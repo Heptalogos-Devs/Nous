@@ -286,7 +286,7 @@ impl KernelService {
     }
 
     pub(super) async fn purge_episode(&self, input: p::EpisodeMutationRequest) -> Result<()> {
-        self.require_memory()?
+        self.0
             .purge_episode(
                 SubjectId(id(&input.subject_id)?),
                 EpisodeId(id(&input.episode_id)?),

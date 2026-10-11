@@ -26,8 +26,7 @@ pub(super) fn validate_query_input(query: &CognitiveQuery) -> Result<()> {
             nous_core::ErrorOwner::Runtime,
             nous_core::ErrorCode::UnresolvedMachinePlaceholder,
             "Resolve machine placeholders before querying",
-        )
-        .into());
+        ));
     }
     Ok(())
 }

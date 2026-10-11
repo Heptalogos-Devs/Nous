@@ -186,7 +186,7 @@ impl KernelService {
         self.journal_lifecycle(input, "reaccept").await
     }
     pub(super) async fn purge_journal(&self, input: p::JournalMutationRequest) -> Result<()> {
-        self.require_memory()?
+        self.0
             .purge_journal(
                 SubjectId(id(&input.subject_id)?),
                 JournalId(id(&input.journal_id)?),

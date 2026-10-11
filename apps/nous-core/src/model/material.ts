@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
-import type { EmbeddingCursor } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import type {
+  EmbeddingCursor,
+  QueryRunHandle,
+} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import { ModelRuntime } from "./runtime.js";
 export class ModelMaterialPipeline {
@@ -14,7 +17,7 @@ export class ModelMaterialPipeline {
     subjectId: string,
     limit: number,
     options: CallOptions = {},
-    preparationToken?: string,
+    queryRun?: QueryRunHandle,
   ) {
     let committed = 0;
     let cursor: EmbeddingCursor | undefined;
@@ -23,7 +26,7 @@ export class ModelMaterialPipeline {
         ?.max_batch_size ?? 64;
     do {
       const needs = await this.kernel.materialWorkflow.listEmbeddingNeeds(
-        { subjectId, limit: limit - committed, preparationToken, cursor },
+        { subjectId, limit: limit - committed, queryRun, cursor },
         options,
       );
       if (!needs.config)
@@ -43,7 +46,7 @@ export class ModelMaterialPipeline {
             await this.kernel.materialWorkflow.commitEmbedding(
               {
                 subjectId,
-                preparationToken,
+                queryRun,
                 bindingReferences: need.references,
                 material: {
                   text: need.text,

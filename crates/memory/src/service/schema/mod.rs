@@ -27,7 +27,7 @@ fn validate_schema_content(content: &SchemaContent) -> Result<()> {
         || content.boundary_definition.len() > 16 * 1024
     {
         return Err(Error::new(
-            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorOwner::Concept,
             nous_core::ErrorCode::InvalidRequest,
             "schema content is required and bounded",
         ));
@@ -38,7 +38,7 @@ fn validate_schema_content(content: &SchemaContent) -> Result<()> {
 fn validate_schema_revision_content(input: &ReviseSchemaInput) -> Result<()> {
     if input.operation_id.0.is_nil() {
         return Err(Error::new(
-            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorOwner::Concept,
             nous_core::ErrorCode::InvalidRequest,
             "operation_id is required",
         ));
@@ -62,7 +62,11 @@ async fn active_schema_link_inputs(
 
 fn decode_schema_link_input(row: sqlx::postgres::PgRow) -> Result<SchemaEvidenceLinkInput> {
     let basis_kind: String = row.try_get("basis_kind").map_err(db)?;
-    let basis_role = parse_enum(row.try_get("basis_role").map_err(db)?, "schema basis role")?;
+    let basis_role = parse_enum(
+        ErrorOwner::Concept,
+        row.try_get("basis_role").map_err(db)?,
+        "schema basis role",
+    )?;
     let basis = if basis_kind == "evidence" {
         let locator = match (
             row.try_get::<Option<Uuid>, _>("source_region_id")
@@ -82,7 +86,7 @@ fn decode_schema_link_input(row: sqlx::postgres::PgRow) -> Result<SchemaEvidence
             (None, None, None) => EvidenceLocator::WholeOccurrence,
             _ => {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorOwner::Concept,
                     nous_core::ErrorCode::InternalFailure,
                     "schema evidence locator is invalid",
                 ));
@@ -109,7 +113,11 @@ fn decode_schema_link_input(row: sqlx::postgres::PgRow) -> Result<SchemaEvidence
         })
     };
     Ok(SchemaEvidenceLinkInput {
-        role: parse_enum(row.try_get("role").map_err(db)?, "schema evidence role")?,
+        role: parse_enum(
+            ErrorOwner::Concept,
+            row.try_get("role").map_err(db)?,
+            "schema evidence role",
+        )?,
         basis,
     })
 }
@@ -138,7 +146,7 @@ impl MemoryService {
             .collect();
         if basis.is_empty() {
             return Err(Error::new(
-                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorOwner::Concept,
                 nous_core::ErrorCode::InvalidRequest,
                 "Schema revision requires evidence links",
             ));
@@ -146,10 +154,16 @@ impl MemoryService {
         for basis in &basis {
             validate_exact_basis(std::slice::from_ref(basis))?;
         }
-        self.validate_basis_for_subject(subject, &basis).await?;
+        self.validate_basis_for_subject(ErrorOwner::Concept, subject, &basis)
+            .await?;
         if content.formation_kind == SchemaFormationKind::Synthesized {
-            self.validate_formation_semantics(subject, FormationMode::Synthesized, &basis)
-                .await?;
+            self.validate_formation_semantics(
+                ErrorOwner::Concept,
+                subject,
+                FormationMode::Synthesized,
+                &basis,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -169,7 +183,8 @@ impl MemoryService {
             .iter()
             .map(|link| link.basis.clone())
             .collect();
-        self.validate_basis_in_tx(tx, input.subject, &basis).await?;
+        self.validate_basis_in_tx(ErrorOwner::Concept, tx, input.subject, &basis)
+            .await?;
         sqlx::query("INSERT INTO cognitive_schemas(schema_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,1,'accepted','valid','normal','normal',$4)")
             .bind(schema_id.0).bind(input.subject.0).bind(revision_id.0).bind(now).execute(&mut **tx).await.map_err(db)?;
         self.write_schema_revision_in(
@@ -238,7 +253,7 @@ fn canonical_schema_producer(
         .map(|producer| {
             if producer.operation != CapabilityOperation::MemoryConsolidationText {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorOwner::Concept,
                     nous_core::ErrorCode::InvalidRequest,
                     "Schema producer requires a cognition consolidation operation",
                 ));

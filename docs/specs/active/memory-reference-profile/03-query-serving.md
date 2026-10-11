@@ -77,11 +77,11 @@ Topology/Wave/Residual/EPA 只作为显式实验 lane；默认 Reference Query �
 
 ## Serving 复用与回收
 
-Kernel 固定 request-scoped immutable Serving view；并发 profile 切换不替换在途视图。QueryExecution 持有 opaque read lease，retained validation ticket 沿用该 lease；finalize/release/expiry 释放它，Runtime 不依赖 concrete Retrieval。
+Kernel 固定 request-scoped immutable Serving view；并发 profile 切换不替换在途视图。QueryRun 在需要 Core 外部步骤时暂存 QueryExecution 与其 opaque Serving read lease，直到最终校验、取消或 lease expiry；Runtime 不依赖 concrete Retrieval。
 
-Query 进入 Serving prepare 前检查 retired collection。`serving.retired_grace_seconds` 为 Developer/SystemOnly/Live，默认 300 秒，范围 0..604800。当前 generation、active query readers/tickets 和显式 research pins 不回收；collection 只跳过被 active reader/ticket 引用的 generation；无关 retired generation 仍可回收，避免持续流量阻塞全部 collection。过 grace 的 unpinned retired artifact 删除物理目录并压缩 metadata 为 checksum/reclaimed audit summary。该 pass 同时清理 owner root 下超过 grace 的未引用 UUID generation 和 orphan staging。配置/watermark 不兼容时不复用；重复并发 publication 复用已发布的相同内容身份并删除多余目录。
+Query 进入 Serving prepare 前检查 retired collection。`serving.retired_grace_seconds` 为 Developer/SystemOnly/Live，默认 300 秒，范围 0..604800。当前 generation、活动 QueryRun 持有的 read lease 与显式 research pins 不回收；collection 只跳过仍被活动 reader 引用的 generation，无关 retired generation 仍可回收，避免持续流量阻塞全部 collection。过 grace 的 unpinned retired artifact 删除物理目录并压缩 metadata 为 checksum/reclaimed audit summary。该 pass 同时清理 owner root 下超过 grace 的未引用 UUID generation 和 orphan staging。配置/watermark 不兼容时不复用；重复并发 publication 复用已发布的相同内容身份并删除多余目录。
 
-## Prepared Query 与 Query Representation
+## Query binding 与 representation
 
 Exact target 是 scope 的候选集合边界，不能和 Runtime/lexical/dense/Tag/Schema/topology discovery 混合扩展。Runtime 仍按冻结绑定、projection、hard constraints 和 owner 最终验证读取；整个 expression 的有效 leaf scopes 都是 exact 时，Kernel 直接调用语义 owner，不准备 Serving generation、query embedding、concept enrichment 或 model rerank。对象 target 在 current/as-of view 绑定一个 head；history view 允许旧 immutable revision，不改变对象 exact read 为历史枚举。混合 typed tree 的非 exact scopes 保留各自 discovery 语义。
 
@@ -95,15 +95,19 @@ Representation 顺序固定：Intent、Temporal orientation、Entities、Concept
 
 `retrieval.query.representation` 是 typed Developer/SubjectOverrideAllowed/Live policy：配置只有 `total_chars=8192` 与 `max_context_items=16`；durable context_text 上限 64 KiB，total_chars 默认 8192、可配置到 32768；Current work 不再固定 1024 上限，必需 intent 超界拒绝而不截断。预算按 Intent → 显式时间/selector/semantic cue → WorkContext Entity/Tag → Current work purpose/questions/text → pinned cognition → ResidentSet/旁路背景分配，随后按固定 section 顺序渲染。同一 descriptor 取其最高输入优先级；截断同时报告 section 和受影响的输入来源类别。`sha256` 对实际 representation text 计算。
 
-Core 查询先取得一次冻结 BoundQuery 的 bounded preparation token，再为完整 representation 生成最多一份 embedding，Kernel 直接消费该 token，保持 ConfigSnapshot 与 context 一致。Runtime 的 QueryReservation 将不可变 BoundQuery 与 infrastructure QueryLease 分开；Core 从同一执行机会传入剩余 lease，激活后的 preparation 和 execution/validation ticket 继承该原始截止时间，不重新开始计时，也不另读一个 Query lease 默认值。Tickets 共用 query slots，single-use、Subject-bound，并在 failure/finalize/release/expiry 清理；最终 validation 在使用和反馈发布前仍须有效。Dense、EPA/VCP sensing 与 expression leaves 共享 request embedding（包括 provider failure），lexical leaf 仍使用该 leaf intent；All/Any 的集合语义保持不变。Rerank 接收同一完整 representation 和原 validated candidates。
+`cognition.prepareQuery` 是绑定结果的只读 inspection，不产生后续执行凭据，也不执行 retrieval、Serving build 或 provider。正式 Query 由 Core 启动 QueryRun：Runtime 一次绑定 BoundQuery、QueryContextSnapshot、ConfigSnapshot 与 infrastructure QueryLease；若 Query 实际执行并持有 Serving view，QueryExecution 的 opaque read lease 同属该次运行。Core 在该运行需要 embedding、concept、rerank 或 Resource 外部动作时，通过带 revision 的 Subject-bound QueryRun handle 恢复同一运行。Handle 只用于该次短暂续接，单次消费；运行在完成 final validation 后结束并释放冻结 ReadContext，不供后续请求复用。QueryLease 的原始截止时间贯穿同一执行机会，不能因 resume 重置。
 
-Core 的意图编译、prepared Query、embedding/concept/rerank/Resource 调用与 projection 共用 `core_execution.opportunity` work clock；最后 release 使用其有界 cleanup。官方 Client 的 Query、recall、prepareQuery、projection 与 managedContext 从 active Configuration 派生响应等待，较短 caller deadline/signal 保留。单个 provider timeout 与候选/算法预算各自保持 owning contract，不能重置该外层机会。
+历史 Query 的 embedding cache miss 由该 QueryRun handle 限定：Host 通过 ListEmbeddingNeeds 与 CommitEmbedding 在运行冻结的 historical Owner view 中发现、生成并提交有界缓存材料，核验精确来源引用和 content identity；不以 current Tag description 验证旧文本，也不建立独立历史数据库。QueryRun 完成后，后续 Projection 是一个新的 Current owner read，不继承历史 ReadContext；它保留 `hit.revision ?? hit.reference` 作为精确选择并重新检查当前可用性。
+
+`runtime.query_lease_slots` 限制 Runtime 同时保留的 QueryRun 数量。Dense、EPA/VCP sensing 与 expression leaves 共享 request embedding（包括 provider failure），lexical leaf 仍使用该 leaf intent；All/Any 的集合语义保持不变。Rerank 接收同一完整 representation 和原 validated candidates。
+
+Core 的意图编译、QueryRun、embedding/concept/rerank/Resource 调用与 projection 共用 `core_execution.opportunity` work clock；最后 release 使用其有界 cleanup。官方 Client 的 Query、recall、prepareQuery、projection 与 managedContext 从 active Configuration 派生响应等待，较短 caller deadline/signal 保留。单个 provider timeout 与候选/算法预算各自保持 owning contract，不能重置该外层机会。
 
 生产 `text_only_compatibility` flag 已删除。研究的 text-only 输入是普通无 context TextCue；轨迹输入显式携带 WorkContext/Session，按 v2 entry contract 分开报告。
 
 QueryRequest 的 typed `capabilities` 传递 text embedding、multimodal interpretation、residual sensing 与 rerank requirement。`rerank: "forbidden"` 明确关闭 model rerank，适用于 deterministic algorithm/Agent wiring run；`text_embedding: "forbidden"`（Client 为 `textEmbedding`）禁止 embedding provider。Required 需求的失败不静默回退。
 
-内部算法比较使用 `BoundQuery::for_profile` 从同一 prepared/context snapshot 生成只读 readout plan。Configuration 的 `query_override` 只允许 Live QueryPolicy，记录 OperationOverride 来源并计算独立 digest；不改变 active/desired/persisted 配置。Serving 根据对应 asset contract 复用 shared artifacts。
+内部算法比较使用 `BoundQuery::for_profile` 从同一 QueryRun 的 BoundQuery/context snapshot 生成只读 readout plan。Configuration 的 `query_override` 只允许 Live QueryPolicy，记录 OperationOverride 来源并计算独立 digest；不改变 active/desired/persisted 配置。Serving 根据对应 asset contract 复用 shared artifacts。
 
 
 Native seed preparation first uses closed exact/context/Entity/Tag/relation anchors that map into the current graph. When no anchor maps into that graph, already prepared ready/truncated lexical and dense lanes can supply weak seeds: at most four distinct graph members per lane, bounded by the graph neighbour budget, with configured `lexical_promoted`/`dense_promoted` weight divided by lane rank. Out-of-generation references and rank zero are excluded. The fallback consumes the shared query signal; it makes no additional embedding request and does not change Wave propagation. Direct graph anchors remain authoritative for explicitly associative queries. Seed origin and weight are included in readout; a promoted direct hit is not a multi-hop witness.
@@ -116,6 +120,6 @@ Material owner validates and materializes Artifact/Occurrence/SourceRegion/Deriv
 
 ## Host activity 与 Query feedback
 
-Host query concept role 只能选择 bounded catalog key 或提出 ephemeral hypotheses；模型不能构造 Tag identity/写 Authority。Required/optional/forbidden 分别沿既有能力合同处理。Historical embedding discovery/commit 使用同一 prepared token 的 frozen Owner view，复用 existing material cache；query embedding 不因 lane/profile 再生成。
+Host query concept role 只能选择 bounded catalog key 或提出 ephemeral hypotheses；模型不能构造 Tag identity/写 Authority。Required/optional/forbidden 分别沿既有能力合同处理。Historical embedding discovery/commit 使用当前 QueryRun handle 及其 frozen Owner view，复用 existing material cache；query embedding 不因 lane/profile 再生成。
 
 Runtime 保存有界 query feedback record：prepared/activation digest、bounded signals、实际返回的 exact revision refs、expiry，默认七天；不保存检索正文。ReportUse 的 query_id 必须同 Subject、未过期且属于 returned membership。稳定 duplicate 可在 record expiry 后重试，accepted UseEvent 不随 feedback 清理删除。Presented 不触发概念 review；refutation 不是 positive reinforcement。Maintenance planner 消费 bounded signals，但只有 Host grant 才可调用模型和提交 canonical Concept mutations。

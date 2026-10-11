@@ -56,7 +56,7 @@ pub(super) async fn materialize_longitudinal(
             bound
                 .config_snapshot
                 .get(super::longitudinal_policy::EPISODE_SYNOPSIS)?,
-            bound.historical_authority.as_deref(),
+            bound.read_context.historical_view(),
         )
         .await?;
         let mut metadata = longitudinal_metadata(
@@ -64,7 +64,7 @@ pub(super) async fn materialize_longitudinal(
             subject,
             kind,
             &ids,
-            bound.historical_authority.as_deref(),
+            bound.read_context.historical_view(),
         )
         .await?;
         for row in rows {
@@ -90,6 +90,7 @@ pub(super) async fn materialize_longitudinal(
                 continue;
             };
             let time = temporal_from_columns(
+                ErrorOwner::Memory,
                 row.get("time_kind"),
                 row.get("time_start"),
                 row.get("time_end"),
@@ -306,7 +307,7 @@ async fn longitudinal_evidence(
                     Error::new(
                         nous_core::ErrorOwner::Memory,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not decode a persisted journal revision basis",
                     )
                     .with_source(error)
                 })?;
@@ -325,7 +326,7 @@ async fn longitudinal_evidence(
                     return Err(Error::new(
                         nous_core::ErrorOwner::Memory,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Journal point basis cannot be a cognitive seed",
                     ));
                 }
             };
@@ -463,6 +464,7 @@ pub(super) async fn longitudinal_metadata(
             }
         }
         let occurred = temporal_from_columns(
+            ErrorOwner::Memory,
             row.get("occurred_time_kind"),
             row.get("occurred_time_start"),
             row.get("occurred_time_end"),

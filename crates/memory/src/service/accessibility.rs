@@ -361,7 +361,13 @@ impl MemoryService {
             &serde_json::json!({"memory_id":memory,"expected_object_epoch":expected_object_epoch,"mode":mode}),
         )?;
         let mut mutation = match self
-            .start_mutation(subject, operation_id, "set_accessibility", &digest)
+            .start_mutation(
+                ErrorOwner::Memory,
+                subject,
+                operation_id,
+                "set_accessibility",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {
@@ -377,7 +383,7 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let epoch:i64=sqlx::query_scalar("SELECT object_epoch FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE").bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "memory not found"))?;
-        crate::service::state::fence_epoch(epoch, expected_object_epoch)?;
+        crate::service::state::fence_epoch(ErrorOwner::Memory, epoch, expected_object_epoch)?;
         sqlx::query("UPDATE memory_objects SET accessibility_mode=$3,object_epoch=object_epoch+1 WHERE subject_id=$1 AND memory_id=$2").bind(subject.0).bind(memory.0).bind(format!("{mode:?}").to_lowercase()).execute(&mut **mutation.tx()).await.map_err(db)?;
         mutation
             .invalidate(ProjectionInvalidation {
@@ -393,57 +399,5 @@ impl MemoryService {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reference_values_match_the_frozen_profile() {
-        let policy = AccessibilityPolicy::default();
-        assert!((policy.activation(0.0, &[]) - 0.019802627).abs() < 1e-6);
-        assert_eq!(
-            policy.level_from_activation(policy.activation(180.0, &[])),
-            AccessibilityLevel::Deep
-        );
-        assert_eq!(
-            policy.level_from_activation(policy.activation(1000.0, &[])),
-            AccessibilityLevel::Explicit
-        );
-    }
-
-    #[test]
-    fn meaningful_use_weights_and_mode_gates_are_distinct() {
-        let policy = AccessibilityPolicy::default();
-        let base = policy.activation(0.0, &[]);
-        for kind in [
-            "referenced",
-            "acted_on",
-            "result_supported",
-            "result_refuted",
-            "corrected",
-            "pinned",
-        ] {
-            assert!(policy.activation(0.0, &[(kind.into(), 0.0)]) > base);
-        }
-        assert_eq!(policy.activation(0.0, &[("presented".into(), 0.0)]), base);
-        assert!(eligible(
-            AccessibilityLevel::Deep,
-            CognitiveEffort::Deep,
-            false
-        ));
-        assert!(!eligible(
-            AccessibilityLevel::Deep,
-            CognitiveEffort::Normal,
-            false
-        ));
-        assert!(!eligible(
-            AccessibilityLevel::Explicit,
-            CognitiveEffort::Maximum,
-            false
-        ));
-        assert!(eligible(
-            AccessibilityLevel::Explicit,
-            CognitiveEffort::Light,
-            true
-        ));
-    }
-}
+#[path = "../../tests/unit/service/accessibility.rs"]
+mod tests;

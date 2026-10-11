@@ -69,7 +69,7 @@ impl ServingService {
                                 Error::new(
                                     nous_core::ErrorOwner::Resource,
                                     nous_core::ErrorCode::InternalFailure,
-                                    "Operation failed",
+                                    "Could not serialize a DTSC VCP readout score",
                                 )
                                 .with_source(e)
                             })?,
@@ -95,7 +95,7 @@ impl ServingService {
                                 Error::new(
                                     nous_core::ErrorOwner::Resource,
                                     nous_core::ErrorCode::InternalFailure,
-                                    "Operation failed",
+                                    "Could not serialize a V3 VCP readout score",
                                 )
                                 .with_source(e)
                             })?,
@@ -163,7 +163,7 @@ impl ServingService {
             .projection_capabilities(bound.source_query.subject)
             .await?;
         Ok(
-            (bound.historical_authority.is_some() || seq == generation.authority_watermark)
+            (bound.read_context.is_historical() || seq == generation.authority_watermark)
                 && (capabilities.memory
                     || !generation.identities.references().iter().any(|r| {
                         matches!(

@@ -1,367 +1,262 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { coreExecutionSchema } from "../src/configuration/catalog.js";
-import { expect, it, vi } from "vitest";
 import { create } from "@bufbuild/protobuf";
+import { expect, it, vi } from "vitest";
+import { coreExecutionSchema } from "../src/configuration/catalog.js";
+import type { KernelClient } from "../src/kernel-client.js";
+import type { ModelRuntime } from "../src/model/runtime.js";
+import { QueryOrchestrator } from "../src/query/orchestrator.js";
+import { ResourceRegistry } from "../src/resources/registry.js";
+import type { ExternalResourceAdapter } from "../src/resources/adapter.js";
+import {
+  QueryHostRequirement,
+  type QueryRunRequest,
+} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import {
   QueryExprSchema,
   QueryRequestSchema,
   QueryResponseSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import { QueryOrchestrator } from "../src/query/orchestrator.js";
-import type { KernelClient } from "../src/kernel-client.js";
-import type { ModelRuntime } from "../src/model/runtime.js";
-import type { ResourceRegistry } from "../src/resources/registry.js";
 
-it("finishes a Resource ticket without invoking required rerank for identity-only intent", async () => {
-  const response = create(QueryResponseSchema, {
-    status: "complete",
-    hits: [{ text: "first" }, { text: "second" }],
-  });
-  const finalize = vi.fn(async () => response);
-  const release = vi.fn(async () => ({}));
-  const rerank = vi.fn(async () => {
-    throw new Error("Empty intent must not enter the reranker");
-  });
-  const kernel = {
-    execution: coreExecutionSchema.parse(undefined),
-    queryWorkflow: {
-      prepareQuery: async () => ({
-        preparationToken: "prepared-token",
-        boundQuery: "{}",
-        embeddingRequired: false,
-        embeddingText: "",
-      }),
-      query: async () => ({ response, validationTicket: "resource-ticket" }),
-      finalizeQuery: finalize,
-      releaseQuery: release,
-    },
-  } as unknown as KernelClient;
-  const models = {
-    invocations: {
-      profile: () => ({ protocol: "rerank-v1", model: "required-model" }),
-      requirement: () => "required",
-      rerank,
-    },
-  } as unknown as ModelRuntime;
-  await new QueryOrchestrator(kernel, models, {} as ResourceRegistry).execute(
-    create(QueryRequestSchema, {
-      subjectId: "subject",
-      expression: create(QueryExprSchema, { operation: "atom" }),
+const queryRequest = () =>
+  create(QueryRequestSchema, {
+    subjectId: "subject",
+    expression: create(QueryExprSchema, {
+      operation: "atom",
+      cues: [{ cue: { case: "text", value: "release status" } }],
     }),
-  );
-  expect(rerank).not.toHaveBeenCalled();
-  expect(finalize).toHaveBeenCalledOnce();
-  expect(release).toHaveBeenCalledTimes(2);
-});
+  });
 
-it("prepares before embedding and sends one complete representation for an expression tree", async () => {
-  const representation =
-    "Intent:\nALL OF: Alice's release; Nous Wave tasks\n\nCurrent work:\nRelease stabilization";
-  const embedding = vi.fn(async (texts: string[]) => ({
-    value: texts.map(() => [1, 0]),
-    producer: { signature_hash: "producer" },
-  }));
-  const execute = vi.fn(async () => ({
-    response: create(QueryResponseSchema, {
-      status: "complete",
-      boundQuery: '{"activation":true}',
-    }),
-  }));
-  const release = vi.fn(async () => ({}));
-  const prepare = vi.fn(async () => ({
-    preparationToken: "prepared",
-    boundQuery: '{"prepared":true}',
-    embeddingText: representation,
-    embeddingRequired: true,
-    rerankRequirement: "forbidden",
-  }));
-  const kernel = {
-    execution: coreExecutionSchema.parse(undefined),
-    materialWorkflow: {
-      getEmbeddingConfig: async () => ({
-        spaceHash: "space",
-        producerHash: "producer",
-        producerHashes: ["producer"],
-        model: "fake",
-      }),
-    },
-    queryWorkflow: {
-      prepareQuery: prepare,
-      query: execute,
-      releaseQuery: release,
-    },
-  } as unknown as KernelClient;
-  const models = {
-    embeddingModel: {},
-    invocations: {
-      embeddingBatch: embedding,
-      profile: () => ({ model: "configured-reranker" }),
-      requirement: (role: string) =>
-        role === "query_rerank" ? "required" : "optional",
-      rerank: vi.fn(async () => {
-        throw new Error("forbidden rerank invoked");
-      }),
-    },
-  } as unknown as ModelRuntime;
-  const expression = create(QueryExprSchema, {
-    operation: "all",
-    children: [
-      {
-        operation: "atom",
-        cues: [{ cue: { case: "text", value: "Alice's release" } }],
-      },
-      {
-        operation: "atom",
-        cues: [{ cue: { case: "text", value: "Nous Wave tasks" } }],
-      },
-    ],
-  });
-  const result = await new QueryOrchestrator(
-    kernel,
-    models,
-    {} as ResourceRegistry,
-  ).execute(
-    create(QueryRequestSchema, {
-      subjectId: "subject",
-      expression,
-      capabilities: { rerank: "forbidden" },
-    }),
-  );
-  expect(prepare).toHaveBeenCalledOnce();
-  expect(embedding).toHaveBeenCalledOnce();
-  expect(embedding.mock.calls[0]?.[0]).toEqual([representation]);
-  expect(execute).toHaveBeenCalledWith(
-    expect.objectContaining({
-      subjectId: "subject",
-      preparationToken: "prepared",
-      embeddings: [expect.objectContaining({ text: representation })],
-    }),
-    expect.anything(),
-  );
-  expect(result.boundQuery).toBe('{"activation":true}');
-  expect(release).toHaveBeenCalledOnce();
-});
-
-it.each([
-  ["off", "optional", false],
-  ["model", "forbidden", false],
-  ["model", "optional", true],
-  ["model", "required", true],
-])(
-  "Host query concept model obeys mode=%s and requirement=%s",
-  async (mode, requirement, allowed) => {
-    const events: string[] = [];
-    const activation = vi.fn(async () => {
-      events.push("activation");
+it("continues one QueryRun through Core embedding and returns its completion", async () => {
+  const runQuery = vi.fn(async (request: QueryRunRequest) => {
+    if (request.command.case === "start") {
       return {
-        preparationToken: "activated",
-        modelInput: '{"existing_tags":[{"key":"c0"}]}',
-      };
-    });
-    const generate = vi.fn(async () => {
-      events.push("model");
-      return {
-        value: {
-          existing_tags: [{ key: "c0", strength: 0.8 }],
-          novel_concepts: [],
+        handle: { queryRunId: "query-run", revision: 1n },
+        next: {
+          case: "embedding" as const,
+          value: {
+            representation: "Intent: release status",
+            config: {
+              spaceHash: "space",
+              producerHash: "producer",
+              producerHashes: ["producer"],
+              model: "fake",
+              dimension: 2,
+            },
+            historicalView: false,
+          },
         },
       };
-    });
-    const execute = vi.fn(async () => {
-      events.push("query");
-      return {
-        response: create(QueryResponseSchema, {
-          status: "complete",
-          boundQuery: '{"model_calls":1}',
-        }),
-      };
-    });
-    const release = vi.fn(async () => ({}));
-    const kernel = {
-      execution: coreExecutionSchema.parse(undefined),
-      queryWorkflow: {
-        prepareQuery: async () => ({
-          preparationToken: "prepared",
-          embeddingRequired: false,
-          embeddingText: "Intent:\nreader leases",
-          rerankRequirement: "forbidden",
-          conceptEnrichmentMode: mode,
-          conceptEnrichmentRequirement: requirement,
-        }),
-        activateQuery: activation,
-        query: execute,
-        releaseQuery: release,
-      },
-    } as unknown as KernelClient;
-    const models = {
-      invocations: {
-        profile: () => ({ model: "fake" }),
-        requirement: () => "optional",
-        generate,
-      },
-    } as unknown as ModelRuntime;
-    await new QueryOrchestrator(kernel, models, {} as ResourceRegistry).execute(
-      create(QueryRequestSchema, { subjectId: "subject" }),
-    );
-    if (allowed) {
-      expect(events).toEqual(["activation", "model", "query"]);
-      expect(execute).toHaveBeenCalledWith(
-        expect.objectContaining({
-          preparationToken: "activated",
-          embeddings: [],
-          conceptOutput: JSON.stringify({
-            existing_tags: [{ key: "c0", strength: 0.8 }],
-            novel_concepts: [],
-          }),
-        }),
-        expect.anything(),
-      );
-      expect(release).toHaveBeenCalledWith(
-        { subjectId: "subject", validationTicket: "activated" },
-        expect.anything(),
-      );
-    } else {
-      expect(events).toEqual(["query"]);
-      expect(generate).not.toHaveBeenCalled();
     }
-  },
-);
-
-it.each(["optional", "required"])(
-  "missing Host concept role obeys %s and releases its activation lease",
-  async (requirement) => {
-    const execute = vi.fn(
-      async (_request: {
-        conceptFailure?: string;
-        conceptModelCalls?: number;
-      }) => ({
-        response: create(QueryResponseSchema, { status: "degraded" }),
-      }),
-    );
-    const release = vi.fn(async () => ({}));
-    const kernel = {
-      execution: coreExecutionSchema.parse(undefined),
-      queryWorkflow: {
-        prepareQuery: async () => ({
-          preparationToken: "prepared",
-          embeddingRequired: false,
-          conceptEnrichmentMode: "model",
-          conceptEnrichmentRequirement: requirement,
-        }),
-        activateQuery: async () => ({
-          preparationToken: "activated",
-          modelInput: "{}",
-        }),
-        query: execute,
-        releaseQuery: release,
+    expect(request.command.case).toBe("resume");
+    if (request.command.case !== "resume") throw new Error("resume expected");
+    expect(request.command.value.handle).toMatchObject({
+      queryRunId: "query-run",
+      revision: 1n,
+    });
+    expect(request.command.value.outcome?.case).toBe("embedding");
+    return {
+      handle: undefined,
+      next: {
+        case: "complete" as const,
+        value: create(QueryResponseSchema, { status: "complete" }),
       },
-    } as unknown as KernelClient;
-    const models = {
-      invocations: { profile: () => undefined, requirement: () => "optional" },
-    } as unknown as ModelRuntime;
-    const result = new QueryOrchestrator(
-      kernel,
-      models,
-      {} as ResourceRegistry,
-    ).execute(create(QueryRequestSchema, { subjectId: "subject" }));
-    if (requirement === "required") {
-      await expect(result).rejects.toThrow(
-        "Required query concept model unavailable",
-      );
-      expect(execute).not.toHaveBeenCalled();
-    } else {
-      await result;
-      expect(execute.mock.calls[0]?.[0].conceptFailure).toContain(
-        "Query concept model role unavailable",
-      );
-      expect(execute.mock.calls[0]?.[0].conceptModelCalls).toBe(0);
-    }
-    expect(release).toHaveBeenCalledWith(
-      { subjectId: "subject", validationTicket: "activated" },
-      expect.anything(),
-    );
-  },
-);
-
-it("discovers and commits historical document embeddings against the reserved query view", async () => {
-  const listEmbeddingNeeds = vi.fn(async () => ({
-    config: {
-      spaceHash: "space",
-      producerHash: "producer",
-      producerHashes: ["producer"],
-      model: "fake",
-    },
-    needs: [
-      {
-        reference: { kind: "tag", value: "old" },
-        text: "Concept: old meaning",
-        digest: "old",
-      },
-    ],
-  }));
-  const commitEmbedding = vi.fn(async () => ({}));
+    };
+  });
   const embeddingBatch = vi.fn(async (texts: string[]) => ({
     value: texts.map(() => [1, 0]),
     producer: { signature_hash: "producer" },
   }));
   const kernel = {
     execution: coreExecutionSchema.parse(undefined),
-    materialWorkflow: {
-      listEmbeddingNeeds,
-      commitEmbedding,
-      getEmbeddingConfig: async () => ({
-        spaceHash: "space",
-        producerHash: "producer",
-        producerHashes: ["producer"],
-        model: "fake",
-      }),
-    },
-    queryWorkflow: {
-      prepareQuery: async () => ({
-        preparationToken: "frozen-history",
-        historicalView: true,
-        embeddingRequired: true,
-        embeddingText: "current question with old concepts",
-        rerankRequirement: "forbidden",
-      }),
-      query: async () => ({
-        response: create(QueryResponseSchema, { status: "complete" }),
-      }),
-      releaseQuery: async () => ({}),
-    },
+    queryWorkflow: { runQuery },
   } as unknown as KernelClient;
   const models = {
     embeddingModel: {},
     invocations: {
       embeddingBatch,
-      profile: () => ({ embedding: { max_batch_size: 64 } }),
+      profile: () => undefined,
       requirement: () => "optional",
     },
   } as unknown as ModelRuntime;
-  await new QueryOrchestrator(kernel, models, {} as ResourceRegistry).execute(
-    create(QueryRequestSchema, { subjectId: "subject" }),
+
+  const result = await new QueryOrchestrator(
+    kernel,
+    models,
+    new ResourceRegistry(),
+  ).execute(queryRequest());
+
+  expect(embeddingBatch).toHaveBeenCalledOnce();
+  expect(embeddingBatch).toHaveBeenCalledWith(
+    ["Intent: release status"],
+    "fake",
+    expect.any(AbortSignal),
   );
-  expect(listEmbeddingNeeds).toHaveBeenCalledWith(
-    { subjectId: "subject", limit: 256, preparationToken: "frozen-history" },
-    expect.anything(),
-  );
-  expect(commitEmbedding).toHaveBeenCalledWith(
-    expect.objectContaining({
-      subjectId: "subject",
-      preparationToken: "frozen-history",
-      material: {
-        text: "Concept: old meaning",
-        spaceHash: "space",
-        producerHash: "producer",
-        vector: [1, 0],
+  expect(runQuery).toHaveBeenCalledTimes(2);
+  expect(runQuery.mock.calls[0]?.[0].command.case).toBe("start");
+  expect(runQuery.mock.calls[1]?.[0].command.case).toBe("resume");
+  expect(result.status).toBe("complete");
+});
+
+it("fences query-vector caching across subject invalidation", async () => {
+  let releaseEmbedding!: (value: {
+    value: number[][];
+    producer: { signature_hash: string };
+  }) => void;
+  const delayedEmbedding = new Promise<{
+    value: number[][];
+    producer: { signature_hash: string };
+  }>((resolve) => {
+    releaseEmbedding = resolve;
+  });
+  const embeddingBatch = vi
+    .fn()
+    .mockReturnValueOnce(delayedEmbedding)
+    .mockImplementation(async (texts: string[]) => ({
+      value: texts.map(() => [1, 0]),
+      producer: { signature_hash: "producer" },
+    }));
+  const runQuery = vi.fn(async (request: QueryRunRequest) => {
+    if (request.command.case === "start") {
+      return {
+        handle: {
+          queryRunId: `run-${runQuery.mock.calls.length}`,
+          revision: 1n,
+        },
+        next: {
+          case: "embedding" as const,
+          value: {
+            representation: "Intent: release status",
+            config: {
+              spaceHash: "space",
+              producerHash: "producer",
+              producerHashes: ["producer"],
+              model: "fake",
+              dimension: 2,
+            },
+            historicalView: false,
+          },
+        },
+      };
+    }
+    return {
+      handle: undefined,
+      next: {
+        case: "complete" as const,
+        value: create(QueryResponseSchema, { status: "complete" }),
       },
-    }),
-    expect.anything(),
+    };
+  });
+  const orchestrator = new QueryOrchestrator(
+    {
+      execution: coreExecutionSchema.parse(undefined),
+      queryWorkflow: { runQuery },
+    } as unknown as KernelClient,
+    {
+      embeddingModel: {},
+      invocations: {
+        embeddingBatch,
+        profile: () => undefined,
+        requirement: () => "optional",
+      },
+    } as unknown as ModelRuntime,
+    new ResourceRegistry(),
   );
-  expect(embeddingBatch.mock.calls.map(([texts]) => texts)).toEqual([
-    ["Concept: old meaning"],
-    ["current question with old concepts"],
+
+  const firstRun = orchestrator.execute(queryRequest());
+  await vi.waitFor(() => expect(embeddingBatch).toHaveBeenCalledOnce());
+  orchestrator.invalidateSubject("subject");
+  releaseEmbedding({
+    value: [[1, 0]],
+    producer: { signature_hash: "producer" },
+  });
+  await firstRun;
+  await orchestrator.execute(queryRequest());
+  expect(embeddingBatch).toHaveBeenCalledTimes(2);
+});
+
+it("does not run resource adapters when required reranking was not requested", async () => {
+  let rerankProfileAvailable = true;
+  const search = vi.fn(async () => []);
+  const runQuery = vi.fn(async (request: QueryRunRequest) => {
+    if (request.command.case === "start") {
+      rerankProfileAvailable = false;
+      return {
+        handle: { queryRunId: "query-run", revision: 1n },
+        next: {
+          case: "finalize" as const,
+          value: {
+            baseline: create(QueryResponseSchema, {
+              status: "complete",
+              hits: [{ text: "one" }, { text: "two" }],
+              resourceActions: [
+                {
+                  resourceRef: "resource:docs",
+                  action: "search",
+                  actionId: "action",
+                  queryText: "release",
+                  limit: 1,
+                  adapterKind: "test",
+                  providerProfile: "test",
+                },
+              ],
+            }),
+            rerankQuery: "release status",
+            rerankCandidateLimit: 2,
+            rerankExpected: true,
+            rerankRequirement: QueryHostRequirement.REQUIRED,
+          },
+        },
+      };
+    }
+    if (request.command.case === "resume") {
+      expect(request.command.value.outcome?.case).toBe("finalize");
+      if (request.command.value.outcome?.case === "finalize") {
+        expect(request.command.value.outcome.value.resources).toEqual([]);
+        expect(request.command.value.outcome.value.rerank?.outcome?.case).toBe(
+          "notRequested",
+        );
+      }
+      return {
+        handle: undefined,
+        next: {
+          case: "complete" as const,
+          value: create(QueryResponseSchema, { status: "complete" }),
+        },
+      };
+    }
+    return { handle: undefined, next: undefined, cancelled: true };
+  });
+  const kernel = {
+    execution: coreExecutionSchema.parse(undefined),
+    queryWorkflow: { runQuery },
+  } as unknown as KernelClient;
+  const models = {
+    invocations: {
+      profile: (role: string) =>
+        role === "query_rerank" && rerankProfileAvailable
+          ? { model: "fake" }
+          : undefined,
+      requirement: (role: string) =>
+        role === "query_rerank" ? "required" : "optional",
+    },
+  } as unknown as ModelRuntime;
+  const resources = new ResourceRegistry([
+    {
+      adapterKind: "test",
+      providerProfile: "test",
+      adapter: {
+        describe: vi.fn(async () => ({ resourceIds: [], accessible: true })),
+        search,
+        materialize: vi.fn(async () => ({})),
+      } as unknown as ExternalResourceAdapter,
+    },
   ]);
+
+  await new QueryOrchestrator(kernel, models, resources).execute(
+    queryRequest(),
+  );
+
+  expect(search).not.toHaveBeenCalled();
 });

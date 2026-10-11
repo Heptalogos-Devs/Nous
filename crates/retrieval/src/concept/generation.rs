@@ -138,7 +138,7 @@ impl ServingService {
                     .embed(TextEmbeddingRequest {
                         subject,
                         text: tag.semantic.text.clone(),
-                        query: false,
+                        origin: crate::TextEmbeddingOrigin::Document(CognitiveRef::Tag(tag.tag)),
                     })
                     .await?;
                 if !output.space.compatible_with(&provider.space())

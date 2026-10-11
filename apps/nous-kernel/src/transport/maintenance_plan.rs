@@ -133,8 +133,7 @@ impl KernelService {
                 nous_core::ErrorOwner::ModelWorkflow,
                 nous_core::ErrorCode::StaleRevision,
                 "maintenance source snapshot changed during planning",
-            )
-            .into());
+            ));
         }
         Ok(plan)
     }
@@ -147,8 +146,7 @@ impl KernelService {
                 nous_core::ErrorOwner::ModelWorkflow,
                 nous_core::ErrorCode::LeaseLost,
                 "maintenance planning lease expired or replaced",
-            )
-            .into());
+            ));
         }
         Ok(())
     }
@@ -329,7 +327,7 @@ fn occurrence_time(row: &sqlx::postgres::PgRow) -> Result<p::TemporalExtent> {
             return Err(Error::new(
                 nous_core::ErrorOwner::ModelWorkflow,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Occurrence has an unsupported occurred-time kind",
             ));
         }
     };

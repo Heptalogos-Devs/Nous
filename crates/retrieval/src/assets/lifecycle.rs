@@ -40,6 +40,10 @@ impl ServingService {
                 config_keys.retain(|key| !crate::WAVE_BUILD_CONFIG_KEYS.contains(key));
             } else {
                 config_keys.retain(|key| *key != crate::VCP_ASSETS.path());
+                // Native Wave topology consumes only typed topology nodes and
+                // edges. Episode excerpts are read alongside those rows for
+                // other families, but they do not enter this graph artifact.
+                config_keys.retain(|key| *key != crate::EPISODE_SYNOPSIS.path());
             }
         }
         let configuration_digest = snapshot.digest_for(&config_keys)?;
@@ -61,7 +65,7 @@ impl ServingService {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not serialize the VCP embedding space configuration",
                 )
                 .with_source(e)
             })?;
@@ -69,7 +73,7 @@ impl ServingService {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not serialize the VCP producer configuration",
                 )
                 .with_source(e)
             })?;
@@ -78,7 +82,7 @@ impl ServingService {
                     Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not serialize the VCP asset build policy",
                     )
                     .with_source(e)
                 })?;
@@ -91,11 +95,10 @@ impl ServingService {
                     Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not serialize the Wave topology build policy",
                     )
                     .with_source(e)
                 })?;
-            config["synopsis_budget"] = serde_json::json!(snapshot.get(crate::EPISODE_SYNOPSIS)?);
         }
         if matches!(family, "dense" | "concept")
             && let Some(provider) = self.embedding()
@@ -104,7 +107,7 @@ impl ServingService {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not serialize the Serving embedding space configuration",
                 )
                 .with_source(e)
             })?;
@@ -112,7 +115,7 @@ impl ServingService {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not serialize the Serving producer configuration",
                 )
                 .with_source(e)
             })?;
@@ -429,7 +432,7 @@ impl ServingService {
             return Err(Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Serving artifact checksum does not match its recorded hash",
             ));
         }
         self.readback(path, &record.family, record.generation_id)
@@ -454,7 +457,7 @@ impl ServingService {
                     return Err(Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Concept Serving artifact has an unexpected generation ID",
                     ));
                 }
                 Ok(OpenArtifact::Concept(Arc::new(generation)))
@@ -466,7 +469,7 @@ impl ServingService {
                         return Err(Error::new(
                             nous_core::ErrorOwner::Resource,
                             nous_core::ErrorCode::InternalFailure,
-                            "Operation failed",
+                            "VCP topology artifact has an unexpected generation ID",
                         ));
                     }
                     assets.validate()?;
@@ -479,7 +482,7 @@ impl ServingService {
                     return Err(Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Topology Serving artifact has an unexpected generation ID",
                     ));
                 }
                 Ok(OpenArtifact::Topology(Arc::new(
@@ -495,7 +498,7 @@ impl ServingService {
                     return Err(Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Dense Serving manifest does not match its vector generation",
                     ));
                 }
                 let dense = DenseGeneration::open(

@@ -14,6 +14,7 @@ impl MemoryService {
         )?;
         let mut mutation = match self
             .start_mutation(
+                ErrorOwner::Concept,
                 input.subject,
                 input.operation_id,
                 "create_cognitive_schema",
@@ -30,7 +31,7 @@ impl MemoryService {
                             CognitiveSchemaId(
                                 id.ok_or_else(|| {
                                     Error::new(
-                                        nous_core::ErrorOwner::Memory,
+                                        nous_core::ErrorOwner::Concept,
                                         nous_core::ErrorCode::InternalFailure,
                                         "schema receipt missing result",
                                     )
@@ -38,7 +39,7 @@ impl MemoryService {
                                 .parse()
                                 .map_err(|_| {
                                     Error::new(
-                                        nous_core::ErrorOwner::Memory,
+                                        nous_core::ErrorOwner::Concept,
                                         nous_core::ErrorCode::InternalFailure,
                                         "invalid schema receipt",
                                     )
@@ -49,7 +50,7 @@ impl MemoryService {
                         .await;
                 }
                 return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorOwner::Concept,
                     nous_core::ErrorCode::Unavailable,
                     "schema operation is already in progress",
                 ));
@@ -148,7 +149,7 @@ impl MemoryService {
             }
             RevisionBasis::Seed(_) => {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorOwner::Concept,
                     nous_core::ErrorCode::InvalidRequest,
                     "CognitiveSchema cannot use Cognitive Seed support",
                 ));
@@ -167,15 +168,25 @@ impl MemoryService {
         link: SchemaEvidenceLinkInput,
     ) -> Result<SchemaView> {
         self.store.require_subject(subject).await?;
-        self.validate_basis_for_subject(subject, std::slice::from_ref(&link.basis))
-            .await?;
+        self.validate_basis_for_subject(
+            ErrorOwner::Concept,
+            subject,
+            std::slice::from_ref(&link.basis),
+        )
+        .await?;
         let digest = operation_digest(
             "add_schema_evidence",
             subject,
             &serde_json::json!({"schema_id":schema_id,"expected_object_epoch":expected_object_epoch,"link":link}),
         )?;
         let mut mutation = match self
-            .start_mutation(subject, operation_id, "add_schema_evidence", &digest)
+            .start_mutation(
+                ErrorOwner::Concept,
+                subject,
+                operation_id,
+                "add_schema_evidence",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {
@@ -183,18 +194,23 @@ impl MemoryService {
                     return self.schema(subject, schema_id).await;
                 }
                 return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorOwner::Concept,
                     nous_core::ErrorCode::Unavailable,
                     "schema evidence operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let row=sqlx::query("SELECT current_revision_id,object_epoch FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
+        let row=sqlx::query("SELECT current_revision_id,object_epoch FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
-        crate::service::state::fence_epoch(epoch, expected_object_epoch)?;
-        self.validate_basis_in_tx(mutation.tx(), subject, std::slice::from_ref(&link.basis))
-            .await?;
+        crate::service::state::fence_epoch(ErrorOwner::Concept, epoch, expected_object_epoch)?;
+        self.validate_basis_in_tx(
+            ErrorOwner::Concept,
+            mutation.tx(),
+            subject,
+            std::slice::from_ref(&link.basis),
+        )
+        .await?;
         self.insert_schema_link(
             mutation.tx(),
             subject,
@@ -253,6 +269,7 @@ impl MemoryService {
         )?;
         let mut mutation = match self
             .start_mutation(
+                ErrorOwner::Concept,
                 input.subject,
                 input.operation_id,
                 "revise_cognitive_schema",
@@ -271,7 +288,7 @@ impl MemoryService {
                         .await;
                 }
                 return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorOwner::Concept,
                     nous_core::ErrorCode::Unavailable,
                     "schema revision operation is already in progress",
                 ));
@@ -286,9 +303,13 @@ impl MemoryService {
         .fetch_optional(&mut **mutation.tx())
         .await
         .map_err(db)?
-        .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
+        .ok_or_else(|| Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
-        crate::service::state::fence_epoch(epoch, input.expected_object_epoch)?;
+        crate::service::state::fence_epoch(
+            ErrorOwner::Concept,
+            epoch,
+            input.expected_object_epoch,
+        )?;
         let parent = CognitiveSchemaRevisionId(row.try_get("current_revision_id").map_err(db)?);
         let revision_no: i32 = sqlx::query_scalar(
             "SELECT revision_no+1 FROM cognitive_schema_revisions WHERE schema_revision_id=$1",
@@ -305,12 +326,12 @@ impl MemoryService {
                 .fetch_optional(&mut **mutation.tx())
                 .await
                 .map_err(db)?
-                .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "schema copy link is not active in Subject"))?;
+                .ok_or_else(|| Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::InvalidRequest, "schema copy link is not active in Subject"))?;
             let source_revision =
                 CognitiveSchemaRevisionId(link.try_get("schema_revision_id").map_err(db)?);
             if source_revision != parent {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorOwner::Concept,
                     nous_core::ErrorCode::InvalidRequest,
                     "schema copy link must belong to the current parent revision",
                 ));
@@ -322,13 +343,19 @@ impl MemoryService {
             .map(|link| link.basis.clone())
             .collect::<Vec<_>>();
         self.validate_object_dependency_cycle(
+            ErrorOwner::Concept,
             input.subject,
             &format!("schema:{}", input.schema_id.0),
             &copied_basis,
         )
         .await?;
-        self.validate_basis_in_tx(mutation.tx(), input.subject, &copied_basis)
-            .await?;
+        self.validate_basis_in_tx(
+            ErrorOwner::Concept,
+            mutation.tx(),
+            input.subject,
+            &copied_basis,
+        )
+        .await?;
         let revision_id = CognitiveSchemaRevisionId::new();
         let parent_scope = sqlx::query(
             "SELECT formation_kind,aboutness FROM cognitive_schema_revisions WHERE schema_revision_id=$1",
@@ -353,7 +380,7 @@ impl MemoryService {
                     }))
         {
             return Err(Error::new(
-                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorOwner::Concept,
                 nous_core::ErrorCode::InvalidRequest,
                 "Schema revision must preserve formation kind and aboutness continuity",
             ));

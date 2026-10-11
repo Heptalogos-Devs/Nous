@@ -23,7 +23,13 @@ impl MemoryService {
         let started = self.cognition.now(input.subject);
         let digest = operation_digest("journal_commit", input.subject, &input)?;
         let mut mutation = match self
-            .start_mutation(input.subject, input.operation_id, "journal_commit", &digest)
+            .start_mutation(
+                ErrorOwner::Memory,
+                input.subject,
+                input.operation_id,
+                "journal_commit",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {
@@ -53,10 +59,11 @@ impl MemoryService {
             .iter()
             .flat_map(|point| point.basis.clone())
             .collect();
-        self.validate_basis_in_tx(mutation.tx(), input.subject, &basis)
+        self.validate_basis_in_tx(ErrorOwner::Memory, mutation.tx(), input.subject, &basis)
             .await?;
         if let Some(target) = &input.target {
             self.validate_object_dependency_cycle(
+                ErrorOwner::Memory,
                 input.subject,
                 &format!("journal:{}", target.journal_id.0),
                 &basis,
@@ -263,8 +270,7 @@ async fn fence_source_snapshot_in(
             "Journal input snapshot is stale",
         )
         .with_context("expected_authority_seq", input.expected_authority_seq)
-        .with_context("actual_authority_seq", watermark)
-        .into());
+        .with_context("actual_authority_seq", watermark));
     }
     Ok(())
 }
@@ -287,8 +293,7 @@ async fn journal_target_in(
             nous_core::ErrorOwner::Memory,
             nous_core::ErrorCode::StaleRevision,
             "Journal target revision or lifecycle is stale",
-        )
-        .into());
+        ));
     }
     validate_journal_scope_in(tx, input, target).await?;
     Ok((
@@ -336,8 +341,7 @@ async fn validate_sources_in(
             nous_core::ErrorOwner::Memory,
             nous_core::ErrorCode::StaleRevision,
             "Journal source disappeared",
-        )
-        .into());
+        ));
     }
     validate_source_catalog_in(tx, input, &ids).await?;
     let mut extents = Vec::with_capacity(rows.len());
@@ -365,10 +369,10 @@ async fn validate_sources_in(
                 nous_core::ErrorOwner::Memory,
                 nous_core::ErrorCode::StaleRevision,
                 "Journal source state is stale",
-            )
-            .into());
+            ));
         }
         extents.push(temporal_from_columns(
+            ErrorOwner::Memory,
             row.try_get("experience_time_kind").map_err(db)?,
             row.try_get("experience_time_start").map_err(db)?,
             row.try_get("experience_time_end").map_err(db)?,

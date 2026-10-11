@@ -17,19 +17,17 @@ use test_support::{database, form_input, observation, open_runtime, open_runtime
 #[tokio::test]
 #[expect(
     clippy::too_many_lines,
-    reason = "one retained query is finalized after revise, suppress and purge, including the purged proposal fence"
+    reason = "one retained query is finalized after revision and suppression change its original candidate pool"
 )]
-async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge() {
+async fn rerank_revalidates_original_candidates_after_revise_and_suppress() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
     let subject = subject(&runtime).await;
     let source = observation(&runtime, subject, "shared source").await;
     let entity = EntityRef::new("entity:cohort").unwrap();
     let mut cohort = Vec::new();
-    let mut operations = Vec::new();
-    for index in 0..3 {
+    for index in 0..2 {
         let operation = OperationId::new();
-        operations.push(operation);
         let mut input = form_input(
             subject,
             source.occurrence.occurrence_id,
@@ -54,36 +52,21 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
         Cue::Entity(nous_core::EntityCue { entity_ref: entity }),
     ];
     let execution = runtime.execute_query(request, Some(64)).await.unwrap();
-    assert_eq!(execution.result.results.len(), 3);
+    assert_eq!(execution.result.results.len(), 2);
     let expiring = nous_runtime::QueryLease::new(std::time::Duration::from_millis(200)).unwrap();
-    let (_, expired_ticket) = runtime
-        .cognition
-        .retain_query(execution.clone(), expiring)
-        .unwrap();
+    let (_, expired_handle) =
+        test_support::retain_query_run(&runtime.cognition, execution.clone(), expiring).unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     assert!(
         runtime
             .cognition
-            .finalize_query(
-                subject,
-                expired_ticket.unwrap(),
-                Vec::new(),
-                Vec::new(),
-                nous_runtime::CognitiveContributors {
-                    material: Some(&runtime.material),
-                    shared: None,
-                    memory: Some(runtime.require_memory().unwrap()),
-                }
-            )
-            .await
+            .take_query_run(subject, expired_handle)
             .is_err(),
         "validation must retain the original opportunity deadline"
     );
-    let (pool, ticket) = runtime
-        .cognition
-        .retain_query(execution, test_support::query_lease())
-        .unwrap();
-    let ticket = ticket.expect("validated query snapshot should be retained");
+    let (pool, handle) =
+        test_support::retain_query_run(&runtime.cognition, execution, test_support::query_lease())
+            .unwrap();
     let first = &cohort[0];
     runtime
         .require_memory()
@@ -121,8 +104,78 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
         )
         .await
         .unwrap();
-    let third = &cohort[2];
-    let key = operations[2].0.to_string();
+    let order = pool
+        .results
+        .into_iter()
+        .map(|hit| (hit.reference, 1.0))
+        .collect();
+    let result = test_support::finish_query_run(
+        &runtime.cognition,
+        subject,
+        handle,
+        order,
+        Vec::new(),
+        nous_runtime::CognitiveContributors {
+            material: Some(&runtime.material),
+            shared: None,
+            memory: Some(runtime.require_memory().unwrap()),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(result.results.is_empty());
+    assert!(
+        result
+            .degradation
+            .iter()
+            .any(|value| value.code == "authority_changed_during_rerank")
+    );
+    assert_eq!(
+        result.diagnostics.unwrap().candidate_counts["drop_authority_changed_during_rerank"],
+        2
+    );
+    assert!(runtime.cognition.cancel_query_run(subject, handle).is_err());
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "purge must scrub dependent durable workflow data and reject the entire bound query at completion"
+)]
+async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = subject(&runtime).await;
+    let source = observation(&runtime, subject, "shared source").await;
+    let operation = OperationId::new();
+    let entity = EntityRef::new("entity:cohort").unwrap();
+    let mut input = form_input(
+        subject,
+        source.occurrence.occurrence_id,
+        operation,
+        "purge candidate",
+    );
+    input.aboutness = vec![entity.clone()];
+    let candidate = runtime
+        .require_memory()
+        .unwrap()
+        .form_memory(input)
+        .await
+        .unwrap();
+    let mut request = query(subject);
+    request.expression.cues = vec![
+        Cue::Text(nous_core::TextCue {
+            text: "Recall cognition for this entity".into(),
+        }),
+        Cue::Entity(nous_core::EntityCue { entity_ref: entity }),
+    ];
+    let execution = runtime.execute_query(request, Some(64)).await.unwrap();
+    assert_eq!(execution.result.results.len(), 1);
+    let (pool, handle) =
+        test_support::retain_query_run(&runtime.cognition, execution, test_support::query_lease())
+            .unwrap();
+
+    let key = operation.0.to_string();
     let reservation = runtime
         .store
         .reserve_model_workflow(
@@ -133,7 +186,7 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
             &nous_core::WorkflowSnapshot {
                 content: nous_core::WorkflowPayload {
                     payload: serde_json::json!({"model":"frozen"}),
-                    dependencies: vec![nous_core::CognitiveRef::Memory(third.object.memory_id)],
+                    dependencies: vec![nous_core::CognitiveRef::Memory(candidate.object.memory_id)],
                     ..Default::default()
                 },
                 ..Default::default()
@@ -157,13 +210,11 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
         .await
         .unwrap();
     runtime
-        .require_memory()
-        .unwrap()
         .purge_memory(
             subject,
-            third.object.memory_id,
+            candidate.object.memory_id,
             OperationId::new(),
-            third.object.object_epoch,
+            candidate.object.object_epoch,
         )
         .await
         .unwrap();
@@ -200,38 +251,33 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
             .await
             .is_err()
     );
+
     let order = pool
         .results
         .into_iter()
         .map(|hit| (hit.reference, 1.0))
         .collect();
-    let result = runtime
-        .cognition
-        .finalize_query(
-            subject,
-            ticket,
-            order,
-            Vec::new(),
-            nous_runtime::CognitiveContributors {
-                material: Some(&runtime.material),
-                shared: None,
-                memory: Some(runtime.require_memory().unwrap()),
-            },
-        )
-        .await
-        .unwrap();
-    assert!(result.results.is_empty());
-    assert!(
-        result
-            .degradation
-            .iter()
-            .any(|value| value.code == "authority_changed_during_rerank")
-    );
+    let error = test_support::finish_query_run(
+        &runtime.cognition,
+        subject,
+        handle,
+        order,
+        Vec::new(),
+        nous_runtime::CognitiveContributors {
+            material: Some(&runtime.material),
+            shared: None,
+            memory: Some(runtime.require_memory().unwrap()),
+        },
+    )
+    .await
+    .expect_err("purge fence rejects the whole stale query result");
+    assert_eq!(error.owner, nous_core::ErrorOwner::Runtime);
+    assert_eq!(error.code, nous_core::ErrorCode::StaleContext);
     assert_eq!(
-        result.diagnostics.unwrap().candidate_counts["drop_authority_changed_during_rerank"],
-        3
+        error.context.get("reason").map(String::as_str),
+        Some("purge_epoch_changed")
     );
-    assert!(runtime.cognition.release_query(subject, ticket).is_ok());
+    assert!(runtime.cognition.cancel_query_run(subject, handle).is_err());
 }
 
 #[tokio::test]

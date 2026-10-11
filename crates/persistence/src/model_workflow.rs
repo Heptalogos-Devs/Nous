@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{AuthorityStore, database_error as db};
-use nous_core::{Error, Result, SubjectId};
+use nous_core::{CognitiveRef, Error, Result, SubjectId, reference_parts};
 use nous_core::{ExecutionTelemetry, WorkflowPayload, WorkflowSnapshot};
 use sqlx::Row;
 use sqlx::{Postgres, Transaction, types::Json};
@@ -53,6 +53,237 @@ pub struct WorkflowReservation {
     pub execution_telemetry: Option<ExecutionTelemetry>,
 }
 
+fn validate_reservation_request(
+    key: &str,
+    digest: &str,
+    snapshot: &WorkflowSnapshot,
+    lease_seconds: u64,
+) -> Result<()> {
+    if !(1..=ABSOLUTE_WORKFLOW_LEASE_SECONDS).contains(&lease_seconds)
+        || snapshot.content.dependencies.len() > 2048
+        || key.is_empty()
+        || key.len() > 256
+        || digest.is_empty()
+        || digest.len() > 128
+    {
+        return Err(Error::new(
+            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorCode::InvalidRequest,
+            "invalid model workflow reservation",
+        ));
+    }
+    let snapshot_size = serde_json::to_vec(snapshot)
+        .map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::InvalidRequest,
+                "Model workflow snapshot cannot be serialized",
+            )
+            .with_source(error)
+        })?
+        .len();
+    if snapshot_size > 262144 {
+        return Err(Error::new(
+            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorCode::InvalidRequest,
+            "invalid model workflow reservation",
+        ));
+    }
+    Ok(())
+}
+
+async fn parent_maintenance_lease_until(
+    tx: &mut Transaction<'_, Postgres>,
+    subject: SubjectId,
+    claim: Option<&nous_core::MaintenanceClaim>,
+    trigger_revision: Option<i64>,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    let Some(claim) = claim else {
+        return Ok(None);
+    };
+    let until: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar("SELECT lease_until FROM maintenance_needs WHERE subject_id=$1 AND need_id=$2 AND state='leased' AND lease_token=$3 AND lease_until>clock_timestamp() AND trigger_revision>=$4 FOR UPDATE")
+        .bind(subject.0)
+        .bind(claim.need_id)
+        .bind(claim.lease_token)
+        .bind(trigger_revision)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db)?;
+    Ok(Some(until.ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorCode::LeaseLost,
+            "Maintenance lease expired or changed",
+        )
+        .with_context("need_id", claim.need_id)
+    })?))
+}
+
+async fn insert_or_lock_reservation_row_in(
+    tx: &mut Transaction<'_, Postgres>,
+    subject: SubjectId,
+    owner: &str,
+    key: &str,
+    digest: &str,
+    snapshot: &WorkflowSnapshot,
+    maintenance_trigger: Option<i64>,
+) -> Result<sqlx::postgres::PgRow> {
+    let maintenance = snapshot.maintenance_claim.as_ref();
+    sqlx::query("INSERT INTO model_workflow_operations(subject_id,owner,operation_key,semantic_digest,snapshot,maintenance_need_id,maintenance_trigger_revision,dependencies) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING")
+        .bind(subject.0)
+        .bind(owner)
+        .bind(key)
+        .bind(digest)
+        .bind(Json(snapshot))
+        .bind(maintenance.map(|claim| claim.need_id))
+        .bind(maintenance_trigger)
+        .bind(Json(&snapshot.content.dependencies))
+        .execute(&mut **tx)
+        .await
+        .map_err(db)?;
+    let row = sqlx::query("SELECT snapshot,proposal,outcome,execution_telemetry,semantic_digest,maintenance_need_id,maintenance_trigger_revision,lease_token,lease_token IS NOT NULL AND lease_until>clock_timestamp() AS live FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3 FOR UPDATE")
+        .bind(subject.0)
+        .bind(owner)
+        .bind(key)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db)?;
+    if row.try_get::<String, _>("semantic_digest").map_err(db)? != digest {
+        return Err(Error::new(
+            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorCode::OperationIdConflict,
+            "Model operation identity has different semantic input",
+        )
+        .with_context("owner", owner)
+        .with_context("operation_key", key));
+    }
+    Ok(row)
+}
+
+fn validate_checkpoint_values(
+    proposal: Option<&WorkflowPayload>,
+    outcome: Option<&WorkflowPayload>,
+    execution_telemetry: Option<&ExecutionTelemetry>,
+    mutation_operations: &[nous_core::OperationId],
+) -> Result<()> {
+    for value in [proposal, outcome].into_iter().flatten() {
+        if serde_json::to_vec(value)
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Model workflow payload cannot be serialized",
+                )
+                .with_source(error)
+            })?
+            .len()
+            > WORKFLOW_VALUE_MAX_BYTES
+        {
+            return Err(Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::InvalidRequest,
+                "model workflow value exceeds bound",
+            ));
+        }
+    }
+    if let Some(telemetry) = execution_telemetry {
+        telemetry.validate()?;
+    }
+    if proposal.is_none()
+        && outcome.is_none()
+        && execution_telemetry.is_none()
+        && mutation_operations.is_empty()
+    {
+        return Err(Error::new(
+            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorCode::InvalidRequest,
+            "empty model workflow checkpoint",
+        ));
+    }
+    Ok(())
+}
+
+async fn validated_maintenance_claim_in(
+    tx: &mut Transaction<'_, Postgres>,
+    subject: SubjectId,
+    owner: &str,
+    key: &str,
+) -> Result<Option<nous_core::MaintenanceClaim>> {
+    let identity_row = sqlx::query("SELECT maintenance_need_id,maintenance_trigger_revision,snapshot FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3")
+        .bind(subject.0)
+        .bind(owner)
+        .bind(key)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::LeaseLost,
+                "Model workflow lease expired or changed",
+            )
+            .with_context("owner", owner)
+            .with_context("operation_key", key)
+        })?;
+    let maintenance_need_id = identity_row
+        .try_get::<Option<Uuid>, _>("maintenance_need_id")
+        .map_err(db)?;
+    let maintenance_trigger_revision = identity_row
+        .try_get::<Option<i64>, _>("maintenance_trigger_revision")
+        .map_err(db)?;
+    let identity_snapshot = identity_row
+        .try_get::<Json<WorkflowSnapshot>, _>("snapshot")
+        .map_err(db)?
+        .0;
+    let maintenance_claim = identity_snapshot.maintenance_claim;
+    match (
+        maintenance_need_id,
+        maintenance_trigger_revision,
+        maintenance_claim.as_ref(),
+    ) {
+        (Some(need_id), Some(trigger_revision), Some(claim))
+            if need_id == claim.need_id
+                && i64::try_from(claim.trigger_revision).ok() == Some(trigger_revision) =>
+        {
+            let trigger = i64::try_from(claim.trigger_revision).map_err(|_| {
+                Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "maintenance revision exceeds storage range",
+                )
+            })?;
+            let valid: Option<Uuid> = sqlx::query_scalar("SELECT need_id FROM maintenance_needs WHERE subject_id=$1 AND need_id=$2 AND state='leased' AND lease_token=$3 AND lease_until>clock_timestamp() AND trigger_revision>=$4 AND trigger_revision>=$5 FOR UPDATE")
+                .bind(subject.0)
+                .bind(need_id)
+                .bind(claim.lease_token)
+                .bind(trigger_revision)
+                .bind(trigger)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(db)?;
+            if valid.is_none() {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::LeaseLost,
+                    "Maintenance lease expired or changed",
+                )
+                .with_context("need_id", need_id));
+            }
+        }
+        (None, None, None) => {}
+        _ => {
+            return Err(Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::OperationIdConflict,
+                "Model workflow maintenance identity changed",
+            )
+            .with_context("owner", owner)
+            .with_context("operation_key", key));
+        }
+    }
+    Ok(maintenance_claim)
+}
+
 impl AuthorityStore {
     pub async fn add_workflow_dependencies_in(
         tx: &mut Transaction<'_, Postgres>,
@@ -96,8 +327,7 @@ impl AuthorityStore {
                 "Model operation identity has different semantic input",
             )
             .with_context("owner", owner)
-            .with_context("operation_key", key)
-            .into());
+            .with_context("operation_key", key));
         }
         Ok(Some(WorkflowReservation {
             snapshot: row
@@ -133,6 +363,89 @@ impl AuthorityStore {
         Ok(())
     }
 
+    /// Clear context bodies that directly depended on purged owner refs while
+    /// retaining an ended shell for existing longitudinal references.
+    pub async fn purge_work_contexts_in(
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+    ) -> Result<()> {
+        if references.is_empty() {
+            return Ok(());
+        }
+        let parts = references.iter().map(reference_parts).collect::<Vec<_>>();
+        let (kinds, values): (Vec<_>, Vec<_>) = parts.into_iter().unzip();
+        let affected: Vec<uuid::Uuid> = sqlx::query_scalar(
+            r#"
+WITH targets(ref_kind,ref_value) AS (
+    SELECT * FROM unnest($2::text[],$3::text[])
+)
+SELECT DISTINCT wc.work_context_id
+FROM work_contexts wc
+JOIN work_context_refs wcr USING(work_context_id)
+JOIN targets requested USING(ref_kind,ref_value)
+WHERE wc.subject_id=$1
+ORDER BY wc.work_context_id
+"#,
+        )
+        .bind(subject.0)
+        .bind(&kinds)
+        .bind(&values)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db)?;
+        for id in affected {
+            let context = CognitiveRef::WorkContext(nous_core::WorkContextId(id));
+            Self::tombstone_identity_refs_in(tx, subject, std::slice::from_ref(&context)).await?;
+            Self::purge_owner_history_in(tx, subject, std::slice::from_ref(&context)).await?;
+        }
+        sqlx::query(
+            r#"
+WITH targets(ref_kind,ref_value) AS (
+    SELECT * FROM unnest($2::text[],$3::text[])
+)
+UPDATE work_contexts wc SET
+    state='ended',purpose='Purged context',context_text='',
+    unresolved_questions='{}',constraints='{}',resume_conditions='{}',
+    budget_summary='{}',revision=revision+1,
+    ended_at=COALESCE(ended_at,clock_timestamp()),updated_at=clock_timestamp()
+WHERE wc.subject_id=$1 AND EXISTS (
+    SELECT 1 FROM work_context_refs wcr
+    JOIN targets requested USING(ref_kind,ref_value)
+    WHERE wcr.work_context_id=wc.work_context_id
+)
+"#,
+        )
+        .bind(subject.0)
+        .bind(&kinds)
+        .bind(&values)
+        .execute(&mut **tx)
+        .await
+        .map_err(db)?;
+        sqlx::query(
+            r#"
+WITH targets(ref_kind,ref_value) AS (
+    SELECT * FROM unnest($2::text[],$3::text[])
+), affected(work_context_id) AS (
+    SELECT DISTINCT wc.work_context_id
+    FROM work_contexts wc
+    JOIN work_context_refs wcr USING(work_context_id)
+    JOIN targets requested USING(ref_kind,ref_value)
+    WHERE wc.subject_id=$1
+)
+DELETE FROM work_context_refs wcr USING affected
+WHERE wcr.work_context_id=affected.work_context_id
+"#,
+        )
+        .bind(subject.0)
+        .bind(kinds)
+        .bind(values)
+        .execute(&mut **tx)
+        .await
+        .map_err(db)?;
+        Ok(())
+    }
+
     pub async fn reserve_model_workflow(
         &self,
         subject: SubjectId,
@@ -144,30 +457,7 @@ impl AuthorityStore {
     ) -> Result<WorkflowReservation> {
         let owner_id = WorkflowOwner::new(owner)?;
         let owner = owner_id.as_str();
-        if !(1..=ABSOLUTE_WORKFLOW_LEASE_SECONDS).contains(&lease_seconds)
-            || snapshot.content.dependencies.len() > 2048
-            || key.is_empty()
-            || key.len() > 256
-            || digest.is_empty()
-            || digest.len() > 128
-            || serde_json::to_vec(snapshot)
-                .map_err(|error| {
-                    Error::new(
-                        nous_core::ErrorOwner::ModelWorkflow,
-                        nous_core::ErrorCode::InvalidRequest,
-                        "Invalid request",
-                    )
-                    .with_source(error)
-                })?
-                .len()
-                > 262144
-        {
-            return Err(Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
-                nous_core::ErrorCode::InvalidRequest,
-                "invalid model workflow reservation",
-            ));
-        }
+        validate_reservation_request(key, digest, snapshot, lease_seconds)?;
         let mut tx = self.begin().await?;
         let maintenance = snapshot.maintenance_claim.as_ref();
         let maintenance_trigger = maintenance
@@ -180,33 +470,20 @@ impl AuthorityStore {
                     "maintenance revision exceeds storage range",
                 )
             })?;
-        let parent_lease_until = if let Some(claim) = maintenance {
-            let until: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar("SELECT lease_until FROM maintenance_needs WHERE subject_id=$1 AND need_id=$2 AND state='leased' AND lease_token=$3 AND lease_until>clock_timestamp() AND trigger_revision>=$4 FOR UPDATE")
-                .bind(subject.0).bind(claim.need_id).bind(claim.lease_token).bind(maintenance_trigger).fetch_optional(&mut *tx).await.map_err(db)?;
-            Some(until.ok_or_else(|| {
-                nous_core::Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
-                    nous_core::ErrorCode::LeaseLost,
-                    "Maintenance lease expired or changed",
-                )
-                .with_context("need_id", claim.need_id)
-            })?)
-        } else {
-            None
-        };
+        let parent_lease_until =
+            parent_maintenance_lease_until(&mut tx, subject, maintenance, maintenance_trigger)
+                .await?;
 
-        sqlx::query("INSERT INTO model_workflow_operations(subject_id,owner,operation_key,semantic_digest,snapshot,maintenance_need_id,maintenance_trigger_revision,dependencies) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING").bind(subject.0).bind(owner).bind(key).bind(digest).bind(Json(snapshot)).bind(maintenance.map(|claim| claim.need_id)).bind(maintenance_trigger).bind(Json(&snapshot.content.dependencies)).execute(&mut *tx).await.map_err(db)?;
-        let row=sqlx::query("SELECT snapshot,proposal,outcome,execution_telemetry,semantic_digest,maintenance_need_id,maintenance_trigger_revision,lease_token,lease_token IS NOT NULL AND lease_until>clock_timestamp() AS live FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3 FOR UPDATE").bind(subject.0).bind(owner).bind(key).fetch_one(&mut *tx).await.map_err(db)?;
-        if row.try_get::<String, _>("semantic_digest").map_err(db)? != digest {
-            return Err(nous_core::Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
-                nous_core::ErrorCode::OperationIdConflict,
-                "Model operation identity has different semantic input",
-            )
-            .with_context("owner", owner)
-            .with_context("operation_key", key)
-            .into());
-        }
+        let row = insert_or_lock_reservation_row_in(
+            &mut tx,
+            subject,
+            owner,
+            key,
+            digest,
+            snapshot,
+            maintenance_trigger,
+        )
+        .await?;
         let mut snapshot = row
             .try_get::<Json<WorkflowSnapshot>, _>("snapshot")
             .map_err(db)?
@@ -234,8 +511,7 @@ impl AuthorityStore {
                     "Model workflow maintenance identity changed",
                 )
                 .with_context("owner", owner)
-                .with_context("operation_key", key)
-                .into());
+                .with_context("operation_key", key));
             }
         }
         let proposal = row
@@ -308,96 +584,11 @@ impl AuthorityStore {
             token,
         } = lease;
         let owner = owner.as_str();
-        for value in [proposal, outcome].into_iter().flatten() {
-            if serde_json::to_vec(value)
-                .map_err(|error| {
-                    Error::new(
-                        nous_core::ErrorOwner::ModelWorkflow,
-                        nous_core::ErrorCode::InvalidRequest,
-                        "Invalid request",
-                    )
-                    .with_source(error)
-                })?
-                .len()
-                > WORKFLOW_VALUE_MAX_BYTES
-            {
-                return Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
-                    nous_core::ErrorCode::InvalidRequest,
-                    "model workflow value exceeds bound",
-                ));
-            }
-        }
-        if let Some(telemetry) = execution_telemetry {
-            telemetry.validate()?;
-        }
-        if proposal.is_none()
-            && outcome.is_none()
-            && execution_telemetry.is_none()
-            && mutation_operations.is_empty()
-        {
-            return Err(Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
-                nous_core::ErrorCode::InvalidRequest,
-                "empty model workflow checkpoint",
-            ));
-        }
+        validate_checkpoint_values(proposal, outcome, execution_telemetry, mutation_operations)?;
         let mut tx = self.begin().await?;
-        let identity_row = sqlx::query("SELECT maintenance_need_id,maintenance_trigger_revision,snapshot FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3")
-            .bind(subject.0).bind(owner).bind(key).fetch_optional(&mut *tx).await.map_err(db)?
-            .ok_or_else(|| nous_core::Error::new(nous_core::ErrorOwner::ModelWorkflow, nous_core::ErrorCode::LeaseLost, "Model workflow lease expired or changed")
-                .with_context("owner", owner).with_context("operation_key", key))?;
-        let maintenance_need_id = identity_row
-            .try_get::<Option<Uuid>, _>("maintenance_need_id")
-            .map_err(db)?;
-        let maintenance_trigger_revision = identity_row
-            .try_get::<Option<i64>, _>("maintenance_trigger_revision")
-            .map_err(db)?;
-        let identity_snapshot = identity_row
-            .try_get::<Json<WorkflowSnapshot>, _>("snapshot")
-            .map_err(db)?
-            .0;
-        let maintenance_claim = identity_snapshot.maintenance_claim.as_ref();
-        match (
-            maintenance_need_id,
-            maintenance_trigger_revision,
-            maintenance_claim,
-        ) {
-            (Some(need_id), Some(trigger_revision), Some(claim))
-                if need_id == claim.need_id
-                    && i64::try_from(claim.trigger_revision).ok() == Some(trigger_revision) =>
-            {
-                let trigger = i64::try_from(claim.trigger_revision).map_err(|_| {
-                    Error::new(
-                        nous_core::ErrorOwner::ModelWorkflow,
-                        nous_core::ErrorCode::InvalidRequest,
-                        "maintenance revision exceeds storage range",
-                    )
-                })?;
-                let valid: Option<Uuid> = sqlx::query_scalar("SELECT need_id FROM maintenance_needs WHERE subject_id=$1 AND need_id=$2 AND state='leased' AND lease_token=$3 AND lease_until>clock_timestamp() AND trigger_revision>=$4 AND trigger_revision>=$5 FOR UPDATE")
-                    .bind(subject.0).bind(need_id).bind(claim.lease_token).bind(trigger_revision).bind(trigger).fetch_optional(&mut *tx).await.map_err(db)?;
-                if valid.is_none() {
-                    return Err(nous_core::Error::new(
-                        nous_core::ErrorOwner::ModelWorkflow,
-                        nous_core::ErrorCode::LeaseLost,
-                        "Maintenance lease expired or changed",
-                    )
-                    .with_context("need_id", need_id)
-                    .into());
-                }
-            }
-            (None, None, None) => {}
-            _ => {
-                return Err(nous_core::Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
-                    nous_core::ErrorCode::OperationIdConflict,
-                    "Model workflow maintenance identity changed",
-                )
-                .with_context("owner", owner)
-                .with_context("operation_key", key)
-                .into());
-            }
-        }
+        let maintenance_claim =
+            validated_maintenance_claim_in(&mut tx, *subject, owner, key).await?;
+        let maintenance_claim = maintenance_claim.as_ref();
         let row = sqlx::query("SELECT snapshot,dependencies,mutation_operations,execution_telemetry,lease_token,lease_until>clock_timestamp() AS child_live,outcome IS NOT NULL AS terminal FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3 FOR UPDATE")
             .bind(subject.0).bind(owner).bind(key).fetch_optional(&mut *tx).await.map_err(db)?
             .ok_or_else(|| nous_core::Error::new(nous_core::ErrorOwner::ModelWorkflow, nous_core::ErrorCode::LeaseLost, "Model workflow lease expired or changed")
@@ -421,8 +612,7 @@ impl AuthorityStore {
                 "Model workflow lease expired or changed",
             )
             .with_context("owner", owner)
-            .with_context("operation_key", key)
-            .into());
+            .with_context("operation_key", key));
         }
         let mut operations: Vec<Uuid> = row.try_get("mutation_operations").map_err(db)?;
         for operation in mutation_operations {
@@ -477,8 +667,7 @@ impl AuthorityStore {
                 "Model workflow lease expired or changed",
             )
             .with_context("owner", owner)
-            .with_context("operation_key", key)
-            .into());
+            .with_context("operation_key", key));
         }
         tx.commit().await.map_err(db)?;
         Ok(())

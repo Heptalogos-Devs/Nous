@@ -146,8 +146,9 @@ impl AuthorityStore {
             return Err(Error::new(
                 nous_core::ErrorOwner::Identity,
                 nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
-            ));
+                "Identity address batch exceeds the limit",
+            )
+            .with_context("max_targets", 2048));
         }
         let requested = targets
             .iter()
@@ -199,8 +200,7 @@ ORDER BY r.ordinal
                 "Expected a Subject lexical reference",
             )
             .with_context("reference", lexical)
-            .with_context("expected_kind", "subject")
-            .into());
+            .with_context("expected_kind", "subject"));
         }
         let canonical: String = sqlx::query_scalar("SELECT b.canonical_ref FROM lexical_bindings b JOIN lexical_visibility v USING(lexical_ref) WHERE b.object_kind='subject' AND b.lexical_ref=$1 AND b.tombstoned_at IS NULL AND v.subject_id::text=b.canonical_ref")
             .bind(lexical).fetch_optional(self.pool()).await.map_err(database_error)?
@@ -265,7 +265,7 @@ ORDER BY r.ordinal
             return Err(Error::new(
                 nous_core::ErrorOwner::Identity,
                 nous_core::ErrorCode::NotFound,
-                "Not found",
+                "Identity binding was not visible after creation",
             ));
         }
         candidates.pop().ok_or_else(|| {
@@ -318,17 +318,6 @@ ORDER BY r.ordinal
                 "invalid identity label bounds",
             ));
         }
-        if !matches!(reference, CognitiveRef::Entity(_))
-            && !self
-                .reference_in_subject_tx(tx, subject, &reference)
-                .await?
-        {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Identity,
-                nous_core::ErrorCode::NotFound,
-                "cognitive reference not found",
-            ));
-        }
         let (kind, canonical) = reference_parts(&reference);
         let prefix = lexical_prefix(&kind)?;
         aliases.sort();
@@ -338,6 +327,20 @@ ORDER BY r.ordinal
             .execute(&mut **tx)
             .await
             .map_err(database_error)?;
+        // Check liveness after the same lock used by purge. Otherwise a binder
+        // can validate immediately before purge, wait on the lock, and recreate
+        // a live identity after purge has committed its tombstone.
+        if !matches!(reference, CognitiveRef::Entity(_))
+            && !self
+                .reference_in_subject_tx(tx, subject, &reference)
+                .await?
+        {
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::NotFound,
+                "cognitive reference not found",
+            ));
+        }
         let row=sqlx::query("SELECT lexical_ref,tombstoned_at IS NOT NULL AS tombstoned FROM lexical_bindings WHERE object_kind=$1 AND canonical_ref=$2")
             .bind(&kind).bind(&canonical).fetch_optional(&mut **tx).await.map_err(database_error)?;
         let lexical = if let Some(row) = row {
@@ -350,8 +353,7 @@ ORDER BY r.ordinal
                     nous_core::ErrorCode::ReferenceTombstoned,
                     "The identity has been tombstoned",
                 )
-                .with_context("reference", format!("{kind}:{canonical}"))
-                .into());
+                .with_context("reference", format!("{kind}:{canonical}")));
             }
             row.try_get::<String, _>("lexical_ref")
                 .map_err(database_error)?
@@ -363,7 +365,7 @@ ORDER BY r.ordinal
                     Error::new(
                         nous_core::ErrorOwner::Identity,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Unable to generate a unique lexical reference",
                     )
                     .with_source(e)
                 })?;
@@ -391,6 +393,53 @@ ORDER BY r.ordinal
             aliases,
             status: "LIVE".into(),
         })
+    }
+
+    /// Tombstone all registered names and aliases for the supplied owner refs.
+    /// Uses the exact advisory-lock key held by identity binding creation.
+    pub async fn tombstone_identity_refs_in(
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+    ) -> Result<()> {
+        let mut seen = std::collections::BTreeSet::new();
+        for reference in references {
+            let (kind, canonical) = reference_parts(reference);
+            if !seen.insert((kind.clone(), canonical.clone())) {
+                continue;
+            }
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,1))")
+                .bind(format!("{kind}:{canonical}"))
+                .execute(&mut **tx)
+                .await
+                .map_err(database_error)?;
+            let lexical_refs: Vec<String> = sqlx::query_scalar("UPDATE lexical_bindings SET tombstoned_at=COALESCE(tombstoned_at,authority_recording_time()) WHERE object_kind=$1 AND canonical_ref=$2 RETURNING lexical_ref")
+                .bind(&kind).bind(&canonical).fetch_all(&mut **tx).await.map_err(database_error)?;
+            if lexical_refs.is_empty() {
+                continue;
+            }
+            sqlx::query("UPDATE lexical_visibility SET display_name='',aliases='{}' WHERE subject_id=$1 AND lexical_ref=ANY($2::text[])")
+                .bind(subject.0).bind(&lexical_refs).execute(&mut **tx).await.map_err(database_error)?;
+            // Directory history must not preserve purged labels or aliases.
+            sqlx::query("DELETE FROM authority_object_states WHERE subject_id=$1 AND object_kind='lexical_visibility' AND object_ref=ANY($2::text[])")
+                .bind(subject.0).bind(&lexical_refs).execute(&mut **tx).await.map_err(database_error)?;
+        }
+        Ok(())
+    }
+
+    /// Remove purged owner-state history while leaving revision audit rows owned
+    /// by other independent domains untouched.
+    pub async fn purge_owner_history_in(
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+    ) -> Result<()> {
+        for reference in references {
+            let (kind, canonical) = reference_parts(reference);
+            sqlx::query("DELETE FROM authority_object_states WHERE subject_id=$1 AND object_kind=$2 AND object_ref=$3")
+                .bind(subject.0).bind(kind).bind(canonical).execute(&mut **tx).await.map_err(database_error)?;
+        }
+        Ok(())
     }
     pub async fn resolve_identity(
         &self,
@@ -429,8 +478,9 @@ SELECT DISTINCT ON(object_kind,canonical_ref) * FROM matched ORDER BY object_kin
             return Err(Error::new(
                 nous_core::ErrorOwner::Identity,
                 nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
-            ));
+                "Identity resolution result exceeds the candidate limit",
+            )
+            .with_context("max_candidates", 64));
         }
         let mut bindings = Vec::new();
         let mut tombstoned = false;
@@ -479,13 +529,5 @@ SELECT DISTINCT ON(object_kind,canonical_ref) * FROM matched ORDER BY object_kin
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn standard_reference_validation() {
-        assert_eq!(validate_lexical("mem:bahog-hijol-mokor").unwrap(), "mem");
-        assert!(validate_lexical("Mem:bahog-hijol-mokor").is_err());
-        assert!(validate_lexical("unknown:bahog-hijol-mokor").is_err());
-        assert!(validate_lexical("mem:bahog-hijol").is_err());
-    }
-}
+#[path = "../tests/unit/identity.rs"]
+mod tests;

@@ -60,7 +60,7 @@ impl VcpServingGeneration {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "VCP candidate index does not match its vector artifact",
                 ));
             }
         }
@@ -69,7 +69,7 @@ impl VcpServingGeneration {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "VCP Tag index does not match its candidate index",
                 ));
             }
         }

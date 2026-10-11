@@ -371,15 +371,14 @@ async fn assert_journal_purge(
     let memory = rt.require_memory().unwrap();
     let fresh_dependencies = create_journal_dependents(rt, subject, episode, journal).await;
     let before = rt.store.authority_seq(subject).await.unwrap();
-    memory
-        .purge_journal(
-            subject,
-            journal.object.journal_id,
-            OperationId::new(),
-            journal.object.object_epoch,
-        )
-        .await
-        .unwrap();
+    rt.purge_journal(
+        subject,
+        journal.object.journal_id,
+        OperationId::new(),
+        journal.object.object_epoch,
+    )
+    .await
+    .unwrap();
     assert!(
         memory
             .journal(subject, journal.object.journal_id, None)

@@ -134,6 +134,96 @@ pub async fn open(path: &Path) -> Result<(NousRuntime, Option<PostgreSQL>)> {
         }
     }
 }
+
+/// Open a caller-supplied offline database copy for the one-time vector
+/// ownership conversion. Only the copied database and copied object root are
+/// opened; normal Kernel startup never runs this conversion.
+pub async fn open_embedding_upgrade_copy(
+    path: &Path,
+    copied_database_url: String,
+    copied_object_root: &Path,
+    serving_scratch_root: &Path,
+) -> Result<NousRuntime> {
+    if !copied_object_root.is_dir() {
+        return Err(Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::FailedPrecondition,
+            "copied object root must already exist; refusing to create or use the source root",
+        ));
+    }
+    let text = tokio::fs::read_to_string(path).await.map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InternalFailure,
+            "Kernel configuration could not be read",
+        )
+        .with_source(error)
+    })?;
+    let config: Config = toml::from_str(&text).map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "Kernel configuration is invalid",
+        )
+        .with_source(error)
+    })?;
+    if config.bootstrap.object_store.backend != "fs" {
+        return Err(Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "object store backend must be fs",
+        ));
+    }
+    let absolute = std::path::absolute(path).map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InternalFailure,
+            "Kernel configuration path could not be resolved",
+        )
+        .with_source(error)
+    })?;
+    let root = absolute.parent().ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "config parent required",
+        )
+    })?;
+    let bundle = read_bundle(&resolve_path(root, &config.configuration_bundle)).await?;
+    nous_kernel::configuration_catalog(bundle.core_descriptors.clone())?
+        .deployment_values(&bundle.deployment_document)?;
+    NousRuntime::open(RuntimeOptions {
+        postgres_url: copied_database_url,
+        max_connections: config.bootstrap.database.max_connections,
+        acquire_timeout_ms: config.bootstrap.database.acquire_timeout_ms,
+        object_root: std::fs::canonicalize(copied_object_root)
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Instance,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Copied object root could not be resolved",
+                )
+                .with_source(error)
+            })?
+            .to_string_lossy()
+            .into_owned(),
+        serving_options: nous_retrieval::ServingOptions {
+            root: serving_scratch_root.to_path_buf(),
+            lexical: false,
+            dense: false,
+            topology: false,
+            memory_enabled: false,
+        },
+        // This offline conversion reads already stored vectors and must never
+        // invoke or initialize a host embedding provider.
+        embedding: None,
+        stored_embedding: None,
+        core_descriptors: bundle.core_descriptors,
+        deployment_document: bundle.deployment_document,
+    })
+    .await
+}
+
 async fn open_database(
     root: &Path,
     config: &DatabaseConfig,
@@ -179,7 +269,7 @@ async fn open_database(
                 Error::new(
                     nous_core::ErrorOwner::Instance,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not check whether the private PostgreSQL database exists",
                 )
                 .with_source(error)
             })? {
@@ -187,7 +277,7 @@ async fn open_database(
                     Error::new(
                         nous_core::ErrorOwner::Instance,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not create the private PostgreSQL database",
                     )
                     .with_source(error)
                 })?;
@@ -231,7 +321,7 @@ async fn private_database_settings(
             Error::new(
                 nous_core::ErrorOwner::Instance,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not create the managed PostgreSQL instance directory",
             )
             .with_source(error)
         })?;
@@ -241,7 +331,7 @@ async fn private_database_settings(
             Error::new(
                 nous_core::ErrorOwner::Instance,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not create the managed PostgreSQL secret directory",
             )
             .with_source(error)
         })?;
@@ -250,7 +340,7 @@ async fn private_database_settings(
             Error::new(
                 nous_core::ErrorOwner::Instance,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not create the managed PostgreSQL data parent directory",
             )
             .with_source(error)
         })?;
@@ -268,7 +358,7 @@ async fn private_database_settings(
                 Error::new(
                     nous_core::ErrorOwner::Instance,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not create the managed PostgreSQL password file",
                 )
                 .with_source(error)
             })?;
@@ -278,7 +368,7 @@ async fn private_database_settings(
                     Error::new(
                         nous_core::ErrorOwner::Instance,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not write the managed PostgreSQL password file",
                     )
                     .with_source(error)
                 })?;
@@ -288,7 +378,7 @@ async fn private_database_settings(
             return Err(Error::new(
                 nous_core::ErrorOwner::Instance,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not read the managed PostgreSQL password file",
             )
             .with_source(error));
         }
@@ -323,7 +413,7 @@ async fn private_database_settings(
                     Error::new(
                         nous_core::ErrorOwner::Instance,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not reserve a loopback port for managed PostgreSQL",
                     )
                     .with_source(error)
                 })?;
@@ -334,7 +424,7 @@ async fn private_database_settings(
                         Error::new(
                             nous_core::ErrorOwner::Instance,
                             nous_core::ErrorCode::InternalFailure,
-                            "Operation failed",
+                            "Could not resolve the managed PostgreSQL listener address",
                         )
                         .with_source(error)
                     })?
@@ -347,7 +437,7 @@ async fn private_database_settings(
                     Error::new(
                         nous_core::ErrorOwner::Instance,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not encode managed PostgreSQL state",
                     )
                     .with_source(error)
                 })?,
@@ -357,7 +447,7 @@ async fn private_database_settings(
                 Error::new(
                     nous_core::ErrorOwner::Instance,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not persist managed PostgreSQL state",
                 )
                 .with_source(error)
             })?;
@@ -367,7 +457,7 @@ async fn private_database_settings(
             return Err(Error::new(
                 nous_core::ErrorOwner::Instance,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not read managed PostgreSQL state",
             )
             .with_source(error));
         }
@@ -391,7 +481,7 @@ async fn private_database_settings(
             return Err(Error::new(
                 nous_core::ErrorOwner::Instance,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not inspect the managed PostgreSQL data version",
             )
             .with_source(error));
         }
@@ -427,7 +517,7 @@ pub async fn stop_managed(mut postgres: Option<PostgreSQL>) -> Result<()> {
             Error::new(
                 nous_core::ErrorOwner::Instance,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not stop the managed PostgreSQL server",
             )
             .with_source(error)
         })?;

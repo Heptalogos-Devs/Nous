@@ -290,5 +290,4 @@ pub(super) fn stale_session(session: SessionId) -> Error {
         "Session is closed or unavailable to the Subject",
     )
     .with_context("session_id", session.0)
-    .into()
 }

@@ -151,28 +151,26 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
                     }
                     .matches_extent(time)))
     );
-    let (_, ticket) = runtime
-        .cognition
-        .retain_query(execution, test_support::query_lease())
-        .unwrap();
-    let result = runtime
-        .cognition
-        .finalize_query(
-            subject,
-            ticket.unwrap(),
-            Vec::new(),
-            Vec::new(),
-            nous_runtime::CognitiveContributors {
-                material: Some(&runtime.material),
-                shared: None,
-                memory: runtime
-                    .memory
-                    .as_ref()
-                    .map(|owner| owner as &dyn nous_runtime::CognitiveContributor),
-            },
-        )
-        .await
-        .unwrap();
+    let (_, handle) =
+        test_support::retain_query_run(&runtime.cognition, execution, test_support::query_lease())
+            .unwrap();
+    let result = test_support::finish_query_run(
+        &runtime.cognition,
+        subject,
+        handle,
+        Vec::new(),
+        Vec::new(),
+        nous_runtime::CognitiveContributors {
+            material: Some(&runtime.material),
+            shared: None,
+            memory: runtime
+                .memory
+                .as_ref()
+                .map(|owner| owner as &dyn nous_runtime::CognitiveContributor),
+        },
+    )
+    .await
+    .unwrap();
     assert!(result.results.iter().any(|hit| hit.reference == past));
     assert!(!result.results.iter().any(|hit| hit.reference == future));
     assert!(

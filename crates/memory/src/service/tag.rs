@@ -71,7 +71,13 @@ impl MemoryService {
             &serde_json::json!({"label":input.label,"description":input.description,"kind_hint":input.kind_hint,"origin":input.origin,"producer":input.producer}),
         )?;
         let mut mutation = match self
-            .start_mutation(subject, input.operation_id, "create_tag", &digest)
+            .start_mutation(
+                ErrorOwner::Concept,
+                subject,
+                input.operation_id,
+                "create_tag",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => return self.replay_tag(subject, receipt).await,
@@ -109,7 +115,13 @@ impl MemoryService {
         input.content.validate()?;
         let digest = operation_digest("revise_tag", subject, &input)?;
         let mut mutation = match self
-            .start_mutation(subject, input.operation_id, "revise_tag", &digest)
+            .start_mutation(
+                ErrorOwner::Concept,
+                subject,
+                input.operation_id,
+                "revise_tag",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => return self.replay_tag(subject, receipt).await,
@@ -143,7 +155,13 @@ impl MemoryService {
     pub async fn merge_tags(&self, subject: SubjectId, input: MergeTagsInput) -> Result<Tag> {
         let digest = operation_digest("merge_tags", subject, &input)?;
         let mut mutation = match self
-            .start_mutation(subject, input.operation_id, "merge_tags", &digest)
+            .start_mutation(
+                ErrorOwner::Concept,
+                subject,
+                input.operation_id,
+                "merge_tags",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => return self.replay_tag(subject, receipt).await,
@@ -176,7 +194,13 @@ impl MemoryService {
             .transpose()?;
         let digest = operation_digest("split_tag", subject, &input)?;
         let mut mutation = match self
-            .start_mutation(subject, input.operation_id, "split_tag", &digest)
+            .start_mutation(
+                ErrorOwner::Concept,
+                subject,
+                input.operation_id,
+                "split_tag",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {
@@ -334,8 +358,7 @@ impl MemoryService {
                 "Tag head or status changed",
             )
             .with_context("tag_id", target.tag_id.0)
-            .with_context("expected_revision_id", target.expected_revision_id)
-            .into());
+            .with_context("expected_revision_id", target.expected_revision_id));
         }
         Ok(())
     }
@@ -454,8 +477,10 @@ impl MemoryService {
                 ));
             }
         }
-        self.validate_basis_for_subject(subject, basis).await?;
-        self.validate_basis_in_tx(tx, subject, basis).await?;
+        self.validate_basis_for_subject(ErrorOwner::Concept, subject, basis)
+            .await?;
+        self.validate_basis_in_tx(ErrorOwner::Concept, tx, subject, basis)
+            .await?;
         Ok(())
     }
     #[expect(

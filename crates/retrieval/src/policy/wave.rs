@@ -90,6 +90,26 @@ pub const WAVE_BUILD_CONFIG_KEYS: &[&str] = &[
     QUALITY_MEANINGFUL_USE_KEY.path(),
 ];
 
+/// Configuration paths captured by a native Wave query's readout policy.
+/// These values are live query policy: they change QueryRun behavior without
+/// changing the immutable topology generation.
+pub const WAVE_READOUT_CONFIG_KEYS: &[&str] = &[
+    MAX_HOPS_KEY.path(),
+    MAX_STATES_KEY.path(),
+    MINIMUM_STATE_ENERGY_KEY.path(),
+    IMMEDIATE_RETURN_MULTIPLIER_KEY.path(),
+    INITIAL_BUDGET_STEPS_KEY.path(),
+    NORMAL_EDGE_COST_KEY.path(),
+    FIR_GAMMA_KEY.path(),
+    SEED_EXACT_KEY.path(),
+    SEED_RUNTIME_KEY.path(),
+    SEED_RELATION_KEY.path(),
+    SEED_ENTITY_KEY.path(),
+    SEED_TAG_KEY.path(),
+    SEED_LEXICAL_KEY.path(),
+    SEED_DENSE_KEY.path(),
+];
+
 #[expect(
     clippy::too_many_lines,
     reason = "Wave registration keeps the complete reference policy catalog in one owner boundary"

@@ -76,7 +76,9 @@ test("a granted opportunity can finish cleanup and acknowledgement before the Cl
       .grantMaintenance(request, { timeoutMs: 1000 })
       .catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(await shorter).toMatchObject({ code: Code.DeadlineExceeded });
+    expect(await shorter).toMatchObject({
+      transportCode: Code.DeadlineExceeded,
+    });
   } finally {
     vi.useRealTimers();
   }

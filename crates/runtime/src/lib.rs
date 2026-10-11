@@ -6,6 +6,7 @@
 mod policy;
 pub use policy::execution::QUERY_SLOTS;
 mod clock;
+mod context;
 mod experience;
 mod maintenance;
 mod query;
@@ -19,27 +20,27 @@ pub use query_feedback::{
     LinkedQueryFeedback, QUERY_FEEDBACK_RETENTION, QueryFeedbackSignals, linked_query_feedback,
 };
 mod work_contexts;
-mod working_set;
 pub use clock::{CognitiveClock, ManualCognitiveClock, SystemCognitiveClock};
+pub use context::*;
 pub use experience::ExperienceInput;
 pub use maintenance::*;
 pub use policy::episode::SETTLE_DELAY_KEY;
 pub use policy::episode::{EpisodePolicy, ExperienceContext};
 pub use policy::maintenance::*;
 pub use query::{
-    ActivationSeed, ActivationSource, BoundQuery, COGNITIVE_PROFILE, CONCEPT_ENRICHMENT,
-    CognitiveContributor, CognitiveContributors, CognitiveProfile, CognitiveProfileRequirements,
-    ConceptActivationPolicy, ConceptEnrichment, DEFAULT_RESULT_LIMIT, LaneCandidate, LaneOutput,
-    LaneStatus, NovelConceptHypothesis, QUERY_REPRESENTATION, QueryActivation, QueryActivationView,
-    QueryConceptCandidate, QueryConceptOutput, QueryConceptSelection, QueryContextSnapshot,
-    QueryExecution, QueryLease, QueryPlan, QueryReadLease, QueryRepresentation,
-    QueryRepresentationLimits, QueryReservation, QuerySemanticEmbedding, SharedLaneProvider,
-    TagActivation, TopologyWorkSummary, WorkCycle, build_query_representation,
-    register_retrieval_configuration,
+    AccessibilityQueryPolicy, ActivationSeed, ActivationSource, AuthorityReadView, BoundQuery,
+    COGNITIVE_PROFILE, CONCEPT_ENRICHMENT, CognitiveContributor, CognitiveContributors,
+    CognitiveProfile, CognitiveProfileRequirements, ConceptActivationPolicy, ConceptEnrichment,
+    DEFAULT_RESULT_LIMIT, LaneCandidate, LaneOutput, LaneStatus, NovelConceptHypothesis,
+    QUERY_REPRESENTATION, QueryActivation, QueryActivationView, QueryConceptCandidate,
+    QueryConceptOutput, QueryConceptSelection, QueryContextSnapshot, QueryExecution, QueryHostPlan,
+    QueryHostRole, QueryLease, QueryPlan, QueryReadLease, QueryRepresentation,
+    QueryRepresentationLimits, QueryRun, QueryRunHandle, QueryRunHostPolicy, QueryRunStage,
+    QuerySemanticEmbedding, ReadContext, SharedLaneProvider, TagActivation, TopologyWorkSummary,
+    WorkCycle, build_query_representation, register_retrieval_configuration,
 };
 pub use segmentation::{EpisodeDraft, SegmentationProgress};
 pub use work_contexts::*;
-pub use working_set::*;
 
 pub use resources::*;
 pub use types::*;
@@ -90,9 +91,7 @@ pub struct CognitiveRuntimeService {
     pub resident_limit: usize,
     pub configuration: nous_configuration::ConfigurationService,
     clock: std::sync::Arc<dyn CognitiveClock>,
-    pending_queries: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<Uuid, query::prepared::PendingQuery>>,
-    >,
+    query_runs: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Uuid, QueryRun>>>,
 }
 
 impl CognitiveRuntimeService {
@@ -127,7 +126,7 @@ impl CognitiveRuntimeService {
             resident_limit,
             configuration,
             clock,
-            pending_queries: Default::default(),
+            query_runs: Default::default(),
         })
     }
 

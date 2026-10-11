@@ -4,201 +4,6 @@
 use super::*;
 use nous_core::*;
 
-impl KernelService {
-    pub(super) async fn query(
-        &self,
-        bound: nous_runtime::BoundQuery,
-        lease: nous_runtime::QueryLease,
-        pool_limit: Option<usize>,
-    ) -> Result<k::KernelQueryResponse> {
-        lease.require_live()?;
-        let execution = Box::pin(self.0.execute_bound_query(bound, pool_limit)).await?;
-        lease.require_live()?;
-        let inspection = inspect_bound_query(&execution.bound)?;
-        let feedback_bound = execution.bound.clone();
-        let requires_finalization =
-            pool_limit.is_some() || !execution.result.resource_actions.is_empty();
-        let (result, ticket) = if requires_finalization {
-            let (result, ticket) = self.0.cognition.retain_query(execution, lease)?;
-            (result, ticket.map(|value| value.to_string()))
-        } else {
-            (execution.result, None)
-        };
-        if requires_finalization && ticket.is_none() {
-            self.0
-                .cognition
-                .record_query_feedback(&feedback_bound, &result)
-                .await?;
-        }
-        let mut response = query_response(result);
-        response.bound_query = Some(inspection);
-        Ok(k::KernelQueryResponse {
-            response: Some(response),
-            validation_ticket: ticket,
-        })
-    }
-    pub(super) async fn finalize_query(
-        &self,
-        input: k::FinalizeQueryRequest,
-    ) -> Result<p::QueryResponse> {
-        let subject = SubjectId(id(&input.subject_id)?);
-        let order = input
-            .order
-            .into_iter()
-            .map(|item| {
-                Ok((
-                    from_ref(required(item.reference, "reference")?)?,
-                    item.score,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let result = self
-            .0
-            .cognition
-            .finalize_query(
-                subject,
-                id(&input.validation_ticket)?,
-                order,
-                input
-                    .external_results
-                    .into_iter()
-                    .map(|value| {
-                        Ok(ExternalResourceResult {
-                            action_id: id(&value.action_id)?,
-                            resource_ref: ResourceRef::new(value.resource_ref)?,
-                            status: value.status,
-                            records: value
-                                .records
-                                .into_iter()
-                                .map(from_resource_record)
-                                .collect::<Result<Vec<_>>>()?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?,
-                nous_runtime::CognitiveContributors {
-                    material: Some(&self.0.material),
-                    shared: None,
-                    memory: self
-                        .0
-                        .memory
-                        .as_ref()
-                        .map(|owner| owner as &dyn nous_runtime::CognitiveContributor),
-                },
-            )
-            .await?;
-        Ok(query_response(result))
-    }
-}
-
-fn query_response(result: CognitiveQueryResult) -> p::QueryResponse {
-    p::QueryResponse {
-        query_id: result.query_id.to_string(),
-        status: enum_name(result.status),
-        hits: result
-            .results
-            .into_iter()
-            .enumerate()
-            .map(|(rank, value)| hit(value, rank + 1))
-            .collect(),
-        resource_actions: result
-            .resource_actions
-            .into_iter()
-            .map(|value| p::ResourceAction {
-                resource_ref: value.resource.as_str().into(),
-                action: value.action,
-                reason: value.reason,
-                current_authority: value.current_authority,
-                action_id: value.action_id.to_string(),
-                query_text: value.query_text,
-                limit: value.limit as u32,
-                materialize: value.materialize,
-                adapter_kind: value.adapter_kind,
-                provider_profile: value.provider_profile,
-                provider_locator: value.provider_locator,
-                descriptor_digest: value.descriptor_digest,
-            })
-            .collect(),
-        degradation: result
-            .degradation
-            .into_iter()
-            .map(|value| p::Degradation {
-                code: value.code,
-                detail: value.detail.unwrap_or_default(),
-            })
-            .collect(),
-        bound_query: None,
-        diagnostics: result.diagnostics.map(|value| p::QueryDiagnostics {
-            candidate_counts: value
-                .candidate_counts
-                .into_iter()
-                .map(|(key, value)| (key, value as u64))
-                .collect(),
-            lane_status: value.lane_status.into_iter().collect(),
-            trace: value
-                .trace
-                .map(|trace| trace.to_string())
-                .unwrap_or_default(),
-            topology_complete: value.topology_complete,
-            topology_discarded_mass: value.topology_discarded_mass,
-        }),
-        resource_records: result
-            .resource_records
-            .into_iter()
-            .map(to_resource_record)
-            .collect(),
-    }
-}
-
-fn to_resource_record(value: ExternalResourceRecord) -> p::ExternalResourceRecord {
-    let reference = value.reference;
-    p::ExternalResourceRecord {
-        resource_ref: value.resource_ref.as_str().into(),
-        reference: Some(p::StableExternalRef {
-            provider_kind: reference.provider_kind,
-            provider_profile: reference.provider_profile,
-            profile_digest: reference.profile_digest,
-            resource_ref: reference.resource_ref.as_str().into(),
-            provider_resource_id: reference.provider_resource_id,
-            entry_id: reference.entry_id,
-            entry_version: reference.entry_version,
-            content_digest: reference.content_digest,
-            source_locator: reference.source_locator,
-            retrieved_at: reference.retrieved_at,
-            access_scope: reference.access_scope,
-        }),
-        title: value.title,
-        content: value.content,
-        provider_rank: value.provider_rank,
-        provider_score: value.provider_score,
-        version_status: value.version_status,
-        access_status: value.access_status,
-    }
-}
-fn from_resource_record(value: p::ExternalResourceRecord) -> Result<ExternalResourceRecord> {
-    let reference = required(value.reference, "external reference")?;
-    Ok(ExternalResourceRecord {
-        resource_ref: ResourceRef::new(value.resource_ref)?,
-        reference: StableExternalRef {
-            provider_kind: reference.provider_kind,
-            provider_profile: reference.provider_profile,
-            profile_digest: reference.profile_digest,
-            resource_ref: ResourceRef::new(reference.resource_ref)?,
-            provider_resource_id: reference.provider_resource_id,
-            entry_id: reference.entry_id,
-            entry_version: reference.entry_version,
-            content_digest: reference.content_digest,
-            source_locator: reference.source_locator,
-            retrieved_at: reference.retrieved_at,
-            access_scope: reference.access_scope,
-        },
-        title: value.title,
-        content: value.content,
-        provider_rank: value.provider_rank,
-        provider_score: value.provider_score,
-        version_status: value.version_status,
-        access_status: value.access_status,
-    })
-}
 pub(super) fn compile_query(
     input: p::QueryRequest,
     default_limit: usize,
@@ -256,7 +61,7 @@ pub(super) fn compile_query(
             SituationDescriptor::default()
         },
         expression: compile_expression(expression, true, 0)?,
-        exploration: enum_or_default(&modifiers.exploration)?,
+        exploration: super::query_projection::enum_or_default(&modifiers.exploration)?,
         resources: ResourceIntent {
             synopsis_only: false,
         },
@@ -267,21 +72,27 @@ pub(super) fn compile_query(
             need_evidence: true,
             need_materialization_handles: modifiers.materialize,
         },
-        effort: enum_or_default(&modifiers.effort)?,
+        effort: super::query_projection::enum_or_default(&modifiers.effort)?,
         capabilities: if let Some(capabilities) = input.capabilities {
             CapabilityPolicy {
-                text_embedding: enum_or_default(&capabilities.text_embedding)?,
-                multimodal_interpretation: enum_or_default(
+                text_embedding: super::query_projection::enum_or_default(
+                    &capabilities.text_embedding,
+                )?,
+                multimodal_interpretation: super::query_projection::enum_or_default(
                     &capabilities.multimodal_interpretation,
                 )?,
-                residual_sensing: enum_or_default(&capabilities.residual_sensing)?,
-                rerank: enum_or_default(&capabilities.rerank)?,
-                query_concept_enrichment: enum_or_default(&capabilities.query_concept_enrichment)?,
+                residual_sensing: super::query_projection::enum_or_default(
+                    &capabilities.residual_sensing,
+                )?,
+                rerank: super::query_projection::enum_or_default(&capabilities.rerank)?,
+                query_concept_enrichment: super::query_projection::enum_or_default(
+                    &capabilities.query_concept_enrichment,
+                )?,
             }
         } else {
             CapabilityPolicy::default()
         },
-        diagnostics: enum_or_default(&modifiers.diagnostics)?,
+        diagnostics: super::query_projection::enum_or_default(&modifiers.diagnostics)?,
     };
     query.validate()?;
     Ok(query)
@@ -335,6 +146,26 @@ fn compile_expression(
     };
     for cue in expression.cues {
         append_cue(&mut node, cue)?;
+    }
+    for target in expression.targets {
+        let target = match target.target.ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "query target is empty",
+            )
+        })? {
+            p::query_target::Target::EntityNeighborhood(value) => QueryTarget::EntityNeighborhood {
+                entity_ref: EntityRef::new(value)?,
+            },
+            p::query_target::Target::SchemaNeighborhood(value) => QueryTarget::SchemaNeighborhood {
+                schema: CognitiveSchemaId(id(&value)?),
+            },
+            p::query_target::Target::Exact(reference) => QueryTarget::Exact {
+                reference: from_ref(reference)?,
+            },
+        };
+        node.targets.push(target);
     }
     for preference in modifiers.preferences {
         let operand = if let Some(cue) = preference.cue {
@@ -420,6 +251,17 @@ fn append_cue(query: &mut CognitiveQueryExpr, cue: p::Cue) -> Result<()> {
         p::cue::Cue::ExternalObjectRef(value) => query.cues.push(Cue::Object(ObjectCue {
             object_ref: ObjectRef::new(value)?,
         })),
+        p::cue::Cue::ArtifactId(value) => query.cues.push(Cue::Artifact(ArtifactCue {
+            artifact: ArtifactId(id(&value)?),
+        })),
+        p::cue::Cue::MediaRegion(value) => query.cues.push(Cue::MediaRegion(MediaRegionCue {
+            region: from_ref(value)?,
+        })),
+        p::cue::Cue::Relation(value) => query.cues.push(Cue::Relation(RelationCue {
+            from: from_ref(required(value.from, "relation source")?)?,
+            to: from_ref(required(value.to, "relation target")?)?,
+        })),
+        p::cue::Cue::Example(value) => query.cues.push(Cue::Example(ExampleCue { text: value })),
         p::cue::Cue::Reference(value) => {
             let reference = from_ref(value)?;
             query.targets.push(QueryTarget::Exact { reference });
@@ -480,111 +322,4 @@ fn constraints_from_proto(value: p::QueryConstraints) -> Result<QueryConstraints
             .collect::<Result<_>>()?,
         evidence_classes: value.evidence_classes,
     })
-}
-
-fn hit(value: CognitiveHit, rank: usize) -> p::Hit {
-    p::Hit {
-        reference: Some(to_ref(value.reference)),
-        revision: value.revision.map(to_ref),
-        text: value.representation,
-        authority: enum_name(value.authority),
-        evidence: value
-            .evidence
-            .into_iter()
-            .map(|e| p::Evidence {
-                epistemic_relation: e
-                    .epistemic_relation
-                    .map(|relation| relation.as_str().into()),
-                reference: Some(to_ref(e.reference)),
-                basis_role: e.basis_role,
-            })
-            .collect(),
-        evidence_families: value
-            .match_evidence
-            .families
-            .into_iter()
-            .map(enum_name)
-            .collect(),
-        entity_refs: value
-            .entity_refs
-            .into_iter()
-            .map(|v| v.as_str().into())
-            .collect(),
-        lexical_ref: None,
-        semantic_role: value.semantic_role,
-        cognitive_role: value.cognitive_role,
-        formation_mode: value.formation_mode,
-        formed_at: value
-            .freshness
-            .formed_at
-            .map(|v| timestamp(v).seconds.to_string()),
-        recorded_at: value
-            .freshness
-            .recorded_at
-            .map(|v| timestamp(v).seconds.to_string()),
-        score: Some(p::HitScore {
-            baseline: value.match_evidence.base_rank_score,
-            preference: value.match_evidence.preference_score,
-            rerank: value.match_evidence.rerank_score,
-            r#final: value.match_evidence.final_score,
-            baseline_rank: value.match_evidence.baseline_rank,
-            final_rank: rank as u32,
-            best_lane_rank: value.match_evidence.best_lane_rank,
-            variants: value.match_evidence.variants,
-        }),
-    }
-}
-
-pub(super) fn inspect_bound_query(bound: &nous_runtime::BoundQuery) -> Result<String> {
-    let mut seeds = bound.topology_seed_refs.clone();
-    seeds.extend(
-        bound
-            .runtime_refs
-            .iter()
-            .cloned()
-            .map(|reference| (reference, "runtime_situation".into())),
-    );
-    seeds.extend(
-        bound
-            .exact_bindings
-            .iter()
-            .map(|binding| (binding.bound_ref.clone(), "exact_target".into())),
-    );
-    seeds.extend(
-        bound
-            .representation
-            .source_refs
-            .iter()
-            .filter(|(reference, source)| {
-                source.starts_with("explicit")
-                    && matches!(reference, CognitiveRef::Tag(_) | CognitiveRef::Entity(_))
-            })
-            .cloned(),
-    );
-    seeds.sort_by_key(|(reference, source)| (reference.to_string(), source.clone()));
-    seeds.dedup();
-    serde_json::to_string(&serde_json::json!({
-        "prepared_query":bound.source_query, "query_id":bound.query_id,
-        "representation":bound.representation, "context_snapshot":bound.context_snapshot.as_ref(), "current_refs":bound.runtime_refs,
-        "query_activation":bound.activation, "concept_enrichment":bound.concept_enrichment,
-        "query_concept_requirement":bound.source_query.capabilities.query_concept_enrichment,
-        "historical_view":bound.historical_authority.as_ref().map(|view|serde_json::json!({"digest":view.snapshot_digest,"as_of":view.as_of,"revision_view":view.revision_view})),
-        "temporal_frame":bound.source_query.temporal_frame, "result_projection":bound.source_query.projection,
-        "topology_seeds":seeds, "exact_bindings":bound.exact_bindings,
-        "profile_id":bound.retrieval_policy.cognitive_profile.id(),
-        "profile_source":bound.config_snapshot.source(nous_runtime::COGNITIVE_PROFILE.path()),
-        "config_snapshot_digest":bound.config_snapshot.effective_digest,
-        "authority_watermark":bound.bound_at_authority_seq,
-        "embedding_digest":bound.representation.sha256,
-        "embedding_space":bound.selected_embedding_space,
-    }))
-    .map_err(|error| Error::new(nous_core::ErrorOwner::Runtime, nous_core::ErrorCode::InternalFailure, "Operation failed").with_source(error))
-}
-
-fn enum_or_default<T: serde::de::DeserializeOwned + Default>(input: &str) -> Result<T> {
-    if input.is_empty() {
-        Ok(T::default())
-    } else {
-        enum_value(input)
-    }
 }

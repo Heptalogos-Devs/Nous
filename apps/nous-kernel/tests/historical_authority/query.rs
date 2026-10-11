@@ -61,9 +61,15 @@ pub(crate) async fn check_historical_binding(
         diagnostics: Default::default(),
     };
     let config = rt.configuration.snapshot_for_subject(subject).unwrap();
+    let read_stamp = rt.store.read_context_stamp(subject).await.unwrap();
     let bound = rt
         .cognition
-        .bind_query_with_authority_view(query.clone(), config.clone(), Some(Arc::new(view.clone())))
+        .bind_query_with_authority_view(
+            query.clone(),
+            config.clone(),
+            Some(Arc::new(view.clone())),
+            read_stamp,
+        )
         .await
         .unwrap();
     assert_eq!(bound.exact_bindings[0].bound_ref, old);
@@ -103,7 +109,7 @@ pub(crate) async fn check_historical_binding(
         .bind_query_with_snapshot(query.clone(), config.clone())
         .await
         .unwrap();
-    assert!(composed.historical_authority.is_some());
+    assert!(composed.read_context.is_historical());
     assert_eq!(composed.exact_bindings[0].bound_ref, old);
     // Binding/reading the exact object uses Authority. Exercise historical
     // Serving with the separate discovery intent and the same as-of context.
@@ -120,9 +126,15 @@ pub(crate) async fn check_historical_binding(
         .expression
         .cues
         .push(Cue::Tag(TagCue { tag: future_tag }));
+    let future_read_stamp = rt.store.read_context_stamp(subject).await.unwrap();
     assert!(matches!(
         rt.cognition
-            .bind_query_with_authority_view(future_query, config, Some(Arc::new(view.clone())))
+            .bind_query_with_authority_view(
+                future_query,
+                config,
+                Some(Arc::new(view.clone())),
+                future_read_stamp,
+            )
             .await,
         Err(Error {
             code: nous_core::ErrorCode::NotFound,
@@ -166,7 +178,7 @@ pub(super) async fn check_historical_serving(
     future: &CognitiveRef,
     tag: TagId,
 ) {
-    let view = bound.historical_authority.as_deref().unwrap();
+    let view = bound.read_context.historical_view().unwrap();
     let input = rt
         .store
         .historical_projection_input(

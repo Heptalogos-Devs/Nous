@@ -79,7 +79,7 @@ impl ServingService {
                             Error::new(
                                 nous_core::ErrorOwner::Resource,
                                 nous_core::ErrorCode::InternalFailure,
-                                "Operation failed",
+                                "VCP document contains an invalid Tag identifier",
                             )
                         })
                 })

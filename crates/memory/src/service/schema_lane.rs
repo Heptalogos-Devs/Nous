@@ -73,7 +73,7 @@ pub(crate) async fn schema_direct_lane(
         query.subject,
         "cognitive_schema",
         &revision_keys,
-        bound.historical_authority.as_deref(),
+        bound.read_context.historical_view(),
     )
     .await?;
     let mut revision_ids = Vec::new();
@@ -193,7 +193,7 @@ pub(crate) async fn materialize_schema_revisions(
         bound.source_query.subject,
         "cognitive_schema",
         &revision_ids,
-        bound.historical_authority.as_deref(),
+        bound.read_context.historical_view(),
     )
     .await?;
     let mut drops = BTreeMap::new();
@@ -275,6 +275,7 @@ pub(crate) async fn materialize_schema_revisions(
             occurred: source_times.occurred,
             observed_at: source_times.observed_at,
             valid_time: temporal_from_columns(
+                ErrorOwner::Concept,
                 row.try_get("valid_time_kind")
                     .map_err(nous_persistence::database_error)?,
                 row.try_get("valid_time_start")

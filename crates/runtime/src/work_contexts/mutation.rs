@@ -179,8 +179,7 @@ impl CognitiveRuntimeService {
             )
             .with_context("work_context_id", input.work_context_id)
             .with_context("expected_revision", input.expected_revision)
-            .with_context("actual_revision", revision)
-            .into());
+            .with_context("actual_revision", revision));
         }
         validate_refs_in_tx(
             &self.store,

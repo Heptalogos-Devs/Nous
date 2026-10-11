@@ -3,6 +3,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+mod context_materialization;
 mod derivation;
 mod documents;
 mod historical;

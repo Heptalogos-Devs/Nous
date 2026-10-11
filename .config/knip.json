@@ -9,11 +9,13 @@
         "scripts/smoke/{memory,runtime-episode,model-material-resource,media-routes,longitudinal,configuration}.ts!",
         "scripts/research/{media,serve-gateway,longitudinal,model-contracts,model-trace,dogfooding}.ts!",
         "scripts/tests/**/*.test.ts"
-      ]
+      ],
+      "ignoreDependencies": ["tsx"]
     },
     "apps/nous-core": {
       "entry": ["src/main.ts!", "src/launcher.ts!", "tests/**/*.test.ts"],
       "project": ["src/**/*.ts!", "tests/**/*.ts"],
+      "ignoreDependencies": ["tsx"],
       "ignoreExportsUsedInFile": {
         "class": true,
         "function": true
@@ -38,6 +40,5 @@
     "namespaceMembers": "error",
     "duplicates": "error",
     "cycles": "error"
-  },
-  "ignoreBinaries": ["tsx"]
+  }
 }

@@ -12,8 +12,8 @@ pub(crate) async fn activate(
     provider: Option<&dyn TextEmbeddingProvider>,
 ) -> Result<QueryActivation> {
     if bound
-        .historical_authority
-        .as_ref()
+        .read_context
+        .historical_view()
         .is_some_and(|view| snapshot.view_digest.as_ref() != Some(&view.snapshot_digest))
     {
         return Err(Error::new(
@@ -42,18 +42,30 @@ pub(crate) async fn activate(
             .as_ref()
             .is_some_and(|space| provider.is_some_and(|p| p.space().compatible_with(space)))
     });
+    let prepared_embedding = activation
+        .embedding
+        .clone()
+        .map(|material| TextEmbeddingOutput {
+            vector: material.vector,
+            space: material.space,
+            producer: material.producer,
+        });
     let failure =
         if bound.source_query.capabilities.text_embedding == RequirementStrength::Forbidden {
             Some("query embedding is forbidden".into())
         } else if let (Some(provider), Some(generation)) = (provider, generation) {
-            match provider
-                .embed(TextEmbeddingRequest {
-                    subject: bound.source_query.subject,
-                    text: bound.representation.text.clone(),
-                    query: true,
-                })
-                .await
-            {
+            let embedding = if let Some(material) = prepared_embedding {
+                Ok(material)
+            } else {
+                provider
+                    .embed(TextEmbeddingRequest {
+                        subject: bound.source_query.subject,
+                        text: bound.representation.text.clone(),
+                        origin: TextEmbeddingOrigin::Query,
+                    })
+                    .await
+            };
+            match embedding {
                 Ok(embedding) => {
                     if !generation
                         .space

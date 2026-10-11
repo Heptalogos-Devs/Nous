@@ -114,8 +114,7 @@ impl CognitiveRuntimeService {
             )
             .with_context("work_context_id", work_context_id)
             .with_context("expected_revision", expected_revision)
-            .with_context("actual_revision", revision)
-            .into());
+            .with_context("actual_revision", revision));
         }
         let next = match transition {
             WorkContextTransition::Pause if state == "open" => "paused",
@@ -265,8 +264,7 @@ impl CognitiveRuntimeService {
             )
             .with_context("session_id", session.0)
             .with_context("expected_revision", expected_runtime_revision)
-            .with_context("actual_revision", current)
-            .into());
+            .with_context("actual_revision", current));
         }
         if let Some(work_context_id) = work_context_id {
             let context = sqlx::query(

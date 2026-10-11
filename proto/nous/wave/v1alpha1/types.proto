@@ -83,17 +83,42 @@ message Cue {
     string tag_id = 6 [(reference_kind) = "tag"];
     string resource_ref = 7 [(reference_kind) = "resource"];
     string external_object_ref = 8;
+    string artifact_id = 9 [(reference_kind) = "artifact"];
+    CognitiveRef media_region = 10;
+    RelationCue relation = 11;
+    string example = 12;
   }
 }
+message RelationCue { CognitiveRef from = 1; CognitiveRef to = 2; }
+message QueryTarget { oneof target { string entity_neighborhood = 1 [(reference_kind) = "entity"]; string schema_neighborhood = 2 [(reference_kind) = "cognitive_schema"]; CognitiveRef exact = 3; } }
 // Result projection is root-only. Omission selects cognition (memory/schema/episode/journal).
 message ResultProjection { repeated string domains = 1; }
 message QueryModifiers { ResultProjection projection = 1; QueryConstraints constraints = 2; string effort = 3; optional uint32 limit = 4; string exploration = 5; string current_authority = 6; bool materialize = 7; string diagnostics = 8; repeated Preference preferences = 9; google.protobuf.Timestamp as_of = 10; bool history = 11; google.protobuf.Timestamp clock_now = 12; repeated string temporal_expressions = 13; }
 message Preference { bool negative = 1; Cue cue = 2; string key = 3; }
-message QueryExpr { string operation = 1; repeated Cue cues = 2; repeated QueryExpr children = 3; QueryModifiers modifiers = 4; }
+message QueryExpr { string operation = 1; repeated Cue cues = 2; repeated QueryExpr children = 3; QueryModifiers modifiers = 4; repeated QueryTarget targets = 5; }
 message QueryCapabilities { string text_embedding = 1; string multimodal_interpretation = 2; string residual_sensing = 3; string rerank = 4; string query_concept_enrichment = 5; }
 message QuerySituation { optional string consumer = 1; repeated CognitiveRef current_refs = 2; repeated string current_objects = 3; map<string,string> object_descriptions = 4; }
 message QueryRequest { string subject_id = 1 [(reference_kind) = "subject"]; optional string session_id = 2 [(reference_kind) = "session"]; QueryExpr expression = 3; optional string nousql = 4; optional string work_context_id = 5 [(reference_kind) = "work_context"]; QuerySituation situation = 6; reserved 7; QueryCapabilities capabilities = 8; }
-message PreparedQueryResponse { string bound_query = 1; optional string preparation_token = 2; string embedding_text = 3; bool embedding_required = 4; string text_embedding_requirement = 5; string rerank_requirement = 6; string concept_enrichment_mode = 7; string concept_enrichment_requirement = 8; bool historical_view = 9; }
+enum QueryAuthorityViewKind { QUERY_AUTHORITY_VIEW_KIND_UNSPECIFIED = 0; QUERY_AUTHORITY_VIEW_KIND_CURRENT = 1; QUERY_AUTHORITY_VIEW_KIND_AS_OF = 2; }
+enum QueryRevisionViewKind { QUERY_REVISION_VIEW_KIND_UNSPECIFIED = 0; QUERY_REVISION_VIEW_KIND_CURRENT = 1; QUERY_REVISION_VIEW_KIND_HISTORY = 2; }
+message QueryTemporalFrame { google.protobuf.Timestamp clock_now = 1; QueryAuthorityViewKind authority_view = 2; optional google.protobuf.Timestamp authority_as_of = 3; QueryRevisionViewKind revision_view = 4; repeated string original_expressions = 5; }
+message AccessibilityQueryPolicy { string effort = 1; bool exact_target_bypasses_auto_level = 2; }
+message ReadContext { string subject_id = 1 [(reference_kind) = "subject"]; QueryAuthorityViewKind view = 2; optional string historical_view_digest = 3; QueryTemporalFrame temporal = 4; AccessibilityQueryPolicy accessibility = 5; int64 bound_authority_seq = 6; int64 purge_epoch = 7; }
+message QuerySourceRef { CognitiveRef reference = 1; string source = 2; }
+message QueryRepresentation { string version = 1; string text = 2; string sha256 = 3; repeated QuerySourceRef source_refs = 4; repeated string truncation_flags = 5; }
+message QueryContextSnapshot { optional Session session = 1; optional WorkContext work_context = 2; repeated CognitiveRef situation_refs = 3; repeated QuerySourceRef source_refs = 4; repeated Degradation history_exclusions = 5; string digest = 6; }
+message QueryExactBinding { CognitiveRef requested_ref = 1; CognitiveRef bound_ref = 2; optional int64 bound_object_epoch = 3; bool mutable_object = 4; }
+message QueryEmbeddingSpaceView { string space_hash = 1; string model_identity = 2; uint32 dimension = 3; }
+message QueryConceptCandidate { string key = 1; CognitiveRef tag = 2; string semantic_text = 3; double strength = 4; }
+message QueryConceptSelection { string key = 1; double strength = 2; }
+message QueryNovelConceptHypothesis { string text = 1; }
+message QueryConceptOutput { repeated QueryConceptSelection existing_tags = 1; repeated QueryNovelConceptHypothesis novel_concepts = 2; }
+message QueryTagActivation { CognitiveRef tag = 1; double strength = 2; string source = 3; string origin = 4; }
+message QueryActivationSeed { CognitiveRef reference = 1; string origin = 2; double strength = 3; }
+message QueryActivationInspection { bool frozen = 1; string semantic_text_digest = 2; repeated QueryConceptCandidate concept_catalog = 3; repeated QueryTagActivation explicit_tags = 4; repeated QueryTagActivation inferred_tags = 5; repeated QueryActivationSeed seeds = 6; repeated CognitiveRef exact_refs = 7; repeated CognitiveRef entity_refs = 8; repeated CognitiveRef schema_refs = 9; repeated CognitiveRef runtime_refs = 10; string exploration = 11; string generation_id = 12; string query_embedding_digest = 13; repeated Degradation degradation = 14; uint32 model_calls = 15; bool model_completed = 16; }
+message QueryPlanInspection { string profile_id = 1; string profile_source = 2; repeated string enabled_lanes = 3; map<string,uint32> lane_budgets = 4; uint32 candidate_limit = 5; uint32 final_validation_budget = 6; bool topology_required = 7; string readout_policy_digest = 8; }
+message QueryInspection { string query_id = 1; QueryExpr canonical_query = 2; QueryRepresentation representation = 3; QueryContextSnapshot context = 4; ReadContext read_context = 5; ResultProjection projection = 6; repeated QueryExactBinding exact_bindings = 7; QueryActivationInspection activation = 8; QueryPlanInspection plan = 9; string config_snapshot_digest = 10; reserved 11, 13; optional QueryEmbeddingSpaceView selected_embedding_space = 12; QueryCapabilities capabilities = 14; }
+message PreparedQueryResponse { QueryInspection bound_query = 1; reserved 2; string embedding_text = 3; bool embedding_required = 4; string text_embedding_requirement = 5; string rerank_requirement = 6; string concept_enrichment_mode = 7; string concept_enrichment_requirement = 8; bool historical_view = 9; }
 message Evidence { CognitiveRef reference = 1; string basis_role = 2; optional string epistemic_relation = 3; }
 message Hit {
   CognitiveRef reference = 1;
@@ -107,16 +132,18 @@ message Hit {
   optional string semantic_role = 9;
   optional string cognitive_role = 10;
   optional string formation_mode = 11;
-  optional string formed_at = 12;
-  optional string recorded_at = 13;
+  reserved 12, 13;
   HitScore score = 14;
+  optional int64 authority_epoch = 15;
+  HitFreshnessDescriptor freshness = 16;
 }
+message HitFreshnessDescriptor { repeated TemporalExtent occurred = 1; optional google.protobuf.Timestamp observed_at = 2; TemporalExtent valid_time = 3; optional google.protobuf.Timestamp formed_at = 4; optional google.protobuf.Timestamp recorded_at = 5; }
 message ResourceAction { string resource_ref = 1 [(reference_kind) = "resource"]; string action = 2; string reason = 3; bool current_authority = 4; string action_id = 5; string query_text = 6; uint32 limit = 7; bool materialize = 8; string adapter_kind = 9; string provider_profile = 10; string provider_locator = 11; string descriptor_digest = 12; }
 message StableExternalRef { string provider_kind = 1; string provider_profile = 2; string profile_digest = 3; string resource_ref = 4 [(reference_kind) = "resource"]; string provider_resource_id = 5; string entry_id = 6; optional string entry_version = 7; string content_digest = 8; string source_locator = 9; string retrieved_at = 10; string access_scope = 11; }
 message ExternalResourceRecord { string resource_ref = 1 [(reference_kind) = "resource"]; StableExternalRef reference = 2; optional string title = 3; string content = 4; uint32 provider_rank = 5; optional double provider_score = 6; string version_status = 7; string access_status = 8; }
 message QueryDiagnostics { map<string, uint64> candidate_counts = 1; map<string, string> lane_status = 2; optional bool topology_complete = 3; optional double topology_discarded_mass = 4; string trace = 5; }
 message HitScore { double baseline = 1; double preference = 2; optional double rerank = 3; double final = 4; uint32 baseline_rank = 5; uint32 final_rank = 6; uint32 best_lane_rank = 7; repeated string variants = 8; }
-message QueryResponse { string query_id = 1; string status = 2; repeated Hit hits = 3; repeated ResourceAction resource_actions = 4; repeated Degradation degradation = 5; optional string bound_query = 6; QueryDiagnostics diagnostics = 7; repeated ExternalResourceRecord resource_records = 10; }
+message QueryResponse { string query_id = 1; string status = 2; repeated Hit hits = 3; repeated ResourceAction resource_actions = 4; repeated Degradation degradation = 5; QueryInspection bound_query = 6; QueryDiagnostics diagnostics = 7; repeated ExternalResourceRecord resource_records = 10; }
 
 message ReportUseRequest { string subject_id = 1 [(reference_kind) = "subject"]; optional string session_id = 2 [(reference_kind) = "session"]; string consumer_ref = 3; repeated UseEvent events = 4; }
 message UseEvent { string event_id = 1; CognitiveRef reference = 2; string kind = 3; google.protobuf.Timestamp occurred_at = 4; google.protobuf.Struct context = 5; optional string query_id = 6; }
@@ -260,7 +287,7 @@ message SetActiveWorkContextRequest {
   optional string work_context_id = 5 [(reference_kind) = "work_context"];
 }
 message ProjectionRequest { string subject_id = 1 [(reference_kind) = "subject"]; string session_id = 2 [(reference_kind) = "session"]; optional string active_work_context_id = 3 [(reference_kind) = "work_context"]; string consumer_id = 4; QueryExpr query = 5; repeated CognitiveRef situation_refs = 6; uint32 max_items = 7; uint32 max_text_bytes = 8; }
-message ContextSegment { string segment_id = 1; string text = 2; string semantic_role = 3; repeated CognitiveRef source_refs = 4; repeated Evidence evidence = 5; string authority = 6; string stability = 7; optional string source_revision = 8; }
+message ContextSegment { string segment_id = 1; string text = 2; string semantic_role = 3; repeated CognitiveRef source_refs = 4; repeated Evidence evidence = 5; string authority = 6; string stability = 7; CognitiveRef source_revision = 8; }
 message Projection { string projection_id = 1; string consumer_id = 2; int64 source_runtime_revision = 3; repeated ContextSegment segments = 4; repeated Degradation degradation = 5; }
 message ContextCursor { string track_id = 1; string epoch_id = 2; uint32 revision = 3; }
 message ManagedContextRequest { ProjectionRequest projection = 1; ContextCursor known_cursor = 2; }

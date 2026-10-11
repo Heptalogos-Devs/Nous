@@ -112,8 +112,7 @@ impl CognitiveRuntimeService {
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::OperationIdConflict,
                 "Query feedback identity has different prepared activation",
-            )
-            .into());
+            ));
         }
         tx.commit().await.map_err(db)
     }
@@ -170,7 +169,7 @@ pub async fn linked_query_feedback(
                     Error::new(
                         nous_core::ErrorOwner::Runtime,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Stored query feedback signals are invalid",
                     )
                     .with_source(error)
                 })?;
@@ -186,7 +185,7 @@ pub async fn linked_query_feedback(
                     Error::new(
                         nous_core::ErrorOwner::Runtime,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Stored query feedback use kind is invalid",
                     )
                     .with_source(error)
                 })?,

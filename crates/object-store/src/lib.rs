@@ -28,7 +28,7 @@ impl ObjectStore {
                     Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not open the object reference lock",
                     )
                     .with_source(e)
                 })?;
@@ -41,7 +41,7 @@ impl ObjectStore {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not acquire the object reference lock",
                 )
                 .with_source(e)
             })?;
@@ -52,7 +52,7 @@ impl ObjectStore {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "The object reference lock worker failed",
             )
             .with_source(e)
         })?
@@ -65,7 +65,7 @@ impl ObjectStore {
             .lister_with("")
             .recursive(true)
             .await
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(error, "Could not list stored objects"))?;
         Ok(lister.filter_map(|entry| async move {
             match entry {
                 Ok(entry) => {
@@ -76,7 +76,7 @@ impl ObjectStore {
                         None
                     }
                 }
-                Err(error) => Some(Err(storage_error(error))),
+                Err(error) => Some(Err(storage_error(error, "Could not list stored objects"))),
             }
         }))
     }
@@ -86,7 +86,7 @@ impl ObjectStore {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not initialize the object storage root",
             )
             .with_source(e)
         })?;
@@ -94,12 +94,14 @@ impl ObjectStore {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not resolve the object storage root",
             )
             .with_source(e)
         })?;
         let operator =
-            Operator::new(Fs::default().root(&root.to_string_lossy())).map_err(storage_error)?;
+            Operator::new(Fs::default().root(&root.to_string_lossy())).map_err(|error| {
+                storage_error(error, "Could not initialize the object storage backend")
+            })?;
         Ok(Self { operator, root })
     }
 
@@ -123,7 +125,7 @@ impl ObjectStore {
         self.operator
             .write(&Self::key(&hash)?, bytes)
             .await
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(error, "Could not write the stored object"))?;
         Ok(hash)
     }
 
@@ -146,7 +148,7 @@ impl ObjectStore {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not create the staged object file",
             )
             .with_source(e)
         })?;
@@ -190,7 +192,7 @@ impl ObjectStore {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not write the staged object",
                 )
                 .with_source(error));
             }
@@ -200,7 +202,7 @@ impl ObjectStore {
             return Err(Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not flush the staged object",
             )
             .with_source(error));
         }
@@ -214,7 +216,7 @@ impl ObjectStore {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not create the stored object directory",
                 )
                 .with_source(e)
             })?;
@@ -225,7 +227,7 @@ impl ObjectStore {
                     Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not remove the redundant staged object",
                     )
                     .with_source(e)
                 })?;
@@ -235,7 +237,7 @@ impl ObjectStore {
                     Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not publish the stored object",
                     )
                     .with_source(e)
                 })?;
@@ -245,7 +247,7 @@ impl ObjectStore {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not inspect the existing object path",
                 )
                 .with_source(error));
             }
@@ -258,13 +260,13 @@ impl ObjectStore {
             .operator
             .read(&Self::key(hash)?)
             .await
-            .map_err(storage_error)?
+            .map_err(|error| storage_error(error, "Could not read the stored object"))?
             .to_vec();
         if blake3::hash(&bytes).to_hex().as_str() != hash {
             return Err(Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Stored object failed integrity verification",
             ));
         }
         Ok(bytes)
@@ -286,7 +288,7 @@ impl ObjectStore {
             .range(start..end)
             .await
             .map(|value| value.to_vec())
-            .map_err(storage_error)
+            .map_err(|error| storage_error(error, "Could not read the stored object range"))
     }
 
     /// Keep complete UTF-8 characters when a bounded read ends inside a character.
@@ -325,7 +327,7 @@ impl ObjectStore {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not open the stored object stream",
                 )
                 .with_source(e)
             })?;
@@ -338,7 +340,7 @@ impl ObjectStore {
                     Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not read the stored object stream",
                     )
                     .with_source(e)
                 })?;
@@ -347,7 +349,7 @@ impl ObjectStore {
                         return Err(Error::new(
                             nous_core::ErrorOwner::Resource,
                             nous_core::ErrorCode::InternalFailure,
-                            "Operation failed",
+                            "Streamed object failed integrity verification",
                         ));
                     }
                     return Ok(None);
@@ -364,19 +366,22 @@ impl ObjectStore {
         self.operator
             .delete(&Self::key(hash)?)
             .await
-            .map_err(storage_error)
+            .map_err(|error| storage_error(error, "Could not delete the unreferenced object"))
     }
 
     pub async fn check(&self) -> Result<()> {
-        self.operator.check().await.map_err(storage_error)
+        self.operator
+            .check()
+            .await
+            .map_err(|error| storage_error(error, "Could not check object storage"))
     }
 }
 
-fn storage_error(error: opendal::Error) -> Error {
+fn storage_error(error: opendal::Error, message: &'static str) -> Error {
     Error::new(
         nous_core::ErrorOwner::Resource,
         nous_core::ErrorCode::InternalFailure,
-        "Operation failed",
+        message,
     )
     .with_source(error)
 }

@@ -292,8 +292,7 @@ impl MemoryService {
                 nous_core::ErrorOwner::Concept,
                 nous_core::ErrorCode::StaleRevision,
                 "concept planning snapshot changed",
-            )
-            .into());
+            ));
         }
         Ok(ConceptPlan {
             subject,

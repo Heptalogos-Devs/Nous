@@ -56,7 +56,7 @@ impl ConfigSnapshot {
                     Error::new(
                         nous_core::ErrorOwner::Configuration,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not serialize configuration values for the effective snapshot digest",
                     )
                     .with_source(error)
                 })?
@@ -137,7 +137,7 @@ impl ConfigSnapshot {
                     Error::new(
                         nous_core::ErrorOwner::Configuration,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not serialize configuration values for the requested digest",
                     )
                     .with_source(error)
                 })?

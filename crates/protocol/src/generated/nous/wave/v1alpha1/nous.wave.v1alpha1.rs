@@ -724,7 +724,7 @@ pub struct QueryConstraints {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Cue {
-    #[prost(oneof="cue::Cue", tags="1, 2, 3, 4, 5, 6, 7, 8")]
+    #[prost(oneof="cue::Cue", tags="1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12")]
     pub cue: ::core::option::Option<cue::Cue>,
 }
 /// Nested message and enum types in `Cue`.
@@ -747,6 +747,38 @@ pub mod cue {
         ResourceRef(::prost::alloc::string::String),
         #[prost(string, tag="8")]
         ExternalObjectRef(::prost::alloc::string::String),
+        #[prost(string, tag="9")]
+        ArtifactId(::prost::alloc::string::String),
+        #[prost(message, tag="10")]
+        MediaRegion(super::CognitiveRef),
+        #[prost(message, tag="11")]
+        Relation(super::RelationCue),
+        #[prost(string, tag="12")]
+        Example(::prost::alloc::string::String),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RelationCue {
+    #[prost(message, optional, tag="1")]
+    pub from: ::core::option::Option<CognitiveRef>,
+    #[prost(message, optional, tag="2")]
+    pub to: ::core::option::Option<CognitiveRef>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryTarget {
+    #[prost(oneof="query_target::Target", tags="1, 2, 3")]
+    pub target: ::core::option::Option<query_target::Target>,
+}
+/// Nested message and enum types in `QueryTarget`.
+pub mod query_target {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Target {
+        #[prost(string, tag="1")]
+        EntityNeighborhood(::prost::alloc::string::String),
+        #[prost(string, tag="2")]
+        SchemaNeighborhood(::prost::alloc::string::String),
+        #[prost(message, tag="3")]
+        Exact(super::CognitiveRef),
     }
 }
 /// Result projection is root-only. Omission selects cognition (memory/schema/episode/journal).
@@ -803,6 +835,8 @@ pub struct QueryExpr {
     pub children: ::prost::alloc::vec::Vec<QueryExpr>,
     #[prost(message, optional, tag="4")]
     pub modifiers: ::core::option::Option<QueryModifiers>,
+    #[prost(message, repeated, tag="5")]
+    pub targets: ::prost::alloc::vec::Vec<QueryTarget>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct QueryCapabilities {
@@ -846,11 +880,232 @@ pub struct QueryRequest {
     pub capabilities: ::core::option::Option<QueryCapabilities>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PreparedQueryResponse {
+pub struct QueryTemporalFrame {
+    #[prost(message, optional, tag="1")]
+    pub clock_now: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(enumeration="QueryAuthorityViewKind", tag="2")]
+    pub authority_view: i32,
+    #[prost(message, optional, tag="3")]
+    pub authority_as_of: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(enumeration="QueryRevisionViewKind", tag="4")]
+    pub revision_view: i32,
+    #[prost(string, repeated, tag="5")]
+    pub original_expressions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AccessibilityQueryPolicy {
     #[prost(string, tag="1")]
-    pub bound_query: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="2")]
-    pub preparation_token: ::core::option::Option<::prost::alloc::string::String>,
+    pub effort: ::prost::alloc::string::String,
+    #[prost(bool, tag="2")]
+    pub exact_target_bypasses_auto_level: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReadContext {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(enumeration="QueryAuthorityViewKind", tag="2")]
+    pub view: i32,
+    #[prost(string, optional, tag="3")]
+    pub historical_view_digest: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="4")]
+    pub temporal: ::core::option::Option<QueryTemporalFrame>,
+    #[prost(message, optional, tag="5")]
+    pub accessibility: ::core::option::Option<AccessibilityQueryPolicy>,
+    #[prost(int64, tag="6")]
+    pub bound_authority_seq: i64,
+    #[prost(int64, tag="7")]
+    pub purge_epoch: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QuerySourceRef {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(string, tag="2")]
+    pub source: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryRepresentation {
+    #[prost(string, tag="1")]
+    pub version: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub text: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub sha256: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="4")]
+    pub source_refs: ::prost::alloc::vec::Vec<QuerySourceRef>,
+    #[prost(string, repeated, tag="5")]
+    pub truncation_flags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryContextSnapshot {
+    #[prost(message, optional, tag="1")]
+    pub session: ::core::option::Option<Session>,
+    #[prost(message, optional, tag="2")]
+    pub work_context: ::core::option::Option<WorkContext>,
+    #[prost(message, repeated, tag="3")]
+    pub situation_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(message, repeated, tag="4")]
+    pub source_refs: ::prost::alloc::vec::Vec<QuerySourceRef>,
+    #[prost(message, repeated, tag="5")]
+    pub history_exclusions: ::prost::alloc::vec::Vec<Degradation>,
+    #[prost(string, tag="6")]
+    pub digest: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryExactBinding {
+    #[prost(message, optional, tag="1")]
+    pub requested_ref: ::core::option::Option<CognitiveRef>,
+    #[prost(message, optional, tag="2")]
+    pub bound_ref: ::core::option::Option<CognitiveRef>,
+    #[prost(int64, optional, tag="3")]
+    pub bound_object_epoch: ::core::option::Option<i64>,
+    #[prost(bool, tag="4")]
+    pub mutable_object: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryEmbeddingSpaceView {
+    #[prost(string, tag="1")]
+    pub space_hash: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub model_identity: ::prost::alloc::string::String,
+    #[prost(uint32, tag="3")]
+    pub dimension: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryConceptCandidate {
+    #[prost(string, tag="1")]
+    pub key: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub tag: ::core::option::Option<CognitiveRef>,
+    #[prost(string, tag="3")]
+    pub semantic_text: ::prost::alloc::string::String,
+    #[prost(double, tag="4")]
+    pub strength: f64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryConceptSelection {
+    #[prost(string, tag="1")]
+    pub key: ::prost::alloc::string::String,
+    #[prost(double, tag="2")]
+    pub strength: f64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryNovelConceptHypothesis {
+    #[prost(string, tag="1")]
+    pub text: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryConceptOutput {
+    #[prost(message, repeated, tag="1")]
+    pub existing_tags: ::prost::alloc::vec::Vec<QueryConceptSelection>,
+    #[prost(message, repeated, tag="2")]
+    pub novel_concepts: ::prost::alloc::vec::Vec<QueryNovelConceptHypothesis>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryTagActivation {
+    #[prost(message, optional, tag="1")]
+    pub tag: ::core::option::Option<CognitiveRef>,
+    #[prost(double, tag="2")]
+    pub strength: f64,
+    #[prost(string, tag="3")]
+    pub source: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub origin: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryActivationSeed {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(string, tag="2")]
+    pub origin: ::prost::alloc::string::String,
+    #[prost(double, tag="3")]
+    pub strength: f64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryActivationInspection {
+    #[prost(bool, tag="1")]
+    pub frozen: bool,
+    #[prost(string, tag="2")]
+    pub semantic_text_digest: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="3")]
+    pub concept_catalog: ::prost::alloc::vec::Vec<QueryConceptCandidate>,
+    #[prost(message, repeated, tag="4")]
+    pub explicit_tags: ::prost::alloc::vec::Vec<QueryTagActivation>,
+    #[prost(message, repeated, tag="5")]
+    pub inferred_tags: ::prost::alloc::vec::Vec<QueryTagActivation>,
+    #[prost(message, repeated, tag="6")]
+    pub seeds: ::prost::alloc::vec::Vec<QueryActivationSeed>,
+    #[prost(message, repeated, tag="7")]
+    pub exact_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(message, repeated, tag="8")]
+    pub entity_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(message, repeated, tag="9")]
+    pub schema_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(message, repeated, tag="10")]
+    pub runtime_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(string, tag="11")]
+    pub exploration: ::prost::alloc::string::String,
+    #[prost(string, tag="12")]
+    pub generation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="13")]
+    pub query_embedding_digest: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="14")]
+    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+    #[prost(uint32, tag="15")]
+    pub model_calls: u32,
+    #[prost(bool, tag="16")]
+    pub model_completed: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryPlanInspection {
+    #[prost(string, tag="1")]
+    pub profile_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub profile_source: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="3")]
+    pub enabled_lanes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(map="string, uint32", tag="4")]
+    pub lane_budgets: ::std::collections::HashMap<::prost::alloc::string::String, u32>,
+    #[prost(uint32, tag="5")]
+    pub candidate_limit: u32,
+    #[prost(uint32, tag="6")]
+    pub final_validation_budget: u32,
+    #[prost(bool, tag="7")]
+    pub topology_required: bool,
+    #[prost(string, tag="8")]
+    pub readout_policy_digest: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryInspection {
+    #[prost(string, tag="1")]
+    pub query_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub canonical_query: ::core::option::Option<QueryExpr>,
+    #[prost(message, optional, tag="3")]
+    pub representation: ::core::option::Option<QueryRepresentation>,
+    #[prost(message, optional, tag="4")]
+    pub context: ::core::option::Option<QueryContextSnapshot>,
+    #[prost(message, optional, tag="5")]
+    pub read_context: ::core::option::Option<ReadContext>,
+    #[prost(message, optional, tag="6")]
+    pub projection: ::core::option::Option<ResultProjection>,
+    #[prost(message, repeated, tag="7")]
+    pub exact_bindings: ::prost::alloc::vec::Vec<QueryExactBinding>,
+    #[prost(message, optional, tag="8")]
+    pub activation: ::core::option::Option<QueryActivationInspection>,
+    #[prost(message, optional, tag="9")]
+    pub plan: ::core::option::Option<QueryPlanInspection>,
+    #[prost(string, tag="10")]
+    pub config_snapshot_digest: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="12")]
+    pub selected_embedding_space: ::core::option::Option<QueryEmbeddingSpaceView>,
+    #[prost(message, optional, tag="14")]
+    pub capabilities: ::core::option::Option<QueryCapabilities>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PreparedQueryResponse {
+    #[prost(message, optional, tag="1")]
+    pub bound_query: ::core::option::Option<QueryInspection>,
     #[prost(string, tag="3")]
     pub embedding_text: ::prost::alloc::string::String,
     #[prost(bool, tag="4")]
@@ -899,12 +1154,25 @@ pub struct Hit {
     pub cognitive_role: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag="11")]
     pub formation_mode: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag="12")]
-    pub formed_at: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag="13")]
-    pub recorded_at: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="14")]
     pub score: ::core::option::Option<HitScore>,
+    #[prost(int64, optional, tag="15")]
+    pub authority_epoch: ::core::option::Option<i64>,
+    #[prost(message, optional, tag="16")]
+    pub freshness: ::core::option::Option<HitFreshnessDescriptor>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HitFreshnessDescriptor {
+    #[prost(message, repeated, tag="1")]
+    pub occurred: ::prost::alloc::vec::Vec<TemporalExtent>,
+    #[prost(message, optional, tag="2")]
+    pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="3")]
+    pub valid_time: ::core::option::Option<TemporalExtent>,
+    #[prost(message, optional, tag="4")]
+    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="5")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceAction {
@@ -1021,8 +1289,8 @@ pub struct QueryResponse {
     pub resource_actions: ::prost::alloc::vec::Vec<ResourceAction>,
     #[prost(message, repeated, tag="5")]
     pub degradation: ::prost::alloc::vec::Vec<Degradation>,
-    #[prost(string, optional, tag="6")]
-    pub bound_query: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="6")]
+    pub bound_query: ::core::option::Option<QueryInspection>,
     #[prost(message, optional, tag="7")]
     pub diagnostics: ::core::option::Option<QueryDiagnostics>,
     #[prost(message, repeated, tag="10")]
@@ -1602,8 +1870,8 @@ pub struct ContextSegment {
     pub authority: ::prost::alloc::string::String,
     #[prost(string, tag="7")]
     pub stability: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="8")]
-    pub source_revision: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="8")]
+    pub source_revision: ::core::option::Option<CognitiveRef>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Projection {
@@ -1813,6 +2081,64 @@ pub struct ListEpisodeRevisionsResponse {
     pub items: ::prost::alloc::vec::Vec<EpisodeRevision>,
     #[prost(string, tag="2")]
     pub next_page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum QueryAuthorityViewKind {
+    Unspecified = 0,
+    Current = 1,
+    AsOf = 2,
+}
+impl QueryAuthorityViewKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "QUERY_AUTHORITY_VIEW_KIND_UNSPECIFIED",
+            Self::Current => "QUERY_AUTHORITY_VIEW_KIND_CURRENT",
+            Self::AsOf => "QUERY_AUTHORITY_VIEW_KIND_AS_OF",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "QUERY_AUTHORITY_VIEW_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "QUERY_AUTHORITY_VIEW_KIND_CURRENT" => Some(Self::Current),
+            "QUERY_AUTHORITY_VIEW_KIND_AS_OF" => Some(Self::AsOf),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum QueryRevisionViewKind {
+    Unspecified = 0,
+    Current = 1,
+    History = 2,
+}
+impl QueryRevisionViewKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "QUERY_REVISION_VIEW_KIND_UNSPECIFIED",
+            Self::Current => "QUERY_REVISION_VIEW_KIND_CURRENT",
+            Self::History => "QUERY_REVISION_VIEW_KIND_HISTORY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "QUERY_REVISION_VIEW_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "QUERY_REVISION_VIEW_KIND_CURRENT" => Some(Self::Current),
+            "QUERY_REVISION_VIEW_KIND_HISTORY" => Some(Self::History),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IdentityBinding {

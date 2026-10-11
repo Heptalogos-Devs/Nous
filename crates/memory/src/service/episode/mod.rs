@@ -278,6 +278,7 @@ async fn validate_parent_and_overlap(
     if let Some(parent) = parent {
         let parent_time = sqlx::query("SELECT experience_time_kind,experience_time_start,experience_time_end FROM episode_revisions WHERE episode_revision_id=$1 AND subject_id=$2").bind(parent.0).bind(subject.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "Episode parent is outside Subject"))?;
         let parent_extent = temporal_from_columns(
+            ErrorOwner::Memory,
             parent_time.try_get("experience_time_kind").map_err(db)?,
             parent_time.try_get("experience_time_start").map_err(db)?,
             parent_time.try_get("experience_time_end").map_err(db)?,
@@ -293,6 +294,7 @@ async fn validate_parent_and_overlap(
     let rows = sqlx::query("SELECT r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND r.parent_episode_revision_id IS NOT DISTINCT FROM $3 AND ($4::uuid IS NULL OR o.episode_id<>$4)").bind(subject.0).bind(track).bind(parent.map(|value| value.0)).bind(exclude).fetch_all(&mut **tx).await.map_err(db)?;
     for row in rows {
         let sibling = temporal_from_columns(
+            ErrorOwner::Memory,
             row.try_get("experience_time_kind").map_err(db)?,
             row.try_get("experience_time_start").map_err(db)?,
             row.try_get("experience_time_end").map_err(db)?,
@@ -316,6 +318,7 @@ async fn validate_episode_reaccept_in(
     let row = sqlx::query("SELECT o.track_key,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.episode_id=$2")
         .bind(subject.0).bind(episode.0).fetch_one(&mut **tx).await.map_err(db)?;
     let time = temporal_from_columns(
+        ErrorOwner::Memory,
         row.try_get("experience_time_kind").map_err(db)?,
         row.try_get("experience_time_start").map_err(db)?,
         row.try_get("experience_time_end").map_err(db)?,
@@ -496,60 +499,6 @@ async fn insert_episode_support(
     sqlx::query("INSERT INTO episode_revision_basis(episode_revision_id,basis_no,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
         .bind(revision.0).bind(basis_no).bind(kind).bind(reference).bind(role).bind(occurrence).bind(source_region).bind(derived).bind(derived_region).bind(epistemic_relation_text(basis.epistemic_relation())).execute(&mut **tx).await.map_err(db)?;
     Ok(())
-}
-
-async fn load_members(pool: &sqlx::PgPool, revision: Uuid) -> Result<Vec<EpisodeMember>> {
-    sqlx::query("SELECT ordinal,ref_kind,ref_value,role FROM episode_revision_members WHERE episode_revision_id=$1 ORDER BY ordinal").bind(revision).fetch_all(pool).await.map_err(db)?.into_iter().map(|row| Ok(EpisodeMember { ordinal: row.try_get("ordinal").map_err(db)?, reference: parse_reference(&row.try_get::<String,_>("ref_kind").map_err(db)?, &row.try_get::<String,_>("ref_value").map_err(db)?)?, role: row.try_get("role").map_err(db)? })).collect()
-}
-
-async fn load_basis(pool: &sqlx::PgPool, revision: Uuid) -> Result<Vec<RevisionBasis>> {
-    let rows = sqlx::query("SELECT basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM episode_revision_basis WHERE episode_revision_id=$1 ORDER BY basis_no").bind(revision).fetch_all(pool).await.map_err(db)?;
-    rows.into_iter()
-        .map(|row| {
-            let role = parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")?;
-            let kind: String = row.try_get("basis_kind").map_err(db)?;
-            if kind == "evidence" {
-                let locator = if let Some(value) = row
-                    .try_get::<Option<Uuid>, _>("source_region_id")
-                    .map_err(db)?
-                {
-                    EvidenceLocator::SourceRegion(SourceRegionId(value))
-                } else if let Some(value) = row
-                    .try_get::<Option<Uuid>, _>("derived_representation_id")
-                    .map_err(db)?
-                {
-                    EvidenceLocator::DerivedRepresentation(DerivedRepresentationId(value))
-                } else if let Some(value) = row
-                    .try_get::<Option<Uuid>, _>("derived_region_id")
-                    .map_err(db)?
-                {
-                    EvidenceLocator::DerivedRegion(DerivedRegionId(value))
-                } else {
-                    EvidenceLocator::WholeOccurrence
-                };
-                return Ok(RevisionBasis::Evidence(EvidenceRef {
-                    epistemic_relation: parse_epistemic_relation(
-                        row.try_get("epistemic_relation").map_err(db)?,
-                    )?,
-                    occurrence_id: OccurrenceId(
-                        row.try_get::<Uuid, _>("occurrence_id").map_err(db)?,
-                    ),
-                    locator,
-                    basis_role: role,
-                }));
-            }
-            Ok(RevisionBasis::CognitionDependency(CognitionDependency {
-                epistemic_relation: parse_epistemic_relation(
-                    row.try_get("epistemic_relation").map_err(db)?,
-                )?,
-                target_revision: parse_reference(
-                    &kind,
-                    &row.try_get::<String, _>("basis_ref").map_err(db)?,
-                )?,
-                basis_role: role,
-            }))
-        })
-        .collect()
 }
 
 fn known_overlap(left: &TemporalExtent, right: &TemporalExtent) -> bool {

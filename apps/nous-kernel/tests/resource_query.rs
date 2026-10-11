@@ -51,15 +51,11 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
     assert!(request.requests_resources());
     request.result_need.limit = 1;
     let explicit = runtime.execute_query(request.clone(), None).await.unwrap();
-    let (pool, ticket) = runtime
-        .cognition
-        .retain_query(explicit, test_support::query_lease())
-        .unwrap();
+    let (pool, handle) =
+        test_support::retain_query_run(&runtime.cognition, explicit, test_support::query_lease())
+            .unwrap();
     assert_eq!(pool.resource_actions.len(), 1);
-    runtime
-        .cognition
-        .release_query(owner, ticket.unwrap())
-        .unwrap();
+    runtime.cognition.cancel_query_run(owner, handle).unwrap();
     request.expression.constraints.current_authority = nous_core::CurrentAuthorityNeed::Required;
     for case in [
         "valid",
@@ -73,11 +69,12 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
         "drift",
     ] {
         let execution = runtime.execute_query(request.clone(), None).await.unwrap();
-        let (pool, ticket) = runtime
-            .cognition
-            .retain_query(execution, test_support::query_lease())
-            .unwrap();
-        let ticket = ticket.unwrap();
+        let (pool, handle) = test_support::retain_query_run(
+            &runtime.cognition,
+            execution,
+            test_support::query_lease(),
+        )
+        .unwrap();
         assert_eq!(pool.resource_actions.len(), 1);
         let action = &pool.resource_actions[0];
         let record = ExternalResourceRecord {
@@ -142,23 +139,16 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
             shared: None,
             memory: Some(runtime.require_memory().unwrap()),
         };
-        assert!(
-            runtime
-                .cognition
-                .finalize_query(
-                    other,
-                    ticket,
-                    Vec::new(),
-                    vec![response.clone()],
-                    contributors()
-                )
-                .await
-                .is_err()
-        );
-        let outcome = runtime
-            .cognition
-            .finalize_query(owner, ticket, Vec::new(), vec![response], contributors())
-            .await;
+        assert!(runtime.cognition.take_query_run(other, handle).is_err());
+        let outcome = test_support::finish_query_run(
+            &runtime.cognition,
+            owner,
+            handle,
+            Vec::new(),
+            vec![response],
+            contributors(),
+        )
+        .await;
         if matches!(case, "valid" | "max_material") {
             let result = outcome.unwrap();
             assert_eq!(result.resource_records.len(), 1);
@@ -181,12 +171,6 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
         } else {
             assert!(outcome.is_err(), "must reject {case}");
         }
-        assert!(
-            runtime
-                .cognition
-                .finalize_query(owner, ticket, Vec::new(), Vec::new(), contributors())
-                .await
-                .is_err()
-        );
+        assert!(runtime.cognition.take_query_run(owner, handle).is_err());
     }
 }

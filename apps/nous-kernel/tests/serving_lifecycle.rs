@@ -145,11 +145,9 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
         .execute_query(request.clone(), Some(5))
         .await
         .unwrap();
-    let (_, ticket) = runtime
-        .cognition
-        .retain_query(held, test_support::query_lease())
-        .unwrap();
-    let ticket = ticket.expect("held validation ticket");
+    let (_, handle) =
+        test_support::retain_query_run(&runtime.cognition, held, test_support::query_lease())
+            .unwrap();
     let next = runtime
         .require_memory()
         .unwrap()
@@ -180,7 +178,7 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
     assert!(busy.readers_active);
     assert!(!busy.reclaimed.contains(&old.generation_id));
     assert!(std::path::Path::new(&old.artifact_location).exists());
-    runtime.cognition.release_query(subject, ticket).unwrap();
+    runtime.cognition.cancel_query_run(subject, handle).unwrap();
     let reclaimed = runtime
         .serving
         .reclaim_retired(subject, std::time::Duration::ZERO)
@@ -215,6 +213,215 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
     );
 }
 
+#[tokio::test]
+async fn purge_retry_resumes_after_the_old_query_reader_releases() {
+    use nous_core::{Error, ErrorCode, ErrorOwner};
+
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime_with_serving(&url, &root, true, false, false).await;
+    let subject = subject(&runtime).await;
+    let source = observation(&runtime, subject, "reader-held source").await;
+    let memory = runtime
+        .require_memory()
+        .unwrap()
+        .form_memory(form_input(
+            subject,
+            source.occurrence.occurrence_id,
+            OperationId::new(),
+            "Recall relevant cognition that awaits a purge",
+        ))
+        .await
+        .unwrap();
+    let query = query(subject);
+    runtime.query(query.clone()).await.unwrap();
+    let previous = runtime
+        .store
+        .serving_current(subject)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|record| record.family == "lexical")
+        .expect("query prepared a lexical generation");
+    let (held, handle) = test_support::retain_query_run(
+        &runtime.cognition,
+        runtime.execute_query(query, Some(5)).await.unwrap(),
+        test_support::query_lease(),
+    )
+    .unwrap();
+    assert!(held.results.iter().any(|hit| {
+        hit.reference == CognitiveRef::MemoryRevision(memory.revision.memory_revision_id)
+    }));
+
+    let operation = OperationId::new();
+    let first_attempt = runtime
+        .purge_memory(
+            subject,
+            memory.object.memory_id,
+            operation,
+            memory.object.object_epoch,
+        )
+        .await;
+    assert!(matches!(
+        first_attempt,
+        Err(Error {
+            owner: ErrorOwner::Persistence,
+            code: ErrorCode::OperationInProgress,
+            ..
+        })
+    ));
+    assert!(std::path::Path::new(&previous.artifact_location).exists());
+
+    runtime.cognition.cancel_query_run(subject, handle).unwrap();
+    runtime
+        .purge_memory(
+            subject,
+            memory.object.memory_id,
+            operation,
+            memory.object.object_epoch,
+        )
+        .await
+        .unwrap();
+    assert!(!std::path::Path::new(&previous.artifact_location).exists());
+    assert!(
+        runtime
+            .require_memory()
+            .unwrap()
+            .memory(subject, memory.object.memory_id, None)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime_with_serving(&url, &root, true, false, false).await;
+    let subject = subject(&runtime).await;
+    let source = observation(&runtime, subject, "artifact-delete failure source").await;
+    let memory = runtime
+        .require_memory()
+        .unwrap()
+        .form_memory(form_input(
+            subject,
+            source.occurrence.occurrence_id,
+            OperationId::new(),
+            "Remove this memory only after Serving bytes are gone",
+        ))
+        .await
+        .unwrap();
+    runtime
+        .serving
+        .prepare(
+            subject,
+            ServingNeed {
+                lexical: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let artifact = runtime
+        .store
+        .serving_current(subject)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|record| record.family == "lexical")
+        .expect("lexical generation was prepared");
+    let operation = OperationId::new();
+    runtime
+        .require_memory()
+        .unwrap()
+        .begin_purge_memory(
+            subject,
+            memory.object.memory_id,
+            operation,
+            memory.object.object_epoch,
+        )
+        .await
+        .unwrap();
+    let purge_epoch = runtime.store.serving_purge_epoch(subject).await.unwrap();
+
+    let artifact_path = std::path::Path::new(&artifact.artifact_location);
+    std::fs::remove_dir_all(artifact_path).unwrap();
+    std::fs::write(artifact_path, b"simulate artifact deletion failure").unwrap();
+    assert!(
+        runtime
+            .serving
+            .reclaim_purged(subject, purge_epoch)
+            .await
+            .is_err()
+    );
+    let direct_completion = runtime
+        .require_memory()
+        .unwrap()
+        .complete_purge_memory(
+            subject,
+            memory.object.memory_id,
+            operation,
+            memory.object.object_epoch,
+        )
+        .await;
+    assert!(matches!(
+        direct_completion,
+        Err(nous_core::Error {
+            owner: nous_core::ErrorOwner::Memory,
+            code: nous_core::ErrorCode::OperationInProgress,
+            ..
+        })
+    ));
+    let adopted_checkpoint = runtime
+        .require_memory()
+        .unwrap()
+        .complete_purge_memory(
+            subject,
+            memory.object.memory_id,
+            OperationId::new(),
+            memory.object.object_epoch,
+        )
+        .await;
+    assert!(matches!(
+        adopted_checkpoint,
+        Err(nous_core::Error {
+            owner: nous_core::ErrorOwner::Memory,
+            code: nous_core::ErrorCode::OperationInProgress,
+            ..
+        })
+    ));
+    let state: String = sqlx::query_scalar(
+        "SELECT state FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2",
+    )
+    .bind(subject.0)
+    .bind(operation.0)
+    .fetch_one(runtime.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(state, "in_progress");
+
+    std::fs::remove_file(artifact_path).unwrap();
+    std::fs::create_dir_all(artifact_path).unwrap();
+    std::fs::write(artifact_path.join("postings.json"), b"{}").unwrap();
+    runtime
+        .purge_memory(
+            subject,
+            memory.object.memory_id,
+            operation,
+            memory.object.object_epoch,
+        )
+        .await
+        .unwrap();
+    let state: String = sqlx::query_scalar(
+        "SELECT state FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2",
+    )
+    .bind(subject.0)
+    .bind(operation.0)
+    .fetch_one(runtime.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(state, "committed");
+    assert!(!artifact_path.exists());
+}
+
 async fn reopen_without_serving_cache(
     url: &str,
     root: &tempfile::TempDir,
@@ -224,8 +431,8 @@ async fn reopen_without_serving_cache(
     assert!(
         std::fs::read_dir(root.path().join("serving"))
             .unwrap()
-            .next()
-            .is_none(),
+            .map(|entry| entry.unwrap())
+            .all(|entry| entry.file_name() == ".nous-serving.lock"),
         "opening Authority must not reconstruct request-owned Serving assets"
     );
     reopened

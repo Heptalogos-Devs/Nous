@@ -88,7 +88,7 @@ impl MaterialService {
                 if row.try_get::<Uuid,_>("subject_id").map_err(db)? != input.subject.0
                     || row.try_get::<String,_>("request_digest").map_err(db)? != request_digest {
                     return Err(nous_core::Error::new(nous_core::ErrorOwner::Observation, nous_core::ErrorCode::OperationIdConflict,  "Observation request_id already binds different input")
-                        .with_context("request_id", request_id).into());
+                        .with_context("request_id", request_id));
                 }
                 let accepted: AcceptedObservation = serde_json::from_value(row.try_get("accepted").map_err(db)?)
                     .map_err(|error| Error::new(nous_core::ErrorOwner::Observation, nous_core::ErrorCode::InternalFailure, "Stored observation receipt is invalid").with_source(error))?;

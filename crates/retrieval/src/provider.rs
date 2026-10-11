@@ -4,11 +4,18 @@
 use nous_core::*;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "reference", rename_all = "snake_case")]
+pub enum TextEmbeddingOrigin {
+    Query,
+    Document(CognitiveRef),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextEmbeddingRequest {
     pub subject: SubjectId,
     pub text: String,
-    pub query: bool,
+    pub origin: TextEmbeddingOrigin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,7 +61,7 @@ impl TextEmbeddingProvider for RequestEmbedding {
         self.inner.producers()
     }
     async fn embed(&self, request: TextEmbeddingRequest) -> Result<TextEmbeddingOutput> {
-        if !request.query || request.text != self.text {
+        if request.origin != TextEmbeddingOrigin::Query || request.text != self.text {
             return Err(Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InvalidRequest,

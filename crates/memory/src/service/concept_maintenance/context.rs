@@ -99,12 +99,12 @@ impl MemoryService {
             CognitiveRef::MemoryRevision(id) => {
                 let row=sqlx::query("SELECT o.cognitive_role,r.semantic_role,r.valid_time_kind,r.valid_time_start,r.valid_time_end FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2")
                     .bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-                serde_json::json!({"cognitiveRole":row.try_get::<String,_>("cognitive_role").map_err(db)?,"semanticRole":row.try_get::<String,_>("semantic_role").map_err(db)?,"validTime":temporal_from_columns(row.try_get("valid_time_kind").map_err(db)?,row.try_get("valid_time_start").map_err(db)?,row.try_get("valid_time_end").map_err(db)?)?})
+                serde_json::json!({"cognitiveRole":row.try_get::<String,_>("cognitive_role").map_err(db)?,"semanticRole":row.try_get::<String,_>("semantic_role").map_err(db)?,"validTime":temporal_from_columns(ErrorOwner::Memory, row.try_get("valid_time_kind").map_err(db)?,row.try_get("valid_time_start").map_err(db)?,row.try_get("valid_time_end").map_err(db)?)?})
             }
             CognitiveRef::CognitiveSchemaRevision(id) => {
                 let row=sqlx::query("SELECT applicability_description,boundary_definition,valid_time_kind,valid_time_start,valid_time_end FROM cognitive_schema_revisions WHERE schema_revision_id=$1")
                     .bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-                serde_json::json!({"applicability":row.try_get::<String,_>("applicability_description").map_err(db)?.chars().take(512).collect::<String>(),"boundary":row.try_get::<String,_>("boundary_definition").map_err(db)?.chars().take(512).collect::<String>(),"validTime":temporal_from_columns(row.try_get("valid_time_kind").map_err(db)?,row.try_get("valid_time_start").map_err(db)?,row.try_get("valid_time_end").map_err(db)?)?})
+                serde_json::json!({"applicability":row.try_get::<String,_>("applicability_description").map_err(db)?.chars().take(512).collect::<String>(),"boundary":row.try_get::<String,_>("boundary_definition").map_err(db)?.chars().take(512).collect::<String>(),"validTime":temporal_from_columns(ErrorOwner::Memory, row.try_get("valid_time_kind").map_err(db)?,row.try_get("valid_time_start").map_err(db)?,row.try_get("valid_time_end").map_err(db)?)?})
             }
             CognitiveRef::EpisodeRevision(id) => {
                 let episode = self.episode_revision(subject, *id).await?;
@@ -176,7 +176,7 @@ impl MemoryService {
             };
             let text = text.chars().take(remaining.min(2048)).collect::<String>();
             remaining -= text.chars().count();
-            result.insert(key.clone(),serde_json::json!({"text":text,"occurredTime":temporal_from_columns(row.try_get("occurred_time_kind").map_err(db)?,row.try_get("occurred_time_start").map_err(db)?,row.try_get("occurred_time_end").map_err(db)?)?,"sourceClass":row.try_get::<String,_>("source_class").map_err(db)?,"observedAt":row.try_get::<DateTime<Utc>,_>("observed_at").map_err(db)?}));
+            result.insert(key.clone(),serde_json::json!({"text":text,"occurredTime":temporal_from_columns(ErrorOwner::Memory, row.try_get("occurred_time_kind").map_err(db)?,row.try_get("occurred_time_start").map_err(db)?,row.try_get("occurred_time_end").map_err(db)?)?,"sourceClass":row.try_get::<String,_>("source_class").map_err(db)?,"observedAt":row.try_get::<DateTime<Utc>,_>("observed_at").map_err(db)?}));
         }
         Ok(serde_json::Value::Object(result))
     }

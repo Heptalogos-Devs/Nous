@@ -333,7 +333,7 @@ impl KernelService {
         ))
     }
     pub(super) async fn purge_memory(&self, input: p::MemoryMutationRequest) -> Result<()> {
-        self.require_memory()?
+        self.0
             .purge_memory(
                 SubjectId(id(&input.subject_id)?),
                 nous_core::MemoryId(id(&input.memory_id)?),

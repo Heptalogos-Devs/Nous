@@ -5,10 +5,7 @@ use super::*;
 use nous_persistence::database_error as db;
 
 mod validation;
-use validation::{
-    association_basis_parts, parse_use_event_key, validate_association_endpoint,
-    validate_association_input,
-};
+use validation::{association_basis_parts, parse_use_event_key, validate_association_input};
 
 impl MemoryService {
     pub async fn create_association(
@@ -28,7 +25,13 @@ impl MemoryService {
             &serde_json::json!({"from":input.from,"to":input.to,"relation_kind":input.relation_kind,"polarity":input.polarity,"basis_class":input.basis_class,"basis":input.basis,"producer_signature_id":input.producer_signature_id,"producer":input.producer,"valid_time":input.valid_time}),
         )?;
         let mut mutation = match self
-            .start_mutation(subject, input.operation_id, "create_association", &digest)
+            .start_mutation(
+                ErrorOwner::Concept,
+                subject,
+                input.operation_id,
+                "create_association",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {
@@ -147,7 +150,6 @@ impl MemoryService {
                         ErrorCode::StaleRevision,
                         "concept Tag endpoint is stale",
                     )
-                    .into()
                 });
             }
             _ => return Ok(()),
@@ -168,8 +170,7 @@ impl MemoryService {
                 ErrorOwner::Concept,
                 ErrorCode::StaleRevision,
                 "concept cognition endpoint is stale",
-            )
-            .into());
+            ));
         }
         Ok(())
     }
@@ -320,7 +321,7 @@ impl MemoryService {
         )?;
         let basis=sqlx::query("SELECT basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM association_evidence_basis WHERE association_evidence_id=$1 ORDER BY basis_kind,basis_ref,basis_role").bind(id.0).fetch_all(self.store.pool()).await.map_err(db)?.into_iter().map(|row| {
             let kind: String = row.try_get("basis_kind").map_err(db)?;
-            let basis_role = parse_enum(row.try_get("basis_role").map_err(db)?, "association basis role")?;
+            let basis_role = parse_enum(ErrorOwner::Concept, row.try_get("basis_role").map_err(db)?, "association basis role")?;
             if kind == "use_event" {
                 let value = row.try_get::<String, _>("basis_ref").map_err(db)?;
                 let (consumer_ref, event_id) = parse_use_event_key(&value)?;
@@ -361,14 +362,20 @@ impl MemoryService {
             from,
             to,
             relation_kind: row.try_get("relation_kind").map_err(db)?,
-            polarity: parse_enum(row.try_get("polarity").map_err(db)?, "association polarity")?,
+            polarity: parse_enum(
+                ErrorOwner::Concept,
+                row.try_get("polarity").map_err(db)?,
+                "association polarity",
+            )?,
             basis_class: parse_enum(
+                ErrorOwner::Concept,
                 row.try_get("basis_class").map_err(db)?,
                 "association support class",
             )?,
             basis,
             producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
             valid_time: temporal_from_columns(
+                ErrorOwner::Concept,
                 row.try_get("valid_time_kind").map_err(db)?,
                 row.try_get("valid_time_start").map_err(db)?,
                 row.try_get("valid_time_end").map_err(db)?,
@@ -391,8 +398,12 @@ impl MemoryService {
                     if matches!(value, RevisionBasis::Evidence(_)) {
                         has_source_evidence = true;
                     }
-                    self.validate_basis_for_subject(subject, std::slice::from_ref(value))
-                        .await?;
+                    self.validate_basis_for_subject(
+                        ErrorOwner::Concept,
+                        subject,
+                        std::slice::from_ref(value),
+                    )
+                    .await?;
                 }
                 AssociationBasis::UseEvent(value) => {
                     if value.subject_id != subject {
@@ -539,7 +550,13 @@ impl MemoryService {
             &serde_json::json!({"association_id": association}),
         )?;
         let mut mutation = match self
-            .start_mutation(subject, operation_id, "revoke_association", &digest)
+            .start_mutation(
+                ErrorOwner::Concept,
+                subject,
+                operation_id,
+                "revoke_association",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {

@@ -1288,34 +1288,10 @@ pub mod kernel_query_service_server {
             tonic::Status,
         >;
         ///
-        async fn activate_query(
+        async fn run_query(
             &self,
-            request: tonic::Request<super::KernelQueryRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::QueryActivationResponse>,
-            tonic::Status,
-        >;
-        ///
-        async fn query(
-            &self,
-            request: tonic::Request<super::KernelQueryRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::KernelQueryResponse>,
-            tonic::Status,
-        >;
-        ///
-        async fn finalize_query(
-            &self,
-            request: tonic::Request<super::FinalizeQueryRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::super::super::v1alpha1::QueryResponse>,
-            tonic::Status,
-        >;
-        ///
-        async fn release_query(
-            &self,
-            request: tonic::Request<super::ReleaseQueryRequest>,
-        ) -> std::result::Result<tonic::Response<()>, tonic::Status>;
+            request: tonic::Request<super::QueryRunRequest>,
+        ) -> std::result::Result<tonic::Response<super::QueryRunUpdate>, tonic::Status>;
     }
     ///
     #[derive(Debug)]
@@ -1492,26 +1468,25 @@ pub mod kernel_query_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/nous.wave.kernel.v1alpha1.KernelQueryService/ActivateQuery" => {
+                "/nous.wave.kernel.v1alpha1.KernelQueryService/RunQuery" => {
                     #[allow(non_camel_case_types)]
-                    struct ActivateQuerySvc<T: KernelQueryService>(pub Arc<T>);
+                    struct RunQuerySvc<T: KernelQueryService>(pub Arc<T>);
                     impl<
                         T: KernelQueryService,
-                    > tonic::server::UnaryService<super::KernelQueryRequest>
-                    for ActivateQuerySvc<T> {
-                        type Response = super::QueryActivationResponse;
+                    > tonic::server::UnaryService<super::QueryRunRequest>
+                    for RunQuerySvc<T> {
+                        type Response = super::QueryRunUpdate;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::KernelQueryRequest>,
+                            request: tonic::Request<super::QueryRunRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as KernelQueryService>::activate_query(&inner, request)
-                                    .await
+                                <T as KernelQueryService>::run_query(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -1522,144 +1497,7 @@ pub mod kernel_query_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = ActivateQuerySvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/nous.wave.kernel.v1alpha1.KernelQueryService/Query" => {
-                    #[allow(non_camel_case_types)]
-                    struct QuerySvc<T: KernelQueryService>(pub Arc<T>);
-                    impl<
-                        T: KernelQueryService,
-                    > tonic::server::UnaryService<super::KernelQueryRequest>
-                    for QuerySvc<T> {
-                        type Response = super::KernelQueryResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::KernelQueryRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as KernelQueryService>::query(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = QuerySvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/nous.wave.kernel.v1alpha1.KernelQueryService/FinalizeQuery" => {
-                    #[allow(non_camel_case_types)]
-                    struct FinalizeQuerySvc<T: KernelQueryService>(pub Arc<T>);
-                    impl<
-                        T: KernelQueryService,
-                    > tonic::server::UnaryService<super::FinalizeQueryRequest>
-                    for FinalizeQuerySvc<T> {
-                        type Response = super::super::super::v1alpha1::QueryResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::FinalizeQueryRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as KernelQueryService>::finalize_query(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = FinalizeQuerySvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/nous.wave.kernel.v1alpha1.KernelQueryService/ReleaseQuery" => {
-                    #[allow(non_camel_case_types)]
-                    struct ReleaseQuerySvc<T: KernelQueryService>(pub Arc<T>);
-                    impl<
-                        T: KernelQueryService,
-                    > tonic::server::UnaryService<super::ReleaseQueryRequest>
-                    for ReleaseQuerySvc<T> {
-                        type Response = ();
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::ReleaseQueryRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as KernelQueryService>::release_query(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = ReleaseQuerySvc(inner);
+                        let method = RunQuerySvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

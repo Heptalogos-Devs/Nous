@@ -307,7 +307,10 @@ for (const unit of units) {
         status: "FAIL",
         strategy,
         derived: partialDerivation,
-        error: error instanceof Error ? error.message : "Operation failed",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Media workflow failed without an error message",
       };
     }
     await save();

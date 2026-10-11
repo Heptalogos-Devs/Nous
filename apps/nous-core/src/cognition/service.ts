@@ -55,7 +55,6 @@ export class CoreCognition {
     return this.kernel.queryWorkflow.prepareQuery(
       {
         query: await this.bindQueryInput(request, calls),
-        reserveExecution: false,
       },
       calls,
     );
@@ -109,7 +108,11 @@ export class CoreCognition {
     return result;
   }
 
-  async buildProjection(input: ProjectionRequest, calls: Execution) {
+  async buildProjection(
+    input: ProjectionRequest,
+    calls: Execution,
+    contextGeneration = this.contexts.generation(input.subjectId),
+  ) {
     const policy = this.planner.policy(input.consumerId);
     const request = create(ProjectionRequestSchema, input);
     const snapshot = await this.kernel.runtime.getSession(
@@ -153,7 +156,10 @@ export class CoreCognition {
         calls,
       );
       request.situationRefs.push(
-        ...query.hits.flatMap((hit) => (hit.reference ? [hit.reference] : [])),
+        ...query.hits.flatMap((hit) => {
+          const selected = hit.revision ?? hit.reference;
+          return selected ? [selected] : [];
+        }),
       );
       queryDegradation.push(...query.degradation);
       request.query = undefined;
@@ -179,6 +185,7 @@ export class CoreCognition {
           actual_revision: after.runtimeRevision.toString(),
         },
       });
+    this.assertContextGeneration(input.subjectId, contextGeneration);
     return projection;
   }
 
@@ -189,7 +196,12 @@ export class CoreCognition {
         Code.InvalidArgument,
       );
     const input = request.projection;
-    const projection = await this.buildProjection(input, calls);
+    const contextGeneration = this.contexts.generation(input.subjectId);
+    const projection = await this.buildProjection(
+      input,
+      calls,
+      contextGeneration,
+    );
     const session = await this.kernel.runtime.getSession(
       { subjectId: input.subjectId, id: input.sessionId },
       calls,
@@ -209,6 +221,7 @@ export class CoreCognition {
           },
         },
       );
+    this.assertContextGeneration(input.subjectId, contextGeneration);
     const policy = this.planner.policy(input.consumerId);
     return create(
       ManagedContextResponseSchema,
@@ -223,8 +236,56 @@ export class CoreCognition {
         `${policy.revision}:${input.maxItems}:${input.maxTextBytes}`,
         projection,
         request.knownCursor,
+        contextGeneration,
       ),
     );
+  }
+
+  async purgeMemory(
+    request: Parameters<KernelClient["memory"]["purgeMemory"]>[0],
+    calls: Execution,
+  ) {
+    if (request.subjectId) this.invalidateSubjectCaches(request.subjectId);
+    return this.kernel.memory.purgeMemory(request, calls);
+  }
+
+  async purgeEpisode(
+    request: Parameters<KernelClient["memory"]["purgeEpisode"]>[0],
+    calls: Execution,
+  ) {
+    if (request.subjectId) this.invalidateSubjectCaches(request.subjectId);
+    return this.kernel.memory.purgeEpisode(request, calls);
+  }
+
+  async purgeJournal(
+    request: Parameters<KernelClient["memory"]["purgeJournal"]>[0],
+    calls: Execution,
+  ) {
+    if (request.subjectId) this.invalidateSubjectCaches(request.subjectId);
+    return this.kernel.memory.purgeJournal(request, calls);
+  }
+
+  async purgeCognitiveSchema(
+    request: Parameters<KernelClient["concepts"]["purgeCognitiveSchema"]>[0],
+    calls: Execution,
+  ) {
+    if (request.subjectId) this.invalidateSubjectCaches(request.subjectId);
+    return this.kernel.concepts.purgeCognitiveSchema(request, calls);
+  }
+
+  private invalidateSubjectCaches(subjectId: string) {
+    this.contexts.invalidateSubject(subjectId);
+    this.queries.invalidateSubject(subjectId);
+  }
+
+  private assertContextGeneration(subjectId: string, generation: number) {
+    if (!this.contexts.isCurrent(subjectId, generation))
+      throw domainError("Projection crossed a Subject purge", Code.Aborted, {
+        code: ErrorCode.STALE_CONTEXT,
+        recovery: ErrorRecovery.REFRESH_STATE,
+        owner: ErrorOwner.RUNTIME,
+        context: { subject_id: subjectId },
+      });
   }
 
   private async bindQueryInput(request: QueryRequest, calls: CallOptions) {

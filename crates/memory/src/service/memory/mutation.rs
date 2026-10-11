@@ -21,7 +21,13 @@ impl MemoryService {
             &serde_json::json!({"cognitive_role":input.cognitive_role,"formation_mode":input.formation_mode,"grounding_occurrence_id":input.grounding_occurrence_id,"semantic_role":input.semantic_role,"representation_text":input.representation_text,"title":input.title,"basis":input.basis,"aboutness":input.aboutness,"tags":input.tags,"valid_time":input.valid_time,"epistemic_class":input.epistemic_class,"producer":input.producer}),
         )?;
         let mut mutation = match self
-            .start_mutation(input.subject, input.operation_id, "form_memory", &digest)
+            .start_mutation(
+                ErrorOwner::Memory,
+                input.subject,
+                input.operation_id,
+                "form_memory",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {
@@ -60,10 +66,15 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        self.validate_basis_for_subject(input.subject, &input.basis)
+        self.validate_basis_for_subject(ErrorOwner::Memory, input.subject, &input.basis)
             .await?;
-        self.validate_formation_semantics(input.subject, input.formation_mode, &input.basis)
-            .await?;
+        self.validate_formation_semantics(
+            ErrorOwner::Memory,
+            input.subject,
+            input.formation_mode,
+            &input.basis,
+        )
+        .await?;
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
             .await?;
@@ -109,7 +120,7 @@ impl MemoryService {
         let memory_id = MemoryId::new();
         let revision_id = MemoryRevisionId::new();
         let now = self.cognition.now(input.subject);
-        self.validate_basis_in_tx(tx, input.subject, &input.basis)
+        self.validate_basis_in_tx(ErrorOwner::Memory, tx, input.subject, &input.basis)
             .await?;
         sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,accessibility_mode,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','normal','auto',$5)")
             .bind(memory_id.0).bind(input.subject.0).bind(input.cognitive_role.as_str()).bind(revision_id.0).bind(now).execute(&mut **tx).await.map_err(db)?;
@@ -297,17 +308,28 @@ impl MemoryService {
         validate_content(&input.semantic_role, &input.representation_text)?;
         input.valid_time.validate()?;
         self.store.require_subject(input.subject).await?;
-        self.validate_basis_for_subject(input.subject, &input.basis)
+        self.validate_basis_for_subject(ErrorOwner::Memory, input.subject, &input.basis)
             .await?;
-        self.validate_formation_semantics(input.subject, input.formation_mode, &input.basis)
-            .await?;
+        self.validate_formation_semantics(
+            ErrorOwner::Memory,
+            input.subject,
+            input.formation_mode,
+            &input.basis,
+        )
+        .await?;
         let digest = operation_digest(
             "revise_memory",
             input.subject,
             &serde_json::json!({"memory_id":input.memory_id,"expected_object_epoch":input.expected_object_epoch,"intent":input.intent,"formation_mode":input.formation_mode,"grounding_occurrence_id":input.grounding_occurrence_id,"semantic_role":input.semantic_role,"representation_text":input.representation_text,"title":input.title,"basis":input.basis,"aboutness":input.aboutness,"tags":input.tags,"valid_time":input.valid_time,"epistemic_class":input.epistemic_class,"producer":input.producer}),
         )?;
         let mut mutation = match self
-            .start_mutation(input.subject, input.operation_id, "revise_memory", &digest)
+            .start_mutation(
+                ErrorOwner::Memory,
+                input.subject,
+                input.operation_id,
+                "revise_memory",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {
@@ -382,7 +404,7 @@ impl MemoryService {
         let row = sqlx::query("SELECT current_revision_id,object_epoch,cognitive_role,purge_state FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE")
             .bind(input.subject.0).bind(input.memory_id.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "memory not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
-        fence_epoch(epoch, input.expected_object_epoch)?;
+        fence_epoch(ErrorOwner::Memory, epoch, input.expected_object_epoch)?;
         if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
             return Err(Error::new(
                 nous_core::ErrorOwner::Memory,
@@ -391,12 +413,13 @@ impl MemoryService {
             ));
         }
         self.validate_object_dependency_cycle(
+            ErrorOwner::Memory,
             input.subject,
             &format!("memory:{}", input.memory_id.0),
             &input.basis.clone(),
         )
         .await?;
-        self.validate_basis_in_tx(tx, input.subject, &input.basis)
+        self.validate_basis_in_tx(ErrorOwner::Memory, tx, input.subject, &input.basis)
             .await?;
         let parent = MemoryRevisionId(row.try_get("current_revision_id").map_err(db)?);
         let parent_aboutness = sqlx::query_scalar::<_, String>(
@@ -427,8 +450,11 @@ impl MemoryService {
         .await
         .map_err(db)?;
         let revision_id = MemoryRevisionId::new();
-        let role: CognitiveRole =
-            parse_enum(row.try_get("cognitive_role").map_err(db)?, "cognitive role")?;
+        let role: CognitiveRole = parse_enum(
+            ErrorOwner::Memory,
+            row.try_get("cognitive_role").map_err(db)?,
+            "cognitive role",
+        )?;
         let input_for_insert = ExplicitMemoryInput {
             producer: input.producer.clone(),
             operation_id: input.operation_id,
@@ -490,7 +516,13 @@ impl MemoryService {
             &serde_json::json!({"from":from,"to":to,"relation":relation}),
         )?;
         let mut mutation = match self
-            .start_mutation(subject, operation_id, "link_memory_revisions", &digest)
+            .start_mutation(
+                ErrorOwner::Memory,
+                subject,
+                operation_id,
+                "link_memory_revisions",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {

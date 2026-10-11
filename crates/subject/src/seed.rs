@@ -182,7 +182,7 @@ impl SubjectCoreService {
             Error::new(
                 nous_core::ErrorOwner::Subject,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Cognitive Seed content is not valid UTF-8",
             )
             .with_source(error)
         })?;
@@ -261,7 +261,7 @@ pub(super) async fn insert_seed(
         let existing: String = row.try_get("request_digest").map_err(db)?;
         if existing != digest {
             return Err(nous_core::Error::new(nous_core::ErrorOwner::Subject, nous_core::ErrorCode::OperationIdConflict,  "Cognitive Seed operation_id was used with a different request")
-                .with_context("operation_id", operation_id.0).into());
+                .with_context("operation_id", operation_id.0));
         }
         return row.try_get("adoption_id").map_err(db);
     }

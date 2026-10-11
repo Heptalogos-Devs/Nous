@@ -52,8 +52,6 @@ async fn purge_keeps_shared_observation_authority() {
         .expect("second memory");
     let artifact_id = source.artifact.as_ref().expect("artifact").artifact_id;
     runtime
-        .require_memory()
-        .unwrap()
         .purge_memory(
             subject,
             first.object.memory_id,

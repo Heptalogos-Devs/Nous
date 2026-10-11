@@ -2,351 +2,468 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Code, ConnectError } from "@connectrpc/connect";
+import { create, toBinary } from "@bufbuild/protobuf";
+import { AnySchema } from "@bufbuild/protobuf/wkt";
 import {
   domainError,
+  domainErrorDetail,
   ErrorCode,
-  ErrorRecovery,
   ErrorOwner,
+  ErrorRecovery,
 } from "@nous-wave/client/errors";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
-import { create } from "@bufbuild/protobuf";
 import {
+  QueryEmbeddingResultSchema,
   QueryEmbeddingSchema,
-  type QueryEmbedding,
+  QueryConceptResultSchema,
+  QueryFinalizeResultSchema,
+  QueryHostPlanSchema,
+  QueryHostRoleSchema,
+  QueryRerankOrderSchema,
+  QueryRerankResultSchema,
+  QueryRunResumeSchema,
+  QueryRunStartSchema,
+  QueryHostRequirement,
+  type QueryRunResume,
+  type QueryRunHandle,
+  type QueryRunUpdate,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import { StatusSchema } from "@nous-wave/protocol/google/rpc/status_pb.js";
 import type {
   QueryExpr,
   QueryRequest,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { QueryConceptOutputSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { ErrorDetailSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/errors_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import { ModelMaterialPipeline } from "../model/material.js";
 import { ModelRuntime } from "../model/runtime.js";
-import { canonicalDigest } from "../digest.js";
-
 import type { ResourceRegistry } from "../resources/registry.js";
 import { executeResourceActions } from "../resources/execute.js";
+import { canonicalDigest } from "../digest.js";
+
+interface CachedQueryVector {
+  subjectId: string;
+  generation: number;
+  vector: number[];
+}
+
 export class QueryOrchestrator {
-  private readonly queryVectors = new Map<string, number[]>();
+  private readonly queryVectors = new Map<string, CachedQueryVector>();
+  private readonly queryVectorGenerations = new Map<string, number>();
+
   constructor(
     private readonly kernel: KernelClient,
     private readonly models: ModelRuntime,
     private readonly resources: ResourceRegistry,
   ) {}
+
+  invalidateSubject(subjectId: string): void {
+    this.queryVectorGenerations.set(
+      subjectId,
+      (this.queryVectorGenerations.get(subjectId) ?? 0) + 1,
+    );
+    for (const [key, entry] of this.queryVectors)
+      if (entry.subjectId === subjectId) this.queryVectors.delete(key);
+  }
+
   async execute(input: QueryRequest, options: ExecutionOptions = {}) {
     const calls = executionOptions(this.kernel.execution.opportunity, options);
-    options = calls;
-    const { opportunity } = calls;
-    const material: QueryEmbedding[] = [];
-    let failure: string | undefined;
-    const preparation = await this.kernel.queryWorkflow.prepareQuery(
+    const opportunity = calls.opportunity;
+    const generation = this.queryVectorGenerations.get(input.subjectId) ?? 0;
+    const intent = input.expression ? positiveIntent(input.expression) : "";
+    const host = create(QueryHostPlanSchema, {
+      embedding: create(QueryHostRoleSchema, {
+        configured: Boolean(this.models.embeddingModel),
+        requirement:
+          this.models.invocations.requirement("query_embedding") === "required"
+            ? QueryHostRequirement.REQUIRED
+            : QueryHostRequirement.OPTIONAL,
+      }),
+      conceptEnrichment: create(QueryHostRoleSchema, {
+        configured: Boolean(
+          this.models.invocations.profile("query_concept_enrichment"),
+        ),
+        requirement:
+          this.models.invocations.requirement("query_concept_enrichment") ===
+          "required"
+            ? QueryHostRequirement.REQUIRED
+            : QueryHostRequirement.OPTIONAL,
+      }),
+      rerank: create(QueryHostRoleSchema, {
+        configured: Boolean(this.models.invocations.profile("query_rerank")),
+        requirement:
+          this.models.invocations.requirement("query_rerank") === "required"
+            ? QueryHostRequirement.REQUIRED
+            : QueryHostRequirement.OPTIONAL,
+      }),
+      rerankCandidateLimit: this.kernel.execution.query_rerank_candidate_limit,
+    });
+
+    let update = await this.kernel.queryWorkflow.runQuery(
       {
-        query: input,
-        reserveExecution: true,
-        leaseSeconds: opportunity.leaseSeconds,
+        command: {
+          case: "start",
+          value: create(QueryRunStartSchema, {
+            query: input,
+            host,
+            leaseSeconds: opportunity.leaseSeconds,
+          }),
+        },
+      },
+      calls,
+    );
+    let handle = update.handle;
+    try {
+      while (update.next.case !== "complete") {
+        if (calls.signal.aborted) throw calls.signal.reason;
+        if (!handle)
+          throw new ConnectError(
+            "QueryRun continuation handle missing",
+            Code.Internal,
+          );
+
+        if (update.next.case === "embedding") {
+          const work = update.next.value;
+          let outcome;
+          try {
+            if (!this.models.embeddingModel)
+              throw domainError(
+                "Query embedding role unavailable",
+                Code.Unavailable,
+                {
+                  code: ErrorCode.CAPABILITY_UNAVAILABLE,
+                  owner: ErrorOwner.CORE,
+                  recovery: ErrorRecovery.CHECK_CONFIGURATION,
+                  context: { capability: "model.query_embedding" },
+                },
+              );
+            if (work.historicalView) {
+              const prepared = await new ModelMaterialPipeline(
+                this.kernel,
+                this.models,
+              ).prepare(input.subjectId, 256, calls, handle);
+              if (prepared.degradation.length)
+                throw domainError(
+                  "Historical embedding material unavailable",
+                  Code.Unavailable,
+                  {
+                    code: ErrorCode.UNAVAILABLE,
+                    owner: ErrorOwner.CORE,
+                    recovery: ErrorRecovery.UNSPECIFIED,
+                    context: { capability: "historical_query_embedding" },
+                  },
+                );
+            }
+            const config = work.config;
+            if (!config)
+              throw domainError(
+                "Query embedding configuration unavailable",
+                Code.FailedPrecondition,
+                {
+                  code: ErrorCode.FAILED_PRECONDITION,
+                  owner: ErrorOwner.KERNEL,
+                  recovery: ErrorRecovery.CHECK_CONFIGURATION,
+                  context: { capability: "query_embedding_space" },
+                },
+              );
+            const cachedProducer = config.producerHashes.find((producer) => {
+              const key = canonicalDigest({
+                subject: input.subjectId,
+                generation,
+                text: work.representation,
+                space: config.spaceHash,
+                producer,
+              });
+              return (
+                (this.queryVectorGenerations.get(input.subjectId) ?? 0) ===
+                  generation && this.queryVectors.has(key)
+              );
+            });
+            const cachedKey =
+              cachedProducer &&
+              canonicalDigest({
+                subject: input.subjectId,
+                generation,
+                text: work.representation,
+                space: config.spaceHash,
+                producer: cachedProducer,
+              });
+            const cached = cachedKey
+              ? this.queryVectors.get(cachedKey)
+              : undefined;
+            const vectors =
+              cached && cachedProducer
+                ? {
+                    producer: { signature_hash: cachedProducer },
+                    value: [cached.vector],
+                  }
+                : await this.models.invocations.embeddingBatch(
+                    [work.representation],
+                    config.model,
+                    calls.signal,
+                  );
+            if (
+              !config.producerHashes.includes(vectors.producer.signature_hash)
+            )
+              throw domainError(
+                "Query embedding producer is not authorized",
+                Code.FailedPrecondition,
+                {
+                  code: ErrorCode.FAILED_PRECONDITION,
+                  owner: ErrorOwner.CORE,
+                  recovery: ErrorRecovery.CHECK_CONFIGURATION,
+                  context: { capability: "query_embedding_producer" },
+                },
+              );
+            const key = canonicalDigest({
+              subject: input.subjectId,
+              generation,
+              text: work.representation,
+              space: config.spaceHash,
+              producer: vectors.producer.signature_hash,
+            });
+            if (
+              (this.queryVectorGenerations.get(input.subjectId) ?? 0) ===
+              generation
+            ) {
+              this.queryVectors.set(key, {
+                subjectId: input.subjectId,
+                generation,
+                vector: vectors.value[0]!,
+              });
+              while (
+                this.queryVectors.size >
+                this.kernel.execution.query_embedding_cache_entries
+              ) {
+                const oldest = this.queryVectors.keys().next().value;
+                if (oldest === undefined) break;
+                this.queryVectors.delete(oldest);
+              }
+            }
+            outcome = {
+              case: "material" as const,
+              value: create(QueryEmbeddingSchema, {
+                text: work.representation,
+                spaceHash: config.spaceHash,
+                producerHash: vectors.producer.signature_hash,
+                vector: vectors.value[0]!,
+              }),
+            };
+          } catch (error) {
+            if (calls.signal.aborted) throw error;
+            outcome = {
+              case: "failure" as const,
+              value: rpcFailure(error, "model.query_embedding"),
+            };
+          }
+          update = await this.resume(
+            input.subjectId,
+            handle,
+            {
+              case: "embedding",
+              value: create(QueryEmbeddingResultSchema, { outcome }),
+            },
+            calls,
+          );
+        } else if (update.next.case === "concept") {
+          const work = update.next.value;
+          let outcome;
+          let modelCalls = 0;
+          try {
+            if (!work.representation)
+              throw new ConnectError(
+                "Query concept representation missing",
+                Code.Internal,
+              );
+            if (!this.models.invocations.profile("query_concept_enrichment"))
+              throw domainError(
+                "Query concept model role unavailable",
+                Code.Unavailable,
+                {
+                  code: ErrorCode.CAPABILITY_UNAVAILABLE,
+                  owner: ErrorOwner.CORE,
+                  recovery: ErrorRecovery.CHECK_CONFIGURATION,
+                  context: { capability: "model.query_concept_enrichment" },
+                },
+              );
+            const response = await this.models.invocations.generate(
+              "query_concept_enrichment",
+              {
+                content: work.representation.text,
+                context: () => ({
+                  existing_tags: work.existingTags,
+                  temporal_frame: work.temporalFrame,
+                }),
+              },
+              {
+                signal: calls.signal,
+                beforeAttempt: () => {
+                  modelCalls++;
+                },
+              },
+            );
+            outcome = {
+              case: "output" as const,
+              value: create(QueryConceptOutputSchema, {
+                existingTags: response.value.existing_tags.map((tag) => ({
+                  key: tag.key,
+                  strength: tag.strength,
+                })),
+                novelConcepts: response.value.novel_concepts.map((item) => ({
+                  text: item.text,
+                })),
+              }),
+            };
+          } catch (error) {
+            if (calls.signal.aborted) throw error;
+            outcome = {
+              case: "failure" as const,
+              value: rpcFailure(error, "model.query_concept_enrichment"),
+            };
+          }
+          update = await this.resume(
+            input.subjectId,
+            handle,
+            {
+              case: "concept",
+              value: create(QueryConceptResultSchema, { outcome, modelCalls }),
+            },
+            calls,
+          );
+        } else if (update.next.case === "finalize") {
+          const work = update.next.value;
+          const profile = this.models.invocations.profile("query_rerank");
+          const candidates = (work.baseline?.hits ?? [])
+            .filter((hit) => hit.text?.trim() && hit.reference)
+            .slice(0, work.rerankCandidateLimit || 64);
+          let rerank;
+          if (work.rerankExpected && profile && candidates.length >= 2) {
+            try {
+              const ranking = await this.models.invocations.rerank(
+                work.rerankQuery || intent,
+                candidates.map((hit) => hit.text!),
+                candidates.length,
+                calls.signal,
+              );
+              rerank = create(QueryRerankResultSchema, {
+                outcome: {
+                  case: "order",
+                  value: create(QueryRerankOrderSchema, {
+                    candidates: ranking.value.map((item) => ({
+                      reference: candidates[item.index]!.reference,
+                      score: item.relevance_score,
+                    })),
+                  }),
+                },
+              });
+            } catch (error) {
+              if (calls.signal.aborted) throw error;
+              rerank = create(QueryRerankResultSchema, {
+                outcome: {
+                  case: "failure",
+                  value: rpcFailure(error, "model.query_rerank"),
+                },
+              });
+            }
+          } else {
+            rerank = create(QueryRerankResultSchema, {
+              outcome: { case: "notRequested", value: true },
+            });
+          }
+          const requiredRerankUnavailable =
+            work.rerankExpected &&
+            work.rerankRequirement === QueryHostRequirement.REQUIRED;
+          const resources =
+            requiredRerankUnavailable &&
+            (rerank.outcome.case === "failure" ||
+              rerank.outcome.case === "notRequested")
+              ? []
+              : await executeResourceActions(
+                  this.resources,
+                  work.baseline?.resourceActions ?? [],
+                  calls.signal,
+                );
+          update = await this.resume(
+            input.subjectId,
+            handle,
+            {
+              case: "finalize",
+              value: create(QueryFinalizeResultSchema, { rerank, resources }),
+            },
+            calls,
+          );
+        }
+        handle = update.handle;
+      }
+      return update.next.value;
+    } catch (error) {
+      if (handle) {
+        await this.kernel.queryWorkflow
+          .runQuery(
+            {
+              command: {
+                case: "cancel",
+                value: { subjectId: input.subjectId, handle },
+              },
+            },
+            opportunity.cleanup(),
+          )
+          .catch(() => {});
+      }
+      throw error;
+    }
+  }
+
+  private resume(
+    subjectId: string,
+    handle: QueryRunHandle,
+    outcome: QueryRunResume["outcome"],
+    options: ExecutionOptions,
+  ): Promise<QueryRunUpdate> {
+    return this.kernel.queryWorkflow.runQuery(
+      {
+        command: {
+          case: "resume",
+          value: create(QueryRunResumeSchema, { subjectId, handle, outcome }),
+        },
       },
       options,
     );
-    if (!preparation.preparationToken)
-      throw new ConnectError("Prepared query token missing", Code.Internal);
-    let executionToken = preparation.preparationToken;
-    try {
-      const texts = new Set(
-        preparation.embeddingRequired && preparation.embeddingText
-          ? [preparation.embeddingText]
-          : [],
-      );
-      if (texts.size) {
-        try {
-          if (!this.models.embeddingModel)
-            throw domainError(
-              "Query embedding role unavailable",
-              Code.Unavailable,
-              {
-                code: ErrorCode.CAPABILITY_UNAVAILABLE,
-                owner: ErrorOwner.RESOURCE,
-                recovery: ErrorRecovery.CHECK_CONFIGURATION,
-                context: { capability: "model.query_embedding" },
-              },
-            );
-          if (preparation.historicalView) {
-            const prepared = await new ModelMaterialPipeline(
-              this.kernel,
-              this.models,
-            ).prepare(input.subjectId, 256, options, executionToken);
-            if (prepared.degradation.length)
-              throw new ConnectError(
-                "Historical embedding material unavailable",
-                Code.Unavailable,
-              );
-          }
-          const config = await this.kernel.materialWorkflow.getEmbeddingConfig(
-            {},
-            options,
-          );
-          const producers = config.producerHashes;
-          const key = (text: string, producer: string) =>
-            canonicalDigest({ text, space: config.spaceHash, producer });
-          const cached = (text: string) =>
-            producers
-              .map((producer) => ({
-                producer,
-                vector: this.queryVectors.get(key(text, producer)),
-              }))
-              .find((item) => item.vector);
-          const missing = [...texts].filter((text) => !cached(text));
-          if (missing.length) {
-            const vectors = await this.models.invocations.embeddingBatch(
-              missing,
-              config.model,
-              options.signal ?? undefined,
-            );
-            if (!producers.includes(vectors.producer.signature_hash))
-              throw new ConnectError(
-                "Embedding producer is not in the prepared configuration",
-                Code.Unavailable,
-              );
-            missing.forEach((text, index) =>
-              this.queryVectors.set(
-                key(text, vectors.producer.signature_hash),
-                vectors.value[index]!,
-              ),
-            );
-          }
-          for (const text of texts) {
-            const selected = cached(text);
-            if (!selected?.vector)
-              throw new ConnectError(
-                "Query embedding material missing",
-                Code.Internal,
-              );
-            material.push(
-              create(QueryEmbeddingSchema, {
-                text,
-                spaceHash: config.spaceHash,
-                producerHash: selected.producer,
-                vector: selected.vector,
-              }),
-            );
-          }
-          while (
-            this.queryVectors.size >
-            this.kernel.execution.query_embedding_cache_entries
-          )
-            this.queryVectors.delete(this.queryVectors.keys().next().value!);
-        } catch (error) {
-          if (options.signal?.aborted) throw error;
-          if (
-            preparation.textEmbeddingRequirement === "required" ||
-            this.models.invocations.requirement("query_embedding") ===
-              "required"
-          )
-            throw new ConnectError(
-              "Required query embedding unavailable",
-              Code.Unavailable,
-            );
-          failure =
-            error instanceof Error ? error.message : "Embedding unavailable";
-        }
-      }
-      let conceptOutput: string | undefined;
-      let conceptFailure: string | undefined;
-      let conceptModelCalls = 0;
-      if (
-        preparation.conceptEnrichmentMode === "model" &&
-        preparation.conceptEnrichmentRequirement !== "forbidden"
-      ) {
-        const activation = await this.kernel.queryWorkflow.activateQuery(
-          {
-            subjectId: input.subjectId,
-            preparationToken: executionToken,
-            embeddings: material,
-          },
-          options,
-        );
-        executionToken = activation.preparationToken;
-        if (!executionToken)
-          throw new ConnectError(
-            "Query activation token missing",
-            Code.Internal,
-          );
-        try {
-          if (!this.models.invocations.profile("query_concept_enrichment"))
-            throw domainError(
-              "Query concept model role unavailable",
-              Code.Unavailable,
-              {
-                code: ErrorCode.CAPABILITY_UNAVAILABLE,
-                owner: ErrorOwner.RESOURCE,
-                recovery: ErrorRecovery.CHECK_CONFIGURATION,
-                context: { capability: "model.query_concept_enrichment" },
-              },
-            );
-          const response = await this.models.invocations.generate(
-            "query_concept_enrichment",
-            { content: activation.modelInput },
-            {
-              signal: options.signal ?? undefined,
-              beforeAttempt: () => {
-                conceptModelCalls++;
-              },
-            },
-          );
-          conceptOutput = JSON.stringify(response.value);
-        } catch (error) {
-          if (options.signal?.aborted) throw error;
-          if (
-            preparation.conceptEnrichmentRequirement === "required" ||
-            this.models.invocations.requirement("query_concept_enrichment") ===
-              "required"
-          )
-            throw new ConnectError(
-              "Required query concept model unavailable",
-              Code.Unavailable,
-            );
-          conceptFailure =
-            error instanceof Error
-              ? error.message
-              : "Query concept model unavailable";
-        }
-      }
-      const intent = input.expression ? positiveIntent(input.expression) : "";
-      const rerankAllowed = preparation.rerankRequirement !== "forbidden";
-      const rerankRequired =
-        rerankAllowed &&
-        (preparation.rerankRequirement === "required" ||
-          this.models.invocations.requirement("query_rerank") === "required");
-      const profile = rerankAllowed
-        ? this.models.invocations.profile("query_rerank")
-        : undefined;
-      if (intent && !profile && rerankRequired)
-        throw domainError(
-          "Required query rerank role unavailable",
-          Code.Unavailable,
-          {
-            code: ErrorCode.CAPABILITY_UNAVAILABLE,
-            owner: ErrorOwner.RESOURCE,
-            recovery: ErrorRecovery.CHECK_CONFIGURATION,
-            context: { capability: "model.query_rerank" },
-          },
-        );
-      const prepared = await this.kernel.queryWorkflow.query(
-        {
-          subjectId: input.subjectId,
-          preparationToken: executionToken,
-          embeddings: conceptOutput || conceptFailure ? [] : material,
-          conceptOutput,
-          conceptFailure,
-          conceptModelCalls,
-          validatedCandidateLimit:
-            intent && profile
-              ? this.kernel.execution.query_rerank_candidate_limit
-              : undefined,
-        },
-        options,
-      );
-      if (!prepared.response)
-        throw new ConnectError("Kernel query response missing", Code.Internal);
-      let result = prepared.response;
-      const ticket = prepared.validationTicket;
-      if (!ticket && intent && profile && rerankRequired)
-        throw new ConnectError(
-          "Required rerank validation snapshot unavailable",
-          Code.ResourceExhausted,
-        );
-      if (ticket) {
-        const candidates = result.hits
-          .filter((hit) => hit.text?.trim())
-          .slice(0, this.kernel.execution.query_rerank_candidate_limit);
-        let order: {
-          reference: NonNullable<(typeof candidates)[number]["reference"]>;
-          score: number;
-        }[] = [];
-        let rerankFailed = false;
-        try {
-          if (intent && profile && candidates.length >= 2) {
-            try {
-              const ranking = await this.models.invocations.rerank(
-                preparation.embeddingText || intent,
-                candidates.map((hit) => hit.text!),
-                candidates.length,
-                options.signal ?? undefined,
-              );
-              order = ranking.value.map((item) => {
-                const reference = candidates[item.index]!.reference;
-                if (!reference)
-                  throw new ConnectError(
-                    "Kernel candidate reference missing",
-                    Code.Internal,
-                  );
-                return { reference, score: item.relevance_score };
-              });
-            } catch (error) {
-              if (options.signal?.aborted) throw error;
-              if (rerankRequired)
-                throw new ConnectError(
-                  "Required rerank invocation unavailable",
-                  Code.Unavailable,
-                );
-              rerankFailed = true;
-            }
-          }
-          result = await this.kernel.queryWorkflow.finalizeQuery(
-            {
-              subjectId: input.subjectId,
-              validationTicket: ticket,
-              order,
-              externalResults: await executeResourceActions(
-                this.resources,
-                result.resourceActions,
-                options.signal ?? undefined,
-              ),
-            },
-            options,
-          );
-          if (rerankFailed) {
-            result.degradation.push({
-              $typeName: "nous.wave.v1alpha1.Degradation",
-              code: "query_rerank_unavailable",
-              detail: "Validated baseline retained after model rerank failure",
-            });
-            if (result.status === "complete") result.status = "degraded";
-          }
-        } finally {
-          await this.kernel.queryWorkflow
-            .releaseQuery(
-              { subjectId: input.subjectId, validationTicket: ticket },
-              opportunity.cleanup(),
-            )
-            .catch(() => {});
-        }
-      }
-      if (failure) {
-        result.degradation.push({
-          $typeName: "nous.wave.v1alpha1.Degradation",
-          code: "query_embedding_unavailable",
-          detail: failure,
-        });
-        if (result.status === "complete") result.status = "degraded";
-      }
-      result.boundQuery ??= prepared.response.boundQuery;
-      return result;
-    } finally {
-      await this.kernel.queryWorkflow
-        .releaseQuery(
-          {
-            subjectId: input.subjectId,
-            validationTicket: executionToken,
-          },
-          opportunity.cleanup(),
-        )
-        .catch(() => {});
-    }
   }
 }
+
+function rpcFailure(error: unknown, capability: string) {
+  const connect =
+    error instanceof ConnectError
+      ? error
+      : domainError("Query host model step unavailable", Code.Unavailable, {
+          code: ErrorCode.UNAVAILABLE,
+          owner: ErrorOwner.CORE,
+          recovery: ErrorRecovery.CHECK_CONFIGURATION,
+          context: { capability },
+        });
+  const detail = domainErrorDetail(connect);
+  return create(StatusSchema, {
+    code: detail ? connect.code : Code.Unavailable,
+    message: detail ? connect.message : "Query host model step unavailable",
+    details: detail
+      ? [
+          create(AnySchema, {
+            typeUrl: "type.googleapis.com/nous.wave.v1alpha1.ErrorDetail",
+            value: toBinary(ErrorDetailSchema, detail),
+          }),
+        ]
+      : [],
+  });
+}
+
 function positiveIntent(node: QueryExpr): string {
   const own = node.cues
     .map((cue) =>
-      cue.cue.case === "text" || cue.cue.case === "concept"
+      cue.cue.case === "text" ||
+      cue.cue.case === "concept" ||
+      cue.cue.case === "example"
         ? cue.cue.value.trim()
         : "",
     )

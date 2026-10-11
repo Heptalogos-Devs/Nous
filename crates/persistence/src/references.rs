@@ -319,4 +319,57 @@ impl AuthorityStore {
             ))
         }
     }
+
+    /// Verify that cached document bindings still target live purge owners while
+    /// the caller holds the Subject row lock used by purge checkpoints.
+    pub async fn validate_not_purging_refs_in(
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+    ) -> Result<()> {
+        let parts = references.iter().map(reference_parts).collect::<Vec<_>>();
+        let (kinds, values): (Vec<_>, Vec<_>) = parts.into_iter().unzip();
+        let unsafe_source: bool = sqlx::query_scalar(
+            r#"
+WITH requested(ref_kind,ref_value) AS (
+    SELECT * FROM unnest($2::text[],$3::text[])
+), owners(ref_kind,ref_value,purge_state) AS (
+    SELECT 'memory',o.memory_id::text,o.purge_state FROM memory_objects o WHERE o.subject_id=$1
+    UNION ALL SELECT 'memory_revision',r.memory_revision_id::text,o.purge_state
+      FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE o.subject_id=$1
+    UNION ALL SELECT 'cognitive_schema',o.schema_id::text,o.purge_state FROM cognitive_schemas o WHERE o.subject_id=$1
+    UNION ALL SELECT 'cognitive_schema_revision',r.schema_revision_id::text,o.purge_state
+      FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1
+    UNION ALL SELECT 'episode',o.episode_id::text,o.purge_state FROM episode_objects o WHERE o.subject_id=$1
+    UNION ALL SELECT 'episode_revision',r.episode_revision_id::text,o.purge_state
+      FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE o.subject_id=$1
+    UNION ALL SELECT 'journal',o.journal_id::text,o.purge_state FROM journal_objects o WHERE o.subject_id=$1
+    UNION ALL SELECT 'journal_revision',r.journal_revision_id::text,o.purge_state
+      FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE o.subject_id=$1
+)
+SELECT EXISTS(
+    SELECT 1 FROM requested r
+    LEFT JOIN owners o USING(ref_kind,ref_value)
+    WHERE r.ref_kind IN (
+        'memory','memory_revision','cognitive_schema','cognitive_schema_revision',
+        'episode','episode_revision','journal','journal_revision'
+    ) AND o.purge_state IS DISTINCT FROM 'normal'
+)
+"#,
+        )
+        .bind(subject.0)
+        .bind(kinds)
+        .bind(values)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db)?;
+        if unsafe_source {
+            return Err(Error::new(
+                ErrorOwner::Material,
+                ErrorCode::StaleRevision,
+                "embedding source changed or is being purged",
+            ));
+        }
+        Ok(())
+    }
 }

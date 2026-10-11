@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use std::collections::HashMap;
 mod lifecycle;
 mod mutations;
 
@@ -105,89 +106,200 @@ impl MemoryService {
         journal: JournalId,
         revision: Option<JournalRevisionId>,
     ) -> Result<JournalView> {
-        let row = sqlx::query("SELECT o.*,r.journal_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end,r.narrative,r.formed_at,r.recorded_at,r.producer_signature_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id AND r.journal_revision_id=COALESCE($3,o.current_revision_id) WHERE o.subject_id=$1 AND o.journal_id=$2")
-            .bind(subject.0).bind(journal.0).bind(revision.map(|id| id.0)).fetch_optional(self.store.pool()).await.map_err(db)?
-            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "Journal not found"))?;
-        let revision = JournalRevisionId(row.try_get("journal_revision_id").map_err(db)?);
-        let point_rows = sqlx::query("SELECT p.ordinal,p.role,p.text,COALESCE(jsonb_agg(s.basis ORDER BY s.basis_no) FILTER(WHERE s.basis_no IS NOT NULL),'[]') AS basis FROM journal_revision_points p LEFT JOIN journal_point_basis s USING(journal_revision_id,ordinal) WHERE p.journal_revision_id=$1 GROUP BY p.ordinal,p.role,p.text ORDER BY p.ordinal")
-            .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)?;
-        let points = point_rows
-            .into_iter()
-            .map(|row| {
-                Ok(JournalPoint {
-                    role: parse_enum(row.try_get("role").map_err(db)?, "Journal point role")?,
-                    text: row.try_get("text").map_err(db)?,
-                    basis: serde_json::from_value(row.try_get("basis").map_err(db)?).map_err(
-                        |error| {
-                            Error::new(
-                                nous_core::ErrorOwner::Memory,
-                                nous_core::ErrorCode::InternalFailure,
-                                "Operation failed",
-                            )
-                            .with_source(error)
-                        },
-                    )?,
-                })
+        let reference = match revision {
+            Some(revision) => CognitiveRef::JournalRevision(revision),
+            None => CognitiveRef::Journal(journal),
+        };
+        let view = self
+            .journals_by_references(subject, std::slice::from_ref(&reference))
+            .await?
+            .remove(&reference)
+            .ok_or_else(|| {
+                Error::new(ErrorOwner::Memory, ErrorCode::NotFound, "Journal not found")
+            })?;
+        if view.object.journal_id != journal {
+            return Err(Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::NotFound,
+                "Journal not found",
+            ));
+        }
+        Ok(view)
+    }
+
+    /// Read complete Journal owner views for current object and exact revision
+    /// references using grouped object/revision, point, basis and source reads.
+    pub async fn journals_by_references(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+    ) -> Result<HashMap<CognitiveRef, JournalView>> {
+        if references.len() > 256 {
+            return Err(Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
+                "Journal context batch exceeds 256 references",
+            ));
+        }
+        let journal_ids = references
+            .iter()
+            .filter_map(|reference| match reference {
+                CognitiveRef::Journal(id) => Some(id.0),
+                _ => None,
             })
+            .collect::<Vec<_>>();
+        let requested_revisions = references
+            .iter()
+            .filter_map(|reference| match reference {
+                CognitiveRef::JournalRevision(id) => Some(id.0),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if journal_ids.is_empty() && requested_revisions.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut tx = self.store.pool().begin().await.map_err(db)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let rows = sqlx::query("SELECT o.journal_id,o.subject_id,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,o.created_at,r.journal_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end,r.narrative,r.formed_at,r.recorded_at,r.producer_signature_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id AND ((o.journal_id=ANY($2) AND r.journal_revision_id=o.current_revision_id) OR r.journal_revision_id=ANY($3)) WHERE o.subject_id=$1 ORDER BY o.journal_id,r.revision_no")
+            .bind(subject.0)
+            .bind(&journal_ids)
+            .bind(&requested_revisions)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db)?;
+        let revision_ids = rows
+            .iter()
+            .map(|row| row.try_get::<Uuid, _>("journal_revision_id").map_err(db))
             .collect::<Result<Vec<_>>>()?;
-        let source_rows = sqlx::query("SELECT ref_kind,ref_value FROM journal_revision_sources WHERE journal_revision_id=$1 ORDER BY ref_kind,ref_value")
-            .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)?;
-        let sources = source_rows
-            .into_iter()
-            .map(|row| {
-                parse_reference(
-                    &row.get::<String, _>("ref_kind"),
-                    &row.get::<String, _>("ref_value"),
-                )
-            })
-            .collect::<Result<_>>()?;
-        Ok(JournalView {
-            object: JournalObject {
-                journal_id: journal,
-                subject_id: subject,
-                current_revision_id: JournalRevisionId(
-                    row.try_get("current_revision_id").map_err(db)?,
-                ),
-                object_epoch: row.try_get("object_epoch").map_err(db)?,
-                acceptance_state: parse_enum(
-                    row.try_get("acceptance_state").map_err(db)?,
-                    "acceptance state",
-                )?,
-                integrity_state: parse_enum(
-                    row.try_get("integrity_state").map_err(db)?,
-                    "integrity state",
-                )?,
-                suppression_state: parse_enum(
-                    row.try_get("suppression_state").map_err(db)?,
-                    "suppression state",
-                )?,
-                purge_state: parse_enum(row.try_get("purge_state").map_err(db)?, "purge state")?,
-                created_at: row.try_get("created_at").map_err(db)?,
-            },
-            revision: JournalRevision {
-                journal_revision_id: revision,
-                journal_id: journal,
-                subject_id: subject,
-                revision_no: row.try_get("revision_no").map_err(db)?,
-                parent_revision_id: row
-                    .try_get::<Option<Uuid>, _>("parent_revision_id")
-                    .map_err(db)?
-                    .map(JournalRevisionId),
-                revision_intent: row.try_get("revision_intent").map_err(db)?,
-                title: row.try_get("title").map_err(db)?,
-                temporal_scope: temporal_from_columns(
-                    row.try_get("temporal_scope_kind").map_err(db)?,
-                    row.try_get("temporal_scope_start").map_err(db)?,
-                    row.try_get("temporal_scope_end").map_err(db)?,
-                )?,
-                narrative: row.try_get("narrative").map_err(db)?,
-                formed_at: row.try_get("formed_at").map_err(db)?,
-                recorded_at: row.try_get("recorded_at").map_err(db)?,
-                producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
-            },
-            points,
-            sources,
-        })
+        if revision_ids.is_empty() {
+            tx.commit().await.map_err(db)?;
+            return Ok(HashMap::new());
+        }
+
+        let mut points = HashMap::<Uuid, Vec<JournalPoint>>::new();
+        for row in sqlx::query("SELECT p.journal_revision_id,p.ordinal,p.role,p.text,COALESCE(jsonb_agg(s.basis ORDER BY s.basis_no) FILTER(WHERE s.basis_no IS NOT NULL),'[]') AS basis FROM journal_revision_points p LEFT JOIN journal_point_basis s USING(journal_revision_id,ordinal) WHERE p.journal_revision_id=ANY($1) GROUP BY p.journal_revision_id,p.ordinal,p.role,p.text ORDER BY p.journal_revision_id,p.ordinal")
+            .bind(&revision_ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db)?
+        {
+            let revision: Uuid = row.try_get("journal_revision_id").map_err(db)?;
+            let role = parse_enum(
+                ErrorOwner::Memory,
+                row.try_get("role").map_err(db)?,
+                "Journal point role",
+            )?;
+            let basis = serde_json::from_value(row.try_get("basis").map_err(db)?).map_err(
+                |error| {
+                    Error::new(
+                        ErrorOwner::Memory,
+                        ErrorCode::InternalFailure,
+                        "Could not decode a persisted journal point basis",
+                    )
+                    .with_source(error)
+                },
+            )?;
+            points.entry(revision).or_default().push(JournalPoint {
+                role,
+                text: row.try_get("text").map_err(db)?,
+                basis,
+            });
+        }
+        let mut sources = HashMap::<Uuid, Vec<CognitiveRef>>::new();
+        for row in sqlx::query("SELECT journal_revision_id,ref_kind,ref_value FROM journal_revision_sources WHERE journal_revision_id=ANY($1) ORDER BY journal_revision_id,ref_kind,ref_value")
+            .bind(&revision_ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db)?
+        {
+            let revision: Uuid = row.try_get("journal_revision_id").map_err(db)?;
+            sources.entry(revision).or_default().push(parse_reference(
+                &row.try_get::<String, _>("ref_kind").map_err(db)?,
+                &row.try_get::<String, _>("ref_value").map_err(db)?,
+            )?);
+        }
+        tx.commit().await.map_err(db)?;
+
+        let mut by_journal = HashMap::<JournalId, JournalView>::new();
+        let mut by_revision = HashMap::<JournalRevisionId, JournalView>::new();
+        for row in rows {
+            let journal_id = JournalId(row.try_get("journal_id").map_err(db)?);
+            let revision_id = JournalRevisionId(row.try_get("journal_revision_id").map_err(db)?);
+            let view = JournalView {
+                object: JournalObject {
+                    journal_id,
+                    subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),
+                    current_revision_id: JournalRevisionId(
+                        row.try_get("current_revision_id").map_err(db)?,
+                    ),
+                    object_epoch: row.try_get("object_epoch").map_err(db)?,
+                    acceptance_state: parse_enum(
+                        ErrorOwner::Memory,
+                        row.try_get("acceptance_state").map_err(db)?,
+                        "acceptance state",
+                    )?,
+                    integrity_state: parse_enum(
+                        ErrorOwner::Memory,
+                        row.try_get("integrity_state").map_err(db)?,
+                        "integrity state",
+                    )?,
+                    suppression_state: parse_enum(
+                        ErrorOwner::Memory,
+                        row.try_get("suppression_state").map_err(db)?,
+                        "suppression state",
+                    )?,
+                    purge_state: parse_enum(
+                        ErrorOwner::Memory,
+                        row.try_get("purge_state").map_err(db)?,
+                        "purge state",
+                    )?,
+                    created_at: row.try_get("created_at").map_err(db)?,
+                },
+                revision: JournalRevision {
+                    journal_revision_id: revision_id,
+                    journal_id,
+                    subject_id: subject,
+                    revision_no: row.try_get("revision_no").map_err(db)?,
+                    parent_revision_id: row
+                        .try_get::<Option<Uuid>, _>("parent_revision_id")
+                        .map_err(db)?
+                        .map(JournalRevisionId),
+                    revision_intent: row.try_get("revision_intent").map_err(db)?,
+                    title: row.try_get("title").map_err(db)?,
+                    temporal_scope: temporal_from_columns(
+                        ErrorOwner::Memory,
+                        row.try_get("temporal_scope_kind").map_err(db)?,
+                        row.try_get("temporal_scope_start").map_err(db)?,
+                        row.try_get("temporal_scope_end").map_err(db)?,
+                    )?,
+                    narrative: row.try_get("narrative").map_err(db)?,
+                    formed_at: row.try_get("formed_at").map_err(db)?,
+                    recorded_at: row.try_get("recorded_at").map_err(db)?,
+                    producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
+                },
+                points: points.remove(&revision_id.0).unwrap_or_default(),
+                sources: sources.remove(&revision_id.0).unwrap_or_default(),
+            };
+            if view.object.current_revision_id == revision_id {
+                by_journal.insert(journal_id, view.clone());
+            }
+            by_revision.insert(revision_id, view);
+        }
+        let mut result = HashMap::new();
+        for reference in references {
+            let view = match reference {
+                CognitiveRef::Journal(id) => by_journal.get(id).cloned(),
+                CognitiveRef::JournalRevision(id) => by_revision.get(id).cloned(),
+                _ => None,
+            };
+            if let Some(view) = view {
+                result.insert(reference.clone(), view);
+            }
+        }
+        Ok(result)
     }
 
     pub async fn journal_revision(

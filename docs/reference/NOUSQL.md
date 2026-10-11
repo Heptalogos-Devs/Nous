@@ -48,9 +48,9 @@ CapabilityPolicy 包括 textEmbedding、multimodalInterpretation、residualSensi
 
 `client.cognition.prepareQuery` 与 Query 共用 compiler/Identity resolver；`nous query prepare|inspect` 显示 root projection、TemporalFrame、captured clock、representation、resolved sources、profile、configuration digest 和 capability requirements，不调用 provider。
 
-正式 Query 使用 Subject-bound single-use preparation token。Historical embedding cache miss 由 Host 在该 token 的 frozen Owner view 中发现、生成、提交，继续复用 existing embedding_materials/content digest；有界 batch 未完成时按能力合同报告。Query embedding 在 activation/dense/VCP/leaves 间复用。Actual generation trace 来自 query 持有的 read view，不来自 serving_current。
+`prepareQuery`/`query prepare|inspect` 只返回绑定结果 inspection；它不产生后续执行凭据，也不调用 provider。正式 Query 由 Core 启动一个有界 QueryRun，Runtime 保留该请求的 BoundQuery 与 frozen ReadContext；Host 的模型或 Resource 步骤通过 Subject-bound、带 revision 的短暂 QueryRun handle 续接同一运行，完成最终校验后即释放，不供之后的请求复用。Historical embedding cache miss 由 Host 使用当前 QueryRun handle 在 frozen Owner view 中发现、生成并提交，继续复用 existing `embedding_materials`/content digest；有界 batch 不足或模型不可用按能力合同报告。Query embedding 在 activation/dense/VCP/leaves 间复用。Actual generation trace 来自 query 持有的 read view，不来自 `serving_current`。后续 Projection 是新的 Current owner read，并保留 `hit.revision ?? hit.reference` 精确选择。
 
-Full diagnostics 显示 QueryActivation、TagDirect/扩散来源、concept generation、实际 query concept model calls、截点 view digest、truncation/degradation。Preparation/validation tickets 共用 bounded slots/lease，在失败、消费、release 或 expiry 时清理。
+Full diagnostics 显示 QueryActivation、TagDirect/扩散来源、concept generation、实际 query concept model calls、截点 view digest、truncation/degradation。`runtime.query_lease_slots` 限制同时保留的 QueryRun 数量；Core 在异常或调用方取消时取消运行，失效续接在 lease expiry 后清理。
 
 ## 反馈与显式形成
 

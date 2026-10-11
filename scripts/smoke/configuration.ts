@@ -154,10 +154,14 @@ try {
   });
   assert.equal(labels.candidates[0]?.displayName, "Configuration smoke");
   assert.deepEqual(labels.candidates[0]?.aliases, ["Original label"]);
-  const entry = async (path: string, subjectId?: string, desired = false) => {
+  const entry = async (
+    path: string,
+    targetSubject?: string,
+    desired = false,
+  ) => {
     const result = await client.configuration.get({
       paths: [path],
-      subjectId,
+      subjectId: targetSubject,
       view: desired ? ConfigurationView.DESIRED : ConfigurationView.ACTIVE,
     });
     const item = result.entries[0];

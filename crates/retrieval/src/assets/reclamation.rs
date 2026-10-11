@@ -244,7 +244,7 @@ impl ServingService {
         pinned: bool,
     ) -> Result<()> {
         let _reader = self.read_gate.clone().read_owned().await;
-        let changed = sqlx::query("UPDATE serving_generations SET metadata=jsonb_set(metadata,'{research_pinned}',$2) WHERE generation_id=$1 AND state IN ('ready','retired')")
+        let changed = sqlx::query("UPDATE serving_generations g SET metadata=jsonb_set(g.metadata,'{research_pinned}',$2) FROM subjects s WHERE g.generation_id=$1 AND g.subject_id=s.subject_id AND g.purge_epoch=s.serving_purge_epoch AND g.state IN ('ready','retired')")
             .bind(id.0).bind(serde_json::json!(pinned)).execute(self.store.pool()).await.map_err(nous_persistence::database_error)?;
         if changed.rows_affected() == 0 {
             return Err(Error::new(
@@ -266,7 +266,7 @@ fn directory_bytes(path: &std::path::Path) -> Result<u64> {
             return Err(Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Serving artifacts cannot contain symbolic links",
             ));
         }
         bytes += if kind.is_dir() {

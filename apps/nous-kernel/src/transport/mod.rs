@@ -38,6 +38,8 @@ mod material;
 mod memory;
 mod model;
 mod query;
+mod query_projection;
+mod query_run_adapter;
 mod schema;
 mod subject;
 mod work_context;
@@ -62,152 +64,118 @@ impl KernelService {
         self.0.require_memory()
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "projection coordination keeps reference origin, current owner validation and bounded materialization in one boundary"
-    )]
     pub async fn build_contribution_batch(
         &self,
         input: p::ProjectionRequest,
     ) -> nous_core::Result<p::Projection> {
+        use nous_core::{AuthorityView, CognitiveEffort, RevisionView, TemporalFrame};
+        use nous_runtime::{
+            AccessibilityQueryPolicy, AuthorityReadView, ContextResolver, ReadContext,
+        };
+
         let subject = SubjectId(id(&input.subject_id)?);
         let session = SessionId(id(&input.session_id)?);
+        let stamp = self.0.store.read_context_stamp(subject).await?;
+        let read_policy_snapshot = self.0.configuration.snapshot_for_subject(subject)?;
         let runtime = self.0.cognition.session(subject, session).await?;
-        let mut segments = self
+        let mut references = self
             .0
             .cognition
             .runtime_references(subject, session)
             .await?
             .into_iter()
-            .map(|(reference, source)| p::ContextSegment {
-                segment_id: uuid::Uuid::now_v7().to_string(),
-                text: String::new(),
-                semantic_role: source.into(),
-                source_refs: vec![to_ref(reference.clone())],
-                evidence: Vec::new(),
-                authority: "subject_cognition".into(),
-                stability: "checkpoint".into(),
-                source_revision: Some(reference.to_string()),
-            })
+            .map(|(reference, _)| reference)
             .collect::<Vec<_>>();
         let situation_refs = input
             .situation_refs
             .into_iter()
             .map(from_ref)
             .collect::<nous_core::Result<Vec<_>>>()?;
-        segments.extend(
-            situation_refs
-                .into_iter()
-                .map(|reference| p::ContextSegment {
-                    segment_id: uuid::Uuid::now_v7().to_string(),
-                    text: String::new(),
-                    semantic_role: "request_situation".into(),
-                    source_refs: vec![to_ref(reference.clone())],
-                    evidence: Vec::new(),
-                    authority: "external_current_authority".into(),
-                    stability: "request".into(),
-                    source_revision: Some(reference.to_string()),
-                }),
-        );
-        let mut remaining = input.max_text_bytes as usize;
-        let mut degradation = Vec::new();
-        let mut eligible_segments = Vec::new();
-        for mut segment in segments {
-            let Some(reference) = segment.source_refs.first() else {
+        let explicit_references = situation_refs.iter().cloned().collect();
+        references.extend(situation_refs);
+        let now = self.0.cognition.now(subject);
+        let context = ReadContext {
+            subject,
+            view: AuthorityReadView::Current {
+                bound_authority_seq: stamp.authority_seq,
+            },
+            temporal: TemporalFrame {
+                clock_now: now,
+                authority_view: AuthorityView::Current,
+                revision_view: RevisionView::Current,
+                original_expressions: Vec::new(),
+            },
+            accessibility: AccessibilityQueryPolicy {
+                effort: CognitiveEffort::Normal,
+                exact_target_bypasses_auto_level: true,
+            },
+            config_snapshot: std::sync::Arc::new(read_policy_snapshot),
+            purge_epoch: stamp.serving_purge_epoch,
+        };
+        let (contributions, degradation) = self
+            .0
+            .context_sources(
+                &context,
+                &references,
+                &explicit_references,
+                input.max_items as usize,
+                input.max_text_bytes as usize,
+            )
+            .await?;
+        let mut segments = Vec::with_capacity(contributions.len());
+        let mut wire_degradation = degradation
+            .into_iter()
+            .map(|value| p::Degradation {
+                code: value.code,
+                detail: value.detail.unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        for contribution in contributions {
+            let Some(text) = contribution.text.filter(|text| !text.is_empty()) else {
+                wire_degradation.push(p::Degradation {
+                    code: "projection_source_unavailable".into(),
+                    detail: contribution.reference.to_string(),
+                });
                 continue;
             };
-            let reference = from_ref(reference.clone())?;
-            match self.0.store.validate_reference(subject, &reference).await {
-                Ok(()) => {}
-                Err(
-                    Error {
-                        code: nous_core::ErrorCode::InvalidRequest,
-                        ..
-                    }
-                    | Error {
-                        code: nous_core::ErrorCode::NotFound,
-                        ..
-                    },
-                ) => {
-                    degradation.push(p::Degradation {
-                        code: "projection_source_unavailable".into(),
-                        detail: reference.to_string(),
-                    });
-                    continue;
-                }
-                Err(error) => return Err(error),
-            }
-            if matches!(
-                reference,
-                nous_core::CognitiveRef::Memory(_)
-                    | nous_core::CognitiveRef::MemoryRevision(_)
-                    | nous_core::CognitiveRef::CognitiveSchema(_)
-                    | nous_core::CognitiveRef::CognitiveSchemaRevision(_)
-                    | nous_core::CognitiveRef::Episode(_)
-                    | nous_core::CognitiveRef::EpisodeRevision(_)
-                    | nous_core::CognitiveRef::Journal(_)
-                    | nous_core::CognitiveRef::JournalRevision(_)
-            ) {
-                if !self
-                    .require_memory()?
-                    .contextual_cognition_eligible(subject, &reference)
-                    .await?
-                {
-                    degradation.push(p::Degradation {
-                        code: "projection_source_unavailable".into(),
-                        detail: reference.to_string(),
-                    });
-                    continue;
-                }
-                segment.authority = "subject_cognition".into();
-            }
-            if !matches!(
-                reference,
-                nous_core::CognitiveRef::Memory(_) | nous_core::CognitiveRef::MemoryRevision(_)
-            ) {
-                eligible_segments.push(segment);
-                continue;
-            }
-            match nous_runtime::ContextResolver::context_source(
-                &self.0, subject, &reference, remaining, true,
-            )
-            .await
-            {
-                Ok(source) => {
-                    segment.text = source.text.unwrap_or_default();
-                    remaining = remaining.saturating_sub(segment.text.len());
-                    segment.evidence = source
-                        .evidence
-                        .into_iter()
-                        .map(|evidence| p::Evidence {
-                            epistemic_relation: evidence
-                                .epistemic_relation
-                                .map(|relation| relation.as_str().into()),
-                            reference: Some(to_ref(evidence.reference)),
-                            basis_role: evidence.basis_role,
-                        })
-                        .collect();
-                    segment.source_revision = source
-                        .source_revision
-                        .map(|revision| revision.0.to_string());
-                    segment.authority = "subject_cognition".into();
-                }
-                Err(_) => {
-                    degradation.push(p::Degradation {
-                        code: "projection_source_unavailable".into(),
-                        detail: reference.to_string(),
-                    });
-                    continue;
-                }
-            }
-            eligible_segments.push(segment);
+            segments.push(p::ContextSegment {
+                segment_id: uuid::Uuid::now_v7().to_string(),
+                text,
+                semantic_role: contribution.semantic_role,
+                source_refs: vec![to_ref(contribution.reference)],
+                evidence: contribution
+                    .evidence
+                    .into_iter()
+                    .map(|evidence| p::Evidence {
+                        epistemic_relation: evidence
+                            .epistemic_relation
+                            .map(|relation| relation.as_str().into()),
+                        reference: Some(to_ref(evidence.reference)),
+                        basis_role: evidence.basis_role,
+                    })
+                    .collect(),
+                authority: serde_json::to_value(contribution.authority)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "subject_cognition".into()),
+                stability: if contribution.source_revision.is_some() {
+                    "revision_bound".into()
+                } else {
+                    "current_owner_read".into()
+                },
+                source_revision: contribution.source_revision.map(to_ref),
+            });
         }
+        self.0
+            .cognition
+            .ensure_read_context_current(&context)
+            .await?;
         Ok(p::Projection {
             projection_id: uuid::Uuid::now_v7().to_string(),
             consumer_id: input.consumer_id,
             source_runtime_revision: runtime.runtime_revision,
-            segments: eligible_segments,
-            degradation,
+            segments,
+            degradation: wire_degradation,
         })
     }
 }

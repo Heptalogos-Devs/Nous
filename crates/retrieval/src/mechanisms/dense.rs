@@ -51,7 +51,7 @@ impl DenseGeneration {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not save the dense Serving index",
                 )
                 .with_source(error)
             })
@@ -88,7 +88,7 @@ impl DenseGeneration {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not open the dense Serving index",
                 )
                 .with_source(error)
             })?;
@@ -108,7 +108,7 @@ impl DenseGeneration {
                     Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not read a vector from the dense Serving index",
                     )
                     .with_source(error)
                 })?;
@@ -116,7 +116,7 @@ impl DenseGeneration {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Dense Serving index is missing a recorded vector",
                 ));
             }
             validate_vector(&generation.space, &vector)?;
@@ -127,7 +127,7 @@ impl DenseGeneration {
             return Err(Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Dense Serving index size does not match its records",
             ));
         }
         generation.generation_id = generation_id;
@@ -163,7 +163,7 @@ impl DenseGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not create the dense Serving index",
             )
             .with_source(error)
         })?;
@@ -171,7 +171,7 @@ impl DenseGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not reserve capacity in the dense Serving index",
             )
             .with_source(error)
         })?;
@@ -200,7 +200,7 @@ impl DenseGeneration {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not add a vector to the dense Serving index",
                 )
                 .with_source(error)
             })?;
@@ -218,7 +218,7 @@ impl DenseGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not search the dense Serving index",
             )
             .with_source(error)
         })?;
@@ -254,7 +254,7 @@ impl DenseGeneration {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not search the filtered dense Serving index",
                 )
                 .with_source(error)
             })?;

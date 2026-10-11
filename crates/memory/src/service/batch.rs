@@ -90,7 +90,11 @@ impl MemoryService {
                     )?,
                     occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
                     locator,
-                    basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")?,
+                    basis_role: parse_enum(
+                        ErrorOwner::Memory,
+                        row.try_get("basis_role").map_err(db)?,
+                        "basis role",
+                    )?,
                 }));
         }
         for row in dependency_rows {
@@ -106,7 +110,11 @@ impl MemoryService {
                         &row.try_get::<String, _>("target_ref_kind").map_err(db)?,
                         &row.try_get::<String, _>("target_ref").map_err(db)?,
                     )?,
-                    basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")?,
+                    basis_role: parse_enum(
+                        ErrorOwner::Memory,
+                        row.try_get("basis_role").map_err(db)?,
+                        "basis role",
+                    )?,
                 }));
         }
         let mut aboutness = HashMap::<Uuid, Vec<EntityRef>>::new();
@@ -121,6 +129,7 @@ impl MemoryService {
             let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;
             let entry = temporal.entry(revision).or_default();
             entry.occurred.push(temporal_from_columns(
+                ErrorOwner::Memory,
                 row.try_get("occurred_time_kind").map_err(db)?,
                 row.try_get("occurred_time_start").map_err(db)?,
                 row.try_get("occurred_time_end").map_err(db)?,

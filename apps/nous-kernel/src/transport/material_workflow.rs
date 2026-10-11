@@ -64,8 +64,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         let result: Result<_> = async {
             let config = self.embedding_config()?;
             let subject = SubjectId(id(&input.subject_id)?);
-            let bound =
-                self.embedding_prepared_view(subject, input.preparation_token.as_deref())?;
+            let bound = self.embedding_run_context(subject, input.query_run)?;
             let cursor = input
                 .cursor
                 .map(|cursor| -> Result<nous_retrieval::EmbeddingCursor> {
@@ -86,7 +85,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                     cursor.as_ref(),
                     bound
                         .as_ref()
-                        .and_then(|bound| bound.historical_authority.as_deref()),
+                        .and_then(|bound| bound.read_context.historical_view()),
                 )
                 .await?;
             Ok(k::EmbeddingNeedsResponse {
@@ -119,12 +118,11 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         let result: Result<_> = async {
             let material = required(input.material, "material")?;
             let subject = SubjectId(id(&input.subject_id)?);
-            let bound =
-                self.embedding_prepared_view(subject, input.preparation_token.as_deref())?;
+            let bound = self.embedding_run_context(subject, input.query_run)?;
             self.0
                 .serving
                 .commit_embedding_in_view(
-                    SubjectId(id(&input.subject_id)?),
+                    subject,
                     input
                         .binding_references
                         .into_iter()
@@ -136,7 +134,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                     material.vector,
                     bound
                         .as_ref()
-                        .and_then(|b| b.historical_authority.as_deref()),
+                        .and_then(|b| b.read_context.historical_view()),
                 )
                 .await
         }
@@ -207,20 +205,29 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
 }
 
 impl KernelService {
-    fn embedding_prepared_view(
+    fn embedding_run_context(
         &self,
         subject: SubjectId,
-        token: Option<&str>,
+        handle: Option<k::QueryRunHandle>,
     ) -> Result<Option<nous_runtime::BoundQuery>> {
-        let Some(token) = token else { return Ok(None) };
-        let bound = self.0.cognition.prepared_query(subject, id(token)?)?;
+        let Some(handle) = handle else {
+            return Ok(None);
+        };
+        let bound = self.0.cognition.query_run_bound(
+            subject,
+            nous_runtime::QueryRunHandle {
+                query_run_id: id(&handle.query_run_id)?,
+                revision: handle.revision,
+            },
+            nous_runtime::QueryRunStage::AwaitEmbedding,
+        )?;
         if bound.source_query.capabilities.text_embedding
             == nous_core::RequirementStrength::Forbidden
         {
             return Err(Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::CapabilityUnavailable,
+                "QueryRun forbids embedding material activity",
             ));
         }
         Ok(Some(bound))

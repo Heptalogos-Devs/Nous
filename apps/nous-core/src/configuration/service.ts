@@ -44,18 +44,23 @@ export function configurationOperations(
           source: error instanceof z.ZodError ? "ZodError" : "NormalizerError",
         }),
       );
-      throw new ConnectError("Invalid configuration value", Code.InvalidArgument, undefined, [
-        {
-          desc: ErrorDetailSchema,
-          value: create(ErrorDetailSchema, {
-            code: ErrorCode.INVALID_REQUEST,
-            recovery: ErrorRecovery.CORRECT_REQUEST,
-            owner: ErrorOwner.CONFIGURATION,
-            context: { path },
-            traceId,
-          }),
-        },
-      ]);
+      throw new ConnectError(
+        "Invalid configuration value",
+        Code.InvalidArgument,
+        undefined,
+        [
+          {
+            desc: ErrorDetailSchema,
+            value: create(ErrorDetailSchema, {
+              code: ErrorCode.INVALID_REQUEST,
+              recovery: ErrorRecovery.CORRECT_REQUEST,
+              owner: ErrorOwner.CONFIGURATION,
+              context: { path },
+              traceId,
+            }),
+          },
+        ],
+      );
     }
   };
   return {

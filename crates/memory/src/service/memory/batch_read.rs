@@ -13,10 +13,38 @@ impl MemoryService {
         subject: SubjectId,
         references: &[CognitiveRef],
     ) -> Result<HashMap<CognitiveRef, MemoryView>> {
+        self.memory_views_for_references_at(subject, references, self.cognition.now(subject))
+            .await
+    }
+
+    /// Load the same complete batch against a caller-captured cognitive clock.
+    /// Query/projection readers use this to avoid a second, live time sample.
+    pub async fn memory_views_for_references_at(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        now: DateTime<Utc>,
+    ) -> Result<HashMap<CognitiveRef, MemoryView>> {
+        let snapshot = self.configuration.snapshot_for_subject(subject)?;
+        let policy = super::super::resolve_accessibility_policy(&snapshot)?;
+        self.memory_views_for_references_at_policy(subject, references, now, policy)
+            .await
+    }
+
+    /// Load complete Memory views using caller-frozen read policy and clock.
+    /// Query projections pass their ReadContext snapshot here so owner policy
+    /// changes after binding cannot alter the projection.
+    pub(super) async fn memory_views_for_references_at_policy(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        now: DateTime<Utc>,
+        policy: AccessibilityPolicy,
+    ) -> Result<HashMap<CognitiveRef, MemoryView>> {
         if references.len() > 256 {
             return Err(Error::new(
-                nous_core::ErrorOwner::Memory,
-                nous_core::ErrorCode::InvalidRequest,
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
                 "Memory context batch exceeds 256 references",
             ));
         }
@@ -55,7 +83,7 @@ impl MemoryService {
             .map(MemoryRevisionId)
             .collect::<Vec<_>>();
         let views = self
-            .memories_by_revision_in_tx(&mut tx, subject, &revision_ids)
+            .memories_by_revision_in_tx(&mut tx, subject, &revision_ids, now, policy)
             .await?;
         tx.commit().await.map_err(db)?;
         let by_revision = views
@@ -86,8 +114,8 @@ impl MemoryService {
     ) -> Result<Vec<MemoryView>> {
         if revisions.len() > 256 {
             return Err(Error::new(
-                nous_core::ErrorOwner::Memory,
-                nous_core::ErrorCode::InvalidRequest,
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
                 "Memory batch exceeds 256 revisions",
             ));
         }
@@ -100,7 +128,15 @@ impl MemoryService {
             .await
             .map_err(db)?;
         let views = self
-            .memories_by_revision_in_tx(&mut tx, subject, revisions)
+            .memories_by_revision_in_tx(
+                &mut tx,
+                subject,
+                revisions,
+                self.cognition.now(subject),
+                super::super::resolve_accessibility_policy(
+                    &self.configuration.snapshot_for_subject(subject)?,
+                )?,
+            )
             .await?;
         tx.commit().await.map_err(db)?;
         Ok(views)
@@ -111,11 +147,13 @@ impl MemoryService {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         revisions: &[MemoryRevisionId],
+        now: DateTime<Utc>,
+        read_policy: AccessibilityPolicy,
     ) -> Result<Vec<MemoryView>> {
         if revisions.len() > 256 {
             return Err(Error::new(
-                nous_core::ErrorOwner::Memory,
-                nous_core::ErrorCode::InvalidRequest,
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
                 "Memory batch exceeds 256 revisions",
             ));
         }
@@ -155,7 +193,7 @@ impl MemoryService {
                 epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
                 occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
                 locator,
-                basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")?,
+                basis_role: parse_enum(ErrorOwner::Memory, row.try_get("basis_role").map_err(db)?, "basis role")?,
             }));
         }
         for row in sqlx::query("SELECT memory_revision_id,target_ref_kind,target_ref,basis_role,epistemic_relation FROM memory_revision_dependencies WHERE memory_revision_id=ANY($1) ORDER BY memory_revision_id,target_ref_kind,target_ref")
@@ -164,7 +202,7 @@ impl MemoryService {
             basis.entry(revision).or_default().push(RevisionBasis::CognitionDependency(CognitionDependency {
                 epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
                 target_revision: parse_reference(&row.try_get::<String, _>("target_ref_kind").map_err(db)?, &row.try_get::<String, _>("target_ref").map_err(db)?)?,
-                basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")?,
+                basis_role: parse_enum(ErrorOwner::Memory, row.try_get("basis_role").map_err(db)?, "basis role")?,
             }));
         }
 
@@ -189,7 +227,7 @@ impl MemoryService {
             let relation = MemoryRevisionRelation {
                 from_revision_id: MemoryRevisionId(row.try_get("from_revision_id").map_err(db)?),
                 to_revision_id: MemoryRevisionId(row.try_get("to_revision_id").map_err(db)?),
-                relation: parse_enum(row.try_get("relation").map_err(db)?, "memory relation")?,
+                relation: parse_enum(ErrorOwner::Memory, row.try_get("relation").map_err(db)?, "memory relation")?,
                 created_at: row.try_get("created_at").map_err(db)?,
             };
             if decoded.contains_key(&target) {
@@ -210,7 +248,7 @@ impl MemoryService {
         for row in sqlx::query("SELECT e.memory_revision_id,o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at,o.source_class FROM memory_revision_evidence e JOIN observation_occurrences o USING(occurrence_id) WHERE e.memory_revision_id=ANY($1) ORDER BY e.memory_revision_id,o.observed_at,o.occurrence_id")
             .bind(&loaded_ids).fetch_all(&mut **tx).await.map_err(db)? {
             let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;
-            temporal.entry(revision).or_insert_with(|| TemporalEvidence { occurred: Vec::new(), observed_at: None }).occurred.push(temporal_from_columns(
+            temporal.entry(revision).or_insert_with(|| TemporalEvidence { occurred: Vec::new(), observed_at: None }).occurred.push(temporal_from_columns(ErrorOwner::Memory,
                 row.try_get("occurred_time_kind").map_err(db)?,
                 row.try_get("occurred_time_start").map_err(db)?,
                 row.try_get("occurred_time_end").map_err(db)?,
@@ -224,7 +262,8 @@ impl MemoryService {
             .accessibility_levels(
                 subject,
                 &memory_ids.into_iter().map(MemoryId).collect::<Vec<_>>(),
-                self.cognition.now(subject),
+                now,
+                read_policy,
                 tx,
             )
             .await?;
@@ -239,8 +278,8 @@ impl MemoryService {
                     accessibility_level: *accessibility.get(&object.memory_id).ok_or_else(
                         || {
                             Error::new(
-                                nous_core::ErrorOwner::Memory,
-                                nous_core::ErrorCode::InternalFailure,
+                                ErrorOwner::Memory,
+                                ErrorCode::InternalFailure,
                                 "Memory accessibility batch omitted an object",
                             )
                         },
@@ -275,11 +314,10 @@ impl MemoryService {
         subject: SubjectId,
         memories: &[MemoryId],
         now: DateTime<Utc>,
+        read_policy: AccessibilityPolicy,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<HashMap<MemoryId, AccessibilityLevel>> {
-        let policy = super::super::resolve_accessibility_policy(
-            &self.configuration.snapshot_for_subject(subject)?,
-        )?;
+        let policy = read_policy;
         let ids = memories.iter().map(|id| id.0).collect::<Vec<_>>();
         let rows = sqlx::query("SELECT o.memory_id,o.accessibility_mode,o.created_at,e.use_kind,e.occurred_at FROM memory_objects o LEFT JOIN memory_revisions r ON r.memory_id=o.memory_id LEFT JOIN cognitive_use_events e ON e.subject_id=o.subject_id AND e.ref_kind='memory_revision' AND e.ref_value=r.memory_revision_id::text AND e.use_kind<>'presented' WHERE o.subject_id=$1 AND o.memory_id=ANY($2) ORDER BY o.memory_id,e.occurred_at")
             .bind(subject.0).bind(ids).fetch_all(&mut **tx).await.map_err(db)?;
@@ -288,6 +326,7 @@ impl MemoryService {
         for row in rows {
             let memory = MemoryId(row.try_get("memory_id").map_err(db)?);
             let mode = parse_enum(
+                ErrorOwner::Memory,
                 row.try_get("accessibility_mode").map_err(db)?,
                 "accessibility mode",
             )?;
@@ -334,9 +373,9 @@ fn evidence_locator(row: &sqlx::postgres::PgRow) -> Result<EvidenceLocator> {
         (None, None, Some(id)) => Ok(EvidenceLocator::DerivedRegion(DerivedRegionId(id))),
         (None, None, None) => Ok(EvidenceLocator::WholeOccurrence),
         _ => Err(Error::new(
-            nous_core::ErrorOwner::Memory,
-            nous_core::ErrorCode::InternalFailure,
-            "evidence locator union is invalid",
+            ErrorOwner::Memory,
+            ErrorCode::InternalFailure,
+            "Evidence locator union is invalid",
         )),
     }
 }

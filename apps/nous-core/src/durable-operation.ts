@@ -33,15 +33,15 @@ export type MutationExecutor = <T>(
   operationId: string,
   commit: () => Promise<T>,
 ) => Promise<T>;
-export type ExecutionTelemetryInput = MessageInitShape<
+type ExecutionTelemetryInput = MessageInitShape<
   typeof ExecutionTelemetrySchema
 >;
 export type DurableIdentity = Pick<
   FindWorkflowRequest,
   "subjectId" | "owner" | "operationKey" | "semanticDigest"
 >;
-export type OperationSnapshot = MessageInitShape<typeof WorkflowSnapshotSchema>;
-export type SnapshotDecision<T = never> =
+type OperationSnapshot = MessageInitShape<typeof WorkflowSnapshotSchema>;
+type SnapshotDecision<T = never> =
   { snapshot: OperationSnapshot } | ([T] extends [never] ? never : { skip: T });
 
 export type OpenDurableOperation<T = never> =
@@ -78,7 +78,7 @@ type WorkflowCheckpoint = {
   mutationOperations?: string[];
 };
 
-export interface DurableOperation {
+interface DurableOperation {
   checkpoint(update: WorkflowCheckpoint): Promise<void>;
   mutate<T>(operationId: string, commit: () => Promise<T>): Promise<T>;
   run<T>(work: () => Promise<T>): Promise<T>;

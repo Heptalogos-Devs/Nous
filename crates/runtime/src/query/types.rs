@@ -12,8 +12,10 @@ use uuid::Uuid;
 /// the enabled lane set or its budgets while it is running.
 #[derive(Debug, Clone)]
 pub struct BoundQuery {
+    /// The owner-authoritative view shared by this query's candidates and any
+    /// later owner validation. Query-only scope and planning remain below.
+    pub read_context: ReadContext,
     pub context_snapshot: std::sync::Arc<super::QueryContextSnapshot>,
-    pub historical_authority: Option<std::sync::Arc<HistoricalAuthoritySnapshot>>,
     pub activation: super::QueryActivation,
     pub activation_view: Option<std::sync::Arc<dyn QueryActivationView>>,
     pub concept_enrichment: super::ConceptEnrichment,
@@ -29,12 +31,44 @@ pub struct BoundQuery {
     pub topology_seed_refs: Vec<(CognitiveRef, String)>,
     pub enabled_lanes: Vec<EvidenceFamily>,
     pub lane_budgets: BTreeMap<EvidenceFamily, usize>,
-    pub accessibility_policy: AccessibilityQueryPolicy,
     pub selected_embedding_space: Option<EmbeddingSpaceSignature>,
     pub topology_required: bool,
     pub fusion_version: String,
     pub config_snapshot: nous_configuration::ConfigSnapshot,
     pub retrieval_policy: super::RetrievalPolicy,
+}
+
+/// Minimum subject-scoped read facts shared by query, exact, history, and
+/// consumer projection paths. This is deliberately not a query DTO.
+#[derive(Debug, Clone)]
+pub struct ReadContext {
+    pub subject: SubjectId,
+    pub view: AuthorityReadView,
+    pub temporal: TemporalFrame,
+    pub accessibility: AccessibilityQueryPolicy,
+    /// Immutable config view captured at query binding. Owner projections
+    /// resolve their canonical read policies against this same snapshot.
+    pub config_snapshot: std::sync::Arc<nous_configuration::ConfigSnapshot>,
+    pub purge_epoch: i64,
+}
+
+impl ReadContext {
+    pub fn historical_view(&self) -> Option<&HistoricalAuthoritySnapshot> {
+        match &self.view {
+            AuthorityReadView::Current { .. } => None,
+            AuthorityReadView::Historical(snapshot) => Some(snapshot.as_ref()),
+        }
+    }
+
+    pub fn is_historical(&self) -> bool {
+        matches!(self.view, AuthorityReadView::Historical(_))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum AuthorityReadView {
+    Current { bound_authority_seq: i64 },
+    Historical(std::sync::Arc<HistoricalAuthoritySnapshot>),
 }
 
 #[derive(Debug, Clone)]

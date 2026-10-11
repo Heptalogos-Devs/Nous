@@ -24,7 +24,202 @@ pub struct EmbeddingPage {
     pub next_cursor: Option<EmbeddingCursor>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct LegacyEmbeddingUpgradeReport {
+    pub legacy_rows_examined: u64,
+    pub references_examined: u64,
+    pub recovered_rows: u64,
+    pub backed_up_rows: u64,
+}
+
 impl ServingService {
+    /// Reconstruct exact source ownership for pre-binding vectors without
+    /// invoking an embedding provider. Rows with no readable current or
+    /// historical source are preserved in the isolated legacy backup table
+    /// and removed from the active cache.
+    pub async fn migrate_legacy_embedding_uses(&self) -> Result<LegacyEmbeddingUpgradeReport> {
+        let mut report = LegacyEmbeddingUpgradeReport::default();
+        let mut after_subject = None;
+        loop {
+            let subjects = self
+                .store
+                .legacy_embedding_subject_page(after_subject, 256)
+                .await?;
+            let Some(last_subject) = subjects.last().copied() else {
+                break;
+            };
+            for subject in &subjects {
+                let pending = self
+                    .store
+                    .unbound_embedding_material_count(*subject)
+                    .await?;
+                if pending == 0 {
+                    continue;
+                }
+                report.legacy_rows_examined += pending as u64;
+                let mut tx = self.store.begin().await?;
+                let status: String = sqlx::query_scalar(
+                    "SELECT status FROM subjects WHERE subject_id=$1 FOR UPDATE",
+                )
+                .bind(subject.0)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Subject,
+                        nous_core::ErrorCode::NotFound,
+                        "subject not found",
+                    )
+                })?;
+                // The lock makes the complete source scan, ownership binding
+                // and unknown-row backup atomic per Subject. All page buffers
+                // remain bounded; interruption cannot leave a partial set of
+                // bindings that prevents a later retry from finding the Subject.
+                let active = status == "active";
+                if active {
+                    let memory_enabled = self.projection_capabilities(*subject).await?.memory;
+                    let mut after_instant = None;
+                    loop {
+                        let page = self
+                            .store
+                            .embedding_document_change_page(*subject, after_instant, 256)
+                            .await?;
+                        let Some(last_instant) = page.instants.last().copied() else {
+                            break;
+                        };
+                        for instant in &page.instants {
+                            let view = self
+                                .legacy_historical_view(*subject, *instant, memory_enabled)
+                                .await?;
+                            report.references_examined +=
+                                self.bind_legacy_document_pages(
+                                    *subject,
+                                    memory_enabled,
+                                    Some(&view),
+                                    &mut tx,
+                                )
+                                .await? as u64;
+                        }
+                        after_instant = Some(last_instant);
+                    }
+
+                    // The current projection can differ from an as-of view if
+                    // persisted event timestamps are in the future.
+                    report.references_examined += self
+                        .bind_legacy_document_pages(*subject, memory_enabled, None, &mut tx)
+                        .await? as u64;
+                }
+
+                let backed_up =
+                    AuthorityStore::back_up_unbound_embedding_materials_in(&mut tx, *subject)
+                        .await?;
+                report.backed_up_rows += backed_up as u64;
+                report.recovered_rows += (pending - backed_up).max(0) as u64;
+                tx.commit().await.map_err(db)?;
+            }
+            after_subject = Some(last_subject);
+        }
+        Ok(report)
+    }
+
+    async fn legacy_historical_view(
+        &self,
+        subject: SubjectId,
+        at: chrono::DateTime<chrono::Utc>,
+        memory_enabled: bool,
+    ) -> Result<HistoricalAuthoritySnapshot> {
+        let mut view = if memory_enabled {
+            if let Some(memory) = &self.memory {
+                memory
+                    .project_as_of(subject, at, RevisionView::History)
+                    .await?
+            } else {
+                HistoricalAuthoritySnapshot::empty(subject, at, RevisionView::History)
+            }
+        } else {
+            HistoricalAuthoritySnapshot::empty(subject, at, RevisionView::History)
+        };
+        let material = self.material.project_as_of(subject, at).await?;
+        view.material_visibility = material.known_references;
+        view.material_documents = material.document_references;
+        view.entity_bindings = material.entity_bindings;
+        view.lexical_visibility.extend(material.lexical_visibility);
+        view.lexical_visibility
+            .sort_by(|left, right| left.lexical_ref.cmp(&right.lexical_ref));
+        view.lexical_visibility
+            .dedup_by(|left, right| left.lexical_ref == right.lexical_ref);
+        view.refresh_digest()?;
+        Ok(view)
+    }
+
+    async fn bind_legacy_document_pages(
+        &self,
+        subject: SubjectId,
+        memory_enabled: bool,
+        view: Option<&HistoricalAuthoritySnapshot>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<usize> {
+        let mut after = None;
+        let mut examined = 0;
+        loop {
+            let mut references = self
+                .store
+                .text_projection_reference_page(subject, memory_enabled, after.as_ref(), 257, view)
+                .await?;
+            let has_more = references.len() > 256;
+            references.truncate(256);
+            if references.is_empty() {
+                break;
+            }
+            let documents = self.documents_lookup(subject, &references, view).await?;
+            examined += documents.len();
+            if !documents.is_empty() {
+                let requested = documents
+                    .iter()
+                    .map(|document| {
+                        let (kind, value) = reference_parts(&document.reference);
+                        serde_json::json!({
+                            "digest": nous_material::text_content_identity(&document.representation_text),
+                            "ref_kind": kind,
+                            "ref_value": value,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let source_references = documents
+                    .iter()
+                    .map(|document| document.reference.clone())
+                    .collect::<Vec<_>>();
+                AuthorityStore::validate_not_purging_refs_in(tx, subject, &source_references)
+                    .await?;
+                sqlx::query(
+                    r#"
+WITH requested AS (
+    SELECT r.digest,r.ref_kind,r.ref_value
+    FROM jsonb_array_elements($2) AS item(value)
+    CROSS JOIN LATERAL jsonb_to_record(item.value) AS r(digest text,ref_kind text,ref_value text)
+)
+INSERT INTO embedding_material_uses(subject_id,content_digest,space_hash,producer_hash,ref_kind,ref_value)
+SELECT m.subject_id,m.content_digest,m.space_hash,m.producer_hash,r.ref_kind,r.ref_value
+FROM requested r
+JOIN embedding_materials m ON m.subject_id=$1 AND m.content_digest=r.digest
+ON CONFLICT DO NOTHING
+"#,
+                )
+                .bind(subject.0)
+                .bind(serde_json::json!(requested))
+                .execute(&mut **tx)
+                .await
+                .map_err(db)?;
+            }
+            if !has_more {
+                break;
+            }
+            after = references.last().cloned();
+        }
+        Ok(examined)
+    }
+
     pub async fn embedding_needs_page(
         &self,
         subject: SubjectId,
@@ -68,8 +263,7 @@ impl ServingService {
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::StaleRevision,
                 "embedding discovery corpus changed",
-            )
-            .into());
+            ));
         }
         let mut references = self
             .store
@@ -99,8 +293,7 @@ impl ServingService {
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::StaleRevision,
                 "embedding discovery corpus changed",
-            )
-            .into());
+            ));
         }
         let mut by_digest = std::collections::BTreeMap::<String, EmbeddingNeed>::new();
         for document in documents {
@@ -121,10 +314,32 @@ impl ServingService {
         }
         let digests: Vec<_> = candidates.iter().map(|need| need.digest.clone()).collect();
         // One anti-join for the entire bounded page; no per-document cache queries.
-        let missing: HashSet<String> = sqlx::query_scalar(r#"
+        let missing: HashSet<String> = sqlx::query_scalar(
+            r#"
 SELECT digest FROM unnest($2::text[]) input(digest)
- WHERE NOT EXISTS(SELECT 1 FROM embedding_materials cached WHERE cached.subject_id=$1 AND cached.content_digest=input.digest AND cached.space_hash=$3 AND cached.producer_hash=ANY($4::text[]))
-"#).bind(subject.0).bind(digests).bind(&space.space_hash).bind(producers.clone()).fetch_all(self.store.pool()).await.map_err(db)?.into_iter().collect();
+ WHERE NOT EXISTS(
+     SELECT 1 FROM embedding_materials cached
+     WHERE cached.subject_id=$1 AND cached.content_digest=input.digest
+       AND cached.space_hash=$3 AND cached.producer_hash=ANY($4::text[])
+       AND EXISTS (
+           SELECT 1 FROM embedding_material_uses existing
+           WHERE existing.subject_id=cached.subject_id
+             AND existing.content_digest=cached.content_digest
+             AND existing.space_hash=cached.space_hash
+             AND existing.producer_hash=cached.producer_hash
+       )
+ )
+"#,
+        )
+        .bind(subject.0)
+        .bind(digests)
+        .bind(&space.space_hash)
+        .bind(producers.clone())
+        .fetch_all(self.store.pool())
+        .await
+        .map_err(db)?
+        .into_iter()
+        .collect();
         let mut tx = self.store.begin().await?;
         let current = sqlx::query(
             "SELECT authority_seq,serving_purge_epoch FROM subjects WHERE subject_id=$1 FOR UPDATE",
@@ -143,8 +358,7 @@ SELECT digest FROM unnest($2::text[]) input(digest)
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::StaleRevision,
                 "embedding source changed during discovery",
-            )
-            .into());
+            ));
         }
         let requested = candidates
             .iter()
@@ -159,6 +373,11 @@ SELECT digest FROM unnest($2::text[]) input(digest)
                 })
             })
             .collect::<Vec<_>>();
+        let source_references = candidates
+            .iter()
+            .flat_map(|need| need.references.iter().cloned())
+            .collect::<Vec<_>>();
+        AuthorityStore::validate_not_purging_refs_in(&mut tx, subject, &source_references).await?;
         sqlx::query(r#"
 WITH requested AS (
     SELECT r.digest,r.ref_kind,r.ref_value
@@ -170,6 +389,13 @@ SELECT $1,m.content_digest,m.space_hash,m.producer_hash,r.ref_kind,r.ref_value
 FROM requested r
 JOIN embedding_materials m ON m.subject_id=$1 AND m.content_digest=r.digest
     AND m.space_hash=$3 AND m.producer_hash=ANY($4::text[])
+WHERE EXISTS (
+    SELECT 1 FROM embedding_material_uses existing
+    WHERE existing.subject_id=m.subject_id
+      AND existing.content_digest=m.content_digest
+      AND existing.space_hash=m.space_hash
+      AND existing.producer_hash=m.producer_hash
+)
 ON CONFLICT DO NOTHING
 "#)
         .bind(subject.0)
@@ -278,8 +504,7 @@ ON CONFLICT DO NOTHING
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::StaleRevision,
                 "embedding source changed",
-            )
-            .into());
+            ));
         }
         let mut tx = self.store.begin().await?;
         // Authority writers advance this row in their transaction. Hold it through cache publication.
@@ -300,9 +525,26 @@ ON CONFLICT DO NOTHING
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::StaleRevision,
                 "Authority or Serving purge epoch changed during embedding validation",
-            )
-            .into());
+            ));
         }
+        let unbound_legacy: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM embedding_materials m WHERE m.subject_id=$1 AND m.content_digest=$2 AND m.space_hash=$3 AND m.producer_hash=$4 AND NOT EXISTS(SELECT 1 FROM embedding_material_uses u WHERE u.subject_id=m.subject_id AND u.content_digest=m.content_digest AND u.space_hash=m.space_hash AND u.producer_hash=m.producer_hash))",
+        )
+        .bind(subject.0)
+        .bind(&digest)
+        .bind(space)
+        .bind(producer)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        if unbound_legacy {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Persistence,
+                nous_core::ErrorCode::FailedPrecondition,
+                "Legacy embedding ownership requires the explicit copied-database upgrade",
+            ));
+        }
+        AuthorityStore::validate_not_purging_refs_in(&mut tx, subject, &references).await?;
         let inserted = sqlx::query("INSERT INTO embedding_materials(subject_id,content_digest,space_hash,producer_hash,vector) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
             .bind(subject.0).bind(&digest).bind(space).bind(producer).bind(vector).execute(&mut *tx).await.map_err(db)?;
         let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();

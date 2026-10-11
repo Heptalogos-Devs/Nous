@@ -38,8 +38,7 @@ pub async fn check_receipt(
                 format!("{kind} operation_id was used with a different request"),
             )
             .with_context("operation_id", operation.0)
-            .with_context("operation_kind", kind)
-            .into());
+            .with_context("operation_kind", kind));
         }
         return Ok(Some(MutationReceipt {
             state: row.try_get("state").map_err(db)?,
@@ -262,6 +261,51 @@ impl<'a> MutationEnvelope<'a> {
     pub async fn checkpoint(mut self) -> Result<()> {
         self.apply_invalidation().await?;
         self.tx.commit().await.map_err(db)
+    }
+
+    /// Persist a typed owner checkpoint in the existing mutation receipt. The
+    /// receipt remains in_progress, so a same-operation retry can resume while
+    /// another operation cannot adopt the owner's purging state.
+    pub async fn checkpoint_with_result(
+        mut self,
+        result_kind: &str,
+        result_ref_kind: &str,
+        result_ref: &str,
+        result_epoch: i64,
+    ) -> Result<()> {
+        self.apply_invalidation().await?;
+        sqlx::query("UPDATE mutation_receipts SET result_kind=$3,result_ref_kind=$4,result_ref=$5,result_epoch=$6 WHERE subject_id=$1 AND operation_id=$2 AND state='in_progress'")
+            .bind(self.subject.0)
+            .bind(self.operation.0)
+            .bind(result_kind)
+            .bind(result_ref_kind)
+            .bind(result_ref)
+            .bind(result_epoch)
+            .execute(&mut *self.tx)
+            .await
+            .map_err(db)?;
+        self.tx.commit().await.map_err(db)
+    }
+
+    /// Verify that this operation owns a previously persisted typed checkpoint.
+    pub async fn checkpoint_matches(
+        &mut self,
+        result_kind: &str,
+        result_ref_kind: &str,
+        result_ref: &str,
+        result_epoch: i64,
+    ) -> Result<bool> {
+        let matches: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2 AND state='in_progress' AND result_kind=$3 AND result_ref_kind=$4 AND result_ref=$5 AND result_epoch=$6)")
+            .bind(self.subject.0)
+            .bind(self.operation.0)
+            .bind(result_kind)
+            .bind(result_ref_kind)
+            .bind(result_ref)
+            .bind(result_epoch)
+            .fetch_one(&mut *self.tx)
+            .await
+            .map_err(db)?;
+        Ok(matches)
     }
 }
 

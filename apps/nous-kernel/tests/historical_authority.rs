@@ -361,15 +361,14 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     )
     .await;
     check_permission_fence(&rt, subject, &baseline).await;
-    owner
-        .purge_memory(
-            subject,
-            memory.object.memory_id,
-            OperationId::new(),
-            revised.object.object_epoch + 1,
-        )
-        .await
-        .unwrap();
+    rt.purge_memory(
+        subject,
+        memory.object.memory_id,
+        OperationId::new(),
+        revised.object.object_epoch + 1,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
         rt.store
             .bind_reference_in_view(subject, &baseline.cognition[0].head, Some(&baseline))
@@ -444,8 +443,8 @@ async fn historical_material_query_runs_without_memory_micro_system() {
     assert!(
         result
             .bound
-            .historical_authority
-            .as_ref()
+            .read_context
+            .historical_view()
             .unwrap()
             .cognition
             .is_empty()

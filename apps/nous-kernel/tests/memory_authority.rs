@@ -201,13 +201,13 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
         .unwrap();
     assert_eq!(runtime.query(exact()).await.unwrap().results.len(), 1);
     let purge_operation = OperationId::new();
-    owner
+    runtime
         .purge_schema(subject, schema_id, purge_operation, 5)
         .await
         .unwrap();
     let duplicate = runtime.cognition.use_feedback(use_input).await.unwrap();
     assert_eq!((duplicate.0, duplicate.1), (0, 1));
-    owner
+    runtime
         .purge_schema(subject, schema_id, purge_operation, 5)
         .await
         .unwrap();

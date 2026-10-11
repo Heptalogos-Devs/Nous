@@ -5,6 +5,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { create, type Message } from "@bufbuild/protobuf";
 import {
+  domainError,
+  ErrorCode,
+  ErrorOwner,
+  ErrorRecovery,
+} from "@nous-wave/client/errors";
+import {
   ContextCursorSchema,
   type ContextCursor as Cursor,
   type Projection,
@@ -21,6 +27,7 @@ type ContextPatch = Omit<
 };
 
 interface Track {
+  subjectId: string;
   cursor: Cursor;
   segments: Segment[];
   profile: string;
@@ -30,7 +37,25 @@ const digest = (value: unknown) =>
 
 export class ContextCompiler {
   private readonly tracks = new Map<string, Track>();
+  private readonly subjectGenerations = new Map<string, number>();
   constructor(private readonly maxTracks: number) {}
+
+  generation(subjectId: string) {
+    return this.subjectGenerations.get(subjectId) ?? 0;
+  }
+
+  invalidateSubject(subjectId: string) {
+    const generation = this.generation(subjectId) + 1;
+    this.subjectGenerations.set(subjectId, generation);
+    for (const [key, track] of this.tracks) {
+      if (track.subjectId === subjectId) this.tracks.delete(key);
+    }
+    return generation;
+  }
+
+  isCurrent(subjectId: string, generation: number) {
+    return this.generation(subjectId) === generation;
+  }
 
   compile(
     key: {
@@ -42,7 +67,19 @@ export class ContextCompiler {
     profile: string,
     projection: Projection,
     known?: Cursor,
+    expectedGeneration = this.generation(key.subjectId),
   ): ContextPatch {
+    if (!this.isCurrent(key.subjectId, expectedGeneration))
+      throw domainError(
+        "Context projection crossed a Subject purge",
+        Code.Aborted,
+        {
+          code: ErrorCode.STALE_CONTEXT,
+          owner: ErrorOwner.RUNTIME,
+          recovery: ErrorRecovery.REFRESH_STATE,
+          context: { subject_id: key.subjectId },
+        },
+      );
     const trackId = digest([
       key.subjectId,
       key.sessionId,
@@ -70,6 +107,7 @@ export class ContextCompiler {
         revision: 1,
       });
       this.save(trackId, {
+        subjectId: key.subjectId,
         cursor,
         segments: structuredClone(projection.segments),
         profile,
@@ -87,6 +125,7 @@ export class ContextCompiler {
       revision: previous.cursor.revision + (delta.length > 0 ? 1 : 0),
     };
     this.save(trackId, {
+      subjectId: key.subjectId,
       cursor,
       segments: structuredClone(projection.segments),
       profile,

@@ -179,7 +179,7 @@ pub(super) fn apply_historical_header(
     view: &mut MemoryView,
     bound: &nous_runtime::BoundQuery,
 ) -> Result<Option<&'static str>> {
-    let Some(snapshot) = bound.historical_authority.as_deref() else {
+    let Some(snapshot) = bound.read_context.historical_view() else {
         return Ok(None);
     };
     let Some(state) = snapshot.cognition_for(&CognitiveRef::MemoryRevision(
@@ -194,7 +194,7 @@ pub(super) fn apply_historical_header(
         Error::new(
             nous_core::ErrorOwner::Memory,
             nous_core::ErrorCode::InternalFailure,
-            "Operation failed",
+            "Could not decode historical memory state",
         )
         .with_source(e)
     })?;

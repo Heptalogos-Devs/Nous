@@ -118,8 +118,7 @@ impl SubjectCoreService {
                     "Subject identity or operation_id was used with a different creation request",
                 )
                 .with_context("subject_id", subject.0)
-                .with_context("operation_id", input.operation_id.0)
-                .into());
+                .with_context("operation_id", input.operation_id.0));
             }
             tx.commit()
                 .await

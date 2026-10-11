@@ -167,6 +167,7 @@ pub struct ServingService {
     pub configuration: nous_configuration::ConfigurationService,
     pub publisher: ServingPublisher,
     pub options: ServingOptions,
+    _root_lock: Arc<std::fs::File>,
     read_gate: Arc<tokio::sync::RwLock<()>>,
     query_readers: Arc<std::sync::Mutex<Vec<std::sync::Weak<query::ServingQuery>>>>,
     embedding: Arc<std::sync::OnceLock<Arc<dyn TextEmbeddingProvider>>>,
@@ -205,6 +206,25 @@ impl ServingService {
         configuration: nous_configuration::ConfigurationService,
     ) -> Result<Self> {
         std::fs::create_dir_all(&options.root).map_err(assets::files::io)?;
+        let lock_path = options.root.join(".nous-serving.lock");
+        let root_lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .map_err(assets::files::io)?;
+        if let Err(error) = root_lock.try_lock() {
+            return Err(match error {
+                std::fs::TryLockError::WouldBlock => Error::new(
+                    ErrorOwner::Instance,
+                    ErrorCode::InstanceAlreadyRunning,
+                    "An instance is already running",
+                )
+                .with_context("reason", "instance_already_running"),
+                std::fs::TryLockError::Error(error) => assets::files::io(error),
+            });
+        }
         Ok(Self {
             store: material.store.clone(),
             objects: material.objects.clone(),
@@ -212,6 +232,7 @@ impl ServingService {
             memory,
             configuration,
             options,
+            _root_lock: Arc::new(root_lock),
             embedding: {
                 let slot = std::sync::OnceLock::new();
                 if let Some(provider) = embedding {

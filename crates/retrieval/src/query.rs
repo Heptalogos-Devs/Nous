@@ -211,7 +211,7 @@ async fn prepare_signals(
                 .embed(TextEmbeddingRequest {
                     subject: query.subject,
                     text: embedding_text.to_owned(),
-                    query: true,
+                    origin: TextEmbeddingOrigin::Query,
                 })
                 .await
             {
@@ -276,8 +276,8 @@ impl ServingService {
         provider: Option<&dyn TextEmbeddingProvider>,
     ) -> Result<Vec<LaneOutput>> {
         if bound
-            .historical_authority
-            .as_ref()
+            .read_context
+            .historical_view()
             .is_some_and(|view| snapshot.view_digest.as_ref() != Some(&view.snapshot_digest))
         {
             return Err(Error::new(
@@ -397,7 +397,7 @@ impl ServingService {
         bound: &BoundQuery,
         plan: &QueryPlan,
     ) -> Result<(ProjectionStatus, Arc<ServingQuery>)> {
-        if let Some(view) = bound.historical_authority.as_deref() {
+        if let Some(view) = bound.read_context.historical_view() {
             return self.prepare_historical_query(bound, plan, view).await;
         }
         let lease = self.read_gate.clone().read_owned().await;

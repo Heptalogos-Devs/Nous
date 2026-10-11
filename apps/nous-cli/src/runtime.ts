@@ -13,7 +13,7 @@ import {
   consumerStatePolicySchema,
   consumerStatePaths,
 } from "@nous-wave/client/consumer-policy";
-export const stringFlags = [
+const stringFlags = [
   "run-root",
   "instance-root",
   "text",
@@ -74,14 +74,8 @@ export const stringFlags = [
   "artifact",
   "limit",
 ] as const;
-export const booleanFlags = [
-  "json",
-  "raw",
-  "developer",
-  "advanced",
-  "clear",
-] as const;
-export const listFlags = ["tag", "aboutness", "alias"] as const;
+const booleanFlags = ["json", "raw", "developer", "advanced", "clear"] as const;
+const listFlags = ["tag", "aboutness", "alias"] as const;
 export type CliValues = Partial<Record<(typeof stringFlags)[number], string>> &
   Partial<Record<(typeof booleanFlags)[number], boolean>> &
   Partial<Record<(typeof listFlags)[number], string[]>>;

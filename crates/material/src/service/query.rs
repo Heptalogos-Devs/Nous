@@ -241,7 +241,7 @@ impl nous_runtime::CognitiveContributor for MaterialService {
             "SELECT occurrence_id FROM observation_occurrences WHERE subject_id=",
         );
         sql.push_bind(bound.source_query.subject.0);
-        if let Some(view) = bound.historical_authority.as_deref() {
+        if let Some(view) = bound.read_context.historical_view() {
             let ids: Vec<_> = view
                 .material_documents
                 .iter()
@@ -331,15 +331,15 @@ impl nous_runtime::CognitiveContributor for MaterialService {
             .iter()
             .filter(|reference| {
                 bound
-                    .historical_authority
-                    .as_ref()
+                    .read_context
+                    .historical_view()
                     .is_none_or(|view| view.material_visibility.contains(reference))
             })
             .cloned()
             .collect();
         let references = visible.as_slice();
         let mut times = self
-            .evidence_times_in_view(subject, references, bound.historical_authority.as_deref())
+            .evidence_times_in_view(subject, references, bound.read_context.historical_view())
             .await?;
         let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
         let rows = sqlx::query(r#"

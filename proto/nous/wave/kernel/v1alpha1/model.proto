@@ -7,6 +7,7 @@ import "nous/wave/v1alpha1/types.proto";
 import "nous/wave/v1alpha1/management.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
+import "google/rpc/status.proto";
 import "nous/wave/kernel/v1alpha1/workflow_envelope.proto";
 message EmbeddingConfig {
   string space_hash = 1;
@@ -16,18 +17,31 @@ message EmbeddingConfig {
   repeated string producer_hashes = 5;
 }
 message QueryEmbedding { string text = 1; string space_hash = 2; string producer_hash = 3; repeated float vector = 4; }
-message PrepareQueryRequest { nous.wave.v1alpha1.QueryRequest query = 1; bool reserve_execution = 2; uint32 lease_seconds = 3; }
-message KernelQueryRequest { reserved 1; repeated QueryEmbedding embeddings = 2; optional uint32 validated_candidate_limit = 3; string preparation_token = 4; string subject_id = 5; optional string concept_output = 6; optional string concept_failure = 7; uint32 concept_model_calls = 8; }
-message KernelQueryResponse { nous.wave.v1alpha1.QueryResponse response = 1; optional string validation_ticket = 2; }
+message PrepareQueryRequest { nous.wave.v1alpha1.QueryRequest query = 1; reserved 2, 3; }
+enum QueryHostRequirement { QUERY_HOST_REQUIREMENT_UNSPECIFIED = 0; QUERY_HOST_REQUIREMENT_OPTIONAL = 1; QUERY_HOST_REQUIREMENT_REQUIRED = 2; QUERY_HOST_REQUIREMENT_FORBIDDEN = 3; }
+message QueryHostRole { bool configured = 1; QueryHostRequirement requirement = 2; }
+message QueryHostPlan { QueryHostRole embedding = 1; QueryHostRole concept_enrichment = 2; QueryHostRole rerank = 3; uint32 rerank_candidate_limit = 4; }
+message QueryRunHandle { string query_run_id = 1; uint64 revision = 2; }
+message QueryRunStart { nous.wave.v1alpha1.QueryRequest query = 1; QueryHostPlan host = 2; uint32 lease_seconds = 3; }
+message QueryEmbeddingResult { oneof outcome { QueryEmbedding material = 1; google.rpc.Status failure = 2; } }
+message QueryConceptResult { oneof outcome { nous.wave.v1alpha1.QueryConceptOutput output = 1; google.rpc.Status failure = 2; } uint32 model_calls = 3; }
+message QueryRerankOrder { repeated RerankCandidate candidates = 1; }
+message QueryRerankResult { oneof outcome { QueryRerankOrder order = 1; google.rpc.Status failure = 2; bool not_requested = 3; } }
+message QueryFinalizeResult { QueryRerankResult rerank = 1; repeated ExternalResourceResult resources = 2; }
+message QueryRunResume { string subject_id = 1; QueryRunHandle handle = 2; oneof outcome { QueryEmbeddingResult embedding = 3; QueryConceptResult concept = 4; QueryFinalizeResult finalize = 5; } }
+message QueryRunCancel { string subject_id = 1; QueryRunHandle handle = 2; }
+message QueryRunRequest { oneof command { QueryRunStart start = 1; QueryRunResume resume = 2; QueryRunCancel cancel = 3; } }
+message QueryEmbeddingWork { string representation = 1; EmbeddingConfig config = 2; bool historical_view = 3; QueryHostRequirement effective_requirement = 4; }
+message QueryConceptWork { nous.wave.v1alpha1.QueryRepresentation representation = 1; repeated nous.wave.v1alpha1.QueryConceptCandidate existing_tags = 2; nous.wave.v1alpha1.QueryTemporalFrame temporal_frame = 3; QueryHostRequirement effective_requirement = 4; }
+message QueryFinalizeWork { nous.wave.v1alpha1.QueryResponse baseline = 1; string rerank_query = 2; uint32 rerank_candidate_limit = 3; bool rerank_expected = 4; QueryHostRequirement rerank_requirement = 5; }
+message QueryRunUpdate { QueryRunHandle handle = 1; oneof next { QueryEmbeddingWork embedding = 2; QueryConceptWork concept = 3; QueryFinalizeWork finalize = 4; nous.wave.v1alpha1.QueryResponse complete = 5; } bool cancelled = 6; }
 message RerankCandidate { nous.wave.v1alpha1.CognitiveRef reference = 1; double score = 2; }
 message ExternalResourceResult { string action_id = 1; string resource_ref = 2; string status = 3; repeated nous.wave.v1alpha1.ExternalResourceRecord records = 4; }
-message FinalizeQueryRequest { string subject_id = 1; string validation_ticket = 2; repeated RerankCandidate order = 3; repeated ExternalResourceResult external_results = 4; }
-message ReleaseQueryRequest { string subject_id = 1; string validation_ticket = 2; }
 message EmbeddingCursor { string subject_id = 1; int64 content_revision = 2; string view_digest = 3; nous.wave.v1alpha1.CognitiveRef after = 4; }
-message EmbeddingNeedsRequest { string subject_id = 1; uint32 limit = 2; optional string preparation_token = 3; EmbeddingCursor cursor = 4; }
+message EmbeddingNeedsRequest { string subject_id = 1; uint32 limit = 2; QueryRunHandle query_run = 3; EmbeddingCursor cursor = 4; }
 message EmbeddingNeed { repeated nous.wave.v1alpha1.CognitiveRef references = 1; string text = 2; string digest = 3; }
 message EmbeddingNeedsResponse { EmbeddingConfig config = 1; repeated EmbeddingNeed needs = 2; EmbeddingCursor next_cursor = 3; }
-message CommitEmbeddingRequest { string subject_id = 1; repeated nous.wave.v1alpha1.CognitiveRef binding_references = 2; QueryEmbedding material = 3; optional string preparation_token = 4; }
+message CommitEmbeddingRequest { string subject_id = 1; repeated nous.wave.v1alpha1.CognitiveRef binding_references = 2; QueryEmbedding material = 3; QueryRunHandle query_run = 4; }
 message CommitInterpretationRequest {
   string subject_id = 1;
   repeated nous.wave.v1alpha1.DerivationInput inputs = 2;
@@ -65,4 +79,3 @@ message ResolvedMentionsResponse { repeated ResolvedMention candidates = 1; }
 message FindWorkflowRequest { string subject_id = 1; string owner = 2; string operation_key = 3; string semantic_digest = 4; }
 message FoundWorkflow { bool found = 1; reserved 2 to 5; WorkflowSnapshot snapshot = 6; WorkflowPayload proposal = 7; WorkflowPayload outcome = 8; ExecutionTelemetry execution_telemetry = 9; }
 
-message QueryActivationResponse { string preparation_token = 1; string model_input = 2; }

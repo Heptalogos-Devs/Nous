@@ -193,8 +193,6 @@ async fn assert_child_result_purge_before_host_ack(
         .await
         .unwrap();
     runtime
-        .require_memory()
-        .unwrap()
         .purge_memory(
             subject,
             memory.object.memory_id,

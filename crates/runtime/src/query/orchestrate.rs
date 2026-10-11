@@ -58,10 +58,12 @@ impl CognitiveRuntimeService {
         contributors: CognitiveContributors<'_>,
         plan: QueryPlan,
     ) -> Result<CognitiveQueryResult> {
-        Ok(self
+        let execution = self
             .execute_query_with_plan(bound, contributors, plan, None)
-            .await?
-            .result)
+            .await?;
+        self.record_query_feedback(&execution.bound, &execution.result)
+            .await?;
+        Ok(execution.result)
     }
 
     pub async fn execute_query_with_plan(
@@ -72,7 +74,7 @@ impl CognitiveRuntimeService {
         validated_pool_limit: Option<usize>,
     ) -> Result<super::QueryExecution> {
         let mut bound = bound;
-        if bound.historical_authority.is_none()
+        if !bound.read_context.is_historical()
             && (bound.source_query.temporal_frame.authority_view != AuthorityView::Current
                 || bound.source_query.temporal_frame.revision_view != RevisionView::Current)
         {
@@ -84,7 +86,7 @@ impl CognitiveRuntimeService {
         }
         if let Some(shared) = contributors
             .shared
-            .filter(|_| !bound.source_query.is_exact_read())
+            .filter(|_| !bound.source_query.is_exact_read() && bound.activation_view.is_none())
         {
             bound.activation = shared.activate(&bound).await?;
         }
@@ -130,10 +132,6 @@ impl CognitiveRuntimeService {
             self.query_leaf_execution(bound, &contributors, plan, output_limit)
                 .await?
         };
-        if validated_pool_limit.is_none() && execution.result.resource_actions.is_empty() {
-            self.record_query_feedback(&execution.bound, &execution.result)
-                .await?;
-        }
         Ok(execution)
     }
     async fn query_leaf_execution(
@@ -329,7 +327,7 @@ impl CognitiveRuntimeService {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Runtime,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Query candidate is owned by multiple semantic owners",
                 ));
             }
             if let Some(index) = matching.first() {
@@ -427,7 +425,7 @@ impl CognitiveRuntimeService {
                             Error::new(
                                 nous_core::ErrorOwner::Runtime,
                                 nous_core::ErrorCode::InternalFailure,
-                                "Operation failed",
+                                "Failed to serialize query hit readout",
                             )
                             .with_source(error)
                         })?,

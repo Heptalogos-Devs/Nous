@@ -65,7 +65,7 @@ impl AuthorityStore {
                     return Err(Error::new(
                         nous_core::ErrorOwner::Memory,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Historical cognition uses an unsupported owner kind",
                     ));
                 }
             };

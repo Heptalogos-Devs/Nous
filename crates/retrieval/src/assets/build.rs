@@ -170,7 +170,7 @@ impl ServingService {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Lexical Serving build task failed",
             )
             .with_source(e)
         })??;
@@ -233,7 +233,7 @@ impl ServingService {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "VCP topology Serving build task failed",
                 )
                 .with_source(e)
             })??;
@@ -287,7 +287,7 @@ impl ServingService {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Wave topology Serving build task failed",
             )
             .with_source(e)
         })??;
@@ -326,7 +326,7 @@ impl ServingService {
                 .embed(TextEmbeddingRequest {
                     subject,
                     text: document.representation_text.clone(),
-                    query: false,
+                    origin: crate::TextEmbeddingOrigin::Document(document.reference.clone()),
                 })
                 .await?
         };
@@ -478,7 +478,7 @@ impl ServingService {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Dense Serving build task failed",
             )
             .with_source(e)
         })??;

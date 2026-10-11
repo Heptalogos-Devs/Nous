@@ -1,10 +1,10 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{BoundQuery, CognitiveContributors, QueryExecution};
+use super::{BoundQuery, CognitiveContributors, QueryExecution, QueryPlan};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -17,9 +17,9 @@ impl QueryLease {
     pub fn new(duration: Duration) -> Result<Self> {
         if duration < Duration::from_millis(1) || duration > Duration::from_secs(3600) {
             return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                ErrorOwner::Runtime,
+                ErrorCode::InvalidRequest,
+                "Invalid query lease duration",
             ));
         }
         Ok(Self {
@@ -31,9 +31,9 @@ impl QueryLease {
             Ok(())
         } else {
             Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::Unavailable,
-                "Service unavailable",
+                ErrorOwner::Runtime,
+                ErrorCode::Unavailable,
+                "Query execution opportunity expired",
             ))
         }
     }
@@ -41,283 +41,366 @@ impl QueryLease {
         Instant::now() < self.deadline
     }
 }
-#[derive(Debug, Clone)]
-pub struct QueryReservation {
-    pub bound: BoundQuery,
-    lease: QueryLease,
+
+#[derive(Debug, Clone, Copy)]
+pub struct QueryHostRole {
+    pub configured: bool,
+    pub requirement: RequirementStrength,
 }
-impl QueryReservation {
-    pub fn new(bound: BoundQuery, lease: QueryLease) -> Result<Self> {
-        lease.require_live()?;
-        Ok(Self { bound, lease })
-    }
-    pub fn into_parts(self) -> (BoundQuery, QueryLease) {
-        (self.bound, self.lease)
+#[derive(Debug, Clone, Copy)]
+pub struct QueryHostPlan {
+    pub embedding: QueryHostRole,
+    pub concept_enrichment: QueryHostRole,
+    pub rerank: QueryHostRole,
+    pub rerank_candidate_limit: usize,
+}
+#[derive(Debug, Clone, Copy)]
+pub struct EffectiveQueryHostRole {
+    pub configured: bool,
+    pub requirement: RequirementStrength,
+}
+#[derive(Debug, Clone, Copy)]
+pub struct QueryRunHostPolicy {
+    pub embedding: EffectiveQueryHostRole,
+    pub concept_enrichment: EffectiveQueryHostRole,
+    pub rerank: EffectiveQueryHostRole,
+    pub rerank_candidate_limit: usize,
+}
+impl QueryRunHostPolicy {
+    pub fn for_query(query: &CognitiveQuery, host: QueryHostPlan) -> Result<Self> {
+        fn effective(
+            requested: RequirementStrength,
+            role: QueryHostRole,
+        ) -> EffectiveQueryHostRole {
+            let requirement = if requested == RequirementStrength::Forbidden
+                || role.requirement == RequirementStrength::Forbidden
+            {
+                RequirementStrength::Forbidden
+            } else if requested == RequirementStrength::Required {
+                RequirementStrength::Required
+            } else if role.requirement == RequirementStrength::Required {
+                RequirementStrength::Required
+            } else {
+                RequirementStrength::Optional
+            };
+            EffectiveQueryHostRole {
+                configured: role.configured,
+                requirement,
+            }
+        }
+        let rerank_candidate_limit = if host.rerank_candidate_limit == 0 {
+            64
+        } else {
+            host.rerank_candidate_limit
+        };
+        if !(2..=64).contains(&rerank_candidate_limit) {
+            return Err(Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::InvalidRequest,
+                "Invalid query rerank candidate limit",
+            ));
+        }
+        Ok(Self {
+            embedding: effective(query.capabilities.text_embedding, host.embedding),
+            concept_enrichment: effective(
+                query.capabilities.query_concept_enrichment,
+                host.concept_enrichment,
+            ),
+            rerank: effective(
+                if query.is_exact_read() {
+                    RequirementStrength::Forbidden
+                } else {
+                    query.capabilities.rerank
+                },
+                host.rerank,
+            ),
+            rerank_candidate_limit,
+        })
     }
 }
 
-pub(crate) enum PendingQuery {
-    Prepared(Box<QueryReservation>),
-    Executed {
-        execution: Box<QueryExecution>,
-        lease: QueryLease,
-    },
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryRunStage {
+    AwaitEmbedding,
+    AwaitConcept,
+    AwaitFinalize,
 }
-impl PendingQuery {
-    fn bound(&self) -> &BoundQuery {
-        match self {
-            Self::Prepared(reservation) => &reservation.bound,
-            Self::Executed { execution, .. } => &execution.bound,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueryRunHandle {
+    pub query_run_id: Uuid,
+    pub revision: u64,
+}
+
+/// One request-scoped continuation, retained only while Core must perform a
+/// real model or resource action. A revision is consumed exactly once.
+pub struct QueryRun {
+    id: Uuid,
+    subject: SubjectId,
+    revision: u64,
+    stage: QueryRunStage,
+    lease: QueryLease,
+    bound: BoundQuery,
+    plan: QueryPlan,
+    execution: Option<QueryExecution>,
+    pub host_policy: QueryRunHostPolicy,
+}
+impl QueryRun {
+    pub fn new(
+        bound: BoundQuery,
+        lease: QueryLease,
+        host_policy: QueryRunHostPolicy,
+        stage: QueryRunStage,
+        plan: QueryPlan,
+    ) -> Result<Self> {
+        lease.require_live()?;
+        let id = bound.query_id;
+        let subject = bound.read_context.subject;
+        Ok(Self {
+            id,
+            subject,
+            revision: 0,
+            stage,
+            lease,
+            bound,
+            plan,
+            execution: None,
+            host_policy,
+        })
+    }
+    pub fn handle(&self) -> QueryRunHandle {
+        QueryRunHandle {
+            query_run_id: self.id,
+            revision: self.revision,
         }
     }
-    fn lease(&self) -> QueryLease {
-        match self {
-            Self::Prepared(reservation) => reservation.lease,
-            Self::Executed { lease, .. } => *lease,
-        }
+    pub fn stage(&self) -> QueryRunStage {
+        self.stage
     }
+    pub fn subject(&self) -> SubjectId {
+        self.subject
+    }
+    pub fn lease(&self) -> QueryLease {
+        self.lease
+    }
+    pub fn plan(&self) -> &QueryPlan {
+        &self.plan
+    }
+    pub fn bound(&self) -> &BoundQuery {
+        self.execution
+            .as_ref()
+            .map_or(&self.bound, |execution| &execution.bound)
+    }
+    pub fn bound_mut(&mut self) -> &mut BoundQuery {
+        &mut self.bound
+    }
+    pub fn set_stage(&mut self, stage: QueryRunStage) {
+        self.stage = stage;
+    }
+    pub fn set_execution(&mut self, execution: QueryExecution) {
+        self.bound = execution.bound.clone();
+        self.execution = Some(execution);
+    }
+    pub fn execution(&self) -> Option<&QueryExecution> {
+        self.execution.as_ref()
+    }
+    pub fn execution_mut(&mut self) -> Option<&mut QueryExecution> {
+        self.execution.as_mut()
+    }
+    pub fn take_execution(&mut self) -> Result<QueryExecution> {
+        self.execution.take().ok_or_else(|| {
+            Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::FailedPrecondition,
+                "Query result is unavailable",
+            )
+        })
+    }
+}
+
+fn unavailable_run(reason: &'static str) -> Error {
+    Error::new(
+        ErrorOwner::Runtime,
+        ErrorCode::StaleContext,
+        "Query continuation is unavailable",
+    )
+    .with_context("reason", reason)
 }
 
 impl CognitiveRuntimeService {
+    pub async fn ensure_read_context_current(&self, context: &super::ReadContext) -> Result<()> {
+        let current_epoch = self.store.serving_purge_epoch(context.subject).await?;
+        if current_epoch != context.purge_epoch {
+            return Err(Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::StaleContext,
+                "Run context is stale",
+            )
+            .with_context("reason", "purge_epoch_changed"));
+        }
+        Ok(())
+    }
+
     pub fn expire_query_leases(&self) -> Result<()> {
-        let mut pending = self.pending_queries.lock().map_err(|_| {
+        let mut runs = self.query_runs.lock().map_err(|_| {
             Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InternalFailure,
-                "query lease lock unavailable",
+                ErrorOwner::Runtime,
+                ErrorCode::InternalFailure,
+                "Query continuation state is unavailable",
             )
         })?;
-        pending.retain(|_, value| value.lease().live());
+        runs.retain(|_, run| run.lease.live());
         Ok(())
     }
 
-    pub fn retain_prepared_query(&self, reservation: QueryReservation) -> Result<Uuid> {
-        reservation.lease.require_live()?;
-        let bound = &reservation.bound;
-        let mut pending = self.pending_queries.lock().map_err(|_| {
+    pub fn retain_query_run(&self, mut run: QueryRun) -> Result<QueryRunHandle> {
+        run.lease.require_live()?;
+        let mut runs = self.query_runs.lock().map_err(|_| {
             Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InternalFailure,
-                "query lease lock unavailable",
+                ErrorOwner::Runtime,
+                ErrorCode::InternalFailure,
+                "Query continuation state is unavailable",
             )
         })?;
-        pending.retain(|_, value| value.lease().live());
-        if pending.len() >= bound.config_snapshot.get(crate::QUERY_SLOTS)? {
+        runs.retain(|_, value| value.lease.live());
+        if runs.contains_key(&run.id) {
             return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::Unavailable,
-                "prepared query slots are busy",
+                ErrorOwner::Runtime,
+                ErrorCode::Conflict,
+                "Query continuation identity is unavailable",
             ));
         }
-        let token = Uuid::new_v4();
-        pending.insert(token, PendingQuery::Prepared(Box::new(reservation)));
-        Ok(token)
-    }
-    pub fn prepared_query(&self, subject: SubjectId, token: Uuid) -> Result<BoundQuery> {
-        let pending = self.pending_queries.lock().map_err(|_| {
-            Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InternalFailure,
-                "query lease lock unavailable",
-            )
-        })?;
-        let entry = pending.get(&token).ok_or_else(|| {
-            Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::NotFound,
-                "prepared query expired or consumed",
-            )
-        })?;
-        if entry.bound().source_query.subject != subject {
+        if let Some(execution) = run.execution() {
+            let bytes = execution
+                .result
+                .results
+                .iter()
+                .map(|hit| hit.representation.as_ref().map_or(0, String::len))
+                .sum::<usize>();
+            if execution.result.results.len() > 64 || bytes > 2 * 1024 * 1024 {
+                return Err(Error::new(
+                    ErrorOwner::Runtime,
+                    ErrorCode::CapacityExhausted,
+                    "Query continuation exceeds its bounded result capacity",
+                )
+                .with_context("reason", "query_capacity"));
+            }
+        }
+        if runs.len() >= run.bound().config_snapshot.get(crate::QUERY_SLOTS)? {
             return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
-            ));
+                ErrorOwner::Runtime,
+                ErrorCode::CapacityExhausted,
+                "Query capacity is exhausted",
+            )
+            .with_context("reason", "query_capacity"));
         }
-        entry.lease().require_live()?;
-        match entry {
-            PendingQuery::Prepared(reservation) => Ok(reservation.bound.clone()),
-            PendingQuery::Executed { .. } => Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
-            )),
-        }
-    }
-    pub fn take_prepared_query(&self, subject: SubjectId, token: Uuid) -> Result<QueryReservation> {
-        let mut pending = self.pending_queries.lock().map_err(|_| {
+        run.revision = run.revision.checked_add(1).ok_or_else(|| {
             Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InternalFailure,
-                "query lease lock unavailable",
+                ErrorOwner::Runtime,
+                ErrorCode::InternalFailure,
+                "Query continuation revision overflow",
             )
         })?;
-        let entry = pending.get(&token).ok_or_else(|| {
-            Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::NotFound,
-                "prepared query expired or consumed",
-            )
-        })?;
-        if entry.bound().source_query.subject != subject {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
-            ));
-        }
-        if !matches!(entry, PendingQuery::Prepared(_)) {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
-            ));
-        }
-        let value = pending.remove(&token).ok_or_else(|| {
-            Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::NotFound,
-                "prepared query disappeared",
-            )
-        })?;
-        value.lease().require_live()?;
-        match value {
-            PendingQuery::Prepared(reservation) => Ok(*reservation),
-            PendingQuery::Executed { .. } => Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "not a preparation token",
-            )),
-        }
+        let handle = run.handle();
+        runs.insert(run.id, run);
+        Ok(handle)
     }
 
-    pub fn retain_query(
-        &self,
-        execution: QueryExecution,
-        lease: QueryLease,
-    ) -> Result<(CognitiveQueryResult, Option<Uuid>)> {
-        lease.require_live()?;
-        if execution.result.results.len() > 64 {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "rerank pool exceeds 64 candidates",
-            ));
-        }
-        if execution
-            .result
-            .results
-            .iter()
-            .map(|hit| hit.representation.as_ref().map_or(0, String::len))
-            .sum::<usize>()
-            > 2 * 1024 * 1024
-        {
-            return Ok(retention_fallback(
-                execution,
-                "validated pool exceeds the text retention bound",
-            ));
-        }
-        let mut pending = self.pending_queries.lock().map_err(|_| {
+    pub fn take_query_run(&self, subject: SubjectId, handle: QueryRunHandle) -> Result<QueryRun> {
+        let mut runs = self.query_runs.lock().map_err(|_| {
             Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InternalFailure,
-                "query lease lock unavailable",
+                ErrorOwner::Runtime,
+                ErrorCode::InternalFailure,
+                "Query continuation state is unavailable",
             )
         })?;
-        pending.retain(|_, value| value.lease().live());
-        if pending.len() >= execution.bound.config_snapshot.get(crate::QUERY_SLOTS)? {
-            return Ok(retention_fallback(
-                execution,
-                "bounded query lease slots are busy",
-            ));
-        }
-        let ticket = Uuid::new_v4();
-        let result = execution.result.clone();
-        pending.insert(
-            ticket,
-            PendingQuery::Executed {
-                execution: Box::new(execution),
-                lease,
-            },
-        );
-        Ok((result, Some(ticket)))
-    }
-    fn take_query(&self, subject: SubjectId, ticket: Uuid) -> Result<(QueryExecution, QueryLease)> {
-        let mut pending = self.pending_queries.lock().map_err(|_| {
-            Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InternalFailure,
-                "query lease lock unavailable",
-            )
-        })?;
-        let Entry::Occupied(entry) = pending.entry(ticket) else {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::NotFound,
-                "query lease expired or consumed",
-            ));
+        let Some(run) = runs.get(&handle.query_run_id) else {
+            return Err(unavailable_run("query_run_unavailable"));
         };
-        if entry.get().bound().source_query.subject != subject {
+        if run.subject != subject {
             return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                ErrorOwner::Runtime,
+                ErrorCode::InvalidRequest,
+                "QueryRun subject does not match",
             ));
         }
-        if !matches!(entry.get(), PendingQuery::Executed { .. }) {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "query ticket has not executed",
-            ));
+        if run.revision != handle.revision {
+            return Err(unavailable_run("query_run_stale_revision"));
         }
-        let value = entry.remove();
-        value.lease().require_live()?;
-        match value {
-            PendingQuery::Executed { execution, lease } => Ok((*execution, lease)),
-            PendingQuery::Prepared(_) => Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "query ticket has not executed",
-            )),
+        if !run.lease.live() {
+            runs.remove(&handle.query_run_id);
+            return Err(unavailable_run("query_run_unavailable"));
         }
+        runs.remove(&handle.query_run_id)
+            .ok_or_else(|| unavailable_run("query_run_unavailable"))
     }
-    pub fn release_query(&self, subject: SubjectId, ticket: Uuid) -> Result<()> {
-        let mut pending = self.pending_queries.lock().map_err(|_| {
-            Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InternalFailure,
-                "query lease lock unavailable",
-            )
-        })?;
-        if pending
-            .get(&ticket)
-            .is_some_and(|value| value.bound().source_query.subject != subject)
-        {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
-            ));
-        }
-        pending.remove(&ticket);
-        Ok(())
-    }
-    pub async fn finalize_query(
+
+    /// Read-only owner-material access while one Core embedding handoff is
+    /// outstanding. The caller neither consumes nor advances this revision.
+    pub fn query_run_bound(
         &self,
         subject: SubjectId,
-        ticket: Uuid,
+        handle: QueryRunHandle,
+        expected_stage: QueryRunStage,
+    ) -> Result<BoundQuery> {
+        let mut runs = self.query_runs.lock().map_err(|_| {
+            Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::InternalFailure,
+                "Query continuation state is unavailable",
+            )
+        })?;
+        let Some(run) = runs.get(&handle.query_run_id) else {
+            return Err(unavailable_run("query_run_unavailable"));
+        };
+        if run.subject != subject {
+            return Err(Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::InvalidRequest,
+                "QueryRun subject does not match",
+            ));
+        }
+        if run.revision != handle.revision {
+            return Err(unavailable_run("query_run_stale_revision"));
+        }
+        if !run.lease.live() {
+            runs.remove(&handle.query_run_id);
+            return Err(unavailable_run("query_run_unavailable"));
+        }
+        if run.stage != expected_stage {
+            return Err(unavailable_run("query_run_stale_revision"));
+        }
+        Ok(run.bound().clone())
+    }
+
+    pub fn cancel_query_run(&self, subject: SubjectId, handle: QueryRunHandle) -> Result<()> {
+        self.take_query_run(subject, handle).map(drop)
+    }
+
+    pub async fn finish_query_run(
+        &self,
+        mut run: QueryRun,
         order: Vec<(CognitiveRef, f64)>,
         external_results: Vec<ExternalResourceResult>,
         contributors: CognitiveContributors<'_>,
     ) -> Result<CognitiveQueryResult> {
-        let (execution, lease) = self.take_query(subject, ticket)?;
+        if run.stage() != QueryRunStage::AwaitFinalize {
+            return Err(Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::FailedPrecondition,
+                "Query continuation stage is unavailable",
+            ));
+        }
+        let execution = run.take_execution()?;
+        let lease = run.lease();
+        let subject = run.subject();
+        lease.require_live()?;
+        self.ensure_read_context_current(&execution.bound.read_context)
+            .await?;
         if order.len() > 64 || order.iter().any(|(_, score)| !score.is_finite()) {
             return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                ErrorOwner::Runtime,
+                ErrorCode::InvalidRequest,
+                "Rerank mapping is invalid",
             ));
         }
         let pool: HashSet<_> = execution
@@ -332,9 +415,9 @@ impl CognitiveRuntimeService {
             .collect();
         if requested.len() != order.len() || !requested.is_subset(&pool) {
             return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                ErrorOwner::Runtime,
+                ErrorCode::InvalidRequest,
+                "Rerank mapping contains unknown candidates",
             ));
         }
         let leaf_count = execution
@@ -431,10 +514,39 @@ impl CognitiveRuntimeService {
         self.finalize_resources(subject, &mut result, external_results)
             .await?;
         lease.require_live()?;
+        self.ensure_read_context_current(&execution.bound.read_context)
+            .await?;
         self.record_query_feedback(&execution.bound, &result)
+            .await?;
+        lease.require_live()?;
+        self.ensure_read_context_current(&execution.bound.read_context)
             .await?;
         Ok(result)
     }
+
+    /// Complete a run that needed no host model or resource continuation.
+    /// Query candidates were already validated during the frozen execution;
+    /// only the purge fence and feedback remain at the response boundary.
+    pub async fn complete_query_run(&self, mut run: QueryRun) -> Result<CognitiveQueryResult> {
+        let execution = run.take_execution()?;
+        run.lease().require_live()?;
+        self.ensure_read_context_current(&execution.bound.read_context)
+            .await?;
+        let mut result = execution.result;
+        result
+            .results
+            .truncate(execution.bound.source_query.result_need.limit);
+        for (rank, hit) in result.results.iter_mut().enumerate() {
+            hit.match_evidence.final_rank = (rank + 1) as u32;
+        }
+        self.record_query_feedback(&execution.bound, &result)
+            .await?;
+        run.lease().require_live()?;
+        self.ensure_read_context_current(&execution.bound.read_context)
+            .await?;
+        Ok(result)
+    }
+
     async fn generic_still_valid(
         &self,
         subject: SubjectId,
@@ -454,15 +566,18 @@ impl CognitiveRuntimeService {
             {
                 Ok((current, epoch, _))
                     if current == binding.bound_ref && epoch == binding.bound_object_epoch => {}
-                Ok(_)
-                | Err(Error {
-                    code: nous_core::ErrorCode::NotFound,
-                    ..
-                })
-                | Err(Error {
-                    code: nous_core::ErrorCode::InvalidRequest,
-                    ..
-                }) => return Ok(false),
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.code,
+                        ErrorCode::NotFound
+                            | ErrorCode::UnknownReference
+                            | ErrorCode::InvalidRequest
+                            | ErrorCode::ReferenceTypeMismatch
+                    ) =>
+                {
+                    return Ok(false);
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -470,14 +585,17 @@ impl CognitiveRuntimeService {
             Ok(()) => Ok(super::orchestrate::generic_constraints_match(
                 &bound.source_query.expression.constraints,
             )),
-            Err(Error {
-                code: nous_core::ErrorCode::NotFound,
-                ..
-            })
-            | Err(Error {
-                code: nous_core::ErrorCode::InvalidRequest,
-                ..
-            }) => Ok(false),
+            Err(error)
+                if matches!(
+                    error.code,
+                    ErrorCode::NotFound
+                        | ErrorCode::UnknownReference
+                        | ErrorCode::InvalidRequest
+                        | ErrorCode::ReferenceTypeMismatch
+                ) =>
+            {
+                Ok(false)
+            }
             Err(error) => Err(error),
         }
     }
@@ -513,22 +631,4 @@ fn apply_model_order(hits: &mut Vec<CognitiveHit>, mut order: Vec<(CognitiveRef,
     for (rank, hit) in hits.iter_mut().enumerate() {
         hit.match_evidence.final_score = (k + 1.0) / (k + (rank + 1) as f64);
     }
-}
-
-fn retention_fallback(
-    mut execution: QueryExecution,
-    reason: &str,
-) -> (CognitiveQueryResult, Option<Uuid>) {
-    execution
-        .result
-        .results
-        .truncate(execution.bound.source_query.result_need.limit);
-    execution.result.degradation.push(Degradation {
-        code: "query_rerank_pool_unavailable".into(),
-        detail: Some(reason.into()),
-    });
-    if execution.result.status == QueryStatus::Complete {
-        execution.result.status = QueryStatus::Degraded;
-    }
-    (execution.result, None)
 }

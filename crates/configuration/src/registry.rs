@@ -258,7 +258,7 @@ impl ConfigRegistryBuilder {
                 Error::new(
                     nous_core::ErrorOwner::Configuration,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not normalize the validated configuration value",
                 )
                 .with_source(error)
             })
@@ -390,7 +390,7 @@ impl ConfigRegistryBuilder {
             Error::new(
                 nous_core::ErrorOwner::Configuration,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not serialize configuration identities for the semantic digest",
             )
             .with_source(error)
         })?)
@@ -408,7 +408,7 @@ impl ConfigRegistryBuilder {
                 Error::new(
                     nous_core::ErrorOwner::Configuration,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not serialize configuration descriptors for the catalog digest",
                 )
                 .with_source(error)
             })?,

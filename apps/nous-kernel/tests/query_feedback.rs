@@ -147,17 +147,18 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     let event = feedback(subject_a, a.clone(), result.bound.query_id, now);
     assert_eq!(rt.cognition.use_feedback(event.clone()).await.unwrap().0, 1);
     assert_eq!(rt.cognition.use_feedback(event.clone()).await.unwrap().1, 1);
-    let mut reopened = open_runtime(&url, &root).await;
-    reopened.cognition = CognitiveRuntimeService::with_clock(
-        reopened.store.clone(),
-        reopened.cognition.resident_limit,
-        reopened.configuration.clone(),
+    rt.store.close().await;
+    drop(rt);
+    let mut rt = open_runtime(&url, &root).await;
+    rt.cognition = CognitiveRuntimeService::with_clock(
+        rt.store.clone(),
+        rt.cognition.resident_limit,
+        rt.configuration.clone(),
         clock.clone(),
     )
     .unwrap();
     assert_eq!(
-        reopened
-            .cognition
+        rt.cognition
             .use_feedback(feedback(subject_a, a.clone(), result.bound.query_id, now))
             .await
             .unwrap()
@@ -243,25 +244,23 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     .await
     .unwrap();
     assert!(!exists);
-    let (_, ticket) = rt
-        .cognition
-        .retain_query(execution, test_support::query_lease())
-        .unwrap();
-    let final_result = rt
-        .cognition
-        .finalize_query(
-            subject_a,
-            ticket.unwrap(),
-            vec![(a.clone(), 1.0)],
-            vec![],
-            nous_runtime::CognitiveContributors {
-                shared: None,
-                memory: Some(rt.require_memory().unwrap()),
-                material: Some(&rt.material),
-            },
-        )
-        .await
-        .unwrap();
+    let (_, handle) =
+        test_support::retain_query_run(&rt.cognition, execution, test_support::query_lease())
+            .unwrap();
+    let final_result = test_support::finish_query_run(
+        &rt.cognition,
+        subject_a,
+        handle,
+        vec![(a.clone(), 1.0)],
+        vec![],
+        nous_runtime::CognitiveContributors {
+            shared: None,
+            memory: Some(rt.require_memory().unwrap()),
+            material: Some(&rt.material),
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(final_result.results.len(), 1);
     assert_eq!(final_result.results[0].reference, a);
     assert!(matches!(

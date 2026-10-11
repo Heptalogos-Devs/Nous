@@ -69,10 +69,10 @@ impl TextEmbeddingProvider for Probe {
         } else {
             vec![1.0, 0.0]
         };
-        self.calls
-            .lock()
-            .unwrap()
-            .push((request.query, request.text));
+        self.calls.lock().unwrap().push((
+            matches!(request.origin, nous_retrieval::TextEmbeddingOrigin::Query),
+            request.text,
+        ));
         Ok(TextEmbeddingOutput {
             vector,
             space: self.space(),

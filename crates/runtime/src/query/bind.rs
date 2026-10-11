@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::resolve_retrieval_policy;
-use super::types::{AccessibilityQueryPolicy, BoundQuery, ExactBinding, RevisionPolicy};
+use super::types::{
+    AccessibilityQueryPolicy, AuthorityReadView, BoundQuery, ExactBinding, ReadContext,
+    RevisionPolicy,
+};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
 use std::collections::{BTreeMap, HashSet};
@@ -375,7 +378,8 @@ impl CognitiveRuntimeService {
         query: CognitiveQuery,
         config_snapshot: nous_configuration::ConfigSnapshot,
     ) -> Result<BoundQuery> {
-        self.bind_query_with_authority_view(query, config_snapshot, None)
+        let read_stamp = self.store.read_context_stamp(query.subject).await?;
+        self.bind_query_with_authority_view(query, config_snapshot, None, read_stamp)
             .await
     }
     #[expect(
@@ -387,6 +391,7 @@ impl CognitiveRuntimeService {
         mut query: CognitiveQuery,
         config_snapshot: nous_configuration::ConfigSnapshot,
         historical_authority: Option<std::sync::Arc<HistoricalAuthoritySnapshot>>,
+        read_stamp: nous_persistence::AuthorityReadStamp,
     ) -> Result<BoundQuery> {
         self.capture_query_clock(&mut query);
         super::historical_context::validate_view(&query, historical_authority.as_deref())?;
@@ -454,8 +459,25 @@ impl CognitiveRuntimeService {
             ));
         }
         let lane_budgets = budget_values(&query, &enabled_lanes, &retrieval_policy);
-        let bound_at_authority_seq = self.store.authority_seq(query.subject).await?;
+        let bound_at_authority_seq = read_stamp.authority_seq;
         let exact_target_bypasses_auto_level = !exact_bindings.is_empty();
+        let accessibility = AccessibilityQueryPolicy {
+            effort: query.effort,
+            exact_target_bypasses_auto_level,
+        };
+        let read_context = ReadContext {
+            subject: query.subject,
+            view: historical_authority.clone().map_or(
+                AuthorityReadView::Current {
+                    bound_authority_seq: bound_at_authority_seq,
+                },
+                AuthorityReadView::Historical,
+            ),
+            temporal: query.temporal_frame.clone(),
+            accessibility,
+            config_snapshot: std::sync::Arc::new(config_snapshot.clone()),
+            purge_epoch: read_stamp.serving_purge_epoch,
+        };
         representation_sources.extend(
             exact_bindings
                 .iter()
@@ -485,8 +507,8 @@ impl CognitiveRuntimeService {
         );
         activation.degradation.extend(context_degradation);
         Ok(BoundQuery {
+            read_context,
             context_snapshot: std::sync::Arc::new(context_snapshot),
-            historical_authority,
             activation_view: None,
             activation,
             concept_enrichment,
@@ -502,10 +524,6 @@ impl CognitiveRuntimeService {
             topology_seed_refs,
             enabled_lanes: enabled_lanes.clone(),
             lane_budgets,
-            accessibility_policy: AccessibilityQueryPolicy {
-                effort: query.effort,
-                exact_target_bypasses_auto_level,
-            },
             selected_embedding_space: None,
             topology_required: !query.is_exact_read()
                 && explicit_topology(&query)

@@ -98,7 +98,7 @@ pub(super) fn historical_header<'a>(
     bound: &'a nous_runtime::BoundQuery,
     reference: &CognitiveRef,
 ) -> Result<Option<&'a serde_json::Value>> {
-    match bound.historical_authority.as_deref() {
+    match bound.read_context.historical_view() {
         Some(view) => view
             .cognition_for(reference)
             .map(|state| Some(&state.state))

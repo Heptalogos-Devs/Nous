@@ -88,7 +88,7 @@ impl HistoricalAuthoritySnapshot {
             Error::new(
                 crate::ErrorOwner::Core,
                 crate::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not serialize the historical snapshot for its digest",
             )
             .with_source(error)
         })?)

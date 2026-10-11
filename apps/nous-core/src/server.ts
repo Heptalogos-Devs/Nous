@@ -171,11 +171,37 @@ export async function createCore(settings: CoreOptions) {
     getOperationStatus: (r, c) =>
       kernel.system.getOperationStatus(r, options(c)),
   };
+  const memory: ServiceImpl<typeof MemoryService> = {
+    ...forward(MemoryService, kernel.memory),
+    purgeMemory: (request, context) =>
+      composition.purgeMemory(
+        request,
+        executionOptions(kernel.execution.opportunity, options(context)),
+      ),
+    purgeEpisode: (request, context) =>
+      composition.purgeEpisode(
+        request,
+        executionOptions(kernel.execution.opportunity, options(context)),
+      ),
+    purgeJournal: (request, context) =>
+      composition.purgeJournal(
+        request,
+        executionOptions(kernel.execution.opportunity, options(context)),
+      ),
+  };
+  const concepts: ServiceImpl<typeof ConceptService> = {
+    ...forward(ConceptService, kernel.concepts),
+    purgeCognitiveSchema: (request, context) =>
+      composition.purgeCognitiveSchema(
+        request,
+        executionOptions(kernel.execution.opportunity, options(context)),
+      ),
+  };
   await app.register(fastifyConnectPlugin, {
     routes: (router) => {
       router.service(SubjectService, forward(SubjectService, kernel.subjects));
       router.service(CognitionService, cognition);
-      router.service(MemoryService, forward(MemoryService, kernel.memory));
+      router.service(MemoryService, memory);
       router.service(
         MaterialService,
         forward(MaterialService, kernel.material),
@@ -185,7 +211,7 @@ export async function createCore(settings: CoreOptions) {
         forward(IdentityService, kernel.identity),
       );
       router.service(ResourceService, resources);
-      router.service(ConceptService, forward(ConceptService, kernel.concepts));
+      router.service(ConceptService, concepts);
       router.service(SystemService, system);
       router.service(
         ConfigurationService,

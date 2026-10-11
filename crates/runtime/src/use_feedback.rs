@@ -109,8 +109,7 @@ impl CognitiveRuntimeService {
                         nous_core::ErrorCode::OperationIdConflict,
                         "Duplicate event in ReportUse has different content",
                     )
-                    .with_context("event_id", event.event_id.0)
-                    .into());
+                    .with_context("event_id", event.event_id.0));
                 }
                 prepared.push(Prepared {
                     event,
@@ -143,8 +142,7 @@ impl CognitiveRuntimeService {
                     nous_core::ErrorCode::OperationIdConflict,
                     "UseEvent idempotency key has a different request digest",
                 )
-                .with_context("event_id", event.event_id.0)
-                .into());
+                .with_context("event_id", event.event_id.0));
             }
             if stored_digest.is_none() {
                 validate_use_target_in(&mut tx, input.subject, &event.reference).await?;

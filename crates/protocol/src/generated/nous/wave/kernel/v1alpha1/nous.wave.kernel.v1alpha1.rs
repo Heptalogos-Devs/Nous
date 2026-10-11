@@ -529,34 +529,204 @@ pub struct QueryEmbedding {
 pub struct PrepareQueryRequest {
     #[prost(message, optional, tag="1")]
     pub query: ::core::option::Option<super::super::v1alpha1::QueryRequest>,
-    #[prost(bool, tag="2")]
-    pub reserve_execution: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryHostRole {
+    #[prost(bool, tag="1")]
+    pub configured: bool,
+    #[prost(enumeration="QueryHostRequirement", tag="2")]
+    pub requirement: i32,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryHostPlan {
+    #[prost(message, optional, tag="1")]
+    pub embedding: ::core::option::Option<QueryHostRole>,
+    #[prost(message, optional, tag="2")]
+    pub concept_enrichment: ::core::option::Option<QueryHostRole>,
+    #[prost(message, optional, tag="3")]
+    pub rerank: ::core::option::Option<QueryHostRole>,
+    #[prost(uint32, tag="4")]
+    pub rerank_candidate_limit: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryRunHandle {
+    #[prost(string, tag="1")]
+    pub query_run_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag="2")]
+    pub revision: u64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryRunStart {
+    #[prost(message, optional, tag="1")]
+    pub query: ::core::option::Option<super::super::v1alpha1::QueryRequest>,
+    #[prost(message, optional, tag="2")]
+    pub host: ::core::option::Option<QueryHostPlan>,
     #[prost(uint32, tag="3")]
     pub lease_seconds: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct KernelQueryRequest {
-    #[prost(message, repeated, tag="2")]
-    pub embeddings: ::prost::alloc::vec::Vec<QueryEmbedding>,
-    #[prost(uint32, optional, tag="3")]
-    pub validated_candidate_limit: ::core::option::Option<u32>,
-    #[prost(string, tag="4")]
-    pub preparation_token: ::prost::alloc::string::String,
-    #[prost(string, tag="5")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="6")]
-    pub concept_output: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag="7")]
-    pub concept_failure: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(uint32, tag="8")]
-    pub concept_model_calls: u32,
+pub struct QueryEmbeddingResult {
+    #[prost(oneof="query_embedding_result::Outcome", tags="1, 2")]
+    pub outcome: ::core::option::Option<query_embedding_result::Outcome>,
+}
+/// Nested message and enum types in `QueryEmbeddingResult`.
+pub mod query_embedding_result {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Outcome {
+        #[prost(message, tag="1")]
+        Material(super::QueryEmbedding),
+        #[prost(message, tag="2")]
+        Failure(super::super::super::super::super::google::rpc::Status),
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct KernelQueryResponse {
+pub struct QueryConceptResult {
+    #[prost(uint32, tag="3")]
+    pub model_calls: u32,
+    #[prost(oneof="query_concept_result::Outcome", tags="1, 2")]
+    pub outcome: ::core::option::Option<query_concept_result::Outcome>,
+}
+/// Nested message and enum types in `QueryConceptResult`.
+pub mod query_concept_result {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Outcome {
+        #[prost(message, tag="1")]
+        Output(super::super::super::v1alpha1::QueryConceptOutput),
+        #[prost(message, tag="2")]
+        Failure(super::super::super::super::super::google::rpc::Status),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryRerankOrder {
+    #[prost(message, repeated, tag="1")]
+    pub candidates: ::prost::alloc::vec::Vec<RerankCandidate>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryRerankResult {
+    #[prost(oneof="query_rerank_result::Outcome", tags="1, 2, 3")]
+    pub outcome: ::core::option::Option<query_rerank_result::Outcome>,
+}
+/// Nested message and enum types in `QueryRerankResult`.
+pub mod query_rerank_result {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Outcome {
+        #[prost(message, tag="1")]
+        Order(super::QueryRerankOrder),
+        #[prost(message, tag="2")]
+        Failure(super::super::super::super::super::google::rpc::Status),
+        #[prost(bool, tag="3")]
+        NotRequested(bool),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryFinalizeResult {
     #[prost(message, optional, tag="1")]
-    pub response: ::core::option::Option<super::super::v1alpha1::QueryResponse>,
-    #[prost(string, optional, tag="2")]
-    pub validation_ticket: ::core::option::Option<::prost::alloc::string::String>,
+    pub rerank: ::core::option::Option<QueryRerankResult>,
+    #[prost(message, repeated, tag="2")]
+    pub resources: ::prost::alloc::vec::Vec<ExternalResourceResult>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryRunResume {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub handle: ::core::option::Option<QueryRunHandle>,
+    #[prost(oneof="query_run_resume::Outcome", tags="3, 4, 5")]
+    pub outcome: ::core::option::Option<query_run_resume::Outcome>,
+}
+/// Nested message and enum types in `QueryRunResume`.
+pub mod query_run_resume {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Outcome {
+        #[prost(message, tag="3")]
+        Embedding(super::QueryEmbeddingResult),
+        #[prost(message, tag="4")]
+        Concept(super::QueryConceptResult),
+        #[prost(message, tag="5")]
+        Finalize(super::QueryFinalizeResult),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryRunCancel {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub handle: ::core::option::Option<QueryRunHandle>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryRunRequest {
+    #[prost(oneof="query_run_request::Command", tags="1, 2, 3")]
+    pub command: ::core::option::Option<query_run_request::Command>,
+}
+/// Nested message and enum types in `QueryRunRequest`.
+pub mod query_run_request {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Command {
+        #[prost(message, tag="1")]
+        Start(super::QueryRunStart),
+        #[prost(message, tag="2")]
+        Resume(super::QueryRunResume),
+        #[prost(message, tag="3")]
+        Cancel(super::QueryRunCancel),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryEmbeddingWork {
+    #[prost(string, tag="1")]
+    pub representation: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub config: ::core::option::Option<EmbeddingConfig>,
+    #[prost(bool, tag="3")]
+    pub historical_view: bool,
+    #[prost(enumeration="QueryHostRequirement", tag="4")]
+    pub effective_requirement: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryConceptWork {
+    #[prost(message, optional, tag="1")]
+    pub representation: ::core::option::Option<super::super::v1alpha1::QueryRepresentation>,
+    #[prost(message, repeated, tag="2")]
+    pub existing_tags: ::prost::alloc::vec::Vec<super::super::v1alpha1::QueryConceptCandidate>,
+    #[prost(message, optional, tag="3")]
+    pub temporal_frame: ::core::option::Option<super::super::v1alpha1::QueryTemporalFrame>,
+    #[prost(enumeration="QueryHostRequirement", tag="4")]
+    pub effective_requirement: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryFinalizeWork {
+    #[prost(message, optional, tag="1")]
+    pub baseline: ::core::option::Option<super::super::v1alpha1::QueryResponse>,
+    #[prost(string, tag="2")]
+    pub rerank_query: ::prost::alloc::string::String,
+    #[prost(uint32, tag="3")]
+    pub rerank_candidate_limit: u32,
+    #[prost(bool, tag="4")]
+    pub rerank_expected: bool,
+    #[prost(enumeration="QueryHostRequirement", tag="5")]
+    pub rerank_requirement: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryRunUpdate {
+    #[prost(message, optional, tag="1")]
+    pub handle: ::core::option::Option<QueryRunHandle>,
+    #[prost(bool, tag="6")]
+    pub cancelled: bool,
+    #[prost(oneof="query_run_update::Next", tags="2, 3, 4, 5")]
+    pub next: ::core::option::Option<query_run_update::Next>,
+}
+/// Nested message and enum types in `QueryRunUpdate`.
+pub mod query_run_update {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Next {
+        #[prost(message, tag="2")]
+        Embedding(super::QueryEmbeddingWork),
+        #[prost(message, tag="3")]
+        Concept(super::QueryConceptWork),
+        #[prost(message, tag="4")]
+        Finalize(super::QueryFinalizeWork),
+        #[prost(message, tag="5")]
+        Complete(super::super::super::v1alpha1::QueryResponse),
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RerankCandidate {
@@ -576,24 +746,6 @@ pub struct ExternalResourceResult {
     #[prost(message, repeated, tag="4")]
     pub records: ::prost::alloc::vec::Vec<super::super::v1alpha1::ExternalResourceRecord>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct FinalizeQueryRequest {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub validation_ticket: ::prost::alloc::string::String,
-    #[prost(message, repeated, tag="3")]
-    pub order: ::prost::alloc::vec::Vec<RerankCandidate>,
-    #[prost(message, repeated, tag="4")]
-    pub external_results: ::prost::alloc::vec::Vec<ExternalResourceResult>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReleaseQueryRequest {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub validation_ticket: ::prost::alloc::string::String,
-}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EmbeddingCursor {
     #[prost(string, tag="1")]
@@ -611,8 +763,8 @@ pub struct EmbeddingNeedsRequest {
     pub subject_id: ::prost::alloc::string::String,
     #[prost(uint32, tag="2")]
     pub limit: u32,
-    #[prost(string, optional, tag="3")]
-    pub preparation_token: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="3")]
+    pub query_run: ::core::option::Option<QueryRunHandle>,
     #[prost(message, optional, tag="4")]
     pub cursor: ::core::option::Option<EmbeddingCursor>,
 }
@@ -642,8 +794,8 @@ pub struct CommitEmbeddingRequest {
     pub binding_references: ::prost::alloc::vec::Vec<super::super::v1alpha1::CognitiveRef>,
     #[prost(message, optional, tag="3")]
     pub material: ::core::option::Option<QueryEmbedding>,
-    #[prost(string, optional, tag="4")]
-    pub preparation_token: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="4")]
+    pub query_run: ::core::option::Option<QueryRunHandle>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitInterpretationRequest {
@@ -773,12 +925,37 @@ pub struct FoundWorkflow {
     #[prost(message, optional, tag="9")]
     pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct QueryActivationResponse {
-    #[prost(string, tag="1")]
-    pub preparation_token: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub model_input: ::prost::alloc::string::String,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum QueryHostRequirement {
+    Unspecified = 0,
+    Optional = 1,
+    Required = 2,
+    Forbidden = 3,
+}
+impl QueryHostRequirement {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "QUERY_HOST_REQUIREMENT_UNSPECIFIED",
+            Self::Optional => "QUERY_HOST_REQUIREMENT_OPTIONAL",
+            Self::Required => "QUERY_HOST_REQUIREMENT_REQUIRED",
+            Self::Forbidden => "QUERY_HOST_REQUIREMENT_FORBIDDEN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "QUERY_HOST_REQUIREMENT_UNSPECIFIED" => Some(Self::Unspecified),
+            "QUERY_HOST_REQUIREMENT_OPTIONAL" => Some(Self::Optional),
+            "QUERY_HOST_REQUIREMENT_REQUIRED" => Some(Self::Required),
+            "QUERY_HOST_REQUIREMENT_FORBIDDEN" => Some(Self::Forbidden),
+            _ => None,
+        }
+    }
 }
 include!("nous.wave.kernel.v1alpha1.tonic.rs");
 // @@protoc_insertion_point(module)

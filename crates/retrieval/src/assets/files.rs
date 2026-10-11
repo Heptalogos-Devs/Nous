@@ -10,7 +10,7 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
         Error::new(
             nous_core::ErrorOwner::Resource,
             nous_core::ErrorCode::InternalFailure,
-            "Operation failed",
+            "Could not serialize a Serving artifact as JSON",
         )
         .with_source(e)
     })?;
@@ -23,7 +23,7 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
         Error::new(
             nous_core::ErrorOwner::Resource,
             nous_core::ErrorCode::InternalFailure,
-            "Operation failed",
+            "Could not decode Serving artifact JSON",
         )
         .with_source(e)
     })
@@ -43,7 +43,7 @@ fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) -> Res
             return Err(Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Serving artifacts cannot contain symbolic links",
             ));
         }
         if kind.is_dir() {
@@ -56,7 +56,7 @@ fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) -> Res
                     Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not resolve a path within a Serving artifact",
                     )
                     .with_source(e)
                 })?
@@ -74,7 +74,7 @@ pub fn digest(value: &impl Serialize) -> Result<String> {
         Error::new(
             nous_core::ErrorOwner::Resource,
             nous_core::ErrorCode::InternalFailure,
-            "Operation failed",
+            "Could not serialize a Serving artifact while computing its digest",
         )
         .with_source(e)
     })?)
@@ -86,7 +86,7 @@ pub fn io(error: std::io::Error) -> Error {
     Error::new(
         nous_core::ErrorOwner::Resource,
         nous_core::ErrorCode::InternalFailure,
-        "Operation failed",
+        "Could not access a Serving artifact file",
     )
     .with_source(error)
 }

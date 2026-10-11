@@ -53,7 +53,7 @@ impl TextEmbeddingProvider for EmbeddingProbe {
     }
     async fn embed(&self, request: TextEmbeddingRequest) -> Result<TextEmbeddingOutput> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        assert!(request.query);
+        assert_eq!(request.origin, TextEmbeddingOrigin::Query);
         assert_eq!(request.text, "query");
         if self.fail {
             return Err(Error::new(
@@ -340,7 +340,7 @@ async fn concurrent_leaf_requests_share_one_embedding_provider_invocation() {
     let request = TextEmbeddingRequest {
         subject: SubjectId::new(),
         text: "query".into(),
-        query: true,
+        origin: TextEmbeddingOrigin::Query,
     };
     let (a, b) = tokio::join!(shared.embed(request.clone()), shared.embed(request));
     assert_eq!(a.unwrap().vector, b.unwrap().vector);
@@ -357,7 +357,7 @@ async fn host_embedding_recovers_reader_after_preparation_without_material() {
     let request = TextEmbeddingRequest {
         subject: SubjectId::new(),
         text: "query".into(),
-        query: true,
+        origin: TextEmbeddingOrigin::Query,
     };
     assert!(shared.embed(request.clone()).await.is_err());
     let supplied = TextEmbeddingOutput {

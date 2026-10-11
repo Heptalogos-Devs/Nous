@@ -5,7 +5,7 @@ use super::*;
 use nous_core::{EntityRef, OperationId, Result, SessionId, SubjectId, TagId};
 use nous_runtime::{CreateWorkContextInput, UpdateWorkContextInput};
 
-fn view(value: nous_runtime::WorkContextView) -> p::WorkContext {
+pub(super) fn view(value: nous_runtime::WorkContextView) -> p::WorkContext {
     p::WorkContext {
         work_context_id: value.work_context_id.to_string(),
         subject_id: value.subject_id.0.to_string(),

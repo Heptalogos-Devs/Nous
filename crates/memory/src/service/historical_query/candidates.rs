@@ -11,10 +11,10 @@ pub(super) async fn select(
     family: EvidenceFamily,
     limit: usize,
 ) -> Result<Vec<CognitiveRef>> {
-    let view = bound.historical_authority.as_deref().ok_or_else(|| {
+    let view = bound.read_context.historical_view().ok_or_else(|| {
         Error::new(
-            nous_core::ErrorOwner::Memory,
-            nous_core::ErrorCode::InvalidRequest,
+            ErrorOwner::Runtime,
+            ErrorCode::InvalidRequest,
             "historical view required",
         )
     })?;

@@ -36,9 +36,9 @@ Selected materialization 的内容上限为 1 MiB UTF-8；query records 的 aggr
 
 Kernel Resource descriptor 保存 adapter_kind/provider_profile/provider_locator，网络与 credential 留宿主。Core adapter 负责 describe/search/materialize/checkVersion/checkAccess；宿主供给的 provider identity 不允许重复。StableExternalRef 保存 provider/profile digest/resource/entry/version(nullable)/content digest/source locator/retrieved time/access descriptor；无 provider revision 时重新读取 content digest 检查变化。
 
-Resource queries use one immutable prepare → host action → finalize ticket. Kernel 在 provider call 前固定 Resource action IDs、绑定 descriptor、query intent、limits、materialize/current-authority、budgets、ConfigSnapshot。Finalize 校验 Subject/action/resource/provider identity、一次提交、数量和 current version/access。准备后 Resource action IDs 与 lane/query budgets 保持固定；provider records 保留 provider rank，与 cognitive raw scores 分开。
+Resource actions 是 QueryRun 的宿主步骤。Kernel 在 provider call 前固定 Resource action IDs、绑定 descriptor、query intent、limits、materialize/current-authority、budgets 和 ConfigSnapshot；Core 在同一 QueryRun 的最终宿主阶段调用 adapters，再用当前 Subject-bound handle 提交结果。Kernel finalization 校验 Subject/action/resource/provider identity、单次提交、数量以及 current version/access。QueryRun 期间 action IDs 与 lane/query budgets 保持固定；provider records 保留 provider rank，与 cognitive raw scores 分开。
 
-Public QueryResponse 将 resource_records 与 cognitive hits 分开；resource_actions 保存未执行项。Adapter 未配置或调用失败时返回显式 degradation，local hits 仍可返回。Core 在 finally 中 release ticket，并将 cancellation 传递给网络请求。Official Client 可管理 Resource、执行 query、读取 records，并 materialize/admit selected record。
+Public QueryResponse 将 resource_records 与 cognitive hits 分开；resource_actions 保存未执行项。Adapter 未配置或调用失败时返回显式 degradation，local hits 仍可返回。Core 将 cancellation 传递给网络请求，出错或取消时取消同一 QueryRun；lease expiry 是清理兜底。Official Client 可管理 Resource、执行 query、读取 records，并 materialize/admit selected record。
 
 Kernel 将单条 record 限制为 1 MiB、每次 query 的总序列化 record 限制为 2 MiB。Authority policies 为 none/prefer/required；query results 保留各 record 的版本与访问判断。
 

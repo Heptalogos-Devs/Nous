@@ -107,23 +107,45 @@ impl TextEmbeddingProvider for StoredEmbeddingProvider {
     }
     async fn embed(&self, request: TextEmbeddingRequest) -> Result<TextEmbeddingOutput> {
         for producer in &self.config.producers {
-            if request.query {
-                if let Some(output) =
-                    query_material_output(&request.text, &self.config.space, producer)
-                {
-                    return Ok(output);
+            let vector = match &request.origin {
+                TextEmbeddingOrigin::Query => {
+                    if let Some(output) =
+                        query_material_output(&request.text, &self.config.space, producer)
+                    {
+                        return Ok(output);
+                    }
+                    None
                 }
-            } else {
-                let vector = sqlx::query_scalar::<_,Vec<f32>>("SELECT vector FROM embedding_materials WHERE subject_id=$1 AND content_digest=$2 AND space_hash=$3 AND producer_hash=$4")
-                    .bind(request.subject.0).bind(nous_material::text_content_identity(&request.text)).bind(&self.config.space.space_hash).bind(&producer.signature_hash)
-                    .fetch_optional(self.store.pool()).await.map_err(db)?;
-                if let Some(vector) = vector {
-                    return Ok(TextEmbeddingOutput {
-                        vector,
-                        space: self.space(),
-                        producer: producer.clone(),
-                    });
+                TextEmbeddingOrigin::Document(reference) => {
+                    let (kind, value) = reference_parts(reference);
+                    sqlx::query_scalar::<_, Vec<f32>>(
+                        r#"
+SELECT m.vector
+FROM embedding_materials m
+JOIN embedding_material_uses u
+  ON u.subject_id=m.subject_id AND u.content_digest=m.content_digest
+ AND u.space_hash=m.space_hash AND u.producer_hash=m.producer_hash
+WHERE m.subject_id=$1 AND m.content_digest=$2 AND m.space_hash=$3
+  AND m.producer_hash=$4 AND u.ref_kind=$5 AND u.ref_value=$6
+"#,
+                    )
+                    .bind(request.subject.0)
+                    .bind(nous_material::text_content_identity(&request.text))
+                    .bind(&self.config.space.space_hash)
+                    .bind(&producer.signature_hash)
+                    .bind(kind)
+                    .bind(value)
+                    .fetch_optional(self.store.pool())
+                    .await
+                    .map_err(db)?
                 }
+            };
+            if let Some(vector) = vector {
+                return Ok(TextEmbeddingOutput {
+                    vector,
+                    space: self.space(),
+                    producer: producer.clone(),
+                });
             }
         }
         Err(Error::new(

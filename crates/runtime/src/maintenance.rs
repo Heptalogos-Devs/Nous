@@ -262,8 +262,7 @@ impl CognitiveRuntimeService {
                 nous_core::ErrorCode::LeaseLost,
                 "Maintenance lease expired or replaced",
             )
-            .with_context("need_id", claimed.need_id)
-            .into());
+            .with_context("need_id", claimed.need_id));
         }
         // Only maintenance-bound completed workflows lose their runtime purpose after ack.
         sqlx::query("DELETE FROM model_workflow_operations WHERE subject_id=$1 AND maintenance_need_id=$2 AND outcome IS NOT NULL")

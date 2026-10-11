@@ -327,8 +327,7 @@ impl k::kernel_configuration_service_server::KernelConfigurationService for Kern
                     nous_core::ErrorOwner::Configuration,
                     nous_core::ErrorCode::StaleRevision,
                     "startup configuration changed",
-                )
-                .into());
+                ));
             }
             if let Some(config) = r.resolved_embedding {
                 let config: nous_retrieval::StoredEmbeddingConfig =

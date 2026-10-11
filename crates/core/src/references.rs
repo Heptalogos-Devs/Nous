@@ -37,184 +37,46 @@ pub fn reference_parts(reference: &CognitiveRef) -> (String, String) {
 }
 
 pub fn parse_reference(kind: &str, value: &str) -> Result<CognitiveRef> {
+    let uuid = || {
+        value.parse::<Uuid>().map_err(|error| {
+            Error::new(
+                ErrorOwner::Identity,
+                ErrorCode::InvalidRequest,
+                format!("invalid {kind} reference"),
+            )
+            .with_context("kind", kind)
+            .with_source(error)
+        })
+    };
     Ok(match kind {
-        "memory" => CognitiveRef::Memory(MemoryId(value.parse().map_err(|error| {
-            Error::new(
-                crate::ErrorOwner::Identity,
-                crate::ErrorCode::InvalidRequest,
-                "invalid memory ref",
-            )
-            .with_source(error)
-        })?)),
-        "memory_revision" => {
-            CognitiveRef::MemoryRevision(MemoryRevisionId(value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid memory revision ref",
-                )
-                .with_source(error)
-            })?))
+        "memory" => CognitiveRef::Memory(MemoryId(uuid()?)),
+        "memory_revision" => CognitiveRef::MemoryRevision(MemoryRevisionId(uuid()?)),
+        "episode" => CognitiveRef::Episode(EpisodeId(uuid()?)),
+        "episode_revision" => CognitiveRef::EpisodeRevision(EpisodeRevisionId(uuid()?)),
+        "journal" => CognitiveRef::Journal(JournalId(uuid()?)),
+        "journal_revision" => CognitiveRef::JournalRevision(JournalRevisionId(uuid()?)),
+        "cognitive_schema" => CognitiveRef::CognitiveSchema(CognitiveSchemaId(uuid()?)),
+        "cognitive_schema_revision" => {
+            CognitiveRef::CognitiveSchemaRevision(CognitiveSchemaRevisionId(uuid()?))
         }
-        "episode" => CognitiveRef::Episode(EpisodeId(value.parse().map_err(|error| {
-            Error::new(
-                crate::ErrorOwner::Identity,
-                crate::ErrorCode::InvalidRequest,
-                "invalid episode ref",
-            )
-            .with_source(error)
-        })?)),
-        "episode_revision" => {
-            CognitiveRef::EpisodeRevision(EpisodeRevisionId(value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid episode revision ref",
-                )
-                .with_source(error)
-            })?))
+        "cognitive_seed_version" => {
+            CognitiveRef::CognitiveSeedVersion(CognitiveSeedVersionId(uuid()?))
         }
-        "journal" => CognitiveRef::Journal(JournalId(value.parse().map_err(|error| {
-            Error::new(
-                crate::ErrorOwner::Identity,
-                crate::ErrorCode::InvalidRequest,
-                "invalid Journal ref",
-            )
-            .with_source(error)
-        })?)),
-        "journal_revision" => {
-            CognitiveRef::JournalRevision(JournalRevisionId(value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid Journal revision ref",
-                )
-                .with_source(error)
-            })?))
+        "artifact" => CognitiveRef::Artifact(ArtifactId(uuid()?)),
+        "source_region" => CognitiveRef::SourceRegion(SourceRegionId(uuid()?)),
+        "derived_representation" => {
+            CognitiveRef::DerivedRepresentation(DerivedRepresentationId(uuid()?))
         }
-        "cognitive_schema" => {
-            CognitiveRef::CognitiveSchema(CognitiveSchemaId(value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid CognitiveSchema ref",
-                )
-                .with_source(error)
-            })?))
-        }
-        "cognitive_schema_revision" => CognitiveRef::CognitiveSchemaRevision(
-            CognitiveSchemaRevisionId(value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid CognitiveSchema revision ref",
-                )
-                .with_source(error)
-            })?),
-        ),
-        "cognitive_seed_version" => CognitiveRef::CognitiveSeedVersion(CognitiveSeedVersionId(
-            value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid Cognitive Seed version ref",
-                )
-                .with_source(error)
-            })?,
-        )),
-        "artifact" => CognitiveRef::Artifact(ArtifactId(value.parse().map_err(|error| {
-            Error::new(
-                crate::ErrorOwner::Identity,
-                crate::ErrorCode::InvalidRequest,
-                "invalid artifact ref",
-            )
-            .with_source(error)
-        })?)),
-        "source_region" => {
-            CognitiveRef::SourceRegion(SourceRegionId(value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid source region ref",
-                )
-                .with_source(error)
-            })?))
-        }
-        "derived_representation" => CognitiveRef::DerivedRepresentation(DerivedRepresentationId(
-            value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid derived ref",
-                )
-                .with_source(error)
-            })?,
-        )),
-        "derived_region" => {
-            CognitiveRef::DerivedRegion(DerivedRegionId(value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid derived region ref",
-                )
-                .with_source(error)
-            })?))
-        }
+        "derived_region" => CognitiveRef::DerivedRegion(DerivedRegionId(uuid()?)),
         "entity" => CognitiveRef::Entity(EntityRef::new(value)?),
-        "tag" => CognitiveRef::Tag(TagId(value.parse().map_err(|error| {
-            Error::new(
-                crate::ErrorOwner::Identity,
-                crate::ErrorCode::InvalidRequest,
-                "invalid tag ref",
-            )
-            .with_source(error)
-        })?)),
+        "tag" => CognitiveRef::Tag(TagId(uuid()?)),
         "resource" => CognitiveRef::Resource(ResourceRef::new(value)?),
         "external_object" => CognitiveRef::ExternalObject(ObjectRef::new(value)?),
-        "occurrence" => CognitiveRef::Occurrence(OccurrenceId(value.parse().map_err(|error| {
-            Error::new(
-                crate::ErrorOwner::Identity,
-                crate::ErrorCode::InvalidRequest,
-                "invalid occurrence ref",
-            )
-            .with_source(error)
-        })?)),
-        "session" => CognitiveRef::Session(SessionId(value.parse().map_err(|error| {
-            Error::new(
-                crate::ErrorOwner::Identity,
-                crate::ErrorCode::InvalidRequest,
-                "invalid session ref",
-            )
-            .with_source(error)
-        })?)),
-        "subject" => CognitiveRef::Subject(SubjectId(value.parse().map_err(|error| {
-            Error::new(
-                crate::ErrorOwner::Identity,
-                crate::ErrorCode::InvalidRequest,
-                "invalid Subject ref",
-            )
-            .with_source(error)
-        })?)),
-        "work_context" => {
-            CognitiveRef::WorkContext(WorkContextId(value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid WorkContext ref",
-                )
-                .with_source(error)
-            })?))
-        }
-        "association" => {
-            CognitiveRef::Association(AssociationEvidenceId(value.parse().map_err(|error| {
-                Error::new(
-                    crate::ErrorOwner::Identity,
-                    crate::ErrorCode::InvalidRequest,
-                    "invalid Association ref",
-                )
-                .with_source(error)
-            })?))
-        }
+        "occurrence" => CognitiveRef::Occurrence(OccurrenceId(uuid()?)),
+        "session" => CognitiveRef::Session(SessionId(uuid()?)),
+        "subject" => CognitiveRef::Subject(SubjectId(uuid()?)),
+        "work_context" => CognitiveRef::WorkContext(WorkContextId(uuid()?)),
+        "association" => CognitiveRef::Association(AssociationEvidenceId(uuid()?)),
         _ => {
             return Err(Error::new(
                 crate::ErrorOwner::Identity,

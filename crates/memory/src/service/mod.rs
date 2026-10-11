@@ -75,6 +75,7 @@ pub struct MemoryService {
 impl MemoryService {
     async fn start_mutation(
         &self,
+        owner: ErrorOwner,
         subject: SubjectId,
         operation: OperationId,
         kind: &str,
@@ -87,7 +88,33 @@ impl MemoryService {
             kind,
             digest,
             Some(OwnerLock("memory-authority")),
-            nous_core::ErrorOwner::Memory,
+            owner,
+        )
+        .await?;
+        if let MutationStart::Active(mutation) = &mut start {
+            mutation
+                .capture_authority_time(self.cognition.now(subject))
+                .await?;
+        }
+        Ok(start)
+    }
+
+    async fn resume_mutation(
+        &self,
+        error_owner: ErrorOwner,
+        subject: SubjectId,
+        operation: OperationId,
+        kind: &str,
+        digest: &str,
+    ) -> Result<MutationStart<'_>> {
+        let mut start = MutationEnvelope::resume(
+            &self.store,
+            subject,
+            operation,
+            kind,
+            digest,
+            Some(OwnerLock("memory-authority")),
+            error_owner,
         )
         .await?;
         if let MutationStart::Active(mutation) = &mut start {
@@ -181,19 +208,21 @@ pub struct RebindEntityRequest {
     pub reason: Option<String>,
 }
 
-fn parse_enum<T: DeserializeOwned>(value: String, name: &str) -> Result<T> {
+fn parse_enum<T: DeserializeOwned>(owner: ErrorOwner, value: String, name: &str) -> Result<T> {
+    let message = match owner {
+        ErrorOwner::Memory => "Persisted Memory enum is invalid",
+        ErrorOwner::Concept => "Persisted CognitiveSchema enum is invalid",
+        _ => "Persisted cognition enum is invalid",
+    };
     serde_json::from_value(serde_json::Value::String(value)).map_err(|error| {
-        Error::new(
-            ErrorOwner::Memory,
-            ErrorCode::InternalFailure,
-            "Persisted Memory enum is invalid",
-        )
-        .with_context("field", name)
-        .with_source(error)
+        Error::new(owner, ErrorCode::InternalFailure, message)
+            .with_context("field", name)
+            .with_source(error)
     })
 }
 
 fn temporal_from_columns(
+    owner: ErrorOwner,
     kind: String,
     start: Option<DateTime<Utc>>,
     end: Option<DateTime<Utc>>,
@@ -203,7 +232,7 @@ fn temporal_from_columns(
         "instant" => Ok(TemporalExtent::Instant {
             at: start.ok_or_else(|| {
                 Error::new(
-                    nous_core::ErrorOwner::Memory,
+                    owner,
                     nous_core::ErrorCode::InternalFailure,
                     "instant has no timestamp",
                 )
@@ -211,7 +240,7 @@ fn temporal_from_columns(
         }),
         "interval" => Ok(TemporalExtent::Interval { start, end }),
         _ => Err(Error::new(
-            nous_core::ErrorOwner::Memory,
+            owner,
             nous_core::ErrorCode::InternalFailure,
             "invalid temporal extent kind",
         )),

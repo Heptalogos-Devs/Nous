@@ -17,6 +17,8 @@ pub use model_workflow::{
 };
 mod episode_text;
 pub use episode_text::EpisodeTextBudget;
+mod embedding_migration;
+pub use embedding_migration::EmbeddingUpgradeInstants;
 mod historical;
 pub use historical::projection::HistoricalProjectionInput;
 pub use historical::*;
@@ -42,7 +44,9 @@ pub use projection::{DenseInvalidation, ProjectionInvalidation};
 pub use serving::{ServingRecord, ServingView};
 
 use nous_core::{Error, OperationId, Result, SubjectId};
-use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
+use sqlx::{Connection, PgConnection, PgPool, Postgres, Transaction, postgres::PgPoolOptions};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Serialize a Subject-scoped mutation receipt within its Authority transaction.
 pub async fn lock_operation(
@@ -61,6 +65,7 @@ pub async fn lock_operation(
 #[derive(Clone)]
 pub struct AuthorityStore {
     pool: PgPool,
+    instance_lock: Arc<Mutex<Option<PgConnection>>>,
 }
 
 impl AuthorityStore {
@@ -75,6 +80,14 @@ impl AuthorityStore {
         .map(SubjectId)
         .collect())
     }
+
+    pub async fn database_name(&self) -> Result<String> {
+        sqlx::query_scalar("SELECT current_database()")
+            .fetch_one(self.pool())
+            .await
+            .map_err(database_error)
+    }
+
     pub async fn connect(
         url: &str,
         max_connections: u32,
@@ -87,13 +100,33 @@ impl AuthorityStore {
                 "max_connections must be positive",
             ));
         }
+        // Hold the database-scoped Kernel lease on a dedicated PostgreSQL
+        // session, never on a pooled connection that another query may reuse.
+        let mut lock_connection = PgConnection::connect(url).await.map_err(database_error)?;
+        let acquired: bool = sqlx::query_scalar(
+            "SELECT pg_try_advisory_lock(hashtextextended(current_database() || ':nous-wave:kernel-instance', 0))",
+        )
+        .fetch_one(&mut lock_connection)
+        .await
+        .map_err(database_error)?;
+        if !acquired {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InstanceAlreadyRunning,
+                "An instance is already running",
+            )
+            .with_context("reason", "instance_already_running"));
+        }
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
             .acquire_timeout(acquire_timeout)
             .connect(url)
             .await
             .map_err(database_error)?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            instance_lock: Arc::new(Mutex::new(Some(lock_connection))),
+        })
     }
 
     pub async fn migrate(&self) -> Result<()> {
@@ -104,7 +137,7 @@ impl AuthorityStore {
                 Error::new(
                     nous_core::ErrorOwner::Persistence,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not apply persistence schema migrations",
                 )
                 .with_source(error)
             })
@@ -164,11 +197,38 @@ impl AuthorityStore {
 
     pub async fn close(&self) {
         self.pool.close().await;
+        let mut lock = self.instance_lock.lock().await;
+        if let Some(connection) = lock.take() {
+            let _ = connection.close().await;
+        }
+    }
+
+    /// Ping the lock-owning session; Kernel main stops serving if this fails.
+    /// Reconnecting here would silently relinquish exclusive DB ownership.
+    pub async fn check_instance_lock(&self) -> Result<()> {
+        let mut lock = self.instance_lock.lock().await;
+        let connection = lock.as_mut().ok_or_else(instance_lock_lost)?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            sqlx::query("SELECT 1").execute(&mut *connection),
+        )
+        .await
+        .map_err(|_| instance_lock_lost())?
+        .map_err(|error| instance_lock_lost().with_source(error))?;
+        Ok(())
     }
 
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
+}
+
+fn instance_lock_lost() -> Error {
+    Error::new(
+        nous_core::ErrorOwner::Instance,
+        nous_core::ErrorCode::LeaseLost,
+        "Kernel database ownership lease was lost",
+    )
 }
 
 pub fn database_error(error: sqlx::Error) -> Error {

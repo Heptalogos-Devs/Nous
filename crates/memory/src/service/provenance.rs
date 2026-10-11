@@ -83,6 +83,7 @@ impl MemoryService {
 
     pub(crate) async fn validate_basis_in_tx(
         &self,
+        owner: ErrorOwner,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         basis: &[RevisionBasis],
@@ -93,9 +94,22 @@ impl MemoryService {
                     sqlx::query("SELECT occurrence_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2 FOR SHARE")
                         .bind(subject.0).bind(evidence.occurrence_id.0)
                         .fetch_optional(&mut **tx).await.map_err(db)?
-                        .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "evidence occurrence is outside Subject"))?;
+                        .ok_or_else(|| Error::new(owner, nous_core::ErrorCode::InvalidRequest, "evidence occurrence is outside Subject"))?;
                 }
                 RevisionBasis::CognitionDependency(dependency) => {
+                    if !matches!(
+                        dependency.target_revision,
+                        CognitiveRef::MemoryRevision(_)
+                            | CognitiveRef::CognitiveSchemaRevision(_)
+                            | CognitiveRef::EpisodeRevision(_)
+                            | CognitiveRef::JournalRevision(_)
+                    ) {
+                        return Err(Error::new(
+                            owner,
+                            nous_core::ErrorCode::InvalidRequest,
+                            "cognition dependency must target an exact revision",
+                        ));
+                    }
                     let (query, id, _) = dependency_query(&dependency.target_revision, true)?;
                     let row = sqlx::query(query)
                         .bind(subject.0)
@@ -103,13 +117,20 @@ impl MemoryService {
                         .fetch_optional(&mut **tx)
                         .await
                         .map_err(db)?;
-                    require_dependency_row(row)?;
+                    require_dependency_row(owner, row)?;
                 }
                 RevisionBasis::Seed(_) => {
+                    let message = match owner {
+                        ErrorOwner::Memory => "Memory revisions cannot use Cognitive Seed support",
+                        ErrorOwner::Concept => {
+                            "Concept revisions cannot use Cognitive Seed support"
+                        }
+                        _ => "Cognitive revisions cannot use Cognitive Seed support",
+                    };
                     return Err(Error::new(
-                        nous_core::ErrorOwner::Memory,
+                        owner,
                         nous_core::ErrorCode::InvalidRequest,
-                        "Memory revisions cannot use Cognitive Seed support",
+                        message,
                     ));
                 }
             }
@@ -119,6 +140,7 @@ impl MemoryService {
 
     pub(crate) async fn validate_object_dependency_cycle(
         &self,
+        owner: ErrorOwner,
         subject: SubjectId,
         owner_key: &str,
         basis: &[RevisionBasis],
@@ -136,7 +158,7 @@ impl MemoryService {
             let object_key = self.revision_object_key(subject, &reference).await?;
             if object_key == owner_key {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
+                    owner,
                     nous_core::ErrorCode::InvalidRequest,
                     "cognition dependency would create an object cycle",
                 ));
@@ -308,6 +330,7 @@ impl MemoryService {
 
     pub(crate) async fn validate_formation_semantics(
         &self,
+        owner: ErrorOwner,
         subject: SubjectId,
         mode: FormationMode,
         basis: &[RevisionBasis],
@@ -318,7 +341,7 @@ impl MemoryService {
         let summary = self.provenance_summary(subject, basis).await?;
         if summary.normalized_inputs.len() < 2 {
             return Err(Error::new(
-                nous_core::ErrorOwner::Memory,
+                owner,
                 nous_core::ErrorCode::InvalidRequest,
                 "synthesized formation needs at least two normalized inputs",
             ));
@@ -330,7 +353,7 @@ impl MemoryService {
             .count();
         if independent_roots < 2 {
             return Err(Error::new(
-                nous_core::ErrorOwner::Memory,
+                owner,
                 nous_core::ErrorCode::InvalidRequest,
                 "synthesized formation needs two known independent provenance roots",
             ));
@@ -350,7 +373,7 @@ impl MemoryService {
             .fetch_optional(self.store.pool())
             .await
             .map_err(db)?;
-        require_dependency_row(row)
+        require_dependency_row(ErrorOwner::Memory, row)
     }
 
     async fn revision_object_key(
@@ -473,18 +496,18 @@ fn dependency_query(
     }
 }
 
-fn require_dependency_row(row: Option<sqlx::postgres::PgRow>) -> Result<()> {
+fn require_dependency_row(owner: ErrorOwner, row: Option<sqlx::postgres::PgRow>) -> Result<()> {
     let state = row
         .map(|row| row.try_get::<String, _>("purge_state").map_err(db))
         .transpose()?;
     match state.as_deref() {
         None => Err(Error::new(
-            nous_core::ErrorOwner::Memory,
+            owner,
             nous_core::ErrorCode::InvalidRequest,
             "cognition dependency is outside Subject",
         )),
         Some("purging") => Err(Error::new(
-            nous_core::ErrorOwner::Memory,
+            owner,
             nous_core::ErrorCode::FailedPrecondition,
             "cognition dependency target is purging",
         )),

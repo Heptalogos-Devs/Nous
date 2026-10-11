@@ -9,7 +9,15 @@ license.workspace = true
 # cargo-shear does not follow these cfg(test) #[path] module declarations.
 [package.metadata.cargo-shear]
 ignored-paths = [
+    "tests/unit/activated_routes.rs",
+    "tests/unit/mechanisms/cue_sensing.rs",
+    "tests/unit/mechanisms/graph.rs",
+    "tests/unit/mechanisms/lexical.rs",
+    "tests/unit/mechanisms/residual.rs",
+    "tests/unit/mechanisms/wave.rs",
     "tests/unit/query_signals.rs",
+    "tests/unit/topology_lane.rs",
+    "tests/unit/vcp/readout.rs",
     "tests/unit/vcp_adapter.rs",
     "tests/unit/vcp_graph.rs",
 ]

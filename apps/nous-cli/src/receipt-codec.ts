@@ -169,7 +169,7 @@ const definition = (
 });
 
 /** Static request/response and status identities share one receipt registry. */
-export const receiptDefinitions = {
+const receiptDefinitions = {
   "subjects.create": definition(
     "SUBJECT",
     "subject_create",

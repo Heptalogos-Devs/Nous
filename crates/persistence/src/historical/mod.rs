@@ -34,6 +34,66 @@ pub struct HistoricalOwnerRows {
     pub lexical: Vec<HistoricalLexicalVisibility>,
     pub material: Vec<CognitiveRef>,
 }
+
+async fn historical_cognition_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    subject: SubjectId,
+    as_of: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<HistoricalCognitionRows>> {
+    let mut cognition = Vec::new();
+    for (kind, objects, revisions, object_id, revision_id) in [
+        (
+            "memory",
+            "memory_objects",
+            "memory_revisions",
+            "memory_id",
+            "memory_revision_id",
+        ),
+        (
+            "cognitive_schema",
+            "cognitive_schemas",
+            "cognitive_schema_revisions",
+            "schema_id",
+            "schema_revision_id",
+        ),
+        (
+            "episode",
+            "episode_objects",
+            "episode_revisions",
+            "episode_id",
+            "episode_revision_id",
+        ),
+        (
+            "journal",
+            "journal_objects",
+            "journal_revisions",
+            "journal_id",
+            "journal_revision_id",
+        ),
+    ] {
+        let query = format!(
+            "SELECT o.{object_id} object_id,h.state,array_agg(r.{revision_id} ORDER BY r.recorded_at DESC,r.revision_no DESC) revisions FROM {objects} o JOIN LATERAL (SELECT state FROM authority_object_states WHERE subject_id=o.subject_id AND object_kind=$2 AND object_ref=o.{object_id}::text AND recorded_at<=$3 ORDER BY recorded_at DESC,event_id DESC LIMIT 1) h ON true JOIN {revisions} r ON r.{object_id}=o.{object_id} AND r.recorded_at<=$3 WHERE o.subject_id=$1 AND o.created_at<=$3 AND o.purge_state='normal' GROUP BY o.{object_id},h.state ORDER BY o.{object_id}"
+        );
+        // Identifiers come only from this fixed four-owner catalog; values are bound.
+        for row in sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+            .bind(subject.0)
+            .bind(kind)
+            .bind(as_of)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(db)?
+        {
+            cognition.push(HistoricalCognitionRows {
+                object_kind: kind.into(),
+                object_id: row.try_get("object_id").map_err(db)?,
+                state: row.try_get("state").map_err(db)?,
+                revisions: row.try_get("revisions").map_err(db)?,
+            });
+        }
+    }
+    Ok(cognition)
+}
+
 impl AuthorityStore {
     pub async fn historical_owner_rows(
         &self,
@@ -45,57 +105,7 @@ impl AuthorityStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let mut cognition = Vec::new();
-        for (kind, objects, revisions, object_id, revision_id) in [
-            (
-                "memory",
-                "memory_objects",
-                "memory_revisions",
-                "memory_id",
-                "memory_revision_id",
-            ),
-            (
-                "cognitive_schema",
-                "cognitive_schemas",
-                "cognitive_schema_revisions",
-                "schema_id",
-                "schema_revision_id",
-            ),
-            (
-                "episode",
-                "episode_objects",
-                "episode_revisions",
-                "episode_id",
-                "episode_revision_id",
-            ),
-            (
-                "journal",
-                "journal_objects",
-                "journal_revisions",
-                "journal_id",
-                "journal_revision_id",
-            ),
-        ] {
-            let query = format!(
-                "SELECT o.{object_id} object_id,h.state,array_agg(r.{revision_id} ORDER BY r.recorded_at DESC,r.revision_no DESC) revisions FROM {objects} o JOIN LATERAL (SELECT state FROM authority_object_states WHERE subject_id=o.subject_id AND object_kind=$2 AND object_ref=o.{object_id}::text AND recorded_at<=$3 ORDER BY recorded_at DESC,event_id DESC LIMIT 1) h ON true JOIN {revisions} r ON r.{object_id}=o.{object_id} AND r.recorded_at<=$3 WHERE o.subject_id=$1 AND o.created_at<=$3 AND o.purge_state='normal' GROUP BY o.{object_id},h.state ORDER BY o.{object_id}"
-            );
-            // Identifiers come only from the fixed four-owner table catalog above; values are bound.
-            for row in sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
-                .bind(subject.0)
-                .bind(kind)
-                .bind(as_of)
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(db)?
-            {
-                cognition.push(HistoricalCognitionRows {
-                    object_kind: kind.into(),
-                    object_id: row.try_get("object_id").map_err(db)?,
-                    state: row.try_get("state").map_err(db)?,
-                    revisions: row.try_get("revisions").map_err(db)?,
-                });
-            }
-        }
+        let cognition = historical_cognition_rows(&mut tx, subject, as_of).await?;
         let rows=sqlx::query("SELECT t.tag_id,h.state,r.tag_revision_id,r.label,r.description,r.kind_hint FROM tags t JOIN LATERAL (SELECT state FROM authority_object_states WHERE subject_id=t.subject_id AND object_kind='tag' AND object_ref=t.tag_id::text AND recorded_at<=$2 ORDER BY recorded_at DESC,event_id DESC LIMIT 1) h ON true JOIN LATERAL (SELECT * FROM tag_revisions WHERE tag_id=t.tag_id AND created_at<=$2 ORDER BY created_at DESC,revision_no DESC LIMIT 1) r ON true WHERE t.subject_id=$1 AND t.created_at<=$2 ORDER BY t.tag_id").bind(subject.0).bind(as_of).fetch_all(&mut *tx).await.map_err(db)?;
         let tags = rows
             .into_iter()
@@ -127,7 +137,7 @@ impl AuthorityStore {
                             Error::new(
                                 nous_core::ErrorOwner::Persistence,
                                 nous_core::ErrorCode::InternalFailure,
-                                "Operation failed",
+                                "Could not decode the persisted historical display name",
                             )
                             .with_source(error)
                         },
@@ -136,7 +146,7 @@ impl AuthorityStore {
                         Error::new(
                             nous_core::ErrorOwner::Persistence,
                             nous_core::ErrorCode::InternalFailure,
-                            "Operation failed",
+                            "Could not decode the persisted historical aliases",
                         )
                         .with_source(error)
                     })?,

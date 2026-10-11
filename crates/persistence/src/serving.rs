@@ -54,7 +54,7 @@ fn decode(row: sqlx::postgres::PgRow) -> Result<ServingRecord> {
             Error::new(
                 nous_core::ErrorOwner::Persistence,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not decode the persisted Serving view descriptor",
             )
             .with_source(e)
         })?,
@@ -75,6 +75,22 @@ fn decode(row: sqlx::postgres::PgRow) -> Result<ServingRecord> {
 }
 
 impl AuthorityStore {
+    /// Detects whether a prior-epoch artifact is still owned by the live Serving
+    /// catalog. Semantic owners call this before final purge deletion so direct
+    /// completion cannot skip Kernel-coordinated artifact reclamation.
+    pub async fn has_unreclaimed_serving_artifact_in(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+    ) -> Result<bool> {
+        sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM serving_generations g JOIN subjects s USING(subject_id) WHERE g.subject_id=$1 AND g.purge_epoch<s.serving_purge_epoch AND g.artifact_location<>'')",
+        )
+        .bind(subject.0)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db)
+    }
+
     /// The Serving owner has rejected this artifact. Remove only that exact current pointer.
     pub async fn fail_serving_generation(&self, record: &ServingRecord) -> Result<()> {
         let mut tx = self.begin().await?;
@@ -274,7 +290,7 @@ impl AuthorityStore {
             Error::new(
                 nous_core::ErrorOwner::Persistence,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not encode the Serving view descriptor for persistence",
             )
             .with_source(e)
         })?;

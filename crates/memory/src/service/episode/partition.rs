@@ -39,6 +39,7 @@ impl MemoryService {
         let digest = operation_digest("episode_partition", input.subject, &input)?;
         let mut mutation = match self
             .start_mutation(
+                ErrorOwner::Memory,
                 input.subject,
                 input.operation_id,
                 "episode_partition",
@@ -86,8 +87,7 @@ impl MemoryService {
                 nous_core::ErrorOwner::Memory,
                 nous_core::ErrorCode::StaleRevision,
                 "Episode partition snapshot is stale",
-            )
-            .into());
+            ));
         }
         let first = &sources[0];
         let track: String = first.try_get("track_key").map_err(db)?;
@@ -319,8 +319,7 @@ async fn lock_sources(
             nous_core::ErrorOwner::Memory,
             nous_core::ErrorCode::StaleRevision,
             "Episode partition source disappeared",
-        )
-        .into());
+        ));
     }
     let track: String = rows[0].try_get("track_key").map_err(db)?;
     let parent: Option<Uuid> = rows[0].try_get("parent_episode_revision_id").map_err(db)?;
@@ -350,8 +349,7 @@ async fn lock_sources(
                 nous_core::ErrorOwner::Memory,
                 nous_core::ErrorCode::StaleRevision,
                 "Episode partition source state is stale",
-            )
-            .into());
+            ));
         }
     }
     let members = sqlx::query("SELECT episode_revision_id,ref_kind,ref_value FROM episode_revision_members WHERE episode_revision_id=ANY($1::uuid[]) ORDER BY episode_revision_id,ordinal")

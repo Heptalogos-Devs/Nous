@@ -30,7 +30,13 @@ impl MemoryService {
             }),
         )?;
         let mut mutation = match self
-            .start_mutation(input.subject, input.operation_id, "create_episode", &digest)
+            .start_mutation(
+                ErrorOwner::Memory,
+                input.subject,
+                input.operation_id,
+                "create_episode",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {
@@ -246,7 +252,13 @@ impl MemoryService {
             }),
         )?;
         let mut mutation = match self
-            .start_mutation(input.subject, input.operation_id, "revise_episode", &digest)
+            .start_mutation(
+                ErrorOwner::Memory,
+                input.subject,
+                input.operation_id,
+                "revise_episode",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {
@@ -271,7 +283,7 @@ impl MemoryService {
             .bind(input.subject.0).bind(input.episode_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
             .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "Episode not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
-        crate::service::state::fence_epoch(epoch, input.expected_object_epoch)?;
+        crate::service::state::fence_epoch(ErrorOwner::Memory, epoch, input.expected_object_epoch)?;
         if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
             return Err(Error::new(
                 nous_core::ErrorOwner::Memory,
@@ -405,7 +417,13 @@ impl MemoryService {
             &serde_json::json!({"from":from,"to":to,"relation":relation}),
         )?;
         let mut mutation = match self
-            .start_mutation(subject, operation_id, "link_episode_revisions", &digest)
+            .start_mutation(
+                ErrorOwner::Memory,
+                subject,
+                operation_id,
+                "link_episode_revisions",
+                &digest,
+            )
             .await?
         {
             MutationStart::Replay(receipt) => {

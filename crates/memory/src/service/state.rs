@@ -4,24 +4,23 @@
 
 use nous_core::{Error, ErrorCode, ErrorOwner, Result};
 
-pub(super) fn fence_epoch(actual: i64, expected: i64) -> Result<()> {
+pub(super) fn fence_epoch(owner: ErrorOwner, actual: i64, expected: i64) -> Result<()> {
     if actual != expected {
         return Err(Error::new(
-            ErrorOwner::Memory,
+            owner,
             ErrorCode::StaleRevision,
             "Expected object epoch is stale",
         )
         .with_context("expected_epoch", expected)
-        .with_context("actual_epoch", actual)
-        .into());
+        .with_context("actual_epoch", actual));
     }
     Ok(())
 }
 
-pub(super) fn require_transition(current: &str, from: &str) -> Result<()> {
+pub(super) fn require_transition(owner: ErrorOwner, current: &str, from: &str) -> Result<()> {
     if current != from {
         return Err(Error::new(
-            ErrorOwner::Memory,
+            owner,
             ErrorCode::FailedPrecondition,
             "Object is not in the required state",
         )

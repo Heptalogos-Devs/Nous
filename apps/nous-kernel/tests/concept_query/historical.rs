@@ -57,8 +57,8 @@ pub(crate) async fn check_historical_profiles(
                 subject,
                 &result
                     .bound
-                    .historical_authority
-                    .as_ref()
+                    .read_context
+                    .historical_view()
                     .unwrap()
                     .snapshot_digest,
             )
@@ -82,7 +82,7 @@ pub(crate) async fn check_historical_profiles(
         check_historical_embedding(
             rt,
             subject,
-            result.bound.historical_authority.as_deref().unwrap(),
+            result.bound.read_context.historical_view().unwrap(),
             &generation,
             tag,
         )

@@ -141,8 +141,90 @@ impl NousRuntime {
                 "Memory MicroSystem is disabled",
             )
             .with_context("capability", "memory")
-            .into()
         })
+    }
+
+    async fn reclaim_purged_serving(&self, subject: SubjectId) -> Result<()> {
+        let epoch = self.store.serving_purge_epoch(subject).await?;
+        let report = self.serving.reclaim_purged(subject, epoch).await?;
+        if report.readers_active {
+            return Err(Error::new(
+                ErrorOwner::Persistence,
+                ErrorCode::OperationInProgress,
+                "Operation is in progress",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Kernel owns the sequencing between semantic owner checkpoint, Serving
+    /// reclamation and semantic owner completion.
+    pub async fn purge_memory(
+        &self,
+        subject: SubjectId,
+        memory: MemoryId,
+        operation: OperationId,
+        expected_object_epoch: i64,
+    ) -> Result<()> {
+        let owner = self.require_memory()?;
+        owner
+            .begin_purge_memory(subject, memory, operation, expected_object_epoch)
+            .await?;
+        self.reclaim_purged_serving(subject).await?;
+        owner
+            .complete_purge_memory(subject, memory, operation, expected_object_epoch)
+            .await
+    }
+
+    pub async fn purge_schema(
+        &self,
+        subject: SubjectId,
+        schema: nous_core::CognitiveSchemaId,
+        operation: OperationId,
+        expected_object_epoch: i64,
+    ) -> Result<()> {
+        let owner = self.require_memory()?;
+        owner
+            .begin_purge_schema(subject, schema, operation, expected_object_epoch)
+            .await?;
+        self.reclaim_purged_serving(subject).await?;
+        owner
+            .complete_purge_schema(subject, schema, operation, expected_object_epoch)
+            .await
+    }
+
+    pub async fn purge_episode(
+        &self,
+        subject: SubjectId,
+        episode: nous_core::EpisodeId,
+        operation: OperationId,
+        expected_object_epoch: i64,
+    ) -> Result<()> {
+        let owner = self.require_memory()?;
+        owner
+            .begin_purge_episode(subject, episode, operation, expected_object_epoch)
+            .await?;
+        self.reclaim_purged_serving(subject).await?;
+        owner
+            .complete_purge_episode(subject, episode, operation, expected_object_epoch)
+            .await
+    }
+
+    pub async fn purge_journal(
+        &self,
+        subject: SubjectId,
+        journal: nous_core::JournalId,
+        operation: OperationId,
+        expected_object_epoch: i64,
+    ) -> Result<()> {
+        let owner = self.require_memory()?;
+        owner
+            .begin_purge_journal(subject, journal, operation, expected_object_epoch)
+            .await?;
+        self.reclaim_purged_serving(subject).await?;
+        owner
+            .complete_purge_journal(subject, journal, operation, expected_object_epoch)
+            .await
     }
 
     pub async fn query(&self, query: CognitiveQuery) -> Result<CognitiveQueryResult> {
@@ -153,6 +235,10 @@ impl NousRuntime {
         mut query: CognitiveQuery,
         config: nous_configuration::ConfigSnapshot,
     ) -> Result<nous_runtime::BoundQuery> {
+        // Historical Authority and Material projection can perform multiple
+        // owner reads. Capture the purge generation before any of them so a
+        // purge racing the snapshot cannot become the apparent starting view.
+        let read_stamp = self.store.read_context_stamp(query.subject).await?;
         if query.temporal_frame.clock_now == chrono::DateTime::<chrono::Utc>::UNIX_EPOCH {
             query.temporal_frame.clock_now = self.cognition.now(query.subject);
         }
@@ -171,7 +257,7 @@ impl NousRuntime {
             None
         };
         self.cognition
-            .bind_query_with_authority_view(query, config, view)
+            .bind_query_with_authority_view(query, config, view, read_stamp)
             .await
     }
     pub async fn historical_authority_view(
@@ -212,9 +298,23 @@ impl NousRuntime {
         mut bound: nous_runtime::BoundQuery,
         pool_limit: Option<usize>,
     ) -> Result<nous_runtime::QueryExecution> {
+        if bound.selected_embedding_space.is_none() {
+            bound.selected_embedding_space =
+                self.serving.embedding().map(|provider| provider.space());
+        }
+        let plan = nous_runtime::QueryPlan::for_bound_query(&bound);
+        self.execute_bound_query_with_plan(bound, plan, pool_limit)
+            .await
+    }
+
+    pub async fn execute_bound_query_with_plan(
+        &self,
+        mut bound: nous_runtime::BoundQuery,
+        plan: nous_runtime::QueryPlan,
+        pool_limit: Option<usize>,
+    ) -> Result<nous_runtime::QueryExecution> {
         if bound.source_query.is_exact_read() {
             self.cognition.expire_query_leases()?;
-            let plan = nous_runtime::QueryPlan::for_bound_query(&bound);
             let capabilities = self
                 .subjects
                 .subject(bound.source_query.subject)
@@ -253,7 +353,6 @@ impl NousRuntime {
                 ),
             )
             .await?;
-        let plan = nous_runtime::QueryPlan::for_bound_query(&bound);
         let subject_capabilities = self
             .subjects
             .subject(bound.source_query.subject)

@@ -65,7 +65,7 @@ impl QueryContextSnapshot {
             Error::new(
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Failed to serialize query context snapshot",
             )
             .with_source(e)
         })?;
@@ -518,8 +518,7 @@ impl CognitiveRuntimeService {
                 nous_core::ErrorCode::StaleContext,
                 "The query Session is closed",
             )
-            .with_context("session_id", closed.session_id.0)
-            .into());
+            .with_context("session_id", closed.session_id.0));
         }
         let context_id = query.work_context.or_else(|| {
             session
@@ -534,8 +533,7 @@ impl CognitiveRuntimeService {
                     nous_core::ErrorCode::StaleContext,
                     "The query WorkContext is no longer open",
                 )
-                .with_context("work_context_id", id)
-                .into());
+                .with_context("work_context_id", id));
             }
             sources.extend(
                 context

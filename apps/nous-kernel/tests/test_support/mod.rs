@@ -357,8 +357,66 @@ impl nous_retrieval::TextEmbeddingProvider for LongitudinalEmbedding {
 pub(crate) fn query_lease() -> nous_runtime::QueryLease {
     nous_runtime::QueryLease::new(Duration::from_secs(30)).unwrap()
 }
-pub(crate) fn query_reservation(bound: nous_runtime::BoundQuery) -> nous_runtime::QueryReservation {
-    nous_runtime::QueryReservation::new(bound, query_lease()).unwrap()
+
+pub(crate) fn query_run(
+    execution: nous_runtime::QueryExecution,
+    lease: nous_runtime::QueryLease,
+) -> nous_runtime::QueryRun {
+    use nous_runtime::{
+        QueryHostPlan, QueryHostRole, QueryPlan, QueryRunHostPolicy, QueryRunStage,
+    };
+    let bound = execution.bound.clone();
+    let role = QueryHostRole {
+        configured: true,
+        requirement: nous_core::RequirementStrength::Optional,
+    };
+    let host_policy = QueryRunHostPolicy::for_query(
+        &bound.source_query,
+        QueryHostPlan {
+            embedding: role,
+            concept_enrichment: role,
+            rerank: role,
+            rerank_candidate_limit: 64,
+        },
+    )
+    .unwrap();
+    let mut run = nous_runtime::QueryRun::new(
+        bound.clone(),
+        lease,
+        host_policy,
+        QueryRunStage::AwaitFinalize,
+        QueryPlan::for_bound_query(&bound),
+    )
+    .unwrap();
+    run.set_execution(execution);
+    run
+}
+
+pub(crate) fn retain_query_run(
+    cognition: &nous_runtime::CognitiveRuntimeService,
+    execution: nous_runtime::QueryExecution,
+    lease: nous_runtime::QueryLease,
+) -> nous_core::Result<(
+    nous_core::CognitiveQueryResult,
+    nous_runtime::QueryRunHandle,
+)> {
+    let result = execution.result.clone();
+    let handle = cognition.retain_query_run(query_run(execution, lease))?;
+    Ok((result, handle))
+}
+
+pub(crate) async fn finish_query_run(
+    cognition: &nous_runtime::CognitiveRuntimeService,
+    subject: nous_core::SubjectId,
+    handle: nous_runtime::QueryRunHandle,
+    order: Vec<(nous_core::CognitiveRef, f64)>,
+    external_results: Vec<nous_core::ExternalResourceResult>,
+    contributors: nous_runtime::CognitiveContributors<'_>,
+) -> nous_core::Result<nous_core::CognitiveQueryResult> {
+    let run = cognition.take_query_run(subject, handle)?;
+    cognition
+        .finish_query_run(run, order, external_results, contributors)
+        .await
 }
 
 #[allow(dead_code)]

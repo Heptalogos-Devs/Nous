@@ -15,6 +15,7 @@ import {
   CognitiveRefSchema,
   ContextSegmentSchema,
   EvidenceSchema,
+  MemoryMutationRequestSchema,
   ProjectionRequestSchema,
   ProjectionSchema,
   type ContextSegment as Segment,
@@ -89,6 +90,43 @@ describe("managed context synchronization", () => {
         initial.cursor,
       ).kind,
     ).toBe("RESET");
+  });
+
+  it("invalidates subject-owned tracks and rejects a pre-purge projection", () => {
+    const compiler = new ContextCompiler(256);
+    const key = { subjectId: "s", sessionId: "session", consumerId: "test" };
+    const started = compiler.generation(key.subjectId);
+    const initial = compiler.compile(
+      key,
+      "1",
+      projection(segment("before")),
+      undefined,
+      started,
+    );
+    expect(initial.kind).toBe("RESET");
+    const otherGeneration = compiler.generation("other");
+    compiler.compile(
+      { ...key, subjectId: "other" },
+      "1",
+      projection(segment("independent")),
+      undefined,
+      otherGeneration,
+    );
+    compiler.invalidateSubject(key.subjectId);
+    expect(compiler.isCurrent(key.subjectId, started)).toBe(false);
+    expect(compiler.isCurrent("other", otherGeneration)).toBe(true);
+    expect(() =>
+      compiler.compile(
+        key,
+        "1",
+        projection(segment("stale")),
+        initial.cursor,
+        started,
+      ),
+    ).toThrow("Subject purge");
+    expect(compiler.compile(key, "1", projection(segment("after"))).kind).toBe(
+      "RESET",
+    );
   });
 });
 describe("projection authority boundaries", () => {
@@ -216,5 +254,50 @@ describe("projection authority boundaries", () => {
     });
     expect(result.segments[0]?.text).toBe("中");
     expect(result.segments).toHaveLength(1);
+  });
+
+  it("drops an in-flight projection when a purge begins for its Subject", async () => {
+    let resolveBatch!: (value: Projection) => void;
+    let entered!: () => void;
+    const batchReady = new Promise<void>((resolve) => (entered = resolve));
+    const batch = new Promise<Projection>(
+      (resolve) => (resolveBatch = resolve),
+    );
+    const execution = coreExecutionSchema.parse(undefined);
+    const kernel = {
+      execution,
+      runtime: { getSession: async () => ({ runtimeRevision: 1n }) },
+      projection: {
+        buildContributionBatch: async () => {
+          entered();
+          return batch;
+        },
+      },
+      memory: { purgeMemory: async () => ({}) },
+    } as unknown as KernelClient;
+    const service = new CoreCognition(
+      kernel,
+      new ModelRuntime(),
+      new ResourceRegistry(),
+      [policy],
+    );
+    const calls = executionOptions(execution.opportunity);
+    const projectionInFlight = service.buildProjection(
+      create(ProjectionRequestSchema, {
+        subjectId: "s",
+        sessionId: "session",
+        consumerId: "test",
+        maxItems: 5,
+        maxTextBytes: 20,
+      }),
+      calls,
+    );
+    await batchReady;
+    await service.purgeMemory(
+      create(MemoryMutationRequestSchema, { subjectId: "s" }),
+      calls,
+    );
+    resolveBatch(projection(segment("after purge")));
+    await expect(projectionInFlight).rejects.toThrow("Subject purge");
   });
 });

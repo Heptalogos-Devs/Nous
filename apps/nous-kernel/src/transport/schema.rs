@@ -24,7 +24,7 @@ fn schema_input(
 fn schema_content(value: p::CognitiveSchemaContent) -> Result<SchemaContent> {
     let scope = value.applicability_scope.ok_or_else(|| {
         Error::new(
-            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorOwner::Concept,
             nous_core::ErrorCode::InvalidRequest,
             "applicability_scope is required",
         )
@@ -48,7 +48,7 @@ fn schema_content(value: p::CognitiveSchemaContent) -> Result<SchemaContent> {
             tags: scope
                 .tags
                 .into_iter()
-                .map(|value| Ok(TagId(id(&value)?)))
+                .map(|value| id(value.as_str()).map(TagId))
                 .collect::<Result<_>>()?,
             valid_time: temporal(scope.valid_time)?,
         },
@@ -164,7 +164,7 @@ impl KernelService {
         &self,
         input: p::CognitiveSchemaMutationRequest,
     ) -> Result<()> {
-        self.require_memory()?
+        self.0
             .purge_schema(
                 SubjectId(id(&input.subject_id)?),
                 CognitiveSchemaId(id(&input.schema_id)?),

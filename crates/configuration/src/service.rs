@@ -315,7 +315,7 @@ impl ConfigurationService {
                     Error::new(
                         nous_core::ErrorOwner::Configuration,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not serialize the configuration mutation for its request digest",
                     )
                     .with_source(error)
                 })?
@@ -352,8 +352,7 @@ impl ConfigurationService {
                     "Configuration operation_id was used with a different request",
                 )
                 .with_context("operation_id", operation_id.0)
-                .with_context("path", key)
-                .into());
+                .with_context("path", key));
             }
             let outcome = ConfigChangeOutcome {
                 revision: row.try_get("revision").map_err(db)?,

@@ -64,4 +64,4 @@ Core 的 formation、derivation 与 embedding preparation 共用 `core_execution
 
 `query_concept_enrichment` 是独立 structured role，使用 `prompts/query/concept-enrichment.md` 与严格 catalog-key/novel-text schema。它不复用 formation 或 concept-maintenance prompt，不创建 Tag，不用无支持的 inferred concept 充当事实证据。Existing match/query embedding 与 dense/Native/VCP 共享 Concept asset；reference default enrichment off，capability forbidden 不调用 role。
 
-历史 Query 执行可在 embedding 许可下通过同一 prepared token 发现、生成、提交截点 Owner-selected 文本的 cache miss，继续使用既有 embedding_materials/content digest。提交不得把 current Tag description 当作旧文本验证；有界 batch 不足或模型不可用按 required/optional 合同报告。Query prepare 只检查 captured representation/config/capabilities，不调用 provider。
+`cognition.prepareQuery`/`query prepare|inspect` 只检查并展示绑定后的 representation/config/capabilities，不调用 provider，也不发放 QueryRun continuation。正式 Query 由 Core 启动一个 QueryRun；历史视图中的 embedding cache miss 由 Host 通过该运行的 Subject-bound handle，在冻结 Owner view 内发现、生成并提交，复用既有 `embedding_materials`/content identity。提交以精确引用和当时的 Owner-selected 文本校验，不以 current Tag description 替代；有界 batch 不足或模型不可用按 required/optional 合同报告。QueryRun 在最终校验后结束，其历史 ReadContext 不供新 Query 或后续 Projection 沿用。

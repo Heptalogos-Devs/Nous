@@ -43,7 +43,7 @@ impl CognitiveContributor for MemoryService {
         if !self.query_permitted(bound.source_query.subject).await? {
             return Ok(Vec::new());
         }
-        if bound.historical_authority.is_some() {
+        if bound.read_context.is_historical() {
             return super::historical_query::direct_lanes(self, bound, plan).await;
         }
         let mut outputs = Vec::new();
@@ -87,7 +87,7 @@ impl CognitiveContributor for MemoryService {
             self,
             subject,
             &memory_references,
-            bound.historical_authority.as_deref(),
+            bound.read_context.historical_view(),
         )
         .await?;
         let revision_ids = resolved
@@ -99,7 +99,7 @@ impl CognitiveContributor for MemoryService {
                 subject,
                 &revision_ids,
                 &accessibility_policy,
-                bound.historical_authority.as_deref(),
+                bound.read_context.historical_view(),
             )
             .await?;
         let mut drops = BTreeMap::new();
@@ -161,7 +161,7 @@ impl CognitiveContributor for MemoryService {
                 self,
                 subject,
                 hit.preference_refs,
-                bound.historical_authority.as_deref(),
+                bound.read_context.historical_view(),
             )
             .await?;
             hit.preference_refs

@@ -194,7 +194,7 @@ export class ModelRuntime {
               evidence: sources.flatMap((s) => s.evidence),
               authority: "interpretation",
               stability: "EPOCH_STABLE",
-              sourceRevision: revision,
+              sourceRevision: undefined,
             }),
           ],
           degradation: [],

@@ -81,12 +81,12 @@ impl MemoryService {
                 _ => return Err(Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InternalFailure, "evidence locator union is invalid")),
             };
             basis.push(RevisionBasis::Evidence(EvidenceRef {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?, occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?), locator, basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")? }));
+                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?, occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?), locator, basis_role: parse_enum(ErrorOwner::Memory, row.try_get("basis_role").map_err(db)?, "basis role")? }));
         }
         for row in sqlx::query("SELECT target_ref_kind,target_ref,basis_role,epistemic_relation FROM memory_revision_dependencies WHERE memory_revision_id=$1 ORDER BY target_ref_kind,target_ref")
             .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)? {
             basis.push(RevisionBasis::CognitionDependency(CognitionDependency {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?, target_revision: parse_reference(&row.try_get::<String, _>("target_ref_kind").map_err(db)?, &row.try_get::<String, _>("target_ref").map_err(db)?)?, basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")? }));
+                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?, target_revision: parse_reference(&row.try_get::<String, _>("target_ref_kind").map_err(db)?, &row.try_get::<String, _>("target_ref").map_err(db)?)?, basis_role: parse_enum(ErrorOwner::Memory, row.try_get("basis_role").map_err(db)?, "basis role")? }));
         }
         Ok(basis)
     }
@@ -101,6 +101,7 @@ impl MemoryService {
         let mut observed_at = None;
         for row in rows {
             occurred.push(temporal_from_columns(
+                ErrorOwner::Memory,
                 row.try_get("occurred_time_kind").map_err(db)?,
                 row.try_get("occurred_time_start").map_err(db)?,
                 row.try_get("occurred_time_end").map_err(db)?,

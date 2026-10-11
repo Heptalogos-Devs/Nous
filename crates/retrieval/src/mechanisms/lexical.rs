@@ -55,7 +55,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not create the lexical Serving index",
             )
             .with_source(error)
         })?;
@@ -77,7 +77,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not resolve the lexical Serving index domain field",
             )
             .with_source(error)
         })?;
@@ -86,7 +86,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not create a reader for the in-memory lexical index",
             )
             .with_source(error)
         })?;
@@ -111,7 +111,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not open the lexical Serving index",
             )
             .with_source(error)
         })?;
@@ -184,7 +184,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not resolve the lexical Serving index domain field",
             )
             .with_source(error)
         })?;
@@ -192,7 +192,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not create a reader for the lexical Serving index",
             )
             .with_source(error)
         })?;
@@ -221,7 +221,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not create a writer for the lexical Serving index",
             )
             .with_source(error)
         })?;
@@ -230,7 +230,7 @@ impl LexicalGeneration {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not encode lexical document metadata",
                 )
                 .with_source(error)
             })?;
@@ -257,7 +257,7 @@ impl LexicalGeneration {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not add a document to the lexical Serving index",
                 )
                 .with_source(error)
             })?;
@@ -266,7 +266,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not commit the lexical Serving index",
             )
             .with_source(error)
         })?;
@@ -274,7 +274,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not finish merging the lexical Serving index",
             )
             .with_source(error)
         })?;
@@ -282,7 +282,7 @@ impl LexicalGeneration {
             Error::new(
                 nous_core::ErrorOwner::Resource,
                 nous_core::ErrorCode::InternalFailure,
-                "Operation failed",
+                "Could not refresh the lexical Serving index reader",
             )
             .with_source(error)
         })?;
@@ -310,7 +310,7 @@ impl LexicalGeneration {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not load a tokenizer for lexical search",
                 )
                 .with_source(error)
             })?;
@@ -364,7 +364,7 @@ impl LexicalGeneration {
                 Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
-                    "Operation failed",
+                    "Could not execute the lexical Serving search",
                 )
                 .with_source(error)
             })?;
@@ -374,7 +374,7 @@ impl LexicalGeneration {
                     Error::new(
                         nous_core::ErrorOwner::Resource,
                         nous_core::ErrorCode::InternalFailure,
-                        "Operation failed",
+                        "Could not load a lexical search result document",
                     )
                     .with_source(error)
                 })?;
@@ -460,37 +460,5 @@ fn schema() -> (
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn natural_language_is_literal_not_search_syntax() {
-        let mut index = LexicalGeneration::in_memory().unwrap();
-        index
-            .add_documents(
-                &[LexicalDocument {
-                    serving_doc_id: 1,
-                    reference: CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId::new()),
-                    representation_text:
-                        "Apple's on-device language model has three billion parameters".into(),
-                    title: None,
-                    entity_refs: Vec::new(),
-                    tag_ids: Vec::new(),
-                    schema_ids: Vec::new(),
-                    source_class: None,
-                }],
-                crate::MINIMUM_LEXICAL_WRITER_BYTES,
-            )
-            .unwrap();
-        for cue in [
-            "How large is Apple's on-device language model?",
-            "unknown_field:Apple AND (model",
-            "\"Apple's\" +model -language",
-        ] {
-            let hits = index.search(cue, 10).unwrap();
-            assert_eq!(hits.len(), 1, "{cue}");
-            assert_eq!(hits[0].serving_doc_id, 1);
-        }
-        assert!(index.search("?!", 10).unwrap().is_empty());
-    }
-}
+#[path = "../../tests/unit/mechanisms/lexical.rs"]
+mod tests;

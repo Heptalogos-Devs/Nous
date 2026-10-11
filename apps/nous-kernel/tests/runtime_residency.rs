@@ -294,8 +294,11 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
     assert_eq!(projection.segments[0].text, "Grounded");
     assert_eq!(projection.segments[0].evidence.len(), 1);
     assert_eq!(
-        projection.segments[0].source_revision.as_deref(),
-        Some(memory.revision.memory_revision_id.0.to_string().as_str())
+        projection.segments[0].source_revision,
+        Some(nous_protocol::public::CognitiveRef {
+            kind: "memory_revision".into(),
+            value: memory.revision.memory_revision_id.0.to_string(),
+        })
     );
     let owner = service.0.require_memory().unwrap();
     owner
@@ -314,7 +317,8 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         .restore(subject, memory.object.memory_id, OperationId::new(), 2)
         .await
         .unwrap();
-    owner
+    service
+        .0
         .purge_memory(subject, memory.object.memory_id, OperationId::new(), 3)
         .await
         .unwrap();

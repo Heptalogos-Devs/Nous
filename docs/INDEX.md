@@ -1,19 +1,14 @@
 # Nous Wave 文档目录
 
-[返回仓库地图](../INDEX.md)
+[返回仓库地图](../INDEX.md) · [文档说明](README.md)
 
 ## 当前实现
 
-- [文档说明](README.md)
-- [架构入口](architecture/README.md) / [实现总览](architecture/current-implementation.md)
-- [状态入口](current-state/README.md) / [当前状态](current-state/CURRENT_STATE.md)
-- [产品合同路由](specs/INDEX.md)
+- [架构入口](architecture/README.md) / [当前实现架构](architecture/current-implementation.md)：进程边界、数据所有者与主要数据流。
+- [状态入口](current-state/README.md) / [当前状态](current-state/CURRENT_STATE.md)：已提供能力、实验能力、已知限制和延期范围。
+- [当前产品合同](specs/INDEX.md)：按 owner 查找当前行为与数据语义。
 
-## Agent 入口
-
-- [Agent 使用指南](agent/README.md) / [自包含 NousQL 手册](agent/NOUSQL.md)
-
-## 使用参考
+## 开发与使用参考
 
 - [接口参考入口](reference/README.md)
 - [Official Client operations](reference/CLIENT.md)
@@ -21,7 +16,9 @@
 - [Configuration](reference/CONFIGURATION.md)
 - [Model Runtime](reference/MODEL_RUNTIME.md)
 - [Capability Composition](reference/CAPABILITIES.md)
+- [旧向量归属离线副本升级](reference/LEGACY_EMBEDDING_COPY_UPGRADE.md)：在隔离数据库与对象目录副本上执行显式转换及管理独立备份。
 - [配置示例](reference/examples/README.md)
+- [Agent 使用指南](agent/README.md) / [自包含 NousQL 手册](agent/NOUSQL.md)
 
 ## 研究与方向
 
@@ -40,4 +37,7 @@
 - [检索与媒体观测](research/observations.md)
 - [VCP source conformance](research/vcp-conformance.md)
 - [长期工程方向](roadmap/target-engineering.md)
-- [Architecture-Vault Target Design](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/docs/Nous-Wave/TARGET_DESIGN.md)
+
+## 长期设计权威
+
+- [Architecture-Vault Target Design](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/docs/Nous-Wave/TARGET_DESIGN.md)：长期认知语义、owner 边界、系统不变量与目标物理架构。
