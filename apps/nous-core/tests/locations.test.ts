@@ -8,7 +8,6 @@ import { expect, it } from "vitest";
 import { resolveLocations } from "../src/locations.js";
 import { initializeConfiguration } from "../src/configuration/file.js";
 import {
-  CONFIG_REVISION,
   parseConfiguration,
   parseEffectiveConfiguration,
   loadConfig,
@@ -72,7 +71,7 @@ it("initializes a portable instance once and preserves operator edits byte for b
         process.platform === "win32" ? "nous-kernel.exe" : "nous-kernel",
       ),
     );
-    const edited = `# operator configuration\r\nconfig_revision = ${CONFIG_REVISION}\r\n[host]\r\nport = 12345\r\n[[consumers]]\r\nconsumer_id = "custom"\r\n`;
+    const edited = `# operator configuration\r\n[host]\r\nport = 12345\r\n[[consumers]]\r\nconsumer_id = "custom"\r\n`;
     await writeFile(results[0]!.path, edited);
     expect((await initializeConfiguration(locations)).created).toBe(false);
     expect(await readFile(results[0]!.path, "utf8")).toBe(edited);
@@ -81,22 +80,15 @@ it("initializes a portable instance once and preserves operator edits byte for b
   }
 });
 
-it("rejects stale configuration semantics and checks examples and explicit references offline", async () => {
+it("checks examples and explicit references offline", async () => {
   const example = await readFile(
     join(process.cwd(), "docs/reference/examples/nous.toml"),
     "utf8",
   );
-  expect(parseConfiguration(example).config.config_revision).toBe(
-    CONFIG_REVISION,
-  );
+  expect(parseConfiguration(example).config.host.port).toBe(9470);
   expect(() =>
-    parseConfiguration(
-      example.replace("config_revision = 2", "config_revision = 0"),
-    ),
-  ).toThrow("Expected configuration revision 2");
-  expect(() =>
-    parseConfiguration(example.replace("config_revision = 2", "")),
-  ).toThrow("Expected configuration revision 2");
+    parseConfiguration(example.replace("port = 9470", "port = 70000")),
+  ).toThrow();
 
   const root = await mkdtemp(join(tmpdir(), "nous-config-check-"));
   try {
@@ -106,7 +98,7 @@ it("rejects stale configuration semantics and checks examples and explicit refer
       programRoot: process.cwd(),
     });
     const initialized = await initializeConfiguration(locations);
-    const text = `config_revision = ${CONFIG_REVISION}\n[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.local]\nbase_url = "http://127.0.0.1:3000/v1"\ncredential_env = "NOUS_OFFLINE_CHECK_TOKEN"\n[models.model_profiles.local]\ngateway = "local"\nprotocol = "openai-chat"\nmodel = "local"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.local]\nmodel = "local"\n[models.roles.memory_formation]\nroutes = ["local"]\nprompt = "config-prompts/missing.md"\n`;
+    const text = `[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.local]\nbase_url = "http://127.0.0.1:3000/v1"\ncredential_env = "NOUS_OFFLINE_CHECK_TOKEN"\n[models.model_profiles.local]\ngateway = "local"\nprotocol = "openai-chat"\nmodel = "local"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.local]\nmodel = "local"\n[models.roles.memory_formation]\nroutes = ["local"]\nprompt = "config-prompts/missing.md"\n`;
     const missingKernel = `\n[host]\nkernel_executable = ${JSON.stringify(join(root, "missing-kernel"))}\n`;
     await writeFile(initialized.path, text + missingKernel);
     const result = await checkConfiguration(locations, true);

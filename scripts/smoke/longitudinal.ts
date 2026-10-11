@@ -13,7 +13,6 @@ import { CreateSubjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alph
 import { KernelClient } from "../../apps/nous-core/src/kernel-client.js";
 import { createCore } from "../../apps/nous-core/src/server.js";
 import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
-import { modelExecutionSchema } from "../../apps/nous-core/src/model/configuration.js";
 import {
   episodePartitionSchema,
   journalSynthesisSchema,
@@ -32,13 +31,8 @@ function proposalModels() {
         }),
       ),
   });
+  models.invocations.executionDigest = () => "b".repeat(64);
   const calls = { episode: 0, journal: 0, consolidation: 0 };
-  models.invocations.snapshot = (role) => ({
-    role,
-    configuration: modelExecutionSchema.parse({}),
-    profileDigest: "a".repeat(64),
-    configDigest: "b".repeat(64),
-  });
   const producerMetadata = {
     modelRole: "journal_synthesis" as const,
     modelProfile: "stub",
@@ -56,7 +50,7 @@ function proposalModels() {
   };
   const plan = (input: string) =>
     fromJson(MaintenancePlanSchema, JSON.parse(input) as JsonValue);
-  models.segmentEpisode = async (input, _signal, _snapshot, beforeAttempt) => {
+  models.segmentEpisode = async (input, _signal, beforeAttempt) => {
     beforeAttempt?.();
     calls.episode++;
     const source = plan(input);
@@ -72,25 +66,9 @@ function proposalModels() {
         ],
       }),
       producerMetadata,
-      execution: {
-        attempts: [
-          {
-            executionProfile: "stub",
-            modelProfile: "stub",
-            status: "succeeded" as const,
-            latencyMs: 0,
-          },
-        ],
-        successfulExecutionProfile: "stub",
-      },
     };
   };
-  models.synthesizeJournal = async (
-    input,
-    _signal,
-    _snapshot,
-    beforeAttempt,
-  ) => {
+  models.synthesizeJournal = async (input, _signal, beforeAttempt) => {
     beforeAttempt?.();
     calls.journal++;
     const source = plan(input);
@@ -115,20 +93,9 @@ function proposalModels() {
         ],
       }),
       producerMetadata,
-      execution: {
-        attempts: [
-          {
-            executionProfile: "stub",
-            modelProfile: "stub",
-            status: "succeeded" as const,
-            latencyMs: 0,
-          },
-        ],
-        successfulExecutionProfile: "stub",
-      },
     };
   };
-  models.consolidate = async (input, _signal, _snapshot, beforeAttempt) => {
+  models.consolidate = async (input, _signal, beforeAttempt) => {
     beforeAttempt?.();
     calls.consolidation++;
     const source = plan(input);
@@ -169,17 +136,6 @@ function proposalModels() {
     return {
       value: consolidationSchema.parse({ actions }),
       producerMetadata,
-      execution: {
-        attempts: [
-          {
-            executionProfile: "stub",
-            modelProfile: "stub",
-            status: "succeeded" as const,
-            latencyMs: 0,
-          },
-        ],
-        successfulExecutionProfile: "stub",
-      },
     };
   };
   return { models, calls };

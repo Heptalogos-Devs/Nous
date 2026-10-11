@@ -4,8 +4,8 @@
 import { canonicalDigest } from "../../digest.js";
 import { type ModelRole } from "../roles.js";
 import {
-  type ModelExecutionConfiguration,
   modelRoleProblem,
+  type ModelConfiguration,
   type RolePolicy,
 } from "../configuration.js";
 import { type ModelProfile, type ExecutionProfile } from "../profiles.js";
@@ -42,23 +42,16 @@ export type ReadyRole = {
   credentialEnv: string;
   timeout: number;
   profileDigest: string;
-  configDigest: string;
-};
-export type ModelRoleSnapshot = {
-  configuration: ModelExecutionConfiguration;
-  role: ModelRole;
-  prompt?: PromptAsset;
-  profileDigest: string;
+  /** Identity of this startup-resolved route and its role policy. */
   configDigest: string;
 };
 
-/** One binding owner for startup admission and in-process execution. */
+/** Resolve a configured route once while Core materializes its model runtime. */
 export function resolveRole(
-  config: ModelRoleSnapshot["configuration"],
+  config: ModelConfiguration,
   name: ModelRole,
   executionName: string,
   prompt?: PromptAsset,
-  snapshotDigest?: string,
 ): ReadyRole {
   const policy = config.roles[name];
   const binding = config.execution_profiles[executionName];
@@ -89,33 +82,9 @@ export function resolveRole(
     timeout: binding.timeout_ms ?? gateway.request_timeout_ms,
     profileDigest: identity.profileDigest,
     configDigest: canonicalDigest({
-      ...(snapshotDigest && { snapshot: snapshotDigest }),
       execution: identity.configDigest,
       policyDigest,
       executionName,
     }),
   };
-}
-
-export function hydrateRole(
-  snapshot: ModelRoleSnapshot,
-  executionName: string,
-  credentialOrigins: ReadonlySet<string>,
-): ReadyRole {
-  const role = resolveRole(
-    snapshot.configuration,
-    snapshot.role,
-    executionName,
-    snapshot.prompt,
-    snapshot.configDigest,
-  );
-  if (
-    !credentialOrigins.has(
-      role.credentialEnv + "@" + new URL(role.baseURL).origin,
-    )
-  )
-    throw new Error(
-      "Reserved gateway credential destination is no longer authorized by current configuration",
-    );
-  return role;
 }

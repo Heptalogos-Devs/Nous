@@ -4,9 +4,8 @@
 import {
   resolveRole,
   type ReadyRole,
-  type ModelRoleSnapshot,
   type ModelProducerMetadata,
-} from "./execution/snapshot.js";
+} from "./execution/role.js";
 import { executeRoutes, GenerationFailure } from "./execution/routes.js";
 import type { UserContent } from "ai";
 import {
@@ -30,10 +29,9 @@ import {
   type ModelConfiguration,
   type RolePolicy,
   modelConfigurationSchema,
-  modelRoleGraph,
 } from "./configuration.js";
 import { PromptRegistry, type PromptAsset } from "./prompts.js";
-import { invocationConfigDigest } from "./identity.js";
+import { modelRoleIdentity } from "./identity.js";
 import { modelImplementations } from "./implementation.js";
 import {
   generationInput,
@@ -46,13 +44,16 @@ type GenerationInput = {
   media?: DirectMedia;
   context?: (input: InputModalities) => Record<string, unknown>;
 };
+export type ModelGenerationOverrides = {
+  prompt?: ModelRole | { role: ModelRole; path: string };
+  adapterIdentity?: string;
+};
+
 type GenerationOptions<
   R extends ModelRole,
   MappedOutput = ModelGenerationOutput<R>,
-> = {
+> = ModelGenerationOverrides & {
   signal?: AbortSignal;
-  snapshot?: ModelRoleSnapshot;
-  prompt?: ModelRole | { role: ModelRole; path: string };
   beforeAttempt?: () => void;
   mapOutput?: (
     value: ModelGenerationOutput<R>,
@@ -62,10 +63,9 @@ type GenerationOptions<
 
 export class ModelInvocations {
   private prompts?: PromptRegistry;
+  private configuration!: ModelConfiguration;
   private promptPaths: Partial<Record<ModelRole, string>> = {};
   private readonly active = new Map<ModelRole, ReadyRole[]>();
-  private configuration!: ModelConfiguration;
-  private readonly credentialOrigins = new Set<string>();
   private readonly requirements = new Map<
     ModelRole,
     RolePolicy["requirement"]
@@ -85,11 +85,6 @@ export class ModelInvocations {
     const runtime = new ModelInvocations();
     config = modelConfigurationSchema.parse(config);
     runtime.configuration = config;
-    for (const gateway of Object.values(config.gateway_profiles))
-      if (gateway.enabled)
-        runtime.credentialOrigins.add(
-          `${gateway.credential_env}@${new URL(gateway.base_url).origin}`,
-        );
     const prompts = new PromptRegistry(promptRoot, overridePromptRoot);
     runtime.prompts = prompts;
     for (const name of roleNames) {
@@ -155,64 +150,31 @@ export class ModelInvocations {
   requirement(role: ModelRole) {
     return this.requirements.get(role) ?? "optional";
   }
-  snapshot(name: ModelRole): ModelRoleSnapshot {
-    const role = this.require(name);
-    const configuration = modelRoleGraph(this.configuration, name);
-    const outputSchemaDigest = providerContractForRole(name)?.digest;
-    return {
-      role: name,
-      configuration,
-      prompt: role.prompt,
-      profileDigest: role.profileDigest,
-      configDigest: canonicalDigest({
-        policy: role.policy,
-        configuration,
-        prompt: role.prompt && {
-          id: role.prompt.id,
-          digest: role.prompt.digest,
-        },
-        outputSchemaDigest,
-      }),
-    };
+  executionDigest(role: ModelRole): string {
+    const routes = this.active.get(role) ?? [];
+    if (!routes.length) throw new Error(`Model role ${role} unavailable`);
+    return canonicalDigest(routes.map((route) => route.configDigest));
   }
-  async snapshotPrompt(
+  private async withRoutes<T, Input = undefined>(
     name: ModelRole,
-    path?: string,
-    adapter?: string,
-  ): Promise<ModelRoleSnapshot> {
-    const snapshot = this.snapshot(name);
-    if (path) {
-      const prompt = await this.prompts?.load(name, path);
-      if (!prompt) throw new Error("Strategy prompt unavailable");
-      snapshot.prompt = prompt;
-    }
-    snapshot.configDigest = invocationConfigDigest(
-      snapshot.configDigest,
-      path ? snapshot.prompt : undefined,
-      adapter,
-    );
-    return snapshot;
-  }
-  private async withRoutes<
-    T extends {
-      value: unknown;
-      producerMetadata: ModelProducerMetadata;
-      usage?: unknown;
-    },
-    Input = undefined,
-  >(
-    name: ModelRole,
-    invoke: (role: ReadyRole, input: Input) => Promise<T>,
+    invoke: (
+      role: ReadyRole,
+      input: Input,
+      overrides: { prompt?: PromptAsset; adapterIdentity?: string },
+    ) => Promise<T>,
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
     prepare?: (role: ReadyRole) => Input,
+    prompt?: PromptAsset,
+    adapterIdentity?: string,
   ) {
+    const routes = this.active.get(name) ?? [];
+    if (!routes.length) this.require(name);
+    const overrides = { prompt, adapterIdentity };
     return executeRoutes(
       name,
-      fixed ?? this.snapshot(name),
-      this.credentialOrigins,
-      invoke,
+      routes,
+      (role, input) => invoke(role, input, overrides),
       signal,
       beforeAttempt,
       prepare,
@@ -226,16 +188,40 @@ export class ModelInvocations {
     if (!value) throw new Error(`Model role ${role} unavailable`);
     return value;
   }
-  private metadata(role: ReadyRole, adapter: string): ModelProducerMetadata {
+  private metadata(
+    role: ReadyRole,
+    adapter: string,
+    overrides: { prompt?: PromptAsset; adapterIdentity?: string } = {},
+  ): ModelProducerMetadata {
+    const prompt = overrides.prompt ?? role.prompt;
+    const configDigest =
+      overrides.prompt || overrides.adapterIdentity
+        ? canonicalDigest({
+            execution: modelRoleIdentity(
+              role.profile,
+              {
+                base_url: role.baseURL,
+                request_timeout_ms: role.timeout,
+              },
+              role.binding,
+              prompt,
+            ).configDigest,
+            policyDigest: role.policyDigest,
+            executionName: role.executionName,
+            ...(overrides.adapterIdentity
+              ? { adapterIdentity: overrides.adapterIdentity }
+              : {}),
+          })
+        : role.configDigest;
     return {
       implementation: `${adapter}:${modelImplementations.provider}`,
       protocol: role.profile.protocol,
       model: role.profile.model,
       modelRevision: role.profile.model_revision,
       profileDigest: role.profileDigest,
-      promptId: role.prompt?.id,
-      promptDigest: role.prompt?.digest,
-      configDigest: role.configDigest,
+      promptId: prompt?.id,
+      promptDigest: prompt?.digest,
+      configDigest,
       modelRole: role.name,
       modelProfile: role.binding.model,
       executionProfile: role.executionName,
@@ -248,36 +234,36 @@ export class ModelInvocations {
     request: GenerationInput,
     options: GenerationOptions<R, MappedOutput> = {},
   ) {
-    const { signal, prompt: promptRole, beforeAttempt, mapOutput } = options;
+    const {
+      signal,
+      prompt: promptRole,
+      adapterIdentity,
+      beforeAttempt,
+      mapOutput,
+    } = options;
     const { content, media } = request;
-    let snapshot = options.snapshot ?? this.snapshot(name);
+    let prompt: PromptAsset | undefined;
     if (promptRole) {
       const selected =
         typeof promptRole === "string" ? promptRole : promptRole.role;
-      const prompt = await this.prompts?.load(
+      prompt = await this.prompts?.load(
         selected,
         typeof promptRole === "string"
           ? this.promptPaths[selected]
           : promptRole.path,
       );
       if (!prompt) throw new Error("Strategy prompt unavailable");
-      snapshot = {
-        ...snapshot,
-        prompt,
-        configDigest: invocationConfigDigest(snapshot.configDigest, prompt),
-      };
     }
     return this.withRoutes<
       {
         value: MappedOutput;
         producerMetadata: ModelProducerMetadata;
-        usage?: unknown;
         input: InputModalities;
       },
       { input: InputModalities; content: UserContent }
     >(
       name,
-      async (role, { input, content: supplied }) => {
+      async (role, { input, content: supplied }, overrides) => {
         const outputContract = providerContractForRole(name);
         const { adapter, ...output } = await generateProvider(
           role,
@@ -285,6 +271,7 @@ export class ModelInvocations {
           outputContract,
           signal,
           media,
+          overrides.prompt,
         );
         const value = output.value as ModelGenerationOutput<R>;
         let mappedValue: MappedOutput;
@@ -294,25 +281,19 @@ export class ModelInvocations {
             : (value as MappedOutput);
         } catch {
           // Owner validation errors may contain source content; keep the public classification bounded.
-          throw new GenerationFailure(
-            name,
-            "output_semantics_invalid",
-            undefined,
-            output.usage,
-          );
+          throw new GenerationFailure(name, "output_semantics_invalid");
         }
         return {
           ...output,
           value: mappedValue,
           producerMetadata: {
-            ...this.metadata(role, adapter),
+            ...this.metadata(role, adapter, overrides),
             outputSchemaDigest: outputContract?.digest,
           },
           input,
         };
       },
       signal,
-      snapshot,
       beforeAttempt,
       (role) => {
         const input = generationInput(role.profile, content, media);
@@ -333,6 +314,8 @@ export class ModelInvocations {
           content: supplied,
         };
       },
+      prompt,
+      adapterIdentity,
     );
   }
   async embeddingBatch(texts: string[], model: string, signal?: AbortSignal) {
@@ -359,11 +342,7 @@ export class ModelInvocations {
       );
     return { ...result, producer };
   }
-  async transcription(
-    audio: Uint8Array,
-    signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
-  ) {
+  async transcription(audio: Uint8Array, signal?: AbortSignal) {
     return this.withRoutes(
       "speech_transcription",
       async (role) => {
@@ -375,7 +354,6 @@ export class ModelInvocations {
         return { ...result, producerMetadata: this.metadata(role, adapter) };
       },
       signal,
-      fixed,
     );
   }
   async rerank(

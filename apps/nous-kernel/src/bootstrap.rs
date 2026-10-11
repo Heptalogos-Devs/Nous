@@ -106,17 +106,42 @@ async fn read_configuration(path: &Path) -> Result<ResolvedConfiguration> {
         Error::new(
             nous_core::ErrorOwner::Instance,
             nous_core::ErrorCode::InvalidRequest,
-            "Invalid request",
+            format!("Could not read configuration file ({:?})", e.kind()),
         )
+        .with_context("path", path.display())
+        .with_context("io_kind", format!("{:?}", e.kind()))
         .with_source(e)
     })?;
     let config: Config = toml::from_str(&text).map_err(|e| {
-        Error::new(
+        let location = e.span().map(|span| {
+            let prefix = &text[..span.start.min(text.len())];
+            let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+            let column = prefix
+                .rsplit('\n')
+                .next()
+                .map_or(1, |line| line.chars().count() + 1);
+            (line, column)
+        });
+        let message = match location {
+            Some((line, column)) => {
+                format!("Configuration file contains invalid TOML at line {line}, column {column}")
+            }
+            None => "Configuration file contains invalid TOML".to_owned(),
+        };
+        let error = Error::new(
             nous_core::ErrorOwner::Instance,
             nous_core::ErrorCode::InvalidRequest,
-            "Invalid request",
+            message,
         )
-        .with_source(e)
+        .with_context("path", path.display());
+        let error = if let Some((line, column)) = location {
+            error
+                .with_context("line", line)
+                .with_context("column", column)
+        } else {
+            error
+        };
+        error.with_source(e)
     })?;
     if config.bootstrap.object_store.backend != "fs" {
         return Err(Error::new(
@@ -213,7 +238,7 @@ async fn open_database(
                 return Err(Error::new(
                     nous_core::ErrorOwner::Instance,
                     nous_core::ErrorCode::InvalidRequest,
-                    "Invalid request",
+                    "External database mode requires database.url",
                 ));
             }
             Ok((config.url.clone(), None))
@@ -288,7 +313,7 @@ async fn private_database_settings(
             return Err(Error::new(
                 nous_core::ErrorOwner::Instance,
                 nous_core::ErrorCode::Unavailable,
-                "Service unavailable",
+                "PostgreSQL runtime pack is missing; run nous runtime install postgresql",
             ));
         }
     }
@@ -366,7 +391,7 @@ async fn private_database_settings(
         return Err(Error::new(
             nous_core::ErrorOwner::Instance,
             nous_core::ErrorCode::InvalidRequest,
-            "Invalid request",
+            "Private PostgreSQL credential is empty",
         ));
     }
     #[derive(Deserialize, Serialize)]

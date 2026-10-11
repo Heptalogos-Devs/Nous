@@ -130,10 +130,7 @@ export async function grantMaintenance(
                     capability.state === "READY",
                 ),
               )
-              .map((role) => [
-                role,
-                models.invocations.snapshot(role).configDigest,
-              ]),
+              .map((role) => [role, models.invocations.executionDigest(role)]),
           ),
         ),
         limit: 1,

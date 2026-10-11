@@ -2,7 +2,7 @@
 
 [返回 Reference](README.md)
 
-操作者配置位于 `ConfigurationRoot/nous.toml`，声明 `config_revision = 2`。配置使用自然 TOML section；完整示例见 [nous.toml](examples/nous.toml)。[bootstrap.toml](examples/bootstrap.toml) 只定位独立运行目录。
+操作者配置位于 `ConfigurationRoot/nous.toml`，使用自然 TOML section；完整示例见 [nous.toml](examples/nous.toml)。[bootstrap.toml](examples/bootstrap.toml) 只定位独立运行目录。
 
 ## Catalog 与所有权
 
@@ -20,7 +20,7 @@ Overrideable 值按 reference default → deployment TOML → persisted system o
 
 ## 启动与快照
 
-Core 先解析 `config_revision`、`host` 和 `database` bootstrap，通过私有 JSON bundle 交付 Core descriptors 与 deployment document。Kernel finalize Catalog 并加载持久覆盖后，Core 从 active snapshot 构造 model/resource/consumer runtime。凭据值只从 SecretRoot/environment 加载；Catalog 保存 credential reference。
+Core 先解析 `host` 和 `database` bootstrap，通过私有 JSON bundle 交付 Core descriptors 与 deployment document。Kernel finalize Catalog 并加载持久覆盖后，Core 从 active snapshot 构造 model/resource/consumer runtime。凭据值只从 SecretRoot/environment 加载；Catalog 保存 credential reference。
 
 Live 修改作用于后续 operation；在途 operation 保留固定快照。RestartProcess 修改 desired snapshot 并返回 restart effect，active snapshot 在重启前不变。Core model/gateway/role/media/resource/consumer、`material.inputs` 与 `core_execution` 结构使用 RestartProcess。`core_execution` 拥有 Kernel RPC、maintenance RPC、工作、cleanup、need acknowledgement 和回应等待的 typed opportunity policy 、HTTP body byte budget 和 managed context track 上限（默认 256）、Query embedding cache entries（默认 128）及 rerank candidate 上限（默认 64）；host startup/shutdown timeout 和 runtime download timeout（默认 300000 ms）是 deployment-only bootstrap 参数。NewSubjectsOnly 更新供给默认，已有 Subject 保存已采用的 typed capability set。ServingRebuild 返回 owner rebuild effect；Serving 在下一次需要该 family 的 prepare 或显式 refresh 中构建并原子替换 generation。Projection status 按 family/space 返回 generation ID、Authority watermark、实际配置 digest 和当前所需 digest；Authority 或配置落后时为 STALE。
 
@@ -50,7 +50,7 @@ nous config check --home <instance>
 
 Set 的值由 `--value-json` 传入完整 JSON 语法：boolean、number、带引号 string、array 或 object。CLI 类型、范围、单位、默认值、来源与应用模式来自目录。Config get 默认并列呈现 active/desired 与来源、revision、digest 和 descriptor effects；写入后重新读取两种 view，不把 desired 当成 active。CLI 使用命令支持的 ProtoJSON 边界，不接受旧 `--desired` alias 或位置 JSON 值。
 
-`nous init` 与首次 `nous serve` exclusive-create 最小配置；已有文件保持原样。`config check` 复用 production bootstrap/catalog validation path，检查版本、schema、未知路径、descriptor overlap、Prompt 和显式 executable reference；无需凭据或 provider 调用。
+`nous init` 与首次 `nous serve` exclusive-create 最小配置；已有文件保持原样。`config check` 复用 production bootstrap/catalog validation path，检查 schema、未知路径、descriptor overlap、Prompt 和显式 executable reference；无需凭据或 provider 调用。
 
 ## Models 与 Prompts
 

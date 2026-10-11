@@ -20,7 +20,6 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { type ExecutionOptions } from "../execution.js";
 import { modelProducer } from "../model/producer.js";
-import { type ModelRoleSnapshot } from "../model/execution/snapshot.js";
 import { type ModelRuntime } from "../model/runtime.js";
 import { conceptMaintenanceSchema } from "../model/schemas/concept-maintenance.js";
 import { consolidationSchema } from "../model/schemas/consolidation.js";
@@ -52,7 +51,6 @@ export async function buildMaintenanceProposal({
   models,
   need,
   plan,
-  modelSnapshot,
   operationId,
   options,
   reserveModelCall,
@@ -60,7 +58,6 @@ export async function buildMaintenanceProposal({
   models: ModelRuntime;
   need: MaintenanceNeed;
   plan: MaintenancePlan;
-  modelSnapshot?: ModelRoleSnapshot;
   operationId: string;
   options: ExecutionOptions;
   reserveModelCall: () => void;
@@ -80,17 +77,11 @@ export async function buildMaintenanceProposal({
     };
   }
 
-  if (!modelSnapshot)
-    throw new ConnectError(
-      "Maintenance model snapshot is unavailable",
-      Code.Internal,
-    );
   const planInput = JSON.stringify(toJson(MaintenancePlanSchema, plan));
   if (need.kind === "episode_resegment") {
     const result = await models.segmentEpisode(
       planInput,
       options.signal ?? undefined,
-      modelSnapshot,
       reserveModelCall,
     );
     let segments;
@@ -150,7 +141,6 @@ export async function buildMaintenanceProposal({
     const result = await models.maintainConcepts(
       plan.conceptModelInputJson,
       options.signal ?? undefined,
-      modelSnapshot,
       reserveModelCall,
     );
     return {
@@ -169,7 +159,6 @@ export async function buildMaintenanceProposal({
     const result = await models.consolidate(
       planInput,
       options.signal ?? undefined,
-      modelSnapshot,
       reserveModelCall,
     );
     return {
@@ -187,7 +176,6 @@ export async function buildMaintenanceProposal({
   const result = await models.synthesizeJournal(
     planInput,
     options.signal ?? undefined,
-    modelSnapshot,
     reserveModelCall,
   );
   const proposal = journalSynthesisSchema.parse(result.value);

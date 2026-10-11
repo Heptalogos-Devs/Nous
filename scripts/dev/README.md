@@ -43,4 +43,4 @@ corepack pnpm dev:portable status
 
 `dev:portable` 默认使用 `data/releases/windows-x64/current/` 中的 Node 和 launcher，进而使用包内 Core/Kernel/Runtime；可用 `--bundle <解包目录>` 指定另一实际包。配置和密钥直接引用 `data/config/apps/`、`data/config/secrets/`，不复制或覆盖。生成的 locator 位于 `data/instances/portable/bootstrap.toml`，Authority/对象/身份与源码开发实例独立。无参数等同 `serve`；关闭规则由正常 launcher 承担。
 
-包尚未组装时该命令明确失败。配置字段与 `config_revision` 必须符合所选 Core package 的合同；版本不匹配时，按该 package 合同更新配置，或选择与配置匹配的 package。
+包尚未组装时该命令明确失败。配置字段必须符合所选 Core package 的合同；不匹配时，按该 package 合同更新配置，或选择与配置匹配的 package。

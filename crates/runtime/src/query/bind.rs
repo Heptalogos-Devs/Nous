@@ -156,7 +156,7 @@ fn validate_hard_constraints(query: &CognitiveQuery) -> Result<()> {
             return Err(Error::new(
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "unsupported cognitive role constraint",
             ));
         }
     }
@@ -165,7 +165,7 @@ fn validate_hard_constraints(query: &CognitiveQuery) -> Result<()> {
             return Err(Error::new(
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "unsupported formation mode constraint",
             ));
         }
     }
@@ -177,7 +177,7 @@ fn validate_hard_constraints(query: &CognitiveQuery) -> Result<()> {
             return Err(Error::new(
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "unsupported evidence class constraint",
             ));
         }
     }

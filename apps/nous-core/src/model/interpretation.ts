@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { UserContent } from "ai";
-import { ModelInvocations } from "./invocations.js";
-import { type ModelRoleSnapshot } from "./execution/snapshot.js";
+import {
+  ModelInvocations,
+  type ModelGenerationOverrides,
+} from "./invocations.js";
 import {
   structuredMaterialResult,
   type MaterialInterpretation as MaterialInterpretationOutput,
@@ -14,15 +16,12 @@ import { originalMediaAccess, type InputModalities } from "./input.js";
 
 /** Owns model input construction and Material output interpretation. */
 export class MaterialInterpretation {
-  constructor(
-    private readonly invocations: ModelInvocations,
-    private readonly videoPrompt: string,
-  ) {}
+  constructor(private readonly invocations: ModelInvocations) {}
   async interpret(
     bytes: Uint8Array,
     mediaType: string,
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    overrides?: ModelGenerationOverrides,
   ) {
     if (!mediaType.startsWith("image/"))
       throw new Error("Image description requires image material");
@@ -33,19 +32,18 @@ export class MaterialInterpretation {
         content,
         context: (actual) => ({ evidence_access: originalMediaAccess(actual) }),
       },
-      { signal: signal, snapshot: fixed },
+      { signal: signal, ...overrides },
     );
     return {
       text: interpretationSchema.parse({ text: result.value }).text,
       producerMetadata: result.producerMetadata,
-      execution: result.execution,
       inputAccess: originalMediaAccess(result.input),
     };
   }
   async structure(
     input: string | { bytes: Uint8Array; mediaType: string },
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    overrides?: ModelGenerationOverrides,
     context?: StructuredMaterialContext,
   ) {
     if (!context)
@@ -106,7 +104,7 @@ export class MaterialInterpretation {
       },
       {
         signal: signal,
-        snapshot: fixed,
+        ...overrides,
         mapOutput: (value, actual) =>
           structuredMaterialResult(value, available(actual)),
       },
@@ -114,7 +112,6 @@ export class MaterialInterpretation {
     return {
       ...result.value,
       producerMetadata: result.producerMetadata,
-      execution: result.execution,
       inputAccess: available(result.input).access,
     };
   }
@@ -123,7 +120,7 @@ export class MaterialInterpretation {
     mediaType: string,
     structured: boolean,
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    overrides?: ModelGenerationOverrides,
     context?: StructuredMaterialContext,
   ) {
     if (structured && !context)
@@ -146,7 +143,7 @@ export class MaterialInterpretation {
       },
       {
         signal: signal,
-        snapshot: fixed,
+        ...overrides,
         mapOutput: structured
           ? (value, actual) =>
               structuredMaterialResult(
@@ -161,7 +158,6 @@ export class MaterialInterpretation {
         ? result.value
         : { text: interpretationSchema.parse({ text: result.value }).text }),
       producerMetadata: result.producerMetadata,
-      execution: result.execution,
       inputAccess: originalMediaAccess(result.input),
     };
   }
@@ -170,7 +166,7 @@ export class MaterialInterpretation {
     transcript: string | undefined,
     structured: boolean,
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    overrides?: ModelGenerationOverrides,
     context?: StructuredMaterialContext,
   ) {
     if (structured && !context)
@@ -221,12 +217,7 @@ export class MaterialInterpretation {
       },
       {
         signal: signal,
-        prompt: fixed
-          ? undefined
-          : structured
-            ? undefined
-            : { role: "material_description", path: this.videoPrompt },
-        snapshot: fixed,
+        ...overrides,
         mapOutput: structured
           ? (value, actual) =>
               structuredMaterialResult(
@@ -241,7 +232,6 @@ export class MaterialInterpretation {
         ? result.value
         : { text: interpretationSchema.parse({ text: result.value }).text }),
       producerMetadata: result.producerMetadata,
-      execution: result.execution,
       inputAccess: available(result.input).access,
     };
   }

@@ -18,7 +18,7 @@ Bootstrap rejects unknown or duplicate path keys and invalid path definitions. P
 
 The portable application package contains Core, CLI/official Client, Kernel, generated protocol, Prompts, migrations and runtime manifests. User configuration, credentials, instance data and locators are created outside ProgramRoot.
 
-Configuration must declare the current `config_revision`. `nous init` and first `nous serve` create a minimal configuration with exclusive create; existing content is not overwritten. `nous config check` uses the same parser and validates local references without starting Runtime or calling a provider. Full fields are documented in [Configuration](../../../reference/CONFIGURATION.md).
+`nous init` and first `nous serve` create a minimal configuration with exclusive create; existing content is not overwritten. `nous config check` uses the same parser and validates local references without starting Runtime or calling a provider. Full fields are documented in [Configuration](../../../reference/CONFIGURATION.md).
 
 Managed-private database mode uses the installed PostgreSQL pack, a protected instance credential and the instance's fixed loopback port. External mode connects only to the configured endpoint. Cluster/version mismatch and port conflicts fail explicitly; startup does not upgrade, recreate or discard database state.
 

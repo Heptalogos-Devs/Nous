@@ -11,11 +11,7 @@ import {
   type ContextSegment as Segment,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { ModelInvocations } from "./invocations.js";
-import {
-  type ModelRoleSnapshot,
-  type ModelProducerMetadata,
-} from "./execution/snapshot.js";
-import { type ExecutionTelemetry } from "./execution/routes.js";
+import { type ModelProducerMetadata } from "./execution/role.js";
 import type { ModelGenerationOutput } from "./schemas/contracts.js";
 import { type ModelRole } from "./roles.js";
 import {
@@ -28,7 +24,6 @@ import { projectionStewardSchema as proposalSchema } from "./schemas/projection.
 type SemanticGeneration<R extends ModelRole> = {
   value: ModelGenerationOutput<R>;
   producerMetadata: ModelProducerMetadata;
-  execution: ExecutionTelemetry;
 };
 
 export class ModelRuntime {
@@ -43,7 +38,7 @@ export class ModelRuntime {
     readonly materialInputs = modelConfigurationSchema.parse({})
       .material_inputs,
   ) {
-    this.material = new MaterialInterpretation(invocations, video.prompt);
+    this.material = new MaterialInterpretation(invocations);
   }
   static async fromConfig(
     config: ModelConfiguration,
@@ -74,61 +69,56 @@ export class ModelRuntime {
   async segmentEpisode(
     input: string,
     signal?: AbortSignal,
-    snapshot?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
   ): Promise<SemanticGeneration<"episode_segmentation">> {
     return this.invocations.generate(
       "episode_segmentation",
       { content: input },
-      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
+      { signal: signal, beforeAttempt: beforeAttempt },
     );
   }
   async synthesizeJournal(
     input: string,
     signal?: AbortSignal,
-    snapshot?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
   ): Promise<SemanticGeneration<"journal_synthesis">> {
     return this.invocations.generate(
       "journal_synthesis",
       { content: input },
-      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
+      { signal: signal, beforeAttempt: beforeAttempt },
     );
   }
   async maintainConcepts(
     input: string,
     signal?: AbortSignal,
-    snapshot?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
   ): Promise<SemanticGeneration<"concept_maintenance">> {
     return this.invocations.generate(
       "concept_maintenance",
       { content: input },
-      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
+      { signal: signal, beforeAttempt: beforeAttempt },
     );
   }
   async consolidate(
     input: string,
     signal?: AbortSignal,
-    snapshot?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
   ): Promise<SemanticGeneration<"memory_consolidation">> {
     return this.invocations.generate(
       "memory_consolidation",
       { content: input },
-      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
+      { signal: signal, beforeAttempt: beforeAttempt },
     );
   }
-  async form(text: string, signal?: AbortSignal, snapshot?: ModelRoleSnapshot) {
+  async form(text: string, signal?: AbortSignal) {
     const result = await this.invocations.generate(
       "memory_formation",
       { content: text },
-      { signal: signal, snapshot: snapshot },
+      { signal: signal },
     );
     return {
       ...formationSchema.parse(result.value),
       producerMetadata: result.producerMetadata,
-      execution: result.execution,
     };
   }
 

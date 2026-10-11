@@ -56,7 +56,6 @@ export async function formObservation(
     ...new Set(r.explicitTags.map((tag) => tag.toLowerCase())),
   ].sort();
 
-  const model = models.invocations.snapshot("memory_formation");
   const occurrence = await kernel.material.getOccurrence(
     { subjectId: r.subjectId, id: r.occurrenceId },
     options,
@@ -140,7 +139,6 @@ export async function formObservation(
       aboutnessMode: mode,
     }),
     options.signal ?? undefined,
-    model,
   );
   if (
     new Set(result.selectedEntityKeys).size !==

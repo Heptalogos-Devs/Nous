@@ -9,7 +9,6 @@ import { configurationBundle, coreConfigurationValues } from "./catalog.js";
 import { join, resolve } from "node:path";
 import { stat, mkdir, writeFile, rm } from "node:fs/promises";
 import {
-  CONFIG_REVISION,
   ConfigurationError,
   readConfiguration,
   parseEffectiveConfiguration,
@@ -153,7 +152,6 @@ export async function checkConfiguration(
   }
   return {
     valid: issues.length === 0,
-    config_revision: CONFIG_REVISION,
     configuration,
     issues,
     diagnostics,

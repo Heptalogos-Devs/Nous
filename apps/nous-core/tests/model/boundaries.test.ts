@@ -89,7 +89,10 @@ describe("model protocol and provenance boundaries", () => {
                       '{"text":"faithful","semanticRole":"reported_fact","title":null,"selectedEntityKeys":[]}',
                   },
                   finish_reason:
-                    body.model === "incomplete-chat" ? "length" : "stop",
+                    body.model === "incomplete-chat" &&
+                    !JSON.stringify(body.messages).includes("semantic-fallback")
+                      ? "length"
+                      : "stop",
                 },
               ],
               usage: {
@@ -229,6 +232,29 @@ describe("model protocol and provenance boundaries", () => {
         "/v1/embeddings",
         "/v1/rerank",
       ]);
+      const strategy = await runtime.generate(
+        "memory_formation",
+        { content: "evidence" },
+        {
+          prompt: {
+            role: "memory_formation",
+            path: "prompts/journal/synthesis.md",
+          },
+          adapterIdentity: "fixture-strategy-adapter-v1",
+        },
+      );
+      expect(strategy.producerMetadata.promptId).toBe(
+        "program/journal/synthesis.md",
+      );
+      expect(strategy.producerMetadata.promptDigest).toMatch(/^[0-9a-f]{64}$/);
+      expect(strategy.producerMetadata.configDigest).not.toBe(
+        formation.producerMetadata.configDigest,
+      );
+      expect(
+        (
+          requests.at(-1)!.body.messages as { role: string; content: string }[]
+        )[0]?.content,
+      ).toContain("# Synthesize a bounded Journal");
       await runtime.generate("memory_formation", {
         content: [
           {
@@ -341,7 +367,6 @@ describe("model protocol and provenance boundaries", () => {
         requirement: "required",
       };
       const routed = await ModelInvocations.create(config);
-      const frozen = routed.snapshot("memory_formation");
       config.model_profiles.backup.model = "changed-after-reservation";
       let admitted = 0;
       const start = requests.length;
@@ -349,7 +374,6 @@ describe("model protocol and provenance boundaries", () => {
         "memory_formation",
         { content: "evidence" },
         {
-          snapshot: frozen,
           beforeAttempt: () => {
             admitted++;
           },
@@ -360,23 +384,18 @@ describe("model protocol and provenance boundaries", () => {
         requests.slice(start).map((request) => request.body.model),
       ).toEqual(["incomplete-chat", "chat-id"]);
       expect(requests.at(-1)!.body.reasoning_effort).toBe("high");
-      expect(
-        fallback.execution.attempts.map((attempt) => attempt.status),
-      ).toEqual(["failed", "succeeded"]);
       expect(fallback.producerMetadata).toMatchObject({
         model: "chat-id",
         modelProfile: "backup",
         executionProfile: "backup",
         modelRole: "memory_formation",
       });
-      const semanticSnapshot = structuredClone(frozen);
-      semanticSnapshot.configuration.model_profiles.chat!.model = "chat-id";
       let semanticChecks = 0;
+      const semanticStart = requests.length;
       const semanticFallback = await routed.generate(
         "memory_formation",
-        { content: "evidence" },
+        { content: "semantic-fallback" },
         {
-          snapshot: semanticSnapshot,
           mapOutput: (value) => {
             if (++semanticChecks === 1)
               throw new Error("source semantics invalid");
@@ -386,10 +405,8 @@ describe("model protocol and provenance boundaries", () => {
       );
       expect(semanticChecks).toBe(2);
       expect(
-        semanticFallback.execution.attempts.map(
-          (attempt) => attempt.failureClass,
-        ),
-      ).toEqual(["output_semantics_invalid", undefined]);
+        requests.slice(semanticStart).map((request) => request.body.model),
+      ).toEqual(["incomplete-chat", "chat-id"]);
       expect(semanticFallback.producerMetadata.executionProfile).toBe("backup");
       expect(semanticFallback.value).toMatchObject({ mapped: true });
       const beforeBudget = requests.length;
@@ -400,7 +417,6 @@ describe("model protocol and provenance boundaries", () => {
           "memory_formation",
           { content: "evidence" },
           {
-            snapshot: frozen,
             beforeAttempt: () => {
               if (++admission > 1)
                 throw new Error("caller model budget exhausted");
@@ -414,11 +430,6 @@ describe("model protocol and provenance boundaries", () => {
       expect((admissionFailure as Error).message).toBe(
         "caller model budget exhausted",
       );
-      expect(fallback.execution.attempts.at(-1)?.usage).toMatchObject({
-        inputTokens: 1,
-        outputTokens: 2,
-        totalTokens: 3,
-      });
       expect(requests.length - beforeBudget).toBe(1);
     } finally {
       delete process.env.NOUS_TEST_GATEWAY;

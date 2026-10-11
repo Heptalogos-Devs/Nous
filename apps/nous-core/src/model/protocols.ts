@@ -33,39 +33,7 @@ type ProviderOutput = {
   providerName: string;
   digest: string;
 };
-export function usageCounts(input: unknown) {
-  if (!input || typeof input !== "object") return undefined;
-  const counters = Object.fromEntries(Object.entries(input));
-  const count = (entry: unknown) => {
-    const value =
-      entry && typeof entry === "object" && "total" in entry
-        ? entry.total
-        : entry;
-    return typeof value === "number" &&
-      Number.isSafeInteger(value) &&
-      value >= 0
-      ? value
-      : undefined;
-  };
-  const usage = {
-    inputTokens: count(counters.inputTokens ?? counters.prompt_tokens),
-    outputTokens: count(counters.outputTokens ?? counters.completion_tokens),
-    totalTokens: count(counters.totalTokens ?? counters.total_tokens),
-  };
-  return Object.values(usage).some((value) => value !== undefined)
-    ? usage
-    : undefined;
-}
-
-export class ProviderFailure extends Error {
-  constructor(
-    message: string,
-    readonly usage?: unknown,
-    readonly outcome: "failed" | "unknown" = "failed",
-  ) {
-    super(message);
-  }
-}
+export class ProviderFailure extends Error {}
 class MediaProtocolError extends ProviderFailure {}
 class ModelOutputError extends ProviderFailure {}
 function provider(role: ProviderExecution) {
@@ -84,8 +52,6 @@ function providerSignal(role: ProviderExecution, signal?: AbortSignal) {
 }
 export function safeProviderFailure(error: unknown) {
   if (error instanceof ProviderFailure) return error.message;
-  if (error instanceof MediaProtocolError) return error.message;
-  if (error instanceof ModelOutputError) return error.message;
   if (NoObjectGeneratedError.isInstance(error))
     return error.finishReason && error.finishReason !== "stop"
       ? `output_incomplete_${error.finishReason}`
@@ -117,7 +83,6 @@ const rerankResponse = z.object({
       }),
     )
     .max(64),
-  usage: z.unknown().optional(),
 });
 function parseRerankResponse(input: unknown, count: number) {
   const result = rerankResponse.parse(input);
@@ -136,6 +101,7 @@ export async function generateProvider(
   output: ProviderOutput | undefined,
   signal?: AbortSignal,
   media?: DirectMedia,
+  promptOverride?: PromptAsset,
 ) {
   if (
     role.profile.protocol !== "openai-chat" &&
@@ -143,10 +109,10 @@ export async function generateProvider(
   )
     throw new Error("Role is not a text generation protocol");
   const schema = output?.owner;
+  const prompt = promptOverride ?? role.prompt;
   if (output && !role.profile.capabilities.includes("structured_output"))
     throw new Error("Strict structured output capability is unavailable");
   let mediaStage = "admission";
-  let receivedUsage: unknown;
   try {
     if (media) {
       const audio = media.mediaType.startsWith("audio/");
@@ -176,7 +142,7 @@ export async function generateProvider(
           model: role.profile.model,
           stream: false,
           messages: [
-            { role: "system", content: role.prompt?.text ?? "" },
+            { role: "system", content: prompt?.text ?? "" },
             {
               role: "user",
               content: [{ type: "text", text: content }, part],
@@ -216,8 +182,6 @@ export async function generateProvider(
       const wire: unknown = JSON.parse(
         new TextDecoder("utf-8", { fatal: true }).decode(bytes),
       );
-      if (wire && typeof wire === "object" && "usage" in wire)
-        receivedUsage = wire.usage;
       const result = z
         .object({
           choices: z
@@ -229,14 +193,12 @@ export async function generateProvider(
             )
             .min(1)
             .max(1),
-          usage: z.unknown().optional(),
         })
         .parse(wire);
       const text = result.choices[0]!.message.content;
       const value = schema ? schema.parse(JSON.parse(text)) : text;
       return {
         value,
-        usage: usageCounts(result.usage),
         adapter: "gateway-chat-media",
       };
     }
@@ -245,7 +207,7 @@ export async function generateProvider(
         role.profile.protocol === "openai-chat"
           ? provider(role).chat(role.profile.model)
           : provider(role).responses(role.profile.model),
-      instructions: role.prompt?.text,
+      instructions: prompt?.text,
       messages: [{ role: "user", content }],
       output: output
         ? Output.object({
@@ -261,17 +223,12 @@ export async function generateProvider(
       maxRetries: 0,
       abortSignal: providerSignal(role, signal),
     });
-    receivedUsage = result.totalUsage;
     if (!schema && !result.text.trim()) throw new Error("Empty model output");
     if (schema && result.finishReason !== "stop")
-      throw new ModelOutputError(
-        `output_incomplete_${result.finishReason}`,
-        result.totalUsage,
-      );
+      throw new ModelOutputError(`output_incomplete_${result.finishReason}`);
     const value = schema ? result.output : result.text;
     return {
       value,
-      usage: result.totalUsage,
       adapter: "ai-sdk",
     };
   } catch (error) {
@@ -280,25 +237,9 @@ export async function generateProvider(
     if (media)
       throw new MediaProtocolError(
         `Direct media invocation failed at ${mediaStage}`,
-        usageCounts(receivedUsage),
-        ["transport", "response_read"].includes(mediaStage)
-          ? "unknown"
-          : "failed",
       );
     // Provider error bodies may echo headers, input material, or credentials.
-    throw new ProviderFailure(
-      safeProviderFailure(error),
-      NoObjectGeneratedError.isInstance(error) ||
-        error instanceof ModelOutputError
-        ? usageCounts(error.usage)
-        : usageCounts(receivedUsage),
-      receivedUsage === undefined &&
-        ["validation_or_transport", "timeout_or_cancellation"].includes(
-          safeProviderFailure(error),
-        )
-        ? "unknown"
-        : "failed",
-    );
+    throw new ProviderFailure(safeProviderFailure(error));
   }
 }
 

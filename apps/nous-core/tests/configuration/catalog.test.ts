@@ -3,7 +3,6 @@
 
 import { expect, it } from "vitest";
 import {
-  CONFIG_REVISION,
   configurationBundle,
   coreConfigurationValues,
 } from "../../src/configuration/catalog.js";
@@ -11,11 +10,9 @@ import { modelConfigurationShape } from "../../src/model/configuration.js";
 
 it("freezes owner-normalized policies before the Kernel computes configuration identity", () => {
   const omitted = configurationBundle({
-    config_revision: CONFIG_REVISION,
     video: { max_frames: 4 },
   });
   const explicit = configurationBundle({
-    config_revision: CONFIG_REVISION,
     video: { ...modelConfigurationShape.video.parse(undefined), max_frames: 4 },
   });
   expect(coreConfigurationValues(omitted.deployment_document)).toEqual(

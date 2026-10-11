@@ -30,7 +30,7 @@ impl TemporalExtent {
             return Err(Error::new(
                 crate::ErrorOwner::Core,
                 crate::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "temporal interval must be half-open with start < end",
             ));
         }
         Ok(())
@@ -52,7 +52,7 @@ impl TimeInterval {
             return Err(Error::new(
                 crate::ErrorOwner::Core,
                 crate::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "time interval must be half-open with start < end",
             ));
         }
         Ok(())

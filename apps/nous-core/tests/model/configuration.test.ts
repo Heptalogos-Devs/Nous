@@ -43,7 +43,7 @@ it("rejects a dangling explicit route with its exact configuration path", () => 
     );
 });
 
-it("freezes only a role's dependency graph so unrelated profiles and media budgets do not change identity", async () => {
+it("keeps resolved route identity independent of unrelated profiles and media budgets", async () => {
   process.env.NOUS_GRAPH_TEST = "controlled-owner-input";
   try {
     const first = modelConfigurationSchema.parse(modelGraph());
@@ -60,16 +60,13 @@ it("freezes only a role's dependency graph so unrelated profiles and media budge
         },
       },
     });
-    const left = (await ModelInvocations.create(first)).snapshot(
+    const left = (await ModelInvocations.create(first)).executionDigest(
       "memory_formation",
     );
-    const right = (await ModelInvocations.create(second)).snapshot(
+    const right = (await ModelInvocations.create(second)).executionDigest(
       "memory_formation",
     );
-    expect(left.configDigest).toBe(right.configDigest);
-    expect(left.configuration.model_profiles).toEqual({
-      chat: first.model_profiles.chat,
-    });
+    expect(left).toBe(right);
   } finally {
     delete process.env.NOUS_GRAPH_TEST;
   }

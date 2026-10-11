@@ -11,8 +11,6 @@ import {
 import { type KernelClient } from "../../src/kernel-client.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
 import { ModelRuntime } from "../../src/model/runtime.js";
-import { type ModelRoleSnapshot } from "../../src/model/execution/snapshot.js";
-import { modelRoleSnapshotFixture } from "../model/snapshot-fixture.js";
 
 export const subject = "10000000-0000-4000-8000-000000000001";
 export const revision = "20000000-0000-4000-8000-000000000001";
@@ -50,7 +48,6 @@ export function admitStub<T>(value: T) {
   return async (
     _input: string,
     _signal?: AbortSignal,
-    _snapshot?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
   ) => {
     beforeAttempt?.();
@@ -60,12 +57,12 @@ export function admitStub<T>(value: T) {
 
 export function fixture() {
   const models = new ModelRuntime();
-  vi.spyOn(models.invocations, "snapshot").mockReturnValue(
-    modelRoleSnapshotFixture("journal_synthesis"),
+  vi.spyOn(models.invocations, "executionDigest").mockReturnValue(
+    "d".repeat(64),
   );
   const synthesize = vi
     .spyOn(models, "synthesizeJournal")
-    .mockImplementation(async (_input, _signal, _snapshot, beforeAttempt) => {
+    .mockImplementation(async (_input, _signal, beforeAttempt) => {
       beforeAttempt?.();
       return {
         value: {
@@ -79,17 +76,6 @@ export function fixture() {
               basisKeys: ["source"],
             },
           ],
-        },
-        execution: {
-          attempts: [
-            {
-              executionProfile: "stub",
-              modelProfile: "stub",
-              status: "succeeded" as const,
-              latencyMs: 0,
-            },
-          ],
-          successfulExecutionProfile: "stub",
         },
         producerMetadata: {
           modelRole: "journal_synthesis" as const,

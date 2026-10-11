@@ -9,7 +9,6 @@ import {
   modelExecutionSchema,
 } from "../model/configuration.js";
 
-export const CONFIG_REVISION = 2;
 const requirement = z.enum(["REQUIRED", "PREFERRED", "OPTIONAL", "FORBIDDEN"]);
 export const consumersSchema = z
   .array(
@@ -88,20 +87,11 @@ const databaseSchema = z
   })
   .prefault({});
 export const bootstrapSchema = z.object({
-  config_revision: z.literal(CONFIG_REVISION),
   host: hostSchema,
   database: databaseSchema,
 });
 
 const owners = [
-  {
-    path: "config_revision",
-    schema: z.literal(CONFIG_REVISION),
-    default: CONFIG_REVISION,
-    owner: "core-host",
-    exposure: "developer",
-    deployment: true,
-  },
   ...Object.entries(hostFields).map(([name, schema]) => ({
     path: `host.${name}`,
     schema,

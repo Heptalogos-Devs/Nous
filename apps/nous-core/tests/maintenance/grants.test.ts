@@ -74,7 +74,7 @@ describe("bounded maintenance grants", () => {
       finishMaintenance: finish,
     });
     state.synthesize.mockImplementation(
-      async (_input, signal, _snapshot, beforeAttempt) => {
+      async (_input, signal, beforeAttempt) => {
         beforeAttempt?.();
         if (!signal) throw new Error("missing opportunity signal");
         return new Promise<never>((_done, reject) =>
@@ -82,17 +82,7 @@ describe("bounded maintenance grants", () => {
             "abort",
             () =>
               reject(
-                new GenerationFailure("journal_synthesis", "caller_cancelled", {
-                  attempts: [
-                    {
-                      executionProfile: "stub",
-                      modelProfile: "stub",
-                      status: "unknown",
-                      latencyMs: 30,
-                      failureClass: "caller_cancelled",
-                    },
-                  ],
-                }),
+                new GenerationFailure("journal_synthesis", "caller_cancelled"),
               ),
             {
               once: true,

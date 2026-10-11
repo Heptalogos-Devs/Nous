@@ -127,28 +127,27 @@ async function run() {
   const input =
     captured?.messages[1]!.content ??
     JSON.stringify(toJson(MaintenancePlanSchema, plan!));
-  const snapshot = models.invocations.snapshot(role!);
   let result;
   if (captured) {
     result = await models.invocations.generate(
       role!,
       { content: input },
-      { signal: signal.signal, snapshot: snapshot },
+      { signal: signal.signal },
     );
   } else if (role === "episode_segmentation") {
-    result = await models.segmentEpisode(input, signal.signal, snapshot);
+    result = await models.segmentEpisode(input, signal.signal);
     partitionIndices(
       episodePartitionSchema.parse(result.value),
       plan!.members.map((member) => member.key),
     );
   } else if (role === "journal_synthesis") {
-    result = await models.synthesizeJournal(input, signal.signal, snapshot);
+    result = await models.synthesizeJournal(input, signal.signal);
     journalBasisKeys(
       journalSynthesisSchema.parse(result.value),
       new Set(plan!.basis.map((basis) => basis.key)),
     );
   } else {
-    result = await models.consolidate(input, signal.signal, snapshot);
+    result = await models.consolidate(input, signal.signal);
     consolidationSchema.parse(result.value);
   }
   await mkdir(dirname(resolve(values.output)), { recursive: true });
@@ -168,7 +167,6 @@ async function run() {
         sourcePlan: plan ? toJson(MaintenancePlanSchema, plan) : undefined,
         proposal: result.value,
         producer: result.producerMetadata,
-        execution: result.execution,
         review: {
           status: "human_review_required",
           checks:

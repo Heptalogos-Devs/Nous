@@ -174,11 +174,10 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                     bound.activation.frozen = true;
                 }
 
-                let execution = service
+                let (execution, rerank_expected) = service
                     .execute_query(bound, host_policy)
                     .await
                     .map_err(status)?;
-                let rerank_expected = rerank_expected(&execution, host_policy);
                 let has_resources = !execution.result.resource_actions.is_empty();
 
                 if rerank_expected || has_resources {
@@ -237,7 +236,12 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                         frame => Err(unexpected_query_frame(frame))?,
                     };
                     let complete = service
-                        .finalize_query_execution(execution, host_policy, input)
+                        .finalize_query_execution(
+                            execution,
+                            host_policy,
+                            input,
+                            rerank_expected,
+                        )
                         .await?;
                     drop(slot);
                     yield complete;
@@ -487,8 +491,8 @@ impl KernelService {
         mut execution: QueryExecution,
         host_policy: QueryRunHostPolicy,
         value: k::QueryFinalizeResult,
+        rerank_expected: bool,
     ) -> std::result::Result<k::QueryRunUpdate, Status> {
-        let rerank_expected = rerank_expected(&execution, host_policy);
         let rerank = value.rerank.unwrap_or_default();
         let mut order = Vec::new();
         match rerank.outcome {
@@ -643,7 +647,7 @@ impl KernelService {
         &self,
         bound: BoundQuery,
         host_policy: QueryRunHostPolicy,
-    ) -> Result<QueryExecution> {
+    ) -> Result<(QueryExecution, bool)> {
         let has_text = !bound.representation.text.trim().is_empty();
         let can_rerank = !bound.source_query.is_exact_read()
             && has_text
@@ -686,7 +690,7 @@ impl KernelService {
         {
             return Err(capability_error("model.query_rerank"));
         }
-        let rerank_expected = rerank_expected(&execution, host_policy);
+        let rerank_expected = can_rerank && rerank_candidates >= 2;
         if !rerank_expected
             && host_policy.rerank.requirement != RequirementStrength::Forbidden
             && !host_policy.rerank.configured
@@ -699,13 +703,7 @@ impl KernelService {
                     detail: None,
                 });
         }
-        if rerank_expected
-            && host_policy.rerank.requirement == RequirementStrength::Required
-            && !host_policy.rerank.configured
-        {
-            return Err(capability_error("model.query_rerank"));
-        }
-        Ok(execution)
+        Ok((execution, rerank_expected))
     }
 
     async fn contributors(&self, subject: SubjectId) -> Result<CognitiveContributors<'_>> {
@@ -744,24 +742,6 @@ fn unexpected_query_frame(frame: Option<k::query_run_request::Frame>) -> Status 
             Status::invalid_argument("query workflow continuation frame is required")
         }
     }
-}
-
-fn rerank_expected(execution: &QueryExecution, host_policy: QueryRunHostPolicy) -> bool {
-    !execution.bound.source_query.is_exact_read()
-        && !execution.bound.representation.text.trim().is_empty()
-        && host_policy.rerank.requirement != RequirementStrength::Forbidden
-        && host_policy.rerank.configured
-        && execution
-            .result
-            .results
-            .iter()
-            .filter(|hit| {
-                hit.representation
-                    .as_ref()
-                    .is_some_and(|text| !text.trim().is_empty())
-            })
-            .count()
-            >= 2
 }
 
 fn query_embedding_needed(bound: &BoundQuery) -> bool {

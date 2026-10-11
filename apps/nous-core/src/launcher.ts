@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import {
   ConfigurationError,
-  CONFIG_REVISION,
   readConfiguration,
 } from "./configuration/schema.js";
 import { checkConfiguration } from "./configuration/check.js";
@@ -164,7 +163,6 @@ main().catch((error) => {
     console.error(
       JSON.stringify({
         valid: false,
-        expected_revision: CONFIG_REVISION,
         issues: error.issues,
       }),
     );

@@ -1,8 +1,6 @@
 # Nous Wave 用户配置，放置于 ConfigurationRoot/nous.toml。
 # SecretRoot/gateway.env 保存 key；所有目录由 bootstrap.toml 的 [paths] 定位。
 # 修改 role/model 配置后重启 Core；示例 identifier 空值表示尚未配置。
-# ConfigurationRoot/nous.toml 使用的合同版本。此示例符合 Core revision 2。
-config_revision = 2
 
 # 应用 API 只监听本机 loopback。
 # 设为 0 时由系统分配空闲端口。默认固定端口为 9470。

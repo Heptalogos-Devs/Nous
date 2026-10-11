@@ -69,7 +69,6 @@ import { modelConfigurationSchema } from "../../src/model/configuration.js";
 import { deriveMaterial } from "../../src/model/derivation.js";
 import { ModelRuntime } from "../../src/model/runtime.js";
 import { type ModelInvocations } from "../../src/model/invocations.js";
-import { modelRoleSnapshotFixture } from "./snapshot-fixture.js";
 import type { KernelClient } from "../../src/kernel-client.js";
 import { create } from "@bufbuild/protobuf";
 import { DeriveMaterialRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
@@ -154,6 +153,7 @@ it("frames without a transcript cannot acquire audio evidence in either structur
   });
   const committed: { kind: string }[] = [];
   const modelInputs: unknown[] = [];
+  const generationOptions: unknown[] = [];
   const kernel = {
     execution: coreExecutionSchema.parse(undefined),
     material: {
@@ -192,13 +192,12 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       role === "speech_transcription"
         ? undefined
         : { capabilities: ["image_input"] },
-    snapshotPrompt: async (
-      role: "material_description" | "material_structuring",
-    ) => modelRoleSnapshotFixture(role),
     generate: async (
       role: string,
       request: { content: unknown },
       options?: {
+        prompt?: unknown;
+        adapterIdentity?: string;
         mapOutput?: (
           value: unknown,
           input: { visual: boolean; audio: boolean; text: boolean },
@@ -207,6 +206,7 @@ it("frames without a transcript cannot acquire audio evidence in either structur
     ) => {
       const input = request.content;
       modelInputs.push(input);
+      generationOptions.push(options ?? {});
       const actualInput = {
         visual: Array.isArray(input),
         audio: false,
@@ -280,6 +280,14 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       timestamp_seconds: 0,
     });
     expect(frameInput[2]!.type).toBe("file");
+    expect(generationOptions).toContainEqual(
+      expect.objectContaining({
+        prompt: {
+          role: "material_description",
+          path: policy.video.prompt,
+        },
+      }),
+    );
     const structuredText = modelInputs.find(
       (input) => typeof input === "string",
     ) as string;

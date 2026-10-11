@@ -6,11 +6,8 @@ import { executionOptions, type ExecutionOptions } from "../execution.js";
 import type { DeriveMaterialRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "./runtime.js";
-import { type ExecutionTelemetry } from "./execution/routes.js";
-import {
-  type ModelProducerMetadata,
-  type ModelRoleSnapshot,
-} from "./execution/snapshot.js";
+import { type ModelProducerMetadata } from "./execution/role.js";
+import { type ModelGenerationOverrides } from "./invocations.js";
 import type { ModelRole } from "./roles.js";
 import { modelProducer } from "./producer.js";
 import type { DerivedRepresentation } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
@@ -173,11 +170,10 @@ export async function deriveMaterial(
     kind: string,
     graph: Parameters<typeof commit>[2],
     role: ModelRole,
-    invoke: (snapshot: ModelRoleSnapshot) => Promise<
+    invoke: (overrides: ModelGenerationOverrides) => Promise<
       | {
           text: string;
           producerMetadata: ModelProducerMetadata;
-          execution: ExecutionTelemetry;
           inputAccess: ChannelAccess;
           structuredPayload?: JsonObject;
           quality?: Record<string, unknown>;
@@ -190,16 +186,15 @@ export async function deriveMaterial(
     adapter?: string,
   ): Promise<DerivedRepresentation | undefined> => {
     paidStageSkipReason = undefined;
-    const model = await models.invocations.snapshotPrompt(
-      role,
-      promptPath,
-      adapter,
-    );
+    const overrides: ModelGenerationOverrides = {
+      ...(promptPath ? { prompt: { role, path: promptPath } } : {}),
+      ...(adapter ? { adapterIdentity: adapter } : {}),
+    };
     const stagePreprocessingDigest =
       typeof preprocessingDigest === "function"
         ? await preprocessingDigest()
         : preprocessingDigest;
-    const result = await invoke(model);
+    const result = await invoke(overrides);
     if ("skipReason" in result) {
       paidStageSkipReason = result.skipReason;
       return undefined;
@@ -254,7 +249,7 @@ export async function deriveMaterial(
         },
       ],
       "material_structuring",
-      async (snapshot) => {
+      async (overrides) => {
         const { segments } = await kernel.materialWorkflow.segmentDescription(
           { subjectId: request.subjectId, id: description.representationId },
           options,
@@ -271,7 +266,7 @@ export async function deriveMaterial(
         return models.material.structure(
           segments.map((item) => `[${item.key}] ${item.text}`).join("\n"),
           signal,
-          snapshot,
+          overrides,
           {
             access: textual ? access : representedAccess(access),
             catalog,
@@ -331,7 +326,7 @@ export async function deriveMaterial(
         strategy === "direct_structured"
           ? "material_direct_structuring"
           : "material_description",
-        async (snapshot) => {
+        async (overrides) => {
           const loaded = await source();
           return {
             ...(await models.material.describeMedia(
@@ -339,7 +334,7 @@ export async function deriveMaterial(
               mime,
               strategy === "direct_structured",
               signal,
-              snapshot,
+              overrides,
               directContext,
             )),
             quality: { source_bytes: loaded.content.length },
@@ -404,7 +399,7 @@ export async function deriveMaterial(
             "transcript",
             inputs,
             "speech_transcription",
-            async (snapshot) => {
+            async (_overrides) => {
               const sampled = await samples();
               if (!sampled.audio)
                 return {
@@ -415,12 +410,10 @@ export async function deriveMaterial(
               const result = await models.invocations.transcription(
                 sampled.audio,
                 signal,
-                snapshot,
               );
               return {
                 text: result.value,
                 producerMetadata: result.producerMetadata,
-                execution: result.execution,
                 inputAccess: {
                   visual: "unavailable",
                   audio: "original",
@@ -482,7 +475,7 @@ export async function deriveMaterial(
         strategy === "direct_structured"
           ? "material_direct_structuring"
           : "material_description",
-        async (snapshot) => {
+        async (overrides) => {
           const sampled = await samples();
           return {
             ...(await models.material.describeScene(
@@ -490,7 +483,7 @@ export async function deriveMaterial(
               transcript,
               strategy === "direct_structured",
               signal,
-              snapshot,
+              overrides,
               sceneContext,
             )),
             quality: { ...sampled.quality, has_audio: sampled.hasAudio },
@@ -529,14 +522,14 @@ export async function deriveMaterial(
         "structured_interpretation",
         inputs,
         textual ? "material_structuring" : "material_direct_structuring",
-        async (snapshot) => {
+        async (overrides) => {
           const loaded = await source();
           return models.material.structure(
             textual
               ? new TextDecoder("utf-8", { fatal: true }).decode(loaded.content)
               : { bytes: loaded.content, mediaType: mime },
             signal,
-            snapshot,
+            overrides,
             directContext,
           );
         },
@@ -564,17 +557,15 @@ export async function deriveMaterial(
         "transcript",
         inputs,
         "speech_transcription",
-        async (snapshot) => {
+        async (_overrides) => {
           const loaded = await source();
           const result = await models.invocations.transcription(
             loaded.content,
             signal,
-            snapshot,
           );
           return {
             text: result.value,
             producerMetadata: result.producerMetadata,
-            execution: result.execution,
             inputAccess: {
               visual: "unavailable",
               audio: "original",
@@ -588,13 +579,13 @@ export async function deriveMaterial(
         "image_description",
         inputs,
         "material_description",
-        async (snapshot) => {
+        async (overrides) => {
           const loaded = await source();
           return models.material.interpret(
             loaded.content,
             mime,
             signal,
-            snapshot,
+            overrides,
           );
         },
       );

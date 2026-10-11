@@ -12,14 +12,12 @@ import {
 } from "../model/configuration.js";
 import type { RuntimeLocations } from "../locations.js";
 import {
-  CONFIG_REVISION,
   bootstrapSchema,
   consumersSchema,
   configurationBundle,
   coreExecutionSchema,
   coreConfigurationGroup,
 } from "./catalog.js";
-export { CONFIG_REVISION } from "./catalog.js";
 
 export class ConfigurationError extends Error {
   constructor(
@@ -43,14 +41,6 @@ export function parseConfiguration(text: string, development = false) {
       },
     ]);
   }
-  if (document.config_revision !== CONFIG_REVISION)
-    throw new ConfigurationError([
-      {
-        path: "config_revision",
-        code: "revision_mismatch",
-        message: `Expected configuration revision ${CONFIG_REVISION}`,
-      },
-    ]);
   const parsed = bootstrapSchema.safeParse(document);
   if (!parsed.success)
     throw new ConfigurationError(

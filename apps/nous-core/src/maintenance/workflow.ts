@@ -42,23 +42,11 @@ export async function runModelMaintenance(
     };
 
   const operationId = maintenanceOperationId(need);
-  const role =
-    need.kind === "episode_resegment"
-      ? "episode_segmentation"
-      : need.kind === "concept_maintenance"
-        ? "concept_maintenance"
-        : need.kind === "memory_consolidate"
-          ? "memory_consolidation"
-          : "journal_synthesis";
-  const modelSnapshot =
-    plan.status === "withdraw" ? undefined : models.invocations.snapshot(role);
-
   try {
     const { proposal } = await buildMaintenanceProposal({
       models,
       need,
       plan,
-      modelSnapshot,
       operationId,
       options,
       reserveModelCall,

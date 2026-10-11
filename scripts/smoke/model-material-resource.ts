@@ -1,7 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { CONFIG_REVISION } from "../../apps/nous-core/src/configuration/schema.js";
 import { connectNousInstance } from "@nous-wave/client/node";
 import { NousError } from "@nous-wave/client";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -170,7 +169,7 @@ if (!providerAddress || typeof providerAddress === "string")
 await mkdir(join(dataRoot, "config"));
 await writeFile(
   join(dataRoot, "config", "nous.toml"),
-  `config_revision = ${CONFIG_REVISION}\n[host]\nkernel_executable = ${JSON.stringify(kernel)}\nport = 0\n[object_store]\nmax_upload_bytes = 1048576\n[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.smoke]\nbase_url = "http://127.0.0.1:${providerAddress.port}/v1"\ncredential_env = "NOUS_SMOKE_GATEWAY"\n[models.model_profiles.local]\ngateway = "smoke"\nprotocol = "openai-chat"\nmodel = "local-contract"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.material_structuring]\nmodel = "local"\n[models.roles.material_structuring]\nroutes = ["material_structuring"]\n`,
+  `[host]\nkernel_executable = ${JSON.stringify(kernel)}\nport = 0\n[object_store]\nmax_upload_bytes = 1048576\n[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.smoke]\nbase_url = "http://127.0.0.1:${providerAddress.port}/v1"\ncredential_env = "NOUS_SMOKE_GATEWAY"\n[models.model_profiles.local]\ngateway = "smoke"\nprotocol = "openai-chat"\nmodel = "local-contract"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.material_structuring]\nmodel = "local"\n[models.roles.material_structuring]\nroutes = ["material_structuring"]\n`,
 );
 const runtimeRoot = process.env.NOUS_WAVE_POSTGRES_RUNTIME
   ? dirname(process.env.NOUS_WAVE_POSTGRES_RUNTIME)
