@@ -860,8 +860,8 @@ pub struct SaveWorkflowRequest {
     pub outcome: ::core::option::Option<WorkflowPayload>,
     #[prost(message, optional, tag="10")]
     pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
-    #[prost(string, repeated, tag="11")]
-    pub mutation_operations: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="11")]
+    pub mutation_operation_id: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="12")]
     pub lease: ::core::option::Option<WorkflowLease>,
 }

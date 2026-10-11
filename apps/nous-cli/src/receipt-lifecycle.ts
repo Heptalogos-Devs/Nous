@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NousError, type NousClient } from "@nous-wave/client";
-import { createHash } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import { CliError } from "./agent.js";
 import { receiptSchema, type OperationReceipt } from "./state.js";
@@ -11,6 +10,7 @@ import {
   freezeResult,
   receiptDefinitionCommands,
   receiptDefinition,
+  receiptIdentity,
   thawRequest,
   thawResult,
 } from "./receipt-codec.js";
@@ -32,13 +32,16 @@ type ConnectedClient = Awaited<ReturnType<typeof connectNousInstance>>;
 type Local = Awaited<ReturnType<typeof cliState>>;
 type Notice = { code: string; message: string; receipt?: string };
 type ReceiptCommand = ReturnType<typeof receiptDefinitionCommands>[number];
-const receiptInfo = (receipt: OperationReceipt) => ({
+const receiptInfo = (
+  receipt: OperationReceipt,
+  identity: ReturnType<typeof receiptIdentity>,
+) => ({
   receiptId: receipt.receiptId,
   command: receipt.command,
-  owner: receipt.owner,
-  operationKind: receipt.operationKind,
-  operationId: receipt.operationId,
-  ...(receipt.subjectId ? { subjectId: receipt.subjectId } : {}),
+  owner: identity.owner,
+  operationKind: identity.operationKind,
+  operationId: identity.operationId,
+  ...(identity.subjectId ? { subjectId: identity.subjectId } : {}),
 });
 
 export function createReceiptLifecycle(
@@ -55,23 +58,16 @@ export function createReceiptLifecycle(
       receipt.request.typeName,
       receipt.request.protoJson,
     );
-    if (
-      spec.operationKind !== receipt.operationKind ||
-      spec.owner(request as unknown as Record<string, unknown>) !==
-        receipt.owner
-    )
-      throw new CliError(
-        "INVALID_ARGUMENT",
-        "Operation receipt owner or kind does not match its frozen request",
-      );
-    return { request, spec };
+    const identity = receiptIdentity(receipt.command, request);
+    return { request, spec, identity };
   }
   async function executeReceipt(
     id: string,
     receipt: Extract<OperationReceipt, { status: "pending" }>,
     invoke: (request: unknown) => Promise<unknown>,
+    saved = savedRequest(receipt),
   ) {
-    const { request, spec } = savedRequest(receipt);
+    const { request, spec, identity } = saved;
     let result: unknown;
     try {
       result = await invoke(request);
@@ -82,8 +78,8 @@ export function createReceiptLifecycle(
           : undefined;
       const noCommit =
         rejection?.errorCode &&
-        ((rejection.owner === receipt.owner &&
-          spec.noCommitCodes(receipt.owner).includes(rejection.errorCode)) ||
+        ((rejection.owner === identity.owner &&
+          spec.noCommitCodes(identity.owner).includes(rejection.errorCode)) ||
           (rejection.owner === "KERNEL" &&
             rejection.errorCode === "INVALID_REQUEST"));
       if (rejection && noCommit) {
@@ -164,29 +160,19 @@ export function createReceiptLifecycle(
           `Registered receipt client method unavailable: ${name}`,
         );
       const id = crypto.randomUUID();
-      const spec = receiptDefinition(name);
       const frozen = freezeRequest(name, request);
-      const owner = frozen.owner;
       const createdAt = new Date().toISOString();
-      const requestDigest = createHash("sha256")
-        .update(JSON.stringify(frozen.frozen))
-        .digest("hex");
       const receipt = receiptSchema.parse({
         format: "nous.consumer.operation.v2",
         receiptId: id,
         command: name,
-        owner,
-        operationKind: spec.operationKind,
-        subjectId: frozen.subjectId,
-        operationId: frozen.operationId,
-        requestDigest,
         request: frozen.frozen,
         status: "pending",
         createdAt,
         updatedAt: createdAt,
       }) as Extract<OperationReceipt, { status: "pending" }>;
       await local.writeReceipt(id, receipt);
-      return (await executeReceipt(id, receipt, replay[name]!)) as O;
+      return (await executeReceipt(id, receipt, replay[name]!, frozen)) as O;
     };
   }
   const client: NousClient & Pick<typeof original, "artifacts"> = {
@@ -227,7 +213,7 @@ export function createReceiptLifecycle(
         {
           code: "STATUS_LOOKUP_UNAVAILABLE",
           message:
-            "Server status could not be confirmed; this does not establish whether the operation committed.",
+            "Server status is unavailable. Retry the status lookup or replay the saved request.",
         },
       ],
     };
@@ -258,7 +244,6 @@ export function createReceiptLifecycle(
       UNKNOWN: "outcome_unknown",
       IN_PROGRESS: "in_progress",
       COMMITTED: "server_committed",
-      FAILED_TERMINAL: "server_failed_terminal",
       COMPLETED: "workflow_completed_only",
     };
     const statusNotices: { code: string; message: string }[] = [];
@@ -271,7 +256,7 @@ export function createReceiptLifecycle(
       statusNotices.push({
         code: "WORKFLOW_COMPLETED_ONLY",
         message:
-          "Workflow execution is terminal; this does not establish domain success.",
+          "Workflow completed. Inspect its outcome for committed changes or a skipped result.",
       });
     const serverOwner = ErrorOwner[remote.owner] ?? "UNSPECIFIED";
     const ownerMismatch =
@@ -282,22 +267,19 @@ export function createReceiptLifecycle(
       statusNotices.push({
         code: "SERVER_OWNER_MISMATCH",
         message:
-          "The server status owner does not match or is unavailable for the owner derived from the saved operation target; status does not confirm this receipt.",
+          "The server owner differs from the saved operation target. Check the endpoint and receipt.",
       });
     return {
       serverState,
       serverOwner,
       ...(remote.subjectId ? { serverSubjectId: remote.subjectId } : {}),
-      ...(remote.resultReference
-        ? { resultReference: remote.resultReference }
-        : {}),
-      ...(remote.resultRevisionId
-        ? { resultRevisionId: remote.resultRevisionId }
-        : {}),
-      ...(remote.resultEpoch !== undefined
-        ? { resultEpoch: remote.resultEpoch.toString() }
-        : {}),
-      ...(remote.terminalCode ? { terminalCode: remote.terminalCode } : {}),
+      results: remote.results.map((result) => ({
+        reference: result.reference,
+        ...(result.revisionId ? { revisionId: result.revisionId } : {}),
+        ...(result.objectEpoch !== undefined
+          ? { objectEpoch: result.objectEpoch.toString() }
+          : {}),
+      })),
       ...(remote.recordedAt ? { recordedAt: remote.recordedAt } : {}),
       ...(remote.updatedAt ? { updatedAt: remote.updatedAt } : {}),
       ...(remote.leaseUntil ? { leaseUntil: remote.leaseUntil } : {}),
@@ -310,19 +292,19 @@ export function createReceiptLifecycle(
   }
   async function inspectOperation(receiptId: string) {
     const receipt = await local.receipt(receiptId);
-    const { spec } = savedRequest(receipt);
-    const receiptSubjectId = receipt.subjectId ?? "";
+    const { spec, identity: frozenIdentity } = savedRequest(receipt);
+    const receiptSubjectId = frozenIdentity.subjectId ?? "";
     const statusLookup = spec.statusLookup;
     if (statusLookup === "unsupported")
       return {
-        ...receiptInfo(receipt),
+        ...receiptInfo(receipt, frozenIdentity),
         localStatus: receipt.status,
         serverState: "UNKNOWN",
         certainty: "outcome_unknown",
         notices: [
           {
             code: "STATUS_LOOKUP_UNSUPPORTED",
-            message: `${receipt.owner} has no operation-status lookup for this command; a retry reuses the saved request and its stable event identity.`,
+            message: `${frozenIdentity.owner} has no operation-status lookup for this command; a retry reuses the saved request and its stable event identity.`,
           },
         ],
       };
@@ -333,7 +315,7 @@ export function createReceiptLifecycle(
           case: "subjectCreate" as const,
           value: create(SubjectCreateIdentitySchema, {
             subjectId: receiptSubjectId,
-            operationId: receipt.operationId,
+            operationId: frozenIdentity.operationId,
           }),
         };
         break;
@@ -341,7 +323,7 @@ export function createReceiptLifecycle(
         identity = {
           case: "configurationMutation" as const,
           value: create(ConfigurationMutationIdentitySchema, {
-            operationId: receipt.operationId,
+            operationId: frozenIdentity.operationId,
           }),
         };
         break;
@@ -350,7 +332,7 @@ export function createReceiptLifecycle(
           case: "observationRequest" as const,
           value: create(ObservationRequestIdentitySchema, {
             subjectId: receiptSubjectId,
-            requestId: receipt.operationId,
+            requestId: frozenIdentity.operationId,
           }),
         };
         break;
@@ -364,8 +346,8 @@ export function createReceiptLifecycle(
             owner,
             operationKey:
               owner === "material"
-                ? `resource:${receipt.operationId}`
-                : receipt.operationId,
+                ? `resource:${frozenIdentity.operationId}`
+                : frozenIdentity.operationId,
           }),
         };
         break;
@@ -375,14 +357,14 @@ export function createReceiptLifecycle(
           case: "mutationReceipt" as const,
           value: create(MutationReceiptIdentitySchema, {
             subjectId: receiptSubjectId,
-            operationId: receipt.operationId,
-            operationKind: receipt.operationKind,
+            operationId: frozenIdentity.operationId,
+            operationKind: frozenIdentity.operationKind,
           }),
         };
         break;
     }
     const expectedOwner =
-      receipt.command === "cognition.mutate" ? receipt.owner : undefined;
+      receipt.command === "cognition.mutate" ? frozenIdentity.owner : undefined;
     const projection = await readOperationStatus(
       create(GetOperationStatusRequestSchema, { identity }),
       receipt.status === "complete"
@@ -402,7 +384,7 @@ export function createReceiptLifecycle(
           "The server reports committed; the local receipt is not synchronized.",
       });
     return {
-      ...receiptInfo(receipt),
+      ...receiptInfo(receipt, frozenIdentity),
       localStatus: receipt.status,
       ...projection,
       notices: safeNotices,
@@ -457,7 +439,8 @@ export function createReceiptLifecycle(
   }
   async function retry(id: string) {
     const receipt = await local.receipt(id);
-    if (receipt.subjectId && receipt.subjectId !== subjectId)
+    const saved = savedRequest(receipt);
+    if (saved.identity.subjectId && saved.identity.subjectId !== subjectId)
       throw new CliError(
         "RESULT_SUBJECT_MISMATCH",
         "Use --subject with the Subject ID frozen in this operation receipt",
@@ -476,7 +459,7 @@ export function createReceiptLifecycle(
     const invoke = replay[receipt.command];
     if (!invoke)
       throw new CliError("INVALID_ARGUMENT", "Receipt command is unavailable");
-    return executeReceipt(id, receipt, invoke);
+    return executeReceipt(id, receipt, invoke, saved);
   }
   return { client, retry, inspectOperation, inspectOperationIdentity };
 }

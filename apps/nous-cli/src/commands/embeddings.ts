@@ -1,9 +1,12 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { defineCommand } from "citty";
+import { commonArgs, stringArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 
 import type { CliEnvironment } from "../runtime.js";
 
-export async function embeddingsCommands(env: CliEnvironment) {
+async function embeddingsCommands(env: CliEnvironment) {
   const { client, values, subjectId } = env;
   const budget = Number(values["max-batches"]);
   if (!Number.isInteger(budget) || budget < 1 || budget > 10_000)
@@ -31,4 +34,13 @@ export async function embeddingsCommands(env: CliEnvironment) {
       },
     ],
   };
+}
+
+export function createEmbeddingsCommand(leaf: CliLeaf) {
+  return defineCommand({
+    args: commonArgs,
+    subCommands: {
+      prepare: leaf({ ...stringArgs("max-batches") }, embeddingsCommands),
+    },
+  });
 }

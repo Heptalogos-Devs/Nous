@@ -1,18 +1,12 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { defineCommand } from "citty";
+import { commonArgs, stringArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 
-import { create, fromJson, type JsonValue } from "@bufbuild/protobuf";
+import { fromJson, type JsonValue } from "@bufbuild/protobuf";
 import { TemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import {
-  AddSchemaEvidenceRequestSchema,
-  CognitiveSchemaContentSchema,
-  CreateCognitiveSchemaRequestSchema,
-  MergeCognitiveSchemasRequestSchema,
-  ReviseCognitiveSchemaRequestSchema,
-  SchemaEvidenceLinkSchema,
-  SchemaScopeSchema,
-  SplitCognitiveSchemaRequestSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
+import {} from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { z } from "zod";
 import { nonnegativeInt64, CliError } from "../agent.js";
 import { revisionBasis } from "../mutation-input.js";
@@ -78,46 +72,36 @@ async function content(env: CliEnvironment, raw: unknown) {
       )
     : undefined;
   const evidenceLinks = await Promise.all(
-    value.evidence_links.map(async (item) =>
-      create(SchemaEvidenceLinkSchema, {
-        linkId: "",
-        role: item.role,
-        basis: await revisionBasis(env, {
-          ref: item.ref,
-          role: item.basis_role,
-          epistemic_relation: item.epistemic_relation,
-        }),
+    value.evidence_links.map(async (item) => ({
+      linkId: "",
+      role: item.role,
+      basis: await revisionBasis(env, {
+        ref: item.ref,
+        role: item.basis_role,
+        epistemic_relation: item.epistemic_relation,
       }),
-    ),
+    })),
   );
-  return create(CognitiveSchemaContentSchema, {
+  return {
     title: value.title,
     structuralClaim: value.structural_claim,
-    applicabilityScope: create(SchemaScopeSchema, {
+    applicabilityScope: {
       description: value.applicability_scope.description,
       aboutness,
       tags,
       validTime,
-    }),
+    },
     boundaryDefinition: value.boundary_definition,
     formationKind: value.formation_kind,
     evidenceLinks,
-  });
+  };
 }
 
-export async function schemaCommands(
+async function schemaCommon(
   env: CliEnvironment,
-  action?: string,
+  action: string,
   argument?: string,
 ) {
-  const {
-    client,
-    values,
-    subjectId,
-    required,
-    resolveReference,
-    requestPayload,
-  } = env;
   const common = await typedCognition.commonCommand(
     env,
     "cognitive_schema",
@@ -125,136 +109,197 @@ export async function schemaCommands(
     argument,
   );
   if (common.handled) return common.value;
-  const operationId = values["operation-id"] ?? crypto.randomUUID();
-  if (action === "create")
-    return client.concepts.createSchema(
-      create(CreateCognitiveSchemaRequestSchema, {
-        operationId,
-        subjectId,
-        schema: await content(
-          env,
-          await requestPayload(values["request-file"]),
-        ),
-      }),
-    );
-  if (action === "evidence") {
-    const ref = await resolveReference(
-      required(argument, "CognitiveSchema reference"),
-      "cognitive_schema",
-    );
-    const input = z
-      .strictObject({
-        role: z.enum(["support", "counterexample", "boundary_case"]),
-        ref: reference,
-        basis_role: z
-          .enum(["direct", "interpretation", "contextual"])
-          .default("direct"),
-        epistemic_relation: epistemicRelation,
-      })
-      .parse(await requestPayload(values["request-file"]));
-    return client.concepts.addSchemaEvidence(
-      create(AddSchemaEvidenceRequestSchema, {
-        operationId,
-        subjectId,
-        schemaId: ref.value,
-        expectedObjectEpoch: nonnegativeInt64(
-          values["expected-epoch"],
-          "--expected-epoch",
-        ),
-        link: create(SchemaEvidenceLinkSchema, {
-          linkId: "",
-          role: input.role,
-          basis: await revisionBasis(env, {
-            ref: input.ref,
-            role: input.basis_role,
-            epistemic_relation: input.epistemic_relation,
-          }),
-        }),
-      }),
-    );
-  }
-  if (action === "revise") {
-    const ref = await resolveReference(
-      required(argument, "CognitiveSchema reference"),
-      "cognitive_schema",
-    );
-    const request = z
-      .strictObject({
-        intent: z.enum(["correct", "rephrase", "reinterpret"]),
-        copy_link_ids: z.array(z.string().min(1).max(128)).max(256).default([]),
-        schema: schemaContentInput,
-      })
-      .parse(await requestPayload(values["request-file"]));
-    return client.concepts.reviseSchema(
-      create(ReviseCognitiveSchemaRequestSchema, {
-        operationId,
-        subjectId,
-        schemaId: ref.value,
-        expectedObjectEpoch: nonnegativeInt64(
-          values["expected-epoch"],
-          "--expected-epoch",
-        ),
-        intent: request.intent,
-        schema: await content(env, request.schema),
-        copyLinkIds: request.copy_link_ids,
-      }),
-    );
-  }
-  if (action === "split") {
-    const ref = await resolveReference(
-      required(argument, "CognitiveSchema reference"),
-      "cognitive_schema",
-    );
-    const request = z
-      .strictObject({ children: z.array(schemaContentInput).min(2).max(32) })
-      .parse(await requestPayload(values["request-file"]));
-    return client.concepts.splitSchema(
-      create(SplitCognitiveSchemaRequestSchema, {
-        operationId,
-        subjectId,
-        schemaId: ref.value,
-        expectedObjectEpoch: nonnegativeInt64(
-          values["expected-epoch"],
-          "--expected-epoch",
-        ),
-        children: await Promise.all(
-          request.children.map((item) => content(env, item)),
-        ),
-      }),
-    );
-  }
-  if (action === "merge") {
-    const request = z
-      .strictObject({
-        schemas: z.array(reference).min(2).max(32),
-        merged: schemaContentInput,
-      })
-      .parse(await requestPayload(values["request-file"]));
-    const refs = await Promise.all(
-      request.schemas.map((item) => resolveReference(item, "cognitive_schema")),
-    );
-    const current = await Promise.all(
-      refs.map((ref) =>
-        typedCognition.read(env, {
-          kind: "cognitive_schema",
-          value: ref.value,
-        }),
-      ),
-    );
-    return client.concepts.mergeSchemas(
-      create(MergeCognitiveSchemasRequestSchema, {
-        operationId,
-        subjectId,
-        schemaIds: refs.map((ref) => ref.value),
-        expectedObjectEpochs: current.map(
-          (item) => item.header?.objectEpoch ?? 0n,
-        ),
-        merged: await content(env, request.merged),
-      }),
-    );
-  }
   throw new CliError(
-    "INVALID_ARGUMENT",
-    "Use schema get|revision|create|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge",
+    "INTERNAL_FAILURE",
+    "CognitiveSchema command is not handled",
   );
+}
+
+const schemaGet = (env: CliEnvironment, argument?: string) =>
+  schemaCommon(env, "get", argument);
+const schemaRevision = (env: CliEnvironment, argument?: string) =>
+  schemaCommon(env, "revision", argument);
+const schemaSuppress = (env: CliEnvironment, argument?: string) =>
+  schemaCommon(env, "suppress", argument);
+const schemaRestore = (env: CliEnvironment, argument?: string) =>
+  schemaCommon(env, "restore", argument);
+const schemaWithdraw = (env: CliEnvironment, argument?: string) =>
+  schemaCommon(env, "withdraw", argument);
+const schemaReaccept = (env: CliEnvironment, argument?: string) =>
+  schemaCommon(env, "reaccept", argument);
+const schemaPurge = (env: CliEnvironment, argument?: string) =>
+  schemaCommon(env, "purge", argument);
+const schemaCreate = async (env: CliEnvironment) =>
+  env.client.concepts.createSchema({
+    operationId: env.values["operation-id"] ?? crypto.randomUUID(),
+    subjectId: env.subjectId,
+    schema: await content(
+      env,
+      await env.requestPayload(env.values["request-file"]),
+    ),
+  });
+const schemaEvidence = async (env: CliEnvironment, argument?: string) => {
+  const ref = await env.resolveReference(
+    env.required(argument, "CognitiveSchema reference"),
+    "cognitive_schema",
+  );
+  const input = z
+    .strictObject({
+      role: z.enum(["support", "counterexample", "boundary_case"]),
+      ref: reference,
+      basis_role: z
+        .enum(["direct", "interpretation", "contextual"])
+        .default("direct"),
+      epistemic_relation: epistemicRelation,
+    })
+    .parse(await env.requestPayload(env.values["request-file"]));
+  return env.client.concepts.addSchemaEvidence({
+    operationId: env.values["operation-id"] ?? crypto.randomUUID(),
+    subjectId: env.subjectId,
+    schemaId: ref.value,
+    expectedObjectEpoch: nonnegativeInt64(
+      env.values["expected-epoch"],
+      "--expected-epoch",
+    ),
+    link: {
+      linkId: "",
+      role: input.role,
+      basis: await revisionBasis(env, {
+        ref: input.ref,
+        role: input.basis_role,
+        epistemic_relation: input.epistemic_relation,
+      }),
+    },
+  });
+};
+const schemaRevise = async (env: CliEnvironment, argument?: string) => {
+  const ref = await env.resolveReference(
+    env.required(argument, "CognitiveSchema reference"),
+    "cognitive_schema",
+  );
+  const request = z
+    .strictObject({
+      intent: z.enum(["correct", "rephrase", "reinterpret"]),
+      copy_link_ids: z.array(z.string().min(1).max(128)).max(256).default([]),
+      schema: schemaContentInput,
+    })
+    .parse(await env.requestPayload(env.values["request-file"]));
+  return env.client.concepts.reviseSchema({
+    operationId: env.values["operation-id"] ?? crypto.randomUUID(),
+    subjectId: env.subjectId,
+    schemaId: ref.value,
+    expectedObjectEpoch: nonnegativeInt64(
+      env.values["expected-epoch"],
+      "--expected-epoch",
+    ),
+    intent: request.intent,
+    schema: await content(env, request.schema),
+    copyLinkIds: request.copy_link_ids,
+  });
+};
+const schemaSplit = async (env: CliEnvironment, argument?: string) => {
+  const ref = await env.resolveReference(
+    env.required(argument, "CognitiveSchema reference"),
+    "cognitive_schema",
+  );
+  const request = z
+    .strictObject({ children: z.array(schemaContentInput).min(2).max(32) })
+    .parse(await env.requestPayload(env.values["request-file"]));
+  return env.client.concepts.splitSchema({
+    operationId: env.values["operation-id"] ?? crypto.randomUUID(),
+    subjectId: env.subjectId,
+    schemaId: ref.value,
+    expectedObjectEpoch: nonnegativeInt64(
+      env.values["expected-epoch"],
+      "--expected-epoch",
+    ),
+    children: await Promise.all(
+      request.children.map((item) => content(env, item)),
+    ),
+  });
+};
+const schemaMerge = async (env: CliEnvironment) => {
+  const request = z
+    .strictObject({
+      schemas: z.array(reference).min(2).max(32),
+      merged: schemaContentInput,
+    })
+    .parse(await env.requestPayload(env.values["request-file"]));
+  const refs = await Promise.all(
+    request.schemas.map((item) =>
+      env.resolveReference(item, "cognitive_schema"),
+    ),
+  );
+  const current = await Promise.all(
+    refs.map((ref) =>
+      typedCognition.read(env, { kind: "cognitive_schema", value: ref.value }),
+    ),
+  );
+  return env.client.concepts.mergeSchemas({
+    operationId: env.values["operation-id"] ?? crypto.randomUUID(),
+    subjectId: env.subjectId,
+    schemaIds: refs.map((ref) => ref.value),
+    expectedObjectEpochs: current.map((item) => item.header?.objectEpoch ?? 0n),
+    merged: await content(env, request.merged),
+  });
+};
+
+export function createSchemaCommand(leaf: CliLeaf) {
+  return defineCommand({
+    args: commonArgs,
+    subCommands: {
+      create: leaf(
+        { ...stringArgs("request-file", "operation-id") },
+        schemaCreate,
+      ),
+      get: leaf({}, schemaGet, { parameters: ["<CognitiveSchema reference>"] }),
+      revision: leaf({}, schemaRevision, {
+        parameters: ["<exact CognitiveSchema revision reference>"],
+      }),
+      evidence: leaf(
+        { ...stringArgs("request-file", "expected-epoch", "operation-id") },
+        schemaEvidence,
+        { parameters: ["<CognitiveSchema reference>"] },
+      ),
+      revise: leaf(
+        { ...stringArgs("request-file", "expected-epoch", "operation-id") },
+        schemaRevise,
+        { parameters: ["<CognitiveSchema reference>"] },
+      ),
+      split: leaf(
+        { ...stringArgs("request-file", "expected-epoch", "operation-id") },
+        schemaSplit,
+        { parameters: ["<CognitiveSchema reference>"] },
+      ),
+      merge: leaf(
+        { ...stringArgs("request-file", "operation-id") },
+        schemaMerge,
+      ),
+      suppress: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        schemaSuppress,
+        { parameters: ["<CognitiveSchema reference>"] },
+      ),
+      restore: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        schemaRestore,
+        { parameters: ["<CognitiveSchema reference>"] },
+      ),
+      withdraw: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        schemaWithdraw,
+        { parameters: ["<CognitiveSchema reference>"] },
+      ),
+      reaccept: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        schemaReaccept,
+        { parameters: ["<CognitiveSchema reference>"] },
+      ),
+      purge: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        schemaPurge,
+        { parameters: ["<CognitiveSchema reference>"] },
+      ),
+    },
+  });
 }

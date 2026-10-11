@@ -1,5 +1,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { defineCommand } from "citty";
+import { commonArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 
 import { create } from "@bufbuild/protobuf";
 import { CliError } from "../agent.js";
@@ -85,28 +88,55 @@ async function explicitIdentity(
   );
 }
 
-export async function operationCommands(
+async function inspectOperation(
   env: CliEnvironment,
-  action?: string,
   argument?: string,
   positionals: string[] = [],
 ) {
-  if (action === "inspect" && argument) {
-    const args = positionals.slice(2);
-    if (
-      [
-        "mutation",
-        "subject-create",
-        "configuration",
-        "observation",
-        "workflow",
-      ].includes(args[0] ?? "")
-    )
-      return explicitIdentity(env, args[0]!, args);
-    return env.inspectOperation(env.required(argument, "Saved receipt ID"));
-  }
-  throw new CliError(
-    "INVALID_ARGUMENT",
-    "Use operation inspect <receipt-id|typed identity>",
+  if (!argument)
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "Use operation inspect <receipt-id|typed identity>",
+    );
+  const args = positionals.slice(2);
+  if (
+    [
+      "mutation",
+      "subject-create",
+      "configuration",
+      "observation",
+      "workflow",
+    ].includes(args[0] ?? "")
+  )
+    return explicitIdentity(env, args[0]!, args);
+  return env.inspectOperation(env.required(argument, "Saved receipt ID"));
+}
+
+export function createOperationCommand(leaf: CliLeaf) {
+  return defineCommand({
+    args: commonArgs,
+    subCommands: {
+      inspect: leaf({}, inspectOperation, {
+        description:
+          "Inspect a saved receipt or query owner-backed status using an explicit typed identity; never displays request or result bodies.",
+        parameters: [
+          "<saved receipt ID> | mutation <operation-kind> <subject-id> <operation-id> | subject-create <subject-id> <operation-id> | configuration <operation-id> | observation <subject-id> <request-id> | workflow <subject-id> <memory|material> <operation-key>",
+        ],
+        example:
+          "nous operation inspect mutation revise_memory <subject-id> <operation-id>",
+      }),
+    },
+  });
+}
+
+export function createRetryCommand(leaf: CliLeaf) {
+  return leaf(
+    {},
+    (env, argument) => env.retry(env.required(argument, "Receipt ID")),
+    {
+      description:
+        "Replay the original frozen request with its original identity.",
+      parameters: ["<saved receipt ID>"],
+    },
   );
 }

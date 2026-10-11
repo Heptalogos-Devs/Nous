@@ -14,7 +14,6 @@ import {
   ContextCursorSchema,
   type ContextCursor as Cursor,
   type Projection,
-  type ContextSegment as Segment,
   type ManagedContextResponse,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 
@@ -29,7 +28,7 @@ type ContextPatch = Omit<
 interface Track {
   subjectId: string;
   cursor: Cursor;
-  segments: Segment[];
+  segmentDigests: string[];
   profile: string;
 }
 const digest = (value: unknown) =>
@@ -93,12 +92,12 @@ export class ContextCompiler {
       known.epochId === previous.cursor.epochId &&
       known.revision === previous.cursor.revision &&
       previous.profile === profile;
+    const segmentDigests = projection.segments.map(digest);
     const appendable =
       synchronized &&
-      previous.segments.length <= projection.segments.length &&
-      previous.segments.every(
-        (segment, index) =>
-          digest(segment) === digest(projection.segments[index]),
+      previous.segmentDigests.length <= segmentDigests.length &&
+      previous.segmentDigests.every(
+        (value, index) => value === segmentDigests[index],
       );
     if (!appendable) {
       const cursor = create(ContextCursorSchema, {
@@ -109,12 +108,12 @@ export class ContextCompiler {
       this.save(trackId, {
         subjectId: key.subjectId,
         cursor,
-        segments: structuredClone(projection.segments),
+        segmentDigests,
         profile,
       });
       return { kind: "RESET", cursor, projection };
     }
-    const delta = projection.segments.slice(previous.segments.length);
+    const delta = projection.segments.slice(previous.segmentDigests.length);
     if (previous.cursor.revision === 0xffffffff)
       throw new ConnectError(
         "Context revision exhausted",
@@ -127,7 +126,7 @@ export class ContextCompiler {
     this.save(trackId, {
       subjectId: key.subjectId,
       cursor,
-      segments: structuredClone(projection.segments),
+      segmentDigests,
       profile,
     });
     return {

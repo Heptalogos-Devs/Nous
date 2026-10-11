@@ -9,15 +9,10 @@ CREATE TABLE mutation_receipts (
     operation_id uuid NOT NULL,
     operation_kind text NOT NULL,
     request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
-    state text NOT NULL CHECK (state IN ('in_progress','committed','failed_terminal')),
-    result_kind text NULL,
-    result_ref_kind text NULL,
-    result_ref text NULL,
-    result_revision uuid NULL,
-    result_epoch bigint NULL,
+    state text NOT NULL CHECK (state IN ('in_progress','committed')),
+    results jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(results)='array' AND jsonb_array_length(results)<=256),
     created_at timestamptz NOT NULL,
     committed_at timestamptz NULL,
-    terminal_problem_code text NULL,
     PRIMARY KEY(subject_id, operation_id)
 );
 CREATE TABLE cognition_dependency_invalidations (
@@ -138,7 +133,7 @@ CREATE TABLE model_workflow_operations (
     outcome jsonb NULL,
     execution_telemetry jsonb NULL,
     dependencies jsonb NOT NULL DEFAULT '[]',
-    mutation_operations uuid[] NOT NULL DEFAULT '{}',
+    mutation_operation_id uuid NULL,
     maintenance_trigger_revision bigint NULL CHECK (maintenance_trigger_revision >= 0),
     maintenance_need_id uuid NULL REFERENCES maintenance_needs(need_id) ON DELETE CASCADE,
     lease_token uuid NULL,

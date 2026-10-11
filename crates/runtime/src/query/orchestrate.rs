@@ -142,7 +142,7 @@ impl CognitiveRuntimeService {
         output_limit: usize,
     ) -> Result<super::QueryExecution> {
         let result = self
-            .query_atom_with_plan(bound.clone(), contributors, plan, output_limit)
+            .query_atom_with_plan(&bound, contributors, plan, output_limit)
             .await?;
         let leaves = vec![super::types::BoundLeaf {
             ordinal: 0,
@@ -163,7 +163,7 @@ impl CognitiveRuntimeService {
 
     pub(super) async fn query_atom_with_plan(
         &self,
-        bound: BoundQuery,
+        bound: &BoundQuery,
         contributors: &CognitiveContributors<'_>,
         plan: QueryPlan,
         output_limit: usize,
@@ -185,10 +185,10 @@ impl CognitiveRuntimeService {
             .extend(bound.activation.degradation.clone());
         let mut lane_outputs = Vec::new();
         if let Some(shared) = contributors.shared.filter(|_| !exact_read) {
-            lane_outputs.extend(shared.lanes(&bound, &plan).await?);
+            lane_outputs.extend(shared.lanes(bound, &plan).await?);
         }
         if let Some(memory) = contributors.memory.filter(|_| !exact_read) {
-            lane_outputs.extend(memory.direct_lanes(&bound, &plan).await?);
+            lane_outputs.extend(memory.direct_lanes(bound, &plan).await?);
         } else if contributors.memory.is_none() && query.projection.has_cognition() {
             return Err(Error::new(
                 nous_core::ErrorOwner::Runtime,
@@ -197,7 +197,7 @@ impl CognitiveRuntimeService {
             ));
         }
         if let Some(material) = contributors.material.filter(|_| !exact_read) {
-            lane_outputs.extend(material.direct_lanes(&bound, &plan).await?);
+            lane_outputs.extend(material.direct_lanes(bound, &plan).await?);
         }
         let mut exact_output = LaneOutput::empty(EvidenceFamily::Exact, LaneStatus::Ready);
         for binding in &bound.exact_bindings {
@@ -359,7 +359,7 @@ impl CognitiveRuntimeService {
         for (index, owner) in owners.iter().enumerate() {
             if let Some(owner) = owner {
                 let (hits, drops) = owner
-                    .validate_and_materialize(query.subject, &by_owner[index], &bound)
+                    .validate_and_materialize(query.subject, &by_owner[index], bound)
                     .await?;
                 for hit in hits {
                     materialized.insert(hit.reference.clone(), hit);
@@ -457,7 +457,7 @@ impl CognitiveRuntimeService {
         if let Some(diagnostics) = result.diagnostics.as_mut() {
             if query.diagnostics == DiagnosticsRequest::Full {
                 diagnostics.trace = Some(serde_json::json!({
-                    "query_activation": bound.activation,
+                    "query_activation": activation_trace(bound),
                     "readouts": result.results.iter().filter_map(|hit| readouts.get(&hit.reference)
                         .map(|value| serde_json::json!({"reference": hit.reference, "lanes": value})))
                         .collect::<Vec<_>>()
@@ -519,6 +519,36 @@ impl CognitiveRuntimeService {
         }
         Ok(result)
     }
+}
+
+fn activation_trace(bound: &BoundQuery) -> serde_json::Value {
+    let activation = &bound.activation;
+    serde_json::json!({
+        "concept_catalog": activation.concept_catalog,
+        "frozen": activation.frozen,
+        "semantic_text_digest": bound.representation.sha256,
+        "exact_refs": bound.exact_bindings.iter().map(|binding| &binding.bound_ref).collect::<Vec<_>>(),
+        "entity_refs": activation.seeds.iter().filter_map(|seed| match &seed.reference {
+            CognitiveRef::Entity(entity) => Some(entity),
+            _ => None,
+        }).collect::<Vec<_>>(),
+        "explicit_tags": activation.explicit_tags,
+        "inferred_tags": activation.inferred_tags,
+        "novel_concepts": activation.novel_concepts,
+        "schema_refs": activation.seeds.iter().filter(|seed| matches!(
+            &seed.reference,
+            CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_)
+        )).map(|seed| &seed.reference).collect::<Vec<_>>(),
+        "runtime_refs": bound.runtime_refs,
+        "seeds": activation.seeds,
+        "exploration": activation.exploration,
+        "temporal_frame": activation.temporal_frame,
+        "concept_generation": activation.concept_generation,
+        "query_embedding_digest": activation.query_embedding_digest,
+        "degradation": activation.degradation,
+        "model_calls": activation.model_calls,
+        "model_completed": activation.model_completed,
+    })
 }
 
 fn merge_counts(target: &mut BTreeMap<String, usize>, incoming: BTreeMap<String, usize>) {

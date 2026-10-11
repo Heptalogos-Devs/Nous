@@ -152,14 +152,9 @@ pub struct QuerySemanticEmbedding {
 pub struct QueryActivation {
     pub concept_catalog: Vec<super::QueryConceptCandidate>,
     pub frozen: bool,
-    pub semantic_text_digest: String,
-    pub exact_refs: Vec<CognitiveRef>,
-    pub entity_refs: Vec<EntityRef>,
     pub explicit_tags: Vec<TagActivation>,
     pub inferred_tags: Vec<TagActivation>,
     pub novel_concepts: Vec<NovelConceptHypothesis>,
-    pub schema_refs: Vec<CognitiveRef>,
-    pub runtime_refs: Vec<CognitiveRef>,
     pub seeds: Vec<ActivationSeed>,
     pub exploration: ExplorationIntent,
     pub temporal_frame: TemporalFrame,
@@ -174,14 +169,12 @@ pub struct QueryActivation {
 impl QueryActivation {
     pub fn prepared(
         query: &CognitiveQuery,
-        digest: String,
-        exact_refs: Vec<CognitiveRef>,
-        runtime_refs: Vec<CognitiveRef>,
+        exact_refs: impl IntoIterator<Item = CognitiveRef>,
+        runtime_refs: &[CognitiveRef],
         structural_seeds: &[(CognitiveRef, String)],
     ) -> Self {
         let mut seeds = exact_refs
-            .iter()
-            .cloned()
+            .into_iter()
             .map(|reference| ActivationSeed {
                 reference,
                 origin: "exact_target".into(),
@@ -245,37 +238,12 @@ impl QueryActivation {
         seeds.sort_by_key(|s| (s.reference.to_string(), s.origin.clone()));
         seeds.dedup_by(|a, b| a.reference == b.reference && a.origin == b.origin);
         let explicit_tags = explicit_tag_activations(&seeds);
-        let entity_refs = seeds
-            .iter()
-            .filter_map(|s| {
-                if let CognitiveRef::Entity(e) = &s.reference {
-                    Some(e.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let schema_refs = seeds
-            .iter()
-            .filter(|s| {
-                matches!(
-                    s.reference,
-                    CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_)
-                )
-            })
-            .map(|s| s.reference.clone())
-            .collect();
         Self {
             concept_catalog: vec![],
             frozen: false,
-            semantic_text_digest: digest,
-            exact_refs,
-            entity_refs,
             explicit_tags,
             inferred_tags: vec![],
             novel_concepts: vec![],
-            schema_refs,
-            runtime_refs,
             seeds,
             exploration: query.exploration,
             temporal_frame: query.temporal_frame.clone(),
@@ -293,16 +261,11 @@ impl QueryActivation {
     pub fn scoped(
         &self,
         query: &CognitiveQuery,
-        exact_refs: Vec<CognitiveRef>,
+        exact_refs: impl IntoIterator<Item = CognitiveRef>,
+        runtime_refs: &[CognitiveRef],
         structural_seeds: &[(CognitiveRef, String)],
     ) -> Self {
-        let mut scoped = Self::prepared(
-            query,
-            self.semantic_text_digest.clone(),
-            exact_refs,
-            self.runtime_refs.clone(),
-            structural_seeds,
-        );
+        let mut scoped = Self::prepared(query, exact_refs, runtime_refs, structural_seeds);
         scoped.concept_catalog = self.concept_catalog.clone();
         scoped.frozen = self.frozen;
         scoped.inferred_tags = self.inferred_tags.clone();

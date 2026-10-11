@@ -1,10 +1,13 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { defineCommand } from "citty";
+import { commonArgs, stringArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 
 import { boundedInteger } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 
-export async function maintenanceCommands(env: CliEnvironment) {
+async function maintenanceCommands(env: CliEnvironment) {
   const { client, values, subjectId } = env;
   const result = await client.cognition.grantMaintenance({
     subjectId,
@@ -35,4 +38,18 @@ export async function maintenanceCommands(env: CliEnvironment) {
         }
       : {}),
   };
+}
+
+export function createMaintenanceCommand(leaf: CliLeaf) {
+  return defineCommand({
+    args: commonArgs,
+    subCommands: {
+      grant: leaf(
+        {
+          ...stringArgs("max-operations", "max-model-calls", "max-elapsed-ms"),
+        },
+        maintenanceCommands,
+      ),
+    },
+  });
 }

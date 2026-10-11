@@ -13,72 +13,71 @@ import {
   consumerStatePolicySchema,
   consumerStatePaths,
 } from "@nous-wave/client/consumer-policy";
-const stringFlags = [
-  "run-root",
-  "instance-root",
-  "text",
-  "file",
-  "purpose",
-  "source",
-  "media-type",
-  "strategy",
-  "target",
-  "supersedes",
-  "representation",
-  "operation-id",
-  "expected-revision",
-  "expected-epoch",
-  "value-json",
-  "view",
-  "status",
-  "intent",
-  "from",
-  "to",
-  "relation",
-  "aboutness-mode",
-  "query-file",
-  "subject",
-  "session",
-  "work-context",
-  "kind",
-  "name",
-  "canonical",
-  "lexical-ref",
-  "association-file",
-  "request-file",
-  "description",
-  "kind-hint",
-  "event-id",
-  "occurred-at",
-  "query-id",
-  "consumer",
-  "max-operations",
-  "max-model-calls",
-  "max-elapsed-ms",
-  "page-token",
-  "page-size",
-  "max-nodes",
-  "max-depth",
-  "max-batches",
-  "max-bytes",
-  "output",
-  "scope",
-  "mode",
-  "cognition",
-  "entity",
-  "entity-ref",
-  "binding-state",
-  "host-resolution-ref",
-  "reason",
-  "source-region",
-  "artifact",
-  "limit",
-] as const;
-const booleanFlags = ["json", "raw", "developer", "advanced", "clear"] as const;
-const listFlags = ["tag", "aboutness", "alias"] as const;
-export type CliValues = Partial<Record<(typeof stringFlags)[number], string>> &
-  Partial<Record<(typeof booleanFlags)[number], boolean>> &
-  Partial<Record<(typeof listFlags)[number], string[]>>;
+type StringValueName =
+  | "run-root"
+  | "instance-root"
+  | "text"
+  | "file"
+  | "purpose"
+  | "source"
+  | "media-type"
+  | "strategy"
+  | "target"
+  | "supersedes"
+  | "representation"
+  | "operation-id"
+  | "expected-revision"
+  | "expected-epoch"
+  | "value-json"
+  | "view"
+  | "status"
+  | "intent"
+  | "from"
+  | "to"
+  | "relation"
+  | "aboutness-mode"
+  | "query-file"
+  | "subject"
+  | "session"
+  | "work-context"
+  | "kind"
+  | "name"
+  | "canonical"
+  | "lexical-ref"
+  | "association-file"
+  | "request-file"
+  | "description"
+  | "kind-hint"
+  | "event-id"
+  | "occurred-at"
+  | "query-id"
+  | "consumer"
+  | "max-operations"
+  | "max-model-calls"
+  | "max-elapsed-ms"
+  | "page-token"
+  | "page-size"
+  | "max-nodes"
+  | "max-depth"
+  | "max-batches"
+  | "max-bytes"
+  | "output"
+  | "scope"
+  | "mode"
+  | "cognition"
+  | "entity"
+  | "entity-ref"
+  | "binding-state"
+  | "host-resolution-ref"
+  | "reason"
+  | "source-region"
+  | "artifact"
+  | "limit";
+type BooleanValueName = "json" | "raw" | "developer" | "advanced" | "clear";
+type ListValueName = "tag" | "aboutness" | "alias";
+export type CliValues = Partial<Record<StringValueName, string>> &
+  Partial<Record<BooleanValueName, boolean>> &
+  Partial<Record<ListValueName, string[]>>;
 function required(value: string | undefined, name: string): string {
   if (!value) throw new CliError("INVALID_ARGUMENT", `${name} required`);
   return value;

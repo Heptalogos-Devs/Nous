@@ -34,7 +34,6 @@ pub struct DenseGeneration {
     pub space: EmbeddingSpaceSignature,
     index: Arc<Index>,
     records: HashMap<u64, VectorRecord>,
-    vectors: HashMap<u64, Vec<f32>>,
 }
 
 impl DenseGeneration {
@@ -92,6 +91,7 @@ impl DenseGeneration {
                 )
                 .with_source(error)
             })?;
+        let mut vector = vec![0.0_f32; generation.space.dimension as usize];
         for record in records {
             if !record.embedding_space.compatible_with(&generation.space) {
                 return Err(Error::new(
@@ -100,27 +100,8 @@ impl DenseGeneration {
                     "Conflict",
                 ));
             }
-            let mut vector = vec![0.0_f32; generation.space.dimension as usize];
-            let count = generation
-                .index
-                .get(record.serving_doc_id, &mut vector)
-                .map_err(|error| {
-                    Error::new(
-                        nous_core::ErrorOwner::Resource,
-                        nous_core::ErrorCode::InternalFailure,
-                        "Could not read a vector from the dense Serving index",
-                    )
-                    .with_source(error)
-                })?;
-            if count != 1 {
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Resource,
-                    nous_core::ErrorCode::InternalFailure,
-                    "Dense Serving index is missing a recorded vector",
-                ));
-            }
+            read_recorded_vector(&generation.index, record.serving_doc_id, &mut vector)?;
             validate_vector(&generation.space, &vector)?;
-            generation.vectors.insert(record.serving_doc_id, vector);
             generation.records.insert(record.serving_doc_id, record);
         }
         if generation.index.size() != generation.records.len() {
@@ -180,7 +161,6 @@ impl DenseGeneration {
             space,
             index: Arc::new(index),
             records: HashMap::new(),
-            vectors: HashMap::new(),
         })
     }
 
@@ -205,7 +185,6 @@ impl DenseGeneration {
                 .with_source(error)
             })?;
         self.records.insert(serving_doc_id, record);
-        self.vectors.insert(serving_doc_id, vector.to_vec());
         Ok(())
     }
 
@@ -287,9 +266,34 @@ impl DenseGeneration {
         self.records.values()
     }
 
-    pub fn vector(&self, serving_doc_id: u64) -> Option<&[f32]> {
-        self.vectors.get(&serving_doc_id).map(Vec::as_slice)
+    pub fn vector(&self, serving_doc_id: u64) -> Result<Option<Vec<f32>>> {
+        if !self.records.contains_key(&serving_doc_id) {
+            return Ok(None);
+        }
+
+        let mut vector = vec![0.0_f32; self.space.dimension as usize];
+        read_recorded_vector(&self.index, serving_doc_id, &mut vector)?;
+        Ok(Some(vector))
     }
+}
+
+fn read_recorded_vector(index: &Index, serving_doc_id: u64, vector: &mut [f32]) -> Result<()> {
+    let count = index.get(serving_doc_id, vector).map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InternalFailure,
+            "Could not read a vector from the dense Serving index",
+        )
+        .with_source(error)
+    })?;
+    if count != 1 {
+        return Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InternalFailure,
+            "Dense Serving index is missing a recorded vector",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_vector(space: &EmbeddingSpaceSignature, vector: &[f32]) -> Result<()> {

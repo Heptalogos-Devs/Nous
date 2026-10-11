@@ -8,19 +8,20 @@ use test_support::query::{query, subject};
 use test_support::{database, form_input, observation, open_runtime_with_serving};
 
 #[tokio::test]
-async fn query_slot_releases_when_continuation_is_dropped() {
+async fn query_slot_releases_when_stream_permit_is_dropped() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime_with_serving(&url, &root, true, false, false).await;
     let subject = subject(&runtime).await;
     let execution = runtime.execute_query(query(subject), None).await.unwrap();
-    let run = test_support::query_run(&runtime.cognition, execution);
+    let slot = test_support::query_slot(&runtime.cognition, &execution.bound);
 
     assert!(runtime.cognition.acquire_query_slot(1).is_err());
-    drop(run);
+    drop(slot);
+    drop(execution);
     let permit = runtime
         .cognition
         .acquire_query_slot(1)
-        .expect("dropping the stream state releases its slot");
+        .expect("dropping the stream-owned permit releases its slot");
     drop(permit);
 }
 
@@ -69,7 +70,6 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
         .execute_query(request.clone(), Some(5))
         .await
         .unwrap();
-    let held = test_support::query_run(&runtime.cognition, held);
     let next = runtime
         .require_memory()
         .unwrap()

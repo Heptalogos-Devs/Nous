@@ -56,7 +56,7 @@ impl VcpServingGeneration {
             MetricKind::Cos,
         )?;
         for (id, vector) in &assets.vectors {
-            if candidates.vector(*id as u64) != Some(vector.as_slice()) {
+            if candidates.vector(*id as u64)?.as_deref() != Some(vector.as_slice()) {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
@@ -65,7 +65,7 @@ impl VcpServingGeneration {
             }
         }
         for (id, _) in &assets.labels {
-            if tags.vector(*id as u64) != candidates.vector(*id as u64) {
+            if tags.vector(*id as u64)?.as_deref() != candidates.vector(*id as u64)?.as_deref() {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Resource,
                     nous_core::ErrorCode::InternalFailure,
@@ -78,12 +78,6 @@ impl VcpServingGeneration {
             candidates,
             tags,
         })
-    }
-    pub fn search_candidates(&self, vector: &[f32], limit: usize) -> Result<Vec<DenseMatch>> {
-        if self.candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.candidates.search(vector, limit)
     }
     pub fn search_candidates_for_projection(
         &self,
@@ -139,17 +133,13 @@ impl VcpServingGeneration {
                             "VCP Tag index identity lacks label",
                         )
                     })?;
-                let vector = self
-                    .tags
-                    .vector(hit.serving_doc_id)
-                    .ok_or_else(|| {
-                        Error::new(
-                            nous_core::ErrorOwner::Resource,
-                            nous_core::ErrorCode::InternalFailure,
-                            "VCP Tag index identity lacks vector",
-                        )
-                    })?
-                    .to_vec();
+                let vector = self.tags.vector(hit.serving_doc_id)?.ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "VCP Tag index identity lacks vector",
+                    )
+                })?;
                 Ok(ReferenceResidualCandidate {
                     id,
                     name,

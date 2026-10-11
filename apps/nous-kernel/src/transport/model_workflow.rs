@@ -132,11 +132,12 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                 .execution_telemetry
                 .map(envelope::telemetry)
                 .transpose()?;
-            let operations = input
-                .mutation_operations
-                .iter()
-                .map(|value| id(value).map(nous_core::OperationId))
-                .collect::<Result<Vec<_>>>()?;
+            let mutation_operation_id = input
+                .mutation_operation_id
+                .as_deref()
+                .map(id)
+                .transpose()?
+                .map(nous_core::OperationId);
             self.0
                 .store
                 .save_model_workflow(
@@ -144,7 +145,7 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                     proposal.as_ref(),
                     outcome.as_ref(),
                     execution_telemetry.as_ref(),
-                    &operations,
+                    mutation_operation_id,
                 )
                 .await
         }

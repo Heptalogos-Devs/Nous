@@ -5,7 +5,7 @@ use super::lane::{LaneCandidate, LaneOutput, LaneStatus};
 use super::*;
 use nous_runtime::{BoundQuery, QueryPlan};
 use sqlx::Row;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use uuid::Uuid;
 
 pub(crate) async fn schema_direct_lane(
@@ -163,7 +163,15 @@ pub(crate) async fn materialize_schema_revisions(
     service: &MemoryService,
     bound: &BoundQuery,
     references: &[CognitiveRef],
+    views: &HashMap<CognitiveRef, CognitionView>,
 ) -> Result<(Vec<CognitiveHit>, BTreeMap<String, usize>)> {
+    let references = references
+        .iter()
+        .filter(|reference| matches!(reference, CognitiveRef::CognitiveSchemaRevision(_)))
+        .collect::<Vec<_>>();
+    if references.is_empty() {
+        return Ok((Vec::new(), BTreeMap::new()));
+    }
     let revision_ids = references
         .iter()
         .filter_map(|reference| match reference {
@@ -171,15 +179,6 @@ pub(crate) async fn materialize_schema_revisions(
             _ => None,
         })
         .collect::<Vec<_>>();
-    if revision_ids.is_empty() {
-        return Ok((Vec::new(), BTreeMap::new()));
-    }
-    let rows = sqlx::query("SELECT s.object_id AS schema_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.purge_state,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,h.formed_at,h.recorded_at FROM cognition_objects s JOIN cognition_revision_headers h ON h.subject_id=s.subject_id AND h.object_kind=s.object_kind AND h.object_id=s.object_id JOIN cognitive_schema_revisions r ON r.schema_revision_id=h.revision_id WHERE s.object_kind='cognitive_schema' AND s.subject_id=$1 AND r.schema_revision_id=ANY($2::uuid[])")
-        .bind(bound.source_query.subject.0)
-        .bind(&revision_ids)
-        .fetch_all(service.store.pool())
-        .await
-        .map_err(nous_persistence::database_error)?;
     let mut metadata = super::longitudinal_query::longitudinal_metadata(
         service,
         bound.source_query.subject,
@@ -190,41 +189,34 @@ pub(crate) async fn materialize_schema_revisions(
     .await?;
     let mut drops = BTreeMap::new();
     let mut hits = Vec::new();
-    for row in rows {
-        let revision = CognitiveSchemaRevisionId(
-            row.try_get("schema_revision_id")
-                .map_err(nous_persistence::database_error)?,
-        );
-        let reference = CognitiveRef::CognitiveSchemaRevision(revision);
-        let header = match super::historical::historical_header(bound, &reference) {
-            Ok(header) => header,
-            Err(Error {
-                code: nous_core::ErrorCode::NotFound,
-                ..
-            }) => {
-                *drops.entry("outside_historical_view".into()).or_default() += 1;
-                continue;
-            }
-            Err(error) => return Err(error),
+    for reference in references {
+        let CognitiveRef::CognitiveSchemaRevision(revision) = reference else {
+            continue;
         };
-        let historical = bound.revision_policy.allows_historical(&reference);
-        let current: Uuid = row
-            .try_get("current_revision_id")
-            .map_err(nous_persistence::database_error)?;
-        if !historical && current != revision.0 {
+        let Some(CognitionView::CognitiveSchema(view)) = views.get(reference) else {
+            if bound.read_context.is_historical()
+                && bound
+                    .read_context
+                    .historical_view()
+                    .is_some_and(|snapshot| {
+                        snapshot.cognition_for(reference).is_none()
+                            || snapshot.selected_cognition_for(reference).is_none()
+                    })
+            {
+                *drops.entry("outside_historical_view".into()).or_default() += 1;
+            }
+            continue;
+        };
+        let revision_id = revision.0;
+        let historical = bound.revision_policy.allows_historical(reference);
+        if !historical && view.header.current_revision_id() != revision_id {
             *drops.entry("not_current".into()).or_default() += 1;
             continue;
         }
-        let accepted = super::historical::header_text(header, &row, "acceptance_state")?;
-        let valid = super::historical::header_text(header, &row, "integrity_state")?;
-        let suppression = super::historical::header_text(header, &row, "suppression_state")?;
-        let purge: String = row
-            .try_get("purge_state")
-            .map_err(nous_persistence::database_error)?;
-        if accepted != "accepted"
-            || valid != "valid"
-            || suppression != "normal"
-            || purge != "normal"
+        if view.header.lifecycle.acceptance != AcceptanceState::Accepted
+            || view.header.lifecycle.integrity != IntegrityState::Valid
+            || view.header.lifecycle.suppression != SuppressionState::Normal
+            || view.header.lifecycle.purge != PurgeState::Normal
         {
             *drops.entry("unavailable_lifecycle".into()).or_default() += 1;
             continue;
@@ -232,19 +224,14 @@ pub(crate) async fn materialize_schema_revisions(
         if let Some(binding) = bound
             .exact_bindings
             .iter()
-            .find(|binding| binding.bound_ref == reference)
+            .find(|binding| binding.bound_ref == *reference)
             && binding.mutable_object
-            && binding.bound_object_epoch != Some(super::historical::header_epoch(header, &row)?)
+            && binding.bound_object_epoch != Some(view.header.object_epoch)
         {
             *drops.entry("stale_exact_binding".into()).or_default() += 1;
             continue;
         }
-        let aboutness = row
-            .try_get::<Vec<String>, _>("aboutness")
-            .map_err(nous_persistence::database_error)?
-            .into_iter()
-            .map(EntityRef::new)
-            .collect::<Result<Vec<_>>>()?;
+        let aboutness = &view.revision.applicability_scope.aboutness;
         let source_times = metadata.remove(&revision.0).unwrap_or_default();
         if !bound
             .source_query
@@ -252,7 +239,7 @@ pub(crate) async fn materialize_schema_revisions(
             .constraints
             .matches_common(QueryFacts {
                 authority: AuthorityClass::SubjectCognition,
-                entities: &aboutness,
+                entities: aboutness,
                 source_classes: &source_times.source_classes,
                 modality: Modality::Text,
                 cognitive_role: None,
@@ -266,23 +253,9 @@ pub(crate) async fn materialize_schema_revisions(
         let freshness = FreshnessDescriptor {
             occurred: source_times.occurred,
             observed_at: source_times.observed_at,
-            valid_time: temporal_from_columns(
-                ErrorOwner::Concept,
-                row.try_get("valid_time_kind")
-                    .map_err(nous_persistence::database_error)?,
-                row.try_get("valid_time_start")
-                    .map_err(nous_persistence::database_error)?,
-                row.try_get("valid_time_end")
-                    .map_err(nous_persistence::database_error)?,
-            )?,
-            formed_at: Some(
-                row.try_get("formed_at")
-                    .map_err(nous_persistence::database_error)?,
-            ),
-            recorded_at: Some(
-                row.try_get("recorded_at")
-                    .map_err(nous_persistence::database_error)?,
-            ),
+            valid_time: view.revision.applicability_scope.valid_time.clone(),
+            formed_at: Some(view.revision.header.formed_at),
+            recorded_at: Some(view.revision.header.recorded_at),
         };
         let constraints = &bound.source_query.expression.constraints;
         if !constraints.occurred.is_none_or(|interval| {
@@ -310,23 +283,17 @@ pub(crate) async fn materialize_schema_revisions(
             continue;
         }
         hits.push(CognitiveHit {
-            authority_epoch: Some(super::historical::header_epoch(header, &row)?),
-            preference_refs: vec![CognitiveRef::CognitiveSchema(CognitiveSchemaId(
-                row.try_get("schema_id")
-                    .map_err(nous_persistence::database_error)?,
-            ))],
+            authority_epoch: Some(view.header.object_epoch),
+            preference_refs: vec![view.header.object_ref.clone()],
             reference: reference.clone(),
             revision: None,
             semantic_role: Some("cognitive_schema".into()),
             cognitive_role: None,
             formation_mode: None,
-            representation: Some(
-                row.try_get("structural_claim")
-                    .map_err(nous_persistence::database_error)?,
-            ),
+            representation: Some(view.revision.structural_claim.clone()),
             authority: AuthorityClass::SubjectCognition,
             freshness,
-            entity_refs: aboutness,
+            entity_refs: aboutness.clone(),
             evidence: Vec::new(),
             match_evidence: MatchEvidence::default(),
             materialization: Vec::new(),

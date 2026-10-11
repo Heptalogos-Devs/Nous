@@ -8,7 +8,6 @@ use nous_retrieval::{
     ServingOptions, TextEmbeddingOutput, TextEmbeddingProvider, TextEmbeddingRequest,
 };
 use nous_runtime::{COGNITIVE_PROFILE, CONCEPT_ENRICHMENT};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use std::sync::{Arc, Mutex};
 use test_support::*;
 #[derive(Default)]
@@ -104,22 +103,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     let (root, url, _pg) = database().await;
     let probe = Arc::new(Probe::default());
     let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:ServingOptions {root:root.path().join("serving"),lexical:true,dense:true,topology:true,memory_enabled:true},embedding:Some(probe.clone()),stored_embedding:None,core_descriptors:vec![],deployment_document:serde_json::json!({"capabilities":{"process":{"memory":true},"subject_defaults":{"memory":true}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":true},"topology":{"enabled":true}}})}).await.unwrap();
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: nous_core::SubjectId::default(),
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let owner = rt.require_memory().unwrap();
     let tag = owner
         .create_tag(

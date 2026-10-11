@@ -468,14 +468,4 @@ impl MaterialService {
             metadata: row.try_get("metadata").map_err(db)?,
         })
     }
-
-    pub async fn artifact_stream(
-        &self,
-        subject: SubjectId,
-        artifact: ArtifactId,
-    ) -> Result<(Artifact, impl Stream<Item = Result<Vec<u8>>> + Send + use<>)> {
-        let artifact = self.artifact(subject, artifact).await?;
-        let stream = self.objects.stream(&artifact.content_hash).await?;
-        Ok((artifact, stream))
-    }
 }

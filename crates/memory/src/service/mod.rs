@@ -35,8 +35,8 @@ use chrono::{DateTime, Utc};
 use nous_core::*;
 use nous_object_store::ObjectStore;
 use nous_persistence::{
-    AuthorityStore, MutationEnvelope, MutationStart, OwnerLock, ProjectionInvalidation,
-    database_error as db,
+    AuthorityStore, MutationEnvelope, MutationReceipt, MutationResult, MutationStart, OwnerLock,
+    ProjectionInvalidation, database_error as db,
 };
 pub use nous_runtime::{ResidentView, ResourceUpsert, ResourceView, SessionView};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -69,6 +69,33 @@ pub(super) fn cognition_owner(kind: CognitionKind) -> ErrorOwner {
     } else {
         ErrorOwner::Memory
     }
+}
+
+pub(super) fn receipt_revision_id(
+    receipt: &MutationReceipt,
+    object: &CognitiveRef,
+) -> Result<Uuid> {
+    let (kind, _, is_revision) = CognitionKind::from_reference(object)?;
+    let owner = cognition_owner(kind);
+    if is_revision {
+        return Err(Error::new(
+            owner,
+            ErrorCode::InternalFailure,
+            "committed mutation receipt expected an object reference",
+        ));
+    }
+    receipt
+        .results
+        .iter()
+        .find(|result| result.reference == *object)
+        .and_then(|result| result.revision_id)
+        .ok_or_else(|| {
+            Error::new(
+                owner,
+                ErrorCode::InternalFailure,
+                "committed mutation receipt has no exact revision result",
+            )
+        })
 }
 
 pub(super) fn decode_cognition_header(
@@ -142,9 +169,11 @@ pub struct MemoryService {
 
 impl MemoryService {
     pub(in crate::service) async fn insert_cognition_revision_header_in(
+        store: &AuthorityStore,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         header: &CognitionRevisionHeader,
+        display_name: &str,
     ) -> Result<()> {
         sqlx::query("INSERT INTO cognition_revision_headers(revision_id,subject_id,object_kind,object_id,revision_no,parent_revision_id,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
             .bind(header.revision_id())
@@ -159,6 +188,14 @@ impl MemoryService {
             .execute(&mut **tx)
             .await
             .map_err(db)?;
+        store
+            .ensure_identity_addresses_in(
+                tx,
+                subject,
+                &[header.object_ref.clone(), header.revision_ref.clone()],
+                display_name,
+            )
+            .await?;
         Ok(())
     }
 

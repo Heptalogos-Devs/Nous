@@ -53,11 +53,6 @@ test("v2 ProtoJSON receipts preserve generated messages and opaque Struct data",
       format: "nous.consumer.operation.v2",
       receiptId: "operation",
       command: "subjects.create",
-      owner: "SUBJECT",
-      operationKind: "subject_create",
-      subjectId,
-      operationId: frozenRequest.operationId,
-      requestDigest: "a".repeat(64),
       request: frozenRequest.frozen,
       status: "pending",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -67,11 +62,6 @@ test("v2 ProtoJSON receipts preserve generated messages and opaque Struct data",
       format: "nous.consumer.operation.v2",
       receiptId: "operation",
       command: "subjects.create",
-      owner: "SUBJECT",
-      operationKind: "subject_create",
-      subjectId,
-      operationId: frozenRequest.operationId,
-      requestDigest: "a".repeat(64),
       request: frozenRequest.frozen,
       status: "complete",
       result: frozenResult,
@@ -182,7 +172,7 @@ test("different processes serialize only the shared consumer receipt transaction
   ).href;
   const worker = `import {cliState} from ${JSON.stringify(module)}; import {consumerStatePolicySchema} from ${JSON.stringify(policyModule)};
     const state=cliState(process.argv[1],JSON.parse(process.argv[2]),consumerStatePolicySchema.parse({receipt_limit:2}));
-    try { const id=process.argv[3]; const now=new Date().toISOString(); await state.writeReceipt(id,{format:'nous.consumer.operation.v2',receiptId:id,command:'subjects.create',owner:'SUBJECT',operationKind:'subject_create',subjectId:'33333333-3333-4333-8333-333333333333',operationId:id,requestDigest:'a'.repeat(64),request:{typeName:'request',protoJson:{}},status:'pending',createdAt:now,updatedAt:now});console.log('saved'); }
+    try { const id=process.argv[3]; const now=new Date().toISOString(); await state.writeReceipt(id,{format:'nous.consumer.operation.v2',receiptId:id,command:'subjects.create',request:{typeName:'request',protoJson:{}},status:'pending',createdAt:now,updatedAt:now});console.log('saved'); }
     catch(error) {if(error.code!=='RESOURCE_EXHAUSTED')throw error;console.log(error.code);}`;
   try {
     const results = await Promise.all(
@@ -218,7 +208,7 @@ test("different processes serialize only the shared consumer receipt transaction
   }
 }, 15000);
 
-test("receipt transitions preserve frozen identity and terminal outcomes", async () => {
+test("receipt transitions preserve the frozen request and terminal outcomes", async () => {
   const root = await mkdtemp(
     join(workspacePaths.temporary, "consumer-receipt-cas-"),
   );
@@ -230,11 +220,6 @@ test("receipt transitions preserve frozen identity and terminal outcomes", async
       format: "nous.consumer.operation.v2" as const,
       receiptId: "operation",
       command: "subjects.create",
-      owner: "SUBJECT",
-      operationKind: "subject_create",
-      subjectId,
-      operationId: "original",
-      requestDigest: "a".repeat(64),
       request: { typeName: "request", protoJson: { subjectId } },
       status: "pending" as const,
       createdAt: now,

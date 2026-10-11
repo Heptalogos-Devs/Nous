@@ -1,5 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import type { CliLeaf } from "./command-types.js";
 
 import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
@@ -10,12 +11,9 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { isCognitionRevisionReference, typedCognition } from "./cognition.js";
 
-export async function traceCommands(
-  env: CliEnvironment,
-  action: string | undefined,
-) {
+async function traceCommands(env: CliEnvironment, argument?: string) {
   const { client, subjectId, required, resolveReference } = env;
-  const refText = required(action, "Reference");
+  const refText = required(argument, "Reference");
   const reference = await resolveReference(refText);
   if (!isCognitionRevisionReference(reference))
     throw new CliError(
@@ -176,4 +174,10 @@ export async function traceCommands(
     sources,
     derivations,
   };
+}
+
+export function createTraceCommand(leaf: CliLeaf) {
+  return leaf({}, traceCommands, {
+    parameters: ["<canonical or lexical reference>"],
+  });
 }

@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nous_persistence::{
-    DenseInvalidation, MutationEnvelope, MutationStart, OwnerLock, ProjectionInvalidation,
+    DenseInvalidation, MutationEnvelope, MutationResult, MutationStart, OwnerLock,
+    ProjectionInvalidation,
 };
 
-use nous_core::{OperationId, SubjectId};
+use nous_core::{CognitiveRef, OperationId, SubjectId};
 
 mod test_support;
 
@@ -111,7 +112,11 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
         panic!("checkpoint must resume");
     };
     mutation
-        .commit("test_result", Some("result"), None, Some(1))
+        .commit(&[MutationResult::new(
+            CognitiveRef::Subject(subject),
+            None,
+            Some(1),
+        )])
         .await
         .unwrap();
     let MutationStart::Replay(receipt) = MutationEnvelope::resume(
@@ -128,7 +133,14 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
         panic!("terminal result must replay");
     };
     assert_eq!(receipt.state, "committed");
-    assert_eq!(receipt.result_ref.as_deref(), Some("result"));
+    assert_eq!(
+        receipt.results,
+        vec![MutationResult::new(
+            CognitiveRef::Subject(subject),
+            None,
+            Some(1),
+        )]
+    );
     assert_eq!(rt.store.authority_seq(subject).await.unwrap(), sequence);
     let families: Vec<(String, String, i64)> = sqlx::query_as("SELECT family,space_signature,desired_authority_seq FROM projection_watermarks WHERE subject_id=$1 AND desired_authority_seq=$2 ORDER BY family")
         .bind(subject.0).bind(sequence).fetch_all(rt.store.pool()).await.unwrap();

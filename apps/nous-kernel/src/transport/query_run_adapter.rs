@@ -4,7 +4,7 @@
 use super::*;
 use nous_core::{Degradation, ErrorCode, ErrorOwner, RequirementStrength};
 use nous_protocol::google::rpc;
-use nous_runtime::{QueryHostPlan, QueryHostRole, QueryRun};
+use nous_runtime::{BoundQuery, QueryHostPlan, QueryHostRole};
 use prost::Message;
 use tonic::{Code, Status};
 
@@ -66,8 +66,8 @@ pub(super) fn rpc_status(value: rpc::Status) -> Status {
     Status::with_details(code, value.message.clone(), value.encode_to_vec().into())
 }
 
-pub(super) fn add_degradation(run: &mut QueryRun, code: &str) {
-    run.bound_mut().activation.degradation.push(Degradation {
+pub(super) fn add_degradation(bound: &mut BoundQuery, code: &str) {
+    bound.activation.degradation.push(Degradation {
         code: code.into(),
         detail: None,
     });

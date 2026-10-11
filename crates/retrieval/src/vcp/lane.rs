@@ -276,8 +276,8 @@ fn offered_candidates(
             )?;
         }
     }
-    for reference in &bound.activation.exact_refs {
-        add(reference, 1.0, 0.0, 1.0)?;
+    for binding in &bound.exact_bindings {
+        add(&binding.bound_ref, 1.0, 0.0, 1.0)?;
     }
     let mut offered = offered.into_values().collect::<Vec<_>>();
     offered.sort_by(|a, b| {

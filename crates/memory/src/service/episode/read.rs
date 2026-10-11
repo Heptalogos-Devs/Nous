@@ -52,81 +52,12 @@ impl MemoryService {
         }
     }
 
-    pub async fn list_episodes(&self, subject: SubjectId) -> Result<Vec<EpisodeView>> {
-        let ids = sqlx::query_scalar::<_, Uuid>("SELECT object_id FROM cognition_objects WHERE object_kind='episode' AND subject_id=$1 ORDER BY created_at,object_id")
-            .bind(subject.0).fetch_all(self.store.pool()).await.map_err(db)?;
-        let references = ids
-            .into_iter()
-            .map(|id| CognitiveRef::Episode(EpisodeId(id)))
-            .collect::<Vec<_>>();
-        if references.is_empty() {
-            return Ok(Vec::new());
-        }
-        let context = self.current_read_context(subject).await?;
-        let mut result = Vec::with_capacity(references.len());
-        for batch in references.chunks(256) {
-            let views = self.read_cognitions(&context, batch).await?;
-            for reference in batch {
-                match views.get(reference) {
-                    Some(CognitionView::Episode(view)) => result.push(view.clone()),
-                    _ => {
-                        return Err(Error::new(
-                            ErrorOwner::Memory,
-                            ErrorCode::NotFound,
-                            "Episode not found",
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(result)
-    }
-
-    pub async fn episode_history(
-        &self,
-        subject: SubjectId,
-        episode: EpisodeId,
-    ) -> Result<Vec<EpisodeView>> {
-        let ids = sqlx::query_scalar::<_, Uuid>("SELECT revision_id FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind='episode' AND object_id=$2 ORDER BY revision_no")
-            .bind(subject.0).bind(episode.0).fetch_all(self.store.pool()).await.map_err(db)?;
-        let references = ids
-            .into_iter()
-            .map(|id| CognitiveRef::EpisodeRevision(EpisodeRevisionId(id)))
-            .collect::<Vec<_>>();
-        if references.is_empty() {
-            return Ok(Vec::new());
-        }
-        let context = self.current_read_context(subject).await?;
-        let mut result = Vec::with_capacity(references.len());
-        for batch in references.chunks(256) {
-            let views = self.read_cognitions(&context, batch).await?;
-            for reference in batch {
-                match views.get(reference) {
-                    Some(CognitionView::Episode(view)) if view.header.object_id() == episode.0 => {
-                        result.push(view.clone())
-                    }
-                    _ => {
-                        return Err(Error::new(
-                            ErrorOwner::Memory,
-                            ErrorCode::NotFound,
-                            "Episode revision not found",
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(result)
-    }
-
     pub(in crate::service) async fn episode_views_for_selections_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        selections: &[CognitionSelection],
-    ) -> Result<HashMap<CognitiveRef, EpisodeView>> {
-        let revision_ids = selections
-            .iter()
-            .map(|selection| selection.revision.revision_id())
-            .collect::<Vec<_>>();
+        selections: &HashMap<Uuid, CognitionSelection>,
+    ) -> Result<HashMap<Uuid, EpisodeView>> {
+        let revision_ids = selections.keys().copied().collect::<Vec<_>>();
         if revision_ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -159,14 +90,10 @@ impl MemoryService {
                 created_at: row.try_get("created_at").map_err(db)?,
             });
         }
-        let selected = selections
-            .iter()
-            .map(|selection| (selection.revision.revision_id(), selection))
-            .collect::<HashMap<_, _>>();
         let mut views = HashMap::with_capacity(rows.len());
         for row in rows {
             let revision_id: Uuid = row.try_get("episode_revision_id").map_err(db)?;
-            let Some(selection) = selected.get(&revision_id) else {
+            let Some(selection) = selections.get(&revision_id) else {
                 continue;
             };
             let revision = EpisodeRevision {
@@ -185,9 +112,8 @@ impl MemoryService {
                 )?,
                 boundary_explanation: row.try_get("boundary_explanation").map_err(db)?,
             };
-            let reference = selection.revision.revision_ref.clone();
             views.insert(
-                reference,
+                revision_id,
                 EpisodeView {
                     header: selection.header.clone(),
                     revision,

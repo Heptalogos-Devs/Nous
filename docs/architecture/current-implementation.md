@@ -36,6 +36,8 @@ flowchart TD
 
 Authority mutation 由语义 owner 校验和提交。Core 执行模型或外部 Resource 工作时不持有 Authority 写事务；生成的候选结果以正式 owner 请求提交，owner 重新校验来源、对象状态、权限和预期修订。持久操作的恢复状态与业务数据由其现有 owner / receipt 机制持有，不建立第二份跨域认知状态。
 
+Mutation receipt 以 `results` 保存唯一的类型化结果：每项携带 `CognitiveRef`，可附精确修订 UUID 和对象 epoch；拆分、分区输出按提交顺序保留。Receipt 状态仅为 `in_progress` 与 `committed`，Serving 协调的认知 purge 用带对象 epoch 的类型化结果记录可恢复 checkpoint。
+
 ### 认知对象与修订
 
 Memory、CognitiveSchema、Episode、Journal 共用 `CognitionHeader` 和 `CognitionRevisionHeader`。对象身份、当前 head、epoch、生命周期写入 `cognition_objects`；修订身份、所属对象、父修订、时间和 producer 写入 `cognition_revision_headers`。四类内容与其关系仍由各自的 typed payload 表保存。
@@ -55,11 +57,13 @@ Memory、CognitiveSchema、Episode、Journal 共用 `CognitionHeader` 和 `Cogni
 
 ### 查询与结果物化
 
-Core 解析调用方的 Query 请求并处理宿主侧模型 / Resource 往返。Runtime 在一次 QueryRun 中冻结该次请求的 ReadContext、语义与预算，持有至最终校验；该运行结束后释放，不供后续请求续用。Retrieval 产生有界候选，Memory 与 Material 分别负责自身认知和材料结果的读取、校验及最终物化，Runtime 组合 owner 结果。Serving 命中只是召回依据，返回前以 owner Authority 为准；历史、访问、抑制和清除约束不能由索引代替。
+Core 解析调用方的 Query 请求并处理宿主侧模型 / Resource 往返。Runtime 在一次查询中冻结该次请求的 ReadContext、语义与预算，持有至最终校验；该运行结束后释放，不供后续请求续用。Retrieval 产生有界候选，Memory 与 Material 分别负责自身认知和材料结果的读取、校验及最终物化，Runtime 组合 owner 结果。Serving 命中只是召回依据，返回前以 owner Authority 为准；历史、访问、抑制和清除约束不能由索引代替。
 
-查询结束后的 Projection / Managed Context 是新的 Current owner read，不延用已经结束的 QueryRun 或其 historical view。Projection 保留查询命中的精确修订（`hit.revision ?? hit.reference`），再由各 owner 提供当前可用内容；Kernel 负责按请求分发并组合 owner 结果，不自行重建其他领域的数据规则。
+查询结束后的 Projection / Managed Context 是新的 Current owner read，不延用已经结束的查询或其 historical view。Projection 保留查询命中的精确修订（`hit.revision ?? hit.reference`），再由各 owner 提供当前可用内容；Kernel 负责按请求分发并组合 owner 结果，不自行重建其他领域的数据规则。
 
 Context projection 使用单一 Kernel batch RPC，按 owner、输入顺序和最多 256 个引用分组。Memory（包括 Episode、Journal、Schema）与 Material 通过有界 grouped owner reads 物化所选引用，并由相应 owner 检查当前生命周期。完成历史 Query 后进行的 projection 仍是新的 Current read，并按 owner 当前可用性重新校验保留的精确修订。
+
+Managed Context 的同步缓存只保存游标、配置身份和各内容段摘要，不保留内容副本。新 projection 与摘要前缀相同则返回追加部分，否则重置；Subject 清除会使已有缓存和进行中的 projection 失效。
 
 ### 持久执行与恢复
 

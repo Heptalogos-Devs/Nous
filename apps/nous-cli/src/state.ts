@@ -47,11 +47,6 @@ const receiptHeader = {
   format: z.literal("nous.consumer.operation.v2"),
   receiptId: z.string().min(1).max(128),
   command: z.string().min(1).max(128),
-  owner: z.string().min(1).max(32),
-  operationKind: z.string().min(1).max(64),
-  subjectId: z.string().optional(),
-  operationId: z.string().min(1).max(128),
-  requestDigest: z.string().regex(/^[0-9a-f]{64}$/),
   request: protoMessageSchema,
   createdAt: z.string().min(1).max(40),
   updatedAt: z.string().min(1).max(40),
@@ -239,11 +234,6 @@ export function cliState(
           const immutable = (item: OperationReceipt) => ({
             receiptId: item.receiptId,
             command: item.command,
-            owner: item.owner,
-            operationKind: item.operationKind,
-            subjectId: item.subjectId,
-            operationId: item.operationId,
-            requestDigest: item.requestDigest,
             request: item.request,
             createdAt: item.createdAt,
           });

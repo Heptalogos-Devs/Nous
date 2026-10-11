@@ -55,22 +55,14 @@ impl MemoryService {
                         "Episode partition is in progress",
                     ));
                 }
-                let revisions: Vec<EpisodeRevisionId> =
-                    serde_json::from_str(&receipt.result_ref.ok_or_else(|| {
-                        Error::new(
-                            nous_core::ErrorOwner::Memory,
-                            nous_core::ErrorCode::InternalFailure,
-                            "partition receipt has no revisions",
-                        )
-                    })?)
-                    .map_err(|error| {
-                        Error::new(
-                            nous_core::ErrorOwner::Memory,
-                            nous_core::ErrorCode::InternalFailure,
-                            "Episode partition receipt is invalid",
-                        )
-                        .with_source(error)
-                    })?;
+                let revisions = receipt
+                    .results
+                    .iter()
+                    .filter_map(|result| match &result.reference {
+                        CognitiveRef::EpisodeRevision(revision) => Some(*revision),
+                        _ => None,
+                    })
+                    .collect();
                 return self.partition_views(input.subject, revisions).await;
             }
             MutationStart::Active(mutation) => mutation,
@@ -541,14 +533,6 @@ async fn commit_partition_result(
     mut mutation: nous_persistence::MutationEnvelope<'_>,
     outputs: &[EpisodeRevisionId],
 ) -> Result<()> {
-    let result = serde_json::to_string(outputs).map_err(|error| {
-        Error::new(
-            nous_core::ErrorOwner::Memory,
-            nous_core::ErrorCode::InternalFailure,
-            "Episode partition result could not be encoded",
-        )
-        .with_source(error)
-    })?;
     mutation
         .publish_workflow_results(
             "memory",
@@ -560,6 +544,12 @@ async fn commit_partition_result(
         )
         .await?;
     mutation
-        .commit("episode_partition", Some(&result), None, None)
+        .commit(
+            &outputs
+                .iter()
+                .copied()
+                .map(|revision| MutationResult::reference(CognitiveRef::EpisodeRevision(revision)))
+                .collect::<Vec<_>>(),
+        )
         .await
 }

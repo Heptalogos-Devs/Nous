@@ -77,7 +77,7 @@ fn explicit_and_pinned_descriptors_precede_work_and_resident_background() {
     let representation = build_query_representation(
         &query,
         &descriptors,
-        Some(context),
+        Some(&context),
         sources,
         &QueryRepresentationLimits::default(),
     );

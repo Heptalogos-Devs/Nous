@@ -35,30 +35,22 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                let id = receipt.result_ref;
                 if receipt.state == "committed" {
-                    return self
-                        .association(
-                            subject,
-                            AssociationEvidenceId(
-                                id.ok_or_else(|| {
-                                    Error::new(
-                                        ErrorOwner::Concept,
-                                        ErrorCode::InternalFailure,
-                                        "association receipt missing result",
-                                    )
-                                })?
-                                .parse()
-                                .map_err(|_| {
-                                    Error::new(
-                                        ErrorOwner::Concept,
-                                        ErrorCode::InternalFailure,
-                                        "invalid association receipt",
-                                    )
-                                })?,
-                            ),
-                        )
-                        .await;
+                    let id = receipt
+                        .results
+                        .iter()
+                        .find_map(|result| match &result.reference {
+                            CognitiveRef::Association(id) => Some(*id),
+                            _ => None,
+                        })
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorOwner::Concept,
+                                ErrorCode::InternalFailure,
+                                "association receipt missing result",
+                            )
+                        })?;
+                    return self.association(subject, id).await;
                 }
                 return Err(Error::new(
                     ErrorOwner::Concept,
@@ -101,7 +93,7 @@ impl MemoryService {
             .publish_workflow_results("memory", &[CognitiveRef::Association(id)])
             .await?;
         mutation
-            .commit("association", Some(&id.0.to_string()), None, None)
+            .commit(&[MutationResult::reference(CognitiveRef::Association(id))])
             .await?;
         self.association(subject, id).await
     }
@@ -564,7 +556,9 @@ impl MemoryService {
             .invalidate(ProjectionInvalidation::topology())
             .await?;
         mutation
-            .commit("association", Some(&association.0.to_string()), None, None)
+            .commit(&[MutationResult::reference(CognitiveRef::Association(
+                association,
+            ))])
             .await
     }
 

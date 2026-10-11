@@ -70,15 +70,6 @@ impl ServingPublisher {
             .cloned()
             .unwrap_or_else(|| Arc::new(ServingSnapshot::default()))
     }
-
-    pub fn publish_for(&self, subject: nous_core::SubjectId, snapshot: ServingSnapshot) {
-        let snapshot = Arc::new(snapshot);
-        self.current.rcu(|current| {
-            let mut next = current.as_ref().clone();
-            next.insert(subject, snapshot.clone());
-            Arc::new(next)
-        });
-    }
 }
 
 impl ServingSnapshot {

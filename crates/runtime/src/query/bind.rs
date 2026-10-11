@@ -488,7 +488,7 @@ impl CognitiveRuntimeService {
         let representation = self
             .resolve_query_representation(
                 &query,
-                context_snapshot.work_context.clone(),
+                context_snapshot.work_context.as_ref(),
                 representation_sources,
                 &config_snapshot,
                 view,
@@ -496,12 +496,14 @@ impl CognitiveRuntimeService {
             .await?;
         let mut activation = super::QueryActivation::prepared(
             &query,
-            representation.sha256.clone(),
-            exact_bindings.iter().map(|b| b.bound_ref.clone()).collect(),
-            runtime_refs.clone(),
+            exact_bindings.iter().map(|b| b.bound_ref.clone()),
+            &runtime_refs,
             &topology_seed_refs,
         );
         activation.degradation.extend(context_degradation);
+        let topology_required = !query.is_exact_read()
+            && explicit_topology(&query)
+            && retrieval_policy.cognitive_profile.requirements().topology;
         Ok(BoundQuery {
             read_context,
             context_snapshot: std::sync::Arc::new(context_snapshot),
@@ -511,7 +513,7 @@ impl CognitiveRuntimeService {
             representation,
             query_id: Uuid::now_v7(),
             bound_at: self.now(query.subject),
-            source_query: query.clone(),
+            source_query: query,
             bound_at_authority_seq,
             revision_policy,
             exact_bindings,
@@ -521,10 +523,7 @@ impl CognitiveRuntimeService {
             enabled_lanes: enabled_lanes.clone(),
             lane_budgets,
             selected_embedding_space: None,
-            topology_required: !query.is_exact_read()
-                && explicit_topology(&query)
-                && retrieval_policy.cognitive_profile.requirements().topology,
-            fusion_version: "rrf-v1".into(),
+            topology_required,
             config_snapshot,
             retrieval_policy,
         })

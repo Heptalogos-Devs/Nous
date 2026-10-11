@@ -4,7 +4,7 @@
 use futures::{Stream, StreamExt};
 use nous_core::{Error, Result};
 use opendal::{Operator, services::Fs};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 #[derive(Clone)]
 pub struct ObjectStore {
@@ -314,51 +314,6 @@ impl ObjectStore {
             Err(_) => return Ok(None),
         };
         Ok(Some(text.to_owned()))
-    }
-
-    /// Read CAS bytes in bounded chunks and verify integrity at end of stream.
-    pub async fn stream(
-        &self,
-        hash: &str,
-    ) -> Result<impl Stream<Item = Result<Vec<u8>>> + Send + use<>> {
-        let file = tokio::fs::File::open(self.root.join(Self::key(hash)?))
-            .await
-            .map_err(|e| {
-                Error::new(
-                    nous_core::ErrorOwner::Resource,
-                    nous_core::ErrorCode::InternalFailure,
-                    "Could not open the stored object stream",
-                )
-                .with_source(e)
-            })?;
-        let expected = hash.to_owned();
-        Ok(futures::stream::try_unfold(
-            (file, blake3::Hasher::new(), expected),
-            |(mut file, mut hasher, expected)| async move {
-                let mut chunk = vec![0; 1024 * 1024];
-                let size = file.read(&mut chunk).await.map_err(|e| {
-                    Error::new(
-                        nous_core::ErrorOwner::Resource,
-                        nous_core::ErrorCode::InternalFailure,
-                        "Could not read the stored object stream",
-                    )
-                    .with_source(e)
-                })?;
-                if size == 0 {
-                    if hasher.finalize().to_hex().as_str() != expected {
-                        return Err(Error::new(
-                            nous_core::ErrorOwner::Resource,
-                            nous_core::ErrorCode::InternalFailure,
-                            "Streamed object failed integrity verification",
-                        ));
-                    }
-                    return Ok(None);
-                }
-                chunk.truncate(size);
-                hasher.update(&chunk);
-                Ok(Some((chunk, (file, hasher, expected))))
-            },
-        ))
     }
 
     /// The canonical owner must first establish that no retained reference exists.

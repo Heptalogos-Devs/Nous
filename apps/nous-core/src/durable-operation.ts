@@ -77,7 +77,7 @@ type WorkflowCheckpoint = {
   proposal?: WorkflowPayload;
   outcome?: WorkflowPayload;
   executionTelemetry?: ExecutionTelemetryInput;
-  mutationOperations?: string[];
+  mutationOperationId?: string;
 };
 
 interface DurableOperation {
@@ -207,7 +207,7 @@ class HeldDurableOperation implements DurableOperation {
       (update.proposal === undefined &&
         update.outcome === undefined &&
         update.executionTelemetry === undefined &&
-        update.mutationOperations === undefined)
+        update.mutationOperationId === undefined)
     )
       throw new ConnectError(
         "Invalid empty or mixed workflow checkpoint",
@@ -224,7 +224,7 @@ class HeldDurableOperation implements DurableOperation {
   }
 
   async mutate<T>(operationId: string, commit: () => Promise<T>): Promise<T> {
-    await this.checkpoint({ mutationOperations: [operationId] });
+    await this.checkpoint({ mutationOperationId: operationId });
     return commit();
   }
 

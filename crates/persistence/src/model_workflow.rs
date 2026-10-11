@@ -208,7 +208,7 @@ fn validate_checkpoint_values(
     proposal: Option<&WorkflowPayload>,
     outcome: Option<&WorkflowPayload>,
     execution_telemetry: Option<&ExecutionTelemetry>,
-    mutation_operations: &[nous_core::OperationId],
+    mutation_operation_id: Option<nous_core::OperationId>,
 ) -> Result<()> {
     for value in [proposal, outcome].into_iter().flatten() {
         if serde_json::to_vec(value)
@@ -236,7 +236,7 @@ fn validate_checkpoint_values(
     if proposal.is_none()
         && outcome.is_none()
         && execution_telemetry.is_none()
-        && mutation_operations.is_empty()
+        && mutation_operation_id.is_none()
     {
         return Err(Error::new(
             nous_core::ErrorOwner::ModelWorkflow,
@@ -336,7 +336,7 @@ impl AuthorityStore {
         operation: nous_core::OperationId,
         dependencies: &[nous_core::CognitiveRef],
     ) -> Result<()> {
-        sqlx::query("UPDATE model_workflow_operations w SET dependencies=(SELECT COALESCE(jsonb_agg(DISTINCT ref),'[]') FROM jsonb_array_elements(w.dependencies||$4::jsonb) ref) WHERE w.subject_id=$1 AND w.owner=$2 AND (w.operation_key=$3::uuid::text OR $3=ANY(w.mutation_operations)) AND w.outcome IS NULL")
+        sqlx::query("UPDATE model_workflow_operations w SET dependencies=(SELECT COALESCE(jsonb_agg(DISTINCT ref),'[]') FROM jsonb_array_elements(w.dependencies||$4::jsonb) ref) WHERE w.subject_id=$1 AND w.owner=$2 AND (w.operation_key=$3::uuid::text OR w.mutation_operation_id=$3) AND w.outcome IS NULL")
             .bind(subject.0).bind(owner).bind(operation.0).bind(Json(dependencies))
             .execute(&mut **tx).await.map_err(db)?;
         Ok(())
@@ -586,7 +586,7 @@ WHERE wcr.work_context_id=affected.work_context_id
         proposal: Option<&WorkflowPayload>,
         outcome: Option<&WorkflowPayload>,
         execution_telemetry: Option<&ExecutionTelemetry>,
-        mutation_operations: &[nous_core::OperationId],
+        mutation_operation_id: Option<nous_core::OperationId>,
     ) -> Result<()> {
         let WorkflowLease {
             subject,
@@ -595,12 +595,17 @@ WHERE wcr.work_context_id=affected.work_context_id
             token,
         } = lease;
         let owner = owner.as_str();
-        validate_checkpoint_values(proposal, outcome, execution_telemetry, mutation_operations)?;
+        validate_checkpoint_values(
+            proposal,
+            outcome,
+            execution_telemetry,
+            mutation_operation_id,
+        )?;
         let mut tx = self.begin().await?;
         let maintenance_claim =
             validated_maintenance_claim_in(&mut tx, *subject, owner, key).await?;
         let maintenance_claim = maintenance_claim.as_ref();
-        let row = sqlx::query("SELECT snapshot,dependencies,mutation_operations,execution_telemetry,lease_token,lease_until>clock_timestamp() AS child_live,outcome IS NOT NULL AS terminal FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3 FOR UPDATE")
+        let row = sqlx::query("SELECT snapshot,dependencies,execution_telemetry,lease_token,lease_until>clock_timestamp() AS child_live,outcome IS NOT NULL AS terminal FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3 FOR UPDATE")
             .bind(subject.0).bind(owner).bind(key).fetch_optional(&mut *tx).await.map_err(db)?
             .ok_or_else(|| nous_core::Error::new(nous_core::ErrorOwner::ModelWorkflow, nous_core::ErrorCode::LeaseLost, "Model workflow lease expired or changed")
                 .with_context("owner", owner).with_context("operation_key", key))?;
@@ -624,19 +629,6 @@ WHERE wcr.work_context_id=affected.work_context_id
             )
             .with_context("owner", owner)
             .with_context("operation_key", key));
-        }
-        let mut operations: Vec<Uuid> = row.try_get("mutation_operations").map_err(db)?;
-        for operation in mutation_operations {
-            if !operations.contains(&operation.0) {
-                operations.push(operation.0);
-            }
-        }
-        if operations.len() > 2048 {
-            return Err(Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
-                nous_core::ErrorCode::InvalidRequest,
-                "workflow mutation bound exceeded",
-            ));
         }
         let mut telemetry = row
             .try_get::<Option<Json<ExecutionTelemetry>>, _>("execution_telemetry")
@@ -667,9 +659,17 @@ WHERE wcr.work_context_id=affected.work_context_id
                 "workflow dependency bound exceeded",
             ));
         }
-        let updated = sqlx::query("UPDATE model_workflow_operations w SET execution_telemetry=$7,dependencies=$8,mutation_operations=$10,proposal=CASE WHEN $6::jsonb IS NULL THEN COALESCE($5,proposal) ELSE NULL END,outcome=COALESCE($6,outcome),snapshot=CASE WHEN $6::jsonb IS NULL THEN snapshot ELSE $9 END,lease_token=CASE WHEN $6::jsonb IS NULL THEN lease_token ELSE NULL END,lease_until=CASE WHEN $6::jsonb IS NULL THEN lease_until ELSE NULL END,updated_at=clock_timestamp() WHERE w.subject_id=$1 AND w.owner=$2 AND w.operation_key=$3 AND w.lease_token=$4 AND w.lease_until>clock_timestamp() AND w.outcome IS NULL AND (w.maintenance_need_id IS NULL OR EXISTS (SELECT 1 FROM maintenance_needs n WHERE n.subject_id=w.subject_id AND n.need_id=w.maintenance_need_id AND n.need_id::text=(w.snapshot #>> '{maintenance_claim,need_id}') AND n.state='leased' AND n.lease_token::text=(w.snapshot #>> '{maintenance_claim,lease_token}') AND n.lease_until>clock_timestamp() AND n.trigger_revision>=w.maintenance_trigger_revision AND n.trigger_revision>=((w.snapshot #>> '{maintenance_claim,trigger_revision}')::bigint)))")
-            .bind(subject.0).bind(owner).bind(key).bind(*token).bind(proposal.map(Json)).bind(outcome.map(Json))
-            .bind(telemetry.as_ref().map(Json)).bind(Json(&dependencies)).bind(Json(WorkflowSnapshot::default())).bind(operations)
+        let updated = sqlx::query("UPDATE model_workflow_operations w SET execution_telemetry=$7,dependencies=$8,mutation_operation_id=$10,proposal=CASE WHEN $6::jsonb IS NULL THEN COALESCE($5,proposal) ELSE NULL END,outcome=COALESCE($6,outcome),snapshot=CASE WHEN $6::jsonb IS NULL THEN snapshot ELSE $9 END,lease_token=CASE WHEN $6::jsonb IS NULL THEN lease_token ELSE NULL END,lease_until=CASE WHEN $6::jsonb IS NULL THEN lease_until ELSE NULL END,updated_at=clock_timestamp() WHERE w.subject_id=$1 AND w.owner=$2 AND w.operation_key=$3 AND w.lease_token=$4 AND w.lease_until>clock_timestamp() AND w.outcome IS NULL AND (w.maintenance_need_id IS NULL OR EXISTS (SELECT 1 FROM maintenance_needs n WHERE n.subject_id=w.subject_id AND n.need_id=w.maintenance_need_id AND n.need_id::text=(w.snapshot #>> '{maintenance_claim,need_id}') AND n.state='leased' AND n.lease_token::text=(w.snapshot #>> '{maintenance_claim,lease_token}') AND n.lease_until>clock_timestamp() AND n.trigger_revision>=w.maintenance_trigger_revision AND n.trigger_revision>=((w.snapshot #>> '{maintenance_claim,trigger_revision}')::bigint)))")
+            .bind(subject.0)
+            .bind(owner)
+            .bind(key)
+            .bind(*token)
+            .bind(proposal.map(Json))
+            .bind(outcome.map(Json))
+            .bind(telemetry.as_ref().map(Json))
+            .bind(Json(&dependencies))
+            .bind(Json(WorkflowSnapshot::default()))
+            .bind(mutation_operation_id.map(|operation| operation.0))
             .execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() != 1 {
             return Err(nous_core::Error::new(

@@ -2,7 +2,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use sqlx::Row;
 impl MemoryService {
     pub async fn project_as_of(
         &self,
@@ -91,58 +90,5 @@ impl MemoryService {
         snapshot.lexical_visibility = rows.lexical;
         snapshot.refresh_digest()?;
         Ok(snapshot)
-    }
-}
-
-pub(super) fn historical_header<'a>(
-    bound: &'a nous_runtime::BoundQuery,
-    reference: &CognitiveRef,
-) -> Result<Option<&'a serde_json::Value>> {
-    match bound.read_context.historical_view() {
-        Some(view) => view
-            .cognition_for(reference)
-            .map(|state| Some(&state.state))
-            .ok_or_else(|| {
-                Error::new(
-                    nous_core::ErrorOwner::Memory,
-                    nous_core::ErrorCode::NotFound,
-                    "outside historical Authority view",
-                )
-            }),
-        None => Ok(None),
-    }
-}
-pub(super) fn header_text(
-    header: Option<&serde_json::Value>,
-    row: &sqlx::postgres::PgRow,
-    key: &str,
-) -> Result<String> {
-    if let Some(header) = header {
-        header[key].as_str().map(str::to_owned).ok_or_else(|| {
-            Error::new(
-                ErrorOwner::Memory,
-                ErrorCode::InternalFailure,
-                "Historical header field is missing or invalid",
-            )
-            .with_context("field", key)
-        })
-    } else {
-        row.try_get(key).map_err(db)
-    }
-}
-pub(super) fn header_epoch(
-    header: Option<&serde_json::Value>,
-    row: &sqlx::postgres::PgRow,
-) -> Result<i64> {
-    if let Some(header) = header {
-        header["object_epoch"].as_i64().ok_or_else(|| {
-            Error::new(
-                nous_core::ErrorOwner::Memory,
-                nous_core::ErrorCode::InternalFailure,
-                "historical object epoch missing",
-            )
-        })
-    } else {
-        row.try_get("object_epoch").map_err(db)
     }
 }

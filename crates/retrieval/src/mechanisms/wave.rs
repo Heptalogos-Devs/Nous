@@ -132,13 +132,6 @@ pub fn propagate(
 ) -> QueryRiver {
     propagate_with_budget(graph, seeds, readout, readout.max_hops, readout.max_states)
 }
-pub fn propagate_weighted(
-    graph: &WaveGraphGeneration,
-    seeds: &[WeightedCognitiveSeed],
-    readout: &WaveReadoutPolicy,
-) -> QueryRiver {
-    propagate_weighted_with_budget(graph, seeds, readout, readout.max_hops, readout.max_states)
-}
 pub fn propagate_weighted_with_budget(
     graph: &WaveGraphGeneration,
     seeds: &[WeightedCognitiveSeed],

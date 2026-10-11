@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{BoundQuery, CognitiveContributors, QueryExecution, QueryPlan};
+use super::{BoundQuery, CognitiveContributors, QueryExecution};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
 use std::collections::{HashMap, HashSet};
@@ -86,98 +86,6 @@ impl QueryRunHostPolicy {
     }
 }
 
-pub struct QueryRunContext {
-    plan: QueryPlan,
-    host_policy: QueryRunHostPolicy,
-    _slot: OwnedSemaphorePermit,
-}
-
-/// The phase determines which payload exists while a single Core↔Kernel stream is open.
-// Each stage owns one query; boxing only Finalize would not shrink the BoundQuery stages.
-#[allow(clippy::large_enum_variant)]
-pub enum QueryRun {
-    Embedding {
-        bound: BoundQuery,
-        context: QueryRunContext,
-    },
-    Concept {
-        bound: BoundQuery,
-        context: QueryRunContext,
-    },
-    Finalize {
-        execution: QueryExecution,
-        context: QueryRunContext,
-    },
-}
-
-impl QueryRunContext {
-    pub fn new(
-        plan: QueryPlan,
-        host_policy: QueryRunHostPolicy,
-        slot: OwnedSemaphorePermit,
-    ) -> Self {
-        Self {
-            plan,
-            host_policy,
-            _slot: slot,
-        }
-    }
-    pub fn plan(&self) -> &QueryPlan {
-        &self.plan
-    }
-    pub fn host_policy(&self) -> QueryRunHostPolicy {
-        self.host_policy
-    }
-}
-
-impl QueryRun {
-    pub fn embedding(bound: BoundQuery, context: QueryRunContext) -> Self {
-        Self::Embedding { bound, context }
-    }
-    pub fn concept(bound: BoundQuery, context: QueryRunContext) -> Self {
-        Self::Concept { bound, context }
-    }
-    pub fn finalize(execution: QueryExecution, context: QueryRunContext) -> Self {
-        Self::Finalize { execution, context }
-    }
-    pub fn bound(&self) -> &BoundQuery {
-        match self {
-            Self::Embedding { bound, .. } | Self::Concept { bound, .. } => bound,
-            Self::Finalize { execution, .. } => &execution.bound,
-        }
-    }
-    pub fn bound_mut(&mut self) -> &mut BoundQuery {
-        match self {
-            Self::Embedding { bound, .. } | Self::Concept { bound, .. } => bound,
-            Self::Finalize { execution, .. } => &mut execution.bound,
-        }
-    }
-    pub fn plan(&self) -> &QueryPlan {
-        match self {
-            Self::Embedding { context, .. }
-            | Self::Concept { context, .. }
-            | Self::Finalize { context, .. } => context.plan(),
-        }
-    }
-    pub fn host_policy(&self) -> QueryRunHostPolicy {
-        match self {
-            Self::Embedding { context, .. }
-            | Self::Concept { context, .. }
-            | Self::Finalize { context, .. } => context.host_policy(),
-        }
-    }
-    pub fn into_finalized(self) -> Result<(QueryExecution, QueryRunContext)> {
-        match self {
-            Self::Finalize { execution, context } => Ok((execution, context)),
-            Self::Embedding { .. } | Self::Concept { .. } => Err(Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::FailedPrecondition,
-                "Query result is unavailable",
-            )),
-        }
-    }
-}
-
 impl CognitiveRuntimeService {
     pub async fn ensure_read_context_current(&self, context: &super::ReadContext) -> Result<()> {
         let current_epoch = self.store.serving_purge_epoch(context.subject).await?;
@@ -245,14 +153,13 @@ impl CognitiveRuntimeService {
         Ok(())
     }
 
-    pub async fn finish_query_run(
+    pub async fn finish_query_execution(
         &self,
-        run: QueryRun,
+        execution: QueryExecution,
         order: Vec<(CognitiveRef, f64)>,
         external_results: Vec<ExternalResourceResult>,
         contributors: CognitiveContributors<'_>,
     ) -> Result<CognitiveQueryResult> {
-        let (execution, _context) = run.into_finalized()?;
         let subject = execution.bound.read_context.subject;
         self.ensure_read_context_current(&execution.bound.read_context)
             .await?;

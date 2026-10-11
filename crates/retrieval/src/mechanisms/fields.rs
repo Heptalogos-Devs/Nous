@@ -28,16 +28,6 @@ pub fn bounded_restart_field(
     max_normalize(&current)
 }
 
-pub fn local_and_transfer_fields(
-    graph: &WaveGraphGeneration,
-    source: &SparseField,
-) -> (SparseField, SparseField) {
-    (
-        bounded_restart_field(graph, source, 0.35, 4),
-        bounded_restart_field(graph, source, 0.72, 8),
-    )
-}
-
 pub(crate) fn normalize_field(field: &SparseField) -> SparseField {
     let total: f64 = field.values().copied().filter(|value| *value > 0.0).sum();
     if total <= 0.0 {

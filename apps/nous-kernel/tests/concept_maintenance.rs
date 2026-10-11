@@ -10,7 +10,6 @@ use nous_core::*;
 use nous_kernel::NousRuntime;
 use nous_memory::*;
 use nous_runtime::{CognitiveProfile, MaintenanceDisposition, MaintenanceNeed};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::*;
 fn producer() -> ProducerSignature {
     ProducerSignature {
@@ -75,22 +74,7 @@ async fn assert_subject_producer(rt: &NousRuntime, subject: SubjectId, implement
 async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_commit() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime_with_serving(&url, &root, true, false, true).await;
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: nous_core::SubjectId::default(),
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let owner = rt.require_memory().unwrap();
     let entity = CognitiveRef::Entity(EntityRef::new("entity:fixture:release-engineer").unwrap());
     assert!(

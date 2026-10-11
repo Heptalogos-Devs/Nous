@@ -488,7 +488,7 @@ pub(super) fn inspect_bound_query_with_plan(
             .collect(),
         activation: Some(p::QueryActivationInspection {
             frozen: activation.frozen,
-            semantic_text_digest: activation.semantic_text_digest.clone(),
+            semantic_text_digest: representation.sha256.clone(),
             concept_catalog: activation
                 .concept_catalog
                 .iter()
@@ -528,20 +528,33 @@ pub(super) fn inspect_bound_query_with_plan(
                     strength: seed.strength,
                 })
                 .collect(),
-            exact_refs: activation.exact_refs.iter().cloned().map(to_ref).collect(),
+            exact_refs: bound
+                .exact_bindings
+                .iter()
+                .map(|binding| to_ref(binding.bound_ref.clone()))
+                .collect(),
             entity_refs: activation
-                .entity_refs
+                .seeds
                 .iter()
-                .cloned()
-                .map(|v| to_ref(CognitiveRef::Entity(v)))
+                .filter_map(|seed| match &seed.reference {
+                    CognitiveRef::Entity(entity) => {
+                        Some(to_ref(CognitiveRef::Entity(entity.clone())))
+                    }
+                    _ => None,
+                })
                 .collect(),
-            schema_refs: activation.schema_refs.iter().cloned().map(to_ref).collect(),
-            runtime_refs: activation
-                .runtime_refs
+            schema_refs: activation
+                .seeds
                 .iter()
-                .cloned()
-                .map(to_ref)
+                .filter(|seed| {
+                    matches!(
+                        &seed.reference,
+                        CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_)
+                    )
+                })
+                .map(|seed| to_ref(seed.reference.clone()))
                 .collect(),
+            runtime_refs: bound.runtime_refs.iter().cloned().map(to_ref).collect(),
             exploration: enum_name(activation.exploration),
             generation_id: activation
                 .concept_generation

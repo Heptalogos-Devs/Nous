@@ -1,74 +1,36 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::query::{Candidate, FinalMemoryState};
 use super::*;
 use std::collections::BTreeMap;
 
-pub(super) fn final_state_filter(
-    query: &CognitiveQuery,
-    candidate: &Candidate,
-    state: &FinalMemoryState,
-    exact: bool,
-    historical: bool,
-) -> bool {
-    if !matches!(state.purge_state, PurgeState::Normal) {
-        return false;
-    }
-    if !historical
-        && (!matches!(state.acceptance_state, AcceptanceState::Accepted)
-            || !matches!(state.integrity_state, IntegrityState::Valid)
-            || !matches!(state.suppression_state, SuppressionState::Normal))
-    {
-        return false;
-    }
-    if !hard_filter(query, &candidate.view, exact, historical) {
-        return false;
-    }
-    let level = match state.accessibility_mode {
-        AccessibilityMode::Normal => AccessibilityLevel::Normal,
-        AccessibilityMode::Deep => AccessibilityLevel::Deep,
-        AccessibilityMode::Explicit => AccessibilityLevel::Explicit,
-        AccessibilityMode::Auto => candidate.view.accessibility_level,
-    };
-    accessibility_eligible(level, query.effort, exact || historical)
-}
-
 pub(super) fn to_hit(
     query: &CognitiveQuery,
-    candidate: &Candidate,
+    view: &MemoryView,
     reference: CognitiveRef,
 ) -> CognitiveHit {
     CognitiveHit {
-        authority_epoch: Some(candidate.view.header.object_epoch),
-        preference_refs: candidate
-            .view
-            .tags
-            .iter()
-            .copied()
-            .map(CognitiveRef::Tag)
-            .collect(),
+        authority_epoch: Some(view.header.object_epoch),
+        preference_refs: view.tags.iter().copied().map(CognitiveRef::Tag).collect(),
         reference,
         revision: Some(CognitiveRef::MemoryRevision(MemoryRevisionId(
-            candidate.view.revision.header.revision_id(),
+            view.revision.header.revision_id(),
         ))),
-        semantic_role: Some(candidate.view.revision.semantic_role.clone()),
-        cognitive_role: Some(candidate.view.header.details.memory_role().as_str().into()),
-        formation_mode: Some(candidate.view.revision.formation_mode.as_str().into()),
-        representation: Some(candidate.view.revision.representation_text.clone()),
+        semantic_role: Some(view.revision.semantic_role.clone()),
+        cognitive_role: Some(view.header.details.memory_role().as_str().into()),
+        formation_mode: Some(view.revision.formation_mode.as_str().into()),
+        representation: Some(view.revision.representation_text.clone()),
         authority: AuthorityClass::SubjectCognition,
         freshness: FreshnessDescriptor {
-            occurred: candidate.view.temporal_evidence.occurred.clone(),
-            observed_at: candidate.view.temporal_evidence.observed_at,
-            valid_time: candidate.view.revision.valid_time.clone(),
-            formed_at: Some(candidate.view.revision.header.formed_at),
-            recorded_at: Some(candidate.view.revision.header.recorded_at),
+            occurred: view.temporal_evidence.occurred.clone(),
+            observed_at: view.temporal_evidence.observed_at,
+            valid_time: view.revision.valid_time.clone(),
+            formed_at: Some(view.revision.header.formed_at),
+            recorded_at: Some(view.revision.header.recorded_at),
         },
-        entity_refs: candidate.view.aboutness.clone(),
+        entity_refs: view.aboutness.clone(),
         evidence: if query.result_need.need_evidence {
-            candidate
-                .view
-                .basis
+            view.basis
                 .iter()
                 .map(|basis| match basis {
                     RevisionBasis::Evidence(value) => EvidenceHandle {
@@ -161,17 +123,17 @@ pub(super) fn increment_drop(counts: &mut BTreeMap<String, usize>, reason: &str)
     *counts.entry(reason.into()).or_default() += 1;
 }
 
-pub(super) fn lifecycle_drop_reason(state: &FinalMemoryState) -> String {
-    if !matches!(state.acceptance_state, AcceptanceState::Accepted) {
-        "withdrawn".into()
-    } else if !matches!(state.integrity_state, IntegrityState::Valid) {
-        "revalidation_required".into()
-    } else if !matches!(state.suppression_state, SuppressionState::Normal) {
-        "suppressed".into()
-    } else if !matches!(state.purge_state, PurgeState::Normal) {
-        "purging".into()
+pub(super) fn lifecycle_drop_reason(state: &CognitionLifecycle) -> &'static str {
+    if !matches!(state.acceptance, AcceptanceState::Accepted) {
+        "withdrawn"
+    } else if !matches!(state.integrity, IntegrityState::Valid) {
+        "revalidation_required"
+    } else if !matches!(state.suppression, SuppressionState::Normal) {
+        "suppressed"
+    } else if !matches!(state.purge, PurgeState::Normal) {
+        "purging"
     } else {
-        "accessibility".into()
+        "accessibility"
     }
 }
 

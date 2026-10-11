@@ -74,7 +74,7 @@ async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
             )),
             None,
             None,
-            &[],
+            None,
         )
         .await
         .unwrap();
@@ -115,13 +115,13 @@ async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
                 )),
                 None,
                 None,
-                &[],
+                None,
             )
             .await
             .is_err()
     );
 
-    let error = test_support::finish_query_run(
+    let error = test_support::finish_query_execution(
         &runtime.cognition,
         execution,
         Vec::new(),

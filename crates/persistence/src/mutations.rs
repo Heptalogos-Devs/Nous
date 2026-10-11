@@ -4,15 +4,47 @@
 
 use crate::{AuthorityStore, ProjectionInvalidation, database_error as db, lock_operation};
 use chrono::Utc;
-use nous_core::{OperationId, Result, SubjectId};
-use sqlx::Row;
+use nous_core::{CognitiveRef, OperationId, Result, SubjectId};
+use serde::{Deserialize, Serialize};
+use sqlx::{Row, types::Json};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct MutationReceipt {
     pub state: String,
-    pub result_ref: Option<String>,
-    pub result_revision: Option<Uuid>,
+    pub results: Vec<MutationResult>,
+}
+
+/// The exact owner result retained for idempotent replay and operation status.
+/// `revision_id` is kept beside the stable object reference for APIs such as
+/// Tag whose immutable revision is not itself a general CognitiveRef.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MutationResult {
+    pub reference: CognitiveRef,
+    pub revision_id: Option<Uuid>,
+    pub object_epoch: Option<i64>,
+}
+
+impl MutationResult {
+    pub fn new(
+        reference: CognitiveRef,
+        revision_id: Option<Uuid>,
+        object_epoch: Option<i64>,
+    ) -> Self {
+        Self {
+            reference,
+            revision_id,
+            object_epoch,
+        }
+    }
+
+    pub fn reference(reference: CognitiveRef) -> Self {
+        Self::new(reference, None, None)
+    }
+
+    pub fn revised(reference: CognitiveRef, revision_id: Uuid, object_epoch: Option<i64>) -> Self {
+        Self::new(reference, Some(revision_id), object_epoch)
+    }
 }
 
 pub async fn check_receipt(
@@ -23,7 +55,7 @@ pub async fn check_receipt(
     digest: &str,
     error_owner: nous_core::ErrorOwner,
 ) -> Result<Option<MutationReceipt>> {
-    let row = sqlx::query("SELECT state,result_ref,result_revision,request_digest,operation_kind FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2")
+    let row = sqlx::query("SELECT state,results,request_digest,operation_kind FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2")
         .bind(subject.0)
         .bind(operation.0)
         .fetch_optional(&mut **tx)
@@ -42,8 +74,10 @@ pub async fn check_receipt(
         }
         return Ok(Some(MutationReceipt {
             state: row.try_get("state").map_err(db)?,
-            result_ref: row.try_get("result_ref").map_err(db)?,
-            result_revision: row.try_get("result_revision").map_err(db)?,
+            results: row
+                .try_get::<Json<Vec<MutationResult>>, _>("results")
+                .map_err(db)?
+                .0,
         }));
     }
     sqlx::query("INSERT INTO mutation_receipts(subject_id,operation_id,operation_kind,request_digest,state,created_at) VALUES($1,$2,$3,$4,'in_progress',$5)")
@@ -62,18 +96,12 @@ pub async fn commit_receipt(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subject: SubjectId,
     operation: OperationId,
-    result_kind: &str,
-    result_ref: Option<&str>,
-    result_revision: Option<Uuid>,
-    result_epoch: Option<i64>,
+    results: &[MutationResult],
 ) -> Result<()> {
-    sqlx::query("UPDATE mutation_receipts SET state='committed',result_kind=$3,result_ref=$4,result_revision=$5,result_epoch=$6,committed_at=$7 WHERE subject_id=$1 AND operation_id=$2")
+    sqlx::query("UPDATE mutation_receipts SET state='committed',results=$3,committed_at=$4 WHERE subject_id=$1 AND operation_id=$2")
         .bind(subject.0)
         .bind(operation.0)
-        .bind(result_kind)
-        .bind(result_ref)
-        .bind(result_revision)
-        .bind(result_epoch)
+        .bind(Json(results))
         .bind(Utc::now())
         .execute(&mut **tx)
         .await
@@ -236,24 +264,9 @@ impl<'a> MutationEnvelope<'a> {
         Ok(())
     }
 
-    pub async fn commit(
-        mut self,
-        result_kind: &str,
-        result_ref: Option<&str>,
-        result_revision: Option<Uuid>,
-        result_epoch: Option<i64>,
-    ) -> Result<()> {
+    pub async fn commit(mut self, results: &[MutationResult]) -> Result<()> {
         self.apply_invalidation().await?;
-        commit_receipt(
-            &mut self.tx,
-            self.subject,
-            self.operation,
-            result_kind,
-            result_ref,
-            result_revision,
-            result_epoch,
-        )
-        .await?;
+        commit_receipt(&mut self.tx, self.subject, self.operation, results).await?;
         self.tx.commit().await.map_err(db)
     }
 
@@ -266,21 +279,12 @@ impl<'a> MutationEnvelope<'a> {
     /// Persist a typed owner checkpoint in the existing mutation receipt. The
     /// receipt remains in_progress, so a same-operation retry can resume while
     /// another operation cannot adopt the owner's purging state.
-    pub async fn checkpoint_with_result(
-        mut self,
-        result_kind: &str,
-        result_ref_kind: &str,
-        result_ref: &str,
-        result_epoch: i64,
-    ) -> Result<()> {
+    pub async fn checkpoint_with_result(mut self, result: &MutationResult) -> Result<()> {
         self.apply_invalidation().await?;
-        sqlx::query("UPDATE mutation_receipts SET result_kind=$3,result_ref_kind=$4,result_ref=$5,result_epoch=$6 WHERE subject_id=$1 AND operation_id=$2 AND state='in_progress'")
+        sqlx::query("UPDATE mutation_receipts SET results=$3 WHERE subject_id=$1 AND operation_id=$2 AND state='in_progress'")
             .bind(self.subject.0)
             .bind(self.operation.0)
-            .bind(result_kind)
-            .bind(result_ref_kind)
-            .bind(result_ref)
-            .bind(result_epoch)
+            .bind(Json(std::slice::from_ref(result)))
             .execute(&mut *self.tx)
             .await
             .map_err(db)?;
@@ -288,20 +292,11 @@ impl<'a> MutationEnvelope<'a> {
     }
 
     /// Verify that this operation owns a previously persisted typed checkpoint.
-    pub async fn checkpoint_matches(
-        &mut self,
-        result_kind: &str,
-        result_ref_kind: &str,
-        result_ref: &str,
-        result_epoch: i64,
-    ) -> Result<bool> {
-        let matches: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2 AND state='in_progress' AND result_kind=$3 AND result_ref_kind=$4 AND result_ref=$5 AND result_epoch=$6)")
+    pub async fn checkpoint_matches(&mut self, result: &MutationResult) -> Result<bool> {
+        let matches: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2 AND state='in_progress' AND results=$3)")
             .bind(self.subject.0)
             .bind(self.operation.0)
-            .bind(result_kind)
-            .bind(result_ref_kind)
-            .bind(result_ref)
-            .bind(result_epoch)
+            .bind(Json(std::slice::from_ref(result)))
             .fetch_one(&mut *self.tx)
             .await
             .map_err(db)?;

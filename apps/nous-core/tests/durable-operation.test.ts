@@ -40,8 +40,8 @@ it("uses the reservation winner snapshot and checkpoints each owner ID before co
     modelWorkflow: {
       findWorkflow: vi.fn(async () => ({ state: { case: undefined } })),
       reserveWorkflow,
-      saveWorkflow: vi.fn(async (input: { mutationOperations?: string[] }) => {
-        events.push(`checkpoint:${input.mutationOperations?.[0]}`);
+      saveWorkflow: vi.fn(async (input: { mutationOperationId?: string }) => {
+        events.push(`checkpoint:${input.mutationOperationId}`);
       }),
       releaseWorkflow: vi.fn(async () => ({})),
     },

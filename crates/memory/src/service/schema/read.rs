@@ -68,13 +68,10 @@ impl MemoryService {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
-        selections: &[CognitionSelection],
+        selections: &HashMap<Uuid, CognitionSelection>,
         historical: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<HashMap<CognitiveRef, SchemaView>> {
-        let revision_ids = selections
-            .iter()
-            .map(|selection| selection.revision.revision_id())
-            .collect::<Vec<_>>();
+    ) -> Result<HashMap<Uuid, SchemaView>> {
+        let revision_ids = selections.keys().copied().collect::<Vec<_>>();
         if revision_ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -103,14 +100,10 @@ impl MemoryService {
                 .or_default()
                 .push(decode_schema_link(row, revision)?);
         }
-        let selected = selections
-            .iter()
-            .map(|selection| (selection.revision.revision_id(), selection))
-            .collect::<HashMap<_, _>>();
         let mut views = HashMap::with_capacity(rows.len());
         for row in rows {
             let revision_id: Uuid = row.try_get("schema_revision_id").map_err(db)?;
-            let Some(selection) = selected.get(&revision_id) else {
+            let Some(selection) = selections.get(&revision_id) else {
                 continue;
             };
             let revision_intent = row
@@ -151,9 +144,8 @@ impl MemoryService {
                     "schema formation kind",
                 )?,
             };
-            let reference = selection.revision.revision_ref.clone();
             views.insert(
-                reference,
+                revision_id,
                 SchemaView {
                     header: selection.header.clone(),
                     revision,

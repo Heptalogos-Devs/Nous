@@ -4,7 +4,7 @@
 
 | 要完成的任务 | 目录指南 | 主要入口 |
 | --- | --- | --- |
-| 源码开发、离线配置检查、源码长度检查 | [dev](dev/README.md) | `dev`、`nous`、`dev:prepare`、`dev:portable`、`check:length` |
+| 源码开发、离线配置检查 | [dev](dev/README.md) | `dev`、`nous`、`dev:prepare`、`dev:portable` |
 | 构建/打包第三方运行依赖 | [runtime](runtime/README.md) | `runtime:pack`、显式构建 shell 脚本 |
 | 构建并验证 Windows Portable | [release](release/README.md) | `release:notices`、`assemble:portable`、`release:verify` |
 | 检查真实公共操作的确定性轨迹 | [smoke](smoke/README.md) | `just smoke` 或单个 `smoke:*` |

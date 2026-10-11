@@ -23,19 +23,6 @@ pub struct VcpProjectedDocument {
 impl ServingService {
     /// Resolve model material for a disposable VCP serving generation using
     /// the same host-supplied provider contract as dense construction.
-    pub async fn vcp_projection_material(
-        &self,
-        subject: SubjectId,
-        snapshot: &nous_configuration::ConfigSnapshot,
-    ) -> Result<VcpProjectionMaterial> {
-        self.vcp_projection_material_in_view(
-            subject,
-            snapshot,
-            None,
-            &self.publisher.snapshot_for(subject),
-        )
-        .await
-    }
     pub(crate) async fn vcp_projection_material_in_view(
         &self,
         subject: SubjectId,

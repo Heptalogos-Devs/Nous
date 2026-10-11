@@ -71,7 +71,7 @@ message PendingWorkflow { WorkflowSnapshot snapshot = 1; WorkflowPayload proposa
 message CompletedWorkflow { WorkflowPayload outcome = 1; ExecutionTelemetry execution_telemetry = 2; }
 message AcquiredWorkflow { PendingWorkflow pending = 1; WorkflowLease lease = 2; }
 message WorkflowReservation { oneof state { AcquiredWorkflow acquired = 1; PendingWorkflow busy = 2; CompletedWorkflow completed = 3; } }
-message SaveWorkflowRequest { reserved 1 to 7; WorkflowPayload proposal = 8; WorkflowPayload outcome = 9; ExecutionTelemetry execution_telemetry = 10; repeated string mutation_operations = 11; WorkflowLease lease = 12; }
+message SaveWorkflowRequest { reserved 1 to 7; WorkflowPayload proposal = 8; WorkflowPayload outcome = 9; ExecutionTelemetry execution_telemetry = 10; optional string mutation_operation_id = 11; WorkflowLease lease = 12; }
 message ReleaseWorkflowRequest { reserved 1 to 4; WorkflowLease lease = 5; }
 message ResolvedMentionsRequest { string subject_id = 1; string occurrence_id = 2; }
 message ResolvedMention { string key = 1; string surface = 2; string entity_ref = 3; }

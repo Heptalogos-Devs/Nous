@@ -84,7 +84,6 @@ pub struct QueryRepresentation {
     pub sha256: String,
     pub source_refs: Vec<(CognitiveRef, String)>,
     pub truncation_flags: Vec<String>,
-    pub work_context: Option<WorkContextView>,
 }
 
 struct Builder {
@@ -221,7 +220,7 @@ fn descriptor_priority(
 pub fn build_query_representation(
     query: &CognitiveQuery,
     descriptors: &[QueryDescriptor],
-    context: Option<WorkContextView>,
+    context: Option<&WorkContextView>,
     sources: Vec<(CognitiveRef, String)>,
     limits: &QueryRepresentationLimits,
 ) -> QueryRepresentation {
@@ -334,13 +333,12 @@ pub fn build_query_representation(
         builder.section("Consumer/task", consumer, 256);
     }
     let text = builder.render();
-    finish(text, sources, builder.flags, context, "cognitive-query-v2")
+    finish(text, sources, builder.flags, "cognitive-query-v2")
 }
 fn finish(
     text: String,
     mut sources: Vec<(CognitiveRef, String)>,
     flags: BTreeSet<String>,
-    context: Option<WorkContextView>,
     version: &str,
 ) -> QueryRepresentation {
     sources.sort_by_key(|(reference, source)| (reference.to_string(), source.clone()));
@@ -354,7 +352,6 @@ fn finish(
         text,
         source_refs: sources,
         truncation_flags: flags.into_iter().collect(),
-        work_context: context,
     }
 }
 
@@ -362,7 +359,7 @@ impl CognitiveRuntimeService {
     pub(super) async fn resolve_query_representation(
         &self,
         query: &CognitiveQuery,
-        work_context: Option<WorkContextView>,
+        work_context: Option<&WorkContextView>,
         mut representation_sources: Vec<(CognitiveRef, String)>,
         config_snapshot: &ConfigSnapshot,
         historical: Option<&HistoricalAuthoritySnapshot>,

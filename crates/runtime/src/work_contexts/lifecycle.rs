@@ -80,27 +80,28 @@ impl CognitiveRuntimeService {
                 "expected_revision": expected_revision,
             }),
         )?;
-        let mut tx = self.store.begin().await?;
-        lock_operation(&mut tx, subject, operation_id).await?;
-        if let Some(existing) = check_receipt(
-            &mut tx,
+        let mut mutation = match MutationEnvelope::begin(
+            &self.store,
             subject,
             operation_id,
             kind,
             &digest,
+            None,
             nous_core::ErrorOwner::Runtime,
         )
         .await?
         {
-            tx.commit().await.map_err(db)?;
-            return self.work_context(subject, replay_context(existing)?).await;
-        }
+            MutationStart::Replay(receipt) => {
+                return self.work_context(subject, replay_context(receipt)?).await;
+            }
+            MutationStart::Active(mutation) => mutation,
+        };
         let row = sqlx::query(
             "SELECT state,revision FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR UPDATE",
         )
         .bind(subject.0)
         .bind(work_context_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **mutation.tx())
         .await
         .map_err(db)?
         .ok_or_else(|| Error::new(nous_core::ErrorOwner::Runtime, nous_core::ErrorCode::NotFound, "WorkContext not found"))?;
@@ -158,7 +159,7 @@ impl CognitiveRuntimeService {
             )
             .bind(subject.0)
             .bind(work_context_id)
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut **mutation.tx())
             .await
             .map_err(db)?;
             for session in sessions {
@@ -168,7 +169,7 @@ impl CognitiveRuntimeService {
                 .bind(subject.0)
                 .bind(session)
                 .bind(self.now(subject))
-                .execute(&mut *tx)
+                .execute(&mut **mutation.tx())
                 .await
                 .map_err(db)?;
             }
@@ -182,24 +183,18 @@ impl CognitiveRuntimeService {
         .bind(next)
         .bind(self.now(subject))
         .bind(ended_at)
-        .execute(&mut *tx)
+        .execute(&mut **mutation.tx())
         .await
         .map_err(db)?;
         if next == "ended" {
-            self.wake_ended_context_in(&mut tx, subject, work_context_id)
+            self.wake_ended_context_in(mutation.tx(), subject, work_context_id)
                 .await?;
         }
-        commit_receipt(
-            &mut tx,
-            subject,
-            operation_id,
-            "work_context",
-            Some(&work_context_id.to_string()),
-            None,
-            None,
-        )
-        .await?;
-        tx.commit().await.map_err(db)?;
+        mutation
+            .commit(&[MutationResult::reference(CognitiveRef::WorkContext(
+                nous_core::WorkContextId(work_context_id),
+            ))])
+            .await?;
         self.work_context(subject, work_context_id).await
     }
 
@@ -220,33 +215,44 @@ impl CognitiveRuntimeService {
                 "expected_runtime_revision": expected_runtime_revision,
             }),
         )?;
-        let mut tx = self.store.begin().await?;
-        lock_operation(&mut tx, subject, operation_id).await?;
-        if let Some(existing) = check_receipt(
-            &mut tx,
+        let mut mutation = match MutationEnvelope::begin(
+            &self.store,
             subject,
             operation_id,
             "set_active_work_context",
             &digest,
+            None,
             nous_core::ErrorOwner::Runtime,
         )
         .await?
         {
-            tx.commit().await.map_err(db)?;
-            if existing.state != "committed" {
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Runtime,
-                    nous_core::ErrorCode::Unavailable,
-                    "foreground WorkContext operation is already in progress",
-                ));
+            MutationStart::Replay(receipt) => {
+                if receipt.state != "committed" {
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::Unavailable,
+                        "foreground WorkContext operation is already in progress",
+                    ));
+                }
+                if !matches!(
+                    receipt.results.first().map(|result| &result.reference),
+                    Some(CognitiveRef::Session(result)) if *result == session
+                ) {
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InternalFailure,
+                        "foreground WorkContext receipt has no matching Session result",
+                    ));
+                }
+                return self.session(subject, session).await;
             }
-            return self.session(subject, session).await;
-        }
+            MutationStart::Active(mutation) => mutation,
+        };
         let row = sqlx::query(
             "SELECT subject_id,closed_at,runtime_revision FROM cognitive_sessions WHERE session_id=$1 FOR UPDATE",
         )
         .bind(session.0)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **mutation.tx())
         .await
         .map_err(db)?
         .ok_or_else(|| crate::sessions::stale_session(session))?;
@@ -272,7 +278,7 @@ impl CognitiveRuntimeService {
             )
             .bind(subject.0)
             .bind(work_context_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **mutation.tx())
             .await
             .map_err(db)?
             .ok_or_else(|| Error::new(nous_core::ErrorOwner::Runtime, nous_core::ErrorCode::NotFound, "WorkContext not found"))?;
@@ -291,20 +297,12 @@ impl CognitiveRuntimeService {
         .bind(session.0)
         .bind(work_context_id)
         .bind(self.now(subject))
-        .execute(&mut *tx)
+        .execute(&mut **mutation.tx())
         .await
         .map_err(db)?;
-        commit_receipt(
-            &mut tx,
-            subject,
-            operation_id,
-            "work_context",
-            None,
-            None,
-            None,
-        )
-        .await?;
-        tx.commit().await.map_err(db)?;
+        mutation
+            .commit(&[MutationResult::reference(CognitiveRef::Session(session))])
+            .await?;
         self.session(subject, session).await
     }
 }

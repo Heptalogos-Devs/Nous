@@ -166,7 +166,7 @@ impl MemoryService {
                 .as_ref()
                 .map(|text| ((text.len().saturating_add(3)) / 4).min(u32::MAX as usize) as u32);
             contributions.push(ContextContribution {
-                source_revision: Some(revision_header.revision_ref),
+                source_revision: Some(revision_header.revision_ref.clone()),
                 reference,
                 semantic_role,
                 estimated_tokens,

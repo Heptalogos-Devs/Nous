@@ -2431,6 +2431,15 @@ pub mod get_operation_status_request {
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OperationResult {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(string, optional, tag="2")]
+    pub revision_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, optional, tag="3")]
+    pub object_epoch: ::core::option::Option<i64>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetOperationStatusResponse {
     #[prost(enumeration="OperationState", tag="1")]
     pub state: i32,
@@ -2446,14 +2455,8 @@ pub struct GetOperationStatusResponse {
     pub lease_until: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="7")]
     pub committed_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag="8")]
-    pub result_reference: ::core::option::Option<CognitiveRef>,
-    #[prost(string, optional, tag="9")]
-    pub result_revision_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(int64, optional, tag="10")]
-    pub result_epoch: ::core::option::Option<i64>,
-    #[prost(string, optional, tag="11")]
-    pub terminal_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="12")]
+    pub results: ::prost::alloc::vec::Vec<OperationResult>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MaterializeResourceRequest {
@@ -2484,7 +2487,6 @@ pub enum OperationState {
     Unknown = 0,
     InProgress = 1,
     Committed = 2,
-    FailedTerminal = 3,
     Completed = 4,
 }
 impl OperationState {
@@ -2497,7 +2499,6 @@ impl OperationState {
             Self::Unknown => "OPERATION_STATE_UNKNOWN",
             Self::InProgress => "OPERATION_STATE_IN_PROGRESS",
             Self::Committed => "OPERATION_STATE_COMMITTED",
-            Self::FailedTerminal => "OPERATION_STATE_FAILED_TERMINAL",
             Self::Completed => "OPERATION_STATE_COMPLETED",
         }
     }
@@ -2507,7 +2508,6 @@ impl OperationState {
             "OPERATION_STATE_UNKNOWN" => Some(Self::Unknown),
             "OPERATION_STATE_IN_PROGRESS" => Some(Self::InProgress),
             "OPERATION_STATE_COMMITTED" => Some(Self::Committed),
-            "OPERATION_STATE_FAILED_TERMINAL" => Some(Self::FailedTerminal),
             "OPERATION_STATE_COMPLETED" => Some(Self::Completed),
             _ => None,
         }

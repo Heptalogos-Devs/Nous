@@ -2,26 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nous_core::{CognitiveRef, parse_reference};
-use nous_persistence::database_error as db;
+use nous_core::CognitiveRef;
+use nous_persistence::{MutationResult, database_error as db};
 use sqlx::Row;
+use sqlx::types::Json;
 
 fn operation_owner(kind: &str) -> Option<p::ErrorOwner> {
     Some(match kind {
         "add_schema_evidence"
         | "create_cognitive_schema"
-        | "create_episode"
-        | "cognition_lifecycle"
+        | "merge_cognitive_schemas"
+        | "revise_cognitive_schema"
+        | "split_cognitive_schema" => p::ErrorOwner::Concept,
+        "cognition_lifecycle" => p::ErrorOwner::Unspecified,
+        "create_episode"
         | "episode_partition"
         | "form_memory"
         | "journal_commit"
         | "link_episode_revisions"
         | "link_memory_revisions"
-        | "merge_cognitive_schemas"
-        | "revise_cognitive_schema"
         | "revise_episode"
-        | "revise_memory"
-        | "split_cognitive_schema" => p::ErrorOwner::Memory,
+        | "revise_memory" => p::ErrorOwner::Memory,
         "create_association" | "revoke_association" | "create_tag" | "revise_tag"
         | "merge_tags" | "split_tag" => p::ErrorOwner::Concept,
         "create_work_context"
@@ -66,7 +67,7 @@ impl KernelService {
                         "operation_kind is not registered",
                     )
                 })?;
-                let row = sqlx::query("SELECT state,created_at,committed_at,result_kind,result_ref_kind,result_ref,result_revision,result_epoch,terminal_problem_code FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2 AND operation_kind=$3")
+                let row = sqlx::query("SELECT state,created_at,committed_at,results FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2 AND operation_kind=$3")
                     .bind(subject)
                     .bind(operation)
                     .bind(&identity.operation_kind)
@@ -76,7 +77,11 @@ impl KernelService {
                 let Some(row) = row else {
                     return Ok(p::GetOperationStatusResponse {
                         state: p::OperationState::Unknown as i32,
-                        owner: owner as i32,
+                        owner: if identity.operation_kind == "cognition_lifecycle" {
+                            p::ErrorOwner::Unspecified as i32
+                        } else {
+                            owner as i32
+                        },
                         subject_id: Some(subject.to_string()),
                         ..Default::default()
                     });
@@ -85,7 +90,6 @@ impl KernelService {
                 let state = match receipt_state.as_str() {
                     "in_progress" => p::OperationState::InProgress,
                     "committed" => p::OperationState::Committed,
-                    "failed_terminal" => p::OperationState::FailedTerminal,
                     _ => {
                         return Err(Error::new(
                             nous_core::ErrorOwner::Kernel,
@@ -94,25 +98,27 @@ impl KernelService {
                         ));
                     }
                 };
-                let result_ref_kind: Option<String> = row.try_get("result_ref_kind").map_err(db)?;
-                let result_kind: Option<String> = row.try_get("result_kind").map_err(db)?;
-                let owner = if identity.operation_kind == "cognition_lifecycle"
-                    && result_kind.as_deref() == Some("cognitive_schema")
-                {
-                    p::ErrorOwner::Concept
+                let results: Vec<MutationResult> = row
+                    .try_get::<Json<Vec<MutationResult>>, _>("results")
+                    .map_err(db)?
+                    .0;
+                let owner = if identity.operation_kind == "cognition_lifecycle" {
+                    match results.first().map(|result| &result.reference) {
+                        Some(CognitiveRef::CognitiveSchema(_)) => p::ErrorOwner::Concept,
+                        Some(_) => p::ErrorOwner::Memory,
+                        None => p::ErrorOwner::Unspecified,
+                    }
                 } else {
                     owner
                 };
-                let result_ref: Option<String> = row.try_get("result_ref").map_err(db)?;
-                let result_reference = match (result_ref_kind, result_ref) {
-                    (Some(kind), Some(value)) => parse_reference(&kind, &value).ok().map(to_ref),
-                    _ => None,
-                };
-                let terminal_code = if state == p::OperationState::FailedTerminal {
-                    row.try_get("terminal_problem_code").map_err(db)?
-                } else {
-                    None
-                };
+                let results = results
+                    .into_iter()
+                    .map(|result| p::OperationResult {
+                        reference: Some(to_ref(result.reference)),
+                        revision_id: result.revision_id.map(|value| value.to_string()),
+                        object_epoch: result.object_epoch,
+                    })
+                    .collect();
                 Ok(p::GetOperationStatusResponse {
                     state: state as i32,
                     owner: owner as i32,
@@ -122,13 +128,7 @@ impl KernelService {
                         .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("committed_at")
                         .map_err(db)?
                         .map(timestamp),
-                    result_reference,
-                    result_revision_id: row
-                        .try_get::<Option<uuid::Uuid>, _>("result_revision")
-                        .map_err(db)?
-                        .map(|value| value.to_string()),
-                    result_epoch: row.try_get("result_epoch").map_err(db)?,
-                    terminal_code,
+                    results,
                     ..Default::default()
                 })
             }
@@ -154,9 +154,12 @@ impl KernelService {
                     owner: p::ErrorOwner::Subject as i32,
                     subject_id: Some(subject.to_string()),
                     recorded_at: Some(timestamp(row.try_get("adopted_at").map_err(db)?)),
-                    result_reference: Some(to_ref(CognitiveRef::Subject(nous_core::SubjectId(
-                        subject,
-                    )))),
+                    results: vec![p::OperationResult {
+                        reference: Some(to_ref(CognitiveRef::Subject(nous_core::SubjectId(
+                            subject,
+                        )))),
+                        ..Default::default()
+                    }],
                     ..Default::default()
                 })
             }
@@ -206,9 +209,12 @@ impl KernelService {
                     owner: p::ErrorOwner::Observation as i32,
                     subject_id: Some(subject.to_string()),
                     recorded_at: Some(timestamp(row.try_get("created_at").map_err(db)?)),
-                    result_reference: Some(to_ref(CognitiveRef::Occurrence(
-                        nous_core::OccurrenceId(occurrence),
-                    ))),
+                    results: vec![p::OperationResult {
+                        reference: Some(to_ref(CognitiveRef::Occurrence(nous_core::OccurrenceId(
+                            occurrence,
+                        )))),
+                        ..Default::default()
+                    }],
                     ..Default::default()
                 })
             }

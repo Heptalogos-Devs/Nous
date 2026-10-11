@@ -86,8 +86,14 @@ enum OperationState {
   OPERATION_STATE_UNKNOWN = 0;
   OPERATION_STATE_IN_PROGRESS = 1;
   OPERATION_STATE_COMMITTED = 2;
-  OPERATION_STATE_FAILED_TERMINAL = 3;
+  reserved 3;
+  reserved "OPERATION_STATE_FAILED_TERMINAL";
   OPERATION_STATE_COMPLETED = 4;
+}
+message OperationResult {
+  CognitiveRef reference = 1;
+  optional string revision_id = 2;
+  optional int64 object_epoch = 3;
 }
 message GetOperationStatusResponse {
   OperationState state = 1;
@@ -97,10 +103,9 @@ message GetOperationStatusResponse {
   google.protobuf.Timestamp updated_at = 5;
   google.protobuf.Timestamp lease_until = 6;
   google.protobuf.Timestamp committed_at = 7;
-  CognitiveRef result_reference = 8;
-  optional string result_revision_id = 9;
-  optional int64 result_epoch = 10;
-  optional string terminal_code = 11;
+  reserved 8 to 11;
+  reserved "result_reference", "result_revision_id", "result_epoch", "terminal_code";
+  repeated OperationResult results = 12;
 }
 
 message MaterializeResourceRequest { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; StableExternalRef reference = 3; google.protobuf.Timestamp observed_at = 4; }

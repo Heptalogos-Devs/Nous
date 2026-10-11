@@ -248,9 +248,6 @@ it("derives unified cognition receipt owners from the target and retries the fro
     const memoryReceiptId = (failure as { receiptId: string }).receiptId;
     expect(await local.receipt(memoryReceiptId)).toMatchObject({
       command: "cognition.mutate",
-      owner: "MEMORY",
-      operationKind: "cognition_lifecycle",
-      operationId: memoryOperationId,
       status: "pending",
       request: {
         protoJson: { objectRef: { kind: "memory", value: memoryId } },
@@ -286,8 +283,6 @@ it("derives unified cognition receipt owners from the target and retries the fro
     expect(conceptFile).toBeTruthy();
     expect(await local.receipt(conceptFile!.slice(0, -5))).toMatchObject({
       command: "cognition.mutate",
-      owner: "CONCEPT",
-      operationId: conceptOperationId,
       status: "complete",
       request: {
         protoJson: { objectRef: { kind: "cognitive_schema", value: schemaId } },

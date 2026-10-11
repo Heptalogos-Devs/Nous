@@ -1,5 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { stringArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 import { CliError, boundedInteger } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 import { writeFile } from "node:fs/promises";
@@ -13,22 +15,19 @@ const cognitionKinds = new Set([
   "episode_revision",
   "journal_revision",
 ]);
-export async function queryCommands(
+async function query(
   env: CliEnvironment,
-  action?: string,
-  argument?: string,
+  argument: string | undefined,
   positionals: string[] = [],
+  preparing = false,
 ) {
   const { client, state, subjectId, values, required, save } = env;
-  const preparing = action === "prepare" || action === "inspect";
   const nousql = values["query-file"]
     ? await env.readText(values["query-file"], 32768)
     : required(
         positionals.length
           ? positionals.slice(preparing ? 2 : 1).join(" ")
-          : preparing
-            ? argument
-            : action,
+          : argument,
         "NousQL",
       );
   if (Buffer.byteLength(nousql) > 32768)
@@ -171,7 +170,18 @@ export async function queryCommands(
     degradation: response.degradation,
   };
 }
-export async function showCommands(env: CliEnvironment, reference?: string) {
+
+const queryCommands = (
+  env: CliEnvironment,
+  argument?: string,
+  positionals?: string[],
+) => query(env, argument, positionals);
+const inspectQuery = (
+  env: CliEnvironment,
+  argument?: string,
+  positionals?: string[],
+) => query(env, argument, positionals, true);
+async function showCommands(env: CliEnvironment, reference?: string) {
   const { client, subjectId, required, resolveReference } = env;
   const ref = await resolveReference(
     required(reference, "Exact reference or result:N"),
@@ -213,7 +223,7 @@ export async function showCommands(env: CliEnvironment, reference?: string) {
   }
 }
 
-export async function readCommands(env: CliEnvironment, reference?: string) {
+async function readCommands(env: CliEnvironment, reference?: string) {
   const ref = await env.resolveReference(
     env.required(reference, "Material reference or result:N"),
   );
@@ -275,4 +285,44 @@ export async function readCommands(env: CliEnvironment, reference?: string) {
     evidence: material.evidence,
     degradation: material.degradation,
   };
+}
+
+export function createShowCommand(leaf: CliLeaf) {
+  return leaf({}, showCommands, {
+    parameters: ["<exact reference | result:N>"],
+  });
+}
+
+export function createReadCommand(leaf: CliLeaf) {
+  return leaf({ ...stringArgs("max-bytes", "output") }, readCommands, {
+    parameters: ["<Material reference | result:N>"],
+  });
+}
+
+export function createQueryCommand(leaf: CliLeaf) {
+  const queryCommand = leaf({ ...stringArgs("query-file") }, queryCommands, {
+    description: "Execute NousQL and save exact result references.",
+    parameters: ["<NousQL> | --query-file <path>"],
+    example: "nous query 'deployment decision $return(memory) $limit(5)'",
+  });
+  const inheritedSetup = queryCommand.setup;
+  queryCommand.subCommands = {
+    prepare: leaf({ ...stringArgs("query-file") }, inspectQuery, {
+      description:
+        "Prepare and inspect a frozen query without retrieval or provider calls.",
+      parameters: ["<NousQL> | --query-file <path>"],
+    }),
+    inspect: leaf({ ...stringArgs("query-file") }, inspectQuery, {
+      description:
+        "Inspect a frozen query without retrieval or provider calls.",
+      parameters: ["<NousQL> | --query-file <path>"],
+    }),
+  };
+  queryCommand.setup = async (ctx) => {
+    await inheritedSetup?.(ctx);
+    const action = ctx.args._[0] ?? "";
+    if (!Object.hasOwn(queryCommand.subCommands ?? {}, action))
+      queryCommand.subCommands = {};
+  };
+  return queryCommand;
 }

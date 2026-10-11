@@ -169,8 +169,8 @@ impl CognitiveRuntimeService {
             &Uuid::NAMESPACE_OID,
             format!("episode-draft:{draft}").as_bytes(),
         );
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$3 AND operation_kind='create_episode' AND state='committed' AND result_revision=$2)")
-            .bind(subject.0).bind(revision.0).bind(operation).fetch_one(&mut *tx).await.map_err(db)?;
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mutation_receipts r CROSS JOIN LATERAL jsonb_array_elements(r.results) AS receipt_result(outcome) WHERE r.subject_id=$1 AND r.operation_id=$3 AND r.operation_kind='create_episode' AND r.state='committed' AND outcome->>'revision_id'=$2::text AND outcome->'reference'->>'kind'='episode')")
+            .bind(subject.0).bind(revision.0.to_string()).bind(operation).fetch_one(&mut *tx).await.map_err(db)?;
         if !exists {
             return Err(Error::new(
                 nous_core::ErrorOwner::Runtime,

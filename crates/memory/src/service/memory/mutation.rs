@@ -32,30 +32,23 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state == "committed" {
-                    return self
-                        .memory(
-                            input.subject,
-                            MemoryId(
-                                receipt
-                                    .result_ref
-                                    .ok_or_else(|| {
-                                        Error::new(
-                                            nous_core::ErrorOwner::Memory,
-                                            nous_core::ErrorCode::InternalFailure,
-                                            "form receipt has no result",
-                                        )
-                                    })?
-                                    .parse()
-                                    .map_err(|_| {
-                                        Error::new(
-                                            nous_core::ErrorOwner::Memory,
-                                            nous_core::ErrorCode::InternalFailure,
-                                            "invalid form receipt",
-                                        )
-                                    })?,
-                            ),
-                            receipt.result_revision.map(MemoryRevisionId),
+                    let result = receipt.results.first().ok_or_else(|| {
+                        Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "form receipt has no result",
                         )
+                    })?;
+                    let CognitiveRef::Memory(memory) = &result.reference else {
+                        return Err(Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "form receipt has an invalid result reference",
+                        ));
+                    };
+                    let revision = receipt_revision_id(&receipt, &CognitiveRef::Memory(*memory))?;
+                    return self
+                        .memory(input.subject, *memory, Some(MemoryRevisionId(revision)))
                         .await;
                 }
                 return Err(Error::new(
@@ -100,12 +93,11 @@ impl MemoryService {
             )
             .await?;
         mutation
-            .commit(
-                "memory",
-                Some(&memory_id.0.to_string()),
-                Some(revision_id.0),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::Memory(memory_id),
+                revision_id.0,
                 Some(1),
-            )
+            )])
             .await?;
         self.memory(input.subject, memory_id, Some(revision_id))
             .await
@@ -173,6 +165,7 @@ impl MemoryService {
         };
         let (valid_kind, valid_start, valid_end) = temporal_columns(&input.valid_time);
         Self::insert_cognition_revision_header_in(
+            &self.store,
             tx,
             input.subject,
             &CognitionRevisionHeader::new(
@@ -185,6 +178,7 @@ impl MemoryService {
                 recorded_at,
                 producer_id,
             ),
+            input.title.as_deref().unwrap_or(""),
         )
         .await?;
         sqlx::query("INSERT INTO memory_revisions(memory_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
@@ -223,17 +217,6 @@ impl MemoryService {
             .await
             .map_err(db)?;
         }
-        self.store
-            .ensure_identity_addresses_in(
-                tx,
-                input.subject,
-                &[
-                    CognitiveRef::Memory(memory_id),
-                    CognitiveRef::MemoryRevision(revision_id),
-                ],
-                input.title.as_deref().unwrap_or(""),
-            )
-            .await?;
         Ok(())
     }
 
@@ -349,11 +332,13 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state == "committed" {
+                    let revision =
+                        receipt_revision_id(&receipt, &CognitiveRef::Memory(input.memory_id))?;
                     return self
                         .memory(
                             input.subject,
                             input.memory_id,
-                            receipt.result_revision.map(MemoryRevisionId),
+                            Some(MemoryRevisionId(revision)),
                         )
                         .await;
                 }
@@ -399,12 +384,11 @@ impl MemoryService {
             )
             .await?;
         mutation
-            .commit(
-                "memory_revision",
-                Some(&input.memory_id.0.to_string()),
-                Some(revision_id.0),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::Memory(input.memory_id),
+                revision_id.0,
                 Some(epoch + 1),
-            )
+            )])
             .await?;
         self.memory(input.subject, input.memory_id, Some(revision_id))
             .await
@@ -557,6 +541,6 @@ impl MemoryService {
             .invalidate(ProjectionInvalidation::topology())
             .await?;
 
-        mutation.commit("relation", None, None, None).await
+        mutation.commit(&[]).await
     }
 }

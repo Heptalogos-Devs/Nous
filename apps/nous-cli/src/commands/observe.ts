@@ -1,17 +1,15 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { defineCommand } from "citty";
+import { commonArgs, stringArgs } from "./command-args.js";
+import type { CliAction, CliLeaf } from "./command-types.js";
 
 import { webSource } from "@nous-wave/client";
-import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 
-export async function observeCommands(
-  env: CliEnvironment,
-  action: string | undefined,
-  argument?: string,
-) {
-  const { client, values, state, subjectId, required, mediaType } = env;
-  const input = {
+function observationInput(env: CliEnvironment) {
+  const { values, state, subjectId } = env;
+  return {
     subjectId,
     sessionId: state.sessionId,
     requestId: crypto.randomUUID(),
@@ -22,31 +20,47 @@ export async function observeCommands(
     },
     admit: true,
   };
-  if (action === "text")
-    return client.cognition.observe({
-      ...input,
-      material: {
-        case: "inlineText",
-        value: {
-          text: required(values.text, "--text"),
-          mediaType: "text/plain",
-        },
-      },
-    });
-  if (action === "file") {
-    const path = required(argument, "File path");
-    const artifact = await client.artifacts.uploadFile(subjectId, path, {
-      mediaType: mediaType(path),
-    });
-    const observation = await client.cognition.observe({
-      ...input,
-      material: { case: "artifactId", value: artifact.artifactId },
-    });
-    return {
-      artifact: { ...artifact, byteLength: artifact.byteLength.toString() },
-      observation,
-    };
-  }
+}
 
-  throw new CliError("INVALID_ARGUMENT", "Unknown observe command");
+const observeText: CliAction = (env) =>
+  env.client.cognition.observe({
+    ...observationInput(env),
+    material: {
+      case: "inlineText",
+      value: {
+        text: env.required(env.values.text, "--text"),
+        mediaType: "text/plain",
+      },
+    },
+  });
+
+const observeFile: CliAction = async (env, argument) => {
+  const path = env.required(argument, "File path");
+  const artifact = await env.client.artifacts.uploadFile(env.subjectId, path, {
+    mediaType: env.mediaType(path),
+  });
+  const observation = await env.client.cognition.observe({
+    ...observationInput(env),
+    material: { case: "artifactId", value: artifact.artifactId },
+  });
+  return {
+    artifact: { ...artifact, byteLength: artifact.byteLength.toString() },
+    observation,
+  };
+};
+
+export function createObserveCommand(leaf: CliLeaf) {
+  return defineCommand({
+    args: commonArgs,
+    subCommands: {
+      text: leaf({ ...stringArgs("text", "source") }, observeText, {
+        description: "Admit bounded inline text as an Observation.",
+        parameters: ["--text <text>", "--source <https URL> (optional)"],
+      }),
+      file: leaf({ ...stringArgs("media-type") }, observeFile, {
+        description: "Upload an Artifact and admit it as an Observation.",
+        parameters: ["<path>", "--media-type <mime>"],
+      }),
+    },
+  });
 }

@@ -352,25 +352,44 @@ export function freezeRequest(command: string, input: unknown) {
   if (!input || typeof input !== "object")
     throw new Error("Mutation request must be an object");
   const request = create(spec.request as never, input as never);
-  const record = request as unknown as Record<string, unknown>;
+  const frozen = freezeMessage(
+    spec.request,
+    request,
+    "Mutation request did not match its registered protobuf schema",
+  );
+  const identity = requestIdentity(
+    command,
+    spec,
+    request as unknown as Record<string, unknown>,
+  );
+  return { frozen, request, spec, identity };
+}
+
+function requestIdentity(
+  command: string,
+  spec: ReceiptDefinition,
+  record: Record<string, unknown>,
+) {
   const subjectId = record.subjectId;
   if (
     spec.request.field.subjectId &&
     (typeof subjectId !== "string" || !subjectId)
   )
     throw new Error("Subject-scoped mutation requires a Subject ID");
-  const frozen = freezeMessage(
-    spec.request,
-    request,
-    "Mutation request did not match its registered protobuf schema",
-  );
   return {
     owner: spec.owner(record),
+    operationKind: spec.operationKind,
     operationId: operationId(command, spec.request, record),
     subjectId:
       typeof subjectId === "string" && subjectId ? subjectId : undefined,
-    frozen,
   };
+}
+
+export function receiptIdentity(command: string, request: unknown) {
+  const spec = receiptDefinition(command);
+  if (!request || typeof request !== "object")
+    throw new Error("Mutation request must be an object");
+  return requestIdentity(command, spec, request as Record<string, unknown>);
 }
 
 export function thawRequest(

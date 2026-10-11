@@ -6,25 +6,16 @@ use super::query_run_adapter::{
     wire_requirement,
 };
 use super::*;
-use futures::{Stream, StreamExt, stream};
+use futures::Stream;
 use nous_core::{Degradation, RequirementStrength, Result};
 use nous_retrieval::{QueryEmbedding, TextEmbeddingOutput};
 use nous_runtime::{
-    BoundQuery, CognitiveContributors, QueryExecution, QueryPlan, QueryRun, QueryRunContext,
-    QueryRunHostPolicy,
+    BoundQuery, CognitiveContributors, QueryExecution, QueryPlan, QueryRunHostPolicy,
 };
 use std::pin::Pin;
 
 type QueryUpdates =
     Pin<Box<dyn Stream<Item = std::result::Result<k::QueryRunUpdate, Status>> + Send + 'static>>;
-
-enum QueryRunStep {
-    Continue {
-        run: Box<QueryRun>,
-        update: k::QueryRunUpdate,
-    },
-    Complete(k::QueryRunUpdate),
-}
 
 #[tonic::async_trait]
 impl k::kernel_query_service_server::KernelQueryService for KernelService {
@@ -96,39 +87,202 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                 "the first query workflow frame must start a query",
             ));
         };
-        let step = self.start_query_run(input).await.map_err(status)?;
-        let stream: Self::RunQueryStream = match step {
-            QueryRunStep::Complete(update) => Box::pin(stream::once(async move { Ok(update) })),
-            QueryRunStep::Continue { run, update } => {
-                let initial = stream::once(async move { Ok(update) });
-                let continuation = stream::try_unfold(
-                    (Some(run), inbound, self.clone()),
-                    |(run, mut inbound, service)| async move {
-                        let Some(run) = run else {
-                            return Ok::<_, Status>(None);
-                        };
+
+        // Bind and preflight before returning the response stream. Everything
+        // after this point lives in that stream's future and drops with it.
+        let (bound, plan, host_policy, slot, embedding_handoff) =
+            self.start_query_run(input).await.map_err(status)?;
+        let first_update = if embedding_handoff {
+            Some(
+                self.embedding_update(&bound, host_policy)
+                    .await
+                    .map_err(status)?,
+            )
+        } else {
+            None
+        };
+        let service = self.clone();
+        let updates = async_stream::try_stream! {
+            let mut bound = bound;
+
+            'query: {
+                if let Some(update) = first_update {
+                    yield update;
+                    loop {
                         let Some(request) = inbound.message().await? else {
-                            return Ok(None);
+                            break 'query;
                         };
-                        match Box::pin(service.advance_query_run(*run, request)).await? {
-                            QueryRunStep::Continue { run, update } => {
-                                Ok(Some((update, (Some(run), inbound, service))))
+                        match request.frame {
+                            Some(k::query_run_request::Frame::EmbeddingNeeds(input)) => {
+                                service
+                                    .require_historical_embedding(
+                                        &bound,
+                                        &input.subject_id,
+                                        "embedding discovery",
+                                    )
+                                    .await?;
+                                let needs = service
+                                    .embedding_needs(input, bound.read_context.historical_view())
+                                    .await
+                                    .map_err(status)?;
+                                yield k::QueryRunUpdate {
+                                    frame: Some(k::query_run_update::Frame::EmbeddingNeeds(needs)),
+                                };
                             }
-                            QueryRunStep::Complete(update) => {
-                                Ok(Some((update, (None, inbound, service))))
+                            Some(k::query_run_request::Frame::CommitEmbedding(input)) => {
+                                service
+                                    .require_historical_embedding(
+                                        &bound,
+                                        &input.subject_id,
+                                        "embedding commit",
+                                    )
+                                    .await?;
+                                service
+                                    .commit_embedding(input, bound.read_context.historical_view())
+                                    .await
+                                    .map_err(status)?;
+                                yield k::QueryRunUpdate {
+                                    frame: Some(k::query_run_update::Frame::EmbeddingCommitted(())),
+                                };
                             }
+                            Some(k::query_run_request::Frame::Embedding(input)) => {
+                                bound = service.apply_embedding_result(bound, host_policy, input)?;
+                                break;
+                            }
+                            frame => Err(unexpected_query_frame(frame))?,
                         }
-                    },
-                );
-                Box::pin(initial.chain(continuation))
+                    }
+                }
+
+                bound = service
+                    .activate_bound_query(bound, &plan)
+                    .await
+                    .map_err(status)?;
+
+                let concept_host = host_policy.concept_enrichment;
+                let concept_requested = !bound.source_query.is_exact_read()
+                    && bound.concept_enrichment == nous_runtime::ConceptEnrichment::Model
+                    && bound.source_query.capabilities.query_concept_enrichment
+                        != RequirementStrength::Forbidden;
+                let concept_handoff = concept_requested
+                    && concept_host.requirement != RequirementStrength::Forbidden
+                    && concept_host.configured;
+                if concept_handoff {
+                    let update = service
+                        .concept_update(&bound, host_policy)
+                        .await
+                        .map_err(status)?;
+                    yield update;
+                    let Some(request) = inbound.message().await? else {
+                        break 'query;
+                    };
+                    let input = match request.frame {
+                        Some(k::query_run_request::Frame::Concept(input)) => input,
+                        frame => Err(unexpected_query_frame(frame))?,
+                    };
+                    bound = service.apply_concept_result(
+                        bound,
+                        host_policy,
+                        input,
+                    )?;
+                } else {
+                    bound.activation.frozen = true;
+                }
+
+                let execution = service
+                    .execute_query(bound, &plan, host_policy)
+                    .await
+                    .map_err(status)?;
+                let rerank_expected = rerank_expected(&execution, host_policy);
+                let has_resources = !execution.result.resource_actions.is_empty();
+
+                if rerank_expected || has_resources {
+                    service
+                        .0
+                        .cognition
+                        .ensure_read_context_current(&execution.bound.read_context)
+                        .await
+                        .map_err(status)?;
+                    service
+                        .0
+                        .cognition
+                        .validate_query_execution_capacity(&execution)
+                        .map_err(status)?;
+                    let baseline =
+                        super::query_projection::query_response(execution.result.clone(), None);
+                    let update = k::QueryRunUpdate {
+                        frame: Some(k::query_run_update::Frame::Finalize(k::QueryFinalizeWork {
+                            baseline: Some(baseline),
+                            rerank_query: execution.bound.representation.text.clone(),
+                            rerank_candidate_limit: host_policy.rerank_candidate_limit as u32,
+                            rerank_expected,
+                            rerank_requirement: wire_requirement(host_policy.rerank.requirement),
+                        })),
+                    };
+                    yield update;
+                    let Some(request) = inbound.message().await? else {
+                        break 'query;
+                    };
+                    let input = match request.frame {
+                        Some(k::query_run_request::Frame::Finalize(input)) => input,
+                        frame => Err(unexpected_query_frame(frame))?,
+                    };
+                    let complete = service
+                        .finalize_query_execution(execution, &plan, host_policy, input)
+                        .await?;
+                    drop(slot);
+                    yield complete;
+                } else {
+                    let completed = service
+                        .0
+                        .cognition
+                        .complete_query_execution(execution)
+                        .await
+                        .map_err(status)?;
+                    let nous_runtime::QueryExecution {
+                        read_lease,
+                        bound: completed_bound,
+                        result,
+                        ..
+                    } = completed;
+                    let inspection = super::query_projection::inspect_bound_query_with_plan(
+                        &completed_bound,
+                        &plan,
+                    )
+                    .map_err(status)?;
+                    let response =
+                        super::query_projection::query_response(result, Some(inspection));
+                    service
+                        .0
+                        .cognition
+                        .ensure_read_context_current(&completed_bound.read_context)
+                        .await
+                        .map_err(status)?;
+                    drop(read_lease);
+                    drop(completed_bound);
+                    drop(slot);
+                    yield k::QueryRunUpdate {
+                        frame: Some(k::query_run_update::Frame::Complete(response)),
+                    };
+                }
             }
         };
+        let stream: Self::RunQueryStream = Box::pin(updates);
         Ok(Response::new(stream))
     }
 }
 
 impl KernelService {
-    async fn start_query_run(&self, input: k::QueryRunStart) -> Result<QueryRunStep> {
+    async fn start_query_run(
+        &self,
+        input: k::QueryRunStart,
+    ) -> Result<(
+        BoundQuery,
+        QueryPlan,
+        QueryRunHostPolicy,
+        tokio::sync::OwnedSemaphorePermit,
+        bool,
+    )> {
         let mut bound = self
             .bind_query_request(required(input.query, "query")?)
             .await?;
@@ -178,12 +332,9 @@ impl KernelService {
                 detail: None,
             });
         }
-        let context = self.query_run_context(&bound, plan, effective_host)?;
-        if embedding_handoff {
-            self.embedding_update(bound, context).await
-        } else {
-            self.activate_and_advance(bound, context).await
-        }
+        let limit = bound.config_snapshot.get(nous_runtime::QUERY_SLOTS)?;
+        let slot = self.0.cognition.acquire_query_slot(limit)?;
+        Ok((bound, plan, effective_host, slot, embedding_handoff))
     }
 
     async fn bind_query_request(&self, query: p::QueryRequest) -> Result<BoundQuery> {
@@ -199,95 +350,32 @@ impl KernelService {
         Ok(bound)
     }
 
-    fn query_run_context(
+    async fn require_historical_embedding(
         &self,
         bound: &BoundQuery,
-        plan: QueryPlan,
-        host_policy: QueryRunHostPolicy,
-    ) -> Result<QueryRunContext> {
-        let limit = bound.config_snapshot.get(nous_runtime::QUERY_SLOTS)?;
-        let slot = self.0.cognition.acquire_query_slot(limit)?;
-        Ok(QueryRunContext::new(plan, host_policy, slot))
-    }
-
-    async fn advance_query_run(
-        &self,
-        run: QueryRun,
-        request: k::QueryRunRequest,
-    ) -> std::result::Result<QueryRunStep, Status> {
-        match request.frame {
-            Some(k::query_run_request::Frame::EmbeddingNeeds(input)) => {
-                self.list_historical_embedding_needs(run, input).await
-            }
-            Some(k::query_run_request::Frame::CommitEmbedding(input)) => {
-                self.commit_historical_embedding(run, input).await
-            }
-            Some(k::query_run_request::Frame::Embedding(input)) => {
-                Box::pin(self.apply_embedding_result(run, input)).await
-            }
-            Some(k::query_run_request::Frame::Concept(input)) => {
-                self.apply_concept_result(run, input).await
-            }
-            Some(k::query_run_request::Frame::Finalize(input)) => {
-                self.finalize_query_run(run, input).await
-            }
-            Some(k::query_run_request::Frame::Start(_)) | None => Err(Status::invalid_argument(
-                "query workflow continuation frame is required",
-            )),
+        subject_id: &str,
+        operation: &str,
+    ) -> std::result::Result<(), Status> {
+        if !bound.read_context.is_historical()
+            || SubjectId(id(subject_id).map_err(status)?) != bound.read_context.subject
+        {
+            return Err(Status::invalid_argument(format!(
+                "{operation} does not match the bound historical query"
+            )));
         }
-    }
-
-    async fn list_historical_embedding_needs(
-        &self,
-        run: QueryRun,
-        input: k::EmbeddingNeedsRequest,
-    ) -> std::result::Result<QueryRunStep, Status> {
-        let (bound, context) = self
-            .historical_embedding_run(run, &input.subject_id, "embedding discovery")
-            .await?;
-        let needs = self
-            .embedding_needs(input, bound.read_context.historical_view())
+        self.0
+            .cognition
+            .ensure_read_context_current(&bound.read_context)
             .await
-            .map_err(status)?;
-        let update = k::QueryRunUpdate {
-            frame: Some(k::query_run_update::Frame::EmbeddingNeeds(needs)),
-        };
-        Ok(QueryRunStep::Continue {
-            run: Box::new(QueryRun::Embedding { bound, context }),
-            update,
-        })
+            .map_err(status)
     }
 
-    async fn commit_historical_embedding(
+    fn apply_embedding_result(
         &self,
-        run: QueryRun,
-        input: k::CommitEmbeddingRequest,
-    ) -> std::result::Result<QueryRunStep, Status> {
-        let (bound, context) = self
-            .historical_embedding_run(run, &input.subject_id, "embedding commit")
-            .await?;
-        self.commit_embedding(input, bound.read_context.historical_view())
-            .await
-            .map_err(status)?;
-        let update = k::QueryRunUpdate {
-            frame: Some(k::query_run_update::Frame::EmbeddingCommitted(())),
-        };
-        Ok(QueryRunStep::Continue {
-            run: Box::new(QueryRun::Embedding { bound, context }),
-            update,
-        })
-    }
-
-    async fn apply_embedding_result(
-        &self,
-        run: QueryRun,
+        mut bound: BoundQuery,
+        host_policy: QueryRunHostPolicy,
         value: k::QueryEmbeddingResult,
-    ) -> std::result::Result<QueryRunStep, Status> {
-        let QueryRun::Embedding { mut bound, context } = run else {
-            return Err(Status::invalid_argument(
-                "query embedding result is not expected at this stage",
-            ));
-        };
+    ) -> std::result::Result<BoundQuery, Status> {
         match value.outcome {
             Some(k::query_embedding_result::Outcome::Material(material)) => {
                 let materials = self
@@ -303,7 +391,7 @@ impl KernelService {
                 });
             }
             Some(k::query_embedding_result::Outcome::Failure(failure)) => {
-                if context.host_policy().embedding.requirement == RequirementStrength::Required {
+                if host_policy.embedding.requirement == RequirementStrength::Required {
                     return Err(rpc_status(failure));
                 }
                 bound.activation.degradation.push(Degradation {
@@ -317,47 +405,15 @@ impl KernelService {
                 ));
             }
         }
-        self.activate_and_advance(bound, context)
-            .await
-            .map_err(status)
+        Ok(bound)
     }
 
-    async fn historical_embedding_run(
+    fn apply_concept_result(
         &self,
-        run: QueryRun,
-        subject_id: &str,
-        operation: &str,
-    ) -> std::result::Result<(BoundQuery, QueryRunContext), Status> {
-        let QueryRun::Embedding { bound, context } = run else {
-            return Err(Status::invalid_argument(format!(
-                "{operation} is only valid during embedding work"
-            )));
-        };
-        if !bound.read_context.is_historical()
-            || SubjectId(id(subject_id).map_err(status)?) != bound.read_context.subject
-        {
-            return Err(Status::invalid_argument(format!(
-                "{operation} does not match the bound historical query"
-            )));
-        }
-        self.0
-            .cognition
-            .ensure_read_context_current(&bound.read_context)
-            .await
-            .map_err(status)?;
-        Ok((bound, context))
-    }
-
-    async fn apply_concept_result(
-        &self,
-        run: QueryRun,
+        mut bound: BoundQuery,
+        host_policy: QueryRunHostPolicy,
         value: k::QueryConceptResult,
-    ) -> std::result::Result<QueryRunStep, Status> {
-        let QueryRun::Concept { mut bound, context } = run else {
-            return Err(Status::invalid_argument(
-                "query concept result is not expected at this stage",
-            ));
-        };
+    ) -> std::result::Result<BoundQuery, Status> {
         match value.outcome {
             Some(k::query_concept_result::Outcome::Output(output)) => {
                 if value.model_calls == 0 || value.model_calls > 4 {
@@ -390,9 +446,7 @@ impl KernelService {
                 bound.activation.model_calls = value.model_calls as usize;
             }
             Some(k::query_concept_result::Outcome::Failure(failure)) => {
-                if context.host_policy().concept_enrichment.requirement
-                    == RequirementStrength::Required
-                {
+                if host_policy.concept_enrichment.requirement == RequirementStrength::Required {
                     return Err(rpc_status(failure));
                 }
                 bound.activation.model_calls = value.model_calls.min(4) as usize;
@@ -408,23 +462,17 @@ impl KernelService {
             }
         }
         bound.activation.frozen = true;
-        self.execute_and_advance(bound, context)
-            .await
-            .map_err(status)
+        Ok(bound)
     }
 
-    async fn finalize_query_run(
+    async fn finalize_query_execution(
         &self,
-        run: QueryRun,
+        mut execution: QueryExecution,
+        plan: &QueryPlan,
+        host_policy: QueryRunHostPolicy,
         value: k::QueryFinalizeResult,
-    ) -> std::result::Result<QueryRunStep, Status> {
-        let QueryRun::Finalize { execution, context } = run else {
-            return Err(Status::invalid_argument(
-                "query finalization result is not expected at this stage",
-            ));
-        };
-        let rerank_expected = rerank_expected(&execution, context.host_policy());
-        let mut run = QueryRun::finalize(execution, context);
+    ) -> std::result::Result<k::QueryRunUpdate, Status> {
+        let rerank_expected = rerank_expected(&execution, host_policy);
         let rerank = value.rerank.unwrap_or_default();
         let mut order = Vec::new();
         match rerank.outcome {
@@ -444,22 +492,22 @@ impl KernelService {
             }
             Some(k::query_rerank_result::Outcome::Failure(failure)) => {
                 if rerank_expected
-                    && run.host_policy().rerank.requirement == RequirementStrength::Required
+                    && host_policy.rerank.requirement == RequirementStrength::Required
                 {
                     return Err(rpc_status(failure));
                 }
                 if rerank_expected {
-                    add_degradation(&mut run, "query_rerank_unavailable");
+                    add_degradation(&mut execution.bound, "query_rerank_unavailable");
                 }
             }
             Some(k::query_rerank_result::Outcome::NotRequested(_)) | None => {
                 if rerank_expected
-                    && run.host_policy().rerank.requirement == RequirementStrength::Required
+                    && host_policy.rerank.requirement == RequirementStrength::Required
                 {
                     return Err(status(capability_error("model.query_rerank")));
                 }
                 if rerank_expected {
-                    add_degradation(&mut run, "query_rerank_unavailable");
+                    add_degradation(&mut execution.bound, "query_rerank_unavailable");
                 }
             }
         }
@@ -480,16 +528,16 @@ impl KernelService {
             })
             .collect::<Result<Vec<_>>>()
             .map_err(status)?;
-        let plan = run.plan().clone();
-        let inspected = super::query_projection::inspect_bound_query_with_plan(run.bound(), &plan)
-            .map_err(status)?;
-        let subject = run.bound().read_context.subject;
-        let read_context = run.bound().read_context.clone();
+        let inspected =
+            super::query_projection::inspect_bound_query_with_plan(&execution.bound, plan)
+                .map_err(status)?;
+        let subject = execution.bound.read_context.subject;
+        let read_context = execution.bound.read_context.clone();
         let contributors = self.contributors(subject).await.map_err(status)?;
         let result = self
             .0
             .cognition
-            .finish_query_run(run, order, external_results, contributors)
+            .finish_query_execution(execution, order, external_results, contributors)
             .await
             .map_err(status)?;
         let response = super::query_projection::query_response(result, Some(inspected));
@@ -498,50 +546,43 @@ impl KernelService {
             .ensure_read_context_current(&read_context)
             .await
             .map_err(status)?;
-        Ok(QueryRunStep::Complete(k::QueryRunUpdate {
+        Ok(k::QueryRunUpdate {
             frame: Some(k::query_run_update::Frame::Complete(response)),
-        }))
+        })
     }
 
     async fn embedding_update(
         &self,
-        bound: BoundQuery,
-        context: QueryRunContext,
-    ) -> Result<QueryRunStep> {
+        bound: &BoundQuery,
+        host_policy: QueryRunHostPolicy,
+    ) -> Result<k::QueryRunUpdate> {
         self.0
             .cognition
             .ensure_read_context_current(&bound.read_context)
             .await?;
         let config = self.embedding_config()?;
-        let update = k::QueryRunUpdate {
+        Ok(k::QueryRunUpdate {
             frame: Some(k::query_run_update::Frame::Embedding(
                 k::QueryEmbeddingWork {
                     representation: bound.representation.text.clone(),
                     config: Some(config),
                     historical_view: bound.read_context.is_historical(),
-                    effective_requirement: wire_requirement(
-                        context.host_policy().embedding.requirement,
-                    ),
+                    effective_requirement: wire_requirement(host_policy.embedding.requirement),
                 },
             )),
-        };
-        Ok(QueryRunStep::Continue {
-            run: Box::new(QueryRun::embedding(bound, context)),
-            update,
         })
     }
 
-    async fn activate_and_advance(
+    async fn activate_bound_query(
         &self,
         mut bound: BoundQuery,
-        context: QueryRunContext,
-    ) -> Result<QueryRunStep> {
+        plan: &QueryPlan,
+    ) -> Result<BoundQuery> {
         if !bound.source_query.is_exact_read() && bound.activation_view.is_none() {
             use nous_runtime::SharedLaneProvider;
             let (projection, view, activation) =
                 nous_retrieval::with_query_material(Vec::new(), async {
-                    let (projection, view) =
-                        self.0.serving.prepare_query(&bound, context.plan()).await?;
+                    let (projection, view) = self.0.serving.prepare_query(&bound, plan).await?;
                     let activation = view.activate(&bound).await?;
                     Ok::<_, nous_core::Error>((projection, view, activation))
                 })
@@ -550,31 +591,18 @@ impl KernelService {
             bound.activation.degradation.extend(projection.degradation);
             bound.activation_view = Some(view);
         }
-
         self.0
             .cognition
             .ensure_read_context_current(&bound.read_context)
             .await?;
-        let concept_requested = !bound.source_query.is_exact_read()
-            && bound.concept_enrichment == nous_runtime::ConceptEnrichment::Model
-            && bound.source_query.capabilities.query_concept_enrichment
-                != RequirementStrength::Forbidden;
-        let concept_host = context.host_policy().concept_enrichment;
-        if concept_requested
-            && concept_host.requirement != RequirementStrength::Forbidden
-            && concept_host.configured
-        {
-            return self.concept_update(bound, context).await;
-        }
-        bound.activation.frozen = true;
-        self.execute_and_advance(bound, context).await
+        Ok(bound)
     }
 
     async fn concept_update(
         &self,
-        bound: BoundQuery,
-        context: QueryRunContext,
-    ) -> Result<QueryRunStep> {
+        bound: &BoundQuery,
+        host_policy: QueryRunHostPolicy,
+    ) -> Result<k::QueryRunUpdate> {
         self.0
             .cognition
             .ensure_read_context_current(&bound.read_context)
@@ -594,29 +622,23 @@ impl KernelService {
         let temporal_frame = Some(super::query_projection::query_temporal(
             &bound.source_query.temporal_frame,
         ));
-        let update = k::QueryRunUpdate {
+        Ok(k::QueryRunUpdate {
             frame: Some(k::query_run_update::Frame::Concept(k::QueryConceptWork {
                 representation: Some(representation),
                 existing_tags,
                 temporal_frame,
-                effective_requirement: wire_requirement(
-                    context.host_policy().concept_enrichment.requirement,
-                ),
+                effective_requirement: wire_requirement(host_policy.concept_enrichment.requirement),
             })),
-        };
-        Ok(QueryRunStep::Continue {
-            run: Box::new(QueryRun::concept(bound, context)),
-            update,
         })
     }
 
-    async fn execute_and_advance(
+    async fn execute_query(
         &self,
         bound: BoundQuery,
-        context: QueryRunContext,
-    ) -> Result<QueryRunStep> {
-        let plan = context.plan().clone();
-        let host_policy = context.host_policy();
+        plan: &QueryPlan,
+        host_policy: QueryRunHostPolicy,
+    ) -> Result<QueryExecution> {
+        let plan = plan.clone();
         let has_text = !bound.representation.text.trim().is_empty();
         let can_rerank = !bound.source_query.is_exact_read()
             && has_text
@@ -641,7 +663,7 @@ impl KernelService {
         let mut execution = Box::pin(nous_retrieval::with_query_material(
             materials,
             self.0
-                .execute_bound_query_with_plan(bound, plan.clone(), pool_limit),
+                .execute_bound_query_with_plan(bound, plan, pool_limit),
         ))
         .await?;
         let rerank_candidates = execution
@@ -676,47 +698,7 @@ impl KernelService {
         {
             return Err(capability_error("model.query_rerank"));
         }
-        let has_resources = !execution.result.resource_actions.is_empty();
-        if rerank_expected || has_resources {
-            self.0
-                .cognition
-                .ensure_read_context_current(&execution.bound.read_context)
-                .await?;
-            self.0
-                .cognition
-                .validate_query_execution_capacity(&execution)?;
-            let baseline = super::query_projection::query_response(execution.result.clone(), None);
-            let rerank_query = execution.bound.representation.text.clone();
-            let rerank_requirement = wire_requirement(host_policy.rerank.requirement);
-            let update = k::QueryRunUpdate {
-                frame: Some(k::query_run_update::Frame::Finalize(k::QueryFinalizeWork {
-                    baseline: Some(baseline),
-                    rerank_query,
-                    rerank_candidate_limit: host_policy.rerank_candidate_limit as u32,
-                    rerank_expected,
-                    rerank_requirement,
-                })),
-            };
-            Ok(QueryRunStep::Continue {
-                run: Box::new(QueryRun::finalize(execution, context)),
-                update,
-            })
-        } else {
-            let completed = self.0.cognition.complete_query_execution(execution).await?;
-            let inspection = super::query_projection::inspect_bound_query_with_plan(
-                &completed.bound,
-                context.plan(),
-            )?;
-            let response =
-                super::query_projection::query_response(completed.result, Some(inspection));
-            self.0
-                .cognition
-                .ensure_read_context_current(&completed.bound.read_context)
-                .await?;
-            Ok(QueryRunStep::Complete(k::QueryRunUpdate {
-                frame: Some(k::query_run_update::Frame::Complete(response)),
-            }))
-        }
+        Ok(execution)
     }
 
     async fn contributors(&self, subject: SubjectId) -> Result<CognitiveContributors<'_>> {
@@ -731,6 +713,29 @@ impl KernelService {
                 .filter(|_| capabilities.memory)
                 .map(|owner| owner as &dyn nous_runtime::CognitiveContributor),
         })
+    }
+}
+
+fn unexpected_query_frame(frame: Option<k::query_run_request::Frame>) -> Status {
+    match frame {
+        Some(k::query_run_request::Frame::EmbeddingNeeds(_)) => {
+            Status::invalid_argument("embedding discovery is only valid during embedding work")
+        }
+        Some(k::query_run_request::Frame::CommitEmbedding(_)) => {
+            Status::invalid_argument("embedding commit is only valid during embedding work")
+        }
+        Some(k::query_run_request::Frame::Embedding(_)) => {
+            Status::invalid_argument("query embedding result is not expected at this stage")
+        }
+        Some(k::query_run_request::Frame::Concept(_)) => {
+            Status::invalid_argument("query concept result is not expected at this stage")
+        }
+        Some(k::query_run_request::Frame::Finalize(_)) => {
+            Status::invalid_argument("query finalization result is not expected at this stage")
+        }
+        Some(k::query_run_request::Frame::Start(_)) | None => {
+            Status::invalid_argument("query workflow continuation frame is required")
+        }
     }
 }
 

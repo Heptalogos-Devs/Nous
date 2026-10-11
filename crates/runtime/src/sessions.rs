@@ -220,25 +220,6 @@ impl CognitiveRuntimeService {
             evicted_count,
         })
     }
-
-    pub async fn resident_reference_strings(&self, session: SessionId) -> Result<HashSet<String>> {
-        Ok(sqlx::query(
-            "SELECT ref_kind,ref_value FROM resident_refs WHERE session_id=$1 AND state IN ('resident','provisional')",
-        )
-        .bind(session.0)
-        .fetch_all(self.store.pool())
-        .await
-        .map_err(db)?
-        .into_iter()
-        .map(|row| {
-            format!(
-                "{}:{}",
-                row.get::<String, _>("ref_kind"),
-                row.get::<String, _>("ref_value")
-            )
-        })
-        .collect())
-    }
 }
 
 fn merge_admissions(admissions: Vec<ResidentAdmission>) -> Result<Vec<ResidentAdmission>> {

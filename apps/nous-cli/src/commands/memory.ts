@@ -1,13 +1,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { defineCommand } from "citty";
+import { commonArgs, stringArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 
-import { create, fromJson, type JsonValue } from "@bufbuild/protobuf";
+import { fromJson, type JsonValue } from "@bufbuild/protobuf";
 import { TemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import {
-  MemoryContentSchema,
-  LinkRevisionsRequestSchema,
-  ReviseMemoryRequestSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { z } from "zod";
 import { nonnegativeInt64, CliError } from "../agent.js";
 import { revisionBasis } from "../mutation-input.js";
@@ -63,19 +61,11 @@ const semanticMemory = z
   })
   .strict();
 
-export async function memoryCommands(
+async function memoryCommon(
   env: CliEnvironment,
-  action?: string,
+  action: string,
   argument?: string,
 ) {
-  const {
-    client,
-    values,
-    subjectId,
-    required,
-    resolveReference,
-    requestPayload,
-  } = env;
   const common = await typedCognition.commonCommand(
     env,
     "memory",
@@ -84,83 +74,169 @@ export async function memoryCommands(
     { list: true, history: true, accessibility: true },
   );
   if (common.handled) return common.value;
-  if (action === "revise") {
-    const ref = await resolveReference(
-      required(argument, "memory reference"),
-      "memory",
-    );
-    const parsed = semanticMemory.parse(
-      await requestPayload(values["request-file"]),
-    );
-    const expectedObjectEpoch = nonnegativeInt64(
-      values["expected-epoch"],
-      "--expected-epoch",
-    );
-    const basis = await Promise.all(
-      parsed.basis.map((item) => revisionBasis(env, item)),
-    );
-    const aboutness = await Promise.all(
-      parsed.aboutness.map(
-        async (text) => (await resolveReference(text, "entity")).value,
-      ),
-    );
-    const tags = await Promise.all(
-      parsed.tags.map(
-        async (text) => (await resolveReference(text, "tag")).value,
-      ),
-    );
-    const groundingOccurrenceId = parsed.grounding_occurrence
-      ? (await resolveReference(parsed.grounding_occurrence, "occurrence"))
-          .value
-      : undefined;
-    const validTime = parsed.valid_time
-      ? fromJson(TemporalExtentSchema, parsed.valid_time as JsonValue)
-      : undefined;
-    const input = create(MemoryContentSchema, {
-      cognitiveRole: parsed.cognitive_role,
-      formationMode: parsed.formation_mode,
-      groundingOccurrenceId,
-      semanticRole: parsed.semantic_role,
-      text: parsed.text,
-      title: parsed.title,
-      basis,
-      aboutness,
-      tags,
-      validTime,
-      epistemicClass: parsed.epistemic_class,
-    });
-    return client.memory.revise(
-      create(ReviseMemoryRequestSchema, {
-        operationId: values["operation-id"] ?? crypto.randomUUID(),
-        subjectId,
-        memoryId: ref.value,
-        expectedObjectEpoch,
-        input,
-        intent: parsed.intent,
-      }),
-    );
-  }
-  if (action === "link") {
-    const from = await resolveReference(
-      required(values.from, "--from exact Memory revision"),
-      "memory_revision",
-    );
-    const to = await resolveReference(
-      required(values.to, "--to exact Memory revision"),
-      "memory_revision",
-    );
-    return client.memory.linkRevisions(
-      create(LinkRevisionsRequestSchema, {
-        operationId: values["operation-id"] ?? crypto.randomUUID(),
-        subjectId,
-        fromRevisionId: from.value,
-        toRevisionId: to.value,
-        relation: required(values.relation, "--relation"),
-      }),
-    );
-  }
-  throw new CliError(
-    "INVALID_ARGUMENT",
-    "Use memory list|get|revision|history|revise|suppress|restore|withdraw|reaccept|purge|accessibility|link",
+  throw new CliError("INTERNAL_FAILURE", "Memory command is not handled");
+}
+
+const memoryList = (env: CliEnvironment) => memoryCommon(env, "list");
+const memoryGet = (env: CliEnvironment, argument?: string) =>
+  memoryCommon(env, "get", argument);
+const memoryRevision = (env: CliEnvironment, argument?: string) =>
+  memoryCommon(env, "revision", argument);
+const memoryHistory = (env: CliEnvironment, argument?: string) =>
+  memoryCommon(env, "history", argument);
+const memorySuppress = (env: CliEnvironment, argument?: string) =>
+  memoryCommon(env, "suppress", argument);
+const memoryRestore = (env: CliEnvironment, argument?: string) =>
+  memoryCommon(env, "restore", argument);
+const memoryWithdraw = (env: CliEnvironment, argument?: string) =>
+  memoryCommon(env, "withdraw", argument);
+const memoryReaccept = (env: CliEnvironment, argument?: string) =>
+  memoryCommon(env, "reaccept", argument);
+const memoryPurge = (env: CliEnvironment, argument?: string) =>
+  memoryCommon(env, "purge", argument);
+const memoryAccessibility = (env: CliEnvironment, argument?: string) =>
+  memoryCommon(env, "accessibility", argument);
+const memoryRevise = async (env: CliEnvironment, argument?: string) => {
+  const {
+    client,
+    values,
+    subjectId,
+    required,
+    resolveReference,
+    requestPayload,
+  } = env;
+  const ref = await resolveReference(
+    required(argument, "memory reference"),
+    "memory",
   );
+  const parsed = semanticMemory.parse(
+    await requestPayload(values["request-file"]),
+  );
+  const expectedObjectEpoch = nonnegativeInt64(
+    values["expected-epoch"],
+    "--expected-epoch",
+  );
+  const basis = await Promise.all(
+    parsed.basis.map((item) => revisionBasis(env, item)),
+  );
+  const aboutness = await Promise.all(
+    parsed.aboutness.map(
+      async (text) => (await resolveReference(text, "entity")).value,
+    ),
+  );
+  const tags = await Promise.all(
+    parsed.tags.map(
+      async (text) => (await resolveReference(text, "tag")).value,
+    ),
+  );
+  const groundingOccurrenceId = parsed.grounding_occurrence
+    ? (await resolveReference(parsed.grounding_occurrence, "occurrence")).value
+    : undefined;
+  const validTime = parsed.valid_time
+    ? fromJson(TemporalExtentSchema, parsed.valid_time as JsonValue)
+    : undefined;
+  const input = {
+    cognitiveRole: parsed.cognitive_role,
+    formationMode: parsed.formation_mode,
+    groundingOccurrenceId,
+    semanticRole: parsed.semantic_role,
+    text: parsed.text,
+    title: parsed.title,
+    basis,
+    aboutness,
+    tags,
+    validTime,
+    epistemicClass: parsed.epistemic_class,
+  };
+  return client.memory.revise({
+    operationId: values["operation-id"] ?? crypto.randomUUID(),
+    subjectId,
+    memoryId: ref.value,
+    expectedObjectEpoch,
+    input,
+    intent: parsed.intent,
+  });
+};
+const memoryLink = async (env: CliEnvironment) => {
+  const { client, values, subjectId, required, resolveReference } = env;
+  const from = await resolveReference(
+    required(values.from, "--from exact Memory revision"),
+    "memory_revision",
+  );
+  const to = await resolveReference(
+    required(values.to, "--to exact Memory revision"),
+    "memory_revision",
+  );
+  return client.memory.linkRevisions({
+    operationId: values["operation-id"] ?? crypto.randomUUID(),
+    subjectId,
+    fromRevisionId: from.value,
+    toRevisionId: to.value,
+    relation: required(values.relation, "--relation"),
+  });
+};
+
+export function createMemoryCommand(leaf: CliLeaf) {
+  return defineCommand({
+    args: commonArgs,
+    subCommands: {
+      list: leaf(
+        { ...stringArgs("page-size", "page-token", "status") },
+        memoryList,
+        { description: "List paged Memories for the selected Subject." },
+      ),
+      get: leaf({}, memoryGet, { parameters: ["<Memory reference>"] }),
+      revision: leaf({}, memoryRevision, {
+        parameters: ["<exact Memory revision reference>"],
+      }),
+      history: leaf(
+        { ...stringArgs("page-size", "page-token") },
+        memoryHistory,
+        { parameters: ["<Memory reference>"] },
+      ),
+      revise: leaf(
+        { ...stringArgs("request-file", "expected-epoch", "operation-id") },
+        memoryRevise,
+        {
+          description:
+            "Revise Memory using semantic TOML and the expected object epoch.",
+          parameters: ["<Memory reference>"],
+        },
+      ),
+      suppress: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        memorySuppress,
+        { parameters: ["<Memory reference>"] },
+      ),
+      restore: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        memoryRestore,
+        { parameters: ["<Memory reference>"] },
+      ),
+      withdraw: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        memoryWithdraw,
+        { parameters: ["<Memory reference>"] },
+      ),
+      reaccept: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        memoryReaccept,
+        { parameters: ["<Memory reference>"] },
+      ),
+      purge: leaf(
+        { ...stringArgs("expected-epoch", "operation-id") },
+        memoryPurge,
+        { parameters: ["<Memory reference>"] },
+      ),
+      accessibility: leaf(
+        { ...stringArgs("mode", "expected-epoch", "operation-id") },
+        memoryAccessibility,
+        { parameters: ["<Memory reference>"] },
+      ),
+      link: leaf(
+        { ...stringArgs("from", "to", "relation", "operation-id") },
+        memoryLink,
+      ),
+    },
+  });
 }

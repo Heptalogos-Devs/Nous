@@ -5,29 +5,13 @@
 mod test_support;
 use nous_core::{MaintenanceClaim, OperationId, WorkflowSnapshot};
 use nous_persistence::{WorkflowRecord, WorkflowReservation};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::{workflow_payload as payload, workflow_snapshot as snapshot};
 
 #[tokio::test]
 async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
     let (root, url, _postgres) = test_support::database().await;
     let runtime = test_support::open_runtime(&url, &root).await;
-    let subject = runtime
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: nous_core::SubjectId::default(),
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&runtime).await;
     let key = OperationId::new().0.to_string();
     let first = runtime
         .store
@@ -79,7 +63,7 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
             Some(&payload(serde_json::json!({"text":"validated proposal"}))),
             None,
             None,
-            &[],
+            None,
         )
         .await
         .unwrap();
@@ -122,7 +106,7 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
             None,
             Some(&outcome),
             None,
-            &[],
+            None,
         )
         .await
         .unwrap();
@@ -178,7 +162,7 @@ async fn assert_child_result_purge_before_host_ack(
             )),
             None,
             None,
-            &[child],
+            Some(child),
         )
         .await
         .unwrap();
@@ -225,7 +209,7 @@ async fn assert_child_result_purge_before_host_ack(
                 Some(&payload(serde_json::json!({"text":"resurrect"}))),
                 None,
                 None,
-                &[]
+                None,
             )
             .await
             .is_err()
@@ -285,7 +269,7 @@ async fn assert_maintenance_workflow_uses_bounded_parent_opportunity(
             Some(&payload(serde_json::json!({"action":"no_change"}))),
             None,
             None,
-            &[],
+            None,
         )
         .await
         .unwrap();
@@ -295,22 +279,7 @@ async fn assert_maintenance_workflow_uses_bounded_parent_opportunity(
 async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot() {
     let (root, url, _postgres) = test_support::database().await;
     let runtime = test_support::open_runtime(&url, &root).await;
-    let subject = runtime
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: nous_core::SubjectId::default(),
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&runtime).await;
     let need_id = runtime
         .cognition
         .enqueue_maintenance(nous_runtime::MaintenanceRequest {
@@ -391,7 +360,7 @@ async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot(
             Some(&payload(serde_json::json!({"stale":"must not save"}))),
             None,
             None,
-            &[],
+            None,
         )
         .await;
     assert!(
@@ -450,7 +419,7 @@ async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot(
             Some(&payload(serde_json::json!({"action":"no_change"}))),
             None,
             None,
-            &[],
+            None,
         )
         .await
         .unwrap();

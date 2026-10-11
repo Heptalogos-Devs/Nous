@@ -78,35 +78,7 @@ pub(crate) async fn open_runtime(url: &str, root: &TempDir) -> NousRuntime {
 }
 
 pub(crate) async fn open_memory_only_runtime(url: &str, root: &TempDir) -> NousRuntime {
-    NousRuntime::open(RuntimeOptions {
-        postgres_url: url.into(),
-        max_connections: 4,
-        acquire_timeout_ms: 15000,
-        object_root: root.path().join("objects").to_string_lossy().into_owned(),
-        serving_options: ServingOptions {
-            root: root.path().join("serving").to_path_buf(),
-            lexical: false,
-            dense: false,
-            topology: false,
-            memory_enabled: true,
-        },
-        embedding: None,
-        stored_embedding: None,
-        core_descriptors: vec![],
-        deployment_document: serde_json::json!({
-                "capabilities": {
-                    "process": { "memory": true },
-                    "subject_defaults": { "memory": true }
-                },
-                "serving": {
-                    "lexical": { "enabled": false },
-                    "dense": { "enabled": false },
-                    "topology": { "enabled": false }
-                }
-        }),
-    })
-    .await
-    .expect("open memory-only runtime")
+    open_runtime_with_serving(url, root, false, false, false).await
 }
 
 pub(crate) async fn open_runtime_with_serving(
@@ -259,51 +231,27 @@ impl nous_retrieval::TextEmbeddingProvider for LongitudinalEmbedding {
     }
 }
 
-pub(crate) fn query_run(
+pub(crate) fn query_slot(
     cognition: &nous_runtime::CognitiveRuntimeService,
-    execution: nous_runtime::QueryExecution,
-) -> nous_runtime::QueryRun {
-    use nous_runtime::{
-        QueryHostPlan, QueryHostRole, QueryPlan, QueryRunContext, QueryRunHostPolicy,
-    };
-    let role = QueryHostRole {
-        configured: true,
-        requirement: nous_core::RequirementStrength::Optional,
-    };
-    let host_policy = QueryRunHostPolicy::for_query(
-        &execution.bound.source_query,
-        QueryHostPlan {
-            embedding: role,
-            concept_enrichment: role,
-            rerank: role,
-            rerank_candidate_limit: 64,
-        },
-    )
-    .unwrap();
-    let plan = QueryPlan::for_bound_query(&execution.bound);
-    let limit = execution
-        .bound
+    bound: &nous_runtime::BoundQuery,
+) -> tokio::sync::OwnedSemaphorePermit {
+    let limit = bound
         .config_snapshot
         .get(nous_runtime::QUERY_SLOTS)
         .unwrap();
-    let slot = cognition.acquire_query_slot(limit).unwrap();
-    nous_runtime::QueryRun::finalize(execution, QueryRunContext::new(plan, host_policy, slot))
+    cognition.acquire_query_slot(limit).unwrap()
 }
 
-pub(crate) async fn finish_query_run(
+pub(crate) async fn finish_query_execution(
     cognition: &nous_runtime::CognitiveRuntimeService,
     execution: nous_runtime::QueryExecution,
     order: Vec<(nous_core::CognitiveRef, f64)>,
     external_results: Vec<nous_core::ExternalResourceResult>,
     contributors: nous_runtime::CognitiveContributors<'_>,
 ) -> nous_core::Result<nous_core::CognitiveQueryResult> {
+    let _slot = query_slot(cognition, &execution.bound);
     cognition
-        .finish_query_run(
-            query_run(cognition, execution),
-            order,
-            external_results,
-            contributors,
-        )
+        .finish_query_execution(execution, order, external_results, contributors)
         .await
 }
 

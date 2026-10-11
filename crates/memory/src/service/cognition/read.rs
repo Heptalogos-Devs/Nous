@@ -12,15 +12,9 @@ pub(in crate::service) struct CognitionSelection {
     pub revision: CognitionRevisionHeader,
 }
 
-impl CognitionSelection {
-    pub fn revision_ref(&self) -> &CognitiveRef {
-        &self.revision.revision_ref
-    }
-}
-
 /// Select current heads and exact revisions once for a complete owner read.
 /// Family loaders receive this shared state and only decode their typed payload.
-pub(in crate::service) async fn select_cognitions_in_tx(
+async fn select_cognitions_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subject: SubjectId,
     references: &[CognitiveRef],
@@ -148,13 +142,6 @@ impl MemoryService {
         context: &ReadContext,
         references: &[CognitiveRef],
     ) -> Result<HashMap<CognitiveRef, CognitionView>> {
-        if references.len() > 256 {
-            return Err(Error::new(
-                ErrorOwner::Memory,
-                ErrorCode::InvalidRequest,
-                "Cognition read batch exceeds 256 references",
-            ));
-        }
         let historical = context.historical_view();
         let mut requested = Vec::with_capacity(references.len());
         for reference in references {
@@ -194,12 +181,14 @@ impl MemoryService {
         let episodes = unique_selections(&selections, CognitionKind::Episode);
         let journals = unique_selections(&selections, CognitionKind::Journal);
         let policy = resolve_accessibility_policy(context.config_snapshot.as_ref())?;
+        // Historical activation only sees uses and age at the frozen cutoff.
+        let memory_clock = historical.map_or(context.temporal.clock_now, |view| view.as_of);
         let memory_views = self
             .memory_views_for_selections_in_tx(
                 &mut tx,
                 context.subject,
                 &memories,
-                context.temporal.clock_now,
+                memory_clock,
                 policy,
                 historical,
             )
@@ -220,22 +209,22 @@ impl MemoryService {
             let Some(selection) = selections.get(&effective) else {
                 continue;
             };
-            let revision = selection.revision.revision_ref.clone();
+            let revision_id = selection.revision.revision_id();
             let view = match kind {
                 CognitionKind::Memory => memory_views
-                    .get(&revision)
+                    .get(&revision_id)
                     .cloned()
                     .map(CognitionView::Memory),
                 CognitionKind::CognitiveSchema => schema_views
-                    .get(&revision)
+                    .get(&revision_id)
                     .cloned()
                     .map(CognitionView::CognitiveSchema),
                 CognitionKind::Episode => episode_views
-                    .get(&revision)
+                    .get(&revision_id)
                     .cloned()
                     .map(CognitionView::Episode),
                 CognitionKind::Journal => journal_views
-                    .get(&revision)
+                    .get(&revision_id)
                     .cloned()
                     .map(CognitionView::Journal),
             };
@@ -245,7 +234,7 @@ impl MemoryService {
                 {
                     let current_purge = view.header().lifecycle.purge;
                     let header = historical_cognition_header(
-                        &view.header(),
+                        view.header(),
                         &state.state,
                         &state.head,
                         current_purge,
@@ -364,7 +353,7 @@ impl MemoryService {
     }
 }
 
-pub(in crate::service) fn historical_cognition_header(
+fn historical_cognition_header(
     current: &CognitionHeader,
     state: &serde_json::Value,
     head: &CognitiveRef,
@@ -426,12 +415,10 @@ pub(in crate::service) fn historical_cognition_header(
 fn unique_selections(
     selections: &HashMap<CognitiveRef, CognitionSelection>,
     kind: CognitionKind,
-) -> Vec<CognitionSelection> {
+) -> HashMap<Uuid, CognitionSelection> {
     selections
         .values()
         .filter(|selection| selection.header.kind() == kind)
-        .map(|selection| (selection.revision.revision_ref.clone(), selection.clone()))
-        .collect::<HashMap<_, _>>()
-        .into_values()
+        .map(|selection| (selection.revision.revision_id(), selection.clone()))
         .collect()
 }

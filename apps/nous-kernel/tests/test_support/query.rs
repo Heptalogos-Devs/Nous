@@ -57,32 +57,10 @@ pub(crate) async fn subject(runtime: &nous_kernel::NousRuntime) -> nous_core::Su
 }
 
 pub(crate) fn text_query(subject: nous_core::SubjectId) -> CognitiveQuery {
-    CognitiveQuery {
-        projection: Default::default(),
-        temporal_frame: Default::default(),
-
-        work_context: None,
-        subject,
-        session: None,
-        situation: Default::default(),
-        expression: CognitiveQueryExpr {
-            operation: QueryOperation::Atom,
-            targets: Vec::new(),
-            preferences: Vec::new(),
-            children: Vec::new(),
-            cues: vec![Cue::Text(TextCue {
-                text: "diagnostic phrase".into(),
-            })],
-            constraints: Default::default(),
-        },
-        exploration: Default::default(),
-        resources: Default::default(),
-        result_need: ResultNeed {
-            limit: 4,
-            ..Default::default()
-        },
-        effort: Default::default(),
-        capabilities: Default::default(),
-        diagnostics: Default::default(),
-    }
+    let mut query = query(subject);
+    query.expression.cues = vec![Cue::Text(TextCue {
+        text: "diagnostic phrase".into(),
+    })];
+    query.result_need.limit = 4;
+    query
 }

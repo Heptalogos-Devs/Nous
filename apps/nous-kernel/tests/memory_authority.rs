@@ -5,13 +5,17 @@ mod test_support;
 
 use chrono::Utc;
 use nous_core::{CognitiveRef, OperationId, QueryTarget, UseEventId};
+use nous_kernel::transport::KernelService;
 use nous_memory::{
     BasisRole, CognitionAction, CreateSchemaInput, EvidenceLocator, EvidenceRef, RevisionBasis,
     SchemaEvidenceLinkInput, SchemaEvidenceRole, SchemaFormationKind, SchemaScope,
 };
+use nous_protocol::nous::wave::v1alpha1 as p;
 use nous_runtime::{UseFeedback, UseFeedbackEvent, UseKind};
+use p::system_service_server::SystemService;
 use test_support::query::{query, subject};
 use test_support::{database, observation, open_runtime};
+use tonic::Request;
 
 #[tokio::test]
 async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
@@ -105,21 +109,36 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
         suppressed.revision_header().revision_ref,
         CognitiveRef::CognitiveSchemaRevision(revision_id)
     );
-    let (result_kind, result_ref, result_revision, result_epoch): (
-        Option<String>,
-        Option<String>,
-        Option<uuid::Uuid>,
-        Option<i64>,
-    ) = sqlx::query_as("SELECT result_kind,result_ref,result_revision,result_epoch FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2")
-        .bind(subject.0)
-        .bind(suppress_operation.0)
-        .fetch_one(runtime.store.pool())
+    let status = KernelService(runtime.clone())
+        .get_operation_status(Request::new(p::GetOperationStatusRequest {
+            identity: Some(p::get_operation_status_request::Identity::MutationReceipt(
+                p::MutationReceiptIdentity {
+                    subject_id: subject.0.to_string(),
+                    operation_id: suppress_operation.0.to_string(),
+                    operation_kind: "cognition_lifecycle".into(),
+                },
+            )),
+        }))
         .await
-        .unwrap();
-    assert_eq!(result_kind.as_deref(), Some("cognitive_schema"));
-    assert_eq!(result_ref, Some(schema_id.0.to_string()));
-    assert_eq!(result_revision, Some(revision_id.0));
-    assert_eq!(result_epoch, Some(2));
+        .unwrap()
+        .into_inner();
+    assert_eq!(status.state, p::OperationState::Committed as i32);
+    assert_eq!(status.owner, p::ErrorOwner::Concept as i32);
+    assert_eq!(status.results.len(), 1);
+    let result = &status.results[0];
+    assert_eq!(
+        result.reference,
+        Some(p::CognitiveRef {
+            kind: "cognitive_schema".into(),
+            value: schema_id.0.to_string(),
+        })
+    );
+    let expected_revision = revision_id.0.to_string();
+    assert_eq!(
+        result.revision_id.as_deref(),
+        Some(expected_revision.as_str())
+    );
+    assert_eq!(result.object_epoch, Some(2));
     assert!(runtime.query(exact()).await.unwrap().results.is_empty());
     assert!(matches!(
         owner

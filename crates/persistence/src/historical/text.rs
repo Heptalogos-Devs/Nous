@@ -55,81 +55,8 @@ async fn historical_catalog_sources_in(
             .collect(),
         None => view.material_documents.clone(),
     };
-    let (kinds, values): (Vec<_>, Vec<_>) = selected
-        .iter()
-        .chain(material.iter())
-        .map(reference_parts)
-        .unzip();
-    let rows = sqlx::query(r#"
-WITH selected AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), cognition AS (
- SELECT s.kind,s.value,h.revision_id,h.object_kind
- FROM selected s
- JOIN cognition_revision_headers h ON h.revision_id::text=s.value AND (
-     (s.kind='memory_revision' AND h.object_kind='memory')
-  OR (s.kind='cognitive_schema_revision' AND h.object_kind='cognitive_schema')
-  OR (s.kind='episode_revision' AND h.object_kind='episode')
-  OR (s.kind='journal_revision' AND h.object_kind='journal'))
- JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id
- WHERE h.subject_id=$1 AND o.purge_state='normal'
-), catalog AS (
- SELECT c.kind,c.value,r.title,r.representation_text text,NULL::text source_class FROM cognition c JOIN memory_revisions r ON c.object_kind='memory' AND r.memory_revision_id=c.revision_id
- UNION ALL SELECT c.kind,c.value,r.title,r.structural_claim,NULL FROM cognition c JOIN cognitive_schema_revisions r ON c.object_kind='cognitive_schema' AND r.schema_revision_id=c.revision_id
- UNION ALL SELECT c.kind,c.value,r.title,NULL,NULL FROM cognition c JOIN episode_revisions r ON c.object_kind='episode' AND r.episode_revision_id=c.revision_id
- UNION ALL SELECT c.kind,c.value,r.title,COALESCE(r.title,'')||E'\n'||r.narrative||E'\n'||COALESCE((SELECT string_agg(text,E'\n' ORDER BY ordinal) FROM journal_revision_points WHERE journal_revision_id=r.journal_revision_id),''),NULL FROM cognition c JOIN journal_revisions r ON c.object_kind='journal' AND r.journal_revision_id=c.revision_id
- UNION ALL SELECT s.kind,s.value,NULL,NULL,o.source_class FROM selected s JOIN observation_occurrences o ON s.kind='occurrence' AND o.occurrence_id=CASE WHEN s.kind='occurrence' THEN s.value::uuid END LEFT JOIN artifacts a USING(artifact_id) WHERE o.subject_id=$1
- UNION ALL SELECT s.kind,s.value,NULL,NULL,NULL FROM selected s JOIN source_regions r ON s.kind='source_region' AND r.source_region_id=CASE WHEN s.kind='source_region' THEN s.value::uuid END JOIN artifacts a USING(artifact_id) WHERE r.subject_id=$1
- UNION ALL SELECT s.kind,s.value,d.representation_kind,NULL,'derived' FROM selected s JOIN derived_representations d ON s.kind='derived_representation' AND d.derived_representation_id=CASE WHEN s.kind='derived_representation' THEN s.value::uuid END WHERE d.subject_id=$1
- UNION ALL SELECT s.kind,s.value,d.representation_kind,NULL,'derived' FROM selected s JOIN derived_regions r ON s.kind='derived_region' AND r.derived_region_id=CASE WHEN s.kind='derived_region' THEN s.value::uuid END JOIN derived_representations d USING(derived_representation_id) WHERE r.subject_id=$1
-) SELECT * FROM catalog ORDER BY kind,value
-"#).bind(view.subject.0).bind(kinds).bind(values).fetch_all(&mut **tx).await.map_err(database_error)?;
-    let mut sources = Vec::new();
-    for row in rows {
-        let reference = parse_reference(
-            &row.get::<String, _>("kind"),
-            &row.get::<String, _>("value"),
-        )?;
-        sources.push(TextProjectionSource {
-            reference: reference.clone(),
-            text: row.get("text"),
-            title: row.get("title"),
-            source_class: row.get("source_class"),
-            member_fragments: vec![],
-            source_region: match reference {
-                CognitiveRef::SourceRegion(id) => Some(id),
-                _ => None,
-            },
-            entity_refs: vec![],
-            tag_ids: vec![],
-            schema_ids: vec![],
-        });
-    }
-    let episode_ids: Vec<_> = sources
-        .iter()
-        .filter_map(|source| match source.reference {
-            CognitiveRef::EpisodeRevision(id) => Some(id.0),
-            _ => None,
-        })
-        .collect();
-    let rows = sqlx::query("SELECT r.episode_revision_id,r.title,r.boundary_explanation,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_revisions r JOIN cognition_revision_headers h ON h.revision_id=r.episode_revision_id AND h.object_kind='episode' JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id WHERE h.subject_id=$1 AND o.purge_state='normal' AND r.episode_revision_id=ANY($2::uuid[])")
-            .bind(view.subject.0).bind(&episode_ids).fetch_all(&mut **tx).await.map_err(database_error)?;
-    for row in rows {
-        let reference =
-            CognitiveRef::EpisodeRevision(EpisodeRevisionId(row.get("episode_revision_id")));
-        if let Some(source) = sources
-            .iter_mut()
-            .find(|source| source.reference == reference)
-        {
-            source.text = Some(crate::projection::text::episode_representation(&row));
-        }
-    }
-    for source in &mut sources {
-        if matches!(source.reference, CognitiveRef::JournalRevision(_))
-            && let Some(text) = &mut source.text
-        {
-            crate::projection::text::truncate_text(text, 65536);
-        }
-    }
-    Ok(sources)
+    let references = selected.into_iter().chain(material).collect::<Vec<_>>();
+    crate::projection::text::catalog_sources_in(tx, view.subject, &references).await
 }
 
 fn historical_tag_sources(

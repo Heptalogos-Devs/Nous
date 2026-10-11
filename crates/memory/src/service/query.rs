@@ -10,19 +10,6 @@ use nous_runtime::{BoundQuery, CognitiveContributor, QueryPlan};
 use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use uuid::Uuid;
-#[derive(Debug, Clone)]
-pub(super) struct Candidate {
-    pub(super) view: MemoryView,
-}
-#[derive(Debug, Clone)]
-pub(super) struct FinalMemoryState {
-    pub(super) acceptance_state: AcceptanceState,
-    pub(super) integrity_state: IntegrityState,
-    pub(super) suppression_state: SuppressionState,
-    pub(super) purge_state: PurgeState,
-    pub(super) accessibility_mode: AccessibilityMode,
-}
-
 #[async_trait]
 impl CognitiveContributor for MemoryService {
     fn owns(&self, reference: &CognitiveRef) -> bool {
@@ -72,7 +59,15 @@ impl CognitiveContributor for MemoryService {
                 BTreeMap::from([("current_permission_denied".into(), references.len())]),
             ));
         }
-        let memory_references = references
+        let cognition_references = references
+            .iter()
+            .filter(|reference| self.owns(reference))
+            .cloned()
+            .collect::<Vec<_>>();
+        let cognition_views = self
+            .read_cognitions(&bound.read_context, &cognition_references)
+            .await?;
+        let memory_references = cognition_references
             .iter()
             .filter(|reference| {
                 matches!(
@@ -80,49 +75,26 @@ impl CognitiveContributor for MemoryService {
                     CognitiveRef::Memory(_) | CognitiveRef::MemoryRevision(_)
                 )
             })
-            .cloned()
             .collect::<Vec<_>>();
-        let resolved = super::query_support::resolve_memory_references_in_view(
-            self,
-            subject,
-            &memory_references,
-            bound.read_context.historical_view(),
-        )
-        .await?;
-        let revision_ids = resolved
-            .values()
-            .map(|(_, revision)| revision.0)
-            .collect::<Vec<_>>();
-        let revisions = revision_ids
+        let revision_ids = memory_references
             .iter()
-            .copied()
-            .map(MemoryRevisionId)
-            .map(CognitiveRef::MemoryRevision)
+            .filter_map(|reference| match cognition_views.get(*reference) {
+                Some(CognitionView::Memory(view)) => Some(view.revision.header.revision_id()),
+                _ => None,
+            })
             .collect::<Vec<_>>();
-        let views = self
-            .memory_views_for_references_at_policy(
-                subject,
-                &revisions,
-                bound.read_context.temporal.clock_now,
-                resolve_accessibility_policy(&bound.read_context.config_snapshot)?,
-                bound.read_context.historical_view(),
-            )
-            .await?;
         let mut drops = BTreeMap::new();
         let source_objects = self
             .source_objects_for_revisions(subject, &revision_ids)
             .await?;
         let mut hits = Vec::new();
-        for reference in &memory_references {
-            let Some((_, revision)) = resolved.get(reference).copied() else {
-                increment_drop(&mut drops, "not_in_subject");
-                continue;
-            };
-            let Some(view) = views.get(&CognitiveRef::MemoryRevision(revision)).cloned() else {
+        for reference in memory_references {
+            let Some(CognitionView::Memory(view)) = cognition_views.get(reference) else {
                 increment_drop(&mut drops, "not_materialized");
                 continue;
             };
-            if let Some(reason) = super::query_materialization::historical_drop_reason(&view, bound)
+            let revision = MemoryRevisionId(view.revision.header.revision_id());
+            if let Some(reason) = super::query_materialization::historical_drop_reason(view, bound)
             {
                 increment_drop(&mut drops, reason);
                 continue;
@@ -133,13 +105,6 @@ impl CognitiveContributor for MemoryService {
                 binding.bound_ref == *reference
                     || binding.bound_ref == CognitiveRef::MemoryRevision(revision)
             });
-            let state = FinalMemoryState {
-                acceptance_state: view.header.lifecycle.acceptance,
-                integrity_state: view.header.lifecycle.integrity,
-                suppression_state: view.header.lifecycle.suppression,
-                purge_state: view.header.lifecycle.purge,
-                accessibility_mode: view.header.details.accessibility_mode(),
-            };
             if let Some(binding) = bound
                 .exact_bindings
                 .iter()
@@ -155,13 +120,12 @@ impl CognitiveContributor for MemoryService {
                 increment_drop(&mut drops, "stale_revision");
                 continue;
             }
-            let candidate = Candidate { view };
-            if !final_state_filter(&bound.source_query, &candidate, &state, exact, historical) {
-                increment_drop(&mut drops, &lifecycle_drop_reason(&state));
+            if !hard_filter(&bound.source_query, view, exact, historical) {
+                increment_drop(&mut drops, lifecycle_drop_reason(&view.header.lifecycle));
                 continue;
             }
             let hit_reference = CognitiveRef::MemoryRevision(revision);
-            let mut hit = to_hit(&bound.source_query, &candidate, hit_reference);
+            let mut hit = to_hit(&bound.source_query, view, hit_reference);
             hit.preference_refs = super::query_support::canonical_preferences(
                 self,
                 subject,
@@ -174,13 +138,19 @@ impl CognitiveContributor for MemoryService {
             hits.push(hit);
         }
         let (longitudinal_hits, longitudinal_drops) =
-            super::longitudinal_query::materialize_longitudinal(self, bound, references).await?;
+            super::longitudinal_query::materialize_longitudinal(
+                self,
+                bound,
+                references,
+                &cognition_views,
+            )
+            .await?;
         hits.extend(longitudinal_hits);
         for (reason, count) in longitudinal_drops {
             *drops.entry(reason).or_default() += count;
         }
         let (schema_hits, schema_drops) =
-            materialize_schema_revisions(self, bound, references).await?;
+            materialize_schema_revisions(self, bound, references, &cognition_views).await?;
         hits.extend(schema_hits);
         for (reason, count) in schema_drops {
             *drops.entry(reason).or_default() += count;

@@ -116,5 +116,3 @@ export function cliErrorPayload(error: unknown) {
     ...(typeof record.traceId === "string" ? { traceId: record.traceId } : {}),
   };
 }
-
-export { commandInventory } from "./commands/command-descriptors.js";

@@ -40,13 +40,28 @@ impl MemoryService {
                         "Journal commit is in progress",
                     ));
                 }
-                let revision = JournalRevisionId(receipt.result_revision.ok_or_else(|| {
-                    Error::new(
-                        nous_core::ErrorOwner::Memory,
-                        nous_core::ErrorCode::NotFound,
-                        "Journal result was purged",
-                    )
-                })?);
+                let expected_journal = input.target.as_ref().map(|target| target.journal_id);
+                let revision = JournalRevisionId(
+                    receipt
+                        .results
+                        .iter()
+                        .find_map(|result| match &result.reference {
+                            CognitiveRef::Journal(journal)
+                                if expected_journal.is_none()
+                                    || expected_journal == Some(*journal) =>
+                            {
+                                result.revision_id
+                            }
+                            _ => None,
+                        })
+                        .ok_or_else(|| {
+                            Error::new(
+                                nous_core::ErrorOwner::Memory,
+                                nous_core::ErrorCode::NotFound,
+                                "Journal result was purged",
+                            )
+                        })?,
+                );
                 return self.journal_revision(input.subject, revision).await;
             }
             MutationStart::Active(mutation) => mutation,
@@ -131,12 +146,11 @@ impl MemoryService {
             )
             .await?;
         mutation
-            .commit(
-                "journal",
-                Some(&journal.0.to_string()),
-                Some(revision.0),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::Journal(journal),
+                revision.0,
                 None,
-            )
+            )])
             .await?;
         self.journal(input.subject, journal, Some(revision)).await
     }
@@ -162,6 +176,7 @@ impl MemoryService {
         }
         let (kind, start, end) = temporal_columns(&source_extent);
         Self::insert_cognition_revision_header_in(
+            &self.store,
             tx,
             input.subject,
             &CognitionRevisionHeader::new(
@@ -174,22 +189,12 @@ impl MemoryService {
                 recorded,
                 producer,
             ),
+            input.title.as_deref().unwrap_or(""),
         )
         .await?;
         sqlx::query("INSERT INTO journal_revisions(journal_revision_id,revision_intent,title,temporal_scope_kind,temporal_scope_start,temporal_scope_end,narrative) VALUES($1,$2,$3,$4,$5,$6,$7)")
             .bind(revision.0).bind(input.target.as_ref().map(|target|&target.intent)).bind(&input.title).bind(kind).bind(start).bind(end).bind(&input.narrative).execute(&mut **tx).await.map_err(db)?;
         insert_journal_points(tx, revision, &input.points).await?;
-        self.store
-            .ensure_identity_addresses_in(
-                tx,
-                input.subject,
-                &[
-                    CognitiveRef::Journal(journal),
-                    CognitiveRef::JournalRevision(revision),
-                ],
-                input.title.as_deref().unwrap_or(""),
-            )
-            .await?;
         for source in &input.sources {
             sqlx::query("INSERT INTO journal_revision_sources(journal_revision_id,ref_kind,ref_value,source_epoch) VALUES($1,'episode_revision',$2,$3)")
                 .bind(revision.0).bind(source.revision.0.to_string()).bind(source.expected_epoch).execute(&mut **tx).await.map_err(db)?;

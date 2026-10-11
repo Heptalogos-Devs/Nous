@@ -52,108 +52,12 @@ impl MemoryService {
         }
     }
 
-    pub async fn journal_page(
-        &self,
-        subject: SubjectId,
-        journal: Option<JournalId>,
-        limit: i64,
-        last: Option<Uuid>,
-        status: &str,
-    ) -> Result<Vec<JournalView>> {
-        if !(1..=201).contains(&limit) {
-            return Err(Error::new(
-                ErrorOwner::Memory,
-                ErrorCode::InvalidRequest,
-                "Journal page limit is out of bounds",
-            ));
-        }
-        if !["", "accepted", "withdrawn"].contains(&status) {
-            return Err(Error::new(
-                ErrorOwner::Memory,
-                ErrorCode::InvalidRequest,
-                "invalid Journal status filter",
-            ));
-        }
-        self.store.require_subject(subject).await?;
-        let references = if let Some(journal) = journal {
-            sqlx::query_scalar::<_, Uuid>("SELECT revision_id FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind='journal' AND object_id=$2 AND ($3::uuid IS NULL OR revision_id>$3) ORDER BY revision_id LIMIT $4")
-                .bind(subject.0).bind(journal.0).bind(last).bind(limit).fetch_all(self.store.pool()).await.map_err(db)?
-                .into_iter().map(|id| CognitiveRef::JournalRevision(JournalRevisionId(id))).collect::<Vec<_>>()
-        } else {
-            sqlx::query_scalar::<_, Uuid>("SELECT object_id FROM cognition_objects WHERE object_kind='journal' AND subject_id=$1 AND ($2::uuid IS NULL OR object_id>$2) AND ($4='' OR acceptance_state=$4) ORDER BY object_id LIMIT $3")
-                .bind(subject.0).bind(last).bind(limit).bind(status).fetch_all(self.store.pool()).await.map_err(db)?
-                .into_iter().map(|id| CognitiveRef::Journal(JournalId(id))).collect::<Vec<_>>()
-        };
-        let context = self.current_read_context(subject).await?;
-        let views = self.read_cognitions(&context, &references).await?;
-        references
-            .iter()
-            .map(|reference| match views.get(reference) {
-                Some(CognitionView::Journal(view)) => Ok(view.clone()),
-                _ => Err(Error::new(
-                    ErrorOwner::Memory,
-                    ErrorCode::NotFound,
-                    "Journal not found",
-                )),
-            })
-            .collect()
-    }
-
-    pub async fn list_journals(&self, subject: SubjectId) -> Result<Vec<JournalView>> {
-        self.store.require_subject(subject).await?;
-        let references = sqlx::query_scalar::<_, Uuid>("SELECT object_id FROM cognition_objects WHERE object_kind='journal' AND subject_id=$1 ORDER BY created_at,object_id LIMIT 256")
-            .bind(subject.0).fetch_all(self.store.pool()).await.map_err(db)?
-            .into_iter().map(|id| CognitiveRef::Journal(JournalId(id))).collect::<Vec<_>>();
-        let context = self.current_read_context(subject).await?;
-        let views = self.read_cognitions(&context, &references).await?;
-        references
-            .iter()
-            .map(|reference| match views.get(reference) {
-                Some(CognitionView::Journal(view)) => Ok(view.clone()),
-                _ => Err(Error::new(
-                    ErrorOwner::Memory,
-                    ErrorCode::NotFound,
-                    "Journal not found",
-                )),
-            })
-            .collect()
-    }
-
-    pub async fn journal_history(
-        &self,
-        subject: SubjectId,
-        journal: JournalId,
-    ) -> Result<Vec<JournalView>> {
-        let references = sqlx::query_scalar::<_, Uuid>("SELECT revision_id FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind='journal' AND object_id=$2 ORDER BY revision_no LIMIT 256")
-            .bind(subject.0).bind(journal.0).fetch_all(self.store.pool()).await.map_err(db)?
-            .into_iter().map(|id| CognitiveRef::JournalRevision(JournalRevisionId(id))).collect::<Vec<_>>();
-        if references.is_empty() {
-            return Ok(Vec::new());
-        }
-        let context = self.current_read_context(subject).await?;
-        let views = self.read_cognitions(&context, &references).await?;
-        references
-            .iter()
-            .map(|reference| match views.get(reference) {
-                Some(CognitionView::Journal(view)) => Ok(view.clone()),
-                _ => Err(Error::new(
-                    ErrorOwner::Memory,
-                    ErrorCode::NotFound,
-                    "Journal revision not found",
-                )),
-            })
-            .collect()
-    }
-
     pub(in crate::service) async fn journal_views_for_selections_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        selections: &[CognitionSelection],
-    ) -> Result<HashMap<CognitiveRef, JournalView>> {
-        let revision_ids = selections
-            .iter()
-            .map(|selection| selection.revision.revision_id())
-            .collect::<Vec<_>>();
+        selections: &HashMap<Uuid, CognitionSelection>,
+    ) -> Result<HashMap<Uuid, JournalView>> {
+        let revision_ids = selections.keys().copied().collect::<Vec<_>>();
         if revision_ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -173,14 +77,10 @@ impl MemoryService {
             let revision: Uuid = row.try_get("journal_revision_id").map_err(db)?;
             sources.entry(revision).or_default().push(parse_reference(&row.try_get::<String, _>("ref_kind").map_err(db)?, &row.try_get::<String, _>("ref_value").map_err(db)?)?);
         }
-        let selected = selections
-            .iter()
-            .map(|selection| (selection.revision.revision_id(), selection))
-            .collect::<HashMap<_, _>>();
         let mut views = HashMap::with_capacity(rows.len());
         for row in rows {
             let revision_id: Uuid = row.try_get("journal_revision_id").map_err(db)?;
-            let Some(selection) = selected.get(&revision_id) else {
+            let Some(selection) = selections.get(&revision_id) else {
                 continue;
             };
             let revision = JournalRevision {
@@ -195,9 +95,8 @@ impl MemoryService {
                 )?,
                 narrative: row.try_get("narrative").map_err(db)?,
             };
-            let reference = selection.revision.revision_ref.clone();
             views.insert(
-                reference,
+                revision_id,
                 JournalView {
                     header: selection.header.clone(),
                     revision,

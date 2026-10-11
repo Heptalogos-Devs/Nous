@@ -23,29 +23,27 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                let id = receipt.result_ref;
                 if receipt.state == "committed" {
+                    let result = receipt.results.iter().find(|result| {
+                        matches!(&result.reference, CognitiveRef::CognitiveSchema(_))
+                    });
+                    let Some(result) = result else {
+                        return Err(Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InternalFailure,
+                            "schema receipt missing result",
+                        ));
+                    };
+                    let CognitiveRef::CognitiveSchema(id) = &result.reference else {
+                        unreachable!();
+                    };
+                    let revision =
+                        receipt_revision_id(&receipt, &CognitiveRef::CognitiveSchema(*id))?;
                     return self
                         .schema_at(
                             input.subject,
-                            CognitiveSchemaId(
-                                id.ok_or_else(|| {
-                                    Error::new(
-                                        nous_core::ErrorOwner::Concept,
-                                        nous_core::ErrorCode::InternalFailure,
-                                        "schema receipt missing result",
-                                    )
-                                })?
-                                .parse()
-                                .map_err(|_| {
-                                    Error::new(
-                                        nous_core::ErrorOwner::Concept,
-                                        nous_core::ErrorCode::InternalFailure,
-                                        "invalid schema receipt",
-                                    )
-                                })?,
-                            ),
-                            receipt.result_revision.map(CognitiveSchemaRevisionId),
+                            *id,
+                            Some(CognitiveSchemaRevisionId(revision)),
                         )
                         .await;
                 }
@@ -90,12 +88,11 @@ impl MemoryService {
             )
             .await?;
         mutation
-            .commit(
-                "schema",
-                Some(&schema_id.0.to_string()),
-                Some(revision_id.0),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::CognitiveSchema(schema_id),
+                revision_id.0,
                 Some(1),
-            )
+            )])
             .await?;
         self.schema_revision(input.subject, revision_id).await
     }
@@ -191,6 +188,18 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state == "committed" {
+                    if !receipt.results.iter().any(|result| {
+                        matches!(
+                            &result.reference,
+                            CognitiveRef::CognitiveSchema(id) if *id == schema_id
+                        )
+                    }) {
+                        return Err(Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InternalFailure,
+                            "schema evidence receipt has no matching result",
+                        ));
+                    }
                     return self.schema(subject, schema_id).await;
                 }
                 return Err(Error::new(
@@ -232,12 +241,11 @@ impl MemoryService {
         )
         .await?;
         mutation
-            .commit(
-                "schema",
-                Some(&schema_id.0.to_string()),
+            .commit(&[MutationResult::new(
+                CognitiveRef::CognitiveSchema(schema_id),
                 None,
                 Some(epoch + 1),
-            )
+            )])
             .await?;
         self.schema(subject, schema_id).await
     }
@@ -275,11 +283,15 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state == "committed" {
+                    let revision = receipt_revision_id(
+                        &receipt,
+                        &CognitiveRef::CognitiveSchema(input.schema_id),
+                    )?;
                     return self
                         .schema_at(
                             input.subject,
                             input.schema_id,
-                            receipt.result_revision.map(CognitiveSchemaRevisionId),
+                            Some(CognitiveSchemaRevisionId(revision)),
                         )
                         .await;
                 }
@@ -442,12 +454,11 @@ impl MemoryService {
             )
             .await?;
         mutation
-            .commit(
-                "schema_revision",
-                Some(&input.schema_id.0.to_string()),
-                Some(revision_id.0),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::CognitiveSchema(input.schema_id),
+                revision_id.0,
                 Some(epoch + 1),
-            )
+            )])
             .await?;
         self.schema_revision(input.subject, revision_id).await
     }

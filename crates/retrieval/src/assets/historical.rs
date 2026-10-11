@@ -42,16 +42,18 @@ impl ServingService {
                 if !self.compatible(record, &bound.config_snapshot).await {
                     continue;
                 }
-                if self.open_record(record).is_ok() {
-                    reusable = Some(record.clone());
-                    break;
+                match self.open_record(record) {
+                    Ok(artifact) => {
+                        reusable = Some((record.clone(), artifact));
+                        break;
+                    }
+                    Err(_) => self.store.fail_serving_generation(record).await?,
                 }
-                self.store.fail_serving_generation(record).await?;
             }
             let outcome = match reusable {
-                Some(record) => {
+                Some(opened) => {
                     status.reopened.push(key.clone());
-                    Ok(record)
+                    Ok(opened)
                 }
                 None => self
                     .build_family_in_view(
@@ -66,8 +68,7 @@ impl ServingService {
                     .inspect(|_| status.rebuilt.push(key.clone())),
             };
             match outcome {
-                Ok(record) => {
-                    let artifact = self.open_record(&record)?;
+                Ok((record, artifact)) => {
                     snapshot.install(artifact);
                     status.generations.insert(key, record.generation_id);
                 }

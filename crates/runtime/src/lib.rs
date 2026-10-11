@@ -35,9 +35,8 @@ pub use query::{
     QUERY_REPRESENTATION, QueryActivation, QueryActivationView, QueryConceptCandidate,
     QueryConceptOutput, QueryConceptSelection, QueryContextSnapshot, QueryExecution, QueryHostPlan,
     QueryHostRole, QueryPlan, QueryReadLease, QueryRepresentation, QueryRepresentationLimits,
-    QueryRun, QueryRunContext, QueryRunHostPolicy, QuerySemanticEmbedding, ReadContext,
-    SharedLaneProvider, TagActivation, TopologyWorkSummary, WorkCycle, build_query_representation,
-    register_retrieval_configuration,
+    QueryRunHostPolicy, QuerySemanticEmbedding, ReadContext, SharedLaneProvider, TagActivation,
+    TopologyWorkSummary, WorkCycle, build_query_representation, register_retrieval_configuration,
 };
 pub use segmentation::{EpisodeDraft, SegmentationProgress};
 pub use work_contexts::*;

@@ -43,7 +43,7 @@ impl SemanticCueSensing for EpaResidualCueSensing {
                         .saturating_mul(config.candidate_oversampling)
                         .max(limit),
                 )
-                .map(|matches| tag_candidates(generation, matches, limit))
+                .and_then(|matches| tag_candidates(generation, matches, limit))
         })
     }
 }
@@ -52,7 +52,7 @@ fn tag_candidates(
     generation: &DenseGeneration,
     matches: Vec<DenseMatch>,
     limit: usize,
-) -> Vec<(u64, Vec<f64>)> {
+) -> Result<Vec<(u64, Vec<f64>)>> {
     let mut result = Vec::new();
     for item in matches {
         let Some(record) = item.record else {
@@ -61,9 +61,13 @@ fn tag_candidates(
         if !matches!(record.reference, CognitiveRef::Tag(_)) {
             continue;
         }
-        let Some(vector) = generation.vector(record.serving_doc_id) else {
-            continue;
-        };
+        let vector = generation.vector(record.serving_doc_id)?.ok_or_else(|| {
+            nous_core::Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Dense Tag record is missing its indexed vector",
+            )
+        })?;
         result.push((
             record.serving_doc_id,
             vector.iter().map(|value| f64::from(*value)).collect(),
@@ -72,7 +76,7 @@ fn tag_candidates(
             break;
         }
     }
-    result
+    Ok(result)
 }
 
 /// Replacement boundary for bounded associative expansion.

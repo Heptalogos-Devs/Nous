@@ -7,9 +7,7 @@ use crate::service::schema::SchemaView;
 
 mod lifecycle;
 mod read;
-pub(in crate::service) use read::{
-    CognitionSelection, historical_cognition_header, select_cognitions_in_tx,
-};
+pub(in crate::service) use read::CognitionSelection;
 
 #[derive(Debug, Clone)]
 pub enum CognitionView {
@@ -20,21 +18,21 @@ pub enum CognitionView {
 }
 
 impl CognitionView {
-    pub fn header(&self) -> CognitionHeader {
+    pub fn header(&self) -> &CognitionHeader {
         match self {
-            Self::Memory(view) => view.header.clone(),
-            Self::CognitiveSchema(view) => view.header.clone(),
-            Self::Episode(view) => view.header.clone(),
-            Self::Journal(view) => view.header.clone(),
+            Self::Memory(view) => &view.header,
+            Self::CognitiveSchema(view) => &view.header,
+            Self::Episode(view) => &view.header,
+            Self::Journal(view) => &view.header,
         }
     }
 
-    pub fn revision_header(&self) -> CognitionRevisionHeader {
+    pub fn revision_header(&self) -> &CognitionRevisionHeader {
         match self {
-            Self::Memory(view) => view.revision.header.clone(),
-            Self::CognitiveSchema(view) => view.revision.header.clone(),
-            Self::Episode(view) => view.revision.header.clone(),
-            Self::Journal(view) => view.revision.header.clone(),
+            Self::Memory(view) => &view.revision.header,
+            Self::CognitiveSchema(view) => &view.revision.header,
+            Self::Episode(view) => &view.revision.header,
+            Self::Journal(view) => &view.revision.header,
         }
     }
 }

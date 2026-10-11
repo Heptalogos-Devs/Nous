@@ -122,7 +122,7 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
             shared: None,
             memory: Some(runtime.require_memory().unwrap()),
         };
-        let outcome = test_support::finish_query_run(
+        let outcome = test_support::finish_query_execution(
             &runtime.cognition,
             execution,
             Vec::new(),

@@ -41,30 +41,23 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state == "committed" {
-                    let id = receipt
-                        .result_ref
-                        .ok_or_else(|| {
-                            Error::new(
-                                nous_core::ErrorOwner::Memory,
-                                nous_core::ErrorCode::InternalFailure,
-                                "Episode receipt has no result",
-                            )
-                        })?
-                        .parse()
-                        .map_err(|error| {
-                            Error::new(
-                                nous_core::ErrorOwner::Memory,
-                                nous_core::ErrorCode::InternalFailure,
-                                "invalid Episode receipt",
-                            )
-                            .with_source(error)
-                        })?;
-                    return self
-                        .episode(
-                            input.subject,
-                            EpisodeId(id),
-                            receipt.result_revision.map(EpisodeRevisionId),
+                    let result = receipt.results.first().ok_or_else(|| {
+                        Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "Episode receipt has no result",
                         )
+                    })?;
+                    let CognitiveRef::Episode(id) = &result.reference else {
+                        return Err(Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "Episode receipt has an invalid result reference",
+                        ));
+                    };
+                    let revision = receipt_revision_id(&receipt, &CognitiveRef::Episode(*id))?;
+                    return self
+                        .episode(input.subject, *id, Some(EpisodeRevisionId(revision)))
                         .await;
                 }
                 return Err(Error::new(
@@ -98,7 +91,7 @@ impl MemoryService {
         sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at,track_key) VALUES('episode',$1,$2,$3,1,'accepted','valid','normal','normal',$4,$5)")
             .bind(episode_id.0).bind(input.subject.0).bind(revision_id.0).bind(now).bind(&input.track_key)
             .execute(&mut **mutation.tx()).await.map_err(db)?;
-        insert_episode_revision(
+        insert_episode_revision_with_intent(
             &self.store,
             mutation.tx(),
             &input,
@@ -106,6 +99,7 @@ impl MemoryService {
             revision_id,
             None,
             None,
+            1,
             time_kind,
             time_start,
             time_end,
@@ -132,12 +126,11 @@ impl MemoryService {
         )
         .await?;
         mutation
-            .commit(
-                "episode",
-                Some(&episode_id.0.to_string()),
-                Some(revision_id.0),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::Episode(episode_id),
+                revision_id.0,
                 Some(1),
-            )
+            )])
             .await?;
         self.episode(input.subject, episode_id, None).await
     }
@@ -259,11 +252,13 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state == "committed" {
+                    let revision =
+                        receipt_revision_id(&receipt, &CognitiveRef::Episode(input.episode_id))?;
                     return self
                         .episode(
                             input.subject,
                             input.episode_id,
-                            receipt.result_revision.map(EpisodeRevisionId),
+                            Some(EpisodeRevisionId(revision)),
                         )
                         .await;
                 }
@@ -377,12 +372,11 @@ impl MemoryService {
         .await?;
 
         mutation
-            .commit(
-                "episode",
-                Some(&input.episode_id.0.to_string()),
-                Some(revision_id.0),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::Episode(input.episode_id),
+                revision_id.0,
                 Some(epoch + 1),
-            )
+            )])
             .await?;
         self.episode(input.subject, input.episode_id, None).await
     }
@@ -447,6 +441,6 @@ impl MemoryService {
         sqlx::query("INSERT INTO episode_revision_relations(from_revision_id,to_revision_id,relation,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
             .bind(from.0).bind(to.0).bind(&relation).bind(self.cognition.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?;
 
-        mutation.commit("episode_relation", None, None, None).await
+        mutation.commit(&[]).await
     }
 }

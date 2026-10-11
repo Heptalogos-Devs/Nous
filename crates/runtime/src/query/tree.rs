@@ -225,8 +225,8 @@ impl CognitiveRuntimeService {
                 branch
                     .exact_bindings
                     .iter()
-                    .map(|binding| binding.bound_ref.clone())
-                    .collect(),
+                    .map(|binding| binding.bound_ref.clone()),
+                &bound.runtime_refs,
                 &branch.topology_seed_refs,
             );
             let mut local = planned_lanes(&branch.source_query);
@@ -274,12 +274,7 @@ impl CognitiveRuntimeService {
                 branch_plan.sense_cues = false;
             }
             let mut value = self
-                .query_atom_with_plan(
-                    branch.clone(),
-                    &contributors,
-                    branch_plan,
-                    validation_budget,
-                )
+                .query_atom_with_plan(&branch, &contributors, branch_plan, validation_budget)
                 .await?;
             snapshots.push(super::types::BoundLeaf {
                 ordinal: index,

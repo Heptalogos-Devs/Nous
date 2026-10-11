@@ -34,33 +34,34 @@ impl CognitiveRuntimeService {
                 "tag_anchors": input.tag_anchors,
             }),
         )?;
-        let mut tx = self.store.begin().await?;
-        lock_operation(&mut tx, input.subject, input.operation_id).await?;
-        if let Some(existing) = check_receipt(
-            &mut tx,
+        let mut mutation = match MutationEnvelope::begin(
+            &self.store,
             input.subject,
             input.operation_id,
             "create_work_context",
             &digest,
+            None,
             nous_core::ErrorOwner::Runtime,
         )
         .await?
         {
-            tx.commit().await.map_err(db)?;
-            return self
-                .work_context(input.subject, replay_context(existing)?)
-                .await;
-        }
+            MutationStart::Replay(receipt) => {
+                return self
+                    .work_context(input.subject, replay_context(receipt)?)
+                    .await;
+            }
+            MutationStart::Active(mutation) => mutation,
+        };
         let work_context_id = Uuid::now_v7();
         validate_refs_in_tx(
             &self.store,
-            &mut tx,
+            mutation.tx(),
             input.subject,
             &input.cognition_anchors,
         )
         .await?;
         let typed = typed_anchors(&input.entity_anchors, &input.tag_anchors);
-        validate_refs_in_tx(&self.store, &mut tx, input.subject, &typed).await?;
+        validate_refs_in_tx(&self.store, mutation.tx(), input.subject, &typed).await?;
         let now = self.now(input.subject);
         sqlx::query(
             "INSERT INTO work_contexts(work_context_id,subject_id,state,purpose,unresolved_questions,constraints,resume_conditions,budget_summary,context_text,revision,created_at,updated_at) VALUES($1,$2,'open',$3,$4,$5,$6,$7,$9,1,$8,$8)",
@@ -74,13 +75,19 @@ impl CognitiveRuntimeService {
         .bind(&input.budget_summary)
         .bind(now)
         .bind(&input.context_text)
-        .execute(&mut *tx)
+        .execute(&mut **mutation.tx())
         .await
         .map_err(db)?;
-        write_anchors(&mut tx, work_context_id, &input.cognition_anchors, &typed).await?;
+        write_anchors(
+            mutation.tx(),
+            work_context_id,
+            &input.cognition_anchors,
+            &typed,
+        )
+        .await?;
         self.store
             .ensure_identity_addresses_in(
-                &mut tx,
+                mutation.tx(),
                 input.subject,
                 &[CognitiveRef::WorkContext(nous_core::WorkContextId(
                     work_context_id,
@@ -88,17 +95,11 @@ impl CognitiveRuntimeService {
                 &input.purpose,
             )
             .await?;
-        commit_receipt(
-            &mut tx,
-            input.subject,
-            input.operation_id,
-            "work_context",
-            Some(&work_context_id.to_string()),
-            None,
-            None,
-        )
-        .await?;
-        tx.commit().await.map_err(db)?;
+        mutation
+            .commit(&[MutationResult::reference(CognitiveRef::WorkContext(
+                nous_core::WorkContextId(work_context_id),
+            ))])
+            .await?;
         self.work_context(input.subject, work_context_id).await
     }
     pub async fn update_work_context(
@@ -136,29 +137,30 @@ impl CognitiveRuntimeService {
                 "tag_anchors": input.tag_anchors,
             }),
         )?;
-        let mut tx = self.store.begin().await?;
-        lock_operation(&mut tx, input.subject, input.operation_id).await?;
-        if let Some(existing) = check_receipt(
-            &mut tx,
+        let mut mutation = match MutationEnvelope::begin(
+            &self.store,
             input.subject,
             input.operation_id,
             "update_work_context",
             &digest,
+            None,
             nous_core::ErrorOwner::Runtime,
         )
         .await?
         {
-            tx.commit().await.map_err(db)?;
-            return self
-                .work_context(input.subject, replay_context(existing)?)
-                .await;
-        }
+            MutationStart::Replay(receipt) => {
+                return self
+                    .work_context(input.subject, replay_context(receipt)?)
+                    .await;
+            }
+            MutationStart::Active(mutation) => mutation,
+        };
         let row = sqlx::query(
             "SELECT state,revision FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR UPDATE",
         )
         .bind(input.subject.0)
         .bind(input.work_context_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **mutation.tx())
         .await
         .map_err(db)?
         .ok_or_else(|| Error::new(nous_core::ErrorOwner::Runtime, nous_core::ErrorCode::NotFound, "WorkContext not found"))?;
@@ -183,13 +185,13 @@ impl CognitiveRuntimeService {
         }
         validate_refs_in_tx(
             &self.store,
-            &mut tx,
+            mutation.tx(),
             input.subject,
             &input.cognition_anchors,
         )
         .await?;
         let typed = typed_anchors(&input.entity_anchors, &input.tag_anchors);
-        validate_refs_in_tx(&self.store, &mut tx, input.subject, &typed).await?;
+        validate_refs_in_tx(&self.store, mutation.tx(), input.subject, &typed).await?;
         let now = self.now(input.subject);
         sqlx::query(
             "UPDATE work_contexts SET purpose=$3,unresolved_questions=$4,constraints=$5,resume_conditions=$6,budget_summary=$7,context_text=$9,revision=revision+1,updated_at=$8 WHERE subject_id=$1 AND work_context_id=$2",
@@ -203,27 +205,21 @@ impl CognitiveRuntimeService {
         .bind(&input.budget_summary)
         .bind(now)
         .bind(&input.context_text)
-        .execute(&mut *tx)
+        .execute(&mut **mutation.tx())
         .await
         .map_err(db)?;
         write_anchors(
-            &mut tx,
+            mutation.tx(),
             input.work_context_id,
             &input.cognition_anchors,
             &typed,
         )
         .await?;
-        commit_receipt(
-            &mut tx,
-            input.subject,
-            input.operation_id,
-            "work_context",
-            Some(&input.work_context_id.to_string()),
-            None,
-            None,
-        )
-        .await?;
-        tx.commit().await.map_err(db)?;
+        mutation
+            .commit(&[MutationResult::reference(CognitiveRef::WorkContext(
+                nous_core::WorkContextId(input.work_context_id),
+            ))])
+            .await?;
         self.work_context(input.subject, input.work_context_id)
             .await
     }

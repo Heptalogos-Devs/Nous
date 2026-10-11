@@ -240,7 +240,7 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     .await
     .unwrap();
     assert!(!exists);
-    let final_result = test_support::finish_query_run(
+    let final_result = test_support::finish_query_execution(
         &rt.cognition,
         execution,
         vec![(a.clone(), 1.0)],

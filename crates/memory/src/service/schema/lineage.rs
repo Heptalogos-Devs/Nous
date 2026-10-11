@@ -40,21 +40,14 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state == "committed" {
-                    let revisions: Vec<CognitiveSchemaRevisionId> =
-                        serde_json::from_str(receipt.result_ref.as_deref().ok_or_else(|| {
-                            Error::new(
-                                nous_core::ErrorOwner::Concept,
-                                nous_core::ErrorCode::InternalFailure,
-                                "schema split receipt has no results",
-                            )
-                        })?)
-                        .map_err(|_| {
-                            Error::new(
-                                nous_core::ErrorOwner::Concept,
-                                nous_core::ErrorCode::InternalFailure,
-                                "invalid schema split receipt",
-                            )
-                        })?;
+                    let revisions = receipt
+                        .results
+                        .iter()
+                        .filter_map(|result| match &result.reference {
+                            CognitiveRef::CognitiveSchemaRevision(revision) => Some(*revision),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
                     return self.schema_split_views(subject, &revisions).await;
                 }
                 return Err(Error::new(
@@ -143,17 +136,15 @@ impl MemoryService {
                     .collect::<Vec<_>>(),
             )
             .await?;
-        let result = serde_json::to_string(&revisions).map_err(|error| {
-            Error::new(
-                nous_core::ErrorOwner::Concept,
-                nous_core::ErrorCode::InternalFailure,
-                "Persisted schema lineage basis is invalid",
-            )
-            .with_source(error)
-        })?;
-        mutation
-            .commit("schema_split", Some(&result), None, Some(epoch + 1))
-            .await?;
+        let mut results = vec![MutationResult::new(
+            CognitiveRef::CognitiveSchema(schema_id),
+            None,
+            Some(epoch + 1),
+        )];
+        results.extend(revisions.iter().copied().map(|revision| {
+            MutationResult::reference(CognitiveRef::CognitiveSchemaRevision(revision))
+        }));
+        mutation.commit(&results).await?;
         self.schema_split_views(subject, &revisions).await
     }
 
@@ -222,13 +213,20 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state == "committed" {
-                    let revision = receipt.result_revision.ok_or_else(|| {
-                        Error::new(
-                            nous_core::ErrorOwner::Concept,
-                            nous_core::ErrorCode::InternalFailure,
-                            "schema merge receipt has no revision",
-                        )
-                    })?;
+                    let revision = receipt
+                        .results
+                        .iter()
+                        .find_map(|result| match &result.reference {
+                            CognitiveRef::CognitiveSchema(_) => result.revision_id,
+                            _ => None,
+                        })
+                        .ok_or_else(|| {
+                            Error::new(
+                                nous_core::ErrorOwner::Concept,
+                                nous_core::ErrorCode::InternalFailure,
+                                "schema merge receipt has no revision",
+                            )
+                        })?;
                     return self
                         .schema_revision(subject, CognitiveSchemaRevisionId(revision))
                         .await;
@@ -341,12 +339,11 @@ impl MemoryService {
             )
             .await?;
         mutation
-            .commit(
-                "schema",
-                Some(&new_id.0.to_string()),
-                Some(new_revision.0),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::CognitiveSchema(new_id),
+                new_revision.0,
                 Some(1),
-            )
+            )])
             .await?;
         self.schema_revision(subject, new_revision).await
     }

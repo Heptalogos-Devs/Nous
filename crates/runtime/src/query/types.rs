@@ -33,7 +33,6 @@ pub struct BoundQuery {
     pub lane_budgets: BTreeMap<EvidenceFamily, usize>,
     pub selected_embedding_space: Option<EmbeddingSpaceSignature>,
     pub topology_required: bool,
-    pub fusion_version: String,
     pub config_snapshot: nous_configuration::ConfigSnapshot,
     pub retrieval_policy: super::RetrievalPolicy,
 }
@@ -142,10 +141,6 @@ impl From<&CognitiveHit> for CandidateStamp {
 }
 
 impl BoundQuery {
-    pub fn query(&self) -> &CognitiveQuery {
-        &self.source_query
-    }
-
     pub fn lane_enabled(&self, family: EvidenceFamily) -> bool {
         self.enabled_lanes.contains(&family)
     }

@@ -1,16 +1,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { defineCommand } from "citty";
+import { commonArgs, stringArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 
-import { create } from "@bufbuild/protobuf";
 import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
-import {
-  CognitiveSeedSchema,
-  CreateSubjectRequestSchema,
-  AdoptCognitiveSeedRequestSchema,
-  SubjectRequestSchema,
-  SubjectCapabilitiesSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { z } from "zod";
 
 const subjectInput = z.strictObject({
@@ -29,95 +24,108 @@ const adoptionInput = z.strictObject({
   kind: z.enum(["initial", "import"]),
 });
 
-export async function subjectCommands(
-  env: CliEnvironment,
-  action: string | undefined,
-  argument?: string,
-) {
-  const { client, save, required, values, requestPayload, resolveReference } =
-    env;
-  if (action === "list") return client.subjects.list({});
-  if (action === "get" || action === "seed" || action === "adopt-seed") {
-    const subjectId = (
-      await resolveReference(required(argument, "Subject reference"), "subject")
-    ).value;
-    if (action === "get")
-      return client.subjects.get(create(SubjectRequestSchema, { subjectId }));
-    if (action === "seed")
-      return client.subjects.seed(create(SubjectRequestSchema, { subjectId }));
-    const input = adoptionInput.parse(
-      await requestPayload(values["request-file"]),
-    );
-    return client.subjects.adoptSeed(
-      create(AdoptCognitiveSeedRequestSchema, {
-        subjectId,
-        operationId: values["operation-id"] ?? crypto.randomUUID(),
-        seed: create(CognitiveSeedSchema, {
-          text: input.text,
-          format:
-            input.format ??
-            "application/vnd.nous-wave.cognitive-seed+toml;version=1",
-          provenance: input.provenance,
-        }),
-        kind: input.kind,
-      }),
-    );
-  }
-  if (action === "create") {
-    const requestFile = values["request-file"];
-    if (!requestFile)
-      throw new CliError(
-        "INVALID_ARGUMENT",
-        "subject create requires --request-file with a [cognitive_seed] section containing text and format",
-      );
-    const parsed = subjectInput.safeParse(await requestPayload(requestFile));
-    if (!parsed.success)
-      throw new CliError(
-        "INVALID_ARGUMENT",
-        "subject request TOML must include [cognitive_seed].text and [cognitive_seed].format, plus optional metadata and capabilities",
-      );
-    const request = parsed.data;
-    const subject = await client.subjects.create(
-      create(CreateSubjectRequestSchema, {
-        subjectId: crypto.randomUUID(),
-        operationId: crypto.randomUUID(),
-        ...(request.capabilities
-          ? {
-              capabilities: create(
-                SubjectCapabilitiesSchema,
-                request.capabilities,
-              ),
-            }
-          : {}),
-        cognitiveSeed: create(CognitiveSeedSchema, {
-          text: request.cognitive_seed.text,
-          format: request.cognitive_seed.format,
-          provenance: request.cognitive_seed.provenance,
-        }),
-        ...(request.metadata ? { metadata: request.metadata } : {}),
-      }),
-    );
-    await save({
-      format: "nous.consumer.selection",
-      subjectId: subject.subjectId,
-    });
-    return subject;
-  }
-  if (action === "use") {
-    const subject = await client.subjects.get({
-      subjectId: (
-        await env.resolveReference(
-          required(argument, "Subject reference"),
-          "subject",
-        )
-      ).value,
-    });
-    await save({
-      format: "nous.consumer.selection",
-      subjectId: subject.subjectId,
-    });
-    return subject;
-  }
+async function subjectId(env: CliEnvironment, argument?: string) {
+  return (
+    await env.resolveReference(
+      env.required(argument, "Subject reference"),
+      "subject",
+    )
+  ).value;
+}
 
-  throw new CliError("INVALID_ARGUMENT", "Unknown subject command");
+const listSubjects = (env: CliEnvironment) => env.client.subjects.list({});
+const getSubject = async (env: CliEnvironment, argument?: string) =>
+  env.client.subjects.get({ subjectId: await subjectId(env, argument) });
+const getSubjectSeed = async (env: CliEnvironment, argument?: string) =>
+  env.client.subjects.seed({ subjectId: await subjectId(env, argument) });
+const adoptSubjectSeed = async (env: CliEnvironment, argument?: string) => {
+  const input = adoptionInput.parse(
+    await env.requestPayload(env.values["request-file"]),
+  );
+  return env.client.subjects.adoptSeed({
+    subjectId: await subjectId(env, argument),
+    operationId: env.values["operation-id"] ?? crypto.randomUUID(),
+    seed: {
+      text: input.text,
+      format:
+        input.format ??
+        "application/vnd.nous-wave.cognitive-seed+toml;version=1",
+      provenance: input.provenance,
+    },
+    kind: input.kind,
+  });
+};
+const createSubject = async (env: CliEnvironment) => {
+  const { client, save, values, requestPayload } = env;
+  const requestFile = values["request-file"];
+  if (!requestFile)
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "subject create requires --request-file with a [cognitive_seed] section containing text and format",
+    );
+  const parsed = subjectInput.safeParse(await requestPayload(requestFile));
+  if (!parsed.success)
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "subject request TOML must include [cognitive_seed].text and [cognitive_seed].format, plus optional metadata and capabilities",
+    );
+  const request = parsed.data;
+  const subject = await client.subjects.create({
+    subjectId: crypto.randomUUID(),
+    operationId: crypto.randomUUID(),
+    ...(request.capabilities ? { capabilities: request.capabilities } : {}),
+    cognitiveSeed: {
+      text: request.cognitive_seed.text,
+      format: request.cognitive_seed.format,
+      provenance: request.cognitive_seed.provenance,
+    },
+    ...(request.metadata ? { metadata: request.metadata } : {}),
+  });
+  await save({
+    format: "nous.consumer.selection",
+    subjectId: subject.subjectId,
+  });
+  return subject;
+};
+const useSubject = async (env: CliEnvironment, argument?: string) => {
+  const subject = await env.client.subjects.get({
+    subjectId: await subjectId(env, argument),
+  });
+  await env.save({
+    format: "nous.consumer.selection",
+    subjectId: subject.subjectId,
+  });
+  return subject;
+};
+
+export function createSubjectCommand(leaf: CliLeaf) {
+  return defineCommand({
+    args: commonArgs,
+    subCommands: {
+      create: leaf({ ...stringArgs("request-file") }, createSubject, {
+        description:
+          "Create a Subject with a stable ID and an explicit valid Cognitive Seed frozen before the operation receipt; metadata and capabilities are optional.",
+        parameters: ["--request-file <semantic TOML> (required)"],
+      }),
+      list: leaf({}, listSubjects),
+      get: leaf({}, getSubject, {
+        parameters: ["<Subject reference>"],
+      }),
+      seed: leaf({}, getSubjectSeed, {
+        parameters: ["<Subject reference>"],
+      }),
+      "adopt-seed": leaf(
+        { ...stringArgs("request-file", "operation-id") },
+        adoptSubjectSeed,
+        {
+          description:
+            "Adopt a TOML Cognitive Seed using an explicit initial or import kind.",
+          parameters: ["<Subject reference>"],
+        },
+      ),
+      use: leaf({}, useSubject, {
+        parameters: ["<Subject reference>"],
+      }),
+    },
+  });
 }

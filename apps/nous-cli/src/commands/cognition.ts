@@ -7,16 +7,11 @@ import { z } from "zod";
 import { boundedInteger, CliError, nonnegativeInt64 } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 import {
-  CognitionHistoryRequestSchema,
-  CognitionListRequestSchema,
-  CognitionMutationRequestSchema,
-  ReadCognitionRequestSchema,
   SetCognitionAccessibilitySchema,
   type CognitionMutationRequest,
   type CognitionResult,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/cognition_pb.js";
 import {
-  CognitiveRefSchema,
   type Episode,
   type Memory,
   type Page,
@@ -160,10 +155,10 @@ function familyValue(
 }
 
 function cognitionRef(reference: CognitionReference) {
-  return create(CognitiveRefSchema, {
+  return {
     kind: reference.kind,
     value: reference.value,
-  });
+  };
 }
 
 function read(
@@ -193,12 +188,10 @@ async function read(
   env: CliEnvironment,
   reference: CognitionReference,
 ): Promise<CognitionObject> {
-  const result = await env.client.cognition.read(
-    create(ReadCognitionRequestSchema, {
-      subjectId: env.subjectId,
-      reference: cognitionRef(reference),
-    }),
-  );
+  const result = await env.client.cognition.read({
+    subjectId: env.subjectId,
+    reference: cognitionRef(reference),
+  });
   return familyValue(result, resultCase(familyKind(reference.kind)));
 }
 
@@ -208,14 +201,12 @@ async function list(
   page: Page,
   status: string,
 ) {
-  const response = await env.client.cognition.list(
-    create(CognitionListRequestSchema, {
-      subjectId: env.subjectId,
-      kind,
-      page,
-      status,
-    }),
-  );
+  const response = await env.client.cognition.list({
+    subjectId: env.subjectId,
+    kind,
+    page,
+    status,
+  });
   return {
     items: response.items.map((item) => familyValue(item, resultCase(kind))),
     nextPageToken: response.nextPageToken,
@@ -227,13 +218,11 @@ async function history(
   reference: CognitionReference & { kind: CognitionKind },
   page: Page,
 ) {
-  const response = await env.client.cognition.history(
-    create(CognitionHistoryRequestSchema, {
-      subjectId: env.subjectId,
-      objectRef: cognitionRef(reference),
-      page,
-    }),
-  );
+  const response = await env.client.cognition.history({
+    subjectId: env.subjectId,
+    objectRef: cognitionRef(reference),
+    page,
+  });
   return {
     items: response.items.map((item) =>
       familyValue(item, resultCase(reference.kind)),
@@ -273,15 +262,13 @@ async function mutate(
   operationId: string,
   mode?: string,
 ) {
-  const response = await env.client.cognition.mutate(
-    create(CognitionMutationRequestSchema, {
-      operationId,
-      subjectId: env.subjectId,
-      objectRef: cognitionRef(reference),
-      expectedObjectEpoch,
-      action: actionValue(action, mode),
-    }),
-  );
+  const response = await env.client.cognition.mutate({
+    operationId,
+    subjectId: env.subjectId,
+    objectRef: cognitionRef(reference),
+    expectedObjectEpoch,
+    action: actionValue(action, mode),
+  });
   switch (response.outcome.case) {
     case "cognition":
       return familyValue(response.outcome.value, resultCase(reference.kind));

@@ -97,12 +97,11 @@ impl MemoryService {
             .publish_workflow_results("memory", &[CognitiveRef::Tag(tag.tag_id)])
             .await?;
         mutation
-            .commit(
-                "tag",
-                Some(&tag.tag_id.0.to_string()),
-                Some(tag.current_revision_id),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::Tag(tag.tag_id),
+                tag.current_revision_id,
                 None,
-            )
+            )])
             .await?;
         Ok(tag)
     }
@@ -141,12 +140,11 @@ impl MemoryService {
             .publish_workflow_results("memory", &[CognitiveRef::Tag(input.target.tag_id)])
             .await?;
         mutation
-            .commit(
-                "tag",
-                Some(&input.target.tag_id.0.to_string()),
-                Some(revision_id),
+            .commit(&[MutationResult::revised(
+                CognitiveRef::Tag(input.target.tag_id),
+                revision_id,
                 None,
-            )
+            )])
             .await?;
         let mut tag = self.tag(subject, input.target.tag_id).await?;
         tag.current_revision_id = revision_id;
@@ -173,12 +171,9 @@ impl MemoryService {
             .publish_workflow_results("memory", &[CognitiveRef::Tag(input.survivor.tag_id)])
             .await?;
         mutation
-            .commit(
-                "tag",
-                Some(&input.survivor.tag_id.0.to_string()),
-                None,
-                None,
-            )
+            .commit(&[MutationResult::reference(CognitiveRef::Tag(
+                input.survivor.tag_id,
+            ))])
             .await?;
         self.tag(subject, input.survivor.tag_id).await
     }
@@ -211,13 +206,23 @@ impl MemoryService {
                         "tag operation in progress",
                     ));
                 }
-                let ids: Vec<(Uuid, Uuid)> = sqlx::query_as("SELECT child_tag_id,child_revision_id FROM tag_lineage WHERE subject_id=$1 AND operation_id=$2 AND relation='split_into' ORDER BY child_index")
-                    .bind(subject.0).bind(input.operation_id.0).fetch_all(self.store.pool()).await.map_err(db)?;
                 let mut result = Vec::new();
-                for (id, revision) in ids {
-                    let mut tag = self.tag(subject, TagId(id)).await?;
+                for output in receipt.results {
+                    let (CognitiveRef::Tag(id), Some(revision)) =
+                        (output.reference, output.revision_id)
+                    else {
+                        continue;
+                    };
+                    let mut tag = self.tag(subject, id).await?;
                     tag.current_revision_id = revision;
                     result.push(tag);
+                }
+                if result.len() != input.children.len() {
+                    return Err(Error::new(
+                        ErrorOwner::Concept,
+                        ErrorCode::InternalFailure,
+                        "tag split receipt has incomplete outputs",
+                    ));
                 }
                 return Ok(result);
             }
@@ -238,10 +243,16 @@ impl MemoryService {
             .await?;
         mutation
             .commit(
-                "tag_split",
-                Some(&input.parent.tag_id.0.to_string()),
-                None,
-                None,
+                &children
+                    .iter()
+                    .map(|child| {
+                        MutationResult::revised(
+                            CognitiveRef::Tag(child.tag_id),
+                            child.current_revision_id,
+                            None,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
             )
             .await?;
         Ok(children)
@@ -258,26 +269,22 @@ impl MemoryService {
                 "tag operation in progress",
             ));
         }
-        let id = receipt
-            .result_ref
-            .ok_or_else(|| {
-                Error::new(
-                    nous_core::ErrorOwner::Concept,
-                    nous_core::ErrorCode::InternalFailure,
-                    "tag receipt missing result",
-                )
-            })?
-            .parse()
-            .map_err(|error| {
-                Error::new(
-                    nous_core::ErrorOwner::Concept,
-                    nous_core::ErrorCode::InternalFailure,
-                    "invalid Tag receipt",
-                )
-                .with_source(error)
-            })?;
-        let mut tag = self.tag(subject, TagId(id)).await?;
-        if let Some(revision) = receipt.result_revision {
+        let result = receipt.results.first().ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InternalFailure,
+                "tag receipt missing result",
+            )
+        })?;
+        let CognitiveRef::Tag(id) = &result.reference else {
+            return Err(Error::new(
+                ErrorOwner::Concept,
+                ErrorCode::InternalFailure,
+                "tag receipt has an invalid result reference",
+            ));
+        };
+        let mut tag = self.tag(subject, *id).await?;
+        if let Some(revision) = result.revision_id {
             tag.current_revision_id = revision;
         }
         Ok(tag)

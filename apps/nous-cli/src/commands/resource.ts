@@ -1,20 +1,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { defineCommand } from "citty";
+import { commonArgs, stringArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 
-import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import {
-  ListRequestSchema,
-  ObjectRequestSchema,
-  PageSchema,
-  StableExternalRefSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import {
-  MaterializeResourceRequestSchema,
-  PutResourceRequestSchema,
-  ResourceDescriptorSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { CliError, boundedInteger } from "../agent.js";
+import { boundedInteger } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 import { z } from "zod";
 
@@ -47,90 +38,98 @@ const materializeInput = z.strictObject({
   observed_at: z.string().datetime({ offset: true }),
 });
 
-export async function resourceCommands(
-  env: CliEnvironment,
-  action?: string,
-  argument?: string,
-) {
-  const {
-    client,
-    values,
+const resourceList = (env: CliEnvironment) =>
+  env.client.resources.list({
+    subjectId: env.subjectId,
+    page: {
+      pageSize: boundedInteger(env.values["page-size"], 1, 200, "--page-size"),
+      pageToken: env.values["page-token"],
+    },
+    status: env.values.status ?? "",
+  });
+const resourcePut = async (env: CliEnvironment) => {
+  const { client, values, subjectId, requestPayload } = env;
+  const input = descriptorInput.parse(
+    await requestPayload(values["request-file"]),
+  );
+  const descriptor = {
+    resourceRef: input.resource_ref,
+    displayLabel: input.display_label,
+    authorityClass: input.authority_class,
+    coverage: input.coverage,
+    queryDimensions: input.query_dimensions,
+    modalities: input.modalities,
+    freshnessPolicy: input.freshness_policy,
+    accessCostClass: input.access_cost_class,
+    readiness: input.readiness,
+    adapterKind: input.adapter_kind,
+    providerProfile: input.provider_profile,
+    providerLocator: input.provider_locator,
+  };
+  return client.resources.put({ subjectId, descriptor });
+};
+const resourceMaterialize = async (env: CliEnvironment) => {
+  const { client, values, subjectId, requestPayload } = env;
+  const input = materializeInput.parse(
+    await requestPayload(values["request-file"]),
+  );
+  const reference = {
+    providerKind: input.provider_kind,
+    providerProfile: input.provider_profile,
+    profileDigest: input.profile_digest,
+    resourceRef: input.resource_ref,
+    providerResourceId: input.provider_resource_id,
+    entryId: input.entry_id,
+    entryVersion: input.entry_version,
+    contentDigest: input.content_digest,
+    sourceLocator: input.source_locator,
+    retrievedAt: input.retrieved_at,
+    accessScope: input.access_scope,
+  };
+  return client.resources.materialize({
     subjectId,
-    required,
-    resolveReference,
-    requestPayload,
-  } = env;
-  if (action === "list")
-    return client.resources.list(
-      create(ListRequestSchema, {
-        subjectId,
-        page: create(PageSchema, {
-          pageSize: boundedInteger(values["page-size"], 1, 200, "--page-size"),
-          pageToken: values["page-token"],
-        }),
-        status: values.status ?? "",
-      }),
-    );
-  if (action === "put") {
-    const input = descriptorInput.parse(
-      await requestPayload(values["request-file"]),
-    );
-    const descriptor = create(ResourceDescriptorSchema, {
-      resourceRef: input.resource_ref,
-      displayLabel: input.display_label,
-      authorityClass: input.authority_class,
-      coverage: input.coverage,
-      queryDimensions: input.query_dimensions,
-      modalities: input.modalities,
-      freshnessPolicy: input.freshness_policy,
-      accessCostClass: input.access_cost_class,
-      readiness: input.readiness,
-      adapterKind: input.adapter_kind,
-      providerProfile: input.provider_profile,
-      providerLocator: input.provider_locator,
-    });
-    return client.resources.put(
-      create(PutResourceRequestSchema, { subjectId, descriptor }),
-    );
-  }
-  if (action === "materialize") {
-    const input = materializeInput.parse(
-      await requestPayload(values["request-file"]),
-    );
-    const reference = create(StableExternalRefSchema, {
-      providerKind: input.provider_kind,
-      providerProfile: input.provider_profile,
-      profileDigest: input.profile_digest,
-      resourceRef: input.resource_ref,
-      providerResourceId: input.provider_resource_id,
-      entryId: input.entry_id,
-      entryVersion: input.entry_version,
-      contentDigest: input.content_digest,
-      sourceLocator: input.source_locator,
-      retrievedAt: input.retrieved_at,
-      accessScope: input.access_scope,
-    });
-    return client.resources.materialize(
-      create(MaterializeResourceRequestSchema, {
-        subjectId,
-        operationId: values["operation-id"] ?? crypto.randomUUID(),
-        reference,
-        observedAt: timestampFromDate(new Date(input.observed_at)),
-      }),
-    );
-  }
-  const reference = await resolveReference(
-    required(argument, `Resource reference for ${action ?? "resource"}`),
+    operationId: values["operation-id"] ?? crypto.randomUUID(),
+    reference,
+    observedAt: timestampFromDate(new Date(input.observed_at)),
+  });
+};
+const resourceGet = async (env: CliEnvironment, argument?: string) => {
+  const ref = await env.resolveReference(
+    env.required(argument, "Resource reference"),
     "resource",
   );
-  const request = create(ObjectRequestSchema, {
-    subjectId,
-    id: reference.value,
-  });
-  if (action === "get") return client.resources.get(request);
-  if (action === "remove") return client.resources.remove(request);
-  throw new CliError(
-    "INVALID_ARGUMENT",
-    "Use resource list|get|put|remove|materialize",
+  return env.client.resources.get({ subjectId: env.subjectId, id: ref.value });
+};
+const resourceRemove = async (env: CliEnvironment, argument?: string) => {
+  const ref = await env.resolveReference(
+    env.required(argument, "Resource reference"),
+    "resource",
   );
+  return env.client.resources.remove({
+    subjectId: env.subjectId,
+    id: ref.value,
+  });
+};
+
+export function createResourceCommand(leaf: CliLeaf) {
+  return defineCommand({
+    args: commonArgs,
+    subCommands: {
+      list: leaf(
+        { ...stringArgs("page-size", "page-token", "status") },
+        resourceList,
+      ),
+      put: leaf({ ...stringArgs("request-file") }, resourcePut),
+      get: leaf({}, resourceGet, {
+        parameters: ["<Resource reference>"],
+      }),
+      remove: leaf({}, resourceRemove, {
+        parameters: ["<Resource reference>"],
+      }),
+      materialize: leaf(
+        { ...stringArgs("request-file", "operation-id") },
+        resourceMaterialize,
+      ),
+    },
+  });
 }

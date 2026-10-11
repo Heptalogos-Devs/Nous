@@ -362,8 +362,7 @@ impl ServingService {
         space: &str,
         snapshot: &nous_configuration::ConfigSnapshot,
     ) -> Result<ServingRecord> {
-        let record = self.build_family(subject, family, space, snapshot).await?;
-        let artifact = self.open_record(&record)?;
+        let (record, artifact) = self.build_family(subject, family, space, snapshot).await?;
         self.publish_snapshot(&record, artifact);
         Ok(record)
     }

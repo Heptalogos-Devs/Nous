@@ -35,6 +35,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 futures.workspace = true
+async-stream.workspace = true
 postgresql_embedded.workspace = true
 chrono.workspace = true
 

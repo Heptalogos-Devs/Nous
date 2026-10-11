@@ -81,11 +81,9 @@ impl MemoryService {
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         let purge: String = row.try_get("purge_state").map_err(db)?;
         if purge == "purging" {
-            if epoch == expected_epoch + 1
-                && mutation
-                    .checkpoint_matches(kind.as_str(), kind.as_str(), &object_id.to_string(), epoch)
-                    .await?
-            {
+            let checkpoint =
+                MutationResult::new(object_ref(kind, object_id), None, Some(expected_epoch + 1));
+            if epoch == expected_epoch + 1 && mutation.checkpoint_matches(&checkpoint).await? {
                 return mutation.checkpoint().await;
             }
             return Err(Error::new(
@@ -208,12 +206,11 @@ impl MemoryService {
             .await
             .map_err(db)?;
         mutation
-            .checkpoint_with_result(
-                kind.as_str(),
-                kind.as_str(),
-                &object_id.to_string(),
-                expected_epoch + 1,
-            )
+            .checkpoint_with_result(&MutationResult::new(
+                object_ref(kind, object_id),
+                None,
+                Some(expected_epoch + 1),
+            ))
             .await
     }
 
@@ -275,12 +272,11 @@ impl MemoryService {
             ));
         }
         if !mutation
-            .checkpoint_matches(
-                kind.as_str(),
-                kind.as_str(),
-                &object_id.to_string(),
-                expected_epoch + 1,
-            )
+            .checkpoint_matches(&MutationResult::new(
+                object_ref(kind, object_id),
+                None,
+                Some(expected_epoch + 1),
+            ))
             .await?
         {
             return Err(Error::new(
@@ -311,12 +307,11 @@ impl MemoryService {
         .await
         .map_err(db)?;
         mutation
-            .commit(
-                kind.as_str(),
-                Some(&object_id.to_string()),
+            .commit(&[MutationResult::new(
+                object_ref(kind, object_id),
                 None,
                 Some(expected_epoch + 1),
-            )
+            )])
             .await
     }
 
@@ -382,13 +377,22 @@ impl MemoryService {
                         "Cognition lifecycle operation is in progress",
                     ));
                 }
-                let revision = receipt.result_revision.ok_or_else(|| {
-                    Error::new(
-                        error_owner,
-                        ErrorCode::InternalFailure,
-                        "committed Cognition lifecycle receipt has no selected revision",
-                    )
-                })?;
+                let target = object_ref(kind, object_id);
+                let revision = receipt
+                    .results
+                    .iter()
+                    .find_map(|result| {
+                        (result.reference == target)
+                            .then_some(result.revision_id)
+                            .flatten()
+                    })
+                    .ok_or_else(|| {
+                        Error::new(
+                            error_owner,
+                            ErrorCode::InternalFailure,
+                            "committed Cognition lifecycle receipt has no selected revision",
+                        )
+                    })?;
                 return self
                     .read_cognition(subject, revision_ref(kind, revision))
                     .await;
@@ -502,12 +506,11 @@ impl MemoryService {
             }
         }
         mutation
-            .commit(
-                kind.as_str(),
-                Some(&object_id.to_string()),
-                Some(result_revision),
+            .commit(&[MutationResult::revised(
+                object_ref(kind, object_id),
+                result_revision,
                 Some(next_epoch),
-            )
+            )])
             .await?;
         self.read_cognition(subject, revision_ref(kind, result_revision))
             .await

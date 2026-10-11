@@ -223,6 +223,7 @@ impl MemoryService {
             .map(|id| id.0)
             .collect();
         Self::insert_cognition_revision_header_in(
+            &self.store,
             tx,
             subject,
             &CognitionRevisionHeader::new(
@@ -235,6 +236,7 @@ impl MemoryService {
                 write.recorded_at,
                 write.producer,
             ),
+            content.title.as_deref().unwrap_or(""),
         )
         .await?;
         sqlx::query("INSERT INTO cognitive_schema_revisions(schema_revision_id,revision_intent,title,structural_claim,applicability_description,aboutness,tags,boundary_definition,formation_kind,valid_time_kind,valid_time_start,valid_time_end) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
@@ -243,17 +245,6 @@ impl MemoryService {
             self.insert_schema_link(tx, subject, write.revision_id, link.clone())
                 .await?;
         }
-        self.store
-            .ensure_identity_addresses_in(
-                tx,
-                subject,
-                &[
-                    CognitiveRef::CognitiveSchema(write.schema_id),
-                    CognitiveRef::CognitiveSchemaRevision(write.revision_id),
-                ],
-                content.title.as_deref().unwrap_or(""),
-            )
-            .await?;
         Ok(())
     }
 }

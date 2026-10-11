@@ -17,7 +17,7 @@ impl ServingService {
         family: &str,
         space: &str,
         snapshot: &nous_configuration::ConfigSnapshot,
-    ) -> Result<ServingRecord> {
+    ) -> Result<(ServingRecord, super::lifecycle::OpenArtifact)> {
         self.build_family_in_view(
             subject,
             family,
@@ -36,7 +36,7 @@ impl ServingService {
         snapshot: &nous_configuration::ConfigSnapshot,
         view: Option<&HistoricalAuthoritySnapshot>,
         serving: &ServingSnapshot,
-    ) -> Result<ServingRecord> {
+    ) -> Result<(ServingRecord, super::lifecycle::OpenArtifact)> {
         // Capture before any source reads. Publication rejects this build if a
         // purge checkpoint advanced while its immutable inputs were collected.
         let purge_epoch = self.store.serving_purge_epoch(subject).await?;
@@ -86,12 +86,9 @@ impl ServingService {
                 .await?
             }
         };
-        // Reopen the staged native artifact before publishing any durable pointer.
-        self.readback(staging.path(), family, id)?;
         let sums = checksums(staging.path())?;
         let hash = digest(&sums)?;
         let target = self.options.root.join(id.0.to_string());
-        std::fs::rename(staging.path(), &target).map_err(io)?;
         let implementation_id = implementation(family).to_owned();
         let config_digest = self.config_digest(subject, family, snapshot).await?;
         let cognitive_profile = (family == "topology")
@@ -121,17 +118,33 @@ impl ServingService {
             built_at: chrono::Utc::now(),
             metadata: serde_json::json!({ "checksums": sums, "cognitive_profile": cognitive_profile }),
         };
-        let published = match self.store.publish_generation(record).await {
-            Ok(published) => published,
+        std::fs::rename(staging.path(), &target).map_err(io)?;
+        // Open the final path before publishing its database pointer. Some native
+        // indexes retain their original directory path, so the staged handle cannot
+        // safely follow the directory rename.
+        let artifact = match self.open_record(&record) {
+            Ok(artifact) => artifact,
             Err(error) => {
                 let _ = std::fs::remove_dir_all(&target);
                 return Err(error);
             }
         };
-        if published.generation_id != id {
+        let published = match self.store.publish_generation(record).await {
+            Ok(published) => published,
+            Err(error) => {
+                drop(artifact);
+                let _ = std::fs::remove_dir_all(&target);
+                return Err(error);
+            }
+        };
+        if published.generation_id == id {
+            Ok((published, artifact))
+        } else {
+            drop(artifact);
             std::fs::remove_dir_all(&target).map_err(io)?;
+            let artifact = self.open_record(&published)?;
+            Ok((published, artifact))
         }
-        Ok(published)
     }
 
     async fn build_text(

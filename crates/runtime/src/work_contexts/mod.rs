@@ -5,7 +5,7 @@ use crate::*;
 use chrono::{DateTime, Utc};
 use nous_core::{CognitiveRef, OperationId, SubjectId};
 use nous_persistence::{
-    MutationReceipt, check_receipt, commit_receipt, database_error as db, lock_operation,
+    MutationEnvelope, MutationReceipt, MutationResult, MutationStart, database_error as db,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -214,24 +214,14 @@ pub(super) fn replay_context(receipt: MutationReceipt) -> Result<Uuid> {
             "WorkContext operation is already in progress",
         ));
     }
-    receipt
-        .result_ref
-        .ok_or_else(|| {
-            Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InternalFailure,
-                "WorkContext receipt has no result",
-            )
-        })?
-        .parse()
-        .map_err(|error| {
-            Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InternalFailure,
-                "invalid WorkContext receipt",
-            )
-            .with_source(error)
-        })
+    match receipt.results.first().map(|result| &result.reference) {
+        Some(CognitiveRef::WorkContext(id)) => Ok(id.0),
+        _ => Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InternalFailure,
+            "WorkContext receipt has no typed result",
+        )),
+    }
 }
 fn typed_anchors(entities: &[EntityRef], tags: &[TagId]) -> Vec<CognitiveRef> {
     entities

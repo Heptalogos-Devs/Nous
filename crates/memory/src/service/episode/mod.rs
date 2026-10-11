@@ -354,42 +354,6 @@ async fn ensure_no_parent_cycle(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "Episode creation binds one immutable revision and its object identity"
-)]
-async fn insert_episode_revision(
-    store: &AuthorityStore,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    input: &EpisodeInput,
-    episode: EpisodeId,
-    revision: EpisodeRevisionId,
-    parent_revision: Option<EpisodeRevisionId>,
-    intent: Option<String>,
-    kind: &str,
-    start: Option<DateTime<Utc>>,
-    end: Option<DateTime<Utc>>,
-    formed_at: DateTime<Utc>,
-    recorded_at: DateTime<Utc>,
-) -> Result<()> {
-    insert_episode_revision_with_intent(
-        store,
-        tx,
-        input,
-        episode,
-        revision,
-        parent_revision,
-        intent,
-        1,
-        kind,
-        start,
-        end,
-        formed_at,
-        recorded_at,
-    )
-    .await
-}
-
-#[expect(
-    clippy::too_many_arguments,
     reason = "Episode revision insertion receives the complete canonical payload"
 )]
 async fn insert_episode_revision_with_intent(
@@ -408,6 +372,7 @@ async fn insert_episode_revision_with_intent(
     recorded_at: DateTime<Utc>,
 ) -> Result<()> {
     MemoryService::insert_cognition_revision_header_in(
+        store,
         tx,
         input.subject,
         &CognitionRevisionHeader::new(
@@ -420,6 +385,7 @@ async fn insert_episode_revision_with_intent(
             recorded_at,
             input.producer_signature_id,
         ),
+        input.title.as_deref().unwrap_or(""),
     )
     .await?;
     sqlx::query("INSERT INTO episode_revisions(episode_revision_id,revision_intent,title,parent_episode_revision_id,experience_time_kind,experience_time_start,experience_time_end,boundary_explanation) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
@@ -431,17 +397,6 @@ async fn insert_episode_revision_with_intent(
     for (basis_no, basis) in input.basis.iter().enumerate() {
         insert_episode_support(tx, revision, basis_no as i32, basis).await?;
     }
-    store
-        .ensure_identity_addresses_in(
-            tx,
-            input.subject,
-            &[
-                CognitiveRef::Episode(episode),
-                CognitiveRef::EpisodeRevision(revision),
-            ],
-            input.title.as_deref().unwrap_or(""),
-        )
-        .await?;
     Ok(())
 }
 

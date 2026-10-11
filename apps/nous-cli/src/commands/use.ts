@@ -1,13 +1,12 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { stringArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 
 import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 
-export async function useCommands(
-  env: CliEnvironment,
-  action: string | undefined,
-) {
+async function useCommands(env: CliEnvironment, argument?: string) {
   const { client, values, state, subjectId, required, resolveReference } = env;
   const kind = values.kind ?? "referenced";
   if (
@@ -22,7 +21,7 @@ export async function useCommands(
     ].includes(kind)
   )
     throw new CliError("INVALID_ARGUMENT", "Invalid use kind");
-  const text = required(action, "Exact cognition revision");
+  const text = required(argument, "Exact cognition revision");
   const reference = await resolveReference(text);
   if (
     ![
@@ -76,4 +75,12 @@ export async function useCommands(
       },
     ],
   });
+}
+
+export function createUseCommand(leaf: CliLeaf) {
+  return leaf(
+    { ...stringArgs("kind", "event-id", "occurred-at", "query-id") },
+    useCommands,
+    { parameters: ["<exact cognition revision>"] },
+  );
 }
