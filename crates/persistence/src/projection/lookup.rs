@@ -95,10 +95,15 @@ WITH catalog AS (
  UNION ALL SELECT 'source_region',source_region_id FROM source_regions WHERE subject_id=$1
  UNION ALL SELECT 'derived_representation',derived_representation_id FROM derived_representations WHERE subject_id=$1
  UNION ALL SELECT 'derived_region',derived_region_id FROM derived_regions WHERE subject_id=$1
- UNION ALL SELECT 'memory_revision',current_revision_id FROM memory_objects WHERE $2 AND subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
- UNION ALL SELECT 'cognitive_schema_revision',current_revision_id FROM cognitive_schemas WHERE $2 AND subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
- UNION ALL SELECT 'episode_revision',current_revision_id FROM episode_objects WHERE $2 AND subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
- UNION ALL SELECT 'journal_revision',current_revision_id FROM journal_objects WHERE $2 AND subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
+ UNION ALL SELECT CASE object_kind
+                   WHEN 'memory' THEN 'memory_revision'
+                   WHEN 'cognitive_schema' THEN 'cognitive_schema_revision'
+                   WHEN 'episode' THEN 'episode_revision'
+                   WHEN 'journal' THEN 'journal_revision'
+                 END,current_revision_id
+            FROM cognition_objects
+            WHERE $2 AND subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid'
+              AND suppression_state='normal' AND purge_state='normal'
  UNION ALL SELECT 'tag',tag_id FROM tags WHERE $2 AND subject_id=$1 AND status='active'
 ) SELECT kind,id FROM catalog WHERE id IS NOT NULL AND ($3::text IS NULL OR kind||':'||id::text > $3 COLLATE "C") ORDER BY kind||':'||id::text COLLATE "C" LIMIT $4
 "#).bind(subject.0).bind(memory_enabled).bind(after.map(ToString::to_string))

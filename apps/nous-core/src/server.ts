@@ -173,29 +173,14 @@ export async function createCore(settings: CoreOptions) {
   };
   const memory: ServiceImpl<typeof MemoryService> = {
     ...forward(MemoryService, kernel.memory),
-    purgeMemory: (request, context) =>
-      composition.purgeMemory(
-        request,
-        executionOptions(kernel.execution.opportunity, options(context)),
-      ),
-    purgeEpisode: (request, context) =>
-      composition.purgeEpisode(
-        request,
-        executionOptions(kernel.execution.opportunity, options(context)),
-      ),
-    purgeJournal: (request, context) =>
-      composition.purgeJournal(
+    mutateCognition: (request, context) =>
+      composition.mutateCognition(
         request,
         executionOptions(kernel.execution.opportunity, options(context)),
       ),
   };
   const concepts: ServiceImpl<typeof ConceptService> = {
     ...forward(ConceptService, kernel.concepts),
-    purgeCognitiveSchema: (request, context) =>
-      composition.purgeCognitiveSchema(
-        request,
-        executionOptions(kernel.execution.opportunity, options(context)),
-      ),
   };
   await app.register(fastifyConnectPlugin, {
     routes: (router) => {

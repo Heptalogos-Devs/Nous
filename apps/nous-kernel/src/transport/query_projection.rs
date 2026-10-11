@@ -4,7 +4,10 @@
 use super::*;
 use nous_core::*;
 
-pub(super) fn query_response(result: CognitiveQueryResult) -> p::QueryResponse {
+pub(super) fn query_response(
+    result: CognitiveQueryResult,
+    bound_query: Option<p::QueryInspection>,
+) -> p::QueryResponse {
     p::QueryResponse {
         query_id: result.query_id.to_string(),
         status: enum_name(result.status),
@@ -40,7 +43,7 @@ pub(super) fn query_response(result: CognitiveQueryResult) -> p::QueryResponse {
                 detail: value.detail.unwrap_or_default(),
             })
             .collect(),
-        bound_query: None,
+        bound_query,
         diagnostics: result.diagnostics.map(|value| p::QueryDiagnostics {
             candidate_counts: value
                 .candidate_counts
@@ -377,11 +380,6 @@ pub(super) fn query_representation(
             .collect(),
         truncation_flags: representation.truncation_flags.clone(),
     }
-}
-
-pub(super) fn inspect_bound_query(bound: &nous_runtime::BoundQuery) -> Result<p::QueryInspection> {
-    let plan = nous_runtime::QueryPlan::for_bound_query(bound);
-    inspect_bound_query_with_plan(bound, &plan)
 }
 
 pub(super) fn inspect_bound_query_with_plan(

@@ -9,28 +9,19 @@ use sqlx::Row;
 fn operation_owner(kind: &str) -> Option<p::ErrorOwner> {
     Some(match kind {
         "add_schema_evidence"
-        | "acceptance_state"
         | "create_cognitive_schema"
         | "create_episode"
-        | "episode_lifecycle"
+        | "cognition_lifecycle"
         | "episode_partition"
         | "form_memory"
         | "journal_commit"
-        | "journal_lifecycle"
-        | "journal_purge"
         | "link_episode_revisions"
         | "link_memory_revisions"
         | "merge_cognitive_schemas"
-        | "purge_episode"
-        | "purge_memory"
         | "revise_cognitive_schema"
         | "revise_episode"
         | "revise_memory"
-        | "schema_lifecycle"
-        | "schema_purge"
-        | "set_accessibility"
-        | "split_cognitive_schema"
-        | "suppression_state" => p::ErrorOwner::Memory,
+        | "split_cognitive_schema" => p::ErrorOwner::Memory,
         "create_association" | "revoke_association" | "create_tag" | "revise_tag"
         | "merge_tags" | "split_tag" => p::ErrorOwner::Concept,
         "create_work_context"
@@ -75,7 +66,7 @@ impl KernelService {
                         "operation_kind is not registered",
                     )
                 })?;
-                let row = sqlx::query("SELECT state,created_at,committed_at,result_ref_kind,result_ref,result_revision,result_epoch,terminal_problem_code FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2 AND operation_kind=$3")
+                let row = sqlx::query("SELECT state,created_at,committed_at,result_kind,result_ref_kind,result_ref,result_revision,result_epoch,terminal_problem_code FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2 AND operation_kind=$3")
                     .bind(subject)
                     .bind(operation)
                     .bind(&identity.operation_kind)
@@ -104,6 +95,14 @@ impl KernelService {
                     }
                 };
                 let result_ref_kind: Option<String> = row.try_get("result_ref_kind").map_err(db)?;
+                let result_kind: Option<String> = row.try_get("result_kind").map_err(db)?;
+                let owner = if identity.operation_kind == "cognition_lifecycle"
+                    && result_kind.as_deref() == Some("cognitive_schema")
+                {
+                    p::ErrorOwner::Concept
+                } else {
+                    owner
+                };
                 let result_ref: Option<String> = row.try_get("result_ref").map_err(db)?;
                 let result_reference = match (result_ref_kind, result_ref) {
                     (Some(kind), Some(value)) => parse_reference(&kind, &value).ok().map(to_ref),

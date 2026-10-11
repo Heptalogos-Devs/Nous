@@ -1,0 +1,42 @@
+// Copyright 2026 Aravine Zhu
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+package nous.wave.v1alpha1;
+import "google/protobuf/empty.proto";
+import "nous/wave/v1alpha1/presentation.proto";
+import "nous/wave/v1alpha1/types.proto";
+import "nous/wave/v1alpha1/management.proto";
+import "nous/wave/v1alpha1/journal.proto";
+
+message CognitionResult {
+  oneof result {
+    Memory memory = 1;
+    CognitiveSchema cognitive_schema = 2;
+    Episode episode = 3;
+    Journal journal = 4;
+  }
+  repeated Degradation degradation = 15;
+}
+message ReadCognitionRequest { string subject_id = 1 [(reference_kind) = "subject"]; CognitiveRef reference = 2; }
+message CognitionListRequest { string subject_id = 1 [(reference_kind) = "subject"]; string kind = 2; Page page = 3; string status = 4; }
+message CognitionHistoryRequest { string subject_id = 1 [(reference_kind) = "subject"]; CognitiveRef object_ref = 2; Page page = 3; }
+message CognitionPage { repeated CognitionResult items = 1; string next_page_token = 2; }
+message SetCognitionAccessibility { string mode = 1; }
+message CognitionMutationRequest {
+  string operation_id = 1;
+  string subject_id = 2 [(reference_kind) = "subject"];
+  CognitiveRef object_ref = 3;
+  int64 expected_object_epoch = 4;
+  oneof action {
+    SetCognitionAccessibility set_accessibility = 5;
+    google.protobuf.Empty suppress = 6;
+    google.protobuf.Empty restore = 7;
+    google.protobuf.Empty withdraw = 8;
+    google.protobuf.Empty reaccept = 9;
+    google.protobuf.Empty purge = 10;
+  }
+}
+message CognitionMutationResponse {
+  oneof outcome { CognitionResult cognition = 1; google.protobuf.Empty purged = 2; }
+}

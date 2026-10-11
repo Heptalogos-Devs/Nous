@@ -40,57 +40,38 @@ async fn historical_cognition_rows(
     subject: SubjectId,
     as_of: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<HistoricalCognitionRows>> {
-    let mut cognition = Vec::new();
-    for (kind, objects, revisions, object_id, revision_id) in [
-        (
-            "memory",
-            "memory_objects",
-            "memory_revisions",
-            "memory_id",
-            "memory_revision_id",
-        ),
-        (
-            "cognitive_schema",
-            "cognitive_schemas",
-            "cognitive_schema_revisions",
-            "schema_id",
-            "schema_revision_id",
-        ),
-        (
-            "episode",
-            "episode_objects",
-            "episode_revisions",
-            "episode_id",
-            "episode_revision_id",
-        ),
-        (
-            "journal",
-            "journal_objects",
-            "journal_revisions",
-            "journal_id",
-            "journal_revision_id",
-        ),
-    ] {
-        let query = format!(
-            "SELECT o.{object_id} object_id,h.state,array_agg(r.{revision_id} ORDER BY r.recorded_at DESC,r.revision_no DESC) revisions FROM {objects} o JOIN LATERAL (SELECT state FROM authority_object_states WHERE subject_id=o.subject_id AND object_kind=$2 AND object_ref=o.{object_id}::text AND recorded_at<=$3 ORDER BY recorded_at DESC,event_id DESC LIMIT 1) h ON true JOIN {revisions} r ON r.{object_id}=o.{object_id} AND r.recorded_at<=$3 WHERE o.subject_id=$1 AND o.created_at<=$3 AND o.purge_state='normal' GROUP BY o.{object_id},h.state ORDER BY o.{object_id}"
-        );
-        // Identifiers come only from this fixed four-owner catalog; values are bound.
-        for row in sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
-            .bind(subject.0)
-            .bind(kind)
-            .bind(as_of)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(db)?
-        {
-            cognition.push(HistoricalCognitionRows {
-                object_kind: kind.into(),
+    let rows = sqlx::query(
+        "SELECT o.object_kind,o.object_id,h.state,array_agg(r.revision_id ORDER BY r.recorded_at DESC,r.revision_no DESC) revisions \
+         FROM cognition_objects o \
+         JOIN LATERAL ( \
+             SELECT state FROM authority_object_states \
+             WHERE subject_id=o.subject_id AND object_kind=o.object_kind \
+               AND object_ref=o.object_id::text AND recorded_at<=$2 \
+             ORDER BY recorded_at DESC,event_id DESC LIMIT 1 \
+         ) h ON true \
+         JOIN cognition_revision_headers r \
+           ON r.subject_id=o.subject_id AND r.object_kind=o.object_kind \
+          AND r.object_id=o.object_id AND r.recorded_at<=$2 \
+         WHERE o.subject_id=$1 AND o.created_at<=$2 AND o.purge_state='normal' \
+         GROUP BY o.object_kind,o.object_id,h.state \
+         ORDER BY o.object_kind,o.object_id",
+    )
+    .bind(subject.0)
+    .bind(as_of)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(db)?;
+    let cognition = rows
+        .into_iter()
+        .map(|row| {
+            Ok(HistoricalCognitionRows {
+                object_kind: row.try_get("object_kind").map_err(db)?,
                 object_id: row.try_get("object_id").map_err(db)?,
                 state: row.try_get("state").map_err(db)?,
                 revisions: row.try_get("revisions").map_err(db)?,
-            });
-        }
-    }
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(cognition)
 }
 

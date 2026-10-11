@@ -30,33 +30,17 @@ impl MemoryService {
             }) => return Ok(false),
             Err(error) => return Err(error),
         };
-        let (query, id) = match exact {
-            CognitiveRef::MemoryRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM memory_objects o JOIN memory_revisions r USING(memory_id) WHERE o.subject_id=$1 AND r.memory_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')",
-                id.0,
-            ),
-            CognitiveRef::CognitiveSchemaRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM cognitive_schemas o JOIN cognitive_schema_revisions r USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')",
-                id.0,
-            ),
-            CognitiveRef::EpisodeRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM episode_objects o JOIN episode_revisions r USING(episode_id) WHERE o.subject_id=$1 AND r.episode_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')",
-                id.0,
-            ),
-            CognitiveRef::JournalRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM journal_objects o JOIN journal_revisions r USING(journal_id) WHERE o.subject_id=$1 AND r.journal_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')",
-                id.0,
-            ),
-            _ => {
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
-                    nous_core::ErrorCode::InvalidRequest,
-                    "contextual cognition requires an owned cognition reference",
-                ));
-            }
-        };
-        sqlx::query_scalar(query)
+        let (kind, id, is_revision) = CognitionKind::from_reference(&exact)?;
+        if !is_revision {
+            return Err(Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
+                "contextual cognition requires an owned cognition revision",
+            ));
+        }
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cognition_revision_headers h JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id WHERE h.subject_id=$1 AND h.object_kind=$2 AND h.revision_id=$3 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')")
             .bind(subject.0)
+            .bind(kind.as_str())
             .bind(id)
             .fetch_one(self.store.pool())
             .await
@@ -66,10 +50,7 @@ impl MemoryService {
     pub async fn references_producer(&self, subject: SubjectId, producer: Uuid) -> Result<bool> {
         sqlx::query_scalar(
             "SELECT EXISTS (
-                SELECT 1 FROM memory_revisions WHERE subject_id=$1 AND producer_signature_id=$2
-                UNION ALL SELECT 1 FROM episode_revisions WHERE subject_id=$1 AND producer_signature_id=$2
-                UNION ALL SELECT 1 FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE o.subject_id=$1 AND r.producer_signature_id=$2
-                UNION ALL SELECT 1 FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.producer_signature_id=$2
+                SELECT 1 FROM cognition_revision_headers WHERE subject_id=$1 AND producer_signature_id=$2
                 UNION ALL SELECT 1 FROM tag_revisions r JOIN tags t USING(tag_id) WHERE t.subject_id=$1 AND r.producer_signature_id=$2
                 UNION ALL SELECT 1 FROM association_evidence WHERE subject_id=$1 AND producer_signature_id=$2
             )",
@@ -110,9 +91,10 @@ impl MemoryService {
                             "cognition dependency must target an exact revision",
                         ));
                     }
-                    let (query, id, _) = dependency_query(&dependency.target_revision, true)?;
+                    let (query, id, kind) = dependency_query(&dependency.target_revision, true)?;
                     let row = sqlx::query(query)
                         .bind(subject.0)
+                        .bind(kind.as_str())
                         .bind(id)
                         .fetch_optional(&mut **tx)
                         .await
@@ -366,9 +348,10 @@ impl MemoryService {
         subject: SubjectId,
         reference: &CognitiveRef,
     ) -> Result<()> {
-        let (query, id, _) = dependency_query(reference, false)?;
+        let (query, id, kind) = dependency_query(reference, false)?;
         let row = sqlx::query(query)
             .bind(subject.0)
+            .bind(kind.as_str())
             .bind(id)
             .fetch_optional(self.store.pool())
             .await
@@ -384,6 +367,7 @@ impl MemoryService {
         let (query, id, kind) = dependency_query(reference, false)?;
         let row = sqlx::query(query)
             .bind(subject.0)
+            .bind(kind.as_str())
             .bind(id)
             .fetch_optional(self.store.pool())
             .await
@@ -396,7 +380,12 @@ impl MemoryService {
                 )
             })?;
         let object: Uuid = row.try_get("object_id").map_err(db)?;
-        Ok(format!("{kind}:{object}"))
+        let family = if kind == CognitionKind::CognitiveSchema {
+            "schema"
+        } else {
+            kind.as_str()
+        };
+        Ok(format!("{family}:{object}"))
     }
 
     async fn revision_basis(
@@ -450,50 +439,21 @@ impl MemoryService {
 fn dependency_query(
     reference: &CognitiveRef,
     lock: bool,
-) -> Result<(&'static str, Uuid, &'static str)> {
-    match reference {
-        CognitiveRef::MemoryRevision(id) => Ok((
-            if lock {
-                "SELECT o.purge_state,r.memory_id AS object_id FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o"
-            } else {
-                "SELECT o.purge_state,r.memory_id AS object_id FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2"
-            },
-            id.0,
-            "memory",
-        )),
-        CognitiveRef::CognitiveSchemaRevision(id) => Ok((
-            if lock {
-                "SELECT o.purge_state,r.schema_id AS object_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o"
-            } else {
-                "SELECT o.purge_state,r.schema_id AS object_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2"
-            },
-            id.0,
-            "schema",
-        )),
-        CognitiveRef::EpisodeRevision(id) => Ok((
-            if lock {
-                "SELECT o.purge_state,r.episode_id AS object_id FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o"
-            } else {
-                "SELECT o.purge_state,r.episode_id AS object_id FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2"
-            },
-            id.0,
-            "episode",
-        )),
-        CognitiveRef::JournalRevision(id) => Ok((
-            if lock {
-                "SELECT o.purge_state,r.journal_id AS object_id FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o"
-            } else {
-                "SELECT o.purge_state,r.journal_id AS object_id FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2"
-            },
-            id.0,
-            "journal",
-        )),
-        _ => Err(Error::new(
-            nous_core::ErrorOwner::Memory,
-            nous_core::ErrorCode::InvalidRequest,
+) -> Result<(&'static str, Uuid, CognitionKind)> {
+    let (kind, id, is_revision) = CognitionKind::from_reference(reference)?;
+    if !is_revision {
+        return Err(Error::new(
+            ErrorOwner::Memory,
+            ErrorCode::InvalidRequest,
             "cognition dependency needs exact revision",
-        )),
+        ));
     }
+    let query = if lock {
+        "SELECT o.purge_state,o.object_id FROM cognition_revision_headers h JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id WHERE h.subject_id=$1 AND h.object_kind=$2 AND h.revision_id=$3 FOR SHARE OF o"
+    } else {
+        "SELECT o.purge_state,o.object_id FROM cognition_revision_headers h JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id WHERE h.subject_id=$1 AND h.object_kind=$2 AND h.revision_id=$3"
+    };
+    Ok((query, id, kind))
 }
 
 fn require_dependency_row(owner: ErrorOwner, row: Option<sqlx::postgres::PgRow>) -> Result<()> {

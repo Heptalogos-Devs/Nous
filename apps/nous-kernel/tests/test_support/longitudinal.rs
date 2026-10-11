@@ -127,7 +127,7 @@ pub(crate) fn consolidation_memory(episode: &EpisodeView) -> nous_memory::Explic
     nous_memory::ExplicitMemoryInput {
         producer: Some(consolidation_producer()),
         operation_id: nous_core::OperationId::new(),
-        subject: episode.object.subject_id,
+        subject: episode.header.subject_id,
         tags: Vec::new(),
         cognitive_role: nous_memory::CognitiveRole::Declarative,
         formation_mode: nous_memory::FormationMode::Grounded,
@@ -150,7 +150,7 @@ pub(crate) fn consolidation_memory(episode: &EpisodeView) -> nous_memory::Explic
 pub(crate) fn consolidation_schema(episode: &EpisodeView) -> nous_memory::CreateSchemaInput {
     nous_memory::CreateSchemaInput {
         operation_id: nous_core::OperationId::new(),
-        subject: episode.object.subject_id,
+        subject: episode.header.subject_id,
         content: nous_memory::SchemaContent {
             producer: Some(consolidation_producer()),
             title: Some("Recurring pattern".into()),

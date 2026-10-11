@@ -5,7 +5,7 @@ mod test_support;
 use nous_core::{OperationId, TemporalExtent};
 use nous_memory::{CreateTagRequest, ReviseMemoryInput};
 use nous_protocol::public as p;
-use p::memory_service_server::MemoryService;
+use p::memory_service_server::MemoryService as MemoryRpcService;
 use test_support::query::subject;
 use test_support::{database, form_input, observation, open_runtime};
 
@@ -43,8 +43,8 @@ async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
         producer: None,
         subject,
         operation_id: OperationId::new(),
-        memory_id: original.object.memory_id,
-        expected_object_epoch: original.object.object_epoch,
+        memory_id: original.header.memory_id(),
+        expected_object_epoch: original.header.object_epoch,
         intent: nous_memory::RevisionIntent::Correct,
         formation_mode: nous_memory::FormationMode::Grounded,
         grounding_occurrence_id: Some(source.occurrence.occurrence_id),
@@ -61,14 +61,17 @@ async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
     let replay = owner.revise_memory(request).await.unwrap();
     assert_eq!(revised.tags, vec![tag.tag_id]);
     assert_eq!(
-        replay.revision.memory_revision_id,
-        revised.revision.memory_revision_id
+        replay.revision.header.revision_id(),
+        revised.revision.header.revision_id()
     );
     let service = nous_kernel::transport::KernelService(runtime.clone());
     let request = |token| {
-        tonic::Request::new(p::MemoryHistoryRequest {
+        tonic::Request::new(p::CognitionHistoryRequest {
             subject_id: subject.0.to_string(),
-            memory_id: original.object.memory_id.0.to_string(),
+            object_ref: Some(p::CognitiveRef {
+                kind: "memory".into(),
+                value: original.header.memory_id().0.to_string(),
+            }),
             page: Some(p::Page {
                 page_size: 1,
                 page_token: token,
@@ -76,30 +79,86 @@ async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
         })
     };
     let first = service
-        .list_memory_revisions(request(String::new()))
+        .list_cognition_history(request(String::new()))
         .await
         .unwrap()
         .into_inner();
     assert_eq!(first.items.len(), 1);
+    let p::cognition_result::Result::Memory(first_memory) = first.items[0].result.as_ref().unwrap()
+    else {
+        panic!("history item should be Memory");
+    };
     assert_eq!(
-        first.items[0].revision_id,
-        original.revision.memory_revision_id.0.to_string()
+        first_memory
+            .revision
+            .as_ref()
+            .unwrap()
+            .header
+            .as_ref()
+            .unwrap()
+            .revision_ref
+            .as_ref()
+            .unwrap()
+            .value,
+        original.revision.header.revision_id().to_string()
     );
-    assert!(!first.items[0].basis.is_empty());
-    assert!(!first.items[0].acceptance_state.is_empty());
-    assert!(first.items[0].created_at.is_some());
+    assert!(
+        !first_memory
+            .revision
+            .as_ref()
+            .unwrap()
+            .details
+            .as_ref()
+            .unwrap()
+            .basis
+            .is_empty()
+    );
+    assert!(
+        !first_memory
+            .header
+            .as_ref()
+            .unwrap()
+            .acceptance_state
+            .is_empty()
+    );
+    assert!(first_memory.header.as_ref().unwrap().created_at.is_some());
     assert!(!first.next_page_token.is_empty());
     let second = service
-        .list_memory_revisions(request(first.next_page_token))
+        .list_cognition_history(request(first.next_page_token))
         .await
         .unwrap()
         .into_inner();
     assert_eq!(second.items.len(), 1);
+    let p::cognition_result::Result::Memory(second_memory) =
+        second.items[0].result.as_ref().unwrap()
+    else {
+        panic!("history item should be Memory");
+    };
     assert_eq!(
-        second.items[0].revision_id,
-        revised.revision.memory_revision_id.0.to_string()
+        second_memory
+            .revision
+            .as_ref()
+            .unwrap()
+            .header
+            .as_ref()
+            .unwrap()
+            .revision_ref
+            .as_ref()
+            .unwrap()
+            .value,
+        revised.revision.header.revision_id().to_string()
     );
-    assert_eq!(second.items[0].tags, vec![tag.tag_id.0.to_string()]);
+    assert_eq!(
+        second_memory
+            .revision
+            .as_ref()
+            .unwrap()
+            .details
+            .as_ref()
+            .unwrap()
+            .tags,
+        vec![tag.tag_id.0.to_string()]
+    );
     assert!(second.next_page_token.is_empty());
     owner
         .form_memory(form_input(
@@ -111,28 +170,56 @@ async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
         .await
         .unwrap();
     let list = |token| {
-        tonic::Request::new(p::ListRequest {
+        tonic::Request::new(p::CognitionListRequest {
             subject_id: subject.0.to_string(),
+            kind: "memory".into(),
             page: Some(p::Page {
                 page_size: 1,
                 page_token: token,
             }),
-            ..Default::default()
+            status: "accepted".into(),
         })
     };
     let page_one = service
-        .list_memories(list(String::new()))
+        .list_cognitions(list(String::new()))
         .await
         .unwrap()
         .into_inner();
     assert_eq!(page_one.items.len(), 1);
     assert!(!page_one.next_page_token.is_empty());
     let page_two = service
-        .list_memories(list(page_one.next_page_token))
+        .list_cognitions(list(page_one.next_page_token))
         .await
         .unwrap()
         .into_inner();
     assert_eq!(page_two.items.len(), 1);
-    assert_ne!(page_one.items[0].memory_id, page_two.items[0].memory_id);
+    let p::cognition_result::Result::Memory(page_one_memory) =
+        page_one.items[0].result.as_ref().unwrap()
+    else {
+        panic!("list item should be Memory");
+    };
+    let p::cognition_result::Result::Memory(page_two_memory) =
+        page_two.items[0].result.as_ref().unwrap()
+    else {
+        panic!("list item should be Memory");
+    };
+    assert_ne!(
+        page_one_memory
+            .header
+            .as_ref()
+            .unwrap()
+            .object_ref
+            .as_ref()
+            .unwrap()
+            .value,
+        page_two_memory
+            .header
+            .as_ref()
+            .unwrap()
+            .object_ref
+            .as_ref()
+            .unwrap()
+            .value
+    );
     assert!(page_two.next_page_token.is_empty());
 }

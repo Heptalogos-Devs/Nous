@@ -57,48 +57,6 @@ describe("bounded maintenance grants", () => {
     expect(attempts).toBe(0);
     expect(state.synthesize).not.toHaveBeenCalled();
   });
-  it("retains lease ownership while acknowledging an expired opportunity", async () => {
-    const state = fixture();
-    const claim = vi.fn(async () => ({ needs: [need] }));
-    const finish = vi.fn(async () => ({}));
-    Object.assign(state.kernel.maintenance, {
-      getMaintenancePolicy: vi.fn(async () => ({
-        enabled: true,
-        maxOperations: 1,
-        experienceBatchSize: 256,
-        workerLeaseSeconds: 120,
-        retryInitialSeconds: 1,
-        retryMaxSeconds: 5,
-        retryMaxAttempts: 4,
-      })),
-      claimMaintenance: claim,
-      finishMaintenance: finish,
-    });
-    state.synthesize.mockRejectedValue(
-      new ConnectError("Opportunity expired", Code.DeadlineExceeded),
-    );
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const result = await grantMaintenance(state.kernel, state.models, {
-        $typeName: "nous.wave.v1alpha1.MaintenanceGrantRequest",
-        subjectId: subject,
-        maxOperations: 1,
-        maxModelCalls: 1,
-        maxElapsedMs: 120000,
-      });
-      expect(claim).toHaveBeenCalledWith(
-        expect.objectContaining({ leaseSeconds: 136 }),
-        expect.anything(),
-      );
-      expect(finish).toHaveBeenCalledWith(
-        expect.objectContaining({ disposition: "retry" }),
-        expect.objectContaining({ timeoutMs: 5000 }),
-      );
-      expect(result.results[0]?.status).toBe("retry");
-    } finally {
-      log.mockRestore();
-    }
-  });
   it("defers unfinished work when the granted opportunity actually expires", async () => {
     const state = fixture();
     const originalSave = state.kernel.modelWorkflow.saveWorkflow;

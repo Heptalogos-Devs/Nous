@@ -4,12 +4,10 @@
 use super::*;
 use sqlx::Row;
 const CURRENT_FOCUS: &str = r#"
-WITH current AS (
- SELECT 'memory_revision'::text kind,o.current_revision_id id,o.object_epoch epoch FROM memory_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'cognitive_schema_revision',o.current_revision_id,o.object_epoch FROM cognitive_schemas o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'episode_revision',o.current_revision_id,o.object_epoch FROM episode_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'journal_revision',o.current_revision_id,o.object_epoch FROM journal_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
-) SELECT epoch FROM current WHERE kind=$2 AND id=$3
+SELECT object_epoch FROM cognition_objects
+WHERE subject_id=$1 AND object_kind=$2 AND current_revision_id=$3
+  AND acceptance_state='accepted' AND integrity_state='valid'
+  AND suppression_state='normal' AND purge_state='normal'
 "#;
 impl MemoryService {
     pub(super) async fn current_concept_epoch(
@@ -17,18 +15,17 @@ impl MemoryService {
         subject: SubjectId,
         reference: &CognitiveRef,
     ) -> Result<Option<i64>> {
-        let (kind, value) = reference_parts(reference);
-        let id: Uuid = value.parse().map_err(|error| {
-            Error::new(
+        let (kind, id, is_revision) = CognitionKind::from_reference(reference)?;
+        if !is_revision {
+            return Err(Error::new(
                 nous_core::ErrorOwner::Concept,
                 nous_core::ErrorCode::InvalidRequest,
                 "concept focus must be exact cognition",
-            )
-            .with_source(error)
-        })?;
+            ));
+        }
         sqlx::query_scalar(CURRENT_FOCUS)
             .bind(subject.0)
-            .bind(kind)
+            .bind(kind.as_str())
             .bind(id)
             .fetch_optional(self.store.pool())
             .await
@@ -312,7 +309,7 @@ impl MemoryService {
         if entities.is_empty() {
             return Ok(Vec::new());
         }
-        let rows:Vec<Uuid>=sqlx::query_scalar("SELECT r.memory_revision_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND r.memory_revision_id::text<>$2 AND EXISTS(SELECT 1 FROM memory_revision_aboutness a WHERE a.memory_revision_id=r.memory_revision_id AND a.entity_ref=ANY($3::text[])) ORDER BY ts_rank_cd(to_tsvector('simple',r.representation_text),to_tsquery('simple',replace(plainto_tsquery('simple',$4)::text,' & ',' | '))) DESC,r.recorded_at DESC,r.memory_revision_id LIMIT 8")
+        let rows:Vec<Uuid>=sqlx::query_scalar("SELECT h.revision_id FROM cognition_objects o JOIN cognition_revision_headers h ON h.subject_id=o.subject_id AND h.object_kind=o.object_kind AND h.object_id=o.object_id AND h.revision_id=o.current_revision_id JOIN memory_revisions r ON r.memory_revision_id=h.revision_id WHERE o.object_kind='memory' AND o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND h.revision_id::text<>$2 AND EXISTS(SELECT 1 FROM memory_revision_aboutness a WHERE a.memory_revision_id=h.revision_id AND a.entity_ref=ANY($3::text[])) ORDER BY ts_rank_cd(to_tsvector('simple',r.representation_text),to_tsquery('simple',replace(plainto_tsquery('simple',$4)::text,' & ',' | '))) DESC,h.recorded_at DESC,h.revision_id LIMIT 8")
             .bind(subject.0).bind(reference_parts(focus).1).bind(entities.iter().map(|entity|entity.as_str()).collect::<Vec<_>>()).bind(text).fetch_all(self.store.pool()).await.map_err(db)?;
         Ok(rows
             .into_iter()

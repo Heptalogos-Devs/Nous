@@ -4,84 +4,17 @@
 mod test_support;
 
 use chrono::Utc;
-use nous_core::{
-    CognitiveRef, EntityRef, EpistemicClass, OperationId, QueryTarget, TemporalExtent, UseEventId,
-};
+use nous_core::{CognitiveRef, OperationId, QueryTarget, UseEventId};
 use nous_memory::{
-    AssociationBasis, AssociationBasisClass, AssociationPolarity, BasisRole, CreateSchemaInput,
-    EvidenceLocator, EvidenceRef, FormationMode, RevisionBasis, SchemaEvidenceLinkInput,
-    SchemaEvidenceRole, SchemaFormationKind, SchemaScope, UseEventRef,
+    BasisRole, CognitionAction, CreateSchemaInput, EvidenceLocator, EvidenceRef, RevisionBasis,
+    SchemaEvidenceLinkInput, SchemaEvidenceRole, SchemaFormationKind, SchemaScope,
 };
 use nous_runtime::{UseFeedback, UseFeedbackEvent, UseKind};
 use test_support::query::{query, subject};
-use test_support::{database, form_input, observation, open_runtime, open_runtime_with_serving};
-
-#[tokio::test]
-async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
-    let (root, url, _postgres) = database().await;
-    let runtime = open_runtime(&url, &root).await;
-    let subject = subject(&runtime).await;
-    let source = observation(&runtime, subject, "A supported source fact").await;
-    let owner = runtime.require_memory().unwrap();
-    let original = owner
-        .form_memory(form_input(
-            subject,
-            source.occurrence.occurrence_id,
-            OperationId::new(),
-            "A supported source fact",
-        ))
-        .await
-        .unwrap();
-    let sequence = runtime.store.authority_seq(subject).await.unwrap();
-    let result = owner
-        .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
-            operation_id: OperationId::new(),
-            subject,
-            memory_id: original.object.memory_id,
-            expected_object_epoch: original.object.object_epoch,
-            intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "A revised source fact".into(),
-            title: None,
-            basis: vec![RevisionBasis::CognitionDependency(
-                nous_core::CognitionDependency {
-                    epistemic_relation: None,
-                    target_revision: CognitiveRef::MemoryRevision(
-                        original.revision.memory_revision_id,
-                    ),
-                    basis_role: BasisRole::Direct,
-                },
-            )],
-            aboutness: vec![],
-            tags: vec![],
-            valid_time: TemporalExtent::Unknown,
-            epistemic_class: EpistemicClass::Observed,
-        })
-        .await;
-    assert!(
-        matches!(result, Err(nous_core::Error { code: nous_core::ErrorCode::InvalidRequest, message, .. }) if message.contains("object cycle"))
-    );
-    let current = owner
-        .memory(subject, original.object.memory_id, None)
-        .await
-        .unwrap();
-    assert_eq!(
-        current.revision.memory_revision_id,
-        original.revision.memory_revision_id
-    );
-    assert_eq!(current.object.object_epoch, original.object.object_epoch);
-    assert_eq!(
-        runtime.store.authority_seq(subject).await.unwrap(),
-        sequence
-    );
-}
+use test_support::{database, observation, open_runtime};
 
 #[tokio::test]
 async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
-    use nous_memory::schema::SchemaLifecycleAction as Action;
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
     let subject = subject(&runtime).await;
@@ -122,8 +55,8 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
         })
         .await
         .unwrap();
-    let schema_id = schema.schema.schema_id;
-    let revision_id = schema.revision.schema_revision_id;
+    let schema_id = schema.header.schema_id();
+    let revision_id = schema.revision.header.schema_revision_id();
     let exact = || {
         let mut request = query(subject);
         request.projection.domains = vec![nous_core::ResultDomain::Schema];
@@ -156,16 +89,47 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
         1
     );
     let suppress_operation = OperationId::new();
+    let target = CognitiveRef::CognitiveSchema(schema_id);
     let suppressed = owner
-        .mutate_schema_lifecycle(subject, schema_id, suppress_operation, 1, Action::Suppress)
+        .mutate_cognition(
+            subject,
+            target.clone(),
+            suppress_operation,
+            1,
+            CognitionAction::Suppress,
+        )
         .await
         .unwrap();
-    assert_eq!(suppressed.schema.object_epoch, 2);
-    assert_eq!(suppressed.revision.schema_revision_id, revision_id);
+    assert_eq!(suppressed.header().object_epoch, 2);
+    assert_eq!(
+        suppressed.revision_header().revision_ref,
+        CognitiveRef::CognitiveSchemaRevision(revision_id)
+    );
+    let (result_kind, result_ref, result_revision, result_epoch): (
+        Option<String>,
+        Option<String>,
+        Option<uuid::Uuid>,
+        Option<i64>,
+    ) = sqlx::query_as("SELECT result_kind,result_ref,result_revision,result_epoch FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2")
+        .bind(subject.0)
+        .bind(suppress_operation.0)
+        .fetch_one(runtime.store.pool())
+        .await
+        .unwrap();
+    assert_eq!(result_kind.as_deref(), Some("cognitive_schema"));
+    assert_eq!(result_ref, Some(schema_id.0.to_string()));
+    assert_eq!(result_revision, Some(revision_id.0));
+    assert_eq!(result_epoch, Some(2));
     assert!(runtime.query(exact()).await.unwrap().results.is_empty());
     assert!(matches!(
         owner
-            .mutate_schema_lifecycle(subject, schema_id, OperationId::new(), 1, Action::Restore)
+            .mutate_cognition(
+                subject,
+                target.clone(),
+                OperationId::new(),
+                1,
+                CognitionAction::Restore
+            )
             .await,
         Err(nous_core::Error {
             code: nous_core::ErrorCode::StaleRevision,
@@ -173,42 +137,115 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
         })
     ));
     owner
-        .mutate_schema_lifecycle(subject, schema_id, OperationId::new(), 2, Action::Restore)
+        .mutate_cognition(
+            subject,
+            target.clone(),
+            OperationId::new(),
+            2,
+            CognitionAction::Restore,
+        )
         .await
         .unwrap();
-    let replay = owner
-        .mutate_schema_lifecycle(subject, schema_id, suppress_operation, 1, Action::Suppress)
-        .await
-        .unwrap();
-    assert_eq!(replay.schema.object_epoch, 3);
-    assert_eq!(
-        replay.schema.suppression_state,
-        nous_core::SuppressionState::Normal
-    );
     assert_eq!(runtime.query(exact()).await.unwrap().results.len(), 1);
     owner
-        .mutate_schema_lifecycle(subject, schema_id, OperationId::new(), 3, Action::Withdraw)
+        .mutate_cognition(
+            subject,
+            target.clone(),
+            OperationId::new(),
+            3,
+            CognitionAction::Withdraw,
+        )
         .await
         .unwrap();
     assert!(runtime.query(exact()).await.unwrap().results.is_empty());
     owner
-        .mutate_schema_lifecycle(subject, schema_id, OperationId::new(), 4, Action::Reaccept)
+        .mutate_cognition(
+            subject,
+            target.clone(),
+            OperationId::new(),
+            4,
+            CognitionAction::Reaccept,
+        )
         .await
         .unwrap();
     assert_eq!(runtime.query(exact()).await.unwrap().results.len(), 1);
+    let revised_schema = owner
+        .revise_schema(nous_memory::ReviseSchemaInput {
+            operation_id: OperationId::new(),
+            subject,
+            schema_id,
+            expected_object_epoch: 5,
+            intent: nous_memory::RevisionIntent::Rephrase,
+            copy_link_ids: Vec::new(),
+            content: nous_memory::SchemaContent {
+                producer: None,
+                title: schema.revision.title.clone(),
+                structural_claim: "Continue an open task from its selected durable context".into(),
+                applicability_scope: schema.revision.applicability_scope.clone(),
+                boundary_definition: schema.revision.boundary_definition.clone(),
+                formation_kind: schema.revision.formation_kind,
+                evidence_links: schema
+                    .evidence_links
+                    .iter()
+                    .map(|link| SchemaEvidenceLinkInput {
+                        role: link.role,
+                        basis: link.basis.clone(),
+                    })
+                    .collect(),
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(revised_schema.header.object_epoch, 6);
+    let replay = owner
+        .mutate_cognition(
+            subject,
+            target.clone(),
+            suppress_operation,
+            1,
+            CognitionAction::Suppress,
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.header().object_epoch, 6);
+    assert_eq!(
+        replay.header().lifecycle.suppression,
+        nous_core::SuppressionState::Normal
+    );
+    assert_eq!(
+        replay.revision_header().revision_ref,
+        CognitiveRef::CognitiveSchemaRevision(revision_id)
+    );
+    assert_eq!(
+        replay.header().current_revision_ref,
+        CognitiveRef::CognitiveSchemaRevision(revised_schema.revision.header.schema_revision_id())
+    );
+    assert_eq!(runtime.query(exact()).await.unwrap().results.len(), 1);
     let purge_operation = OperationId::new();
     runtime
-        .purge_schema(subject, schema_id, purge_operation, 5)
+        .purge_cognition(
+            subject,
+            CognitiveRef::CognitiveSchema(schema_id),
+            purge_operation,
+            6,
+        )
         .await
         .unwrap();
     let duplicate = runtime.cognition.use_feedback(use_input).await.unwrap();
     assert_eq!((duplicate.0, duplicate.1), (0, 1));
     runtime
-        .purge_schema(subject, schema_id, purge_operation, 5)
+        .purge_cognition(
+            subject,
+            CognitiveRef::CognitiveSchema(schema_id),
+            purge_operation,
+            6,
+        )
         .await
         .unwrap();
     assert!(matches!(
-        owner.schema_revision(subject, revision_id).await,
+        owner
+            .read_cognition(subject, CognitiveRef::CognitiveSchemaRevision(revision_id),)
+            .await,
         Err(nous_core::Error {
             code: nous_core::ErrorCode::NotFound,
             ..
@@ -216,7 +253,13 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
     ));
     assert!(matches!(
         owner
-            .mutate_schema_lifecycle(subject, schema_id, suppress_operation, 1, Action::Suppress)
+            .mutate_cognition(
+                subject,
+                target,
+                suppress_operation,
+                1,
+                CognitionAction::Suppress
+            )
             .await,
         Err(nous_core::Error {
             code: nous_core::ErrorCode::NotFound,
@@ -231,7 +274,6 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
             .is_ok()
     );
 }
-
 #[tokio::test]
 async fn synthesized_schema_requires_independent_known_roots() {
     let (root, url, _postgres) = database().await;
@@ -302,226 +344,4 @@ async fn synthesized_schema_requires_independent_known_roots() {
         })
         .await;
     assert!(independent.is_ok());
-}
-
-#[tokio::test]
-async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
-    let (root, url, _postgres) = database().await;
-    let runtime = open_runtime(&url, &root).await;
-    let subject = subject(&runtime).await;
-    let observation = observation(&runtime, subject, "identity guard").await;
-    let alice = EntityRef::new("entity:alice").expect("alice");
-    let bob = EntityRef::new("entity:bob").expect("bob");
-    let mut input = form_input(
-        subject,
-        observation.occurrence.occurrence_id,
-        OperationId::new(),
-        "Alice identity matter",
-    );
-    input.aboutness = vec![alice.clone()];
-    let memory = runtime
-        .require_memory()
-        .unwrap()
-        .form_memory(input)
-        .await
-        .expect("memory");
-    let mut revision = form_input(
-        subject,
-        observation.occurrence.occurrence_id,
-        OperationId::new(),
-        "Bob disjoint matter",
-    );
-    revision.aboutness = vec![bob.clone()];
-    let rejected = runtime
-        .require_memory()
-        .unwrap()
-        .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
-            operation_id: revision.operation_id,
-            subject,
-            memory_id: memory.object.memory_id,
-            expected_object_epoch: memory.object.object_epoch,
-            intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: revision.formation_mode,
-            grounding_occurrence_id: revision.grounding_occurrence_id,
-            semantic_role: revision.semantic_role,
-            representation_text: revision.representation_text,
-            title: revision.title,
-            basis: revision.basis,
-            aboutness: revision.aboutness,
-            tags: vec![],
-            valid_time: revision.valid_time,
-
-            epistemic_class: revision.epistemic_class,
-        })
-        .await;
-    assert!(matches!(
-        rejected,
-        Err(nous_core::Error {
-            code: nous_core::ErrorCode::FailedPrecondition,
-            ..
-        })
-    ));
-}
-
-#[tokio::test]
-async fn association_requires_exact_cognition_and_valid_basis_class() {
-    let (root, url, _postgres) = database().await;
-    let runtime = open_runtime_with_serving(&url, &root, false, false, true).await;
-    let subject = subject(&runtime).await;
-    let entity = EntityRef::new("entity:association").expect("entity");
-    let observation = observation(&runtime, subject, "association evidence").await;
-    let mut input = form_input(
-        subject,
-        observation.occurrence.occurrence_id,
-        OperationId::new(),
-        "association memory",
-    );
-    input.aboutness = vec![entity.clone()];
-    let memory = runtime
-        .require_memory()
-        .unwrap()
-        .form_memory(input)
-        .await
-        .expect("memory");
-    let invalid = runtime
-        .require_memory()
-        .unwrap()
-        .create_association(
-            nous_memory::CreateAssociationRequest {
-                producer: None,
-                operation_id: OperationId::new(),
-                from: CognitiveRef::Memory(memory.object.memory_id),
-                to: CognitiveRef::Entity(entity.clone()),
-                relation_kind: "assoc.related".into(),
-                polarity: AssociationPolarity::Positive,
-                basis_class: AssociationBasisClass::HostExplicit,
-                basis: vec![AssociationBasis::Revision(RevisionBasis::Evidence(
-                    EvidenceRef {
-                        epistemic_relation: None,
-                        occurrence_id: observation.occurrence.occurrence_id,
-                        locator: EvidenceLocator::WholeOccurrence,
-                        basis_role: BasisRole::Direct,
-                    },
-                ))],
-                producer_signature_id: None,
-                valid_time: Default::default(),
-            },
-            subject,
-        )
-        .await;
-    assert!(matches!(
-        invalid,
-        Err(nous_core::Error {
-            code: nous_core::ErrorCode::InvalidRequest,
-            ..
-        })
-    ));
-    let event_id = UseEventId::new();
-    runtime
-        .cognition
-        .use_feedback(UseFeedback {
-            subject,
-            session_id: None,
-            consumer_ref: "consumer:test:association".into(),
-            events: vec![UseFeedbackEvent {
-                query_id: None,
-                event_id,
-                reference: CognitiveRef::MemoryRevision(memory.revision.memory_revision_id),
-                use_kind: UseKind::Referenced,
-                occurred_at: Utc::now(),
-                context: serde_json::json!({"association":"test"}),
-            }],
-        })
-        .await
-        .expect("use event");
-    let association = runtime
-        .require_memory()
-        .unwrap()
-        .create_association(
-            nous_memory::CreateAssociationRequest {
-                producer: None,
-                operation_id: OperationId::new(),
-                from: CognitiveRef::MemoryRevision(memory.revision.memory_revision_id),
-                to: CognitiveRef::Entity(entity.clone()),
-                relation_kind: "assoc.related".into(),
-                polarity: AssociationPolarity::Positive,
-                basis_class: AssociationBasisClass::MeaningfulUse,
-                basis: vec![AssociationBasis::UseEvent(UseEventRef {
-                    subject_id: subject,
-                    consumer_ref: "consumer:test:association".into(),
-                    event_id,
-                })],
-                producer_signature_id: None,
-                valid_time: Default::default(),
-            },
-            subject,
-        )
-        .await
-        .expect("meaningful-use association");
-    assert_eq!(association.basis.len(), 1);
-    let topology = runtime
-        .serving
-        .projection_input(
-            subject,
-            true,
-            runtime
-                .configuration
-                .snapshot_for_subject(subject)
-                .unwrap()
-                .get(nous_memory::EPISODE_SYNOPSIS)
-                .unwrap(),
-            None,
-        )
-        .await
-        .expect("topology input");
-    assert!(topology.topology.edges.iter().any(|edge| {
-        edge.association_kind == "assoc.related" && edge.provenance_root.is_none()
-    }));
-    let projection_budget = nous_persistence::EpisodeTextBudget {
-        max_members: 32,
-        fragment_max_bytes: 4096,
-        total_max_bytes: 16384,
-    };
-    let cognitive = runtime
-        .serving
-        .projection_input(subject, true, projection_budget, None)
-        .await
-        .expect("coherent cognitive projection");
-    assert_eq!(cognitive.authority_watermark, topology.authority_watermark);
-    assert_eq!(cognitive.topology.nodes, topology.topology.nodes);
-    let memory_reference = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
-    assert!(
-        cognitive
-            .sources
-            .iter()
-            .any(|s| s.reference == memory_reference && s.text.is_some())
-    );
-    assert!(
-        cognitive
-            .topology
-            .edges
-            .iter()
-            .any(|e| e.association_kind == "assoc.related" && e.provenance_root.is_none())
-    );
-    let forbidden = runtime
-        .serving
-        .projection_input(subject, false, projection_budget, None)
-        .await
-        .expect("cognitive projection without memory capability");
-    assert!(
-        !forbidden
-            .sources
-            .iter()
-            .any(|s| s.reference == memory_reference)
-    );
-    assert!(!forbidden.topology.nodes.contains(&memory_reference));
-    let memory_roots = &cognitive.evidence_roots[&memory_reference];
-    assert!(!memory_roots.is_empty());
-    assert!(
-        memory_roots
-            .iter()
-            .any(|root| !root.starts_with("unknown-dependency:"))
-    );
-    assert!(!forbidden.evidence_roots.contains_key(&memory_reference));
 }

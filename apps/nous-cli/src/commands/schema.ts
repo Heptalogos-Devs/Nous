@@ -6,20 +6,18 @@ import { TemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/typ
 import {
   AddSchemaEvidenceRequestSchema,
   CognitiveSchemaContentSchema,
-  CognitiveSchemaMutationRequestSchema,
   CreateCognitiveSchemaRequestSchema,
-  GetCognitiveSchemaRequestSchema,
   MergeCognitiveSchemasRequestSchema,
   ReviseCognitiveSchemaRequestSchema,
   SchemaEvidenceLinkSchema,
   SchemaScopeSchema,
   SplitCognitiveSchemaRequestSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { ObjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { z } from "zod";
 import { nonnegativeInt64, CliError } from "../agent.js";
 import { revisionBasis } from "../mutation-input.js";
 import type { CliEnvironment } from "../runtime.js";
+import { typedCognition } from "./cognition.js";
 
 const reference = z.string().min(1).max(2048);
 const epistemicRelation = z
@@ -120,6 +118,13 @@ export async function schemaCommands(
     resolveReference,
     requestPayload,
   } = env;
+  const common = await typedCognition.commonCommand(
+    env,
+    "cognitive_schema",
+    action,
+    argument,
+  );
+  if (common.handled) return common.value;
   const operationId = values["operation-id"] ?? crypto.randomUUID();
   if (action === "create")
     return client.concepts.createSchema(
@@ -132,24 +137,6 @@ export async function schemaCommands(
         ),
       }),
     );
-  if (action === "get" || action === "revision") {
-    const kind =
-      action === "get" ? "cognitive_schema" : "cognitive_schema_revision";
-    const ref = await resolveReference(
-      required(argument, `${kind} reference`),
-      kind,
-    );
-    if (action === "get")
-      return client.concepts.getSchema(
-        create(GetCognitiveSchemaRequestSchema, {
-          subjectId,
-          schemaId: ref.value,
-        }),
-      );
-    return client.concepts.getSchemaRevision(
-      create(ObjectRequestSchema, { subjectId, id: ref.value }),
-    );
-  }
   if (action === "evidence") {
     const ref = await resolveReference(
       required(argument, "CognitiveSchema reference"),
@@ -248,12 +235,10 @@ export async function schemaCommands(
     );
     const current = await Promise.all(
       refs.map((ref) =>
-        client.concepts.getSchema(
-          create(GetCognitiveSchemaRequestSchema, {
-            subjectId,
-            schemaId: ref.value,
-          }),
-        ),
+        typedCognition.read(env, {
+          kind: "cognitive_schema",
+          value: ref.value,
+        }),
       ),
     );
     return client.concepts.mergeSchemas(
@@ -261,41 +246,12 @@ export async function schemaCommands(
         operationId,
         subjectId,
         schemaIds: refs.map((ref) => ref.value),
-        expectedObjectEpochs: current.map((item) => item.objectEpoch),
+        expectedObjectEpochs: current.map(
+          (item) => item.header?.objectEpoch ?? 0n,
+        ),
         merged: await content(env, request.merged),
       }),
     );
-  }
-  if (
-    ["suppress", "restore", "withdraw", "reaccept", "purge"].includes(
-      action ?? "",
-    )
-  ) {
-    const ref = await resolveReference(
-      required(argument, "CognitiveSchema reference"),
-      "cognitive_schema",
-    );
-    const mutation = create(CognitiveSchemaMutationRequestSchema, {
-      operationId,
-      subjectId,
-      schemaId: ref.value,
-      expectedObjectEpoch: nonnegativeInt64(
-        values["expected-epoch"],
-        "--expected-epoch",
-      ),
-    });
-    switch (action) {
-      case "suppress":
-        return client.concepts.suppressSchema(mutation);
-      case "restore":
-        return client.concepts.restoreSchema(mutation);
-      case "withdraw":
-        return client.concepts.withdrawSchema(mutation);
-      case "reaccept":
-        return client.concepts.reacceptSchema(mutation);
-      case "purge":
-        return client.concepts.purgeSchema(mutation);
-    }
   }
   throw new CliError(
     "INVALID_ARGUMENT",

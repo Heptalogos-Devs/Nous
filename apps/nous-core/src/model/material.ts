@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
-import type {
-  EmbeddingCursor,
-  QueryRunHandle,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import type { EmbeddingCursor } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import { ModelRuntime } from "./runtime.js";
+
+export type EmbeddingMaterialChannel = Pick<
+  KernelClient["materialWorkflow"],
+  "listEmbeddingNeeds" | "commitEmbedding"
+>;
 export class ModelMaterialPipeline {
   constructor(
     private readonly kernel: KernelClient,
@@ -17,7 +19,7 @@ export class ModelMaterialPipeline {
     subjectId: string,
     limit: number,
     options: CallOptions = {},
-    queryRun?: QueryRunHandle,
+    channel: EmbeddingMaterialChannel = this.kernel.materialWorkflow,
   ) {
     let committed = 0;
     let cursor: EmbeddingCursor | undefined;
@@ -25,8 +27,8 @@ export class ModelMaterialPipeline {
       this.models.invocations.profile("query_embedding")?.embedding
         ?.max_batch_size ?? 64;
     do {
-      const needs = await this.kernel.materialWorkflow.listEmbeddingNeeds(
-        { subjectId, limit: limit - committed, queryRun, cursor },
+      const needs = await channel.listEmbeddingNeeds(
+        { subjectId, limit: limit - committed, cursor },
         options,
       );
       if (!needs.config)
@@ -43,10 +45,9 @@ export class ModelMaterialPipeline {
             options.signal ?? undefined,
           );
           for (const [index, need] of batch.entries()) {
-            await this.kernel.materialWorkflow.commitEmbedding(
+            await channel.commitEmbedding(
               {
                 subjectId,
-                queryRun,
                 bindingReferences: need.references,
                 material: {
                   text: need.text,

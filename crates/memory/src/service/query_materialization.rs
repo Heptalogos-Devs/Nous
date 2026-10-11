@@ -40,7 +40,7 @@ pub(super) fn to_hit(
     reference: CognitiveRef,
 ) -> CognitiveHit {
     CognitiveHit {
-        authority_epoch: Some(candidate.view.object.object_epoch),
+        authority_epoch: Some(candidate.view.header.object_epoch),
         preference_refs: candidate
             .view
             .tags
@@ -49,11 +49,11 @@ pub(super) fn to_hit(
             .map(CognitiveRef::Tag)
             .collect(),
         reference,
-        revision: Some(CognitiveRef::MemoryRevision(
-            candidate.view.revision.memory_revision_id,
-        )),
+        revision: Some(CognitiveRef::MemoryRevision(MemoryRevisionId(
+            candidate.view.revision.header.revision_id(),
+        ))),
         semantic_role: Some(candidate.view.revision.semantic_role.clone()),
-        cognitive_role: Some(candidate.view.object.cognitive_role.as_str().into()),
+        cognitive_role: Some(candidate.view.header.details.memory_role().as_str().into()),
         formation_mode: Some(candidate.view.revision.formation_mode.as_str().into()),
         representation: Some(candidate.view.revision.representation_text.clone()),
         authority: AuthorityClass::SubjectCognition,
@@ -61,8 +61,8 @@ pub(super) fn to_hit(
             occurred: candidate.view.temporal_evidence.occurred.clone(),
             observed_at: candidate.view.temporal_evidence.observed_at,
             valid_time: candidate.view.revision.valid_time.clone(),
-            formed_at: Some(candidate.view.revision.formed_at),
-            recorded_at: Some(candidate.view.revision.recorded_at),
+            formed_at: Some(candidate.view.revision.header.formed_at),
+            recorded_at: Some(candidate.view.revision.header.recorded_at),
         },
         entity_refs: candidate.view.aboutness.clone(),
         evidence: if query.result_need.need_evidence {
@@ -103,17 +103,17 @@ pub(super) fn hard_filter(
     historical: bool,
 ) -> bool {
     (historical
-        || (matches!(view.object.acceptance_state, AcceptanceState::Accepted)
-            && matches!(view.object.integrity_state, IntegrityState::Valid)
-            && matches!(view.object.suppression_state, SuppressionState::Normal)))
-        && matches!(view.object.purge_state, PurgeState::Normal)
+        || (matches!(view.header.lifecycle.acceptance, AcceptanceState::Accepted)
+            && matches!(view.header.lifecycle.integrity, IntegrityState::Valid)
+            && matches!(view.header.lifecycle.suppression, SuppressionState::Normal)))
+        && matches!(view.header.lifecycle.purge, PurgeState::Normal)
         && accessibility_eligible(view.accessibility_level, query.effort, exact || historical)
         && query.expression.constraints.matches_common(QueryFacts {
             authority: AuthorityClass::SubjectCognition,
             entities: &view.aboutness,
             source_classes: &view.source_classes,
             modality: Modality::Text,
-            cognitive_role: Some(view.object.cognitive_role.as_str()),
+            cognitive_role: Some(view.header.details.memory_role().as_str()),
             formation_mode: Some(view.revision.formation_mode.as_str()),
             epistemic_class: Some(view.revision.epistemic_class),
         })
@@ -149,12 +149,12 @@ pub(super) fn temporal_match(query: &CognitiveQuery, view: &MemoryView) -> bool 
             .expression
             .constraints
             .formed
-            .is_none_or(|interval| interval.contains(view.revision.formed_at))
+            .is_none_or(|interval| interval.contains(view.revision.header.formed_at))
         && query
             .expression
             .constraints
             .recorded
-            .is_none_or(|interval| interval.contains(view.revision.recorded_at))
+            .is_none_or(|interval| interval.contains(view.revision.header.recorded_at))
 }
 
 pub(super) fn increment_drop(counts: &mut BTreeMap<String, usize>, reason: &str) {
@@ -181,19 +181,19 @@ pub(super) fn historical_drop_reason(
 ) -> Option<&'static str> {
     let snapshot = bound.read_context.historical_view()?;
     if snapshot
-        .cognition_for(&CognitiveRef::MemoryRevision(
-            view.revision.memory_revision_id,
-        ))
+        .cognition_for(&CognitiveRef::MemoryRevision(MemoryRevisionId(
+            view.revision.header.revision_id(),
+        )))
         .is_none()
     {
         return Some("outside_historical_view");
     }
-    if view.object.purge_state != PurgeState::Normal {
+    if view.header.lifecycle.purge != PurgeState::Normal {
         return Some("purged");
     }
-    if view.object.acceptance_state != AcceptanceState::Accepted
-        || view.object.integrity_state != IntegrityState::Valid
-        || (view.object.suppression_state != SuppressionState::Normal
+    if view.header.lifecycle.acceptance != AcceptanceState::Accepted
+        || view.header.lifecycle.integrity != IntegrityState::Valid
+        || (view.header.lifecycle.suppression != SuppressionState::Normal
             && !bound.source_query.expression.constraints.include_suppressed)
     {
         return Some("historical_lifecycle");

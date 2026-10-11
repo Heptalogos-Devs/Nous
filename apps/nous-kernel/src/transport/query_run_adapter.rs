@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nous_core::{Degradation, ErrorCode, ErrorOwner, RequirementStrength, Result};
+use nous_core::{Degradation, ErrorCode, ErrorOwner, RequirementStrength};
 use nous_protocol::google::rpc;
 use nous_runtime::{QueryHostPlan, QueryHostRole, QueryRun};
 use prost::Message;
@@ -71,16 +71,4 @@ pub(super) fn add_degradation(run: &mut QueryRun, code: &str) {
         code: code.into(),
         detail: None,
     });
-}
-
-pub(super) fn response_for_run(
-    result: nous_core::CognitiveQueryResult,
-    bound: &nous_runtime::BoundQuery,
-    plan: &nous_runtime::QueryPlan,
-) -> Result<p::QueryResponse> {
-    let mut response = super::query_projection::query_response(result);
-    response.bound_query = Some(super::query_projection::inspect_bound_query_with_plan(
-        bound, plan,
-    )?);
-    Ok(response)
 }

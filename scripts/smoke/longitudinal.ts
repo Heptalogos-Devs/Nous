@@ -265,15 +265,25 @@ async function scenario(endpoint: string, token: string) {
     });
     assert.equal(nearline.modelCalls, 0);
     assert.equal(
-      (await client.memory.listEpisodes({ subjectId, status: "accepted" }))
-        .items.length,
+      (
+        await client.cognition.list({
+          subjectId,
+          kind: "episode",
+          status: "accepted",
+        })
+      ).items.filter((item) => item.result.case === "episode").length,
       0,
     );
     await advance(2000);
     await maintain();
     assert.equal(
-      (await client.memory.listEpisodes({ subjectId, status: "accepted" }))
-        .items.length,
+      (
+        await client.cognition.list({
+          subjectId,
+          kind: "episode",
+          status: "accepted",
+        })
+      ).items.filter((item) => item.result.case === "episode").length,
       1,
     );
     for (let pass = 0; pass < 4; pass++) {
@@ -281,38 +291,54 @@ async function scenario(endpoint: string, token: string) {
       await maintain();
     }
     const episodes = (
-      await client.memory.listEpisodes({ subjectId, status: "accepted" })
-    ).items;
+      await client.cognition.list({
+        subjectId,
+        kind: "episode",
+        status: "accepted",
+      })
+    ).items.flatMap((item) =>
+      item.result.case === "episode" ? [item.result.value] : [],
+    );
     const journals = (
-      await client.memory.listJournals({ subjectId, status: "accepted" })
-    ).items;
+      await client.cognition.list({
+        subjectId,
+        kind: "journal",
+        status: "accepted",
+      })
+    ).items.flatMap((item) =>
+      item.result.case === "journal" ? [item.result.value] : [],
+    );
     const memories = (
-      await client.memory.list({ subjectId, status: "accepted" })
-    ).items;
+      await client.cognition.list({
+        subjectId,
+        kind: "memory",
+        status: "accepted",
+      })
+    ).items.flatMap((item) =>
+      item.result.case === "memory" ? [item.result.value] : [],
+    );
     assert.equal(episodes.length, 1);
     assert.equal(journals.length, 1);
     assert.equal(memories.length, 1);
     const episode = episodes[0]!;
     const journal = journals[0]!;
     const memory = memories[0]!;
-    assert.equal(episode.currentRevision?.members.length, 3);
-    assert.equal(episode.currentRevision?.title, "Calibration sequence");
-    assert(
-      journal.currentRevision?.points.every((point) => point.basis.length > 0),
-    );
+    assert.equal(episode.revision?.members.length, 3);
+    assert.equal(episode.revision?.title, "Calibration sequence");
+    assert(journal.revision?.points.every((point) => point.basis.length > 0));
     assert(calls.episode > 0 && calls.journal > 0 && calls.consolidation > 0);
     const refs = [
       {
         kind: "episode_revision",
-        value: episode.currentRevision!.episodeRevisionId,
+        value: episode.revision!.header!.revisionRef!.value,
       },
       {
         kind: "journal_revision",
-        value: journal.currentRevision!.journalRevisionId,
+        value: journal.revision!.header!.revisionRef!.value,
       },
       {
         kind: "memory_revision",
-        value: memory.revisionId,
+        value: memory.revision!.header!.revisionRef!.value,
       },
     ];
     await app.close();
@@ -326,27 +352,34 @@ async function scenario(endpoint: string, token: string) {
     });
     publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
     client = connectNous(publicEndpoint, token);
+    const episodeRevision = await client.cognition.read({
+      subjectId,
+      reference: refs[0]!,
+    });
+    if (episodeRevision.result.case !== "episode")
+      throw new Error("exact Episode revision read returned the wrong kind");
     assert.equal(
-      (
-        await client.memory.getEpisodeRevision({
-          subjectId,
-          id: refs[0]!.value,
-        })
-      ).episodeRevisionId,
+      episodeRevision.result.value.revision?.header?.revisionRef?.value,
       refs[0]!.value,
     );
+    const journalRevision = await client.cognition.read({
+      subjectId,
+      reference: refs[1]!,
+    });
+    if (journalRevision.result.case !== "journal")
+      throw new Error("exact Journal revision read returned the wrong kind");
     assert.equal(
-      (
-        await client.memory.getJournalRevision({
-          subjectId,
-          id: refs[1]!.value,
-        })
-      ).journalRevisionId,
+      journalRevision.result.value.revision?.header?.revisionRef?.value,
       refs[1]!.value,
     );
+    const memoryRevision = await client.cognition.read({
+      subjectId,
+      reference: refs[2]!,
+    });
+    if (memoryRevision.result.case !== "memory")
+      throw new Error("exact Memory revision read returned the wrong kind");
     assert.equal(
-      (await client.memory.revision({ subjectId, id: refs[2]!.value }))
-        .revisionId,
+      memoryRevision.result.value.revision?.header?.revisionRef?.value,
       refs[2]!.value,
     );
     const continuation = await client.cognition.createWorkContext({
@@ -455,14 +488,26 @@ async function scenario(endpoint: string, token: string) {
         ],
       },
     });
-    assert.equal(schema.evidenceLinks.length, 1);
-    assert.equal(schema.evidenceLinks[0]?.basis?.basis.case, "evidence");
-    if (schema.evidenceLinks[0]?.basis?.basis.case === "evidence")
+    const schemaRevision = schema.revision;
+    const schemaDetails = schemaRevision?.details;
+    const schemaRevisionId = schema.header?.currentRevisionRef?.value;
+    const schemaFormedAt = schemaRevision?.header?.formedAt;
+    const evidenceLinks = schemaDetails?.evidenceLinks;
+    if (
+      !schemaRevision ||
+      !schemaDetails ||
+      !schemaRevisionId ||
+      !schemaFormedAt ||
+      !evidenceLinks
+    )
+      throw new Error("CognitiveSchema revision data missing");
+    assert.equal(evidenceLinks.length, 1);
+    assert.equal(evidenceLinks[0]?.basis?.basis.case, "evidence");
+    if (evidenceLinks[0]?.basis?.basis.case === "evidence")
       assert.equal(
-        schema.evidenceLinks[0].basis.basis.value.occurrenceId,
+        evidenceLinks[0].basis.basis.value.occurrenceId,
         observationIds[0],
       );
-    assert(schema.formedAt);
     const exactSchema = {
       subjectId,
       expression: {
@@ -476,7 +521,7 @@ async function scenario(endpoint: string, token: string) {
               case: "reference" as const,
               value: {
                 kind: "cognitive_schema_revision",
-                value: schema.currentRevisionId,
+                value: schemaRevisionId,
               },
             },
           },
@@ -487,7 +532,7 @@ async function scenario(endpoint: string, token: string) {
     for (const constraints of [
       {
         formed: {
-          predicate: { case: "point" as const, value: schema.formedAt },
+          predicate: { case: "point" as const, value: schemaFormedAt },
         },
       },
       {
@@ -543,7 +588,7 @@ async function scenario(endpoint: string, token: string) {
     }
     const nousqlPoint = await client.cognition.query({
       subjectId,
-      nousql: `Calibration $return(schema) $time(formed,at="${toJson(TimestampSchema, create(TimestampSchema, schema.formedAt))}")`,
+      nousql: `Calibration $return(schema) $time(formed,at="${toJson(TimestampSchema, create(TimestampSchema, schemaFormedAt))}")`,
     });
     assert.equal(nousqlPoint.hits.length, 1);
     console.error("Longitudinal smoke passed");

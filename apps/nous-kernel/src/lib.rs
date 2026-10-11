@@ -161,71 +161,20 @@ impl NousRuntime {
 
     /// Kernel owns the sequencing between semantic owner checkpoint, Serving
     /// reclamation and semantic owner completion.
-    pub async fn purge_memory(
+    pub async fn purge_cognition(
         &self,
         subject: SubjectId,
-        memory: MemoryId,
+        target: CognitiveRef,
         operation: OperationId,
         expected_object_epoch: i64,
     ) -> Result<()> {
         let owner = self.require_memory()?;
         owner
-            .begin_purge_memory(subject, memory, operation, expected_object_epoch)
+            .begin_purge_cognition(subject, target.clone(), operation, expected_object_epoch)
             .await?;
         self.reclaim_purged_serving(subject).await?;
         owner
-            .complete_purge_memory(subject, memory, operation, expected_object_epoch)
-            .await
-    }
-
-    pub async fn purge_schema(
-        &self,
-        subject: SubjectId,
-        schema: nous_core::CognitiveSchemaId,
-        operation: OperationId,
-        expected_object_epoch: i64,
-    ) -> Result<()> {
-        let owner = self.require_memory()?;
-        owner
-            .begin_purge_schema(subject, schema, operation, expected_object_epoch)
-            .await?;
-        self.reclaim_purged_serving(subject).await?;
-        owner
-            .complete_purge_schema(subject, schema, operation, expected_object_epoch)
-            .await
-    }
-
-    pub async fn purge_episode(
-        &self,
-        subject: SubjectId,
-        episode: nous_core::EpisodeId,
-        operation: OperationId,
-        expected_object_epoch: i64,
-    ) -> Result<()> {
-        let owner = self.require_memory()?;
-        owner
-            .begin_purge_episode(subject, episode, operation, expected_object_epoch)
-            .await?;
-        self.reclaim_purged_serving(subject).await?;
-        owner
-            .complete_purge_episode(subject, episode, operation, expected_object_epoch)
-            .await
-    }
-
-    pub async fn purge_journal(
-        &self,
-        subject: SubjectId,
-        journal: nous_core::JournalId,
-        operation: OperationId,
-        expected_object_epoch: i64,
-    ) -> Result<()> {
-        let owner = self.require_memory()?;
-        owner
-            .begin_purge_journal(subject, journal, operation, expected_object_epoch)
-            .await?;
-        self.reclaim_purged_serving(subject).await?;
-        owner
-            .complete_purge_journal(subject, journal, operation, expected_object_epoch)
+            .complete_purge_cognition(subject, target, operation, expected_object_epoch)
             .await
     }
 
@@ -326,7 +275,6 @@ impl NousRuntime {
     ) -> Pin<Box<dyn Future<Output = Result<nous_runtime::QueryExecution>> + Send + 'a>> {
         Box::pin(async move {
             if bound.source_query.is_exact_read() {
-                self.cognition.expire_query_leases()?;
                 let capabilities = self
                     .subjects
                     .subject(bound.source_query.subject)
@@ -354,7 +302,6 @@ impl NousRuntime {
                 bound.selected_embedding_space =
                     self.serving.embedding().map(|provider| provider.space());
             }
-            self.cognition.expire_query_leases()?;
             self.serving
                 .reclaim_retired(
                     bound.source_query.subject,

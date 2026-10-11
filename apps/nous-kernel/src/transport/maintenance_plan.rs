@@ -72,24 +72,24 @@ impl KernelService {
         plan.consolidation_source = source;
         if let Some(journal) = scope.journal {
             plan.target = Some(k::JournalTarget {
-                journal_id: journal.object.journal_id.0.to_string(),
-                expected_revision_id: journal.revision.journal_revision_id.0.to_string(),
-                expected_epoch: journal.object.object_epoch,
+                journal_id: journal.header.journal_id().0.to_string(),
+                expected_revision_id: journal.revision.header.revision_id().to_string(),
+                expected_epoch: journal.header.object_epoch,
                 intent: "revalidate".into(),
             });
-            plan.journal = Some(journal::journal_revision_proto(journal));
+            plan.journal = Some(journal::journal_revision_proto(&journal));
         }
         let mut catalog = BTreeMap::new();
         for episode in &scope.episodes {
             plan.sources.push(k::EpisodePartitionSource {
-                revision_id: episode.revision.episode_revision_id.0.to_string(),
-                expected_epoch: episode.object.object_epoch,
+                revision_id: episode.revision.header.revision_id().to_string(),
+                expected_epoch: episode.header.object_epoch,
             });
             let basis = RevisionBasis::CognitionDependency(CognitionDependency {
                 epistemic_relation: None,
-                target_revision: CognitiveRef::EpisodeRevision(
-                    episode.revision.episode_revision_id,
-                ),
+                target_revision: CognitiveRef::EpisodeRevision(EpisodeRevisionId(
+                    episode.revision.header.revision_id(),
+                )),
                 basis_role: BasisRole::Direct,
             });
             catalog.insert(basis.canonical_key(), basis);
@@ -297,19 +297,19 @@ impl KernelService {
 fn consolidation_source(scope: &nous_memory::MaintenanceScope) -> Option<k::ExpectedCognition> {
     if let Some(journal) = &scope.journal {
         return Some(k::ExpectedCognition {
-            reference: Some(to_ref(CognitiveRef::JournalRevision(
-                journal.revision.journal_revision_id,
-            ))),
-            expected_epoch: journal.object.object_epoch,
-            object_id: journal.object.journal_id.0.to_string(),
+            reference: Some(to_ref(CognitiveRef::JournalRevision(JournalRevisionId(
+                journal.revision.header.revision_id(),
+            )))),
+            expected_epoch: journal.header.object_epoch,
+            object_id: journal.header.journal_id().0.to_string(),
         });
     }
     scope.episodes.first().map(|episode| k::ExpectedCognition {
-        reference: Some(to_ref(CognitiveRef::EpisodeRevision(
-            episode.revision.episode_revision_id,
-        ))),
-        expected_epoch: episode.object.object_epoch,
-        object_id: episode.object.episode_id.0.to_string(),
+        reference: Some(to_ref(CognitiveRef::EpisodeRevision(EpisodeRevisionId(
+            episode.revision.header.revision_id(),
+        )))),
+        expected_epoch: episode.header.object_epoch,
+        object_id: episode.header.episode_id().0.to_string(),
     })
 }
 

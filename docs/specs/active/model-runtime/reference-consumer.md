@@ -14,7 +14,7 @@ Parallel Agents share Core RunRoot and use independent consumer InstanceRoots. T
 
 Consumer state is keyed by stable Core instanceId and consumer identity. Each command freezes its selection, context and input once. Maintained atomic-write and cross-process lock libraries protect only short local state transactions; RPC and provider execution remain concurrent. Selection patches merge independent fields and reject conflicting fields or changed Subject/query context. A successful business operation with a failed selection save returns its result and `STATE_UNSAVED`; the returned exact references remain usable. The `consumer_state` Catalog policy defines receipt capacity, file budget and lock timing and is frozen from active configuration at command start.
 
-Current selection and operation records each carry one format identifier and use a codec that preserves BigInt separately from arbitrary JSON payload keys. The current consumer does not load superseded records. Unknown old requests and their operation associations must be preserved before obsolete state cleanup. Within a current receipt, the frozen request cannot be replaced and a terminal outcome cannot regress to pending or another terminal outcome.
+Selection is ordinary JSON validated by its Zod schema. Receipts store their format identifier, request/response schema names and Buf ProtoJSON payloads; the generated service descriptor supplies each schema. Unsupported selection records produce a reselect error without changing the file. A pending receipt is the single unconfirmed state: it retains its frozen request and identity before send and after an RPC failure whose outcome is unknown. Retry replays that same request and identity. Terminal receipts follow the configured retention policy; a terminal outcome cannot regress to pending or change terminal result.
 
 Material references returned by observation/query/trace are accepted as exact canonical references. `show` reads metadata; `read` materializes bounded source/derived text through Material Authority, preserving actual range, total bytes, partial output and evidence. Binary sources direct the caller to derivation instead of rendering raw bytes as text.
 
@@ -28,7 +28,7 @@ The consumer uses citty 0.2.2 command families, Zod-validated semantic TOML inpu
 
 正文、title、摘要和操作消息逐字保留，包括完整 UUID 或 `memory:<UUID>`。引用呈现按 typed reference 字段转换。业务已成功而地址呈现失败时，输出原 canonical result 并附 `PRESENTATION_UNAVAILABLE` notice；本地完成回执写入失败则附 `RECEIPT_UNSAVED`，保持真实已知结果。Authority 已明确拒绝而本地拒绝终态写入失败时，也保留原错误 code/message 并附 receipt 与 `RECEIPT_UNSAVED`，不把已知拒绝改成保存错误或未知业务结果。
 
-引用字段由 canonical Proto 的 `reference_kind` 标注，Official Client 保留对应 schema，renderer 只读取 Identity 的去重批量地址结果。各创建 owner 在 Authority 事务内分配对象/revision 地址；普通显示不分配、不改名、不增加 visibility。Protobuf JSON Value/Struct 的内容保持不透明，合法 `$typeName`、`$unknown` 和引用同名字段均保留。现行 consumer codec 将实际协议 schema 作为 devalue 类型记录保存，完成回执重放恢复 schema；用户 JSON 不通过字符串或字段名猜测获得引用类型。
+引用字段由 canonical Proto 的 `reference_kind` 标注，Official Client 保留对应 schema，renderer 只读取 Identity 的去重批量地址结果。各创建 owner 在 Authority 事务内分配对象/revision 地址；普通显示不分配、不改名、不增加 visibility。Protobuf JSON Value/Struct 的内容保持不透明，合法 `$typeName`、`$unknown` 和引用同名字段均保留。回执使用 Buf ProtoJSON 保存与恢复正式协议消息；引用类型来自 schema 标注，用户 JSON 始终保持不透明。
 
 ## 机器错误与恢复
 

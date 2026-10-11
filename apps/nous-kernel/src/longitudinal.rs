@@ -84,7 +84,7 @@ impl NousRuntime {
                 .acknowledge_episode_draft(
                     subject,
                     draft.draft_id,
-                    episode.revision.episode_revision_id,
+                    nous_core::EpisodeRevisionId(episode.revision.header.revision_id()),
                 )
                 .await?;
             episodes.push(episode);

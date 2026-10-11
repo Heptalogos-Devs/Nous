@@ -65,7 +65,9 @@ async fn entity_lane_uses_aboutness_and_multi_value_include() {
                     text: "Recall memory within requested domain".into(),
                 })],
                 targets: vec![QueryTarget::Exact {
-                    reference: CognitiveRef::MemoryRevision(first.revision.memory_revision_id),
+                    reference: CognitiveRef::MemoryRevision(
+                        first.revision.header.memory_revision_id(),
+                    ),
                 }],
                 ..Default::default()
             },
@@ -82,9 +84,8 @@ async fn entity_lane_uses_aboutness_and_multi_value_include() {
             .iter()
             .all(|hit| !matches!(hit.reference, CognitiveRef::Artifact(_)))
     );
-    assert!(fenced.results.iter().any(
-        |hit| hit.reference == CognitiveRef::MemoryRevision(first.revision.memory_revision_id)
-    ));
+    assert!(fenced.results.iter().any(|hit| hit.reference
+        == CognitiveRef::MemoryRevision(first.revision.header.memory_revision_id())));
     let mut request = query(subject);
     request.expression.cues = vec![
         Cue::Text(nous_core::TextCue {
@@ -101,10 +102,10 @@ async fn entity_lane_uses_aboutness_and_multi_value_include() {
         .map(|hit| hit.reference)
         .collect::<Vec<_>>();
     assert!(references.contains(&CognitiveRef::MemoryRevision(
-        first.revision.memory_revision_id,
+        first.revision.header.memory_revision_id(),
     )));
     assert!(references.contains(&CognitiveRef::MemoryRevision(
-        second.revision.memory_revision_id,
+        second.revision.header.memory_revision_id(),
     )));
     let mut declarative = request.expression.clone();
     declarative.constraints.cognitive_roles_include = vec!["declarative".into()];
@@ -140,7 +141,7 @@ async fn entity_lane_uses_aboutness_and_multi_value_include() {
     assert_eq!(narrowed.results.len(), 1);
     assert_eq!(
         narrowed.results[0].reference,
-        CognitiveRef::MemoryRevision(first.revision.memory_revision_id)
+        CognitiveRef::MemoryRevision(first.revision.header.memory_revision_id())
     );
     let mut preferred = request.clone();
     preferred.expression.preferences = vec![nous_core::QueryPreference {
@@ -156,7 +157,7 @@ async fn entity_lane_uses_aboutness_and_multi_value_include() {
     assert_eq!(positive.results.len(), 2);
     assert_eq!(
         positive.results[0].reference,
-        CognitiveRef::MemoryRevision(second.revision.memory_revision_id)
+        CognitiveRef::MemoryRevision(second.revision.header.memory_revision_id())
     );
     assert!(positive.results[0].match_evidence.preference_score > 0.0);
     preferred.expression.preferences[0].negative = true;
@@ -166,7 +167,7 @@ async fn entity_lane_uses_aboutness_and_multi_value_include() {
         .expect("negative preference");
     assert_eq!(
         negative.results[0].reference,
-        CognitiveRef::MemoryRevision(first.revision.memory_revision_id)
+        CognitiveRef::MemoryRevision(first.revision.header.memory_revision_id())
     );
     preferred.expression.preferences = vec![nous_core::QueryPreference {
         negative: false,

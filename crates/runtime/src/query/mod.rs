@@ -35,7 +35,4 @@ pub use types::{
     QueryReadLease, ReadContext,
 };
 pub(super) mod prepared;
-pub use prepared::{
-    QueryHostPlan, QueryHostRole, QueryLease, QueryRun, QueryRunHandle, QueryRunHostPolicy,
-    QueryRunStage,
-};
+pub use prepared::{QueryHostPlan, QueryHostRole, QueryRun, QueryRunContext, QueryRunHostPolicy};

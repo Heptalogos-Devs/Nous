@@ -137,6 +137,8 @@ CREATE TABLE model_workflow_operations (
     proposal jsonb NULL,
     outcome jsonb NULL,
     execution_telemetry jsonb NULL,
+    dependencies jsonb NOT NULL DEFAULT '[]',
+    mutation_operations uuid[] NOT NULL DEFAULT '{}',
     maintenance_trigger_revision bigint NULL CHECK (maintenance_trigger_revision >= 0),
     maintenance_need_id uuid NULL REFERENCES maintenance_needs(need_id) ON DELETE CASCADE,
     lease_token uuid NULL,
@@ -253,13 +255,6 @@ CREATE TABLE serving_generations (
     published_at timestamptz NULL,
     metadata jsonb NOT NULL DEFAULT '{}'
 );
-CREATE TABLE serving_current (
-    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    family text NOT NULL,
-    space_signature text NOT NULL DEFAULT '',
-    generation_id uuid NOT NULL REFERENCES serving_generations(generation_id) ON DELETE CASCADE,
-    PRIMARY KEY(subject_id, family, space_signature)
-);
 CREATE TABLE projection_watermarks (
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
     family text NOT NULL,
@@ -325,9 +320,17 @@ BEGIN
     END IF;
     RETURN NEW;
 END $$;
-CREATE TRIGGER memory_state_history AFTER INSERT OR UPDATE ON memory_objects FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('memory','memory_id');
-CREATE TRIGGER schema_state_history AFTER INSERT OR UPDATE ON cognitive_schemas FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('cognitive_schema','schema_id');
-CREATE TRIGGER episode_state_history AFTER INSERT OR UPDATE ON episode_objects FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('episode','episode_id');
-CREATE TRIGGER journal_state_history AFTER INSERT OR UPDATE ON journal_objects FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('journal','journal_id');
+CREATE FUNCTION capture_cognition_object_state() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    payload jsonb := to_jsonb(NEW);
+    captured timestamptz := authority_recording_time();
+BEGIN
+    IF TG_OP='INSERT' OR to_jsonb(OLD) IS DISTINCT FROM payload THEN
+        INSERT INTO authority_object_states(subject_id,object_kind,object_ref,state,recorded_at)
+        VALUES(NEW.subject_id,NEW.object_kind,NEW.object_id::text,payload,captured);
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER cognition_object_state_history AFTER INSERT OR UPDATE ON cognition_objects FOR EACH ROW EXECUTE FUNCTION capture_cognition_object_state();
 CREATE TRIGGER tag_state_history AFTER INSERT OR UPDATE ON tags FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('tag','tag_id');
 CREATE TRIGGER lexical_state_history AFTER INSERT OR UPDATE ON lexical_visibility FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('lexical_visibility','lexical_ref');

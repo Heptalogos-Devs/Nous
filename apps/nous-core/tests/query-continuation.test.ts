@@ -10,10 +10,15 @@ import { QueryOrchestrator } from "../src/query/orchestrator.js";
 import { ResourceRegistry } from "../src/resources/registry.js";
 import type { ExternalResourceAdapter } from "../src/resources/adapter.js";
 import {
+  EmbeddingNeedsResponseSchema,
+  QueryEmbeddingWorkSchema,
   QueryHostRequirement,
+  QueryRunUpdateSchema,
   type QueryRunRequest,
+  type QueryRunUpdate,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import {
+  CognitiveRefSchema,
   QueryExprSchema,
   QueryRequestSchema,
   QueryResponseSchema,
@@ -28,42 +33,68 @@ const queryRequest = () =>
     }),
   });
 
-it("continues one QueryRun through Core embedding and returns its completion", async () => {
-  const runQuery = vi.fn(async (request: QueryRunRequest) => {
-    if (request.command.case === "start") {
-      return {
-        handle: { queryRunId: "query-run", revision: 1n },
-        next: {
-          case: "embedding" as const,
-          value: {
-            representation: "Intent: release status",
-            config: {
-              spaceHash: "space",
-              producerHash: "producer",
-              producerHashes: ["producer"],
-              model: "fake",
-              dimension: 2,
-            },
-            historicalView: false,
-          },
-        },
-      };
-    }
-    expect(request.command.case).toBe("resume");
-    if (request.command.case !== "resume") throw new Error("resume expected");
-    expect(request.command.value.handle).toMatchObject({
-      queryRunId: "query-run",
-      revision: 1n,
-    });
-    expect(request.command.value.outcome?.case).toBe("embedding");
-    return {
-      handle: undefined,
-      next: {
-        case: "complete" as const,
-        value: create(QueryResponseSchema, { status: "complete" }),
+const embeddingConfig = {
+  spaceHash: "space",
+  producerHash: "producer",
+  producerHashes: ["producer"],
+  model: "fake",
+  dimension: 2,
+};
+
+const embeddingUpdate = (historicalView = false): QueryRunUpdate =>
+  create(QueryRunUpdateSchema, {
+    frame: {
+      case: "embedding",
+      value: create(QueryEmbeddingWorkSchema, {
+        representation: "Intent: release status",
+        config: embeddingConfig,
+        historicalView,
+      }),
+    },
+  });
+
+const completeUpdate = (): QueryRunUpdate =>
+  create(QueryRunUpdateSchema, {
+    frame: {
+      case: "complete",
+      value: create(QueryResponseSchema, { status: "complete" }),
+    },
+  });
+
+const workflow = (
+  requests: AsyncIterable<QueryRunRequest>,
+  run: (
+    frames: AsyncIterator<QueryRunRequest, undefined>,
+  ) => AsyncGenerator<QueryRunUpdate>,
+) => ({
+  async *[Symbol.asyncIterator]() {
+    const input = requests[Symbol.asyncIterator]();
+    let pending = input.next();
+    const frames: AsyncIterator<QueryRunRequest, undefined> = {
+      async next() {
+        const frame = await pending;
+        pending = input.next();
+        return frame;
       },
     };
-  });
+    try {
+      yield* run(frames);
+    } finally {
+      await input.return?.();
+    }
+  },
+});
+
+it("runs host embedding and returns completion on one bidi stream", async () => {
+  const runQuery = vi.fn((requests: AsyncIterable<QueryRunRequest>) =>
+    workflow(requests, async function* (frames) {
+      expect((await frames.next()).value?.frame.case).toBe("start");
+      yield embeddingUpdate();
+      const outcome = (await frames.next()).value;
+      expect(outcome?.frame.case).toBe("embedding");
+      yield completeUpdate();
+    }),
+  );
   const embeddingBatch = vi.fn(async (texts: string[]) => ({
     value: texts.map(() => [1, 0]),
     producer: { signature_hash: "producer" },
@@ -93,10 +124,79 @@ it("continues one QueryRun through Core embedding and returns its completion", a
     "fake",
     expect.any(AbortSignal),
   );
-  expect(runQuery).toHaveBeenCalledTimes(2);
-  expect(runQuery.mock.calls[0]?.[0].command.case).toBe("start");
-  expect(runQuery.mock.calls[1]?.[0].command.case).toBe("resume");
+  expect(runQuery).toHaveBeenCalledOnce();
+  expect(runQuery).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ timeoutMs: 300000 }),
+  );
   expect(result.status).toBe("complete");
+});
+
+it("uses the same stream for historical embedding discovery and commit", async () => {
+  const frames: string[] = [];
+  const runQuery = vi.fn((requests: AsyncIterable<QueryRunRequest>) =>
+    workflow(requests, async function* (inbound) {
+      expect((await inbound.next()).value?.frame.case).toBe("start");
+      yield embeddingUpdate(true);
+      const needs = (await inbound.next()).value;
+      frames.push(needs?.frame.case ?? "missing");
+      expect(needs?.frame.case).toBe("embeddingNeeds");
+      yield create(QueryRunUpdateSchema, {
+        frame: {
+          case: "embeddingNeeds",
+          value: create(EmbeddingNeedsResponseSchema, {
+            config: embeddingConfig,
+            needs: [
+              {
+                references: [
+                  create(CognitiveRefSchema, {
+                    kind: "occurrence",
+                    value: "source",
+                  }),
+                ],
+                text: "historical material",
+                digest: "digest",
+              },
+            ],
+          }),
+        },
+      });
+      const commit = (await inbound.next()).value;
+      frames.push(commit?.frame.case ?? "missing");
+      expect(commit?.frame.case).toBe("commitEmbedding");
+      yield create(QueryRunUpdateSchema, {
+        frame: { case: "embeddingCommitted", value: {} },
+      });
+      const embedding = (await inbound.next()).value;
+      frames.push(embedding?.frame.case ?? "missing");
+      expect(embedding?.frame.case).toBe("embedding");
+      yield completeUpdate();
+    }),
+  );
+  const embeddingBatch = vi.fn(async (texts: string[]) => ({
+    value: texts.map(() => [1, 0]),
+    producer: { signature_hash: "producer" },
+  }));
+  const kernel = {
+    execution: coreExecutionSchema.parse(undefined),
+    queryWorkflow: { runQuery },
+  } as unknown as KernelClient;
+  const models = {
+    embeddingModel: {},
+    invocations: {
+      embeddingBatch,
+      profile: () => undefined,
+      requirement: () => "optional",
+    },
+  } as unknown as ModelRuntime;
+
+  await new QueryOrchestrator(kernel, models, new ResourceRegistry()).execute(
+    queryRequest(),
+  );
+
+  expect(frames).toEqual(["embeddingNeeds", "commitEmbedding", "embedding"]);
+  expect(embeddingBatch).toHaveBeenCalledTimes(2);
+  expect(runQuery).toHaveBeenCalledOnce();
 });
 
 it("fences query-vector caching across subject invalidation", async () => {
@@ -117,37 +217,14 @@ it("fences query-vector caching across subject invalidation", async () => {
       value: texts.map(() => [1, 0]),
       producer: { signature_hash: "producer" },
     }));
-  const runQuery = vi.fn(async (request: QueryRunRequest) => {
-    if (request.command.case === "start") {
-      return {
-        handle: {
-          queryRunId: `run-${runQuery.mock.calls.length}`,
-          revision: 1n,
-        },
-        next: {
-          case: "embedding" as const,
-          value: {
-            representation: "Intent: release status",
-            config: {
-              spaceHash: "space",
-              producerHash: "producer",
-              producerHashes: ["producer"],
-              model: "fake",
-              dimension: 2,
-            },
-            historicalView: false,
-          },
-        },
-      };
-    }
-    return {
-      handle: undefined,
-      next: {
-        case: "complete" as const,
-        value: create(QueryResponseSchema, { status: "complete" }),
-      },
-    };
-  });
+  const runQuery = vi.fn((requests: AsyncIterable<QueryRunRequest>) =>
+    workflow(requests, async function* (frames) {
+      expect((await frames.next()).value?.frame.case).toBe("start");
+      yield embeddingUpdate();
+      expect((await frames.next()).value?.frame.case).toBe("embedding");
+      yield completeUpdate();
+    }),
+  );
   const orchestrator = new QueryOrchestrator(
     {
       execution: coreExecutionSchema.parse(undefined),
@@ -176,16 +253,15 @@ it("fences query-vector caching across subject invalidation", async () => {
   expect(embeddingBatch).toHaveBeenCalledTimes(2);
 });
 
-it("does not run resource adapters when required reranking was not requested", async () => {
+it("does not execute resources when required reranking is unavailable", async () => {
   let rerankProfileAvailable = true;
   const search = vi.fn(async () => []);
-  const runQuery = vi.fn(async (request: QueryRunRequest) => {
-    if (request.command.case === "start") {
-      rerankProfileAvailable = false;
-      return {
-        handle: { queryRunId: "query-run", revision: 1n },
-        next: {
-          case: "finalize" as const,
+  const runQuery = vi.fn((requests: AsyncIterable<QueryRunRequest>) =>
+    workflow(requests, async function* (frames) {
+      expect((await frames.next()).value?.frame.case).toBe("start");
+      yield create(QueryRunUpdateSchema, {
+        frame: {
+          case: "finalize",
           value: {
             baseline: create(QueryResponseSchema, {
               status: "complete",
@@ -208,26 +284,17 @@ it("does not run resource adapters when required reranking was not requested", a
             rerankRequirement: QueryHostRequirement.REQUIRED,
           },
         },
-      };
-    }
-    if (request.command.case === "resume") {
-      expect(request.command.value.outcome?.case).toBe("finalize");
-      if (request.command.value.outcome?.case === "finalize") {
-        expect(request.command.value.outcome.value.resources).toEqual([]);
-        expect(request.command.value.outcome.value.rerank?.outcome?.case).toBe(
-          "notRequested",
-        );
+      });
+      rerankProfileAvailable = false;
+      const finalize = (await frames.next()).value;
+      expect(finalize?.frame.case).toBe("finalize");
+      if (finalize?.frame.case === "finalize") {
+        expect(finalize.frame.value.resources).toEqual([]);
+        expect(finalize.frame.value.rerank?.outcome?.case).toBe("notRequested");
       }
-      return {
-        handle: undefined,
-        next: {
-          case: "complete" as const,
-          value: create(QueryResponseSchema, { status: "complete" }),
-        },
-      };
-    }
-    return { handle: undefined, next: undefined, cancelled: true };
-  });
+      yield completeUpdate();
+    }),
+  );
   const kernel = {
     execution: coreExecutionSchema.parse(undefined),
     queryWorkflow: { runQuery },

@@ -18,7 +18,7 @@ Atom 是 leaf candidate set；all 对 canonical identity 取交集，any 取并�
 
 执行顺序为 candidate lanes → 固定 RRF → bounded Authority validation/materialization → optional model rerank → final Authority revalidation → user limit。
 
-Core 持有 query embedding、rerank 和 Resource host actions；Kernel 持有 BoundQuery、QueryPlan、candidate fusion 与 final validation。内部 validated_candidate_limit 最大为 64，不改变用户 limit。正式 query 需要非空 TextCue；NousQL 使用单一 Unicode 意图和可选 syntax islands，内部 typed QueryExpr 保留 composition。Rerank 与 Resource action 由 Core 在同一 QueryRun 的 host-work 步骤执行，再由 Kernel 对原 BoundQuery 最终校验；QueryRun 完成、取消或过期后释放其 read context 与 Serving lease。
+Core 持有 query embedding、rerank 和 Resource host actions；Kernel 持有 BoundQuery、QueryPlan、candidate fusion 与 final validation。内部 validated_candidate_limit 最大为 64，不改变用户 limit。正式 query 需要非空 TextCue；NousQL 使用单一 Unicode 意图和可选 syntax islands，内部 typed QueryExpr 保留 composition。Rerank 与 Resource action 由 Core 在同一 QueryRun 的 host-work 步骤执行，再由 Kernel 对原 BoundQuery 最终校验；Query 流完成、取消或断开后释放其 read context 与 Serving lease。
 
 Model rerank 接收固定 candidate refs 与标准 `query/documents/top_n` 请求。Index 范围、唯一性与 finite score 必须通过校验；未返回候选保留 baseline tail。Required 调用失败使 operation 失败；optional 调用不可用时返回 baseline 与 degradation。回包后按原 BoundQuery 批量检查 revision/head/epoch/lifecycle/source/hard constraints；失效候选丢弃，operation 返回 `authority_changed_during_rerank`。Mutable exact target 在 bind 时固定到 revision 与 object epoch，执行期间变化时返回 `stale_exact_binding`，不得自动重绑。
 

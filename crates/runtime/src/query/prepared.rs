@@ -4,48 +4,10 @@
 use super::{BoundQuery, CognitiveContributors, QueryExecution, QueryPlan};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
-use std::collections::{
-    HashMap, HashSet,
-    hash_map::{Entry, OccupiedEntry},
-};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::time::{Duration, Instant};
-use uuid::Uuid;
-
-/// Infrastructure permission for one query opportunity, separate from its immutable semantics.
-#[derive(Debug, Clone, Copy)]
-pub struct QueryLease {
-    deadline: Instant,
-}
-impl QueryLease {
-    pub fn new(duration: Duration) -> Result<Self> {
-        if duration < Duration::from_millis(1) || duration > Duration::from_secs(3600) {
-            return Err(Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::InvalidRequest,
-                "Invalid query lease duration",
-            ));
-        }
-        Ok(Self {
-            deadline: Instant::now() + duration,
-        })
-    }
-    pub fn require_live(self) -> Result<()> {
-        if self.live() {
-            Ok(())
-        } else {
-            Err(Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::Unavailable,
-                "Query execution opportunity expired",
-            ))
-        }
-    }
-    fn live(self) -> bool {
-        Instant::now() < self.deadline
-    }
-}
+use tokio::sync::OwnedSemaphorePermit;
 
 #[derive(Debug, Clone, Copy)]
 pub struct QueryHostRole {
@@ -124,143 +86,96 @@ impl QueryRunHostPolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueryRunStage {
-    Embedding,
-    Concept,
-    Finalize,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QueryRunHandle {
-    pub query_run_id: Uuid,
-    pub revision: u64,
+pub struct QueryRunContext {
+    plan: QueryPlan,
+    host_policy: QueryRunHostPolicy,
+    _slot: OwnedSemaphorePermit,
 }
 
-/// One request-scoped continuation, retained only while Core must perform a
-/// real model or resource action. A revision is consumed exactly once.
-pub struct QueryRun {
-    id: Uuid,
-    subject: SubjectId,
-    revision: u64,
-    stage: QueryRunStage,
-    lease: QueryLease,
-    bound: BoundQuery,
-    plan: QueryPlan,
-    execution: Option<QueryExecution>,
-    pub host_policy: QueryRunHostPolicy,
-}
-impl QueryRun {
-    pub fn new(
+/// The phase determines which payload exists while a single Core↔Kernel stream is open.
+// Each stage owns one query; boxing only Finalize would not shrink the BoundQuery stages.
+#[allow(clippy::large_enum_variant)]
+pub enum QueryRun {
+    Embedding {
         bound: BoundQuery,
-        lease: QueryLease,
-        host_policy: QueryRunHostPolicy,
-        stage: QueryRunStage,
+        context: QueryRunContext,
+    },
+    Concept {
+        bound: BoundQuery,
+        context: QueryRunContext,
+    },
+    Finalize {
+        execution: QueryExecution,
+        context: QueryRunContext,
+    },
+}
+
+impl QueryRunContext {
+    pub fn new(
         plan: QueryPlan,
-    ) -> Result<Self> {
-        lease.require_live()?;
-        let id = bound.query_id;
-        let subject = bound.read_context.subject;
-        Ok(Self {
-            id,
-            subject,
-            revision: 0,
-            stage,
-            lease,
-            bound,
+        host_policy: QueryRunHostPolicy,
+        slot: OwnedSemaphorePermit,
+    ) -> Self {
+        Self {
             plan,
-            execution: None,
             host_policy,
-        })
-    }
-    pub fn handle(&self) -> QueryRunHandle {
-        QueryRunHandle {
-            query_run_id: self.id,
-            revision: self.revision,
+            _slot: slot,
         }
-    }
-    pub fn stage(&self) -> QueryRunStage {
-        self.stage
-    }
-    pub fn subject(&self) -> SubjectId {
-        self.subject
-    }
-    pub fn lease(&self) -> QueryLease {
-        self.lease
     }
     pub fn plan(&self) -> &QueryPlan {
         &self.plan
     }
+    pub fn host_policy(&self) -> QueryRunHostPolicy {
+        self.host_policy
+    }
+}
+
+impl QueryRun {
+    pub fn embedding(bound: BoundQuery, context: QueryRunContext) -> Self {
+        Self::Embedding { bound, context }
+    }
+    pub fn concept(bound: BoundQuery, context: QueryRunContext) -> Self {
+        Self::Concept { bound, context }
+    }
+    pub fn finalize(execution: QueryExecution, context: QueryRunContext) -> Self {
+        Self::Finalize { execution, context }
+    }
     pub fn bound(&self) -> &BoundQuery {
-        self.execution
-            .as_ref()
-            .map_or(&self.bound, |execution| &execution.bound)
+        match self {
+            Self::Embedding { bound, .. } | Self::Concept { bound, .. } => bound,
+            Self::Finalize { execution, .. } => &execution.bound,
+        }
     }
     pub fn bound_mut(&mut self) -> &mut BoundQuery {
-        &mut self.bound
+        match self {
+            Self::Embedding { bound, .. } | Self::Concept { bound, .. } => bound,
+            Self::Finalize { execution, .. } => &mut execution.bound,
+        }
     }
-    pub fn set_stage(&mut self, stage: QueryRunStage) {
-        self.stage = stage;
+    pub fn plan(&self) -> &QueryPlan {
+        match self {
+            Self::Embedding { context, .. }
+            | Self::Concept { context, .. }
+            | Self::Finalize { context, .. } => context.plan(),
+        }
     }
-    pub fn set_execution(&mut self, execution: QueryExecution) {
-        self.bound = execution.bound.clone();
-        self.execution = Some(execution);
+    pub fn host_policy(&self) -> QueryRunHostPolicy {
+        match self {
+            Self::Embedding { context, .. }
+            | Self::Concept { context, .. }
+            | Self::Finalize { context, .. } => context.host_policy(),
+        }
     }
-    pub fn execution(&self) -> Option<&QueryExecution> {
-        self.execution.as_ref()
-    }
-    pub fn execution_mut(&mut self) -> Option<&mut QueryExecution> {
-        self.execution.as_mut()
-    }
-    pub fn take_execution(&mut self) -> Result<QueryExecution> {
-        self.execution.take().ok_or_else(|| {
-            Error::new(
+    pub fn into_finalized(self) -> Result<(QueryExecution, QueryRunContext)> {
+        match self {
+            Self::Finalize { execution, context } => Ok((execution, context)),
+            Self::Embedding { .. } | Self::Concept { .. } => Err(Error::new(
                 ErrorOwner::Runtime,
                 ErrorCode::FailedPrecondition,
                 "Query result is unavailable",
-            )
-        })
+            )),
+        }
     }
-}
-
-fn unavailable_run(reason: &'static str) -> Error {
-    Error::new(
-        ErrorOwner::Runtime,
-        ErrorCode::StaleContext,
-        "Query continuation is unavailable",
-    )
-    .with_context("reason", reason)
-}
-
-fn query_run_entry(
-    runs: &mut HashMap<Uuid, QueryRun>,
-    subject: SubjectId,
-    handle: QueryRunHandle,
-    expected_stage: Option<QueryRunStage>,
-) -> Result<OccupiedEntry<'_, Uuid, QueryRun>> {
-    let Entry::Occupied(entry) = runs.entry(handle.query_run_id) else {
-        return Err(unavailable_run("query_run_unavailable"));
-    };
-    let run = entry.get();
-    if run.subject != subject {
-        return Err(Error::new(
-            ErrorOwner::Runtime,
-            ErrorCode::InvalidRequest,
-            "QueryRun subject does not match",
-        ));
-    }
-    if run.revision != handle.revision {
-        return Err(unavailable_run("query_run_stale_revision"));
-    }
-    let lease_live = run.lease.live();
-    let stage = run.stage;
-    if !lease_live {
-        entry.remove();
-        return Err(unavailable_run("query_run_unavailable"));
-    }
-    if expected_stage.is_some_and(|expected| stage != expected) {
-        return Err(unavailable_run("query_run_stale_revision"));
-    }
-    Ok(entry)
 }
 
 impl CognitiveRuntimeService {
@@ -277,52 +192,24 @@ impl CognitiveRuntimeService {
         Ok(())
     }
 
-    pub fn expire_query_leases(&self) -> Result<()> {
-        let mut runs = self.query_runs.lock().map_err(|_| {
-            Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::InternalFailure,
-                "Query continuation state is unavailable",
-            )
-        })?;
-        runs.retain(|_, run| run.lease.live());
-        Ok(())
-    }
-
-    pub fn retain_query_run(&self, mut run: QueryRun) -> Result<QueryRunHandle> {
-        run.lease.require_live()?;
-        let mut runs = self.query_runs.lock().map_err(|_| {
-            Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::InternalFailure,
-                "Query continuation state is unavailable",
-            )
-        })?;
-        runs.retain(|_, value| value.lease.live());
-        if runs.contains_key(&run.id) {
+    pub fn acquire_query_slot(&self, limit: usize) -> Result<OwnedSemaphorePermit> {
+        const MAX_QUERY_SLOTS: usize = 64;
+        if !(1..=MAX_QUERY_SLOTS).contains(&limit) {
             return Err(Error::new(
                 ErrorOwner::Runtime,
-                ErrorCode::Conflict,
-                "Query continuation identity is unavailable",
+                ErrorCode::InvalidRequest,
+                "Invalid query slot limit",
             ));
         }
-        if let Some(execution) = run.execution() {
-            let bytes = execution
-                .result
-                .results
-                .iter()
-                .map(|hit| hit.representation.as_ref().map_or(0, String::len))
-                .sum::<usize>();
-            if execution.result.results.len() > 64 || bytes > 2 * 1024 * 1024 {
-                return Err(Error::new(
-                    ErrorOwner::Runtime,
-                    ErrorCode::CapacityExhausted,
-                    "Query continuation exceeds its bounded result capacity",
-                )
-                .with_context("reason", "query_capacity"));
-            }
-        }
-        if runs.len() >= run.bound().config_snapshot.get(crate::QUERY_SLOTS)? {
+        let _admission = self.query_slot_admission.lock().map_err(|_| {
+            Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::InternalFailure,
+                "Query capacity state is unavailable",
+            )
+        })?;
+        let active = MAX_QUERY_SLOTS - self.query_slots.available_permits();
+        if active >= limit {
             return Err(Error::new(
                 ErrorOwner::Runtime,
                 ErrorCode::CapacityExhausted,
@@ -330,84 +217,43 @@ impl CognitiveRuntimeService {
             )
             .with_context("reason", "query_capacity"));
         }
-        run.revision = run.revision.checked_add(1).ok_or_else(|| {
+        self.query_slots.clone().try_acquire_owned().map_err(|_| {
             Error::new(
                 ErrorOwner::Runtime,
-                ErrorCode::InternalFailure,
-                "Query continuation revision overflow",
+                ErrorCode::CapacityExhausted,
+                "Query capacity is exhausted",
             )
-        })?;
-        let handle = run.handle();
-        runs.insert(run.id, run);
-        Ok(handle)
+            .with_context("reason", "query_capacity")
+        })
     }
 
-    pub fn take_query_run(
-        &self,
-        subject: SubjectId,
-        handle: QueryRunHandle,
-        expected_stage: QueryRunStage,
-    ) -> Result<QueryRun> {
-        let mut runs = self.query_runs.lock().map_err(|_| {
-            Error::new(
+    pub fn validate_query_execution_capacity(&self, execution: &QueryExecution) -> Result<()> {
+        let bytes = execution
+            .result
+            .results
+            .iter()
+            .map(|hit| hit.representation.as_ref().map_or(0, String::len))
+            .sum::<usize>();
+        if execution.result.results.len() > 64 || bytes > 2 * 1024 * 1024 {
+            return Err(Error::new(
                 ErrorOwner::Runtime,
-                ErrorCode::InternalFailure,
-                "Query continuation state is unavailable",
+                ErrorCode::CapacityExhausted,
+                "Query continuation exceeds its bounded result capacity",
             )
-        })?;
-        query_run_entry(&mut runs, subject, handle, Some(expected_stage)).map(OccupiedEntry::remove)
-    }
-
-    /// Read-only owner-material access while one Core embedding handoff is
-    /// outstanding. The caller neither consumes nor advances this revision.
-    pub fn query_run_bound(
-        &self,
-        subject: SubjectId,
-        handle: QueryRunHandle,
-        expected_stage: QueryRunStage,
-    ) -> Result<BoundQuery> {
-        let mut runs = self.query_runs.lock().map_err(|_| {
-            Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::InternalFailure,
-                "Query continuation state is unavailable",
-            )
-        })?;
-        let entry = query_run_entry(&mut runs, subject, handle, Some(expected_stage))?;
-        Ok(entry.get().bound().clone())
-    }
-
-    pub fn cancel_query_run(&self, subject: SubjectId, handle: QueryRunHandle) -> Result<()> {
-        let mut runs = self.query_runs.lock().map_err(|_| {
-            Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::InternalFailure,
-                "Query continuation state is unavailable",
-            )
-        })?;
-        query_run_entry(&mut runs, subject, handle, None)
-            .map(OccupiedEntry::remove)
-            .map(drop)
+            .with_context("reason", "query_capacity"));
+        }
+        Ok(())
     }
 
     pub async fn finish_query_run(
         &self,
-        mut run: QueryRun,
+        run: QueryRun,
         order: Vec<(CognitiveRef, f64)>,
         external_results: Vec<ExternalResourceResult>,
         contributors: CognitiveContributors<'_>,
     ) -> Result<CognitiveQueryResult> {
-        if run.stage() != QueryRunStage::Finalize {
-            return Err(Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::FailedPrecondition,
-                "Query continuation stage is unavailable",
-            ));
-        }
-        let execution = run.take_execution()?;
-        let lease = run.lease();
-        let subject = run.subject();
-        lease.require_live()?;
+        let (execution, _context) = run.into_finalized()?;
+        let subject = execution.bound.read_context.subject;
         self.ensure_read_context_current(&execution.bound.read_context)
             .await?;
         if order.len() > 64 || order.iter().any(|(_, score)| !score.is_finite()) {
@@ -519,17 +365,14 @@ impl CognitiveRuntimeService {
             );
         }
         result = finalize_query_response(&execution.bound, result);
-        lease.require_live()?;
         self.finalize_resources(subject, &mut result, external_results)
             .await?;
-        self.record_finalized_query_feedback(&execution.bound, &result, Some(lease))
+        self.record_finalized_query_feedback(&execution.bound, &result)
             .await?;
         Ok(result)
     }
 
-    /// Complete a direct one-shot query execution at the same response fence as
-    /// a QueryRun. Candidate pools must instead be retained and finalized by a
-    /// QueryRun so only the final membership is recorded.
+    /// Complete a direct one-shot query execution at the same response fence.
     pub fn complete_query_execution<'a>(
         &'a self,
         execution: QueryExecution,
@@ -549,7 +392,7 @@ impl CognitiveRuntimeService {
                 ));
             }
             let result = finalize_query_response(&bound, result);
-            self.record_finalized_query_feedback(&bound, &result, None)
+            self.record_finalized_query_feedback(&bound, &result)
                 .await?;
             Ok(QueryExecution {
                 read_lease,
@@ -560,32 +403,14 @@ impl CognitiveRuntimeService {
         })
     }
 
-    /// Complete a run that needed no host model or resource continuation.
-    /// Query candidates were already validated during the frozen execution;
-    /// only the purge fence and feedback remain at the response boundary.
-    pub async fn complete_query_run(&self, mut run: QueryRun) -> Result<CognitiveQueryResult> {
-        let execution = run.take_execution()?;
-        let result = finalize_query_response(&execution.bound, execution.result);
-        self.record_finalized_query_feedback(&execution.bound, &result, Some(run.lease()))
-            .await?;
-        Ok(result)
-    }
-
     async fn record_finalized_query_feedback(
         &self,
         bound: &BoundQuery,
         result: &CognitiveQueryResult,
-        lease: Option<QueryLease>,
     ) -> Result<()> {
-        if let Some(lease) = lease {
-            lease.require_live()?;
-        }
         self.ensure_read_context_current(&bound.read_context)
             .await?;
         self.record_query_feedback(bound, result).await?;
-        if let Some(lease) = lease {
-            lease.require_live()?;
-        }
         self.ensure_read_context_current(&bound.read_context)
             .await?;
         Ok(())

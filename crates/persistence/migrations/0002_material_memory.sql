@@ -1,30 +1,65 @@
 -- Copyright 2026 Aravine Zhu
 -- SPDX-License-Identifier: Apache-2.0
 
-CREATE TABLE memory_objects (
-    memory_id uuid PRIMARY KEY,
+-- One owner-level current head and lifecycle row for the four Cognition kinds.
+CREATE TABLE cognition_objects (
+    object_kind text NOT NULL CHECK (object_kind IN ('memory','cognitive_schema','episode','journal')),
+    object_id uuid NOT NULL,
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    cognitive_role text NOT NULL CHECK (cognitive_role IN ('experiential','declarative','procedural_experience')),
     current_revision_id uuid NOT NULL,
     object_epoch bigint NOT NULL DEFAULT 1 CHECK (object_epoch > 0),
     acceptance_state text NOT NULL CHECK (acceptance_state IN ('accepted','withdrawn')),
     integrity_state text NOT NULL CHECK (integrity_state IN ('valid','revalidation_required')),
     suppression_state text NOT NULL CHECK (suppression_state IN ('normal','suppressed')),
     purge_state text NOT NULL CHECK (purge_state IN ('normal','purging')),
-    accessibility_mode text NOT NULL DEFAULT 'auto' CHECK (accessibility_mode IN ('auto','normal','deep','explicit')),
-    created_at timestamptz NOT NULL
+    created_at timestamptz NOT NULL,
+    cognitive_role text NULL CHECK (cognitive_role IS NULL OR cognitive_role IN ('experiential','declarative','procedural_experience')),
+    accessibility_mode text NULL CHECK (accessibility_mode IS NULL OR accessibility_mode IN ('auto','normal','deep','explicit')),
+    track_key text NULL CHECK (track_key IS NULL OR octet_length(track_key) BETWEEN 1 AND 128),
+    PRIMARY KEY(object_kind,object_id),
+    UNIQUE(subject_id,object_kind,object_id),
+    CHECK (
+        (object_kind='memory' AND cognitive_role IS NOT NULL AND accessibility_mode IS NOT NULL AND track_key IS NULL)
+        OR (object_kind='episode' AND cognitive_role IS NULL AND accessibility_mode IS NULL AND track_key IS NOT NULL)
+        OR (object_kind IN ('cognitive_schema','journal') AND cognitive_role IS NULL AND accessibility_mode IS NULL AND track_key IS NULL)
+    )
 );
+
+-- Revision identity/order/time belongs to the owner. Payload remains in one
+-- strongly typed revision table per kind.
+CREATE TABLE cognition_revision_headers (
+    revision_id uuid PRIMARY KEY,
+    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
+    object_kind text NOT NULL CHECK (object_kind IN ('memory','cognitive_schema','episode','journal')),
+    object_id uuid NOT NULL,
+    revision_no integer NOT NULL CHECK (revision_no > 0),
+    parent_revision_id uuid NULL,
+    formed_at timestamptz NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    producer_signature_id uuid NULL REFERENCES producer_signatures(producer_signature_id),
+    UNIQUE(revision_id,object_kind),
+    UNIQUE(subject_id,object_kind,object_id,revision_id),
+    UNIQUE(subject_id,object_kind,object_id,revision_no),
+    FOREIGN KEY(subject_id,object_kind,object_id)
+        REFERENCES cognition_objects(subject_id,object_kind,object_id) ON DELETE CASCADE,
+    FOREIGN KEY(subject_id,object_kind,object_id,parent_revision_id)
+        REFERENCES cognition_revision_headers(subject_id,object_kind,object_id,revision_id)
+);
+ALTER TABLE cognition_objects
+    ADD CONSTRAINT cognition_objects_current_revision_fk
+    FOREIGN KEY(subject_id,object_kind,object_id,current_revision_id)
+    REFERENCES cognition_revision_headers(subject_id,object_kind,object_id,revision_id)
+    DEFERRABLE INITIALLY DEFERRED;
+
+CREATE INDEX cognition_object_list ON cognition_objects(subject_id,object_kind,acceptance_state,object_id);
+CREATE INDEX cognition_object_epoch ON cognition_objects(subject_id,object_kind,object_epoch);
 
 CREATE TABLE memory_revisions (
     memory_revision_id uuid PRIMARY KEY,
-    memory_id uuid NOT NULL REFERENCES memory_objects(memory_id) ON DELETE CASCADE,
-    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    revision_no integer NOT NULL CHECK (revision_no > 0),
-    parent_revision_id uuid NULL REFERENCES memory_revisions(memory_revision_id),
+    object_kind text NOT NULL DEFAULT 'memory' CHECK (object_kind='memory'),
     revision_intent text NULL CHECK (revision_intent IN ('correct','rephrase','reinterpret')),
     formation_mode text NOT NULL CHECK (formation_mode IN ('grounded','synthesized')),
     grounding_occurrence_id uuid NULL REFERENCES observation_occurrences(occurrence_id) ON DELETE RESTRICT,
-    producer_signature_id uuid NULL REFERENCES producer_signatures(producer_signature_id),
     semantic_role text NOT NULL,
     title text NULL,
     representation_text text NOT NULL CHECK (length(trim(representation_text)) > 0 AND octet_length(representation_text) <= 1048576),
@@ -32,19 +67,16 @@ CREATE TABLE memory_revisions (
     valid_time_kind text NOT NULL DEFAULT 'unknown' CHECK (valid_time_kind IN ('unknown','instant','interval')),
     valid_time_start timestamptz NULL,
     valid_time_end timestamptz NULL,
-    formed_at timestamptz NOT NULL,
-    recorded_at timestamptz NOT NULL,
-    UNIQUE(memory_id, revision_no),
+    FOREIGN KEY(memory_revision_id,object_kind)
+        REFERENCES cognition_revision_headers(revision_id,object_kind) ON DELETE CASCADE,
     CHECK (valid_time_kind <> 'interval'
         OR valid_time_start IS NULL
         OR valid_time_end IS NULL
         OR valid_time_start < valid_time_end),
     CHECK ((formation_mode = 'grounded') = (grounding_occurrence_id IS NOT NULL))
 );
-ALTER TABLE memory_objects
-    ADD CONSTRAINT memory_objects_current_revision_fk
-    FOREIGN KEY (current_revision_id) REFERENCES memory_revisions(memory_revision_id)
-    DEFERRABLE INITIALLY DEFERRED;
+
+CREATE INDEX cognition_revision_as_of ON cognition_revision_headers(subject_id,object_kind,recorded_at DESC,revision_no DESC);
 
 CREATE TABLE memory_revision_evidence (
     memory_revision_id uuid NOT NULL REFERENCES memory_revisions(memory_revision_id) ON DELETE CASCADE,
@@ -140,22 +172,9 @@ CREATE TABLE memory_revision_tags (
     PRIMARY KEY(memory_revision_id, tag_id)
 );
 
-CREATE TABLE cognitive_schemas (
-    schema_id uuid PRIMARY KEY,
-    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    current_revision_id uuid NOT NULL,
-    object_epoch bigint NOT NULL DEFAULT 1 CHECK (object_epoch > 0),
-    acceptance_state text NOT NULL CHECK (acceptance_state IN ('accepted','withdrawn')),
-    integrity_state text NOT NULL CHECK (integrity_state IN ('valid','revalidation_required')),
-    suppression_state text NOT NULL CHECK (suppression_state IN ('normal','suppressed')),
-    purge_state text NOT NULL CHECK (purge_state IN ('normal','purging')),
-    created_at timestamptz NOT NULL
-);
 CREATE TABLE cognitive_schema_revisions (
     schema_revision_id uuid PRIMARY KEY,
-    schema_id uuid NOT NULL REFERENCES cognitive_schemas(schema_id) ON DELETE CASCADE,
-    revision_no integer NOT NULL CHECK (revision_no > 0),
-    parent_revision_id uuid NULL REFERENCES cognitive_schema_revisions(schema_revision_id),
+    object_kind text NOT NULL DEFAULT 'cognitive_schema' CHECK (object_kind='cognitive_schema'),
     revision_intent text NULL CHECK (revision_intent IN ('correct','rephrase','reinterpret')),
     formation_kind text NOT NULL DEFAULT 'explicit_import'
         CHECK (formation_kind IN ('explicit_import','synthesized')),
@@ -168,19 +187,13 @@ CREATE TABLE cognitive_schema_revisions (
     valid_time_kind text NOT NULL DEFAULT 'unknown' CHECK (valid_time_kind IN ('unknown','instant','interval')),
     valid_time_start timestamptz NULL,
     valid_time_end timestamptz NULL,
-    formed_at timestamptz NOT NULL,
-    recorded_at timestamptz NOT NULL,
-    producer_signature_id uuid NULL REFERENCES producer_signatures(producer_signature_id),
-    UNIQUE(schema_id, revision_no),
+    FOREIGN KEY(schema_revision_id,object_kind)
+        REFERENCES cognition_revision_headers(revision_id,object_kind) ON DELETE CASCADE,
     CHECK (valid_time_kind <> 'interval'
         OR valid_time_start IS NULL
         OR valid_time_end IS NULL
         OR valid_time_start < valid_time_end)
 );
-ALTER TABLE cognitive_schemas
-    ADD CONSTRAINT cognitive_schemas_current_revision_fk
-    FOREIGN KEY (current_revision_id) REFERENCES cognitive_schema_revisions(schema_revision_id)
-    DEFERRABLE INITIALLY DEFERRED;
 CREATE TABLE cognitive_schema_evidence_links (
     link_id uuid PRIMARY KEY,
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
@@ -236,25 +249,9 @@ CREATE TABLE association_evidence_basis (
     CHECK (num_nonnulls(source_region_id, derived_representation_id, derived_region_id) <= 1)
 );
 
-CREATE TABLE episode_objects (
-    episode_id uuid PRIMARY KEY,
-    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    track_key text NOT NULL CHECK (octet_length(track_key) BETWEEN 1 AND 128),
-    current_revision_id uuid NOT NULL,
-    object_epoch bigint NOT NULL DEFAULT 1 CHECK (object_epoch > 0),
-    acceptance_state text NOT NULL CHECK (acceptance_state IN ('accepted','withdrawn')),
-    integrity_state text NOT NULL CHECK (integrity_state IN ('valid','revalidation_required')),
-    suppression_state text NOT NULL CHECK (suppression_state IN ('normal','suppressed')),
-    purge_state text NOT NULL CHECK (purge_state IN ('normal','purging')),
-    created_at timestamptz NOT NULL,
-    UNIQUE(subject_id, episode_id)
-);
 CREATE TABLE episode_revisions (
     episode_revision_id uuid PRIMARY KEY,
-    episode_id uuid NOT NULL REFERENCES episode_objects(episode_id) ON DELETE CASCADE,
-    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    revision_no integer NOT NULL CHECK (revision_no > 0),
-    parent_revision_id uuid NULL REFERENCES episode_revisions(episode_revision_id),
+    object_kind text NOT NULL DEFAULT 'episode' CHECK (object_kind='episode'),
     revision_intent text NULL CHECK (revision_intent IN ('resegment','reinterpret')),
     title text NULL CHECK (title IS NULL OR octet_length(title) <= 8192),
     parent_episode_revision_id uuid NULL REFERENCES episode_revisions(episode_revision_id) ON DELETE SET NULL,
@@ -262,19 +259,13 @@ CREATE TABLE episode_revisions (
     experience_time_start timestamptz NULL,
     experience_time_end timestamptz NULL,
     boundary_explanation text NOT NULL CHECK (octet_length(boundary_explanation) BETWEEN 1 AND 16384),
-    formed_at timestamptz NOT NULL,
-    recorded_at timestamptz NOT NULL,
-    producer_signature_id uuid NULL REFERENCES producer_signatures(producer_signature_id),
-    UNIQUE(episode_id, revision_no),
+    FOREIGN KEY(episode_revision_id,object_kind)
+        REFERENCES cognition_revision_headers(revision_id,object_kind) ON DELETE CASCADE,
     CHECK (experience_time_kind <> 'interval'
         OR experience_time_start IS NULL
         OR experience_time_end IS NULL
         OR experience_time_start < experience_time_end)
 );
-ALTER TABLE episode_objects
-    ADD CONSTRAINT episode_objects_current_revision_fk
-    FOREIGN KEY (current_revision_id) REFERENCES episode_revisions(episode_revision_id)
-    DEFERRABLE INITIALLY DEFERRED;
 CREATE TABLE episode_revision_members (
     episode_revision_id uuid NOT NULL REFERENCES episode_revisions(episode_revision_id) ON DELETE CASCADE,
     ordinal integer NOT NULL CHECK (ordinal >= 0),
@@ -307,38 +298,19 @@ CREATE TABLE episode_revision_relations (
     PRIMARY KEY(from_revision_id, to_revision_id, relation)
 );
 
-CREATE TABLE journal_objects (
-    journal_id uuid PRIMARY KEY,
-    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    current_revision_id uuid NOT NULL,
-    object_epoch bigint NOT NULL DEFAULT 1 CHECK (object_epoch > 0),
-    acceptance_state text NOT NULL CHECK (acceptance_state IN ('accepted','withdrawn')),
-    integrity_state text NOT NULL CHECK (integrity_state IN ('valid','revalidation_required')),
-    suppression_state text NOT NULL CHECK (suppression_state IN ('normal','suppressed')),
-    purge_state text NOT NULL CHECK (purge_state IN ('normal','purging')),
-    created_at timestamptz NOT NULL,
-    UNIQUE(subject_id,journal_id)
-);
 CREATE TABLE journal_revisions (
     journal_revision_id uuid PRIMARY KEY,
-    journal_id uuid NOT NULL REFERENCES journal_objects(journal_id) ON DELETE CASCADE,
-    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    revision_no integer NOT NULL CHECK (revision_no > 0),
-    parent_revision_id uuid NULL REFERENCES journal_revisions(journal_revision_id),
+    object_kind text NOT NULL DEFAULT 'journal' CHECK (object_kind='journal'),
     revision_intent text NULL CHECK (revision_intent IN ('revalidate','reinterpret','reframe')),
     title text NULL CHECK (title IS NULL OR octet_length(title) <= 8192),
     temporal_scope_kind text NOT NULL CHECK (temporal_scope_kind IN ('unknown','instant','interval')),
     temporal_scope_start timestamptz NULL,
     temporal_scope_end timestamptz NULL,
     narrative text NOT NULL CHECK (octet_length(narrative) BETWEEN 1 AND 131072),
-    formed_at timestamptz NOT NULL,
-    recorded_at timestamptz NOT NULL,
-    producer_signature_id uuid NULL REFERENCES producer_signatures(producer_signature_id),
-    UNIQUE(journal_id,revision_no),
+    FOREIGN KEY(journal_revision_id,object_kind)
+        REFERENCES cognition_revision_headers(revision_id,object_kind) ON DELETE CASCADE,
     CHECK (temporal_scope_kind<>'interval' OR temporal_scope_start IS NULL OR temporal_scope_end IS NULL OR temporal_scope_start<temporal_scope_end)
 );
-ALTER TABLE journal_objects ADD CONSTRAINT journal_current_revision_fk
-    FOREIGN KEY(current_revision_id) REFERENCES journal_revisions(journal_revision_id) DEFERRABLE INITIALLY DEFERRED;
 CREATE TABLE journal_revision_points (
     journal_revision_id uuid NOT NULL REFERENCES journal_revisions(journal_revision_id) ON DELETE CASCADE,
     ordinal integer NOT NULL CHECK (ordinal BETWEEN 0 AND 127),

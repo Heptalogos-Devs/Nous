@@ -6,6 +6,25 @@ use database_error as db;
 use nous_core::*;
 use sqlx::{Executor, Postgres, Row, Transaction};
 
+/// Project a typed Cognition reference into the shared physical identity.
+/// `is_object` selects the mutable object's current head; `false` keeps an
+/// exact immutable revision identity.
+pub(crate) fn cognition_ref_parts(
+    reference: &CognitiveRef,
+) -> Option<(&'static str, uuid::Uuid, bool)> {
+    Some(match reference {
+        CognitiveRef::Memory(id) => ("memory", id.0, true),
+        CognitiveRef::MemoryRevision(id) => ("memory", id.0, false),
+        CognitiveRef::Episode(id) => ("episode", id.0, true),
+        CognitiveRef::EpisodeRevision(id) => ("episode", id.0, false),
+        CognitiveRef::Journal(id) => ("journal", id.0, true),
+        CognitiveRef::JournalRevision(id) => ("journal", id.0, false),
+        CognitiveRef::CognitiveSchema(id) => ("cognitive_schema", id.0, true),
+        CognitiveRef::CognitiveSchemaRevision(id) => ("cognitive_schema", id.0, false),
+        _ => return None,
+    })
+}
+
 impl AuthorityStore {
     /// Resolve a query exact target once at binding time.  Mutable cognition
     /// object refs are deliberately converted to their current exact revision;
@@ -16,61 +35,33 @@ impl AuthorityStore {
         subject: SubjectId,
         reference: &CognitiveRef,
     ) -> Result<(CognitiveRef, Option<i64>, bool)> {
-        let (query, id, mutable) = match reference {
-            CognitiveRef::Memory(id) => (
-                "SELECT current_revision_id,object_epoch FROM memory_objects WHERE subject_id=$1 AND memory_id=$2",
-                id.0,
-                true,
-            ),
-            CognitiveRef::MemoryRevision(id) => (
-                "SELECT r.memory_revision_id AS current_revision_id,o.object_epoch FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2",
-                id.0,
-                false,
-            ),
-            CognitiveRef::Episode(id) => (
-                "SELECT current_revision_id,object_epoch FROM episode_objects WHERE subject_id=$1 AND episode_id=$2",
-                id.0,
-                true,
-            ),
-            CognitiveRef::EpisodeRevision(id) => (
-                "SELECT r.episode_revision_id AS current_revision_id,o.object_epoch FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2",
-                id.0,
-                false,
-            ),
-            CognitiveRef::Journal(id) => (
-                "SELECT current_revision_id,object_epoch FROM journal_objects WHERE subject_id=$1 AND journal_id=$2",
-                id.0,
-                true,
-            ),
-            CognitiveRef::JournalRevision(id) => (
-                "SELECT r.journal_revision_id AS current_revision_id,o.object_epoch FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2",
-                id.0,
-                false,
-            ),
-            CognitiveRef::CognitiveSchema(id) => (
-                "SELECT current_revision_id,object_epoch FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2",
-                id.0,
-                true,
-            ),
-            CognitiveRef::CognitiveSchemaRevision(id) => (
-                "SELECT r.schema_revision_id AS current_revision_id,s.object_epoch FROM cognitive_schema_revisions r JOIN cognitive_schemas s USING(schema_id) WHERE s.subject_id=$1 AND r.schema_revision_id=$2",
-                id.0,
-                false,
-            ),
-            CognitiveRef::Tag(tag) => {
-                return Ok((
-                    CognitiveRef::Tag(self.canonical_tag_id(subject, *tag).await?),
-                    None,
-                    false,
-                ));
-            }
-            _ => {
-                self.validate_reference(subject, reference).await?;
-                return Ok((reference.clone(), None, false));
-            }
+        // All four cognition families share a single immutable revision
+        // identity and current-head table. Keep the kind supplied by the
+        // caller in the predicate so UUID collisions across kinds can never
+        // resolve to the wrong owner.
+        let (kind, id, mutable) = match cognition_ref_parts(reference) {
+            Some(parts) => parts,
+            None => match reference {
+                CognitiveRef::Tag(tag) => {
+                    return Ok((
+                        CognitiveRef::Tag(self.canonical_tag_id(subject, *tag).await?),
+                        None,
+                        false,
+                    ));
+                }
+                _ => {
+                    self.validate_reference(subject, reference).await?;
+                    return Ok((reference.clone(), None, false));
+                }
+            },
         };
-        let row = sqlx::query(query)
+        let row = sqlx::query(if mutable {
+            "SELECT current_revision_id,object_epoch FROM cognition_objects WHERE subject_id=$1 AND object_kind=$2 AND object_id=$3"
+        } else {
+            "SELECT h.revision_id AS current_revision_id,o.object_epoch FROM cognition_revision_headers h JOIN cognition_objects o USING(subject_id,object_kind,object_id) WHERE h.subject_id=$1 AND h.object_kind=$2 AND h.revision_id=$3"
+        })
             .bind(subject.0)
+            .bind(kind)
             .bind(id)
             .fetch_optional(self.pool())
             .await
@@ -136,71 +127,19 @@ impl AuthorityStore {
     where
         E: Executor<'e, Database = Postgres>,
     {
-        let valid = match reference {
-            CognitiveRef::Memory(id) => sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM memory_objects WHERE subject_id=$1 AND memory_id=$2)",
+        let valid = if let Some((kind, id, object)) = cognition_ref_parts(reference) {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT CASE WHEN $4 THEN EXISTS(SELECT 1 FROM cognition_objects WHERE subject_id=$1 AND object_kind=$2 AND object_id=$3) ELSE EXISTS(SELECT 1 FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind=$2 AND revision_id=$3) END",
             )
             .bind(subject.0)
-            .bind(id.0)
+            .bind(kind)
+            .bind(id)
+            .bind(object)
             .fetch_one(executor)
             .await
-            .map_err(db)?,
-            CognitiveRef::MemoryRevision(id) => sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM memory_revisions WHERE subject_id=$1 AND memory_revision_id=$2)",
-            )
-            .bind(subject.0)
-            .bind(id.0)
-            .fetch_one(executor)
-            .await
-            .map_err(db)?,
-            CognitiveRef::Episode(id) => sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM episode_objects WHERE subject_id=$1 AND episode_id=$2)",
-            )
-            .bind(subject.0)
-            .bind(id.0)
-            .fetch_one(executor)
-            .await
-            .map_err(db)?,
-            CognitiveRef::EpisodeRevision(id) => sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE o.subject_id=$1 AND r.episode_revision_id=$2)",
-            )
-            .bind(subject.0)
-            .bind(id.0)
-            .fetch_one(executor)
-            .await
-            .map_err(db)?,
-            CognitiveRef::Journal(id) => sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM journal_objects WHERE subject_id=$1 AND journal_id=$2)",
-            )
-            .bind(subject.0)
-            .bind(id.0)
-            .fetch_one(executor)
-            .await
-            .map_err(db)?,
-            CognitiveRef::JournalRevision(id) => sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE o.subject_id=$1 AND r.journal_revision_id=$2)",
-            )
-            .bind(subject.0)
-            .bind(id.0)
-            .fetch_one(executor)
-            .await
-            .map_err(db)?,
-            CognitiveRef::CognitiveSchema(id) => sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2)",
-            )
-            .bind(subject.0)
-            .bind(id.0)
-            .fetch_one(executor)
-            .await
-            .map_err(db)?,
-            CognitiveRef::CognitiveSchemaRevision(id) => sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM cognitive_schema_revisions r JOIN cognitive_schemas s USING(schema_id) WHERE s.subject_id=$1 AND r.schema_revision_id=$2)",
-            )
-            .bind(subject.0)
-            .bind(id.0)
-            .fetch_one(executor)
-            .await
-            .map_err(db)?,
+            .map_err(db)?
+        } else {
+            match reference {
             CognitiveRef::CognitiveSeedVersion(id) => sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM cognitive_seed_versions WHERE subject_id=$1 AND seed_version_id=$2)",
             )
@@ -276,7 +215,7 @@ impl AuthorityStore {
             CognitiveRef::Entity(id) => {
                 EntityRef::new(id.as_str())?;
                 sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM lexical_bindings b JOIN lexical_visibility v USING(lexical_ref) WHERE v.subject_id=$1 AND b.object_kind='entity' AND b.canonical_ref=$2 AND b.tombstoned_at IS NULL) OR EXISTS(SELECT 1 FROM observation_occurrences WHERE subject_id=$1 AND actor_entity_ref=$2) OR EXISTS(SELECT 1 FROM entity_mentions m JOIN entity_binding_revisions b USING(mention_id) WHERE m.subject_id=$1 AND b.entity_ref=$2 AND b.binding_state='bound') OR EXISTS(SELECT 1 FROM memory_revision_aboutness e JOIN memory_revisions r USING(memory_revision_id) WHERE r.subject_id=$1 AND e.entity_ref=$2) OR EXISTS(SELECT 1 FROM cognitive_schema_revisions r JOIN cognitive_schemas s USING(schema_id) WHERE s.subject_id=$1 AND $2 = ANY(r.aboutness))",
+                "SELECT EXISTS(SELECT 1 FROM lexical_bindings b JOIN lexical_visibility v USING(lexical_ref) WHERE v.subject_id=$1 AND b.object_kind='entity' AND b.canonical_ref=$2 AND b.tombstoned_at IS NULL) OR EXISTS(SELECT 1 FROM observation_occurrences WHERE subject_id=$1 AND actor_entity_ref=$2) OR EXISTS(SELECT 1 FROM entity_mentions m JOIN entity_binding_revisions b USING(mention_id) WHERE m.subject_id=$1 AND b.entity_ref=$2 AND b.binding_state='bound') OR EXISTS(SELECT 1 FROM memory_revision_aboutness e JOIN cognition_revision_headers h ON h.revision_id=e.memory_revision_id AND h.object_kind='memory' WHERE h.subject_id=$1 AND e.entity_ref=$2) OR EXISTS(SELECT 1 FROM cognitive_schema_revisions r JOIN cognition_revision_headers h ON h.revision_id=r.schema_revision_id AND h.object_kind='cognitive_schema' WHERE h.subject_id=$1 AND $2 = ANY(r.aboutness))",
                 )
                 .bind(subject.0)
                 .bind(id.as_str())
@@ -295,6 +234,17 @@ impl AuthorityStore {
             .fetch_one(executor)
             .await
             .map_err(db)?,
+            CognitiveRef::Memory(_)
+            | CognitiveRef::MemoryRevision(_)
+            | CognitiveRef::Episode(_)
+            | CognitiveRef::EpisodeRevision(_)
+            | CognitiveRef::Journal(_)
+            | CognitiveRef::JournalRevision(_)
+            | CognitiveRef::CognitiveSchema(_)
+            | CognitiveRef::CognitiveSchemaRevision(_) => {
+                unreachable!("Cognition refs use the shared header existence query")
+            }
+        }
         };
         Ok(valid)
     }
@@ -330,18 +280,13 @@ impl AuthorityStore {
 WITH requested(ref_kind,ref_value) AS (
     SELECT * FROM unnest($2::text[],$3::text[])
 ), owners(ref_kind,ref_value,purge_state) AS (
-    SELECT 'memory',o.memory_id::text,o.purge_state FROM memory_objects o WHERE o.subject_id=$1
-    UNION ALL SELECT 'memory_revision',r.memory_revision_id::text,o.purge_state
-      FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE o.subject_id=$1
-    UNION ALL SELECT 'cognitive_schema',o.schema_id::text,o.purge_state FROM cognitive_schemas o WHERE o.subject_id=$1
-    UNION ALL SELECT 'cognitive_schema_revision',r.schema_revision_id::text,o.purge_state
-      FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1
-    UNION ALL SELECT 'episode',o.episode_id::text,o.purge_state FROM episode_objects o WHERE o.subject_id=$1
-    UNION ALL SELECT 'episode_revision',r.episode_revision_id::text,o.purge_state
-      FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE o.subject_id=$1
-    UNION ALL SELECT 'journal',o.journal_id::text,o.purge_state FROM journal_objects o WHERE o.subject_id=$1
-    UNION ALL SELECT 'journal_revision',r.journal_revision_id::text,o.purge_state
-      FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE o.subject_id=$1
+    SELECT object_kind,object_id::text,purge_state
+      FROM cognition_objects WHERE subject_id=$1
+    UNION ALL
+    SELECT h.object_kind || '_revision',h.revision_id::text,o.purge_state
+      FROM cognition_revision_headers h
+      JOIN cognition_objects o USING(subject_id,object_kind,object_id)
+     WHERE o.subject_id=$1
 )
 SELECT EXISTS(
     SELECT 1 FROM requested r

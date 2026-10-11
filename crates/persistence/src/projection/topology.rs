@@ -155,7 +155,7 @@ async fn topology_snapshot_in(
                     .with_source(error)
                 })?;
                 let revision = sqlx::query_scalar::<_, Uuid>(
-                        "SELECT current_revision_id FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'",
+                        "SELECT h.revision_id FROM cognition_objects o JOIN cognition_revision_headers h ON h.subject_id=o.subject_id AND h.object_kind=o.object_kind AND h.object_id=o.object_id AND h.revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.object_kind='cognitive_schema' AND o.object_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'",
                     )
                     .bind(subject.0)
                     .bind(schema_id)
@@ -271,7 +271,7 @@ async fn topology_snapshot_in(
         }
 
         let rows = sqlx::query(
-                "SELECT rr.from_revision_id,rr.to_revision_id,rr.relation FROM memory_revision_relations rr JOIN memory_revisions l ON l.memory_revision_id=rr.from_revision_id JOIN memory_revisions r ON r.memory_revision_id=rr.to_revision_id JOIN memory_objects lo ON lo.memory_id=l.memory_id JOIN memory_objects ro ON ro.memory_id=r.memory_id WHERE lo.subject_id=$1 AND ro.subject_id=$1 AND lo.current_revision_id=l.memory_revision_id AND ro.current_revision_id=r.memory_revision_id AND lo.acceptance_state='accepted' AND ro.acceptance_state='accepted' AND lo.integrity_state='valid' AND ro.integrity_state='valid' AND lo.suppression_state='normal' AND ro.suppression_state='normal' AND lo.purge_state='normal' AND ro.purge_state='normal'",
+                "SELECT rr.from_revision_id,rr.to_revision_id,rr.relation FROM memory_revision_relations rr JOIN cognition_revision_headers l ON l.revision_id=rr.from_revision_id AND l.object_kind='memory' JOIN cognition_objects lo ON lo.subject_id=l.subject_id AND lo.object_kind=l.object_kind AND lo.object_id=l.object_id AND lo.current_revision_id=l.revision_id JOIN cognition_revision_headers r ON r.revision_id=rr.to_revision_id AND r.object_kind='memory' JOIN cognition_objects ro ON ro.subject_id=r.subject_id AND ro.object_kind=r.object_kind AND ro.object_id=r.object_id AND ro.current_revision_id=r.revision_id WHERE lo.subject_id=$1 AND ro.subject_id=$1 AND lo.acceptance_state='accepted' AND ro.acceptance_state='accepted' AND lo.integrity_state='valid' AND ro.integrity_state='valid' AND lo.suppression_state='normal' AND ro.suppression_state='normal' AND lo.purge_state='normal' AND ro.purge_state='normal'",
             )
             .bind(subject.0)
             .fetch_all(&mut **tx)

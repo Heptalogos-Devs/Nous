@@ -21,6 +21,20 @@ pub(super) fn lease_proto(value: nous_persistence::WorkflowLease) -> k::Workflow
     }
 }
 
+pub(super) fn pending_proto(value: nous_persistence::PendingWorkflow) -> k::PendingWorkflow {
+    k::PendingWorkflow {
+        snapshot: Some(snapshot_proto(value.snapshot)),
+        proposal: value.proposal.map(payload_proto),
+        execution_telemetry: value.execution_telemetry.map(telemetry_proto),
+    }
+}
+pub(super) fn completed_proto(value: nous_persistence::CompletedWorkflow) -> k::CompletedWorkflow {
+    k::CompletedWorkflow {
+        outcome: Some(payload_proto(value.outcome)),
+        execution_telemetry: value.execution_telemetry.map(telemetry_proto),
+    }
+}
+
 pub(super) fn payload(value: k::WorkflowPayload) -> Result<nous_core::WorkflowPayload> {
     Ok(nous_core::WorkflowPayload {
         payload: super::model::workflow_json(&value.payload_json)?,

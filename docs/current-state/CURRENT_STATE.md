@@ -4,7 +4,7 @@
 
 ## 已提供能力
 
-- **Memory-only Subject**：Subject identity 与 capability；Memory、CognitiveSchema、Episode、Journal、Tag、AssociationEvidence 的 Authority、不可变修订、provenance、history 和 owner 生命周期。
+- **Memory-only Subject**：Subject identity 与 capability；Memory、CognitiveSchema、Episode、Journal、Tag、AssociationEvidence 的 Authority、不可变修订、provenance、history 和 owner 生命周期；前四类共用对象 / 修订 header、读取与生命周期入口，保留各自内容结构。
 - **材料来源链**：Artifact、Observation、SourceRegion、DerivedRepresentation 与派生 DAG；Material owner 维护内容身份、来源区域、五轴时间和精确 lineage。
 - **认知 Runtime**：Session、ResidentSet、WorkContext、UseEvent、MaintenanceNeed 与 durable checkpoint；Runtime 捕获交互经历，Memory owner 提供 Episode / Journal 与有界维护写入。
 - **查询与上下文**：自然语言 Query、exact/history 读取、lexical/dense/runtime/concept/topology lanes、固定计划与 owner 最终校验；QueryRun 支持外部能力往返。Projection 在完成查询后单独读取 owner 内容并保留命中修订；Memory（含 Episode、Journal、Schema）与 Material 使用有界 grouped owner reads。

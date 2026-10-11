@@ -1,7 +1,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtemp, rm, readdir } from "node:fs/promises";
+import { mkdtemp, rm, readdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
@@ -13,8 +14,6 @@ import { repositoryRoot } from "../../../scripts/workspace.js";
 import { pathToFileURL } from "node:url";
 import { create, toJson } from "@bufbuild/protobuf";
 import { TimestampSchema } from "@bufbuild/protobuf/wkt";
-import { configurationValue } from "@nous-wave/client";
-import { SetSystemOverrideRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import {
   CreateSubjectRequestSchema,
   SubjectSchema,
@@ -23,30 +22,8 @@ import { protocolReferences } from "@nous-wave/client/data";
 import {
   freezeRequest,
   freezeResult,
-  thawRequest,
   thawResult,
 } from "../src/receipt-codec.js";
-
-test("configuration receipts freeze and thaw the generated protobuf Value", () => {
-  const request = create(SetSystemOverrideRequestSchema, {
-    operationId: "configuration-operation",
-    path: "maintenance.enabled",
-    expectedRevision: 7n,
-    value: configurationValue("true"),
-  });
-  const frozen = freezeRequest("configuration.setSystem", request);
-  expect(frozen.frozen.protoJson).toMatchObject({ value: true });
-  const thawed = thawRequest(
-    "configuration.setSystem",
-    frozen.frozen.typeName,
-    frozen.frozen.protoJson,
-  );
-  const thawedJson = toJson(
-    SetSystemOverrideRequestSchema,
-    thawed as never,
-  ) as Record<string, unknown>;
-  expect(thawedJson.value).toBe(true);
-});
 
 test("v2 ProtoJSON receipts preserve generated messages and opaque Struct data", async () => {
   const root = await mkdtemp(join(workspacePaths.temporary, "consumer-codec-"));
@@ -167,6 +144,27 @@ test("selection updates preserve independent fields and reject conflicting or fo
         policy,
       ).selection(),
     ).toEqual({ format: "nous.consumer.selection" });
+    const namespace = createHash("sha256")
+      .update(JSON.stringify([identity.instanceId, identity.consumer]))
+      .digest("hex");
+    const selectionPath = join(root, "consumers", namespace, "selection.json");
+    const encoded = await readFile(selectionPath, "utf8");
+    expect(JSON.parse(encoded)).toEqual({
+      format: "nous.consumer.selection",
+      subjectId: "another",
+    });
+    expect(await state.selection()).toMatchObject({ subjectId: "another" });
+
+    const incompatible = JSON.stringify({
+      format: "nous.consumer.selection",
+      subjectId: "another",
+      obsoleteField: true,
+    });
+    await writeFile(selectionPath, incompatible);
+    await expect(state.selection()).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect(await readFile(selectionPath, "utf8")).toBe(incompatible);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

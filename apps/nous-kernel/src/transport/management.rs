@@ -200,7 +200,7 @@ impl KernelService {
         let subject = SubjectId(id(&input.subject_id)?);
         self.0.store.require_subject(subject).await?;
         let snapshot = self.0.configuration.snapshot_for_subject(subject)?;
-        let rows=sqlx::query("SELECT COALESCE(w.family,c.family) AS family,COALESCE(w.space_signature,c.space_signature) AS space_signature,COALESCE(w.desired_authority_seq,0) AS desired_authority_seq,g.authority_watermark,g.generation_id,g.config_digest FROM projection_watermarks w FULL JOIN serving_current c ON c.subject_id=w.subject_id AND c.family=w.family AND c.space_signature=w.space_signature LEFT JOIN serving_generations g ON g.generation_id=c.generation_id WHERE COALESCE(w.subject_id,c.subject_id)=$1 ORDER BY family,space_signature")
+        let rows=sqlx::query("SELECT COALESCE(w.family,g.family) AS family,COALESCE(w.space_signature,g.space_signature,'') AS space_signature,COALESCE(w.desired_authority_seq,0) AS desired_authority_seq,g.authority_watermark,g.generation_id,g.config_digest FROM projection_watermarks w FULL JOIN (SELECT g.* FROM serving_generations g WHERE g.state='ready' AND g.view_descriptor->>'kind'='current' AND g.purge_epoch=(SELECT serving_purge_epoch FROM subjects WHERE subject_id=g.subject_id)) g ON g.subject_id=w.subject_id AND g.family=w.family AND COALESCE(g.space_signature,'')=COALESCE(w.space_signature,'') WHERE COALESCE(w.subject_id,g.subject_id)=$1 ORDER BY family,space_signature")
             .bind(subject.0).fetch_all(self.0.store.pool()).await.map_err(db)?;
         let mut families = Vec::with_capacity(rows.len());
         for row in rows {

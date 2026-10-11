@@ -11,7 +11,6 @@ import {
   CreateEpisodeRequestSchema,
   CreateSubjectRequestSchema,
   CreateWorkContextRequestSchema,
-  EpisodeMutationRequestSchema,
   EpisodeMemberSchema,
   EvidenceRefSchema,
   FormMemoryRequestSchema,
@@ -28,6 +27,7 @@ import {
   UpdateWorkContextRequestSchema,
   WorkContextMutationRequestSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { CognitionMutationRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/cognition_pb.js";
 import { rm } from "node:fs/promises";
 import { workspaceTemp } from "../workspace.js";
 
@@ -120,6 +120,8 @@ async function main() {
         }),
       }),
     );
+    const memoryRevisionId = memory.revision?.header?.revisionRef?.value;
+    if (!memoryRevisionId) throw new Error("Memory revision identity missing");
     let context = await client.cognition.createWorkContext(
       create(CreateWorkContextRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009905",
@@ -128,7 +130,7 @@ async function main() {
         cognitionAnchors: [
           create(CognitiveRefSchema, {
             kind: "memory_revision",
-            value: memory.revisionId,
+            value: memoryRevisionId,
           }),
         ],
       }),
@@ -152,7 +154,7 @@ async function main() {
       contextQuery(sessionA.sessionId),
     );
     if (
-      !activeQuery.hits.some((hit) => hit.revision?.value === memory.revisionId)
+      !activeQuery.hits.some((hit) => hit.revision?.value === memoryRevisionId)
     )
       throw new Error(
         "active WorkContext did not surface exact MemoryRevision",
@@ -196,9 +198,7 @@ async function main() {
     const continued = await current.client.cognition.query(
       contextQuery(sessionB.sessionId),
     );
-    if (
-      !continued.hits.some((hit) => hit.revision?.value === memory.revisionId)
-    )
+    if (!continued.hits.some((hit) => hit.revision?.value === memoryRevisionId))
       throw new Error(
         "cross-session WorkContext did not surface exact MemoryRevision",
       );
@@ -224,15 +224,15 @@ async function main() {
       }),
     );
     const episodeValue = episode.episode;
-    const episodeId = episodeValue?.episodeId;
-    const firstRevision = episodeValue?.currentRevisionId;
-    if (!episodeValue || !episodeId || !firstRevision)
+    const episodeId = episodeValue?.header?.objectRef?.value;
+    const firstRevision = episodeValue?.revision?.header?.revisionRef?.value;
+    if (!episodeValue?.header || !episodeId || !firstRevision)
       throw new Error("Episode identity missing");
     const revised = await current.client.memory.reviseEpisode({
       operationId: "00000000-0000-0000-0000-000000009911",
       subjectId,
       episodeId,
-      expectedObjectEpoch: episodeValue.objectEpoch,
+      expectedObjectEpoch: episodeValue.header.objectEpoch,
       intent: "resegment",
       boundaryExplanation: "resegmented interaction",
       experienceTime: create(TemporalExtentSchema, {}),
@@ -248,24 +248,28 @@ async function main() {
       ],
       basis: [evidence(observed.occurrenceId)],
     });
-    const history = await current.client.memory.listEpisodeRevisions({
+    const history = await current.client.cognition.history({
       subjectId,
-      episodeId,
+      objectRef: { kind: "episode", value: episodeId },
     });
     if (
       history.items.length !== 2 ||
-      revised.episode?.currentRevisionId === firstRevision
+      revised.episode?.header?.currentRevisionRef?.value === firstRevision
     )
       throw new Error(
         "Episode revision history did not preserve the first revision",
       );
-    const exact = await current.client.memory.getEpisodeRevision({
+    const exact = await current.client.cognition.read({
       subjectId,
-      id: firstRevision,
+      reference: { kind: "episode_revision", value: firstRevision },
     });
-    if (exact.episodeId !== episodeId)
+    if (
+      exact.result.case !== "episode" ||
+      exact.result.value.header?.objectRef?.value !== episodeId ||
+      exact.result.value.revision?.header?.revisionRef?.value !== firstRevision
+    )
       throw new Error("historical Episode revision read mismatch");
-    const currentRevision = revised.episode?.currentRevisionId;
+    const currentRevision = revised.episode?.header?.currentRevisionRef?.value;
     const revisedEpisode = revised.episode;
     if (!revisedEpisode || !currentRevision)
       throw new Error("current Episode revision missing");
@@ -280,7 +284,7 @@ async function main() {
         cognitionAnchors: [
           create(CognitiveRefSchema, {
             kind: "memory_revision",
-            value: memory.revisionId,
+            value: memoryRevisionId,
           }),
           create(CognitiveRefSchema, {
             kind: "episode_revision",
@@ -301,11 +305,17 @@ async function main() {
 
     await stop(current);
     current = await boot(configPath);
-    const restartedEpisode = await current.client.memory.getEpisode({
+    const restartedEpisodeRead = await current.client.cognition.read({
       subjectId,
-      id: episodeId,
+      reference: { kind: "episode", value: episodeId },
     });
-    if (restartedEpisode.episode?.currentRevisionId !== currentRevision)
+    if (restartedEpisodeRead.result.case !== "episode")
+      throw new Error("restart could not read the Episode");
+    const restartedEpisode = restartedEpisodeRead.result.value;
+    if (
+      !restartedEpisode.header ||
+      restartedEpisode.revision?.header?.revisionRef?.value !== currentRevision
+    )
       throw new Error("restart changed the current Episode revision");
     const restartedQuery = await current.client.cognition.query(
       contextQuery(sessionB.sessionId),
@@ -332,35 +342,60 @@ async function main() {
     if (endedSession.activeWorkContextId)
       throw new Error("end did not clear foreground binding");
 
-    const suppressedEpisode = await current.client.memory.suppressEpisode(
-      create(EpisodeMutationRequestSchema, {
+    const suppressedResponse = await current.client.cognition.mutate(
+      create(CognitionMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009920",
         subjectId,
-        episodeId,
-        expectedObjectEpoch: restartedEpisode.episode?.objectEpoch,
+        objectRef: { kind: "episode", value: episodeId },
+        expectedObjectEpoch: restartedEpisode.header.objectEpoch,
+        action: { case: "suppress", value: {} },
       }),
     );
-    const restoredEpisode = await current.client.memory.restoreEpisode(
-      create(EpisodeMutationRequestSchema, {
+    if (
+      suppressedResponse.outcome.case !== "cognition" ||
+      suppressedResponse.outcome.value.result.case !== "episode"
+    )
+      throw new Error("Episode suppression did not return the Episode");
+    const suppressedEpisode = suppressedResponse.outcome.value.result.value;
+    if (!suppressedEpisode.header)
+      throw new Error("suppressed Episode header missing");
+    const restoredResponse = await current.client.cognition.mutate(
+      create(CognitionMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009921",
         subjectId,
-        episodeId,
-        expectedObjectEpoch: suppressedEpisode.episode?.objectEpoch,
+        objectRef: { kind: "episode", value: episodeId },
+        expectedObjectEpoch: suppressedEpisode.header.objectEpoch,
+        action: { case: "restore", value: {} },
       }),
     );
-    if (restoredEpisode.episode?.currentRevisionId !== currentRevision)
+    if (
+      restoredResponse.outcome.case !== "cognition" ||
+      restoredResponse.outcome.value.result.case !== "episode"
+    )
+      throw new Error("Episode restoration did not return the Episode");
+    const restoredEpisode = restoredResponse.outcome.value.result.value;
+    if (
+      !restoredEpisode.header ||
+      restoredEpisode.revision?.header?.revisionRef?.value !== currentRevision
+    )
       throw new Error("Episode restore created a content revision");
-    await current.client.memory.purgeEpisode(
-      create(EpisodeMutationRequestSchema, {
+    const purged = await current.client.cognition.mutate(
+      create(CognitionMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009922",
         subjectId,
-        episodeId,
-        expectedObjectEpoch: restoredEpisode.episode?.objectEpoch,
+        objectRef: { kind: "episode", value: episodeId },
+        expectedObjectEpoch: restoredEpisode.header.objectEpoch,
+        action: { case: "purge", value: {} },
       }),
     );
+    if (purged.outcome.case !== "purged")
+      throw new Error("Episode purge did not complete");
     let purgeReadRejected = false;
     try {
-      await current.client.memory.getEpisode({ subjectId, id: episodeId });
+      await current.client.cognition.read({
+        subjectId,
+        reference: { kind: "episode", value: episodeId },
+      });
     } catch {
       purgeReadRejected = true;
     }
@@ -371,7 +406,7 @@ async function main() {
       "COGNITIVE_RUNTIME_EPISODE_SMOKE subject=" +
         subjectId +
         " memory=" +
-        memory.revisionId +
+        memoryRevisionId +
         " work_context=" +
         contextId +
         " episode=" +

@@ -17,17 +17,10 @@ rpc_service! {
             revoke_association(p::RevokeAssociationRequest) -> ();
             get_neighborhood(p::NeighborhoodRequest) -> p::NeighborhoodResponse;
             create_cognitive_schema(p::CreateCognitiveSchemaRequest) -> p::CognitiveSchema;
-            get_cognitive_schema(p::GetCognitiveSchemaRequest) -> p::CognitiveSchema;
-            get_cognitive_schema_revision(p::ObjectRequest) -> p::CognitiveSchema;
             add_schema_evidence(p::AddSchemaEvidenceRequest) -> p::CognitiveSchema;
             revise_cognitive_schema(p::ReviseCognitiveSchemaRequest) -> p::CognitiveSchema;
             split_cognitive_schema(p::SplitCognitiveSchemaRequest) -> p::SplitCognitiveSchemaResponse;
             merge_cognitive_schemas(p::MergeCognitiveSchemasRequest) -> p::CognitiveSchema;
-            suppress_cognitive_schema(p::CognitiveSchemaMutationRequest) -> p::CognitiveSchema;
-            restore_cognitive_schema(p::CognitiveSchemaMutationRequest) -> p::CognitiveSchema;
-            withdraw_cognitive_schema(p::CognitiveSchemaMutationRequest) -> p::CognitiveSchema;
-            reaccept_cognitive_schema(p::CognitiveSchemaMutationRequest) -> p::CognitiveSchema;
-            purge_cognitive_schema(p::CognitiveSchemaMutationRequest) -> ();
         }
         custom {}
     }

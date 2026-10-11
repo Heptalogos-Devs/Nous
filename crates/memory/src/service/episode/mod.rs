@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-mod lifecycle;
 mod mutation;
 mod read;
 
@@ -55,34 +54,13 @@ pub struct ReviseEpisodeInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EpisodeObject {
-    pub episode_id: EpisodeId,
-    pub subject_id: SubjectId,
-    pub track_key: String,
-    pub current_revision_id: EpisodeRevisionId,
-    pub object_epoch: i64,
-    pub acceptance_state: AcceptanceState,
-    pub integrity_state: IntegrityState,
-    pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EpisodeRevision {
-    pub episode_revision_id: EpisodeRevisionId,
-    pub episode_id: EpisodeId,
-    pub subject_id: SubjectId,
-    pub revision_no: i32,
-    pub parent_revision_id: Option<EpisodeRevisionId>,
+    pub header: CognitionRevisionHeader,
     pub revision_intent: Option<String>,
     pub title: Option<String>,
     pub parent_episode_revision_id: Option<EpisodeRevisionId>,
     pub experience_time: TemporalExtent,
     pub boundary_explanation: String,
-    pub formed_at: DateTime<Utc>,
-    pub recorded_at: DateTime<Utc>,
-    pub producer_signature_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,7 +80,7 @@ pub struct EpisodeRelation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EpisodeView {
-    pub object: EpisodeObject,
+    pub header: CognitionHeader,
     pub revision: EpisodeRevision,
     pub members: Vec<EpisodeMember>,
     pub basis: Vec<RevisionBasis>,
@@ -276,7 +254,7 @@ async fn validate_parent_and_overlap(
         .await
         .map_err(db)?;
     if let Some(parent) = parent {
-        let parent_time = sqlx::query("SELECT experience_time_kind,experience_time_start,experience_time_end FROM episode_revisions WHERE episode_revision_id=$1 AND subject_id=$2").bind(parent.0).bind(subject.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "Episode parent is outside Subject"))?;
+        let parent_time = sqlx::query("SELECT experience_time_kind,experience_time_start,experience_time_end FROM episode_revisions r JOIN cognition_revision_headers h ON h.revision_id=r.episode_revision_id WHERE r.episode_revision_id=$1 AND h.subject_id=$2 AND h.object_kind='episode'").bind(parent.0).bind(subject.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "Episode parent is outside Subject"))?;
         let parent_extent = temporal_from_columns(
             ErrorOwner::Memory,
             parent_time.try_get("experience_time_kind").map_err(db)?,
@@ -291,7 +269,7 @@ async fn validate_parent_and_overlap(
             ));
         }
     }
-    let rows = sqlx::query("SELECT r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND r.parent_episode_revision_id IS NOT DISTINCT FROM $3 AND ($4::uuid IS NULL OR o.episode_id<>$4)").bind(subject.0).bind(track).bind(parent.map(|value| value.0)).bind(exclude).fetch_all(&mut **tx).await.map_err(db)?;
+    let rows = sqlx::query("SELECT r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM cognition_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.object_kind='episode' AND o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND r.parent_episode_revision_id IS NOT DISTINCT FROM $3 AND ($4::uuid IS NULL OR o.object_id<>$4)").bind(subject.0).bind(track).bind(parent.map(|value| value.0)).bind(exclude).fetch_all(&mut **tx).await.map_err(db)?;
     for row in rows {
         let sibling = temporal_from_columns(
             ErrorOwner::Memory,
@@ -310,12 +288,12 @@ async fn validate_parent_and_overlap(
     Ok(())
 }
 
-async fn validate_episode_reaccept_in(
+pub(super) async fn validate_episode_reaccept_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subject: SubjectId,
     episode: EpisodeId,
 ) -> Result<()> {
-    let row = sqlx::query("SELECT o.track_key,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.episode_id=$2")
+    let row = sqlx::query("SELECT o.track_key,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM cognition_objects o JOIN cognition_revision_headers h ON h.subject_id=o.subject_id AND h.object_kind=o.object_kind AND h.object_id=o.object_id AND h.revision_id=o.current_revision_id JOIN episode_revisions r ON r.episode_revision_id=h.revision_id WHERE o.object_kind='episode' AND o.subject_id=$1 AND o.object_id=$2")
         .bind(subject.0).bind(episode.0).fetch_one(&mut **tx).await.map_err(db)?;
     let time = temporal_from_columns(
         ErrorOwner::Memory,
@@ -351,7 +329,7 @@ async fn ensure_no_parent_cycle(
             ));
         }
         let row = sqlx::query(
-            "SELECT episode_id,parent_episode_revision_id FROM episode_revisions WHERE episode_revision_id=$1",
+            "SELECT h.object_id AS episode_id,r.parent_episode_revision_id FROM episode_revisions r JOIN cognition_revision_headers h ON h.revision_id=r.episode_revision_id WHERE h.object_kind='episode' AND r.episode_revision_id=$1",
         )
         .bind(parent)
         .fetch_optional(&mut **tx)
@@ -429,8 +407,23 @@ async fn insert_episode_revision_with_intent(
     formed_at: DateTime<Utc>,
     recorded_at: DateTime<Utc>,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO episode_revisions(episode_revision_id,episode_id,subject_id,revision_no,parent_revision_id,revision_intent,title,parent_episode_revision_id,experience_time_kind,experience_time_start,experience_time_end,boundary_explanation,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)")
-        .bind(revision.0).bind(episode.0).bind(input.subject.0).bind(revision_no).bind(parent_revision.map(|value| value.0)).bind(intent).bind(&input.title).bind(input.parent_episode_revision_id.map(|value| value.0)).bind(kind).bind(start).bind(end).bind(&input.boundary_explanation).bind(formed_at).bind(recorded_at).bind(input.producer_signature_id).execute(&mut **tx).await.map_err(db)?;
+    MemoryService::insert_cognition_revision_header_in(
+        tx,
+        input.subject,
+        &CognitionRevisionHeader::new(
+            CognitionKind::Episode,
+            episode.0,
+            revision.0,
+            revision_no,
+            parent_revision.map(|value| value.0),
+            formed_at,
+            recorded_at,
+            input.producer_signature_id,
+        ),
+    )
+    .await?;
+    sqlx::query("INSERT INTO episode_revisions(episode_revision_id,revision_intent,title,parent_episode_revision_id,experience_time_kind,experience_time_start,experience_time_end,boundary_explanation) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+        .bind(revision.0).bind(intent).bind(&input.title).bind(input.parent_episode_revision_id.map(|value| value.0)).bind(kind).bind(start).bind(end).bind(&input.boundary_explanation).execute(&mut **tx).await.map_err(db)?;
     for (ordinal, member) in input.members.iter().enumerate() {
         let (kind, value) = reference_parts(&member.reference);
         sqlx::query("INSERT INTO episode_revision_members(episode_revision_id,ordinal,ref_kind,ref_value,role) VALUES($1,$2,$3,$4,$5)").bind(revision.0).bind(ordinal as i32).bind(kind).bind(value).bind(&member.role).execute(&mut **tx).await.map_err(db)?;

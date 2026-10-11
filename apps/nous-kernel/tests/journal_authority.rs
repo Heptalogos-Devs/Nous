@@ -4,9 +4,9 @@
 mod test_support;
 
 use chrono::{Duration, SubsecRound, Utc};
-use nous_core::TemporalExtent;
+use nous_core::{CognitiveRef, JournalId, SubjectId, TemporalExtent};
 use nous_kernel::NousRuntime;
-use nous_memory::{EpisodePartitionSource, EpisodeView};
+use nous_memory::{CognitionView, EpisodePartitionSource, EpisodeView, JournalView, MemoryService};
 use nous_runtime::ManualCognitiveClock;
 use sqlx::Row;
 use std::sync::Arc;
@@ -16,6 +16,21 @@ use test_support::longitudinal::{
     consolidation_memory, consolidation_schema, journal_source_episode, runtime_with_clock_serving,
 };
 use test_support::query::subject as create_subject;
+
+async fn read_journal(
+    owner: &MemoryService,
+    subject: SubjectId,
+    journal_id: JournalId,
+) -> JournalView {
+    match owner
+        .read_cognition(subject, CognitiveRef::Journal(journal_id))
+        .await
+        .unwrap()
+    {
+        CognitionView::Journal(journal) => journal,
+        _ => panic!("common Cognition read returned the wrong view kind"),
+    }
+}
 
 #[tokio::test]
 async fn journal_lineage_revalidation_and_receipt_are_exact() {
@@ -31,7 +46,9 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
     let memory = rt.require_memory().unwrap();
     let basis = RevisionBasis::CognitionDependency(CognitionDependency {
         epistemic_relation: None,
-        target_revision: CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id),
+        target_revision: CognitiveRef::EpisodeRevision(
+            episode.revision.header.episode_revision_id(),
+        ),
         basis_role: BasisRole::Direct,
     });
     let input = JournalInput {
@@ -40,8 +57,8 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
         expected_authority_seq: rt.store.authority_seq(subject).await.unwrap(),
         target: None,
         sources: vec![EpisodePartitionSource {
-            revision: episode.revision.episode_revision_id,
-            expected_epoch: episode.object.object_epoch,
+            revision: episode.revision.header.episode_revision_id(),
+            expected_epoch: episode.header.object_epoch,
         }],
         title: Some("Experience summary".into()),
         narrative: "Two sources contributed.".into(),
@@ -55,13 +72,15 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
     let journal = memory.commit_journal(input.clone()).await.unwrap();
     let mut recall = test_support::query::query(subject);
     recall.expression.targets = vec![nous_core::QueryTarget::Exact {
-        reference: CognitiveRef::JournalRevision(journal.revision.journal_revision_id),
+        reference: CognitiveRef::JournalRevision(journal.revision.header.journal_revision_id()),
     }];
     assert_eq!(rt.query(recall.clone()).await.unwrap().results.len(), 1);
     let dependencies = create_journal_dependents(&rt, subject, &episode, &journal).await;
     let basis = RevisionBasis::CognitionDependency(CognitionDependency {
         epistemic_relation: None,
-        target_revision: CognitiveRef::JournalRevision(journal.revision.journal_revision_id),
+        target_revision: CognitiveRef::JournalRevision(
+            journal.revision.header.journal_revision_id(),
+        ),
         basis_role: BasisRole::Direct,
     });
     let provenance = memory
@@ -76,40 +95,44 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
     invalid.points[0].basis = vec![basis];
     assert!(memory.commit_journal(invalid).await.is_err());
     memory
-        .suppress_episode(
+        .mutate_cognition(
             subject,
-            episode.object.episode_id,
+            nous_core::CognitiveRef::Episode(episode.header.episode_id()),
             OperationId::new(),
-            episode.object.object_epoch,
+            episode.header.object_epoch,
+            nous_memory::CognitionAction::Suppress,
         )
         .await
         .unwrap();
-    let invalidated = memory
-        .journal(subject, journal.object.journal_id, None)
-        .await
-        .unwrap();
+    let invalidated = read_journal(memory, subject, journal.header.journal_id()).await;
     assert!(matches!(
-        invalidated.object.integrity_state,
+        invalidated.header.lifecycle.integrity,
         IntegrityState::RevalidationRequired
     ));
     assert_eq!(
-        invalidated.object.object_epoch,
-        journal.object.object_epoch + 1
+        invalidated.header.object_epoch,
+        journal.header.object_epoch + 1
     );
     assert_eq!(invalidated.revision.narrative, journal.revision.narrative);
     assert!(rt.query(recall).await.unwrap().results.is_empty());
     assert_invalidated_dependents(&rt, subject, &dependencies).await;
     let needs = rt.cognition.maintenance_needs(subject).await.unwrap();
     assert!(needs.iter().any(|need| need.kind == "journal_revalidate"
-        && need.scope_ref == journal.object.journal_id.0.to_string()));
+        && need.scope_ref == journal.header.journal_id().0.to_string()));
     clock.advance_by(subject, Duration::days(1)).unwrap();
     let replay = memory.commit_journal(input.clone()).await.unwrap();
     assert_eq!(
-        replay.revision.journal_revision_id,
-        journal.revision.journal_revision_id
+        replay.revision.header.revision_id(),
+        journal.revision.header.revision_id()
     );
-    assert_eq!(replay.revision.formed_at, journal.revision.formed_at);
-    assert_eq!(replay.revision.recorded_at, journal.revision.recorded_at);
+    assert_eq!(
+        replay.revision.header.formed_at,
+        journal.revision.header.formed_at
+    );
+    assert_eq!(
+        replay.revision.header.recorded_at,
+        journal.revision.header.recorded_at
+    );
     let revised = assert_journal_revalidation(&rt, input, &episode, &invalidated).await;
     let uses = assert_longitudinal_use(&rt, subject, &episode, &revised).await;
     assert_journal_purge(&rt, subject, &revised, &episode, uses, &dependencies).await;
@@ -124,36 +147,42 @@ async fn assert_journal_revalidation(
     let subject = input.subject;
     let memory = rt.require_memory().unwrap();
     let restored = memory
-        .restore_episode(
+        .mutate_cognition(
             subject,
-            episode.object.episode_id,
+            nous_core::CognitiveRef::Episode(episode.header.episode_id()),
             nous_core::OperationId::new(),
-            episode.object.object_epoch + 1,
+            episode.header.object_epoch + 1,
+            nous_memory::CognitionAction::Restore,
         )
         .await
         .unwrap();
     input.operation_id = nous_core::OperationId::new();
     input.expected_authority_seq = rt.store.authority_seq(subject).await.unwrap();
-    input.sources[0].expected_epoch = restored.object.object_epoch;
+    input.sources[0].expected_epoch = restored.header().object_epoch;
     input.target = Some(nous_memory::JournalTarget {
-        journal_id: invalidated.object.journal_id,
-        expected_revision: invalidated.revision.journal_revision_id,
-        expected_epoch: invalidated.object.object_epoch,
+        journal_id: invalidated.header.journal_id(),
+        expected_revision: invalidated.revision.header.journal_revision_id(),
+        expected_epoch: invalidated.header.object_epoch,
         intent: "revalidate".into(),
     });
     let revised = memory.commit_journal(input.clone()).await.unwrap();
-    assert_eq!(revised.object.journal_id, invalidated.object.journal_id);
+    assert_eq!(revised.header.journal_id(), invalidated.header.journal_id());
     assert_ne!(
-        revised.revision.journal_revision_id,
-        invalidated.revision.journal_revision_id
+        revised.revision.header.revision_id(),
+        invalidated.revision.header.revision_id()
     );
     assert!(matches!(
-        revised.object.integrity_state,
+        revised.header.lifecycle.integrity,
         nous_core::IntegrityState::Valid
     ));
     assert_eq!(
         memory
-            .journal_history(subject, revised.object.journal_id)
+            .cognition_history_refs(
+                subject,
+                &CognitiveRef::Journal(revised.header.journal_id()),
+                None,
+                201,
+            )
             .await
             .unwrap()
             .len(),
@@ -172,8 +201,8 @@ async fn assert_longitudinal_use(
     journal: &nous_memory::JournalView,
 ) -> nous_runtime::UseFeedback {
     let references = vec![
-        nous_core::CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id),
-        nous_core::CognitiveRef::JournalRevision(journal.revision.journal_revision_id),
+        nous_core::CognitiveRef::EpisodeRevision(episode.revision.header.episode_revision_id()),
+        nous_core::CognitiveRef::JournalRevision(journal.revision.header.journal_revision_id()),
     ];
     let context = rt
         .cognition
@@ -238,13 +267,13 @@ async fn create_journal_dependents(
 ) -> Vec<nous_core::CognitiveRef> {
     use nous_core::{BasisRole, CognitionDependency, CognitiveRef, OperationId, RevisionBasis};
     use nous_memory::FormationMode;
-    let journal_ref = CognitiveRef::JournalRevision(journal.revision.journal_revision_id);
+    let journal_ref = CognitiveRef::JournalRevision(journal.revision.header.journal_revision_id());
     let mut content = consolidation_memory(episode);
     content.formation_mode = FormationMode::Synthesized;
     content.grounding_occurrence_id = None;
     content.basis = [
         journal_ref.clone(),
-        CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id),
+        CognitiveRef::EpisodeRevision(episode.revision.header.episode_revision_id()),
     ]
     .into_iter()
     .map(|target_revision| {
@@ -262,7 +291,7 @@ async fn create_journal_dependents(
         input.operation_id = OperationId::new();
         let result = memory.form_memory(input).await.unwrap();
         refs.push(CognitiveRef::MemoryRevision(
-            result.revision.memory_revision_id,
+            result.revision.header.memory_revision_id(),
         ));
     }
     let mut schema = consolidation_schema(episode);
@@ -280,7 +309,7 @@ async fn create_journal_dependents(
         .collect();
     let result = memory.create_schema(schema).await.unwrap();
     refs.push(CognitiveRef::CognitiveSchemaRevision(
-        result.revision.schema_revision_id,
+        result.revision.header.schema_revision_id(),
     ));
     let episode = memory
         .create_episode(nous_memory::EpisodeInput {
@@ -305,7 +334,7 @@ async fn create_journal_dependents(
         .await
         .unwrap();
     refs.push(CognitiveRef::EpisodeRevision(
-        episode.revision.episode_revision_id,
+        episode.revision.header.episode_revision_id(),
     ));
     refs
 }
@@ -316,27 +345,15 @@ async fn assert_invalidated_dependents(
     refs: &[nous_core::CognitiveRef],
 ) {
     for reference in refs {
-        let query = match reference {
-            nous_core::CognitiveRef::MemoryRevision(_) => {
-                "SELECT o.integrity_state,o.object_epoch FROM memory_objects o JOIN memory_revisions r USING(memory_id) WHERE o.subject_id=$1 AND r.memory_revision_id=$2"
-            }
-            nous_core::CognitiveRef::CognitiveSchemaRevision(_) => {
-                "SELECT o.integrity_state,o.object_epoch FROM cognitive_schemas o JOIN cognitive_schema_revisions r USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2"
-            }
-            nous_core::CognitiveRef::EpisodeRevision(_) => {
-                "SELECT o.integrity_state,o.object_epoch FROM episode_objects o JOIN episode_revisions r USING(episode_id) WHERE o.subject_id=$1 AND r.episode_revision_id=$2"
-            }
+        let (kind, id) = match reference {
+            nous_core::CognitiveRef::MemoryRevision(id) => ("memory", id.0),
+            nous_core::CognitiveRef::CognitiveSchemaRevision(id) => ("cognitive_schema", id.0),
+            nous_core::CognitiveRef::EpisodeRevision(id) => ("episode", id.0),
             _ => panic!("unexpected dependency kind"),
         };
-        let id = reference
-            .to_string()
-            .split_once(':')
-            .unwrap()
-            .1
-            .parse::<uuid::Uuid>()
-            .unwrap();
-        let row = sqlx::query(query)
+        let row = sqlx::query("SELECT o.integrity_state,o.object_epoch FROM cognition_objects o JOIN cognition_revision_headers r ON r.subject_id=o.subject_id AND r.object_kind=o.object_kind AND r.object_id=o.object_id WHERE o.subject_id=$1 AND o.object_kind=$2 AND r.revision_id=$3")
             .bind(subject.0)
+            .bind(kind)
             .bind(id)
             .fetch_one(rt.store.pool())
             .await
@@ -371,23 +388,26 @@ async fn assert_journal_purge(
     let memory = rt.require_memory().unwrap();
     let fresh_dependencies = create_journal_dependents(rt, subject, episode, journal).await;
     let before = rt.store.authority_seq(subject).await.unwrap();
-    rt.purge_journal(
+    rt.purge_cognition(
         subject,
-        journal.object.journal_id,
+        CognitiveRef::Journal(journal.header.journal_id()),
         OperationId::new(),
-        journal.object.object_epoch,
+        journal.header.object_epoch,
     )
     .await
     .unwrap();
     assert!(
         memory
-            .journal(subject, journal.object.journal_id, None)
+            .read_cognition(subject, CognitiveRef::Journal(journal.header.journal_id()),)
             .await
             .is_err()
     );
     assert!(
         memory
-            .episode_revision(subject, episode.revision.episode_revision_id)
+            .read_cognition(
+                subject,
+                CognitiveRef::EpisodeRevision(episode.revision.header.episode_revision_id()),
+            )
             .await
             .is_ok()
     );

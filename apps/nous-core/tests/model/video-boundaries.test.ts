@@ -170,12 +170,17 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       },
     },
     modelWorkflow: {
-      findWorkflow: async () => ({ found: false }),
+      findWorkflow: async () => ({ state: { case: undefined } }),
       reserveWorkflow: async (
         input: MessageInitShape<typeof ReserveWorkflowRequestSchema>,
       ) => ({
-        lease: { token: "lease" },
-        snapshot: input.snapshot,
+        state: {
+          case: "acquired",
+          value: {
+            lease: { token: "lease" },
+            pending: { snapshot: input.snapshot },
+          },
+        },
       }),
       saveWorkflow: async () => ({}),
       releaseWorkflow: async () => ({}),

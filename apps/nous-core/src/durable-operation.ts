@@ -18,10 +18,12 @@ import {
   type MaintenanceClaim,
   type WorkflowPayload,
   type WorkflowSnapshot,
+  type WorkflowLease,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import type {
   FindWorkflowRequest,
-  WorkflowReservation,
+  CompletedWorkflow,
+  PendingWorkflow,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import type { CognitiveRef } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { KernelClient } from "./kernel-client.js";
@@ -102,22 +104,11 @@ export async function openDurableOperation<T = never>(
 ): Promise<OpenDurableOperation<T>> {
   const calls = executionOptions(kernel.execution.opportunity, input.execution);
   const found = await kernel.modelWorkflow.findWorkflow(identity, calls);
-  if (found.found && found.outcome) {
-    return {
-      state: "completed",
-      outcome: found.outcome,
-      executionTelemetry: found.executionTelemetry,
-    };
-  }
+  if (found.state.case === "completed") return completed(found.state.value);
 
   let snapshot: OperationSnapshot | WorkflowSnapshot;
-  if (found.found) {
-    if (!found.snapshot)
-      throw new ConnectError(
-        "Found workflow has no frozen snapshot",
-        Code.DataLoss,
-      );
-    snapshot = found.snapshot;
+  if (found.state.case === "pending") {
+    snapshot = pendingSnapshot(found.state.value);
   } else {
     const decision = await input.snapshotFactory();
     if ("skip" in decision)
@@ -146,51 +137,55 @@ export async function openDurableOperation<T = never>(
     },
     calls,
   );
-  if (!reserved.snapshot)
-    throw new ConnectError(
-      "Workflow reservation has no persisted snapshot",
-      Code.DataLoss,
-    );
-  if (reserved.outcome) {
-    if (reserved.lease || reserved.busy)
+  switch (reserved.state.case) {
+    case "completed":
+      return completed(reserved.state.value);
+    case "busy": {
+      const pending = reserved.state.value;
+      return {
+        state: "busy",
+        snapshot: pendingSnapshot(pending),
+        proposal: pending.proposal,
+        executionTelemetry: pending.executionTelemetry,
+      };
+    }
+    case "acquired": {
+      const { pending, lease } = reserved.state.value;
+      if (!pending || !lease)
+        throw new ConnectError(
+          "Incomplete workflow acquisition",
+          Code.DataLoss,
+        );
+      return {
+        state: "acquired",
+        operation: new HeldDurableOperation(kernel, lease, calls),
+        snapshot: pendingSnapshot(pending),
+        proposal: pending.proposal,
+        executionTelemetry: pending.executionTelemetry,
+      };
+    }
+    default:
       throw new ConnectError(
-        "Terminal workflow reservation has an active attempt",
+        "Missing workflow reservation state",
         Code.DataLoss,
       );
-    return {
-      state: "completed",
-      outcome: reserved.outcome,
-      executionTelemetry: reserved.executionTelemetry,
-    };
   }
-  if (reserved.busy) {
-    if (reserved.lease)
-      throw new ConnectError(
-        "Busy workflow reservation unexpectedly has a lease",
-        Code.DataLoss,
-      );
-    return {
-      state: "busy",
-      snapshot: reserved.snapshot,
-      proposal: reserved.proposal,
-      executionTelemetry: reserved.executionTelemetry,
-    };
-  }
-  if (!reserved.lease)
-    throw new ConnectError(
-      "Acquired workflow reservation has no lease",
-      Code.DataLoss,
-    );
+}
+
+function pendingSnapshot(pending: PendingWorkflow): WorkflowSnapshot {
+  if (!pending.snapshot)
+    throw new ConnectError("Pending workflow has no snapshot", Code.DataLoss);
+  return pending.snapshot;
+}
+function completed(
+  value: CompletedWorkflow,
+): Extract<OpenDurableOperation, { state: "completed" }> {
+  if (!value.outcome)
+    throw new ConnectError("Completed workflow has no outcome", Code.DataLoss);
   return {
-    state: "acquired",
-    operation: new HeldDurableOperation(
-      kernel,
-      { ...reserved, lease: reserved.lease },
-      calls,
-    ),
-    snapshot: reserved.snapshot,
-    proposal: reserved.proposal,
-    executionTelemetry: reserved.executionTelemetry,
+    state: "completed",
+    outcome: value.outcome,
+    executionTelemetry: value.executionTelemetry,
   };
 }
 
@@ -198,14 +193,12 @@ export async function openDurableOperation<T = never>(
 class HeldDurableOperation implements DurableOperation {
   constructor(
     private readonly kernel: KernelClient,
-    private readonly record: WorkflowReservation & {
-      lease: NonNullable<WorkflowReservation["lease"]>;
-    },
+    private readonly heldLease: WorkflowLease,
     private readonly calls: ReturnType<typeof executionOptions>,
   ) {}
 
   private get lease() {
-    return { lease: this.record.lease };
+    return { lease: this.heldLease };
   }
 
   private async save(update: WorkflowCheckpoint, options: ExecutionOptions) {

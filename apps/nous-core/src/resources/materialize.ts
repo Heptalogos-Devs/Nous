@@ -120,7 +120,6 @@ export async function materializeResource(
         proposal = { content: material.content, mediaType: material.mediaType };
         await operation.checkpoint({
           proposal: workflowPayload(proposal),
-          mutationOperations: [request.operationId],
         });
       }
       const [version, access] = await Promise.all([

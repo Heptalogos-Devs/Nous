@@ -78,7 +78,7 @@ async fn copied_upgrade_binds_known_vectors_backs_up_unknown_and_purge_keeps_bac
     let text = "same legacy memory text";
     let first = create_memory(&runtime, subject, source.occurrence.occurrence_id, text).await;
     let second = create_memory(&runtime, subject, source.occurrence.occurrence_id, text).await;
-    let first_ref = CognitiveRef::MemoryRevision(first.revision.memory_revision_id);
+    let first_ref = CognitiveRef::MemoryRevision(first.revision.header.memory_revision_id());
     let config = stored_embedding_config();
     runtime
         .serving
@@ -173,11 +173,11 @@ async fn copied_upgrade_binds_known_vectors_backs_up_unknown_and_purge_keeps_bac
     runtime
         .require_memory()
         .unwrap()
-        .begin_purge_memory(
+        .begin_purge_cognition(
             subject,
-            first.object.memory_id,
+            CognitiveRef::Memory(first.header.memory_id()),
             first_purge_operation,
-            first.object.object_epoch,
+            first.header.object_epoch,
         )
         .await
         .unwrap();
@@ -197,11 +197,11 @@ async fn copied_upgrade_binds_known_vectors_backs_up_unknown_and_purge_keeps_bac
             .is_err()
     );
     runtime
-        .purge_memory(
+        .purge_cognition(
             subject,
-            first.object.memory_id,
+            CognitiveRef::Memory(first.header.memory_id()),
             first_purge_operation,
-            first.object.object_epoch,
+            first.header.object_epoch,
         )
         .await
         .unwrap();
@@ -215,11 +215,11 @@ async fn copied_upgrade_binds_known_vectors_backs_up_unknown_and_purge_keeps_bac
     .unwrap();
     assert_eq!(after_first_purge, 1);
     runtime
-        .purge_memory(
+        .purge_cognition(
             subject,
-            second.object.memory_id,
+            CognitiveRef::Memory(second.header.memory_id()),
             OperationId::new(),
-            second.object.object_epoch,
+            second.header.object_epoch,
         )
         .await
         .unwrap();

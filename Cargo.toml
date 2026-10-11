@@ -92,7 +92,6 @@ perf = { level = "warn", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
 complexity = { level = "warn", priority = -1 }
 # Cohesive owner transactions and full protocol mappings are reviewed by responsibility.
-# Source-file size is checked separately by check:length.
 excessive_nesting = "warn"
 too_many_arguments = "warn"
 type_complexity = "warn"

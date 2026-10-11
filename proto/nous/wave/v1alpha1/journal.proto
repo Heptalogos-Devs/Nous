@@ -5,7 +5,6 @@ syntax = "proto3";
 package nous.wave.v1alpha1;
 import "nous/wave/v1alpha1/presentation.proto";
 import "nous/wave/v1alpha1/types.proto";
-import "google/protobuf/timestamp.proto";
 
 message JournalPoint {
   int32 ordinal = 1;
@@ -14,38 +13,16 @@ message JournalPoint {
   repeated RevisionBasis basis = 4;
 }
 message JournalRevision {
-  string journal_revision_id = 1 [(reference_kind) = "journal_revision"];
-  string journal_id = 2 [(reference_kind) = "journal"];
-  string subject_id = 3 [(reference_kind) = "subject"];
-  int32 revision_no = 4;
-  optional string parent_revision_id = 5 [(reference_kind) = "journal_revision"];
-  optional string revision_intent = 6;
-  optional string title = 7;
-  TemporalExtent temporal_scope = 8;
-  string narrative = 9;
-  google.protobuf.Timestamp formed_at = 10;
-  google.protobuf.Timestamp recorded_at = 11;
-  optional string producer_signature_id = 12;
-  repeated JournalPoint points = 13;
-  repeated CognitiveRef sources = 14;
+  CognitionRevisionHeader header = 1;
+  optional string revision_intent = 2;
+  optional string title = 3;
+  TemporalExtent temporal_scope = 4;
+  string narrative = 5;
+  repeated JournalPoint points = 6;
+  repeated CognitiveRef sources = 7;
 }
-message Journal {
-  string journal_id = 1 [(reference_kind) = "journal"];
-  string subject_id = 2 [(reference_kind) = "subject"];
-  string current_revision_id = 3 [(reference_kind) = "journal_revision"];
-  int64 object_epoch = 4;
-  string acceptance_state = 5;
-  string integrity_state = 6;
-  string suppression_state = 7;
-  string purge_state = 8;
-  google.protobuf.Timestamp created_at = 9;
-  JournalRevision current_revision = 10;
-}
+message Journal { CognitionHeader header = 1; JournalRevision revision = 2; }
 message JournalResponse { Journal journal = 1; repeated Degradation degradation = 2; }
-message JournalMutationRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string journal_id = 3 [(reference_kind) = "journal"]; int64 expected_object_epoch = 4; }
-message ListJournalsResponse { repeated Journal items = 1; string next_page_token = 2; }
-message ListJournalRevisionsRequest { string subject_id = 1 [(reference_kind) = "subject"]; string journal_id = 2 [(reference_kind) = "journal"]; Page page = 3; }
-message ListJournalRevisionsResponse { repeated JournalRevision items = 1; string next_page_token = 2; }
 message MaintenanceGrantRequest { string subject_id = 1 [(reference_kind) = "subject"]; uint32 max_operations = 2; uint32 max_model_calls = 3; uint32 max_elapsed_ms = 4; }
 message MaintenanceOperationResult { string need_id = 1; string kind = 2; string status = 3; optional string problem_code = 4; }
 message MaintenanceGrantResponse { repeated MaintenanceOperationResult results = 1; uint32 model_calls = 2; uint32 elapsed_ms = 3; string disposition = 4; }

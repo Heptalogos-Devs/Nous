@@ -97,7 +97,7 @@ impl MemoryService {
             .collect::<Vec<_>>();
         let context = match focus {
             CognitiveRef::MemoryRevision(id) => {
-                let row=sqlx::query("SELECT o.cognitive_role,r.semantic_role,r.valid_time_kind,r.valid_time_start,r.valid_time_end FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2")
+                let row=sqlx::query("SELECT o.cognitive_role,r.semantic_role,r.valid_time_kind,r.valid_time_start,r.valid_time_end FROM cognition_revision_headers h JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id JOIN memory_revisions r ON r.memory_revision_id=h.revision_id WHERE h.subject_id=$1 AND h.object_kind='memory' AND h.revision_id=$2")
                     .bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
                 serde_json::json!({"cognitiveRole":row.try_get::<String,_>("cognitive_role").map_err(db)?,"semanticRole":row.try_get::<String,_>("semantic_role").map_err(db)?,"validTime":temporal_from_columns(ErrorOwner::Memory, row.try_get("valid_time_kind").map_err(db)?,row.try_get("valid_time_start").map_err(db)?,row.try_get("valid_time_end").map_err(db)?)?})
             }

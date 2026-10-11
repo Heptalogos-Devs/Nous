@@ -61,11 +61,21 @@ async fn historical_catalog_sources_in(
         .map(reference_parts)
         .unzip();
     let rows = sqlx::query(r#"
-WITH selected AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), catalog AS (
- SELECT s.kind,s.value,r.title,r.representation_text text,NULL::text source_class FROM selected s JOIN memory_revisions r ON s.kind='memory_revision' AND r.memory_revision_id=CASE WHEN s.kind='memory_revision' THEN s.value::uuid END JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND o.purge_state='normal'
- UNION ALL SELECT s.kind,s.value,r.title,r.structural_claim,NULL FROM selected s JOIN cognitive_schema_revisions r ON s.kind='cognitive_schema_revision' AND r.schema_revision_id=CASE WHEN s.kind='cognitive_schema_revision' THEN s.value::uuid END JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND o.purge_state='normal'
- UNION ALL SELECT s.kind,s.value,r.title,NULL,NULL FROM selected s JOIN episode_revisions r ON s.kind='episode_revision' AND r.episode_revision_id=CASE WHEN s.kind='episode_revision' THEN s.value::uuid END JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND o.purge_state='normal'
- UNION ALL SELECT s.kind,s.value,r.title,COALESCE(r.title,'')||E'\n'||r.narrative||E'\n'||COALESCE((SELECT string_agg(text,E'\n' ORDER BY ordinal) FROM journal_revision_points WHERE journal_revision_id=r.journal_revision_id),''),NULL FROM selected s JOIN journal_revisions r ON s.kind='journal_revision' AND r.journal_revision_id=CASE WHEN s.kind='journal_revision' THEN s.value::uuid END JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND o.purge_state='normal'
+WITH selected AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), cognition AS (
+ SELECT s.kind,s.value,h.revision_id,h.object_kind
+ FROM selected s
+ JOIN cognition_revision_headers h ON h.revision_id::text=s.value AND (
+     (s.kind='memory_revision' AND h.object_kind='memory')
+  OR (s.kind='cognitive_schema_revision' AND h.object_kind='cognitive_schema')
+  OR (s.kind='episode_revision' AND h.object_kind='episode')
+  OR (s.kind='journal_revision' AND h.object_kind='journal'))
+ JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id
+ WHERE h.subject_id=$1 AND o.purge_state='normal'
+), catalog AS (
+ SELECT c.kind,c.value,r.title,r.representation_text text,NULL::text source_class FROM cognition c JOIN memory_revisions r ON c.object_kind='memory' AND r.memory_revision_id=c.revision_id
+ UNION ALL SELECT c.kind,c.value,r.title,r.structural_claim,NULL FROM cognition c JOIN cognitive_schema_revisions r ON c.object_kind='cognitive_schema' AND r.schema_revision_id=c.revision_id
+ UNION ALL SELECT c.kind,c.value,r.title,NULL,NULL FROM cognition c JOIN episode_revisions r ON c.object_kind='episode' AND r.episode_revision_id=c.revision_id
+ UNION ALL SELECT c.kind,c.value,r.title,COALESCE(r.title,'')||E'\n'||r.narrative||E'\n'||COALESCE((SELECT string_agg(text,E'\n' ORDER BY ordinal) FROM journal_revision_points WHERE journal_revision_id=r.journal_revision_id),''),NULL FROM cognition c JOIN journal_revisions r ON c.object_kind='journal' AND r.journal_revision_id=c.revision_id
  UNION ALL SELECT s.kind,s.value,NULL,NULL,o.source_class FROM selected s JOIN observation_occurrences o ON s.kind='occurrence' AND o.occurrence_id=CASE WHEN s.kind='occurrence' THEN s.value::uuid END LEFT JOIN artifacts a USING(artifact_id) WHERE o.subject_id=$1
  UNION ALL SELECT s.kind,s.value,NULL,NULL,NULL FROM selected s JOIN source_regions r ON s.kind='source_region' AND r.source_region_id=CASE WHEN s.kind='source_region' THEN s.value::uuid END JOIN artifacts a USING(artifact_id) WHERE r.subject_id=$1
  UNION ALL SELECT s.kind,s.value,d.representation_kind,NULL,'derived' FROM selected s JOIN derived_representations d ON s.kind='derived_representation' AND d.derived_representation_id=CASE WHEN s.kind='derived_representation' THEN s.value::uuid END WHERE d.subject_id=$1
@@ -100,7 +110,7 @@ WITH selected AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), ca
             _ => None,
         })
         .collect();
-    let rows = sqlx::query("SELECT episode_revision_id,title,boundary_explanation,experience_time_kind,experience_time_start,experience_time_end FROM episode_revisions WHERE subject_id=$1 AND episode_revision_id=ANY($2::uuid[])")
+    let rows = sqlx::query("SELECT r.episode_revision_id,r.title,r.boundary_explanation,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_revisions r JOIN cognition_revision_headers h ON h.revision_id=r.episode_revision_id AND h.object_kind='episode' JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id WHERE h.subject_id=$1 AND o.purge_state='normal' AND r.episode_revision_id=ANY($2::uuid[])")
             .bind(view.subject.0).bind(&episode_ids).fetch_all(&mut **tx).await.map_err(database_error)?;
     for row in rows {
         let reference =

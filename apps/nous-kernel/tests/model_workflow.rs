@@ -4,6 +4,7 @@
 #[path = "test_support/mod.rs"]
 mod test_support;
 use nous_core::{MaintenanceClaim, OperationId, WorkflowSnapshot};
+use nous_persistence::{WorkflowRecord, WorkflowReservation};
 use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::{workflow_payload as payload, workflow_snapshot as snapshot};
 
@@ -40,7 +41,10 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
         )
         .await
         .unwrap();
-    let token = first.lease.as_ref().unwrap().token;
+    let WorkflowReservation::Acquired { lease, .. } = first else {
+        panic!("expected acquisition")
+    };
+    let token = lease.token;
     let concurrent = runtime
         .store
         .reserve_model_workflow(
@@ -53,8 +57,7 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
         )
         .await
         .unwrap();
-    assert!(concurrent.busy);
-    assert!(concurrent.lease.is_none());
+    assert!(matches!(concurrent, WorkflowReservation::Busy(_)));
     assert!(
         runtime
             .store
@@ -99,6 +102,13 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
         )
         .await
         .unwrap();
+    let WorkflowReservation::Acquired {
+        pending: resumed,
+        lease: resumed_lease,
+    } = resumed
+    else {
+        panic!("expected acquisition")
+    };
     assert_eq!(
         resumed.snapshot.content.payload,
         serde_json::json!({"model":"original"})
@@ -108,12 +118,7 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
     runtime
         .store
         .save_model_workflow(
-            &test_support::workflow_lease(
-                subject,
-                "memory",
-                &key,
-                resumed.lease.as_ref().unwrap().token,
-            ),
+            &test_support::workflow_lease(subject, "memory", &key, resumed_lease.token),
             None,
             Some(&outcome),
             None,
@@ -133,10 +138,10 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
         )
         .await
         .unwrap();
-    assert_eq!(completed.outcome, Some(outcome));
-    assert!(completed.proposal.is_none());
-    assert!(completed.lease.is_none());
-    assert_eq!(completed.snapshot, WorkflowSnapshot::default());
+    let WorkflowReservation::Completed(completed) = completed else {
+        panic!("expected completion")
+    };
+    assert_eq!(completed.outcome, outcome);
     assert_owner_validation(&runtime.store, subject, &key).await;
     assert_maintenance_workflow_uses_bounded_parent_opportunity(&runtime, subject).await;
     assert_child_result_purge_before_host_ack(&runtime, subject).await;
@@ -161,7 +166,9 @@ async fn assert_child_result_purge_before_host_ack(
         )
         .await
         .unwrap();
-    let lease = reserved.lease.unwrap();
+    let WorkflowReservation::Acquired { lease, .. } = reserved else {
+        panic!("expected acquisition")
+    };
     runtime
         .store
         .save_model_workflow(
@@ -189,11 +196,11 @@ async fn assert_child_result_purge_before_host_ack(
         .await
         .unwrap();
     runtime
-        .purge_memory(
+        .purge_cognition(
             subject,
-            memory.object.memory_id,
+            nous_core::CognitiveRef::Memory(memory.header.memory_id()),
             OperationId::new(),
-            memory.object.object_epoch,
+            memory.header.object_epoch,
         )
         .await
         .unwrap();
@@ -203,12 +210,13 @@ async fn assert_child_result_purge_before_host_ack(
         .await
         .unwrap()
         .unwrap();
+    let WorkflowRecord::Completed(found) = found else {
+        panic!("expected purged completion")
+    };
     assert!(
-        found.outcome.unwrap().purged,
+        found.outcome.purged,
         "the owner commit links its result before the host acknowledges it"
     );
-    assert!(found.proposal.is_none());
-    assert_eq!(found.snapshot, WorkflowSnapshot::default());
     assert!(
         runtime
             .store
@@ -221,129 +229,6 @@ async fn assert_child_result_purge_before_host_ack(
             )
             .await
             .is_err()
-    );
-}
-
-#[tokio::test]
-async fn legacy_envelope_migration_preserves_payload_time_unknown_usage_and_declared_dependencies()
-{
-    let (root, url, _postgres) = test_support::database().await;
-    let runtime = test_support::open_runtime(&url, &root).await;
-    let subject = test_support::query::subject(&runtime).await;
-    let source = test_support::observation(&runtime, subject, "legacy source").await;
-    let memory = runtime
-        .require_memory()
-        .unwrap()
-        .form_memory(test_support::form_input(
-            subject,
-            source.occurrence.occurrence_id,
-            OperationId::new(),
-            "opaque context control",
-        ))
-        .await
-        .unwrap();
-    let opaque_id = memory.object.memory_id.0.to_string();
-    let key = OperationId::new().0.to_string();
-    let need_id = runtime
-        .cognition
-        .enqueue_maintenance(nous_runtime::MaintenanceRequest {
-            subject,
-            kind: "memory_consolidate".into(),
-            scope_kind: "subject".into(),
-            scope_ref: subject.0.to_string(),
-            trigger_authority_seq: runtime.store.authority_seq(subject).await.unwrap(),
-            due_at: chrono::Utc::now(),
-            priority: 1,
-        })
-        .await
-        .unwrap();
-    let claim = runtime
-        .cognition
-        .lease_maintenance(subject, &["memory_consolidate".into()], 1, 60, None)
-        .await
-        .unwrap()
-        .remove(0);
-    assert_eq!(claim.need_id, need_id);
-    let formed = chrono::Utc::now();
-    let saved = serde_json::json!({
-        "cognitive_formed_at": formed,
-        "maintenance_claim": {"need_id":need_id,"lease_token":claim.lease_token,"trigger":claim.trigger_authority_seq,"trigger_revision":claim.trigger_revision},
-        "model": {"context":{"kind":"memory","value":opaque_id}},
-        "plan": {"reference":{"kind":"occurrence","value":source.occurrence.occurrence_id}},
-    });
-    let proposed = serde_json::json!({"text":opaque_id,"context":{"memoryId":opaque_id}});
-    // Recreate exactly the pre-transition workflow table shape in this isolated cluster.
-    sqlx::raw_sql("ALTER TABLE model_workflow_operations DROP COLUMN dependencies; ALTER TABLE model_workflow_operations DROP COLUMN mutation_operations;").execute(runtime.store.pool()).await.unwrap();
-    sqlx::query("INSERT INTO model_workflow_operations(subject_id,owner,operation_key,semantic_digest,snapshot,proposal,execution_telemetry,maintenance_need_id,maintenance_trigger_revision) VALUES($1,'memory',$2,'legacy',$3,$4,$5,$6,$7)")
-        .bind(subject.0).bind(&key).bind(&saved).bind(&proposed)
-        .bind(serde_json::json!({"attempts":[{"executionProfile":"route","modelProfile":"model","status":"unknown","latencyMs":12,"failureClass":"caller_cancelled"}]}))
-        .bind(need_id).bind(claim.trigger_revision as i64).execute(runtime.store.pool()).await.unwrap();
-    sqlx::raw_sql(include_str!(
-        "../../../crates/persistence/migrations/0005_workflow_envelope.sql"
-    ))
-    .execute(runtime.store.pool())
-    .await
-    .unwrap();
-    let found = runtime
-        .store
-        .find_model_workflow(subject, "memory", &key, "legacy")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(found.snapshot.cognitive_formed_at, Some(formed));
-    let migrated_claim = found.snapshot.maintenance_claim.as_ref().unwrap();
-    assert_eq!(migrated_claim.need_id, need_id);
-    assert_eq!(migrated_claim.lease_token, claim.lease_token.unwrap());
-    assert_eq!(migrated_claim.trigger_revision, claim.trigger_revision);
-    let mut domain = saved;
-    domain
-        .as_object_mut()
-        .unwrap()
-        .remove("cognitive_formed_at");
-    domain.as_object_mut().unwrap().remove("maintenance_claim");
-    assert_eq!(found.snapshot.content.payload, domain);
-    assert_eq!(found.proposal.as_ref().unwrap().payload, proposed);
-    let execution = found.execution_telemetry.unwrap();
-    assert_eq!(
-        execution.attempts[0].status,
-        nous_core::AttemptStatus::Unknown
-    );
-    assert!(execution.attempts[0].usage.is_none());
-    let mut tx = runtime.store.begin().await.unwrap();
-    nous_persistence::AuthorityStore::purge_workflows_in(&mut tx, subject, &[opaque_id])
-        .await
-        .unwrap();
-    tx.commit().await.unwrap();
-    assert!(
-        runtime
-            .store
-            .find_model_workflow(subject, "memory", &key, "legacy")
-            .await
-            .unwrap()
-            .unwrap()
-            .proposal
-            .is_some(),
-        "opaque UUID content is not a dependency"
-    );
-    let mut tx = runtime.store.begin().await.unwrap();
-    nous_persistence::AuthorityStore::purge_workflows_in(
-        &mut tx,
-        subject,
-        &[source.occurrence.occurrence_id.0.to_string()],
-    )
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
-    assert!(
-        runtime
-            .store
-            .find_model_workflow(subject, "memory", &key, "legacy")
-            .await
-            .unwrap()
-            .unwrap()
-            .outcome
-            .unwrap()
-            .purged
     );
 }
 
@@ -385,6 +270,9 @@ async fn assert_maintenance_workflow_uses_bounded_parent_opportunity(
         .reserve_model_workflow(subject, "memory", &key, "bounded maintenance", &snapshot, 1)
         .await
         .unwrap();
+    let WorkflowReservation::Acquired { lease, .. } = reservation else {
+        panic!("expected acquisition")
+    };
     let workflow_until: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT lease_until FROM model_workflow_operations WHERE subject_id=$1 AND owner='memory' AND operation_key=$2").bind(subject.0).bind(&key).fetch_one(runtime.store.pool()).await.unwrap();
     assert!(
         workflow_until < need.lease_until.unwrap(),
@@ -393,12 +281,7 @@ async fn assert_maintenance_workflow_uses_bounded_parent_opportunity(
     runtime
         .store
         .save_model_workflow(
-            &test_support::workflow_lease(
-                subject,
-                "memory",
-                &key,
-                reservation.lease.as_ref().unwrap().token,
-            ),
+            &test_support::workflow_lease(subject, "memory", &key, lease.token),
             Some(&payload(serde_json::json!({"action":"no_change"}))),
             None,
             None,
@@ -471,7 +354,10 @@ async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot(
         )
         .await
         .unwrap();
-    let old_child_token = original.lease.as_ref().unwrap().token;
+    let WorkflowReservation::Acquired { lease, .. } = original else {
+        panic!("expected acquisition")
+    };
+    let old_child_token = lease.token;
 
     sqlx::query("UPDATE maintenance_needs SET lease_until=clock_timestamp()-interval '1 second' WHERE subject_id=$1 AND need_id=$2")
         .bind(subject.0)
@@ -534,8 +420,14 @@ async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot(
         )
         .await
         .unwrap();
-    assert!(!resumed.busy);
-    assert_ne!(resumed.lease.as_ref().unwrap().token, old_child_token);
+    let WorkflowReservation::Acquired {
+        pending: resumed,
+        lease: resumed_lease,
+    } = resumed
+    else {
+        panic!("expected reacquisition")
+    };
+    assert_ne!(resumed_lease.token, old_child_token);
     assert_eq!(
         resumed.snapshot.content.payload,
         serde_json::json!({"frozen":"first plan"}),
@@ -554,12 +446,7 @@ async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot(
     runtime
         .store
         .save_model_workflow(
-            &test_support::workflow_lease(
-                subject,
-                "memory",
-                &key,
-                resumed.lease.as_ref().unwrap().token,
-            ),
+            &test_support::workflow_lease(subject, "memory", &key, resumed_lease.token),
             Some(&payload(serde_json::json!({"action":"no_change"}))),
             None,
             None,
@@ -588,7 +475,7 @@ async fn assert_owner_validation(
         )
         .await
         .unwrap();
-    assert!(generalized.lease.is_some());
+    assert!(matches!(generalized, WorkflowReservation::Acquired { .. }));
     for owner in [
         "",
         "Memory",

@@ -3,7 +3,6 @@
 
 import { CONFIG_REVISION } from "../../apps/nous-core/src/configuration/schema.js";
 import { spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +14,15 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export type Boot = {
   process: ChildProcess;
   client: Awaited<ReturnType<typeof connectNousInstance>>;
+  stderr: () => string;
+  waitForClose: () => Promise<void>;
 };
+
+function withStderr(error: unknown, stderr: string) {
+  if (!stderr) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`${message}\nCore stderr:\n${stderr}`, { cause: error });
+}
 export async function prepare(home: string) {
   const runtime = process.env.NOUS_WAVE_POSTGRES_RUNTIME
     ? dirname(process.env.NOUS_WAVE_POSTGRES_RUNTIME)
@@ -72,11 +79,19 @@ export async function boot(locator: string): Promise<Boot> {
   child.stderr!.on("data", (chunk: Buffer) => {
     errors = (errors + chunk.toString()).slice(-8192);
   });
+  let closed = false;
+  child.once("close", () => {
+    closed = true;
+  });
+  const waitForClose = () =>
+    closed
+      ? Promise.resolve()
+      : new Promise<void>((done) => child.once("close", () => done()));
   try {
     await new Promise<void>((done, failed) => {
       const timer = setTimeout(() => {
         cleanup();
-        failed(new Error(`Core startup timeout: ${errors}`));
+        failed(new Error("Core startup timeout"));
       }, 120000);
       let pending = "";
       const cleanup = () => {
@@ -87,7 +102,7 @@ export async function boot(locator: string): Promise<Boot> {
       };
       const exited = (code: number | null) => {
         cleanup();
-        failed(new Error(`Core startup exited (${code}): ${errors}`));
+        failed(new Error(`Core startup exited (${code})`));
       };
       const errored = (error: Error) => {
         cleanup();
@@ -120,15 +135,29 @@ export async function boot(locator: string): Promise<Boot> {
     return {
       process: child,
       client: await connectNousInstance({ runRoot: locations.run }),
+      stderr: () => errors,
+      waitForClose,
     };
   } catch (error) {
     child.stdin!.end();
-    throw error;
+    await waitForClose();
+    throw withStderr(error, errors);
   }
 }
 export async function stop(value: Boot | undefined) {
-  if (!value || value.process.exitCode !== null) return;
-  const exited = once(value.process, "exit");
-  value.process.stdin!.end();
-  await exited;
+  if (!value) return;
+  const child = value.process;
+  if (child.exitCode === null && child.signalCode === null) child.stdin!.end();
+  await value.waitForClose();
+  if (child.exitCode !== 0 || child.signalCode !== null) {
+    const status =
+      child.exitCode === null
+        ? `signal ${child.signalCode ?? "unknown"}`
+        : `exit ${child.exitCode}`;
+    const stderr = value.stderr();
+    process.stderr.write(
+      `Smoke Core shutdown failed (${status})${stderr ? `:\n${stderr}` : ""}\n`,
+    );
+    process.exitCode ??= child.exitCode ?? 1;
+  }
 }

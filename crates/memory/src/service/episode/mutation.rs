@@ -95,8 +95,8 @@ impl MemoryService {
             .await?;
         let now = self.cognition.now(input.subject);
         let (time_kind, time_start, time_end) = temporal_columns(&input.experience_time);
-        sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','normal',$5)")
-            .bind(episode_id.0).bind(input.subject.0).bind(&input.track_key).bind(revision_id.0).bind(now)
+        sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at,track_key) VALUES('episode',$1,$2,$3,1,'accepted','valid','normal','normal',$4,$5)")
+            .bind(episode_id.0).bind(input.subject.0).bind(revision_id.0).bind(now).bind(&input.track_key)
             .execute(&mut **mutation.tx()).await.map_err(db)?;
         insert_episode_revision(
             &self.store,
@@ -275,7 +275,7 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let row = sqlx::query("SELECT track_key,current_revision_id,object_epoch,purge_state FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE")
+        let row = sqlx::query("SELECT track_key,current_revision_id,object_epoch,purge_state FROM cognition_objects WHERE subject_id=$1 AND object_kind='episode' AND object_id=$2 FOR UPDATE")
             .bind(input.subject.0).bind(input.episode_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
             .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "Episode not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
@@ -306,7 +306,7 @@ impl MemoryService {
         }
         let current: Uuid = row.try_get("current_revision_id").map_err(db)?;
         let revision_no: i32 = sqlx::query_scalar(
-            "SELECT revision_no+1 FROM episode_revisions WHERE episode_revision_id=$1",
+            "SELECT revision_no+1 FROM cognition_revision_headers WHERE object_kind='episode' AND revision_id=$1",
         )
         .bind(current)
         .fetch_one(&mut **mutation.tx())
@@ -347,7 +347,7 @@ impl MemoryService {
             now,
         )
         .await?;
-        sqlx::query("UPDATE episode_objects SET current_revision_id=$3,object_epoch=object_epoch+1,integrity_state='valid' WHERE subject_id=$1 AND episode_id=$2")
+        sqlx::query("UPDATE cognition_objects SET current_revision_id=$3,object_epoch=object_epoch+1,integrity_state='valid' WHERE subject_id=$1 AND object_kind='episode' AND object_id=$2")
             .bind(input.subject.0).bind(input.episode_id.0).bind(revision_id.0).execute(&mut **mutation.tx()).await.map_err(db)?;
         let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
         self.enqueue_concept_in(
@@ -435,7 +435,7 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         for revision in [from, to] {
-            let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM episode_revisions WHERE subject_id=$1 AND episode_revision_id=$2)").bind(subject.0).bind(revision.0).fetch_one(&mut **mutation.tx()).await.map_err(db)?;
+            let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind='episode' AND revision_id=$2)").bind(subject.0).bind(revision.0).fetch_one(&mut **mutation.tx()).await.map_err(db)?;
             if !exists {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Memory,

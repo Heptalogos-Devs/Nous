@@ -238,7 +238,12 @@ for (const unit of units) {
         throw new Error(
           `Formation did not commit Memory: ${json(formed.degradation)}`,
         );
-      if (formed?.memory) operation.revisionId = formed.memory.revisionId;
+      if (formed?.memory) {
+        const revisionId = formed.memory.revision?.header?.revisionRef?.value;
+        if (!revisionId)
+          throw new Error("Formation returned Memory without a revision ref");
+        operation.revisionId = revisionId;
+      }
       const oraclePatterns =
         unit.oracle_patterns_by_representation_kind?.[selected.kind] ??
         unit.oracle_patterns;

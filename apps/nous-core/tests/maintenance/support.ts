@@ -138,10 +138,11 @@ export function fixture() {
     },
     modelWorkflow: {
       findWorkflow: vi.fn(async () => ({
-        found: !!snapshot,
-        snapshot,
-        proposal,
-        outcome,
+        state: outcome
+          ? { case: "completed", value: { outcome } }
+          : snapshot
+            ? { case: "pending", value: { snapshot, proposal } }
+            : { case: undefined },
       })),
       reserveWorkflow: vi.fn(
         async (
@@ -149,11 +150,15 @@ export function fixture() {
         ) => {
           snapshot ??= create(WorkflowSnapshotSchema, input.snapshot);
           return {
-            snapshot,
-            proposal,
-            outcome,
-            lease: { token: "lease" },
-            busy: false,
+            state: outcome
+              ? { case: "completed", value: { outcome } }
+              : {
+                  case: "acquired",
+                  value: {
+                    pending: { snapshot, proposal },
+                    lease: { token: "lease" },
+                  },
+                },
           };
         },
       ),

@@ -14,11 +14,312 @@ pub use nous_core::cognition::{
 };
 use nous_core::{
     AssociationEvidenceId, CognitiveRef, CognitiveSchemaId, CognitiveSchemaRevisionId, EntityRef,
-    EpistemicClass, Error, ErrorCode, ErrorOwner, MemoryId, MemoryRevisionId, OccurrenceId,
-    OperationId, Result, SchemaEvidenceLinkId, SubjectId, TagId, TemporalExtent, UseEventId,
+    EpisodeId, EpisodeRevisionId, EpistemicClass, Error, ErrorCode, ErrorOwner, JournalId,
+    JournalRevisionId, MemoryId, MemoryRevisionId, OccurrenceId, OperationId, Result,
+    SchemaEvidenceLinkId, SubjectId, TagId, TemporalExtent, UseEventId,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// The four revisioned cognition families that share Memory Authority state.
+/// Tags and Material are deliberately outside this finite owner model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CognitionKind {
+    Memory,
+    CognitiveSchema,
+    Episode,
+    Journal,
+}
+
+impl CognitionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::CognitiveSchema => "cognitive_schema",
+            Self::Episode => "episode",
+            Self::Journal => "journal",
+        }
+    }
+
+    pub fn from_reference(reference: &CognitiveRef) -> Result<(Self, Uuid, bool)> {
+        Ok(match reference {
+            CognitiveRef::Memory(id) => (Self::Memory, id.0, false),
+            CognitiveRef::MemoryRevision(id) => (Self::Memory, id.0, true),
+            CognitiveRef::CognitiveSchema(id) => (Self::CognitiveSchema, id.0, false),
+            CognitiveRef::CognitiveSchemaRevision(id) => (Self::CognitiveSchema, id.0, true),
+            CognitiveRef::Episode(id) => (Self::Episode, id.0, false),
+            CognitiveRef::EpisodeRevision(id) => (Self::Episode, id.0, true),
+            CognitiveRef::Journal(id) => (Self::Journal, id.0, false),
+            CognitiveRef::JournalRevision(id) => (Self::Journal, id.0, true),
+            _ => {
+                return Err(Error::new(
+                    ErrorOwner::Memory,
+                    ErrorCode::InvalidRequest,
+                    "reference is outside Memory Cognition Authority",
+                ));
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CognitionLifecycle {
+    pub acceptance: AcceptanceState,
+    pub integrity: IntegrityState,
+    pub suppression: SuppressionState,
+    pub purge: PurgeState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CognitionDetails {
+    Memory {
+        role: CognitiveRole,
+        accessibility: AccessibilityMode,
+    },
+    CognitiveSchema,
+    Episode {
+        track_key: String,
+    },
+    Journal,
+}
+
+impl CognitionDetails {
+    pub const fn kind(&self) -> CognitionKind {
+        match self {
+            Self::Memory { .. } => CognitionKind::Memory,
+            Self::CognitiveSchema => CognitionKind::CognitiveSchema,
+            Self::Episode { .. } => CognitionKind::Episode,
+            Self::Journal => CognitionKind::Journal,
+        }
+    }
+
+    pub fn memory_role(&self) -> CognitiveRole {
+        match self {
+            Self::Memory { role, .. } => *role,
+            _ => unreachable!("Memory role requested from another Cognition kind"),
+        }
+    }
+
+    pub fn accessibility_mode(&self) -> AccessibilityMode {
+        match self {
+            Self::Memory { accessibility, .. } => *accessibility,
+            _ => unreachable!("Memory accessibility requested from another Cognition kind"),
+        }
+    }
+
+    pub fn track_key(&self) -> &str {
+        match self {
+            Self::Episode { track_key } => track_key,
+            _ => unreachable!("Episode track requested from another Cognition kind"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CognitionHeader {
+    pub object_ref: CognitiveRef,
+    pub subject_id: SubjectId,
+    pub current_revision_ref: CognitiveRef,
+    pub object_epoch: i64,
+    pub lifecycle: CognitionLifecycle,
+    pub created_at: DateTime<Utc>,
+    pub details: CognitionDetails,
+}
+
+impl CognitionHeader {
+    pub fn new(
+        kind: CognitionKind,
+        subject_id: SubjectId,
+        object_id: Uuid,
+        current_revision_id: Uuid,
+        object_epoch: i64,
+        lifecycle: CognitionLifecycle,
+        created_at: DateTime<Utc>,
+        details: CognitionDetails,
+    ) -> Self {
+        debug_assert_eq!(kind, details.kind());
+        Self {
+            object_ref: cognition_object_ref(kind, object_id),
+            subject_id,
+            current_revision_ref: cognition_revision_ref(kind, current_revision_id),
+            object_epoch,
+            lifecycle,
+            created_at,
+            details,
+        }
+    }
+
+    pub fn kind(&self) -> CognitionKind {
+        self.details.kind()
+    }
+
+    pub fn object_id(&self) -> Uuid {
+        match &self.object_ref {
+            CognitiveRef::Memory(id) => id.0,
+            CognitiveRef::CognitiveSchema(id) => id.0,
+            CognitiveRef::Episode(id) => id.0,
+            CognitiveRef::Journal(id) => id.0,
+            _ => unreachable!("Cognition header has a non-object reference"),
+        }
+    }
+
+    pub fn memory_id(&self) -> MemoryId {
+        match &self.object_ref {
+            CognitiveRef::Memory(id) => *id,
+            _ => unreachable!("not a Memory header"),
+        }
+    }
+    pub fn schema_id(&self) -> CognitiveSchemaId {
+        match &self.object_ref {
+            CognitiveRef::CognitiveSchema(id) => *id,
+            _ => unreachable!("not a schema header"),
+        }
+    }
+    pub fn episode_id(&self) -> EpisodeId {
+        match &self.object_ref {
+            CognitiveRef::Episode(id) => *id,
+            _ => unreachable!("not an Episode header"),
+        }
+    }
+    pub fn journal_id(&self) -> JournalId {
+        match &self.object_ref {
+            CognitiveRef::Journal(id) => *id,
+            _ => unreachable!("not a Journal header"),
+        }
+    }
+
+    pub fn current_revision_id(&self) -> Uuid {
+        match &self.current_revision_ref {
+            CognitiveRef::MemoryRevision(id) => id.0,
+            CognitiveRef::CognitiveSchemaRevision(id) => id.0,
+            CognitiveRef::EpisodeRevision(id) => id.0,
+            CognitiveRef::JournalRevision(id) => id.0,
+            _ => unreachable!("Cognition header has a non-revision head"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CognitionRevisionHeader {
+    pub revision_ref: CognitiveRef,
+    pub object_ref: CognitiveRef,
+    pub revision_no: i32,
+    pub parent_revision_ref: Option<CognitiveRef>,
+    pub formed_at: DateTime<Utc>,
+    pub recorded_at: DateTime<Utc>,
+    pub producer_signature_id: Option<Uuid>,
+}
+
+impl CognitionRevisionHeader {
+    pub fn new(
+        kind: CognitionKind,
+        object_id: Uuid,
+        revision_id: Uuid,
+        revision_no: i32,
+        parent_revision_id: Option<Uuid>,
+        formed_at: DateTime<Utc>,
+        recorded_at: DateTime<Utc>,
+        producer_signature_id: Option<Uuid>,
+    ) -> Self {
+        Self {
+            revision_ref: cognition_revision_ref(kind, revision_id),
+            object_ref: cognition_object_ref(kind, object_id),
+            revision_no,
+            parent_revision_ref: parent_revision_id.map(|id| cognition_revision_ref(kind, id)),
+            formed_at,
+            recorded_at,
+            producer_signature_id,
+        }
+    }
+
+    pub fn revision_id(&self) -> Uuid {
+        match &self.revision_ref {
+            CognitiveRef::MemoryRevision(id) => id.0,
+            CognitiveRef::CognitiveSchemaRevision(id) => id.0,
+            CognitiveRef::EpisodeRevision(id) => id.0,
+            CognitiveRef::JournalRevision(id) => id.0,
+            _ => unreachable!("Cognition revision header has a non-revision reference"),
+        }
+    }
+
+    pub fn object_id(&self) -> Uuid {
+        match &self.object_ref {
+            CognitiveRef::Memory(id) => id.0,
+            CognitiveRef::CognitiveSchema(id) => id.0,
+            CognitiveRef::Episode(id) => id.0,
+            CognitiveRef::Journal(id) => id.0,
+            _ => unreachable!("Cognition revision header has a non-object reference"),
+        }
+    }
+
+    pub fn memory_revision_id(&self) -> MemoryRevisionId {
+        match &self.revision_ref {
+            CognitiveRef::MemoryRevision(id) => *id,
+            _ => unreachable!("not a Memory revision"),
+        }
+    }
+    pub fn schema_revision_id(&self) -> CognitiveSchemaRevisionId {
+        match &self.revision_ref {
+            CognitiveRef::CognitiveSchemaRevision(id) => *id,
+            _ => unreachable!("not a schema revision"),
+        }
+    }
+    pub fn episode_revision_id(&self) -> EpisodeRevisionId {
+        match &self.revision_ref {
+            CognitiveRef::EpisodeRevision(id) => *id,
+            _ => unreachable!("not an Episode revision"),
+        }
+    }
+    pub fn journal_revision_id(&self) -> JournalRevisionId {
+        match &self.revision_ref {
+            CognitiveRef::JournalRevision(id) => *id,
+            _ => unreachable!("not a Journal revision"),
+        }
+    }
+
+    pub fn parent_revision_id(&self) -> Option<Uuid> {
+        self.parent_revision_ref
+            .as_ref()
+            .map(|reference| match reference {
+                CognitiveRef::MemoryRevision(id) => id.0,
+                CognitiveRef::CognitiveSchemaRevision(id) => id.0,
+                CognitiveRef::EpisodeRevision(id) => id.0,
+                CognitiveRef::JournalRevision(id) => id.0,
+                _ => unreachable!("Cognition parent header has a non-revision reference"),
+            })
+    }
+}
+
+fn cognition_object_ref(kind: CognitionKind, id: Uuid) -> CognitiveRef {
+    match kind {
+        CognitionKind::Memory => CognitiveRef::Memory(MemoryId(id)),
+        CognitionKind::CognitiveSchema => CognitiveRef::CognitiveSchema(CognitiveSchemaId(id)),
+        CognitionKind::Episode => CognitiveRef::Episode(nous_core::EpisodeId(id)),
+        CognitionKind::Journal => CognitiveRef::Journal(nous_core::JournalId(id)),
+    }
+}
+
+fn cognition_revision_ref(kind: CognitionKind, id: Uuid) -> CognitiveRef {
+    match kind {
+        CognitionKind::Memory => CognitiveRef::MemoryRevision(MemoryRevisionId(id)),
+        CognitionKind::CognitiveSchema => {
+            CognitiveRef::CognitiveSchemaRevision(CognitiveSchemaRevisionId(id))
+        }
+        CognitionKind::Episode => CognitiveRef::EpisodeRevision(nous_core::EpisodeRevisionId(id)),
+        CognitionKind::Journal => CognitiveRef::JournalRevision(nous_core::JournalRevisionId(id)),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CognitionAction {
+    Suppress,
+    Restore,
+    Withdraw,
+    Reaccept,
+    Purge,
+    SetAccessibility(AccessibilityMode),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -91,28 +392,8 @@ impl RevisionIntent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryObject {
-    pub memory_id: MemoryId,
-    pub subject_id: SubjectId,
-    pub cognitive_role: CognitiveRole,
-    pub current_revision_id: MemoryRevisionId,
-    pub object_epoch: i64,
-    pub acceptance_state: AcceptanceState,
-    pub integrity_state: IntegrityState,
-    pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
-    pub accessibility_mode: AccessibilityMode,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRevision {
-    pub producer_signature_id: Option<Uuid>,
-    pub memory_revision_id: MemoryRevisionId,
-    pub memory_id: MemoryId,
-    pub subject_id: SubjectId,
-    pub revision_no: i32,
-    pub parent_revision_id: Option<MemoryRevisionId>,
+    pub header: CognitionRevisionHeader,
     pub revision_intent: Option<RevisionIntent>,
     pub formation_mode: FormationMode,
     pub grounding_occurrence_id: Option<OccurrenceId>,
@@ -121,8 +402,6 @@ pub struct MemoryRevision {
     pub representation_text: String,
     pub epistemic_class: EpistemicClass,
     pub valid_time: TemporalExtent,
-    pub formed_at: DateTime<Utc>,
-    pub recorded_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -478,33 +757,14 @@ pub struct SchemaScope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CognitiveSchema {
-    pub schema_id: CognitiveSchemaId,
-    pub subject_id: SubjectId,
-    pub current_revision_id: CognitiveSchemaRevisionId,
-    pub object_epoch: i64,
-    pub acceptance_state: AcceptanceState,
-    pub integrity_state: IntegrityState,
-    pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CognitiveSchemaRevision {
-    pub schema_revision_id: CognitiveSchemaRevisionId,
-    pub schema_id: CognitiveSchemaId,
-    pub revision_no: i32,
-    pub parent_revision_id: Option<CognitiveSchemaRevisionId>,
+    pub header: CognitionRevisionHeader,
     pub revision_intent: Option<RevisionIntent>,
     pub title: Option<String>,
     pub structural_claim: String,
     pub applicability_scope: SchemaScope,
     pub boundary_definition: String,
     pub formation_kind: SchemaFormationKind,
-    pub formed_at: DateTime<Utc>,
-    pub recorded_at: DateTime<Utc>,
-    pub producer_signature_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

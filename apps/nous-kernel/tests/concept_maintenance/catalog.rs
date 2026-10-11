@@ -107,7 +107,8 @@ pub(super) async fn assert_schema_accretion(
         })
         .await
         .unwrap();
-    let schema_ref = CognitiveRef::CognitiveSchemaRevision(schema.schema.current_revision_id);
+    let schema_ref =
+        CognitiveRef::CognitiveSchemaRevision(schema.revision.header.schema_revision_id());
     let signal = owner
         .accretion_signal(subject, &schema_ref)
         .await

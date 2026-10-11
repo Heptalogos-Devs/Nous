@@ -5,19 +5,14 @@ import { create, fromJson, type JsonValue } from "@bufbuild/protobuf";
 import { TemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
   MemoryContentSchema,
-  MemoryHistoryRequestSchema,
-  MemoryMutationRequestSchema,
   LinkRevisionsRequestSchema,
-  ListRequestSchema,
-  ObjectRequestSchema,
-  PageSchema,
   ReviseMemoryRequestSchema,
-  SetAccessibilityRequestSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { z } from "zod";
-import { nonnegativeInt64, CliError, boundedInteger } from "../agent.js";
+import { nonnegativeInt64, CliError } from "../agent.js";
 import { revisionBasis } from "../mutation-input.js";
 import type { CliEnvironment } from "../runtime.js";
+import { typedCognition } from "./cognition.js";
 
 const semanticMemory = z
   .strictObject({
@@ -81,45 +76,14 @@ export async function memoryCommands(
     resolveReference,
     requestPayload,
   } = env;
-  if (action === "list")
-    return client.memory.list(
-      create(ListRequestSchema, {
-        subjectId,
-        page: create(PageSchema, {
-          pageSize: boundedInteger(values["page-size"], 1, 200, "--page-size"),
-          pageToken: values["page-token"],
-        }),
-        status: values.status ?? "",
-      }),
-    );
-  if (action === "get" || action === "revision") {
-    const kind = action === "get" ? "memory" : "memory_revision";
-    const ref = await resolveReference(
-      required(argument, `${kind} reference`),
-      kind,
-    );
-    const request = create(ObjectRequestSchema, { subjectId, id: ref.value });
-    return action === "get"
-      ? client.memory.get(request)
-      : client.memory.revision(request);
-  }
-  if (action === "history") {
-    const ref = await resolveReference(
-      required(argument, "memory reference"),
-      "memory",
-    );
-    const page = create(PageSchema, {
-      pageSize: boundedInteger(values["page-size"], 1, 200, "--page-size"),
-      pageToken: values["page-token"],
-    });
-    return client.memory.history(
-      create(MemoryHistoryRequestSchema, {
-        subjectId,
-        memoryId: ref.value,
-        page,
-      }),
-    );
-  }
+  const common = await typedCognition.commonCommand(
+    env,
+    "memory",
+    action,
+    argument,
+    { list: true, history: true, accessibility: true },
+  );
+  if (common.handled) return common.value;
   if (action === "revise") {
     const ref = await resolveReference(
       required(argument, "memory reference"),
@@ -173,60 +137,6 @@ export async function memoryCommands(
         expectedObjectEpoch,
         input,
         intent: parsed.intent,
-      }),
-    );
-  }
-  if (
-    ["suppress", "restore", "withdraw", "reaccept", "purge"].includes(
-      action ?? "",
-    )
-  ) {
-    const ref = await resolveReference(
-      required(argument, "Memory reference"),
-      "memory",
-    );
-    const epoch = nonnegativeInt64(
-      values["expected-epoch"],
-      "--expected-epoch",
-    );
-    const request = create(MemoryMutationRequestSchema, {
-      operationId: values["operation-id"] ?? crypto.randomUUID(),
-      subjectId,
-      memoryId: ref.value,
-      expectedObjectEpoch: epoch,
-    });
-    switch (action) {
-      case "suppress":
-        return client.memory.suppress(request);
-      case "restore":
-        return client.memory.restore(request);
-      case "withdraw":
-        return client.memory.withdraw(request);
-      case "reaccept":
-        return client.memory.reaccept(request);
-      case "purge":
-        return client.memory.purge(request);
-    }
-  }
-  if (action === "accessibility") {
-    const ref = await resolveReference(
-      required(argument, "Memory reference"),
-      "memory",
-    );
-    const epoch = nonnegativeInt64(
-      values["expected-epoch"],
-      "--expected-epoch",
-    );
-    const mode = z
-      .enum(["auto", "normal", "deep", "explicit"])
-      .parse(required(values.mode, "--mode auto|normal|deep|explicit"));
-    return client.memory.setAccessibility(
-      create(SetAccessibilityRequestSchema, {
-        operationId: values["operation-id"] ?? crypto.randomUUID(),
-        subjectId,
-        memoryId: ref.value,
-        expectedObjectEpoch: epoch,
-        mode,
       }),
     );
   }

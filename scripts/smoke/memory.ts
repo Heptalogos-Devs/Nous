@@ -14,7 +14,6 @@ import {
   FormMemoryRequestSchema,
   InlineTextSchema,
   MemoryContentSchema,
-  MemoryMutationRequestSchema,
   ObservationInputSchema,
   QueryExprSchema,
   QueryRequestSchema,
@@ -25,6 +24,7 @@ import {
   TemporalExtentSchema,
   UseEventSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { CognitionMutationRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/cognition_pb.js";
 import { rm } from "node:fs/promises";
 import { workspaceTemp } from "../workspace.js";
 
@@ -155,10 +155,11 @@ async function main() {
         }),
       }),
     );
-    if (!formed.memoryId || !formed.revisionId)
-      throw new Error("Memory identity missing");
+    const memoryId = formed.header?.objectRef?.value;
+    const revisionId = formed.revision?.header?.revisionRef?.value;
+    if (!memoryId || !revisionId) throw new Error("Memory identity missing");
     if (
-      !formed.basis.some(
+      !formed.revision?.details?.basis.some(
         (basis) =>
           basis.basis.case === "evidence" &&
           basis.basis.value.occurrenceId === observed.occurrenceId,
@@ -167,11 +168,7 @@ async function main() {
       throw new Error("Memory provenance does not trace to Observation");
 
     const recalled = await query(client, undefined, "Alice is present");
-    if (
-      !recalled.hits.some((hit) =>
-        hitMatches(hit, formed.memoryId, formed.revisionId),
-      )
-    )
+    if (!recalled.hits.some((hit) => hitMatches(hit, memoryId, revisionId)))
       throw new Error("public Query did not recall the formed Memory");
 
     const useRequest = create(ReportUseRequestSchema, {
@@ -183,7 +180,7 @@ async function main() {
           eventId: useEventId,
           reference: create(CognitiveRefSchema, {
             kind: "memory_revision",
-            value: formed.revisionId,
+            value: revisionId,
           }),
           kind: "referenced",
           occurredAt: instant,
@@ -197,26 +194,24 @@ async function main() {
 
     const residentA = await query(client, sessionA.sessionId);
     const residentB = await query(client, sessionB.sessionId);
-    if (
-      !residentA.hits.some((hit) =>
-        hitMatches(hit, formed.memoryId, formed.revisionId),
-      )
-    )
+    if (!residentA.hits.some((hit) => hitMatches(hit, memoryId, revisionId)))
       throw new Error("Session A did not expose its resident Memory");
-    if (
-      residentB.hits.some((hit) =>
-        hitMatches(hit, formed.memoryId, formed.revisionId),
-      )
-    )
+    if (residentB.hits.some((hit) => hitMatches(hit, memoryId, revisionId)))
       throw new Error("Session B observed Session A residency");
 
     await stop(booted);
     booted = await boot(configPath);
-    const restarted = await booted.client.memory.get({
+    const restartedRead = await booted.client.cognition.read({
       subjectId,
-      id: formed.memoryId,
+      reference: { kind: "memory", value: memoryId },
     });
-    if (restarted.revisionId !== formed.revisionId)
+    if (restartedRead.result.case !== "memory")
+      throw new Error("restart could not read the Memory");
+    const restarted = restartedRead.result.value;
+    if (
+      !restarted.header ||
+      restarted.revision?.header?.revisionRef?.value !== revisionId
+    )
       throw new Error("restart changed the Authority revision");
     const recalledAfterRestart = await query(
       booted.client,
@@ -225,56 +220,69 @@ async function main() {
     );
     if (
       !recalledAfterRestart.hits.some((hit) =>
-        hitMatches(hit, formed.memoryId, formed.revisionId),
+        hitMatches(hit, memoryId, revisionId),
       )
     )
       throw new Error("restart lost public Query recall");
 
-    const suppressed = await booted.client.memory.suppress(
-      create(MemoryMutationRequestSchema, {
+    const suppressedResponse = await booted.client.cognition.mutate(
+      create(CognitionMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009805",
         subjectId,
-        memoryId: formed.memoryId,
-        expectedObjectEpoch: restarted.objectEpoch,
+        objectRef: { kind: "memory", value: memoryId },
+        expectedObjectEpoch: restarted.header.objectEpoch,
+        action: { case: "suppress", value: {} },
       }),
     );
-    const hidden = await query(booted.client, undefined, "Alice is present");
     if (
-      hidden.hits.some((hit) =>
-        hitMatches(hit, formed.memoryId, formed.revisionId),
-      )
+      suppressedResponse.outcome.case !== "cognition" ||
+      suppressedResponse.outcome.value.result.case !== "memory"
     )
+      throw new Error("Memory suppression did not return the Memory");
+    const suppressed = suppressedResponse.outcome.value.result.value;
+    if (!suppressed.header) throw new Error("suppressed Memory header missing");
+    const hidden = await query(booted.client, undefined, "Alice is present");
+    if (hidden.hits.some((hit) => hitMatches(hit, memoryId, revisionId)))
       throw new Error("suppressed Memory remained query-visible");
-    const restored = await booted.client.memory.restore(
-      create(MemoryMutationRequestSchema, {
+    const restoredResponse = await booted.client.cognition.mutate(
+      create(CognitionMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009806",
         subjectId,
-        memoryId: formed.memoryId,
-        expectedObjectEpoch: suppressed.objectEpoch,
+        objectRef: { kind: "memory", value: memoryId },
+        expectedObjectEpoch: suppressed.header.objectEpoch,
+        action: { case: "restore", value: {} },
       }),
     );
-    if (restored.revisionId !== formed.revisionId)
+    if (
+      restoredResponse.outcome.case !== "cognition" ||
+      restoredResponse.outcome.value.result.case !== "memory"
+    )
+      throw new Error("Memory restoration did not return the Memory");
+    const restored = restoredResponse.outcome.value.result.value;
+    if (
+      !restored.header ||
+      restored.revision?.header?.revisionRef?.value !== revisionId
+    )
       throw new Error("restore created a content revision");
     const visibleAgain = await query(
       booted.client,
       undefined,
       "Alice is present",
     );
-    if (
-      !visibleAgain.hits.some((hit) =>
-        hitMatches(hit, formed.memoryId, formed.revisionId),
-      )
-    )
+    if (!visibleAgain.hits.some((hit) => hitMatches(hit, memoryId, revisionId)))
       throw new Error("restore did not restore public recall");
 
-    await booted.client.memory.purge(
-      create(MemoryMutationRequestSchema, {
+    const purged = await booted.client.cognition.mutate(
+      create(CognitionMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009807",
         subjectId,
-        memoryId: formed.memoryId,
-        expectedObjectEpoch: restored.objectEpoch,
+        objectRef: { kind: "memory", value: memoryId },
+        expectedObjectEpoch: restored.header.objectEpoch,
+        action: { case: "purge", value: {} },
       }),
     );
+    if (purged.outcome.case !== "purged")
+      throw new Error("Memory purge did not complete");
     const purgedRetry = await booted.client.cognition.reportUse(useRequest);
     if (purgedRetry.duplicateCount !== 1)
       throw new Error("purged UseEvent retry lost its idempotency receipt");
@@ -283,15 +291,11 @@ async function main() {
       undefined,
       "Alice is present",
     );
-    if (
-      afterPurge.hits.some((hit) =>
-        hitMatches(hit, formed.memoryId, formed.revisionId),
-      )
-    )
+    if (afterPurge.hits.some((hit) => hitMatches(hit, memoryId, revisionId)))
       throw new Error("purged Memory remained query-visible");
 
     process.stdout.write(
-      `MEMORY_REFERENCE_SMOKE subject=${subjectId} memory=${formed.memoryId} revision=${formed.revisionId} sessions=2 restart=true suppress_restore=true purge=true traceback=true\n`,
+      `MEMORY_REFERENCE_SMOKE subject=${subjectId} memory=${memoryId} revision=${revisionId} sessions=2 restart=true suppress_restore=true purge=true traceback=true\n`,
     );
   } finally {
     await stop(booted);

@@ -9,7 +9,7 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
     registry.register(
         QUERY_SLOTS,
         "cognitive-runtime",
-        "Concurrent retained query slots.",
+        "Concurrent active query continuation slots.",
         16,
         ConfigExposure::Developer,
         ConfigScopePolicy::SystemOnly,
@@ -20,9 +20,9 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
                 Ok(())
             } else {
                 Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Runtime,
                     nous_core::ErrorCode::InvalidRequest,
-                    "query lease slots must be 1..64",
+                    "query slots must be 1..64",
                 ))
             }
         },

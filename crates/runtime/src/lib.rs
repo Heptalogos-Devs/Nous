@@ -34,10 +34,10 @@ pub use query::{
     DEFAULT_RESULT_LIMIT, LaneCandidate, LaneOutput, LaneStatus, NovelConceptHypothesis,
     QUERY_REPRESENTATION, QueryActivation, QueryActivationView, QueryConceptCandidate,
     QueryConceptOutput, QueryConceptSelection, QueryContextSnapshot, QueryExecution, QueryHostPlan,
-    QueryHostRole, QueryLease, QueryPlan, QueryReadLease, QueryRepresentation,
-    QueryRepresentationLimits, QueryRun, QueryRunHandle, QueryRunHostPolicy, QueryRunStage,
-    QuerySemanticEmbedding, ReadContext, SharedLaneProvider, TagActivation, TopologyWorkSummary,
-    WorkCycle, build_query_representation, register_retrieval_configuration,
+    QueryHostRole, QueryPlan, QueryReadLease, QueryRepresentation, QueryRepresentationLimits,
+    QueryRun, QueryRunContext, QueryRunHostPolicy, QuerySemanticEmbedding, ReadContext,
+    SharedLaneProvider, TagActivation, TopologyWorkSummary, WorkCycle, build_query_representation,
+    register_retrieval_configuration,
 };
 pub use segmentation::{EpisodeDraft, SegmentationProgress};
 pub use work_contexts::*;
@@ -91,7 +91,8 @@ pub struct CognitiveRuntimeService {
     pub resident_limit: usize,
     pub configuration: nous_configuration::ConfigurationService,
     clock: std::sync::Arc<dyn CognitiveClock>,
-    query_runs: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Uuid, QueryRun>>>,
+    query_slots: std::sync::Arc<tokio::sync::Semaphore>,
+    query_slot_admission: std::sync::Arc<std::sync::Mutex<()>>,
 }
 
 impl CognitiveRuntimeService {
@@ -126,7 +127,8 @@ impl CognitiveRuntimeService {
             resident_limit,
             configuration,
             clock,
-            query_runs: Default::default(),
+            query_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(64)),
+            query_slot_admission: Default::default(),
         })
     }
 

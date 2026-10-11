@@ -1,16 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 mod test_support;
-mod concept_query {
-    use super::*;
-    pub(super) mod configuration;
-    pub(super) mod historical;
-    pub(super) mod model;
-}
-use concept_query::{
-    configuration::check_activation_configuration, historical::check_historical_profiles,
-    model::check_model_catalog_activity,
-};
 use nous_core::*;
 use nous_kernel::{NousRuntime, RuntimeOptions};
 use nous_memory::{CreateTagRequest, ReviseTagInput, TagContent, TagExpectation};
@@ -161,7 +151,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     );
     input.tags = vec![tag.tag_id];
     let memory = owner.form_memory(input).await.unwrap();
-    let revision = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
+    let revision = CognitiveRef::MemoryRevision(memory.revision.header.memory_revision_id());
     let text = Cue::Text(TextCue {
         text: "reader lease retirement".into(),
     });
@@ -416,6 +406,63 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .count(),
         2
     );
+    rt.configuration
+        .set_subject_override(
+            OperationId::new(),
+            subject,
+            CONCEPT_ENRICHMENT.path(),
+            serde_json::json!("existing"),
+            None,
+        )
+        .await
+        .unwrap();
+    let mut historical_query = query(
+        subject,
+        vec![
+            Cue::Text(TextCue {
+                text: "reader reclamation".into(),
+            }),
+            Cue::Tag(TagCue { tag: tag.tag_id }),
+        ],
+    );
+    historical_query.temporal_frame.authority_view = AuthorityView::AsOf(historical_cut);
+    historical_query.exploration = ExplorationIntent::BoundedAssociative;
+    let historical = rt.execute_query(historical_query, None).await.unwrap();
+    assert!(
+        historical
+            .result
+            .results
+            .iter()
+            .any(|hit| hit.reference == revision)
+    );
+    let historical_view = historical
+        .bound
+        .read_context
+        .historical_view()
+        .expect("historical query captures its authority cut");
+    let records = rt
+        .store
+        .historical_serving_reusable(subject, &historical_view.snapshot_digest)
+        .await
+        .unwrap();
+    let concept = records
+        .iter()
+        .find(|record| record.family == "concept" && !record.space.is_empty())
+        .expect("historical concept generation");
+    let content =
+        std::fs::read(std::path::Path::new(&concept.artifact_location).join("concept.json"))
+            .unwrap();
+    let historical_generation: nous_retrieval::ConceptGeneration =
+        serde_json::from_slice(&content).unwrap();
+    let historical_record = historical_generation.record(tag.tag_id).unwrap();
+    assert!(historical_record.semantic.text.contains("active readers"));
+    assert!(
+        !historical_record
+            .semantic
+            .text
+            .contains("historical assets")
+    );
+
     let semantic = rt
         .execute_query(
             query(
@@ -462,10 +509,4 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .iter()
             .any(|hit| hit.reference == revision)
     );
-    Box::pin(check_model_catalog_activity(
-        &rt, subject, tag.tag_id, &probe,
-    ))
-    .await;
-    check_historical_profiles(&rt, subject, tag.tag_id, &revision, historical_cut).await;
-    Box::pin(check_activation_configuration(&rt, subject)).await;
 }

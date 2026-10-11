@@ -177,101 +177,6 @@ pub(crate) async fn observation(
         .expect("record observation")
 }
 
-pub(crate) async fn external_observation(
-    runtime: &NousRuntime,
-    subject: nous_core::SubjectId,
-    object_ref: &str,
-) -> nous_material::AcceptedObservation {
-    let object_ref = nous_core::ObjectRef::new(object_ref).expect("object ref");
-    runtime
-        .material
-        .record_observation(ObservationInput {
-            subject,
-            session: None,
-            occurrence: OccurrenceDescriptor {
-                source_class: nous_core::SourceClass::Message,
-                external_object_ref: Some(object_ref.clone()),
-                occurred_time: TemporalExtent::Unknown,
-                observed_at: Some(Utc::now()),
-                conversation_ref: None,
-                actor_entity_ref: None,
-                context: serde_json::json!({}),
-            },
-            material: ObservationMaterial::ExternalObjectRef { object_ref },
-            entities: Vec::new(),
-            runtime: RuntimeDirective {
-                admit: false,
-                hold_until: None,
-            },
-        })
-        .await
-        .expect("record external observation")
-}
-
-pub(crate) async fn external_actor_observation(
-    runtime: &NousRuntime,
-    subject: nous_core::SubjectId,
-    actor: &str,
-    object_ref: &str,
-) -> nous_material::AcceptedObservation {
-    let actor = nous_core::EntityRef::new(actor).expect("actor ref");
-    let object_ref = nous_core::ObjectRef::new(object_ref).expect("object ref");
-    runtime
-        .material
-        .record_observation(ObservationInput {
-            subject,
-            session: None,
-            occurrence: OccurrenceDescriptor {
-                source_class: nous_core::SourceClass::Message,
-                external_object_ref: Some(object_ref.clone()),
-                occurred_time: TemporalExtent::Unknown,
-                observed_at: Some(Utc::now()),
-                conversation_ref: None,
-                actor_entity_ref: Some(actor),
-                context: serde_json::json!({}),
-            },
-            material: ObservationMaterial::ExternalObjectRef { object_ref },
-            entities: Vec::new(),
-            runtime: RuntimeDirective {
-                admit: false,
-                hold_until: None,
-            },
-        })
-        .await
-        .expect("record external actor observation")
-}
-
-pub(crate) async fn occurrence_only_observation(
-    runtime: &NousRuntime,
-    subject: nous_core::SubjectId,
-) -> nous_material::AcceptedObservation {
-    runtime
-        .material
-        .record_observation(ObservationInput {
-            subject,
-            session: None,
-            occurrence: OccurrenceDescriptor {
-                source_class: nous_core::SourceClass::HostEvent,
-                external_object_ref: None,
-                occurred_time: TemporalExtent::Unknown,
-                observed_at: Some(Utc::now()),
-                conversation_ref: None,
-                actor_entity_ref: None,
-                context: serde_json::json!({}),
-            },
-            material: ObservationMaterial::ResourceAvailability {
-                resource: nous_core::ResourceRef::new("resource:unknown").expect("resource ref"),
-            },
-            entities: Vec::new(),
-            runtime: RuntimeDirective {
-                admit: false,
-                hold_until: None,
-            },
-        })
-        .await
-        .expect("record occurrence-only observation")
-}
-
 pub(crate) fn form_input(
     subject: nous_core::SubjectId,
     occurrence: nous_core::OccurrenceId,
@@ -354,24 +259,19 @@ impl nous_retrieval::TextEmbeddingProvider for LongitudinalEmbedding {
     }
 }
 
-pub(crate) fn query_lease() -> nous_runtime::QueryLease {
-    nous_runtime::QueryLease::new(Duration::from_secs(30)).unwrap()
-}
-
 pub(crate) fn query_run(
+    cognition: &nous_runtime::CognitiveRuntimeService,
     execution: nous_runtime::QueryExecution,
-    lease: nous_runtime::QueryLease,
 ) -> nous_runtime::QueryRun {
     use nous_runtime::{
-        QueryHostPlan, QueryHostRole, QueryPlan, QueryRunHostPolicy, QueryRunStage,
+        QueryHostPlan, QueryHostRole, QueryPlan, QueryRunContext, QueryRunHostPolicy,
     };
-    let bound = execution.bound.clone();
     let role = QueryHostRole {
         configured: true,
         requirement: nous_core::RequirementStrength::Optional,
     };
     let host_policy = QueryRunHostPolicy::for_query(
-        &bound.source_query,
+        &execution.bound.source_query,
         QueryHostPlan {
             embedding: role,
             concept_enrichment: role,
@@ -380,42 +280,30 @@ pub(crate) fn query_run(
         },
     )
     .unwrap();
-    let mut run = nous_runtime::QueryRun::new(
-        bound.clone(),
-        lease,
-        host_policy,
-        QueryRunStage::Finalize,
-        QueryPlan::for_bound_query(&bound),
-    )
-    .unwrap();
-    run.set_execution(execution);
-    run
-}
-
-pub(crate) fn retain_query_run(
-    cognition: &nous_runtime::CognitiveRuntimeService,
-    execution: nous_runtime::QueryExecution,
-    lease: nous_runtime::QueryLease,
-) -> nous_core::Result<(
-    nous_core::CognitiveQueryResult,
-    nous_runtime::QueryRunHandle,
-)> {
-    let result = execution.result.clone();
-    let handle = cognition.retain_query_run(query_run(execution, lease))?;
-    Ok((result, handle))
+    let plan = QueryPlan::for_bound_query(&execution.bound);
+    let limit = execution
+        .bound
+        .config_snapshot
+        .get(nous_runtime::QUERY_SLOTS)
+        .unwrap();
+    let slot = cognition.acquire_query_slot(limit).unwrap();
+    nous_runtime::QueryRun::finalize(execution, QueryRunContext::new(plan, host_policy, slot))
 }
 
 pub(crate) async fn finish_query_run(
     cognition: &nous_runtime::CognitiveRuntimeService,
-    subject: nous_core::SubjectId,
-    handle: nous_runtime::QueryRunHandle,
+    execution: nous_runtime::QueryExecution,
     order: Vec<(nous_core::CognitiveRef, f64)>,
     external_results: Vec<nous_core::ExternalResourceResult>,
     contributors: nous_runtime::CognitiveContributors<'_>,
 ) -> nous_core::Result<nous_core::CognitiveQueryResult> {
-    let run = cognition.take_query_run(subject, handle, nous_runtime::QueryRunStage::Finalize)?;
     cognition
-        .finish_query_run(run, order, external_results, contributors)
+        .finish_query_run(
+            query_run(cognition, execution),
+            order,
+            external_results,
+            contributors,
+        )
         .await
 }
 

@@ -81,7 +81,8 @@ pub(crate) async fn episode_member_text_input_in_view(
 SELECT m.episode_revision_id,o.occurrence_id,
     (a.media_type LIKE 'text/%' OR a.media_type IN ('application/json','application/xml')) AS raw_text,
     d.derived_representation_id
-FROM episode_revision_members m JOIN episode_revisions e USING(episode_revision_id)
+FROM episode_revision_members m JOIN cognition_revision_headers e
+    ON e.revision_id=m.episode_revision_id AND e.object_kind='episode'
 JOIN observation_occurrences o ON o.occurrence_id=CASE WHEN m.ref_kind='occurrence' THEN m.ref_value::uuid END
 LEFT JOIN artifacts a USING(artifact_id)
 LEFT JOIN LATERAL (

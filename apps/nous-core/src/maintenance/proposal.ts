@@ -94,7 +94,7 @@ export async function buildMaintenanceProposal({
           const existing = new Set(
             plan.episodes.flatMap(
               (episode) =>
-                episode.currentRevision?.members.map(
+                episode.revision?.members.map(
                   (member) => member.reference?.value,
                 ) ?? [],
             ),

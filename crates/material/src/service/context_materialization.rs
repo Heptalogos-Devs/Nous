@@ -14,6 +14,7 @@ impl MaterialService {
         max_items: usize,
         max_text_bytes: usize,
     ) -> Result<(Vec<ContextContribution>, Vec<Degradation>)> {
+        let mut seen = std::collections::HashSet::new();
         let selected = references
             .iter()
             .filter(|reference| {
@@ -26,6 +27,7 @@ impl MaterialService {
                         | CognitiveRef::DerivedRegion(_)
                 )
             })
+            .filter(|reference| seen.insert((*reference).clone()))
             .take(max_items.min(256))
             .cloned()
             .collect::<Vec<_>>();
@@ -40,7 +42,6 @@ impl MaterialService {
                 context.historical_view(),
             )
             .await?;
-        let mut remaining = max_text_bytes;
         let mut contributions = Vec::new();
         let mut degradation = Vec::new();
         for reference in selected {
@@ -58,29 +59,13 @@ impl MaterialService {
                 });
                 continue;
             }
-            let bytes = material.bytes.len().min(remaining);
-            let text = match std::str::from_utf8(&material.bytes[..bytes]) {
-                Ok(text) => text.to_owned(),
-                Err(error) if error.error_len().is_none() => {
-                    std::str::from_utf8(&material.bytes[..error.valid_up_to()])
-                        .map_err(|_| {
-                            Error::new(
-                                ErrorOwner::Material,
-                                ErrorCode::InvalidRequest,
-                                "Material context text is not UTF-8",
-                            )
-                        })?
-                        .to_owned()
-                }
-                Err(_) => {
-                    degradation.push(Degradation {
-                        code: "projection_source_unavailable".into(),
-                        detail: Some(reference.to_string()),
-                    });
-                    continue;
-                }
+            let Ok(text) = std::str::from_utf8(&material.bytes) else {
+                degradation.push(Degradation {
+                    code: "projection_source_unavailable".into(),
+                    detail: Some(reference.to_string()),
+                });
+                continue;
             };
-            remaining = remaining.saturating_sub(text.len());
             let evidence = material
                 .provenance
                 .iter()
@@ -113,7 +98,7 @@ impl MaterialService {
                 } else {
                     "material_evidence".into()
                 },
-                text: Some(text.clone()),
+                text: Some(text.to_owned()),
                 authority,
                 freshness: FreshnessDescriptor {
                     occurred: Vec::new(),

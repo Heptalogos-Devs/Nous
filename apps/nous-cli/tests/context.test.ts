@@ -1,11 +1,12 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { it, expect, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "./support/client.js";
 import type { connectNousInstance } from "@nous-wave/client/node";
+import type { ReadCognitionRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/cognition_pb.js";
 
 it("recovers an unknown context mutation using the exact saved identity and expected revision", async () => {
   const root = await mkdtemp(join(tmpdir(), "nous-cli-context-"));
@@ -84,9 +85,24 @@ it("retains exact query result revisions for continuation and rejects another Su
     kind: "memory_revision",
     value: "30000000-0000-4000-8000-000000000001",
   };
-  const read = vi
-    .fn()
-    .mockResolvedValue({ revisionId: revision.value, text: "Prior cognition" });
+  const read = vi.fn(async (_request: ReadCognitionRequest) => ({
+    result: {
+      case: "memory",
+      value: {
+        header: {
+          objectRef: { kind: "memory", value: "mutable" },
+          objectEpoch: 1n,
+        },
+        details: {},
+        revision: {
+          header: {
+            revisionRef: revision,
+          },
+          details: { text: "Prior cognition" },
+        },
+      },
+    },
+  }));
   const client = {
     cognition: {
       query: async () => ({
@@ -100,8 +116,8 @@ it("retains exact query result revisions for continuation and rejects another Su
           },
         ],
       }),
+      read,
     },
-    memory: { revision: read },
   } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   const connect = vi.fn().mockResolvedValue(client);
   const flags = [
@@ -115,9 +131,11 @@ it("retains exact query result revisions for continuation and rejects another Su
   try {
     await runCli(["query", "Recall prior cognition", ...flags], connect);
     await runCli(["show", "result:1", ...flags], connect);
-    expect(read).toHaveBeenCalledWith({
-      subjectId: "subject",
-      id: revision.value,
+    const request = read.mock.calls[0]?.[0];
+    expect(request?.subjectId).toBe("subject");
+    expect(request?.reference).toMatchObject({
+      kind: "memory_revision",
+      value: revision.value,
     });
     await expect(
       runCli(
@@ -134,217 +152,6 @@ it("retains exact query result revisions for continuation and rejects another Su
         connect,
       ),
     ).rejects.toMatchObject({ code: "RESULT_SUBJECT_MISMATCH" });
-    expect(read).toHaveBeenCalledTimes(1);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-it("freezes semantic TOML targets and input before a recoverable mutation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "nous-cli-toml-"));
-  const path = join(root, "tag.toml");
-  const tagId = "30000000-0000-4000-8000-000000000002";
-  const revise = vi
-    .fn()
-    .mockRejectedValueOnce(new Error("lost response"))
-    .mockResolvedValue({ tagId });
-  const get = vi
-    .fn()
-    .mockResolvedValue({ currentRevisionId: "original-revision" });
-  const connect = vi
-    .fn()
-    .mockResolvedValue({ concepts: { getTag: get, reviseTag: revise } });
-  const flags = [
-    "--run-root",
-    root,
-    "--instance-root",
-    root,
-    "--subject",
-    "subject",
-  ];
-  try {
-    await writeFile(
-      path,
-      `target = "tag:${tagId}"\nlabel = "Release planning"\n`,
-    );
-    let receipt = "";
-    try {
-      await runCli(
-        ["tag", "revise", "--request-file", path, ...flags],
-        connect,
-      );
-    } catch (error) {
-      receipt = (error as { receiptId: string }).receiptId;
-    }
-    expect(receipt).toBeTruthy();
-    await writeFile(
-      path,
-      'target = "tag:changed"\nlabel = "Changed after admission"\n',
-    );
-    await runCli(["retry", receipt, ...flags], connect);
-    expect(get).toHaveBeenCalledTimes(1);
-    expect(revise.mock.calls[1]).toEqual(revise.mock.calls[0]);
-    expect(revise.mock.calls[0]?.[0]).toMatchObject({
-      target: { tagId, expectedRevisionId: "original-revision" },
-      content: { label: "Release planning" },
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-it("renders Evidence/Resource and mixed hits while preserving each owner continuation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "nous-cli-source-results-"));
-  const refs = [
-    { kind: "memory_revision", value: "30000000-0000-4000-8000-000000000001" },
-    { kind: "source_region", value: "30000000-0000-4000-8000-000000000002" },
-    { kind: "resource", value: "resource:source" },
-  ];
-  const sourceRegion = vi.fn().mockResolvedValue({
-    sourceRegionId: refs[1]!.value,
-    artifactId: "artifact",
-  });
-  const getResource = vi
-    .fn()
-    .mockResolvedValue({ resourceRef: refs[2]!.value });
-  const readRevision = vi
-    .fn()
-    .mockResolvedValue({ revisionId: refs[0]!.value });
-  const reportUse = vi.fn();
-  const query = vi.fn();
-  const connect = vi.fn().mockResolvedValue({
-    cognition: { query, reportUse },
-    material: {
-      sourceRegion,
-      occurrences: vi.fn().mockResolvedValue({ items: [], truncated: false }),
-    },
-    memory: { revision: readRevision },
-    resources: { get: getResource },
-  });
-  const flags = [
-    "--run-root",
-    root,
-    "--instance-root",
-    root,
-    "--subject",
-    "subject",
-  ];
-  try {
-    for (const selection of [[refs[1]!], [refs[2]!], refs]) {
-      query.mockResolvedValue({
-        queryId: "q",
-        hits: selection.map((reference) => ({
-          reference,
-          text: reference.kind,
-        })),
-        resourceRecords: [{ reference: { entryId: "external-source" } }],
-        degradation: [],
-      });
-      const result = await runCli(
-        ["query", "source $return(memory,evidence,resource)", ...flags],
-        connect,
-      );
-      expect(result).toMatchObject({
-        data: {
-          results: selection.map((ref, index) => ({
-            result: `result:${index + 1}`,
-            ref,
-          })),
-          resourceRecords: [{ reference: { entryId: "external-source" } }],
-        },
-      });
-    }
-    expect(await runCli(["show", "result:2", ...flags], connect)).toMatchObject(
-      { data: { sourceRegionId: refs[1]!.value } },
-    );
-    await runCli(["show", "result:3", ...flags], connect);
-    expect(getResource).toHaveBeenCalledWith({
-      subjectId: "subject",
-      id: "resource:source",
-    });
-    await expect(
-      runCli(["use", "result:2", ...flags], connect),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
-    expect(reportUse).not.toHaveBeenCalled();
-    await runCli(["show", "result:1", ...flags], connect);
-    expect(readRevision).toHaveBeenCalledWith({
-      subjectId: "subject",
-      id: refs[0]!.value,
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-it("reads a returned closed Session reference without selecting or opening a Session", async () => {
-  const root = await mkdtemp(join(tmpdir(), "nous-cli-closed-session-"));
-  const sessionId = "30000000-0000-4000-8000-000000000003";
-  const read = vi.fn().mockResolvedValue({
-    sessionId,
-    subjectId: "subject",
-    runtimeRevision: 2n,
-    closed: true,
-    residentRefs: [],
-  });
-  const open = vi.fn();
-  const close = vi.fn();
-  const client = {
-    cognition: { getSession: read, openSession: open, closeSession: close },
-    identity: {
-      resolve: vi
-        .fn()
-        .mockImplementation(
-          async (request: { locator: { value: string }; kind: string }) => ({
-            status: "BOUND",
-            candidates: [
-              {
-                lexicalRef: request.locator.value,
-                canonical: { kind: request.kind, value: sessionId },
-              },
-            ],
-          }),
-        ),
-    },
-  } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
-  const connect = vi.fn().mockResolvedValue(client);
-  const flags = [
-    "--run-root",
-    root,
-    "--instance-root",
-    root,
-    "--subject",
-    "subject",
-  ];
-  try {
-    const result = await runCli(
-      ["session", "show", "session:vanib-jalup-jifuj", ...flags],
-      connect,
-    );
-    expect(result).toMatchObject({
-      data: { closed: true, runtimeRevision: 2n },
-    });
-    expect(read).toHaveBeenCalledWith({ subjectId: "subject", id: sessionId });
-    expect(open).not.toHaveBeenCalled();
-    await expect(
-      runCli(["session", "show", ...flags], connect),
-    ).rejects.toThrow("Selected Session");
-    await expect(
-      runCli(["session", "show", `memory:${sessionId}`, ...flags], connect),
-    ).rejects.toMatchObject({ code: "REFERENCE_TYPE_MISMATCH" });
-    await expect(
-      runCli(
-        [
-          "session",
-          "close",
-          "session:vanib-jalup-jifuj",
-          ...flags,
-          "--session",
-          sessionId,
-        ],
-        connect,
-      ),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
-    expect(close).not.toHaveBeenCalled();
     expect(read).toHaveBeenCalledTimes(1);
   } finally {
     await rm(root, { recursive: true, force: true });

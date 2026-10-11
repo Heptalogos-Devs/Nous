@@ -4,7 +4,10 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
-import { FormMemoryRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import {
+  CognitiveRefSchema,
+  FormMemoryRequestSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { type FormationRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "./runtime.js";
@@ -100,13 +103,24 @@ export async function formObservation(
     if (saved.purged)
       throw new ConnectError("Formation outcome was purged", Code.NotFound);
     const outcome = outcomeSchema.parse(JSON.parse(saved.payloadJson));
-    const memory = await kernel.memory.getMemoryRevision(
-      { subjectId: r.subjectId, id: outcome.revisionId },
+    const read = await kernel.memory.readCognition(
+      {
+        subjectId: r.subjectId,
+        reference: create(CognitiveRefSchema, {
+          kind: "memory_revision",
+          value: outcome.revisionId,
+        }),
+      },
       options,
     );
+    if (read.result.case !== "memory")
+      throw new ConnectError(
+        "Formation replay did not resolve to its Memory",
+        Code.Internal,
+      );
     return {
-      memory,
-      degradation: [],
+      memory: read.result.value,
+      degradation: read.degradation,
     };
   };
   const opened = await openDurableOperation(kernel, identity, {
@@ -298,7 +312,6 @@ export async function formObservation(
       await operation.checkpoint({
         proposal: workflowPayload(proposed),
         executionTelemetry: result.execution,
-        mutationOperations: [request.operationId],
       });
     }
     const request = fromJson(
@@ -308,10 +321,17 @@ export async function formObservation(
     const memory = await operation.mutate(request.operationId, () =>
       kernel.memory.formMemory(request, options),
     );
+    const memoryId = memory.header?.objectRef?.value;
+    const revisionId = memory.revision?.header?.revisionRef?.value;
+    if (!memoryId || !revisionId)
+      throw new ConnectError(
+        "Memory formation returned incomplete CognitionHeader data",
+        Code.Internal,
+      );
     await operation.checkpoint({
-      outcome: workflowPayload({ revisionId: memory.revisionId }, [
-        { kind: "memory", value: memory.memoryId },
-        { kind: "memory_revision", value: memory.revisionId },
+      outcome: workflowPayload({ revisionId }, [
+        { kind: "memory", value: memoryId },
+        { kind: "memory_revision", value: revisionId },
       ]),
     });
     return {

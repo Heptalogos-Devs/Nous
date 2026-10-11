@@ -1287,11 +1287,17 @@ pub mod kernel_query_service_server {
             tonic::Response<super::super::super::v1alpha1::PreparedQueryResponse>,
             tonic::Status,
         >;
+        /// Server streaming response type for the RunQuery method.
+        type RunQueryStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::QueryRunUpdate, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
         ///
         async fn run_query(
             &self,
-            request: tonic::Request<super::QueryRunRequest>,
-        ) -> std::result::Result<tonic::Response<super::QueryRunUpdate>, tonic::Status>;
+            request: tonic::Request<tonic::Streaming<super::QueryRunRequest>>,
+        ) -> std::result::Result<tonic::Response<Self::RunQueryStream>, tonic::Status>;
     }
     ///
     #[derive(Debug)]
@@ -1473,16 +1479,19 @@ pub mod kernel_query_service_server {
                     struct RunQuerySvc<T: KernelQueryService>(pub Arc<T>);
                     impl<
                         T: KernelQueryService,
-                    > tonic::server::UnaryService<super::QueryRunRequest>
+                    > tonic::server::StreamingService<super::QueryRunRequest>
                     for RunQuerySvc<T> {
                         type Response = super::QueryRunUpdate;
+                        type ResponseStream = T::RunQueryStream;
                         type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
+                            tonic::Response<Self::ResponseStream>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::QueryRunRequest>,
+                            request: tonic::Request<
+                                tonic::Streaming<super::QueryRunRequest>,
+                            >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
@@ -1508,7 +1517,7 @@ pub mod kernel_query_service_server {
                                 max_decoding_message_size,
                                 max_encoding_message_size,
                             );
-                        let res = grpc.unary(method, req).await;
+                        let res = grpc.streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

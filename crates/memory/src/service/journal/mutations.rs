@@ -157,12 +157,27 @@ impl MemoryService {
             producer,
         } = write;
         if parent.is_none() {
-            sqlx::query("INSERT INTO journal_objects(journal_id,subject_id,current_revision_id,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,'accepted','valid','normal','normal',$4)")
+            sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES('journal',$1,$2,$3,'accepted','valid','normal','normal',$4)")
                 .bind(journal.0).bind(input.subject.0).bind(revision.0).bind(recorded).execute(&mut **tx).await.map_err(db)?;
         }
         let (kind, start, end) = temporal_columns(&source_extent);
-        sqlx::query("INSERT INTO journal_revisions(journal_revision_id,journal_id,subject_id,revision_no,parent_revision_id,revision_intent,title,temporal_scope_kind,temporal_scope_start,temporal_scope_end,narrative,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
-            .bind(revision.0).bind(journal.0).bind(input.subject.0).bind(revision_no).bind(parent.map(|id|id.0)).bind(input.target.as_ref().map(|target|&target.intent)).bind(&input.title).bind(kind).bind(start).bind(end).bind(&input.narrative).bind(formed).bind(recorded).bind(producer).execute(&mut **tx).await.map_err(db)?;
+        Self::insert_cognition_revision_header_in(
+            tx,
+            input.subject,
+            &CognitionRevisionHeader::new(
+                CognitionKind::Journal,
+                journal.0,
+                revision.0,
+                revision_no,
+                parent.map(|id| id.0),
+                formed,
+                recorded,
+                producer,
+            ),
+        )
+        .await?;
+        sqlx::query("INSERT INTO journal_revisions(journal_revision_id,revision_intent,title,temporal_scope_kind,temporal_scope_start,temporal_scope_end,narrative) VALUES($1,$2,$3,$4,$5,$6,$7)")
+            .bind(revision.0).bind(input.target.as_ref().map(|target|&target.intent)).bind(&input.title).bind(kind).bind(start).bind(end).bind(&input.narrative).execute(&mut **tx).await.map_err(db)?;
         insert_journal_points(tx, revision, &input.points).await?;
         self.store
             .ensure_identity_addresses_in(
@@ -179,7 +194,7 @@ impl MemoryService {
             sqlx::query("INSERT INTO journal_revision_sources(journal_revision_id,ref_kind,ref_value,source_epoch) VALUES($1,'episode_revision',$2,$3)")
                 .bind(revision.0).bind(source.revision.0.to_string()).bind(source.expected_epoch).execute(&mut **tx).await.map_err(db)?;
         }
-        sqlx::query("UPDATE journal_objects SET current_revision_id=$2,object_epoch=object_epoch+CASE WHEN $3 THEN 1 ELSE 0 END,integrity_state='valid' WHERE journal_id=$1")
+        sqlx::query("UPDATE cognition_objects SET current_revision_id=$2,object_epoch=object_epoch+CASE WHEN $3 THEN 1 ELSE 0 END,integrity_state='valid' WHERE object_kind='journal' AND object_id=$1")
             .bind(journal.0).bind(revision.0).bind(parent.is_some()).execute(&mut **tx).await.map_err(db)?;
         Ok(())
     }
@@ -282,7 +297,7 @@ async fn journal_target_in(
     let Some(target) = &input.target else {
         return Ok((JournalId::new(), None, 1));
     };
-    let row = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.purge_state,r.revision_no FROM journal_objects o JOIN journal_revisions r ON r.journal_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.journal_id=$2 FOR UPDATE OF o")
+    let row = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.purge_state,h.revision_no FROM cognition_objects o JOIN cognition_revision_headers h ON h.subject_id=o.subject_id AND h.object_kind=o.object_kind AND h.object_id=o.object_id AND h.revision_id=o.current_revision_id WHERE o.object_kind='journal' AND o.subject_id=$1 AND o.object_id=$2 FOR UPDATE OF o")
         .bind(input.subject.0).bind(target.journal_id.0).fetch_optional(&mut **tx).await.map_err(db)?
         .ok_or_else(|| nous_core::Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::StaleRevision,  "Journal target disappeared"))?;
     if row.get::<Uuid, _>("current_revision_id") != target.expected_revision.0
@@ -313,7 +328,7 @@ async fn validate_journal_scope_in(
         .iter()
         .map(|source| source.revision.0)
         .collect();
-    let connected: i64 = sqlx::query_scalar("WITH RECURSIVE old_scope AS (SELECT r.episode_revision_id,r.episode_id FROM journal_revision_sources s JOIN episode_revisions r ON r.episode_revision_id::text=s.ref_value WHERE s.journal_revision_id=$1 AND s.ref_kind='episode_revision'), ancestry(origin,revision) AS (SELECT id,id FROM unnest($2::uuid[]) id UNION SELECT a.origin,e.ancestor FROM ancestry a JOIN LATERAL (SELECT parent_revision_id AS ancestor FROM episode_revisions WHERE episode_revision_id=a.revision AND parent_revision_id IS NOT NULL UNION SELECT to_revision_id FROM episode_revision_relations WHERE from_revision_id=a.revision AND relation IN ('derived_from','split_from','merged_from')) e ON true) SELECT COUNT(DISTINCT a.origin) FROM ancestry a JOIN episode_revisions r ON r.episode_revision_id=a.revision JOIN old_scope o ON o.episode_revision_id=a.revision OR o.episode_id=r.episode_id")
+    let connected: i64 = sqlx::query_scalar("WITH RECURSIVE old_scope AS (SELECT r.episode_revision_id,h.object_id AS episode_id FROM journal_revision_sources s JOIN episode_revisions r ON r.episode_revision_id::text=s.ref_value JOIN cognition_revision_headers h ON h.revision_id=r.episode_revision_id WHERE h.object_kind='episode' AND s.journal_revision_id=$1 AND s.ref_kind='episode_revision'), ancestry(origin,revision) AS (SELECT id,id FROM unnest($2::uuid[]) id UNION SELECT a.origin,e.ancestor FROM ancestry a JOIN LATERAL (SELECT ph.parent_revision_id AS ancestor FROM episode_revisions p JOIN cognition_revision_headers ph ON ph.revision_id=p.episode_revision_id WHERE p.episode_revision_id=a.revision AND ph.parent_revision_id IS NOT NULL UNION SELECT to_revision_id FROM episode_revision_relations WHERE from_revision_id=a.revision AND relation IN ('derived_from','split_from','merged_from')) e ON true) SELECT COUNT(DISTINCT a.origin) FROM ancestry a JOIN episode_revisions r ON r.episode_revision_id=a.revision JOIN cognition_revision_headers h ON h.revision_id=r.episode_revision_id JOIN old_scope o ON o.episode_revision_id=a.revision OR o.episode_id=h.object_id")
         .bind(target.expected_revision.0).bind(&current).fetch_one(&mut **tx).await.map_err(db)?;
     if connected != current.len() as i64 {
         return Err(Error::new(
@@ -334,7 +349,7 @@ async fn validate_sources_in(
         .iter()
         .map(|source| source.revision.0)
         .collect();
-    let rows = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,r.episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR SHARE OF o")
+    let rows = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,r.episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM cognition_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.object_kind='episode' AND o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.object_id FOR SHARE OF o")
         .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
     if rows.len() != ids.len() {
         return Err(nous_core::Error::new(

@@ -28,7 +28,7 @@ pub(crate) async fn resolve_memory_references(
     if memory_ids.is_empty() && revision_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let rows = sqlx::query("SELECT memory_id,current_revision_id,memory_revision_id,source_kind,source_id FROM (SELECT memory_id,current_revision_id AS current_revision_id,current_revision_id AS memory_revision_id,'memory'::text AS source_kind,memory_id AS source_id FROM memory_objects WHERE subject_id=$1 AND memory_id=ANY($2::uuid[]) UNION ALL SELECT memory_id,memory_revision_id,memory_revision_id,'memory_revision'::text,memory_revision_id FROM memory_revisions WHERE subject_id=$1 AND memory_revision_id=ANY($3::uuid[])) resolved")
+    let rows = sqlx::query("SELECT memory_id,current_revision_id,memory_revision_id,source_kind,source_id FROM (SELECT object_id AS memory_id,current_revision_id,current_revision_id AS memory_revision_id,'memory'::text AS source_kind,object_id AS source_id FROM cognition_objects WHERE object_kind='memory' AND subject_id=$1 AND object_id=ANY($2::uuid[]) UNION ALL SELECT object_id AS memory_id,revision_id AS current_revision_id,revision_id AS memory_revision_id,'memory_revision'::text AS source_kind,revision_id AS source_id FROM cognition_revision_headers WHERE object_kind='memory' AND subject_id=$1 AND revision_id=ANY($3::uuid[])) resolved")
         .bind(subject.0)
         .bind(&memory_ids)
         .bind(&revision_ids)

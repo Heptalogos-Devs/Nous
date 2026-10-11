@@ -104,7 +104,7 @@ impl MemoryService {
         }
         if !one_to_one {
             let ids: Vec<Uuid> = sources.iter().map(|row| row.get("episode_id")).collect();
-            sqlx::query("UPDATE episode_objects SET acceptance_state='withdrawn',object_epoch=object_epoch+1 WHERE subject_id=$1 AND episode_id=ANY($2::uuid[])")
+            sqlx::query("UPDATE cognition_objects SET acceptance_state='withdrawn',object_epoch=object_epoch+1 WHERE subject_id=$1 AND object_kind='episode' AND object_id=ANY($2::uuid[])")
                 .bind(input.subject.0).bind(&ids).execute(&mut **mutation.tx()).await.map_err(db)?;
         }
         let producer_id = partition_producer_in(mutation.tx(), input.producer.as_ref()).await?;
@@ -193,8 +193,8 @@ impl MemoryService {
                 1
             };
             if !one_to_one {
-                sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','normal',$5)")
-                    .bind(episode.0).bind(input.subject.0).bind(&track).bind(revision.0).bind(recorded_at).execute(&mut **tx).await.map_err(db)?;
+                sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at,track_key) VALUES('episode',$1,$2,$3,1,'accepted','valid','normal','normal',$4,$5)")
+                    .bind(episode.0).bind(input.subject.0).bind(revision.0).bind(recorded_at).bind(&track).execute(&mut **tx).await.map_err(db)?;
             }
             insert_episode_revision_with_intent(
                 &self.store,
@@ -213,7 +213,7 @@ impl MemoryService {
             )
             .await?;
             if one_to_one {
-                sqlx::query("UPDATE episode_objects SET current_revision_id=$2,object_epoch=object_epoch+1,integrity_state='valid' WHERE episode_id=$1")
+                sqlx::query("UPDATE cognition_objects SET current_revision_id=$2,object_epoch=object_epoch+1,integrity_state='valid' WHERE object_kind='episode' AND object_id=$1")
                     .bind(episode.0).bind(revision.0).execute(&mut **tx).await.map_err(db)?;
             } else {
                 let relation = if input.sources.len() == 1 {
@@ -312,7 +312,7 @@ async fn lock_sources(
         .iter()
         .map(|source| source.revision.0)
         .collect();
-    let rows = sqlx::query("SELECT o.*,r.episode_revision_id,r.revision_no,r.parent_episode_revision_id,r.title,r.boundary_explanation FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR UPDATE OF o")
+    let rows = sqlx::query("SELECT o.object_id AS episode_id,o.subject_id,o.track_key,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,o.created_at,r.episode_revision_id,h.revision_no,h.parent_revision_id,r.parent_episode_revision_id,r.title,r.boundary_explanation FROM cognition_objects o JOIN cognition_revision_headers h ON h.subject_id=o.subject_id AND h.object_kind=o.object_kind AND h.object_id=o.object_id JOIN episode_revisions r ON r.episode_revision_id=h.revision_id WHERE o.object_kind='episode' AND o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.object_id FOR UPDATE OF o")
         .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
     if rows.len() != ids.len() {
         return Err(nous_core::Error::new(

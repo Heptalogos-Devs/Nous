@@ -23,17 +23,22 @@ async fn authority_lanes_reach_matches_beyond_first_n_objects() {
         let memory_id = Uuid::now_v7();
         let revision_id = Uuid::now_v7();
         let valid = index == 9_999;
-        sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,accessibility_mode,created_at) VALUES($1,$2,'declarative',$3,1,'accepted','valid','normal','normal','auto',now())")
+        sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,cognitive_role,accessibility_mode,created_at) VALUES('memory',$1,$2,$3,1,'accepted','valid','normal','normal','declarative','auto',now())")
             .bind(memory_id)
             .bind(subject.0)
             .bind(revision_id)
             .execute(&mut *tx)
             .await
             .expect("memory object");
-        sqlx::query("INSERT INTO memory_revisions(memory_revision_id,memory_id,subject_id,revision_no,parent_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at) VALUES($1,$2,$3,1,NULL,NULL,'synthesized',NULL,'fact','tail fixture',$4,'inferred',$5,$6,$7,now(),now())")
+        sqlx::query("INSERT INTO cognition_revision_headers(revision_id,subject_id,object_kind,object_id,revision_no,parent_revision_id,formed_at,recorded_at) VALUES($1,$2,'memory',$3,1,NULL,now(),now())")
             .bind(revision_id)
-            .bind(memory_id)
             .bind(subject.0)
+            .bind(memory_id)
+            .execute(&mut *tx)
+            .await
+            .expect("memory revision header");
+        sqlx::query("INSERT INTO memory_revisions(memory_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end) VALUES($1,NULL,'synthesized',NULL,'fact','tail fixture',$2,'inferred',$3,$4,$5)")
+            .bind(revision_id)
             .bind(if valid { "tail temporal match" } else { "ordinary fixture" })
             .bind(if valid { "interval" } else { "unknown" })
             .bind(valid.then_some(temporal_start))

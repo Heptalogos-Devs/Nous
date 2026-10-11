@@ -6,6 +6,7 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { toJson } from "@bufbuild/protobuf";
 import { QueryDiagnosticsSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { isCognitionRevisionReference, typedCognition } from "./cognition.js";
 const cognitionKinds = new Set([
   "memory_revision",
   "cognitive_schema_revision",
@@ -175,16 +176,9 @@ export async function showCommands(env: CliEnvironment, reference?: string) {
   const ref = await resolveReference(
     required(reference, "Exact reference or result:N"),
   );
+  if (isCognitionRevisionReference(ref)) return typedCognition.read(env, ref);
   const input = { subjectId, id: ref.value };
   switch (ref.kind) {
-    case "memory_revision":
-      return client.memory.revision(input);
-    case "cognitive_schema_revision":
-      return client.concepts.getSchemaRevision(input);
-    case "episode_revision":
-      return client.memory.getEpisodeRevision(input);
-    case "journal_revision":
-      return client.memory.getJournalRevision(input);
     case "occurrence":
       return client.material.occurrence(input);
     case "artifact": {

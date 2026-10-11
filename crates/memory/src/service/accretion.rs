@@ -126,7 +126,7 @@ impl MemoryService {
                 counterevidence += count;
             }
         }
-        let episodes:i64=sqlx::query_scalar("WITH members AS (SELECT * FROM unnest($2::text[],$3::text[]) AS m(kind,value)) SELECT count(DISTINCT r.episode_revision_id)::bigint FROM episode_revisions r JOIN episode_objects o ON o.current_revision_id=r.episode_revision_id JOIN episode_revision_members e USING(episode_revision_id) WHERE r.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND (EXISTS(SELECT 1 FROM members m WHERE m.kind=e.ref_kind AND m.value=e.ref_value) OR (e.ref_kind='occurrence' AND e.ref_value=ANY($4::text[])))")
+        let episodes:i64=sqlx::query_scalar("WITH members AS (SELECT * FROM unnest($2::text[],$3::text[]) AS m(kind,value)) SELECT count(DISTINCT r.episode_revision_id)::bigint FROM cognition_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id JOIN episode_revision_members e USING(episode_revision_id) WHERE o.subject_id=$1 AND o.object_kind='episode' AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND (EXISTS(SELECT 1 FROM members m WHERE m.kind=e.ref_kind AND m.value=e.ref_value) OR (e.ref_kind='occurrence' AND e.ref_value=ANY($4::text[])))")
                 .bind(subject.0).bind(&kinds).bind(&values).bind(occurrences.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_one(self.store.pool()).await.map_err(db)?;
         let span:i64=sqlx::query_scalar("SELECT COALESCE(extract(epoch FROM max(observed_at)-min(observed_at))::bigint,0) FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=ANY($2::uuid[])")
                 .bind(subject.0).bind(occurrences.iter().copied().collect::<Vec<_>>()).fetch_one(self.store.pool()).await.map_err(db)?;
@@ -237,10 +237,10 @@ impl MemoryService {
     ) -> Result<(Vec<CognitiveRef>, usize)> {
         let members = match center {
             CognitiveRef::Tag(_) => {
-                "SELECT 'memory_revision'::text kind,m.memory_revision_id::text value FROM memory_revision_tags m JOIN memory_revisions r USING(memory_revision_id) WHERE r.subject_id=$1 AND canonical_tag($1,m.tag_id)=canonical_tag($1,$2) UNION SELECT a.from_ref_kind,a.from_ref FROM association_evidence a WHERE a.subject_id=$1 AND a.to_ref_kind='tag' AND canonical_tag($1,CASE WHEN a.to_ref_kind='tag' THEN a.to_ref::uuid END)=canonical_tag($1,$2) AND a.relation_kind='tag_attachment' AND a.polarity='positive' AND a.revoked_at IS NULL"
+                "SELECT 'memory_revision'::text kind,m.memory_revision_id::text value FROM memory_revision_tags m JOIN cognition_revision_headers h ON h.revision_id=m.memory_revision_id AND h.object_kind='memory' WHERE h.subject_id=$1 AND canonical_tag($1,m.tag_id)=canonical_tag($1,$2) UNION SELECT a.from_ref_kind,a.from_ref FROM association_evidence a WHERE a.subject_id=$1 AND a.to_ref_kind='tag' AND canonical_tag($1,CASE WHEN a.to_ref_kind='tag' THEN a.to_ref::uuid END)=canonical_tag($1,$2) AND a.relation_kind='tag_attachment' AND a.polarity='positive' AND a.revoked_at IS NULL"
             }
             CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_) => {
-                "SELECT basis_kind kind,basis_ref value FROM cognitive_schema_evidence_links l JOIN cognitive_schema_revisions r USING(schema_revision_id) JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 AND l.revoked_at IS NULL AND basis_kind IN ('memory_revision','cognitive_schema_revision','episode_revision','journal_revision')"
+                "SELECT basis_kind kind,basis_ref value FROM cognitive_schema_evidence_links l JOIN cognitive_schema_revisions r USING(schema_revision_id) JOIN cognition_revision_headers h ON h.revision_id=r.schema_revision_id JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id WHERE o.subject_id=$1 AND h.object_kind='cognitive_schema' AND r.schema_revision_id=$2 AND l.revoked_at IS NULL AND basis_kind IN ('memory_revision','cognitive_schema_revision','episode_revision','journal_revision')"
             }
             CognitiveRef::MemoryRevision(_) => return Ok((vec![center.clone()], 1)),
             _ => {
@@ -251,7 +251,7 @@ impl MemoryService {
                 ));
             }
         };
-        let live = "SELECT 'memory_revision'::text kind,current_revision_id::text value FROM memory_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal' UNION SELECT 'cognitive_schema_revision',current_revision_id::text FROM cognitive_schemas WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal' UNION SELECT 'episode_revision',current_revision_id::text FROM episode_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal' UNION SELECT 'journal_revision',current_revision_id::text FROM journal_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'";
+        let live = "SELECT object_kind||'_revision' AS kind,current_revision_id::text AS value FROM cognition_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'";
         let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new("WITH live AS (");
         query.push(live).push("),members AS (").push(members).push("),eligible AS(SELECT DISTINCT kind,value FROM members JOIN live USING(kind,value)) SELECT *,count(*) OVER() total FROM eligible ORDER BY kind,value LIMIT $3");
         let id = match center {

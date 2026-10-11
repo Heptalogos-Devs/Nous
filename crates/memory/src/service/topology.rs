@@ -112,35 +112,14 @@ impl MemoryService {
         subject: SubjectId,
         reference: &CognitiveRef,
     ) -> Result<()> {
-        let (revision_table, object_table, revision_column, object_column, id) = match reference {
-            CognitiveRef::MemoryRevision(id) => (
-                "memory_revisions",
-                "memory_objects",
-                "memory_revision_id",
-                "memory_id",
-                id.0,
-            ),
-            CognitiveRef::CognitiveSchemaRevision(id) => (
-                "cognitive_schema_revisions",
-                "cognitive_schemas",
-                "schema_revision_id",
-                "schema_id",
-                id.0,
-            ),
-            CognitiveRef::EpisodeRevision(id) => (
-                "episode_revisions",
-                "episode_objects",
-                "episode_revision_id",
-                "episode_id",
-                id.0,
-            ),
-            CognitiveRef::JournalRevision(id) => (
-                "journal_revisions",
-                "journal_objects",
-                "journal_revision_id",
-                "journal_id",
-                id.0,
-            ),
+        let (kind, id) = match reference {
+            CognitiveRef::MemoryRevision(_)
+            | CognitiveRef::CognitiveSchemaRevision(_)
+            | CognitiveRef::EpisodeRevision(_)
+            | CognitiveRef::JournalRevision(_) => {
+                let (kind, id, _) = CognitionKind::from_reference(reference)?;
+                (kind, id)
+            }
             CognitiveRef::Tag(id) => {
                 let active: Option<Uuid> = sqlx::query_scalar("SELECT tag_id FROM tags WHERE subject_id=$1 AND tag_id=$2 AND status='active' FOR SHARE")
                     .bind(subject.0).bind(id.0).fetch_optional(&mut **tx).await.map_err(db)?;
@@ -154,14 +133,10 @@ impl MemoryService {
             }
             _ => return Ok(()),
         };
-        let mut query =
-            sqlx::QueryBuilder::<sqlx::Postgres>::new("SELECT o.current_revision_id FROM ");
-        query.push(revision_table).push(" r JOIN ").push(object_table)
-            .push(" o USING(").push(object_column).push(") WHERE o.subject_id=")
-            .push_bind(subject.0).push(" AND r.").push(revision_column).push("=")
-            .push_bind(id).push(" AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' FOR SHARE OF o");
-        let current: Option<Uuid> = query
-            .build_query_scalar()
+        let current: Option<Uuid> = sqlx::query_scalar("SELECT current_revision_id FROM cognition_objects WHERE subject_id=$1 AND object_kind=$2 AND current_revision_id=$3 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal' FOR SHARE")
+            .bind(subject.0)
+            .bind(kind.as_str())
+            .bind(id)
             .fetch_optional(&mut **tx)
             .await
             .map_err(db)?;

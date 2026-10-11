@@ -8,8 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ContextOwner {
-    Memory,
-    OtherMemory,
+    Cognition,
     Material,
     Resource,
     Unsupported,
@@ -17,13 +16,14 @@ enum ContextOwner {
 
 fn context_owner(reference: &CognitiveRef) -> ContextOwner {
     match reference {
-        CognitiveRef::Memory(_) | CognitiveRef::MemoryRevision(_) => ContextOwner::Memory,
-        CognitiveRef::Episode(_)
+        CognitiveRef::Memory(_)
+        | CognitiveRef::MemoryRevision(_)
+        | CognitiveRef::Episode(_)
         | CognitiveRef::EpisodeRevision(_)
         | CognitiveRef::Journal(_)
         | CognitiveRef::JournalRevision(_)
         | CognitiveRef::CognitiveSchema(_)
-        | CognitiveRef::CognitiveSchemaRevision(_) => ContextOwner::OtherMemory,
+        | CognitiveRef::CognitiveSchemaRevision(_) => ContextOwner::Cognition,
         CognitiveRef::Artifact(_)
         | CognitiveRef::Occurrence(_)
         | CognitiveRef::SourceRegion(_)
@@ -87,8 +87,7 @@ impl ContextResolver for NousRuntime {
         let mut owner_degradation = HashMap::<String, Vec<Degradation>>::new();
         let mut general_degradation = Vec::new();
         for owner in [
-            ContextOwner::Memory,
-            ContextOwner::OtherMemory,
+            ContextOwner::Cognition,
             ContextOwner::Material,
             ContextOwner::Resource,
             ContextOwner::Unsupported,
@@ -98,38 +97,13 @@ impl ContextResolver for NousRuntime {
             };
             for batch in group.chunks(256) {
                 match owner {
-                    ContextOwner::Memory => {
+                    ContextOwner::Cognition => {
                         if let Some(memory) = &self.memory {
                             let (views, batch_degradation) = memory
                                 .context_contributions(
                                     context,
                                     batch,
                                     explicit_references,
-                                    batch.len(),
-                                    max_text_bytes,
-                                )
-                                .await?;
-                            insert_contributions(&mut by_reference, views);
-                            collect_degradation(
-                                &mut owner_degradation,
-                                &mut general_degradation,
-                                batch_degradation,
-                            );
-                        } else {
-                            for reference in batch {
-                                owner_degradation
-                                    .entry(reference.to_string())
-                                    .or_default()
-                                    .push(unavailable_source(reference));
-                            }
-                        }
-                    }
-                    ContextOwner::OtherMemory => {
-                        if let Some(memory) = &self.memory {
-                            let (views, batch_degradation) = memory
-                                .contextual_revision_contributions(
-                                    context,
-                                    batch,
                                     batch.len(),
                                     max_text_bytes,
                                 )

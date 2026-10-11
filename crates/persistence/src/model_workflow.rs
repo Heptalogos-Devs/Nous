@@ -44,13 +44,57 @@ pub struct WorkflowLease {
     pub token: Uuid,
 }
 
-pub struct WorkflowReservation {
+pub struct PendingWorkflow {
     pub snapshot: WorkflowSnapshot,
     pub proposal: Option<WorkflowPayload>,
-    pub outcome: Option<WorkflowPayload>,
-    pub lease: Option<WorkflowLease>,
-    pub busy: bool,
     pub execution_telemetry: Option<ExecutionTelemetry>,
+}
+
+pub struct CompletedWorkflow {
+    pub outcome: WorkflowPayload,
+    pub execution_telemetry: Option<ExecutionTelemetry>,
+}
+
+pub enum WorkflowRecord {
+    Pending(PendingWorkflow),
+    Completed(CompletedWorkflow),
+}
+
+pub enum WorkflowReservation {
+    Acquired {
+        pending: PendingWorkflow,
+        lease: WorkflowLease,
+    },
+    Busy(PendingWorkflow),
+    Completed(CompletedWorkflow),
+}
+
+fn workflow_record(row: &sqlx::postgres::PgRow) -> Result<WorkflowRecord> {
+    let execution_telemetry = row
+        .try_get::<Option<Json<ExecutionTelemetry>>, _>("execution_telemetry")
+        .map_err(db)?
+        .map(|value| value.0);
+    if let Some(outcome) = row
+        .try_get::<Option<Json<WorkflowPayload>>, _>("outcome")
+        .map_err(db)?
+    {
+        Ok(WorkflowRecord::Completed(CompletedWorkflow {
+            outcome: outcome.0,
+            execution_telemetry,
+        }))
+    } else {
+        Ok(WorkflowRecord::Pending(PendingWorkflow {
+            snapshot: row
+                .try_get::<Json<WorkflowSnapshot>, _>("snapshot")
+                .map_err(db)?
+                .0,
+            proposal: row
+                .try_get::<Option<Json<WorkflowPayload>>, _>("proposal")
+                .map_err(db)?
+                .map(|value| value.0),
+            execution_telemetry,
+        }))
+    }
 }
 
 fn validate_reservation_request(
@@ -315,7 +359,7 @@ impl AuthorityStore {
         owner: &str,
         key: &str,
         digest: &str,
-    ) -> Result<Option<WorkflowReservation>> {
+    ) -> Result<Option<WorkflowRecord>> {
         WorkflowOwner::new(owner)?;
         let row = sqlx::query("SELECT semantic_digest,snapshot,proposal,outcome,execution_telemetry FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3")
             .bind(subject.0).bind(owner).bind(key).fetch_optional(self.pool()).await.map_err(db)?;
@@ -329,26 +373,7 @@ impl AuthorityStore {
             .with_context("owner", owner)
             .with_context("operation_key", key));
         }
-        Ok(Some(WorkflowReservation {
-            snapshot: row
-                .try_get::<Json<WorkflowSnapshot>, _>("snapshot")
-                .map_err(db)?
-                .0,
-            proposal: row
-                .try_get::<Option<Json<WorkflowPayload>>, _>("proposal")
-                .map_err(db)?
-                .map(|v| v.0),
-            outcome: row
-                .try_get::<Option<Json<WorkflowPayload>>, _>("outcome")
-                .map_err(db)?
-                .map(|v| v.0),
-            execution_telemetry: row
-                .try_get::<Option<Json<ExecutionTelemetry>>, _>("execution_telemetry")
-                .map_err(db)?
-                .map(|v| v.0),
-            lease: None,
-            busy: false,
-        }))
+        Ok(Some(workflow_record(&row)?))
     }
 
     pub async fn purge_workflows_in(
@@ -484,10 +509,15 @@ WHERE wcr.work_context_id=affected.work_context_id
             maintenance_trigger,
         )
         .await?;
-        let mut snapshot = row
-            .try_get::<Json<WorkflowSnapshot>, _>("snapshot")
-            .map_err(db)?
-            .0;
+        let record = workflow_record(&row)?;
+        let mut pending = match record {
+            WorkflowRecord::Completed(completed) => {
+                tx.commit().await.map_err(db)?;
+                return Ok(WorkflowReservation::Completed(completed));
+            }
+            WorkflowRecord::Pending(pending) => pending,
+        };
+        let snapshot = &mut pending.snapshot;
         let stored_need = row
             .try_get::<Option<Uuid>, _>("maintenance_need_id")
             .map_err(db)?;
@@ -514,14 +544,6 @@ WHERE wcr.work_context_id=affected.work_context_id
                 .with_context("operation_key", key));
             }
         }
-        let proposal = row
-            .try_get::<Option<Json<WorkflowPayload>>, _>("proposal")
-            .map_err(db)?
-            .map(|v| v.0);
-        let outcome = row
-            .try_get::<Option<Json<WorkflowPayload>>, _>("outcome")
-            .map_err(db)?
-            .map(|v| v.0);
         let existing_claim_token = snapshot
             .maintenance_claim
             .as_ref()
@@ -529,43 +551,32 @@ WHERE wcr.work_context_id=affected.work_context_id
         let same_parent_claim = maintenance
             .map(|claim| existing_claim_token == Some(claim.lease_token))
             .unwrap_or(true);
-        let busy =
-            outcome.is_none() && same_parent_claim && row.try_get::<bool, _>("live").map_err(db)?;
-        let token = if outcome.is_none() && !busy {
-            Some(Uuid::now_v7())
-        } else {
-            None
-        };
-        if let Some(token) = token {
-            if let (Some(claim), Some(parent_until)) = (maintenance, parent_lease_until) {
-                snapshot
-                    .maintenance_claim
-                    .as_mut()
-                    .expect("maintenance row identity was checked")
-                    .lease_token = claim.lease_token;
-                sqlx::query("UPDATE model_workflow_operations SET snapshot=$5,lease_token=$4,lease_until=LEAST($6::timestamptz,clock_timestamp()+($7::double precision * interval '1 second')),updated_at=clock_timestamp() WHERE subject_id=$1 AND owner=$2 AND operation_key=$3")
+        if same_parent_claim && row.try_get::<bool, _>("live").map_err(db)? {
+            tx.commit().await.map_err(db)?;
+            return Ok(WorkflowReservation::Busy(pending));
+        }
+        let token = Uuid::now_v7();
+        if let (Some(claim), Some(parent_until)) = (maintenance, parent_lease_until) {
+            snapshot
+                .maintenance_claim
+                .as_mut()
+                .expect("maintenance row identity was checked")
+                .lease_token = claim.lease_token;
+            sqlx::query("UPDATE model_workflow_operations SET snapshot=$5,lease_token=$4,lease_until=LEAST($6::timestamptz,clock_timestamp()+($7::double precision * interval '1 second')),updated_at=clock_timestamp() WHERE subject_id=$1 AND owner=$2 AND operation_key=$3")
                     .bind(subject.0).bind(owner).bind(key).bind(token).bind(Json(&snapshot)).bind(parent_until).bind(lease_seconds as f64).execute(&mut *tx).await.map_err(db)?;
-            } else {
-                sqlx::query("UPDATE model_workflow_operations SET lease_token=$4,lease_until=clock_timestamp()+($5::double precision * interval '1 second'),updated_at=clock_timestamp() WHERE subject_id=$1 AND owner=$2 AND operation_key=$3")
+        } else {
+            sqlx::query("UPDATE model_workflow_operations SET lease_token=$4,lease_until=clock_timestamp()+($5::double precision * interval '1 second'),updated_at=clock_timestamp() WHERE subject_id=$1 AND owner=$2 AND operation_key=$3")
                     .bind(subject.0).bind(owner).bind(key).bind(token).bind(lease_seconds as f64).execute(&mut *tx).await.map_err(db)?;
-            }
         }
         tx.commit().await.map_err(db)?;
-        Ok(WorkflowReservation {
-            snapshot,
-            proposal,
-            outcome,
-            lease: token.map(|token| WorkflowLease {
+        Ok(WorkflowReservation::Acquired {
+            pending,
+            lease: WorkflowLease {
                 subject,
                 owner: owner_id,
                 operation_key: key.into(),
                 token,
-            }),
-            busy,
-            execution_telemetry: row
-                .try_get::<Option<Json<ExecutionTelemetry>>, _>("execution_telemetry")
-                .map_err(db)?
-                .map(|v| v.0),
+            },
         })
     }
 

@@ -5,7 +5,6 @@ import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { parse as parseDevalue, stringify as stringifyDevalue } from "devalue";
 import { lock } from "proper-lockfile";
 import writeAtomic from "write-file-atomic";
 import { z } from "zod";
@@ -31,13 +30,9 @@ const selectionSchema = z.strictObject({
 });
 export type Selection = z.infer<typeof selectionSchema>;
 
-const requestSchema = z.strictObject({
+const protoMessageSchema = z.strictObject({
   typeName: z.string(),
-  protoJson: z.unknown(),
-});
-const resultSchema = z.strictObject({
-  typeName: z.string(),
-  protoJson: z.unknown(),
+  protoJson: z.json(),
 });
 const safeErrorSchema = z.strictObject({
   transportCode: z.number().int().optional(),
@@ -57,17 +52,16 @@ const receiptHeader = {
   subjectId: z.string().optional(),
   operationId: z.string().min(1).max(128),
   requestDigest: z.string().regex(/^[0-9a-f]{64}$/),
-  request: requestSchema,
+  request: protoMessageSchema,
   createdAt: z.string().min(1).max(40),
   updatedAt: z.string().min(1).max(40),
 };
 export const receiptSchema = z.discriminatedUnion("status", [
   z.strictObject({ ...receiptHeader, status: z.literal("pending") }),
-  z.strictObject({ ...receiptHeader, status: z.literal("outcome_unknown") }),
   z.strictObject({
     ...receiptHeader,
     status: z.literal("complete"),
-    result: resultSchema,
+    result: protoMessageSchema,
   }),
   z.strictObject({
     ...receiptHeader,
@@ -151,11 +145,16 @@ export function cliState(
     if (!root) return emptySelection();
     try {
       return selectionSchema.parse(
-        parseDevalue(await readBytes(selectionPath())),
+        JSON.parse(await readBytes(selectionPath())),
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT")
         return emptySelection();
+      if (error instanceof SyntaxError || error instanceof z.ZodError)
+        throw new CliError(
+          "INVALID_ARGUMENT",
+          "Consumer selection is not valid current JSON state; select the Subject and context again",
+        );
       throw error;
     }
   };
@@ -217,7 +216,7 @@ export function cliState(
         const merged = { ...current };
         for (const name of changed)
           Object.assign(merged, { [name]: desired[name] });
-        await writeText(selectionPath(), stringifyDevalue(merged));
+        await writeText(selectionPath(), JSON.stringify(merged));
       });
     },
     receipt,

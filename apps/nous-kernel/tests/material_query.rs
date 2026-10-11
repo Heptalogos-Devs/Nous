@@ -147,13 +147,9 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
                     }
                     .matches_extent(time)))
     );
-    let (_, handle) =
-        test_support::retain_query_run(&runtime.cognition, execution, test_support::query_lease())
-            .unwrap();
     let result = test_support::finish_query_run(
         &runtime.cognition,
-        subject,
-        handle,
+        execution,
         Vec::new(),
         Vec::new(),
         nous_runtime::CognitiveContributors {

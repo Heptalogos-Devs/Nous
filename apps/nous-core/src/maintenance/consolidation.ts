@@ -36,6 +36,17 @@ export type ConsolidationActionResult = z.infer<
 function invalid(message: string): never {
   throw new ConnectError(message, Code.InvalidArgument);
 }
+function currentRevisionRef(value: {
+  header?: { currentRevisionRef?: { value: string } };
+}) {
+  const reference = value.header?.currentRevisionRef?.value;
+  if (!reference)
+    throw new ConnectError(
+      "Cognition mutation returned no current revision reference",
+      Code.Internal,
+    );
+  return reference;
+}
 function time(
   value: Extract<Action, { action: "create_memory" }>["content"]["validTime"],
 ) {
@@ -199,7 +210,10 @@ export async function executeConsolidation(
           result = {
             index,
             status: "committed",
-            resultRef: { kind: "memory_revision", value: value.revisionId },
+            resultRef: {
+              kind: "memory_revision",
+              value: currentRevisionRef(value),
+            },
           };
           break;
         }
@@ -223,7 +237,10 @@ export async function executeConsolidation(
           result = {
             index,
             status: "committed",
-            resultRef: { kind: "memory_revision", value: value.revisionId },
+            resultRef: {
+              kind: "memory_revision",
+              value: currentRevisionRef(value),
+            },
           };
           break;
         }
@@ -244,7 +261,7 @@ export async function executeConsolidation(
             status: "committed",
             resultRef: {
               kind: "cognitive_schema_revision",
-              value: value.currentRevisionId,
+              value: currentRevisionRef(value),
             },
           };
           break;
@@ -275,7 +292,7 @@ export async function executeConsolidation(
             status: "committed",
             resultRef: {
               kind: "cognitive_schema_revision",
-              value: value.currentRevisionId,
+              value: currentRevisionRef(value),
             },
           };
           break;

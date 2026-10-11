@@ -53,7 +53,8 @@ impl MemoryService {
                     }) => return Ok(MaintenanceScope::empty("obsolete")),
                     Err(error) => return Err(error),
                 };
-                if episode.object.current_revision_id != revision || !episode_eligible(&episode) {
+                if episode.header.current_revision_id() != revision.0 || !episode_eligible(&episode)
+                {
                     return Ok(MaintenanceScope::empty("obsolete"));
                 }
                 result.episodes.push(episode);
@@ -74,11 +75,11 @@ impl MemoryService {
                     }) => return Ok(MaintenanceScope::empty("obsolete")),
                     Err(error) => return Err(error),
                 };
-                if journal.object.current_revision_id != revision
-                    || journal.object.acceptance_state != AcceptanceState::Accepted
-                    || journal.object.integrity_state != IntegrityState::Valid
-                    || journal.object.suppression_state != SuppressionState::Normal
-                    || journal.object.purge_state != PurgeState::Normal
+                if journal.header.current_revision_id() != revision.0
+                    || journal.header.lifecycle.acceptance != AcceptanceState::Accepted
+                    || journal.header.lifecycle.integrity != IntegrityState::Valid
+                    || journal.header.lifecycle.suppression != SuppressionState::Normal
+                    || journal.header.lifecycle.purge != PurgeState::Normal
                 {
                     return Ok(MaintenanceScope::empty("obsolete"));
                 }
@@ -130,17 +131,17 @@ impl MemoryService {
                 }) => return Ok(MaintenanceScope::empty("obsolete")),
                 Err(error) => return Err(error),
             };
-            if source.object.current_revision_id != revision || !episode_eligible(&source) {
+            if source.header.current_revision_id() != revision.0 || !episode_eligible(&source) {
                 return Ok(MaintenanceScope::empty("obsolete"));
             }
             (
-                source.object.track_key.clone(),
+                source.header.details.track_key().to_owned(),
                 extent_start(&source.revision.experience_time),
                 None,
                 source.revision.parent_episode_revision_id.map(|id| id.0),
             )
         } else if scope_kind == "track" {
-            let late = sqlx::query("SELECT e.occurrence_id,e.observed_at FROM experience_items e WHERE e.subject_id=$1 AND e.recorded_seq<=$2 AND NOT EXISTS(SELECT 1 FROM episode_revision_members m JOIN episode_objects o ON o.current_revision_id=m.episode_revision_id WHERE o.subject_id=$1 AND o.track_key=$3 AND o.acceptance_state='accepted' AND m.ref_kind='occurrence' AND m.ref_value=e.occurrence_id::text) AND NOT EXISTS(SELECT 1 FROM episode_draft_members m JOIN episode_drafts d USING(draft_id) WHERE m.occurrence_id=e.occurrence_id AND d.state IN ('open','ready')) ORDER BY e.recorded_seq LIMIT 1")
+            let late = sqlx::query("SELECT e.occurrence_id,e.observed_at FROM experience_items e WHERE e.subject_id=$1 AND e.recorded_seq<=$2 AND NOT EXISTS(SELECT 1 FROM episode_revision_members m JOIN cognition_revision_headers h ON h.revision_id=m.episode_revision_id AND h.object_kind='episode' JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id WHERE o.subject_id=$1 AND o.track_key=$3 AND o.acceptance_state='accepted' AND m.ref_kind='occurrence' AND m.ref_value=e.occurrence_id::text) AND NOT EXISTS(SELECT 1 FROM episode_draft_members m JOIN episode_drafts d USING(draft_id) WHERE m.occurrence_id=e.occurrence_id AND d.state IN ('open','ready')) ORDER BY e.recorded_seq LIMIT 1")
                 .bind(subject.0).bind(trigger).bind(scope).fetch_optional(self.store.pool()).await.map_err(db)?;
             let Some(late) = late else {
                 return Ok(MaintenanceScope::empty("obsolete"));
@@ -163,7 +164,7 @@ impl MemoryService {
         };
         // The local partition contains overlapping Episodes and the immediate
         // neighbors on either side. Age relative to today's clock is irrelevant.
-        let ids: Vec<Uuid> = sqlx::query_scalar("WITH eligible AS (SELECT o.current_revision_id AS id,r.experience_time_start AS start_at,COALESCE(r.experience_time_end,r.experience_time_start) AS end_at FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND r.parent_episode_revision_id IS NOT DISTINCT FROM $3::uuid), neighborhood AS (SELECT id FROM eligible WHERE start_at<=$4 AND end_at>=$4 UNION SELECT id FROM (SELECT id FROM eligible WHERE end_at<$4 ORDER BY end_at DESC,id LIMIT 1) preceding UNION SELECT id FROM (SELECT id FROM eligible WHERE start_at>$4 ORDER BY start_at,id LIMIT 1) following) SELECT id FROM neighborhood LIMIT $5")
+        let ids: Vec<Uuid> = sqlx::query_scalar("WITH eligible AS (SELECT h.revision_id AS id,r.experience_time_start AS start_at,COALESCE(r.experience_time_end,r.experience_time_start) AS end_at FROM cognition_objects o JOIN cognition_revision_headers h ON h.subject_id=o.subject_id AND h.object_kind=o.object_kind AND h.object_id=o.object_id AND h.revision_id=o.current_revision_id JOIN episode_revisions r ON r.episode_revision_id=h.revision_id WHERE o.subject_id=$1 AND o.object_kind='episode' AND o.track_key=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND r.parent_episode_revision_id IS NOT DISTINCT FROM $3::uuid), neighborhood AS (SELECT id FROM eligible WHERE start_at<=$4 AND end_at>=$4 UNION SELECT id FROM (SELECT id FROM eligible WHERE end_at<$4 ORDER BY end_at DESC,id LIMIT 1) preceding UNION SELECT id FROM (SELECT id FROM eligible WHERE start_at>$4 ORDER BY start_at,id LIMIT 1) following) SELECT id FROM neighborhood LIMIT $5")
             .bind(subject.0).bind(&track).bind(parent).bind(anchor).bind(max_neighbors+1).fetch_all(self.store.pool()).await.map_err(db)?;
         if ids.len() as i64 > max_neighbors {
             let mut result = MaintenanceScope::empty("blocked");
@@ -180,7 +181,7 @@ impl MemoryService {
         result.episodes.sort_by_key(|episode| {
             (
                 extent_start(&episode.revision.experience_time),
-                episode.object.episode_id.0,
+                episode.header.episode_id().0,
             )
         });
         if let (Some(first), Some(last)) = (
@@ -256,9 +257,9 @@ impl MemoryService {
                 }) => return Ok(MaintenanceScope::empty("obsolete")),
                 Err(error) => return Err(error),
             };
-            if journal.object.purge_state != PurgeState::Normal
-                || journal.object.acceptance_state != AcceptanceState::Accepted
-                || journal.object.integrity_state == IntegrityState::Valid
+            if journal.header.lifecycle.purge != PurgeState::Normal
+                || journal.header.lifecycle.acceptance != AcceptanceState::Accepted
+                || journal.header.lifecycle.integrity == IntegrityState::Valid
             {
                 return Ok(MaintenanceScope::empty("obsolete"));
             }
@@ -270,12 +271,12 @@ impl MemoryService {
                     _ => None,
                 })
                 .collect();
-            let ids = sqlx::query_scalar("WITH RECURSIVE lineage(revision) AS (SELECT episode_revision_id FROM episode_revisions WHERE subject_id=$1 AND episode_revision_id::text=ANY($2::text[]) UNION SELECT r.episode_revision_id FROM episode_revisions r JOIN lineage l ON r.parent_revision_id=l.revision OR EXISTS(SELECT 1 FROM episode_revision_relations rel WHERE rel.from_revision_id=r.episode_revision_id AND rel.to_revision_id=l.revision AND rel.relation IN ('derived_from','split_from','merged_from')) WHERE r.subject_id=$1) SELECT o.current_revision_id FROM episode_objects o JOIN lineage l ON l.revision=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' ORDER BY o.created_at,o.episode_id LIMIT $3")
+            let ids = sqlx::query_scalar("WITH RECURSIVE lineage(revision) AS (SELECT revision_id FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind='episode' AND revision_id::text=ANY($2::text[]) UNION SELECT h.revision_id FROM cognition_revision_headers h JOIN lineage l ON h.parent_revision_id=l.revision OR EXISTS(SELECT 1 FROM episode_revision_relations rel WHERE rel.from_revision_id=h.revision_id AND rel.to_revision_id=l.revision AND rel.relation IN ('derived_from','split_from','merged_from')) WHERE h.subject_id=$1 AND h.object_kind='episode') SELECT o.current_revision_id FROM cognition_objects o JOIN lineage l ON l.revision=o.current_revision_id WHERE o.subject_id=$1 AND o.object_kind='episode' AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' ORDER BY o.created_at,o.object_id LIMIT $3")
                 .bind(subject.0).bind(sources).bind(max_count+1).fetch_all(self.store.pool()).await.map_err(db)?;
             result.journal = Some(journal);
             ids
         } else {
-            sqlx::query_scalar("SELECT o.current_revision_id FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND NOT EXISTS(SELECT 1 FROM journal_revision_sources s JOIN journal_objects j ON j.current_revision_id=s.journal_revision_id JOIN episode_revisions old ON old.episode_revision_id::text=s.ref_value WHERE j.subject_id=$1 AND j.acceptance_state='accepted' AND s.ref_kind='episode_revision' AND (old.episode_id=o.episode_id OR EXISTS(SELECT 1 FROM episode_revision_relations rel WHERE rel.from_revision_id=r.episode_revision_id AND rel.to_revision_id=old.episode_revision_id))) ORDER BY r.experience_time_start,o.created_at,o.episode_id LIMIT $3")
+            sqlx::query_scalar("SELECT h.revision_id FROM cognition_objects o JOIN cognition_revision_headers h ON h.subject_id=o.subject_id AND h.object_kind=o.object_kind AND h.object_id=o.object_id AND h.revision_id=o.current_revision_id JOIN episode_revisions r ON r.episode_revision_id=h.revision_id WHERE o.subject_id=$1 AND o.object_kind='episode' AND o.track_key=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND NOT EXISTS(SELECT 1 FROM journal_revision_sources s JOIN cognition_revision_headers jh ON jh.revision_id=s.journal_revision_id AND jh.object_kind='journal' JOIN cognition_objects j ON j.subject_id=jh.subject_id AND j.object_kind=jh.object_kind AND j.object_id=jh.object_id AND j.current_revision_id=jh.revision_id JOIN cognition_revision_headers old ON old.object_kind='episode' AND old.revision_id::text=s.ref_value WHERE j.subject_id=$1 AND j.acceptance_state='accepted' AND s.ref_kind='episode_revision' AND (old.object_id=o.object_id OR EXISTS(SELECT 1 FROM episode_revision_relations rel WHERE rel.from_revision_id=r.episode_revision_id AND rel.to_revision_id=old.revision_id))) ORDER BY r.experience_time_start,o.created_at,o.object_id LIMIT $3")
                 .bind(subject.0).bind(scope).bind(max_count).fetch_all(self.store.pool()).await.map_err(db)?
         };
         if ids.len() as i64 > max_count {
@@ -289,8 +290,8 @@ impl MemoryService {
             let episode = self
                 .episode_revision(subject, EpisodeRevisionId(id))
                 .await?;
-            if episode.revision.recorded_at + delay > now {
-                result.next_due = Some(episode.revision.recorded_at + delay);
+            if episode.revision.header.recorded_at + delay > now {
+                result.next_due = Some(episode.revision.header.recorded_at + delay);
                 if result.journal.is_some() {
                     result.status = "deferred".into();
                     result.problem = Some("journal_sources_settling".into());
@@ -402,10 +403,10 @@ fn scope_occurrences(episodes: &[EpisodeView]) -> Result<Vec<OccurrenceId>> {
 }
 
 fn episode_eligible(episode: &EpisodeView) -> bool {
-    episode.object.acceptance_state == AcceptanceState::Accepted
-        && episode.object.integrity_state == IntegrityState::Valid
-        && episode.object.suppression_state == SuppressionState::Normal
-        && episode.object.purge_state == PurgeState::Normal
+    episode.header.lifecycle.acceptance == AcceptanceState::Accepted
+        && episode.header.lifecycle.integrity == IntegrityState::Valid
+        && episode.header.lifecycle.suppression == SuppressionState::Normal
+        && episode.header.lifecycle.purge == PurgeState::Normal
 }
 
 fn extent_start(time: &TemporalExtent) -> Option<DateTime<Utc>> {

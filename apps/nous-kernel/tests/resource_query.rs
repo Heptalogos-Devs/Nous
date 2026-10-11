@@ -17,7 +17,6 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
     let owner = subject(&runtime).await;
-    let other = subject(&runtime).await;
     let resource = ResourceRef::new("resource:external").unwrap();
     let descriptor = nous_runtime::ResourceUpsert {
         resource_ref: resource.clone(),
@@ -46,12 +45,6 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
     request.projection.domains = vec![nous_core::ResultDomain::Resource];
     assert!(request.requests_resources());
     request.result_need.limit = 1;
-    let explicit = runtime.execute_query(request.clone(), None).await.unwrap();
-    let (pool, handle) =
-        test_support::retain_query_run(&runtime.cognition, explicit, test_support::query_lease())
-            .unwrap();
-    assert_eq!(pool.resource_actions.len(), 1);
-    runtime.cognition.cancel_query_run(owner, handle).unwrap();
     request.expression.constraints.current_authority = nous_core::CurrentAuthorityNeed::Required;
     for case in [
         "valid",
@@ -65,14 +58,8 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
         "drift",
     ] {
         let execution = runtime.execute_query(request.clone(), None).await.unwrap();
-        let (pool, handle) = test_support::retain_query_run(
-            &runtime.cognition,
-            execution,
-            test_support::query_lease(),
-        )
-        .unwrap();
-        assert_eq!(pool.resource_actions.len(), 1);
-        let action = &pool.resource_actions[0];
+        assert_eq!(execution.result.resource_actions.len(), 1);
+        let action = &execution.result.resource_actions[0];
         let record = ExternalResourceRecord {
             resource_ref: resource.clone(),
             reference: StableExternalRef {
@@ -135,22 +122,9 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
             shared: None,
             memory: Some(runtime.require_memory().unwrap()),
         };
-        assert!(
-            runtime
-                .cognition
-                .take_query_run(owner, handle, nous_runtime::QueryRunStage::Embedding)
-                .is_err()
-        );
-        assert!(
-            runtime
-                .cognition
-                .take_query_run(other, handle, nous_runtime::QueryRunStage::Finalize)
-                .is_err()
-        );
         let outcome = test_support::finish_query_run(
             &runtime.cognition,
-            owner,
-            handle,
+            execution,
             Vec::new(),
             vec![response],
             contributors(),
@@ -178,11 +152,5 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
         } else {
             assert!(outcome.is_err(), "must reject {case}");
         }
-        assert!(
-            runtime
-                .cognition
-                .take_query_run(owner, handle, nous_runtime::QueryRunStage::Finalize)
-                .is_err()
-        );
     }
 }

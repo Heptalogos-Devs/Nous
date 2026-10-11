@@ -85,7 +85,7 @@ impl CognitiveRuntimeService {
                         .await?;
                 }
             } else {
-                let prior_end: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT max(end_at) FROM (SELECT observed_end AS end_at FROM episode_drafts WHERE subject_id=$1 AND track_key=$2 AND state='ready' UNION ALL SELECT COALESCE(r.experience_time_end,r.experience_time_start) FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted') prior")
+                let prior_end: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT max(end_at) FROM (SELECT observed_end AS end_at FROM episode_drafts WHERE subject_id=$1 AND track_key=$2 AND state='ready' UNION ALL SELECT COALESCE(r.experience_time_end,r.experience_time_start) FROM cognition_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.object_kind='episode' AND o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted') prior")
                     .bind(subject.0).bind(track).fetch_one(&mut *tx).await.map_err(db)?;
                 late = prior_end.is_some_and(|end| at <= end);
             }

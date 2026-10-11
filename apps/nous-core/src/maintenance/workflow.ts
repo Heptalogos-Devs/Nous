@@ -8,7 +8,7 @@ import { consolidationSchema } from "../model/schemas/consolidation.js";
 import { maintenanceOperationId } from "./identity.js";
 import { authorityRejection } from "./rejection.js";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
-import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
+import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { z } from "zod";
 import {
   MaintenancePlanSchema,
@@ -19,6 +19,8 @@ import {
   type MaintenanceNeed,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { CognitionMutationRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/cognition_pb.js";
 import {
   GenerationFailure,
   failedExecutionTelemetry,
@@ -146,18 +148,11 @@ export async function runModelMaintenance(
           reserveModelCall,
         });
         proposed = built.proposal;
-        const mutationOperations =
-          proposed.action === "partition" ||
-          proposed.action === "journal" ||
-          proposed.action === "withdraw"
-            ? [operationId]
-            : [];
         await operation.checkpoint({
           proposal: workflowPayload(proposed),
           ...(built.executionTelemetry
             ? { executionTelemetry: built.executionTelemetry }
             : {}),
-          ...(mutationOperations.length ? { mutationOperations } : {}),
         });
       }
 
@@ -244,13 +239,17 @@ export async function runModelMaintenance(
         return outcome;
       } else if (proposed.action === "withdraw") {
         await operation.mutate(operationId, () =>
-          kernel.memory.withdrawJournal(
-            {
+          kernel.memory.mutateCognition(
+            create(CognitionMutationRequestSchema, {
               operationId,
               subjectId: need.subjectId,
-              journalId: proposed.journalId,
+              objectRef: create(CognitiveRefSchema, {
+                kind: "journal",
+                value: proposed.journalId,
+              }),
               expectedObjectEpoch: BigInt(proposed.epoch),
-            },
+              action: { case: "withdraw", value: {} },
+            }),
             options,
           ),
         );

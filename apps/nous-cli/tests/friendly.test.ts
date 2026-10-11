@@ -71,20 +71,26 @@ it("keeps canonical reference data and adds lexical refs only as display metadat
   );
   const bind = vi.fn();
   const cognition = create(MemorySchema, {
-    subjectId: id,
-    text: `Original ${id}`,
-    title: `memory:${id}`,
-    basis: [
-      {
-        basis: {
-          case: "evidence",
-          value: {
-            occurrenceId: id,
-            locator: { case: "sourceRegionId", value: id },
+    header: { subjectId: id },
+    details: { cognitiveRole: "declarative", accessibilityMode: "auto" },
+    revision: {
+      details: {
+        semanticRole: "test",
+        text: `Original ${id}`,
+        title: `memory:${id}`,
+        basis: [
+          {
+            basis: {
+              case: "evidence",
+              value: {
+                occurrenceId: id,
+                locator: { case: "sourceRegionId", value: id },
+              },
+            },
           },
-        },
+        ],
       },
-    ],
+    },
   });
   const input = {
     cognition,
@@ -111,23 +117,27 @@ it("keeps canonical reference data and adds lexical refs only as display metadat
   } as unknown as CliEnvironment);
   expect(result).toMatchObject({
     cognition: {
-      subjectId: id,
-      text: `Original ${id}`,
-      title: `memory:${id}`,
-      basis: [
-        {
-          evidence: {
-            occurrenceId: id,
-            sourceRegionId: id,
-            displayReferences: {
-              occurrenceId: "obs:fakoh-todud-rovor",
-              sourceRegionId: "src:vahol-gutij-nakur",
+      header: {
+        subjectId: id,
+        displayReferences: { subjectId: "sub:tujap-vibuz-gozod" },
+      },
+      revision: {
+        details: {
+          text: `Original ${id}`,
+          title: `memory:${id}`,
+          basis: [
+            {
+              evidence: {
+                occurrenceId: id,
+                sourceRegionId: id,
+                displayReferences: {
+                  occurrenceId: "obs:fakoh-todud-rovor",
+                  sourceRegionId: "src:vahol-gutij-nakur",
+                },
+              },
             },
-          },
+          ],
         },
-      ],
-      displayReferences: {
-        subjectId: "sub:tujap-vibuz-gozod",
       },
     },
     sources: [
@@ -143,8 +153,8 @@ it("keeps canonical reference data and adds lexical refs only as display metadat
   expect(addresses.mock.calls[0]![0].targets).toHaveLength(3);
   expect(bind).not.toHaveBeenCalled();
   expect(
-    cognition.basis[0]?.basis.case === "evidence" &&
-      cognition.basis[0].basis.value.occurrenceId,
+    cognition.revision?.details?.basis[0]?.basis.case === "evidence" &&
+      cognition.revision.details.basis[0].basis.value.occurrenceId,
   ).toBe(id);
   expect(renderText(result)).toContain("src:vahol-gutij-nakur");
   expect(renderText(result)).toContain("subjectId: sub:tujap-vibuz-gozod");

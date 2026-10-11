@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::service::cognition::CognitionSelection;
 use std::collections::HashMap;
 
 impl MemoryService {
@@ -17,18 +18,14 @@ impl MemoryService {
         subject: SubjectId,
         revision: CognitiveSchemaRevisionId,
     ) -> Result<SchemaView> {
-        let reference = CognitiveRef::CognitiveSchemaRevision(revision);
-        self.schemas_by_references(subject, std::slice::from_ref(&reference), None)
-            .await?
-            .remove(&reference)
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorOwner::Concept,
-                    ErrorCode::NotFound,
-                    "CognitiveSchema revision not found",
-                )
-            })
+        self.read_schema(
+            subject,
+            CognitiveRef::CognitiveSchemaRevision(revision),
+            None,
+        )
+        .await
     }
+
     pub(super) async fn schema_at(
         &self,
         subject: SubjectId,
@@ -39,81 +36,53 @@ impl MemoryService {
             CognitiveRef::CognitiveSchema(schema_id),
             CognitiveRef::CognitiveSchemaRevision,
         );
-        let view = self
-            .schemas_by_references(subject, std::slice::from_ref(&reference), None)
+        self.read_schema(subject, reference, Some(schema_id)).await
+    }
+
+    async fn read_schema(
+        &self,
+        subject: SubjectId,
+        reference: CognitiveRef,
+        expected_schema: Option<CognitiveSchemaId>,
+    ) -> Result<SchemaView> {
+        let context = self.current_read_context(subject).await?;
+        match self
+            .read_cognitions(&context, std::slice::from_ref(&reference))
             .await?
             .remove(&reference)
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorOwner::Concept,
-                    ErrorCode::NotFound,
-                    "CognitiveSchema not found",
-                )
-            })?;
-        if view.schema.schema_id != schema_id {
-            return Err(Error::new(
+        {
+            Some(CognitionView::CognitiveSchema(view))
+                if expected_schema.is_none_or(|id| view.header.object_id() == id.0) =>
+            {
+                Ok(view)
+            }
+            _ => Err(Error::new(
                 ErrorOwner::Concept,
                 ErrorCode::NotFound,
                 "CognitiveSchema not found",
-            ));
+            )),
         }
-        Ok(view)
     }
 
-    /// Load complete CognitiveSchema views for the requested current objects
-    /// and exact revisions in a single owner snapshot. Evidence links are
-    /// grouped by revision, and historical link visibility is taken from the
-    /// already-frozen Authority view when one is present.
-    pub async fn schemas_by_references(
+    pub(in crate::service) async fn schema_views_for_selections_in_tx(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
-        references: &[CognitiveRef],
+        selections: &[CognitionSelection],
         historical: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<HashMap<CognitiveRef, SchemaView>> {
-        if references.len() > 256 {
-            return Err(Error::new(
-                ErrorOwner::Concept,
-                ErrorCode::InvalidRequest,
-                "CognitiveSchema context batch exceeds 256 references",
-            ));
-        }
-        let schema_ids = references
+        let revision_ids = selections
             .iter()
-            .filter_map(|reference| match reference {
-                CognitiveRef::CognitiveSchema(id) => Some(id.0),
-                _ => None,
-            })
+            .map(|selection| selection.revision.revision_id())
             .collect::<Vec<_>>();
-        let requested_revisions = references
-            .iter()
-            .filter_map(|reference| match reference {
-                CognitiveRef::CognitiveSchemaRevision(id) => Some(id.0),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        if schema_ids.is_empty() && requested_revisions.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let mut tx = self.store.pool().begin().await.map_err(db)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        let rows = sqlx::query("SELECT s.schema_id,s.subject_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.purge_state,s.created_at,r.schema_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.structural_claim,r.applicability_description,r.aboutness,r.tags,r.boundary_definition,r.formation_kind,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id AND ((s.schema_id=ANY($2) AND r.schema_revision_id=s.current_revision_id) OR r.schema_revision_id=ANY($3)) WHERE s.subject_id=$1 ORDER BY s.schema_id,r.revision_no")
-            .bind(subject.0)
-            .bind(&schema_ids)
-            .bind(&requested_revisions)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db)?;
-        let revision_ids = rows
-            .iter()
-            .map(|row| row.try_get::<Uuid, _>("schema_revision_id").map_err(db))
-            .collect::<Result<Vec<_>>>()?;
         if revision_ids.is_empty() {
-            tx.commit().await.map_err(db)?;
             return Ok(HashMap::new());
         }
+        let rows = sqlx::query("SELECT schema_revision_id,revision_intent,title,structural_claim,applicability_description,aboutness,tags,boundary_definition,formation_kind,valid_time_kind,valid_time_start,valid_time_end FROM cognitive_schema_revisions WHERE schema_revision_id=ANY($1)")
+            .bind(&revision_ids)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(db)?;
         let historical_link_ids = historical
             .map(|snapshot| snapshot.schema_evidence_links.clone())
             .unwrap_or_default();
@@ -122,7 +91,7 @@ impl MemoryService {
             .bind(&revision_ids)
             .bind(historical.is_some())
             .bind(&historical_link_ids)
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut **tx)
             .await
             .map_err(db)?;
         let mut links = HashMap::<Uuid, Vec<SchemaEvidenceLink>>::new();
@@ -134,29 +103,23 @@ impl MemoryService {
                 .or_default()
                 .push(decode_schema_link(row, revision)?);
         }
-        tx.commit().await.map_err(db)?;
-
-        let mut by_schema = HashMap::<CognitiveSchemaId, SchemaView>::new();
-        let mut by_revision = HashMap::<CognitiveSchemaRevisionId, SchemaView>::new();
+        let selected = selections
+            .iter()
+            .map(|selection| (selection.revision.revision_id(), selection))
+            .collect::<HashMap<_, _>>();
+        let mut views = HashMap::with_capacity(rows.len());
         for row in rows {
-            let schema_id = CognitiveSchemaId(row.try_get("schema_id").map_err(db)?);
-            let revision_id =
-                CognitiveSchemaRevisionId(row.try_get("schema_revision_id").map_err(db)?);
-            let current_revision_id =
-                CognitiveSchemaRevisionId(row.try_get("current_revision_id").map_err(db)?);
+            let revision_id: Uuid = row.try_get("schema_revision_id").map_err(db)?;
+            let Some(selection) = selected.get(&revision_id) else {
+                continue;
+            };
             let revision_intent = row
                 .try_get::<Option<String>, _>("revision_intent")
                 .map_err(db)?
                 .map(|value| parse_enum(ErrorOwner::Concept, value, "schema revision intent"))
                 .transpose()?;
             let revision = CognitiveSchemaRevision {
-                schema_revision_id: revision_id,
-                schema_id,
-                revision_no: row.try_get("revision_no").map_err(db)?,
-                parent_revision_id: row
-                    .try_get::<Option<Uuid>, _>("parent_revision_id")
-                    .map_err(db)?
-                    .map(CognitiveSchemaRevisionId),
+                header: selection.revision.clone(),
                 revision_intent,
                 title: row.try_get("title").map_err(db)?,
                 structural_claim: row.try_get("structural_claim").map_err(db)?,
@@ -187,58 +150,18 @@ impl MemoryService {
                     row.try_get("formation_kind").map_err(db)?,
                     "schema formation kind",
                 )?,
-                formed_at: row.try_get("formed_at").map_err(db)?,
-                recorded_at: row.try_get("recorded_at").map_err(db)?,
-                producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
             };
-            let view = SchemaView {
-                schema: CognitiveSchema {
-                    schema_id,
-                    subject_id: subject,
-                    current_revision_id,
-                    object_epoch: row.try_get("object_epoch").map_err(db)?,
-                    acceptance_state: parse_enum(
-                        ErrorOwner::Concept,
-                        row.try_get("acceptance_state").map_err(db)?,
-                        "schema acceptance state",
-                    )?,
-                    integrity_state: parse_enum(
-                        ErrorOwner::Concept,
-                        row.try_get("integrity_state").map_err(db)?,
-                        "schema integrity state",
-                    )?,
-                    suppression_state: parse_enum(
-                        ErrorOwner::Concept,
-                        row.try_get("suppression_state").map_err(db)?,
-                        "schema suppression state",
-                    )?,
-                    purge_state: parse_enum(
-                        ErrorOwner::Concept,
-                        row.try_get("purge_state").map_err(db)?,
-                        "schema purge state",
-                    )?,
-                    created_at: row.try_get("created_at").map_err(db)?,
+            let reference = selection.revision.revision_ref.clone();
+            views.insert(
+                reference,
+                SchemaView {
+                    header: selection.header.clone(),
+                    revision,
+                    evidence_links: links.remove(&revision_id).unwrap_or_default(),
                 },
-                revision,
-                evidence_links: links.remove(&revision_id.0).unwrap_or_default(),
-            };
-            if view.schema.current_revision_id == revision_id {
-                by_schema.insert(schema_id, view.clone());
-            }
-            by_revision.insert(revision_id, view);
+            );
         }
-        let mut result = HashMap::new();
-        for reference in references {
-            let view = match reference {
-                CognitiveRef::CognitiveSchema(id) => by_schema.get(id).cloned(),
-                CognitiveRef::CognitiveSchemaRevision(id) => by_revision.get(id).cloned(),
-                _ => None,
-            };
-            if let Some(view) = view {
-                result.insert(reference.clone(), view);
-            }
-        }
-        Ok(result)
+        Ok(views)
     }
 
     pub(crate) async fn schema_links(

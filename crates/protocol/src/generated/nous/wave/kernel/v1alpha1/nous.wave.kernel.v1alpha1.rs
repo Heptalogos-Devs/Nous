@@ -548,21 +548,12 @@ pub struct QueryHostPlan {
     #[prost(uint32, tag="4")]
     pub rerank_candidate_limit: u32,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct QueryRunHandle {
-    #[prost(string, tag="1")]
-    pub query_run_id: ::prost::alloc::string::String,
-    #[prost(uint64, tag="2")]
-    pub revision: u64,
-}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryRunStart {
     #[prost(message, optional, tag="1")]
     pub query: ::core::option::Option<super::super::v1alpha1::QueryRequest>,
     #[prost(message, optional, tag="2")]
     pub host: ::core::option::Option<QueryHostPlan>,
-    #[prost(uint32, tag="3")]
-    pub lease_seconds: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryEmbeddingResult {
@@ -626,48 +617,26 @@ pub struct QueryFinalizeResult {
     pub resources: ::prost::alloc::vec::Vec<ExternalResourceResult>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueryRunResume {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag="2")]
-    pub handle: ::core::option::Option<QueryRunHandle>,
-    #[prost(oneof="query_run_resume::Outcome", tags="3, 4, 5")]
-    pub outcome: ::core::option::Option<query_run_resume::Outcome>,
-}
-/// Nested message and enum types in `QueryRunResume`.
-pub mod query_run_resume {
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum Outcome {
-        #[prost(message, tag="3")]
-        Embedding(super::QueryEmbeddingResult),
-        #[prost(message, tag="4")]
-        Concept(super::QueryConceptResult),
-        #[prost(message, tag="5")]
-        Finalize(super::QueryFinalizeResult),
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct QueryRunCancel {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag="2")]
-    pub handle: ::core::option::Option<QueryRunHandle>,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryRunRequest {
-    #[prost(oneof="query_run_request::Command", tags="1, 2, 3")]
-    pub command: ::core::option::Option<query_run_request::Command>,
+    #[prost(oneof="query_run_request::Frame", tags="1, 2, 3, 4, 5, 6")]
+    pub frame: ::core::option::Option<query_run_request::Frame>,
 }
 /// Nested message and enum types in `QueryRunRequest`.
 pub mod query_run_request {
     #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum Command {
+    pub enum Frame {
         #[prost(message, tag="1")]
         Start(super::QueryRunStart),
         #[prost(message, tag="2")]
-        Resume(super::QueryRunResume),
+        Embedding(super::QueryEmbeddingResult),
         #[prost(message, tag="3")]
-        Cancel(super::QueryRunCancel),
+        Concept(super::QueryConceptResult),
+        #[prost(message, tag="4")]
+        Finalize(super::QueryFinalizeResult),
+        #[prost(message, tag="5")]
+        EmbeddingNeeds(super::EmbeddingNeedsRequest),
+        #[prost(message, tag="6")]
+        CommitEmbedding(super::CommitEmbeddingRequest),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -707,25 +676,25 @@ pub struct QueryFinalizeWork {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryRunUpdate {
-    #[prost(message, optional, tag="1")]
-    pub handle: ::core::option::Option<QueryRunHandle>,
-    #[prost(bool, tag="6")]
-    pub cancelled: bool,
-    #[prost(oneof="query_run_update::Next", tags="2, 3, 4, 5")]
-    pub next: ::core::option::Option<query_run_update::Next>,
+    #[prost(oneof="query_run_update::Frame", tags="1, 2, 3, 4, 5, 6")]
+    pub frame: ::core::option::Option<query_run_update::Frame>,
 }
 /// Nested message and enum types in `QueryRunUpdate`.
 pub mod query_run_update {
     #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum Next {
-        #[prost(message, tag="2")]
+    pub enum Frame {
+        #[prost(message, tag="1")]
         Embedding(super::QueryEmbeddingWork),
-        #[prost(message, tag="3")]
+        #[prost(message, tag="2")]
         Concept(super::QueryConceptWork),
-        #[prost(message, tag="4")]
+        #[prost(message, tag="3")]
         Finalize(super::QueryFinalizeWork),
-        #[prost(message, tag="5")]
+        #[prost(message, tag="4")]
         Complete(super::super::super::v1alpha1::QueryResponse),
+        #[prost(message, tag="5")]
+        EmbeddingNeeds(super::EmbeddingNeedsResponse),
+        #[prost(message, tag="6")]
+        EmbeddingCommitted(()),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -764,8 +733,6 @@ pub struct EmbeddingNeedsRequest {
     #[prost(uint32, tag="2")]
     pub limit: u32,
     #[prost(message, optional, tag="3")]
-    pub query_run: ::core::option::Option<QueryRunHandle>,
-    #[prost(message, optional, tag="4")]
     pub cursor: ::core::option::Option<EmbeddingCursor>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -794,8 +761,6 @@ pub struct CommitEmbeddingRequest {
     pub binding_references: ::prost::alloc::vec::Vec<super::super::v1alpha1::CognitiveRef>,
     #[prost(message, optional, tag="3")]
     pub material: ::core::option::Option<QueryEmbedding>,
-    #[prost(message, optional, tag="4")]
-    pub query_run: ::core::option::Option<QueryRunHandle>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitInterpretationRequest {
@@ -848,19 +813,44 @@ pub struct ReserveWorkflowRequest {
     pub snapshot: ::core::option::Option<WorkflowSnapshot>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct WorkflowReservation {
-    #[prost(bool, tag="5")]
-    pub busy: bool,
-    #[prost(message, optional, tag="7")]
+pub struct PendingWorkflow {
+    #[prost(message, optional, tag="1")]
     pub snapshot: ::core::option::Option<WorkflowSnapshot>,
-    #[prost(message, optional, tag="8")]
+    #[prost(message, optional, tag="2")]
     pub proposal: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="9")]
-    pub outcome: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="10")]
+    #[prost(message, optional, tag="3")]
     pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
-    #[prost(message, optional, tag="11")]
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CompletedWorkflow {
+    #[prost(message, optional, tag="1")]
+    pub outcome: ::core::option::Option<WorkflowPayload>,
+    #[prost(message, optional, tag="2")]
+    pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AcquiredWorkflow {
+    #[prost(message, optional, tag="1")]
+    pub pending: ::core::option::Option<PendingWorkflow>,
+    #[prost(message, optional, tag="2")]
     pub lease: ::core::option::Option<WorkflowLease>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WorkflowReservation {
+    #[prost(oneof="workflow_reservation::State", tags="1, 2, 3")]
+    pub state: ::core::option::Option<workflow_reservation::State>,
+}
+/// Nested message and enum types in `WorkflowReservation`.
+pub mod workflow_reservation {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum State {
+        #[prost(message, tag="1")]
+        Acquired(super::AcquiredWorkflow),
+        #[prost(message, tag="2")]
+        Busy(super::PendingWorkflow),
+        #[prost(message, tag="3")]
+        Completed(super::CompletedWorkflow),
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SaveWorkflowRequest {
@@ -914,16 +904,18 @@ pub struct FindWorkflowRequest {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FoundWorkflow {
-    #[prost(bool, tag="1")]
-    pub found: bool,
-    #[prost(message, optional, tag="6")]
-    pub snapshot: ::core::option::Option<WorkflowSnapshot>,
-    #[prost(message, optional, tag="7")]
-    pub proposal: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="8")]
-    pub outcome: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="9")]
-    pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
+    #[prost(oneof="found_workflow::State", tags="1, 2")]
+    pub state: ::core::option::Option<found_workflow::State>,
+}
+/// Nested message and enum types in `FoundWorkflow`.
+pub mod found_workflow {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum State {
+        #[prost(message, tag="1")]
+        Pending(super::PendingWorkflow),
+        #[prost(message, tag="2")]
+        Completed(super::CompletedWorkflow),
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

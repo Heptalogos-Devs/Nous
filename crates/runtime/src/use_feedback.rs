@@ -325,23 +325,11 @@ async fn validate_use_target_in(
     subject: SubjectId,
     reference: &CognitiveRef,
 ) -> Result<()> {
-    let (query, id) = match reference {
-        CognitiveRef::MemoryRevision(id) => (
-            "SELECT o.purge_state FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o",
-            id.0,
-        ),
-        CognitiveRef::CognitiveSchemaRevision(id) => (
-            "SELECT o.purge_state FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o",
-            id.0,
-        ),
-        CognitiveRef::EpisodeRevision(id) => (
-            "SELECT o.purge_state FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o",
-            id.0,
-        ),
-        CognitiveRef::JournalRevision(id) => (
-            "SELECT o.purge_state FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o",
-            id.0,
-        ),
+    let (kind, id) = match reference {
+        CognitiveRef::MemoryRevision(id) => ("memory", id.0),
+        CognitiveRef::CognitiveSchemaRevision(id) => ("cognitive_schema", id.0),
+        CognitiveRef::EpisodeRevision(id) => ("episode", id.0),
+        CognitiveRef::JournalRevision(id) => ("journal", id.0),
         _ => {
             return Err(Error::new(
                 nous_core::ErrorOwner::Runtime,
@@ -350,8 +338,9 @@ async fn validate_use_target_in(
             ));
         }
     };
-    let state: Option<String> = sqlx::query_scalar(query)
+    let state: Option<String> = sqlx::query_scalar("SELECT o.purge_state FROM cognition_revision_headers h JOIN cognition_objects o USING(subject_id,object_kind,object_id) WHERE h.subject_id=$1 AND h.object_kind=$2 AND h.revision_id=$3 FOR SHARE OF o")
         .bind(subject.0)
+        .bind(kind)
         .bind(id)
         .fetch_optional(&mut **tx)
         .await

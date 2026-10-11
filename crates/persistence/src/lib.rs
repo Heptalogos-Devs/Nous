@@ -13,7 +13,8 @@ mod read_stamp;
 pub use read_stamp::AuthorityReadStamp;
 mod model_workflow;
 pub use model_workflow::{
-    WORKFLOW_VALUE_MAX_BYTES, WorkflowLease, WorkflowOwner, WorkflowReservation,
+    CompletedWorkflow, PendingWorkflow, WORKFLOW_VALUE_MAX_BYTES, WorkflowLease, WorkflowOwner,
+    WorkflowRecord, WorkflowReservation,
 };
 mod episode_text;
 pub use episode_text::EpisodeTextBudget;

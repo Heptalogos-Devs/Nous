@@ -65,7 +65,7 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let source=sqlx::query("SELECT current_revision_id,object_epoch,acceptance_state,purge_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
+        let source=sqlx::query("SELECT current_revision_id,object_epoch,acceptance_state,purge_state FROM cognition_objects WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
         if source
             .try_get::<String, _>("acceptance_state")
             .map_err(db)?
@@ -113,7 +113,7 @@ impl MemoryService {
             ids.push(child_id);
             revisions.push(child_revision);
         }
-        sqlx::query("UPDATE cognitive_schemas SET acceptance_state='withdrawn',object_epoch=object_epoch+1 WHERE subject_id=$1 AND schema_id=$2").bind(subject.0).bind(schema_id.0).execute(&mut **mutation.tx()).await.map_err(db)?;
+        sqlx::query("UPDATE cognition_objects SET acceptance_state='withdrawn',object_epoch=object_epoch+1 WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2").bind(subject.0).bind(schema_id.0).execute(&mut **mutation.tx()).await.map_err(db)?;
         let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
         for child in &ids {
             self.enqueue_concept_in(
@@ -245,7 +245,7 @@ impl MemoryService {
         sorted.sort_by_key(|(_, id)| *id);
         let mut source_revisions = Vec::with_capacity(sorted.len());
         for (index, id) in sorted {
-            let row=sqlx::query("SELECT object_epoch,current_revision_id,acceptance_state,purge_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(id.0).fetch_one(&mut **mutation.tx()).await.map_err(db)?;
+            let row=sqlx::query("SELECT object_epoch,current_revision_id,acceptance_state,purge_state FROM cognition_objects WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2 FOR UPDATE").bind(subject.0).bind(id.0).fetch_one(&mut **mutation.tx()).await.map_err(db)?;
             if row.try_get::<String, _>("acceptance_state").map_err(db)? != "accepted" {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Concept,
@@ -311,7 +311,7 @@ impl MemoryService {
             )
             .await?;
         for (id, source_revision) in source_revisions {
-            sqlx::query("UPDATE cognitive_schemas SET acceptance_state='withdrawn',object_epoch=object_epoch+1 WHERE subject_id=$1 AND schema_id=$2").bind(subject.0).bind(id.0).execute(&mut **mutation.tx()).await.map_err(db)?;
+            sqlx::query("UPDATE cognition_objects SET acceptance_state='withdrawn',object_epoch=object_epoch+1 WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2").bind(subject.0).bind(id.0).execute(&mut **mutation.tx()).await.map_err(db)?;
             sqlx::query("INSERT INTO cognitive_schema_lineage(from_revision_id,to_revision_id,relation) VALUES($1,$2,'schema_merged_from')").bind(new_revision.0).bind(source_revision.0).execute(&mut **mutation.tx()).await.map_err(db)?;
         }
         let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;

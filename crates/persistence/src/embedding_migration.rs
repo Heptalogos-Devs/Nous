@@ -75,14 +75,8 @@ WITH changes(event_at) AS (
     UNION SELECT created_at FROM source_regions WHERE subject_id=$1
     UNION SELECT created_at FROM derived_representations WHERE subject_id=$1
     UNION SELECT created_at FROM derived_regions WHERE subject_id=$1
-    UNION SELECT created_at FROM memory_objects WHERE subject_id=$1
-    UNION SELECT recorded_at FROM memory_revisions WHERE subject_id=$1
-    UNION SELECT created_at FROM cognitive_schemas WHERE subject_id=$1
-    UNION SELECT r.recorded_at FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1
-    UNION SELECT created_at FROM episode_objects WHERE subject_id=$1
-    UNION SELECT recorded_at FROM episode_revisions WHERE subject_id=$1
-    UNION SELECT created_at FROM journal_objects WHERE subject_id=$1
-    UNION SELECT recorded_at FROM journal_revisions WHERE subject_id=$1
+    UNION SELECT created_at FROM cognition_objects WHERE subject_id=$1
+    UNION SELECT recorded_at FROM cognition_revision_headers WHERE subject_id=$1
     UNION SELECT created_at FROM tags WHERE subject_id=$1
     UNION SELECT r.created_at FROM tag_revisions r JOIN tags t USING(tag_id) WHERE t.subject_id=$1
     UNION SELECT recorded_at FROM authority_object_states WHERE subject_id=$1

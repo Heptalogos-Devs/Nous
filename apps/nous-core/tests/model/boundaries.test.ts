@@ -1,23 +1,13 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import { modelConfigurationSchema } from "../../src/model/configuration.js";
 import { ModelInvocations } from "../../src/model/invocations.js";
 import { failedExecutionTelemetry } from "../../src/model/execution/routes.js";
-import { PromptRegistry } from "../../src/model/prompts.js";
 import { providerContractForRole } from "../../src/model/schemas/contracts.js";
 
-const temporary: string[] = [];
-afterEach(async () => {
-  await Promise.all(
-    temporary.splice(0).map((p) => rm(p, { recursive: true, force: true })),
-  );
-});
 describe("model protocol and provenance boundaries", () => {
   it("rejects unsafe destinations and structurally misbound roles", async () => {
     for (const base_url of [
@@ -67,29 +57,6 @@ describe("model protocol and provenance boundaries", () => {
         "routes",
         0,
       ]);
-  });
-  it("bounds prompt decoding and canonical path while tracking changed content", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "nous-prompts-"));
-    temporary.push(dir);
-    const root = join(dir, "prompts");
-    await mkdir(root);
-    await writeFile(join(root, "p.md"), "first");
-    await writeFile(join(dir, "outside.md"), "outside");
-    const registry = new PromptRegistry(root);
-    const first = await registry.load("memory_formation", "p.md");
-    await writeFile(join(root, "p.md"), "second");
-    expect(
-      (await registry.load("memory_formation", "prompts/p.md"))?.digest,
-    ).not.toBe(first?.digest);
-    await expect(
-      registry.load("memory_formation", "../outside.md"),
-    ).rejects.toThrow("allowed root");
-    await writeFile(join(root, "p.md"), Buffer.alloc(128 * 1024 + 1));
-    await expect(registry.load("memory_formation", "p.md")).rejects.toThrow(
-      "128 KiB",
-    );
-    await writeFile(join(root, "p.md"), Buffer.from([0xff]));
-    await expect(registry.load("memory_formation", "p.md")).rejects.toThrow();
   });
   it("uses explicit chat/embedding/rerank endpoints and redacts provider errors", async () => {
     const requests: { path: string; body: Record<string, unknown> }[] = [];

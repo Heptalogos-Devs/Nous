@@ -262,6 +262,53 @@ impl MaterialService {
                 "Material context batch exceeds bounds",
             ));
         }
+        let mut payloads = self.payloads(subject, references, view).await?;
+        let mut remaining = max_bytes;
+        let mut output = HashMap::new();
+        for reference in references {
+            if remaining == 0 {
+                break;
+            }
+            let Some(payload) = payloads.remove(reference) else {
+                continue;
+            };
+            let material = self
+                .materialize_payload(
+                    MaterializeRequest {
+                        reference: reference.clone(),
+                        byte_range: None,
+                        max_bytes: remaining,
+                        resource_handle: None,
+                        resource: None,
+                    },
+                    payload,
+                )
+                .await?;
+            remaining = remaining.saturating_sub(material.bytes.len() as u64);
+            output.insert(reference.clone(), material);
+        }
+        Ok(output)
+    }
+
+    async fn payload(&self, subject: SubjectId, reference: &CognitiveRef) -> Result<Payload> {
+        self.payloads(subject, std::slice::from_ref(reference), None)
+            .await?
+            .remove(reference)
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorOwner::Material,
+                    ErrorCode::Unavailable,
+                    "reference requires its semantic owner or Host materializer",
+                )
+            })
+    }
+
+    async fn payloads(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<HashMap<CognitiveRef, Payload>> {
         let mut kinds = Vec::with_capacity(references.len());
         let mut ids = Vec::with_capacity(references.len());
         let mut supported_references = Vec::with_capacity(references.len());
@@ -308,14 +355,7 @@ impl MaterialService {
         tx.commit().await.map_err(db)?;
 
         let mut payloads = HashMap::new();
-        for (index, row) in rows.into_iter().enumerate() {
-            let reference = supported_references.get(index).cloned().ok_or_else(|| {
-                Error::new(
-                    ErrorOwner::Material,
-                    ErrorCode::InternalFailure,
-                    "Material batch row identity is missing",
-                )
-            })?;
+        for (reference, row) in supported_references.into_iter().zip(rows) {
             let kind: i32 = row.try_get("kind").map_err(db)?;
             let mut provenance = vec![reference.clone()];
             let mut selection = None;
@@ -371,13 +411,22 @@ impl MaterialService {
                 else {
                     continue;
                 };
-                for root in row
+                let roots = row
                     .try_get::<Option<Vec<Uuid>>, _>("source_region_ids")
                     .map_err(db)?
-                    .unwrap_or_default()
-                {
-                    provenance.push(CognitiveRef::SourceRegion(SourceRegionId(root)));
+                    .unwrap_or_default();
+                if roots.is_empty() {
+                    return Err(Error::new(
+                        ErrorOwner::Material,
+                        ErrorCode::InvalidRequest,
+                        "derived representation has no source roots",
+                    ));
                 }
+                provenance.extend(
+                    roots
+                        .into_iter()
+                        .map(|id| CognitiveRef::SourceRegion(SourceRegionId(id))),
+                );
                 if let Some(id) = row.try_get::<Option<Uuid>, _>("artifact_id").map_err(db)? {
                     provenance.push(CognitiveRef::Artifact(ArtifactId(id)));
                 }
@@ -390,11 +439,10 @@ impl MaterialService {
                     "text/plain; charset=utf-8".to_owned(),
                     text.len() as u64,
                 )
-            } else if let Some(id) = artifact_id {
+            } else if artifact_id.is_some() {
                 let hash: String = row.try_get("content_hash").map_err(db)?;
                 let bytes: i64 = row.try_get("byte_length").map_err(db)?;
                 let media: String = row.try_get("media_type").map_err(db)?;
-                let _ = id;
                 (Some(hash), media, bytes as u64)
             } else {
                 continue;
@@ -421,167 +469,7 @@ impl MaterialService {
             payloads.insert(reference, payload);
         }
 
-        let mut remaining = max_bytes;
-        let mut output = HashMap::new();
-        for reference in references {
-            if remaining == 0 {
-                break;
-            }
-            let Some(payload) = payloads.remove(reference) else {
-                continue;
-            };
-            let material = self
-                .materialize_payload(
-                    MaterializeRequest {
-                        reference: reference.clone(),
-                        byte_range: None,
-                        max_bytes: remaining,
-                        resource_handle: None,
-                        resource: None,
-                    },
-                    payload,
-                )
-                .await?;
-            remaining = remaining.saturating_sub(material.bytes.len() as u64);
-            output.insert(reference.clone(), material);
-        }
-        Ok(output)
-    }
-
-    async fn payload(&self, subject: SubjectId, reference: &CognitiveRef) -> Result<Payload> {
-        let mut provenance = vec![reference.clone()];
-        let mut selection = None;
-        let mut selected = None;
-        let mut reference = reference.clone();
-        if let CognitiveRef::Occurrence(id) = reference {
-            let artifact: Option<Uuid> = sqlx::query_scalar("SELECT artifact_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2").bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-            reference = CognitiveRef::Artifact(ArtifactId(artifact.ok_or_else(|| {
-                Error::new(
-                    nous_core::ErrorOwner::Material,
-                    nous_core::ErrorCode::Unavailable,
-                    "external occurrence requires its Host resolver",
-                )
-            })?));
-            provenance.push(reference.clone());
-        }
-        if let CognitiveRef::SourceRegion(id) = reference {
-            let row = sqlx::query("SELECT artifact_id,coordinate_kind,coordinate FROM source_regions WHERE subject_id=$1 AND source_region_id=$2").bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-            let coordinate: serde_json::Value = row.try_get("coordinate").map_err(db)?;
-            selected = coordinate_range(
-                &row.try_get::<String, _>("coordinate_kind").map_err(db)?,
-                &coordinate,
-            )?;
-            selection = Some(coordinate);
-            reference = CognitiveRef::Artifact(ArtifactId(row.try_get("artifact_id").map_err(db)?));
-            provenance.push(reference.clone());
-        }
-        if let CognitiveRef::DerivedRegion(id) = reference {
-            let row = sqlx::query("SELECT derived_representation_id,coordinate_kind,coordinate FROM derived_regions WHERE subject_id=$1 AND derived_region_id=$2").bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-            let coordinate: serde_json::Value = row.try_get("coordinate").map_err(db)?;
-            selected = coordinate_range(
-                &row.try_get::<String, _>("coordinate_kind").map_err(db)?,
-                &coordinate,
-            )?;
-            selection = Some(coordinate);
-            reference = CognitiveRef::DerivedRepresentation(DerivedRepresentationId(
-                row.try_get("derived_representation_id").map_err(db)?,
-            ));
-            provenance.push(reference.clone());
-        }
-        let mut payload = match reference {
-            CognitiveRef::Artifact(id) => {
-                let artifact = self.artifact(subject, id).await?;
-                Payload {
-                    text: None,
-                    hash: Some(artifact.content_hash),
-                    media_type: artifact.media_type,
-                    length: artifact.byte_length,
-                    selected: None,
-                    provenance,
-                    producer: None,
-                    selection,
-                }
-            }
-            CognitiveRef::DerivedRepresentation(id) => {
-                self.derived_payload(subject, id, provenance, selection)
-                    .await?
-            }
-            _ => {
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Material,
-                    nous_core::ErrorCode::Unavailable,
-                    "reference needs its semantic owner or Host materializer",
-                ));
-            }
-        };
-        if let Some(range) = selected {
-            if range.end < range.start || range.end > payload.length {
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Material,
-                    nous_core::ErrorCode::InvalidRequest,
-                    "source coordinate is outside payload",
-                ));
-            }
-            payload.selected = Some(range);
-        }
-        Ok(payload)
-    }
-
-    async fn derived_payload(
-        &self,
-        subject: SubjectId,
-        id: DerivedRepresentationId,
-        mut provenance: Vec<CognitiveRef>,
-        selection: Option<serde_json::Value>,
-    ) -> Result<Payload> {
-        let row=sqlx::query("SELECT d.payload_text,d.payload_artifact_id,to_jsonb(p) AS producer FROM derived_representations d JOIN producer_signatures p USING(producer_signature_id) WHERE d.subject_id=$1 AND d.derived_representation_id=$2")
-            .bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-        let roots: Vec<Uuid> =
-            sqlx::query_scalar("SELECT source_region_id FROM representation_source_regions($1,$2)")
-                .bind(subject.0)
-                .bind(id.0)
-                .fetch_all(self.store.pool())
-                .await
-                .map_err(db)?;
-        if roots.is_empty() {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Material,
-                nous_core::ErrorCode::InvalidRequest,
-                "derived representation has no source roots",
-            ));
-        }
-        provenance.extend(
-            roots
-                .into_iter()
-                .map(|id| CognitiveRef::SourceRegion(SourceRegionId(id))),
-        );
-        let text: Option<String> = row.try_get("payload_text").map_err(db)?;
-        let (hash, media_type, length) = if let Some(text) = &text {
-            (None, "text/plain; charset=utf-8".into(), text.len() as u64)
-        } else {
-            let artifact = self
-                .artifact(
-                    subject,
-                    ArtifactId(row.try_get("payload_artifact_id").map_err(db)?),
-                )
-                .await?;
-            provenance.push(CognitiveRef::Artifact(artifact.artifact_id));
-            (
-                Some(artifact.content_hash),
-                artifact.media_type,
-                artifact.byte_length,
-            )
-        };
-        Ok(Payload {
-            text,
-            hash,
-            media_type,
-            length,
-            selected: None,
-            provenance,
-            producer: Some(row.try_get("producer").map_err(db)?),
-            selection,
-        })
+        Ok(payloads)
     }
 }
 

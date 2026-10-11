@@ -37,7 +37,7 @@ impl KernelService {
                 },
             )
             .collect();
-        let schemas: std::collections::BTreeMap<uuid::Uuid, sqlx::postgres::PgRow> = sqlx::query("SELECT schema_revision_id,schema_id,formation_kind,title,applicability_description,boundary_definition,tags FROM cognitive_schema_revisions WHERE schema_revision_id=ANY($1::uuid[])")
+        let schemas: std::collections::BTreeMap<uuid::Uuid, sqlx::postgres::PgRow> = sqlx::query("SELECT h.revision_id AS schema_revision_id,h.object_id AS schema_id,r.formation_kind,r.title,r.applicability_description,r.boundary_definition,r.tags FROM cognition_revision_headers h JOIN cognitive_schema_revisions r ON r.schema_revision_id=h.revision_id WHERE h.object_kind='cognitive_schema' AND h.revision_id=ANY($1::uuid[])")
             .bind(schema_ids).fetch_all(self.0.store.pool()).await.map_err(nous_persistence::database_error)?
             .into_iter().map(|row| (row.get("schema_revision_id"), row)).collect();
         let memory_ids: Vec<uuid::Uuid> = hits
@@ -49,7 +49,7 @@ impl KernelService {
                 },
             )
             .collect();
-        let memory_objects: std::collections::BTreeMap<uuid::Uuid, uuid::Uuid> = sqlx::query("SELECT memory_revision_id,memory_id FROM memory_revisions WHERE subject_id=$1 AND memory_revision_id=ANY($2::uuid[])").bind(subject.0).bind(memory_ids).fetch_all(self.0.store.pool()).await.map_err(nous_persistence::database_error)?.into_iter().map(|row| (row.get("memory_revision_id"),row.get("memory_id"))).collect();
+        let memory_objects: std::collections::BTreeMap<uuid::Uuid, uuid::Uuid> = sqlx::query("SELECT revision_id,object_id FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind='memory' AND revision_id=ANY($2::uuid[])").bind(subject.0).bind(memory_ids).fetch_all(self.0.store.pool()).await.map_err(nous_persistence::database_error)?.into_iter().map(|row| (row.get("revision_id"),row.get("object_id"))).collect();
         let references: Vec<_> = hits
             .iter()
             .map(|hit| hit.revision.as_ref().unwrap_or(&hit.reference).clone())
@@ -212,17 +212,14 @@ impl KernelService {
         for candidate in &mut plan.candidates {
             let target = required(candidate.target.as_ref(), "target")?;
             let reference = from_ref(required(target.reference.clone(), "reference")?)?;
-            let query = match reference {
-                CognitiveRef::MemoryRevision(_) => {
-                    "SELECT memory_revision_id FROM memory_revisions WHERE subject_id=$1 AND memory_id=$2"
-                }
-                CognitiveRef::CognitiveSchemaRevision(_) => {
-                    "SELECT r.schema_revision_id FROM cognitive_schema_revisions r JOIN cognitive_schemas s USING(schema_id) WHERE s.subject_id=$1 AND s.schema_id=$2"
-                }
+            let kind = match reference {
+                CognitiveRef::MemoryRevision(_) => "memory",
+                CognitiveRef::CognitiveSchemaRevision(_) => "cognitive_schema",
                 _ => unreachable!(),
             };
-            let revisions: Vec<uuid::Uuid> = sqlx::query_scalar(query)
+            let revisions: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT revision_id FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind=$2 AND object_id=$3")
                 .bind(subject.0)
+                .bind(kind)
                 .bind(id(&target.object_id)?)
                 .fetch_all(self.0.store.pool())
                 .await
@@ -292,19 +289,5 @@ fn consolidation_query(subject: SubjectId, cue: String, limit: usize) -> Cogniti
         effort: CognitiveEffort::Light,
         capabilities: Default::default(),
         diagnostics: Default::default(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn consolidation_source_lookup_does_not_require_closing_pronouns_in_quoted_content() {
-        let query = consolidation_query(
-            SubjectId::new(),
-            "Lin said this was her preferred trial rule.".into(),
-            8,
-        );
-        assert!(query.validate().is_ok());
     }
 }

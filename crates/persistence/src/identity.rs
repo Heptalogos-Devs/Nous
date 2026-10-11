@@ -434,11 +434,36 @@ ORDER BY r.ordinal
         subject: SubjectId,
         references: &[CognitiveRef],
     ) -> Result<()> {
-        for reference in references {
-            let (kind, canonical) = reference_parts(reference);
-            sqlx::query("DELETE FROM authority_object_states WHERE subject_id=$1 AND object_kind=$2 AND object_ref=$3")
-                .bind(subject.0).bind(kind).bind(canonical).execute(&mut **tx).await.map_err(database_error)?;
-        }
+        let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
+        sqlx::query(
+            r#"
+WITH requested(object_kind,object_ref) AS (
+    SELECT * FROM unnest($2::text[],$3::text[])
+), targets(object_kind,object_ref) AS (
+    -- Preserve direct non-Cognition owner identities (Tags, material, etc.).
+    SELECT object_kind,object_ref FROM requested
+    UNION
+    -- Exact cognition revision refs also identify their common owner. This
+    -- removes the shared object's history even when callers supply only its
+    -- immutable revision refs; typed payloads never own a separate timeline.
+    SELECT h.object_kind,h.object_id::text
+      FROM requested r
+      JOIN cognition_revision_headers h
+        ON r.object_kind=h.object_kind || '_revision'
+       AND r.object_ref=h.revision_id::text
+     WHERE h.subject_id=$1
+)
+DELETE FROM authority_object_states s
+ USING targets t
+ WHERE s.subject_id=$1 AND s.object_kind=t.object_kind AND s.object_ref=t.object_ref
+"#,
+        )
+        .bind(subject.0)
+        .bind(kinds)
+        .bind(values)
+        .execute(&mut **tx)
+        .await
+        .map_err(database_error)?;
         Ok(())
     }
     pub async fn resolve_identity(

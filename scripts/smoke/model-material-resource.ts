@@ -625,22 +625,22 @@ try {
     subjectId,
     "protocol continuity $return(memory) $limit(5)",
   );
-  assert(memory.producerSignatureId);
+  const revisionId = memory.revision?.header?.revisionRef?.value;
+  const producerSignatureId = memory.revision?.header?.producerSignatureId;
+  assert(revisionId && producerSignatureId);
   const producer = await client.material.producer({
     subjectId,
-    id: memory.producerSignatureId,
+    id: producerSignatureId,
   });
   assert.equal(producer.operation, "memory_formation_text");
   assert.equal(producer.preprocessingIdentity, "manual-grounded-source");
   assert.match(producer.signatureHash, /^[a-f0-9]{64}$/);
-  assert(
-    response.hits.some((hit) => hit.revision?.value === memory.revisionId),
-  );
+  assert(response.hits.some((hit) => hit.revision?.value === revisionId));
   await cli("query", "protocol continuity $return(memory) $limit(5)");
-  const trace = await cli("trace", `memory_revision:${memory.revisionId}`);
+  const trace = await cli("trace", `memory_revision:${revisionId}`);
   assert(Array.isArray(trace.sources) && trace.sources.length === 1);
   assert(Array.isArray(trace.derivations) && trace.derivations.length >= 2);
-  await cli("use", `memory_revision:${memory.revisionId}`);
+  await cli("use", `memory_revision:${revisionId}`);
   const file = join(dataRoot, "source.txt");
   await writeFile(file, "Streaming artifact consumer wiring.");
   const uploaded = await cli("observe", "file", file);
@@ -694,7 +694,7 @@ routes = ["memory_formation"]
     subjectId,
     "protocol continuity $return(memory) $limit(5)",
   );
-  assert(recall.hits.some((hit) => hit.revision?.value === memory.revisionId));
+  assert(recall.hits.some((hit) => hit.revision?.value === revisionId));
   const formationRequest = {
     subjectId,
     operationId: crypto.randomUUID(),
@@ -719,9 +719,12 @@ routes = ["memory_formation"]
   assert(
     recoveredFormation.memory && recoveredFormation.degradation.length === 0,
   );
+  const formationProducerId =
+    recoveredFormation.memory.revision?.header?.producerSignatureId;
+  assert(formationProducerId);
   const formationProducer = await restarted.material.producer({
     subjectId,
-    id: recoveredFormation.memory.producerSignatureId!,
+    id: formationProducerId,
   });
   assert.match(formationProducer.implementation, /^ai-sdk:[a-f0-9]{64}$/);
   await cli("session", "show");

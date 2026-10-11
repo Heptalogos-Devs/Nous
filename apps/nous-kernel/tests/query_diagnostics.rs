@@ -50,30 +50,38 @@ async fn query_reports_validation_budget_exhaustion() {
     let runtime = open_runtime(&url, &root).await;
     let subject = subject(&runtime).await;
     let mut tx = runtime.store.begin().await.expect("fixture transaction");
-    sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,accessibility_mode,created_at) SELECT md5('budget-memory-'||n)::uuid,$1,'declarative',md5('budget-rev-'||n)::uuid,1,'accepted','valid','suppressed','normal','auto',now() FROM generate_series(1,40) AS values(n)")
+    sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,cognitive_role,accessibility_mode,created_at) SELECT 'memory',md5('budget-memory-'||n)::uuid,$1,md5('budget-rev-'||n)::uuid,1,'accepted','valid','suppressed','normal','declarative','auto',now() FROM generate_series(1,40) AS values(n)")
         .bind(subject.0)
         .execute(&mut *tx)
         .await
         .expect("budget memories");
-    sqlx::query("INSERT INTO memory_revisions(memory_revision_id,memory_id,subject_id,revision_no,parent_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at) SELECT md5('budget-rev-'||n)::uuid,md5('budget-memory-'||n)::uuid,$1,1,NULL,NULL,'synthesized',NULL,'budget',NULL,'budget memory','inferred','unknown',NULL,NULL,now(),now() FROM generate_series(1,40) AS values(n)")
+    sqlx::query("INSERT INTO cognition_revision_headers(revision_id,subject_id,object_kind,object_id,revision_no,parent_revision_id,formed_at,recorded_at) SELECT md5('budget-rev-'||n)::uuid,$1,'memory',md5('budget-memory-'||n)::uuid,1,NULL,now(),now() FROM generate_series(1,40) AS values(n)")
         .bind(subject.0)
         .execute(&mut *tx)
         .await
-        .expect("budget revisions");
+        .expect("budget revision headers");
+    sqlx::query("INSERT INTO memory_revisions(memory_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end) SELECT md5('budget-rev-'||n)::uuid,NULL,'synthesized',NULL,'budget',NULL,'budget memory','inferred','unknown',NULL,NULL FROM generate_series(1,40) AS values(n)")
+        .execute(&mut *tx)
+        .await
+        .expect("budget revision payloads");
     sqlx::query("INSERT INTO memory_revision_aboutness(memory_revision_id,entity_ref) SELECT md5('budget-rev-'||n)::uuid,'entity:budget' FROM generate_series(1,40) AS values(n)")
         .execute(&mut *tx)
         .await
         .expect("budget aboutness");
-    sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,accessibility_mode,created_at) SELECT md5('budget-temporal-memory-'||n)::uuid,$1,'declarative',md5('budget-temporal-rev-'||n)::uuid,1,'accepted','valid','normal','normal','auto',now() FROM generate_series(1,40) AS values(n)")
+    sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,cognitive_role,accessibility_mode,created_at) SELECT 'memory',md5('budget-temporal-memory-'||n)::uuid,$1,md5('budget-temporal-rev-'||n)::uuid,1,'accepted','valid','normal','normal','declarative','auto',now() FROM generate_series(1,40) AS values(n)")
         .bind(subject.0)
         .execute(&mut *tx)
         .await
         .expect("temporal budget memories");
-    sqlx::query("INSERT INTO memory_revisions(memory_revision_id,memory_id,subject_id,revision_no,parent_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at) SELECT md5('budget-temporal-rev-'||n)::uuid,md5('budget-temporal-memory-'||n)::uuid,$1,1,NULL,NULL,'synthesized',NULL,'budget',NULL,'temporal budget memory','inferred','instant',now(),NULL,now(),now() FROM generate_series(1,40) AS values(n)")
+    sqlx::query("INSERT INTO cognition_revision_headers(revision_id,subject_id,object_kind,object_id,revision_no,parent_revision_id,formed_at,recorded_at) SELECT md5('budget-temporal-rev-'||n)::uuid,$1,'memory',md5('budget-temporal-memory-'||n)::uuid,1,NULL,now(),now() FROM generate_series(1,40) AS values(n)")
         .bind(subject.0)
         .execute(&mut *tx)
         .await
-        .expect("temporal budget revisions");
+        .expect("temporal budget revision headers");
+    sqlx::query("INSERT INTO memory_revisions(memory_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end) SELECT md5('budget-temporal-rev-'||n)::uuid,NULL,'synthesized',NULL,'budget',NULL,'temporal budget memory','inferred','instant',now(),NULL FROM generate_series(1,40) AS values(n)")
+        .execute(&mut *tx)
+        .await
+        .expect("temporal budget revision payloads");
     tx.commit().await.expect("budget commit");
     let mut query = text_query(subject);
     query.expression.cues = vec![

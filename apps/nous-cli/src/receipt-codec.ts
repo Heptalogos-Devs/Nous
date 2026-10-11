@@ -7,73 +7,20 @@ import {
   isMessage,
   toJson,
   type DescMessage,
+  type DescMethod,
   type JsonValue,
 } from "@bufbuild/protobuf";
-import { EmptySchema } from "@bufbuild/protobuf/wkt";
+import { ConfigurationService } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import {
-  ClearSubjectOverrideRequestSchema,
-  ClearSystemOverrideRequestSchema,
-  ConfigurationChangeSchema,
-  SetSubjectOverrideRequestSchema,
-  SetSystemOverrideRequestSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
-import {
-  AcceptedObservationSchema,
-  CreateSubjectRequestSchema,
-  AdoptCognitiveSeedRequestSchema,
-  CognitiveSeedVersionSchema,
-  MemorySchema,
-  MemoryMutationRequestSchema,
-  LinkRevisionsRequestSchema,
-  SetAccessibilityRequestSchema,
-  ReportUseRequestSchema,
-  ReportUseResponseSchema,
-  ReviseMemoryRequestSchema,
-  SetActiveWorkContextRequestSchema,
-  SessionSchema,
-  SubjectSchema,
-  WorkContextResponseSchema,
-  CreateWorkContextRequestSchema,
-  UpdateWorkContextRequestSchema,
-  WorkContextMutationRequestSchema,
-  ObservationInputSchema,
-  CreateEpisodeRequestSchema,
-  ReviseEpisodeRequestSchema,
-  LinkEpisodeRevisionsRequestSchema,
-  EpisodeMutationRequestSchema,
-  EpisodeResponseSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import {
-  AddSchemaEvidenceRequestSchema,
-  CognitiveSchemaMutationRequestSchema,
-  CognitiveSchemaSchema,
-  CreateCognitiveSchemaRequestSchema,
-  MergeCognitiveSchemasRequestSchema,
-  ReviseCognitiveSchemaRequestSchema,
-  SplitCognitiveSchemaRequestSchema,
-  SplitCognitiveSchemaResponseSchema,
-  MaterializeResourceRequestSchema,
-  ResourceMaterializationSchema,
+  ConceptService,
+  ResourceService,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import {
-  JournalMutationRequestSchema,
-  JournalResponseSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/journal_pb.js";
-import {
-  AssociationSchema,
-  CreateAssociationRequestSchema,
-  CreateTagRequestSchema,
-  MergeTagsRequestSchema,
-  RevokeAssociationRequestSchema,
-  ReviseTagRequestSchema,
-  SplitTagRequestSchema,
-  SplitTagResponseSchema,
-  TagSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import {
-  FormationRequestSchema,
-  FormationResponseSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
+  MemoryService,
+  RuntimeService,
+  SubjectService,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/services_pb.js";
+import { ModelService } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 import type { NousClient } from "@nous-wave/client";
 
 type ReceiptStatusLookup =
@@ -84,465 +31,345 @@ type ReceiptStatusLookup =
   | "mutationReceipt"
   | "unsupported";
 
+type ReceiptOwner = string | ((input: Record<string, unknown>) => string);
+type ReceiptRegistration = readonly [
+  owner: ReceiptOwner,
+  operationKind: string,
+  method: DescMethod,
+];
 interface ReceiptDefinition {
-  owner: string;
+  owner(input: Record<string, unknown>): string;
   operationKind: string;
   request: DescMessage;
   response: DescMessage;
-  subjectScope: "required" | "optional";
-  operationId(input: Record<string, unknown>): string;
   statusLookup: ReceiptStatusLookup;
-  noCommitCodes: readonly string[];
+  noCommitCodes(owner: string): readonly string[];
 }
-type ReceiptDefinitionOptions = {
-  subjectScope?: ReceiptDefinition["subjectScope"];
-  operationId?: ReceiptDefinition["operationId"];
-  statusLookup?: ReceiptStatusLookup;
+
+const cognitionNoCommitCodes = [
+  "INVALID_REQUEST",
+  "STALE_REVISION",
+  "OPERATION_ID_CONFLICT",
+  "UNKNOWN_REFERENCE",
+  "REFERENCE_TYPE_MISMATCH",
+  "REFERENCE_TOMBSTONED",
+] as const;
+const ownerNoCommitCodes: Record<string, readonly string[]> = {
+  SUBJECT: ["INVALID_REQUEST", "OPERATION_ID_CONFLICT"],
+  CONFIGURATION: ["INVALID_REQUEST", "STALE_REVISION", "OPERATION_ID_CONFLICT"],
+  OBSERVATION: [
+    "INVALID_REQUEST",
+    "OPERATION_ID_CONFLICT",
+    "UNKNOWN_REFERENCE",
+  ],
+  MODEL_WORKFLOW: [],
+  RUNTIME: ["INVALID_REQUEST", "STALE_CONTEXT", "OPERATION_ID_CONFLICT"],
+  CONCEPT: cognitionNoCommitCodes,
+  MEMORY: cognitionNoCommitCodes,
 };
-const operationField = (input: Record<string, unknown>) => {
-  const id = input.operationId ?? input.requestId ?? input.eventId;
-  return typeof id === "string" && id ? id : "";
-};
-const requiredOperationId = (input: Record<string, unknown>) => {
-  const id = operationField(input);
-  if (!id) throw new Error("Mutation request needs an operation identity");
-  return id;
-};
-const reportUseOperationId = (input: Record<string, unknown>) => {
-  const events = input.events;
-  const id =
-    Array.isArray(events) && events[0] && typeof events[0] === "object"
-      ? (events[0] as Record<string, unknown>).eventId
+
+function cognitionMutationOwner(input: Record<string, unknown>) {
+  const target = input.objectRef;
+  const kind =
+    target && typeof target === "object"
+      ? (target as Record<string, unknown>).kind
       : undefined;
-  if (typeof id !== "string" || !id)
-    throw new Error("UseEvent request needs its stable event identity");
-  return id;
-};
-const definition = (
-  owner: string,
-  operationKind: string,
-  request: DescMessage,
-  response: DescMessage,
-  options: ReceiptDefinitionOptions = {},
-): ReceiptDefinition => ({
-  owner,
-  operationKind,
-  request,
-  response,
-  subjectScope: options.subjectScope ?? "required",
-  operationId: options.operationId ?? requiredOperationId,
-  statusLookup: options.statusLookup ?? "mutationReceipt",
-  noCommitCodes:
-    {
-      SUBJECT: ["INVALID_REQUEST", "OPERATION_ID_CONFLICT"],
-      CONFIGURATION: [
-        "INVALID_REQUEST",
-        "STALE_REVISION",
-        "OPERATION_ID_CONFLICT",
-      ],
-      OBSERVATION: [
-        "INVALID_REQUEST",
-        "OPERATION_ID_CONFLICT",
-        "UNKNOWN_REFERENCE",
-      ],
-      MODEL_WORKFLOW: [],
-      RUNTIME: ["INVALID_REQUEST", "STALE_CONTEXT", "OPERATION_ID_CONFLICT"],
-      CONCEPT: [
-        "INVALID_REQUEST",
-        "STALE_REVISION",
-        "OPERATION_ID_CONFLICT",
-        "UNKNOWN_REFERENCE",
-        "REFERENCE_TYPE_MISMATCH",
-        "REFERENCE_TOMBSTONED",
-      ],
-      MEMORY: [
-        "INVALID_REQUEST",
-        "STALE_REVISION",
-        "OPERATION_ID_CONFLICT",
-        "UNKNOWN_REFERENCE",
-        "REFERENCE_TYPE_MISMATCH",
-        "REFERENCE_TOMBSTONED",
-      ],
-    }[owner] ?? [],
-});
+  if (kind === "cognitive_schema" || kind === "cognitive_schema_revision")
+    return "CONCEPT";
+  if (
+    [
+      "memory",
+      "memory_revision",
+      "episode",
+      "episode_revision",
+      "journal",
+      "journal_revision",
+    ].includes(String(kind))
+  )
+    return "MEMORY";
+  throw new Error("Cognition mutation receipt has an unsupported target kind");
+}
 
-type ReceiptClientMethodPath = {
-  [
-    Namespace in keyof NousClient
-  ]: `${Namespace}.${Extract<keyof NousClient[Namespace], string>}`;
-}[keyof NousClient];
-
-/** Static request/response and status identities share one receipt registry. */
-const receiptDefinitions = {
-  "subjects.create": definition(
+/** Current receipt semantics paired with the generated RPC's canonical message schemas. */
+const receiptRegistrations = {
+  "subjects.create": [
     "SUBJECT",
     "subject_create",
-    CreateSubjectRequestSchema,
-    SubjectSchema,
-    { statusLookup: "subjectCreate" },
-  ),
-  "subjects.adoptSeed": definition(
+    SubjectService.method.createSubject,
+  ],
+  "subjects.adoptSeed": [
     "SUBJECT",
     "cognitive_seed_adopt",
-    AdoptCognitiveSeedRequestSchema,
-    CognitiveSeedVersionSchema,
-    { statusLookup: "unsupported" },
-  ),
-  "configuration.setSystem": definition(
+    SubjectService.method.adoptCognitiveSeed,
+  ],
+  "configuration.setSystem": [
     "CONFIGURATION",
     "configuration_mutation",
-    SetSystemOverrideRequestSchema,
-    ConfigurationChangeSchema,
-    { subjectScope: "optional", statusLookup: "configurationMutation" },
-  ),
-  "configuration.setSubject": definition(
+    ConfigurationService.method.setSystemOverride,
+  ],
+  "configuration.setSubject": [
     "CONFIGURATION",
     "configuration_mutation",
-    SetSubjectOverrideRequestSchema,
-    ConfigurationChangeSchema,
-    { statusLookup: "configurationMutation" },
-  ),
-  "configuration.clearSystem": definition(
+    ConfigurationService.method.setSubjectOverride,
+  ],
+  "configuration.clearSystem": [
     "CONFIGURATION",
     "configuration_mutation",
-    ClearSystemOverrideRequestSchema,
-    ConfigurationChangeSchema,
-    { subjectScope: "optional", statusLookup: "configurationMutation" },
-  ),
-  "configuration.clearSubject": definition(
+    ConfigurationService.method.clearSystemOverride,
+  ],
+  "configuration.clearSubject": [
     "CONFIGURATION",
     "configuration_mutation",
-    ClearSubjectOverrideRequestSchema,
-    ConfigurationChangeSchema,
-    { statusLookup: "configurationMutation" },
-  ),
-  "model.formFromObservation": definition(
+    ConfigurationService.method.clearSubjectOverride,
+  ],
+  "model.formFromObservation": [
     "MODEL_WORKFLOW",
     "form_memory",
-    FormationRequestSchema,
-    FormationResponseSchema,
-    { statusLookup: "modelWorkflow" },
-  ),
-  "cognition.observe": definition(
+    ModelService.method.formFromObservation,
+  ],
+  "cognition.observe": [
     "OBSERVATION",
     "observation_request",
-    ObservationInputSchema,
-    AcceptedObservationSchema,
-    { statusLookup: "observationRequest" },
-  ),
-  "cognition.reportUse": definition(
+    RuntimeService.method.recordObservation,
+  ],
+  "cognition.reportUse": [
     "RUNTIME",
     "report_use",
-    ReportUseRequestSchema,
-    ReportUseResponseSchema,
-    { operationId: reportUseOperationId, statusLookup: "unsupported" },
-  ),
-  "cognition.createWorkContext": definition(
+    RuntimeService.method.reportUse,
+  ],
+  "cognition.createWorkContext": [
     "RUNTIME",
     "create_work_context",
-    CreateWorkContextRequestSchema,
-    WorkContextResponseSchema,
-  ),
-  "cognition.updateWorkContext": definition(
+    RuntimeService.method.createWorkContext,
+  ],
+  "cognition.updateWorkContext": [
     "RUNTIME",
     "update_work_context",
-    UpdateWorkContextRequestSchema,
-    WorkContextResponseSchema,
-  ),
-  "cognition.pauseWorkContext": definition(
+    RuntimeService.method.updateWorkContext,
+  ],
+  "cognition.pauseWorkContext": [
     "RUNTIME",
     "pause_work_context",
-    WorkContextMutationRequestSchema,
-    WorkContextResponseSchema,
-  ),
-  "cognition.resumeWorkContext": definition(
+    RuntimeService.method.pauseWorkContext,
+  ],
+  "cognition.resumeWorkContext": [
     "RUNTIME",
     "resume_work_context",
-    WorkContextMutationRequestSchema,
-    WorkContextResponseSchema,
-  ),
-  "cognition.endWorkContext": definition(
+    RuntimeService.method.resumeWorkContext,
+  ],
+  "cognition.endWorkContext": [
     "RUNTIME",
     "end_work_context",
-    WorkContextMutationRequestSchema,
-    WorkContextResponseSchema,
-  ),
-  "cognition.setActiveWorkContext": definition(
+    RuntimeService.method.endWorkContext,
+  ],
+  "cognition.setActiveWorkContext": [
     "RUNTIME",
     "set_active_work_context",
-    SetActiveWorkContextRequestSchema,
-    SessionSchema,
-  ),
-  "concepts.createTag": definition(
+    RuntimeService.method.setActiveWorkContext,
+  ],
+  "cognition.mutate": [
+    cognitionMutationOwner,
+    "cognition_lifecycle",
+    MemoryService.method.mutateCognition,
+  ],
+  "concepts.createTag": [
     "CONCEPT",
     "create_tag",
-    CreateTagRequestSchema,
-    TagSchema,
-  ),
-  "concepts.reviseTag": definition(
+    ConceptService.method.createTag,
+  ],
+  "concepts.reviseTag": [
     "CONCEPT",
     "revise_tag",
-    ReviseTagRequestSchema,
-    TagSchema,
-  ),
-  "concepts.mergeTags": definition(
+    ConceptService.method.reviseTag,
+  ],
+  "concepts.mergeTags": [
     "CONCEPT",
     "merge_tags",
-    MergeTagsRequestSchema,
-    TagSchema,
-  ),
-  "concepts.splitTag": definition(
-    "CONCEPT",
-    "split_tag",
-    SplitTagRequestSchema,
-    SplitTagResponseSchema,
-  ),
-  "concepts.associate": definition(
+    ConceptService.method.mergeTags,
+  ],
+  "concepts.splitTag": ["CONCEPT", "split_tag", ConceptService.method.splitTag],
+  "concepts.associate": [
     "CONCEPT",
     "create_association",
-    CreateAssociationRequestSchema,
-    AssociationSchema,
-  ),
-  "concepts.revokeAssociation": definition(
+    ConceptService.method.createAssociation,
+  ],
+  "concepts.revokeAssociation": [
     "CONCEPT",
     "revoke_association",
-    RevokeAssociationRequestSchema,
-    EmptySchema,
-  ),
-  "memory.revise": definition(
+    ConceptService.method.revokeAssociation,
+  ],
+  "memory.revise": [
     "MEMORY",
     "revise_memory",
-    ReviseMemoryRequestSchema,
-    MemorySchema,
-  ),
-  "memory.setAccessibility": definition(
-    "MEMORY",
-    "set_accessibility",
-    SetAccessibilityRequestSchema,
-    MemorySchema,
-  ),
-  "memory.linkRevisions": definition(
+    MemoryService.method.reviseMemory,
+  ],
+  "memory.linkRevisions": [
     "MEMORY",
     "link_memory_revisions",
-    LinkRevisionsRequestSchema,
-    EmptySchema,
-  ),
-  "memory.suppress": definition(
-    "MEMORY",
-    "suppression_state",
-    MemoryMutationRequestSchema,
-    MemorySchema,
-  ),
-  "memory.restore": definition(
-    "MEMORY",
-    "suppression_state",
-    MemoryMutationRequestSchema,
-    MemorySchema,
-  ),
-  "memory.withdraw": definition(
-    "MEMORY",
-    "acceptance_state",
-    MemoryMutationRequestSchema,
-    MemorySchema,
-  ),
-  "memory.reaccept": definition(
-    "MEMORY",
-    "acceptance_state",
-    MemoryMutationRequestSchema,
-    MemorySchema,
-  ),
-  "memory.purge": definition(
-    "MEMORY",
-    "purge_memory",
-    MemoryMutationRequestSchema,
-    EmptySchema,
-  ),
-  "memory.createEpisode": definition(
+    MemoryService.method.linkRevisions,
+  ],
+  "memory.createEpisode": [
     "MEMORY",
     "create_episode",
-    CreateEpisodeRequestSchema,
-    EpisodeResponseSchema,
-  ),
-  "memory.reviseEpisode": definition(
+    MemoryService.method.createEpisode,
+  ],
+  "memory.reviseEpisode": [
     "MEMORY",
     "revise_episode",
-    ReviseEpisodeRequestSchema,
-    EpisodeResponseSchema,
-  ),
-  "memory.linkEpisodeRevisions": definition(
+    MemoryService.method.reviseEpisode,
+  ],
+  "memory.linkEpisodeRevisions": [
     "MEMORY",
     "link_episode_revisions",
-    LinkEpisodeRevisionsRequestSchema,
-    EmptySchema,
-  ),
-  "memory.suppressEpisode": definition(
-    "MEMORY",
-    "episode_lifecycle",
-    EpisodeMutationRequestSchema,
-    EpisodeResponseSchema,
-  ),
-  "memory.restoreEpisode": definition(
-    "MEMORY",
-    "episode_lifecycle",
-    EpisodeMutationRequestSchema,
-    EpisodeResponseSchema,
-  ),
-  "memory.withdrawEpisode": definition(
-    "MEMORY",
-    "episode_lifecycle",
-    EpisodeMutationRequestSchema,
-    EpisodeResponseSchema,
-  ),
-  "memory.reacceptEpisode": definition(
-    "MEMORY",
-    "episode_lifecycle",
-    EpisodeMutationRequestSchema,
-    EpisodeResponseSchema,
-  ),
-  "memory.purgeEpisode": definition(
-    "MEMORY",
-    "purge_episode",
-    EpisodeMutationRequestSchema,
-    EmptySchema,
-  ),
-  "memory.suppressJournal": definition(
-    "MEMORY",
-    "journal_lifecycle",
-    JournalMutationRequestSchema,
-    JournalResponseSchema,
-  ),
-  "memory.restoreJournal": definition(
-    "MEMORY",
-    "journal_lifecycle",
-    JournalMutationRequestSchema,
-    JournalResponseSchema,
-  ),
-  "memory.withdrawJournal": definition(
-    "MEMORY",
-    "journal_lifecycle",
-    JournalMutationRequestSchema,
-    JournalResponseSchema,
-  ),
-  "memory.reacceptJournal": definition(
-    "MEMORY",
-    "journal_lifecycle",
-    JournalMutationRequestSchema,
-    JournalResponseSchema,
-  ),
-  "memory.purgeJournal": definition(
-    "MEMORY",
-    "journal_purge",
-    JournalMutationRequestSchema,
-    EmptySchema,
-  ),
-  "concepts.createSchema": definition(
+    MemoryService.method.linkEpisodeRevisions,
+  ],
+  "concepts.createSchema": [
     "CONCEPT",
     "create_cognitive_schema",
-    CreateCognitiveSchemaRequestSchema,
-    CognitiveSchemaSchema,
-  ),
-  "concepts.addSchemaEvidence": definition(
+    ConceptService.method.createCognitiveSchema,
+  ],
+  "concepts.addSchemaEvidence": [
     "CONCEPT",
     "add_schema_evidence",
-    AddSchemaEvidenceRequestSchema,
-    CognitiveSchemaSchema,
-  ),
-  "concepts.reviseSchema": definition(
+    ConceptService.method.addSchemaEvidence,
+  ],
+  "concepts.reviseSchema": [
     "CONCEPT",
     "revise_cognitive_schema",
-    ReviseCognitiveSchemaRequestSchema,
-    CognitiveSchemaSchema,
-  ),
-  "concepts.splitSchema": definition(
+    ConceptService.method.reviseCognitiveSchema,
+  ],
+  "concepts.splitSchema": [
     "CONCEPT",
     "split_cognitive_schema",
-    SplitCognitiveSchemaRequestSchema,
-    SplitCognitiveSchemaResponseSchema,
-  ),
-  "concepts.mergeSchemas": definition(
+    ConceptService.method.splitCognitiveSchema,
+  ],
+  "concepts.mergeSchemas": [
     "CONCEPT",
     "merge_cognitive_schemas",
-    MergeCognitiveSchemasRequestSchema,
-    CognitiveSchemaSchema,
-  ),
-  "concepts.suppressSchema": definition(
-    "CONCEPT",
-    "schema_lifecycle",
-    CognitiveSchemaMutationRequestSchema,
-    CognitiveSchemaSchema,
-  ),
-  "concepts.restoreSchema": definition(
-    "CONCEPT",
-    "schema_lifecycle",
-    CognitiveSchemaMutationRequestSchema,
-    CognitiveSchemaSchema,
-  ),
-  "concepts.withdrawSchema": definition(
-    "CONCEPT",
-    "schema_lifecycle",
-    CognitiveSchemaMutationRequestSchema,
-    CognitiveSchemaSchema,
-  ),
-  "concepts.reacceptSchema": definition(
-    "CONCEPT",
-    "schema_lifecycle",
-    CognitiveSchemaMutationRequestSchema,
-    CognitiveSchemaSchema,
-  ),
-  "concepts.purgeSchema": definition(
-    "CONCEPT",
-    "schema_purge",
-    CognitiveSchemaMutationRequestSchema,
-    EmptySchema,
-  ),
-  "resources.materialize": definition(
+    ConceptService.method.mergeCognitiveSchemas,
+  ],
+  "resources.materialize": [
     "MODEL_WORKFLOW",
     "resource_materialization",
-    MaterializeResourceRequestSchema,
-    ResourceMaterializationSchema,
-    { statusLookup: "modelWorkflow" },
-  ),
-} satisfies Partial<Record<ReceiptClientMethodPath, ReceiptDefinition>>;
+    ResourceService.method.materializeResource,
+  ],
+} as const satisfies Partial<
+  Record<ReceiptClientMethodPath, ReceiptRegistration>
+>;
 
-type ReceiptCommand = keyof typeof receiptDefinitions;
+type ReceiptClientMethodPath = {
+  [Namespace in keyof NousClient]: `${Namespace}.${Extract<
+    keyof NousClient[Namespace],
+    string
+  >}`;
+}[keyof NousClient];
 
-export function receiptDefinitionCommands(): readonly ReceiptCommand[] {
-  return Object.keys(receiptDefinitions) as ReceiptCommand[];
+type ReceiptCommand = keyof typeof receiptRegistrations;
+
+function statusLookup(
+  command: ReceiptCommand,
+  owner: string,
+): ReceiptStatusLookup {
+  if (command === "subjects.create") return "subjectCreate";
+  if (command === "subjects.adoptSeed" || command === "cognition.reportUse")
+    return "unsupported";
+  if (owner === "CONFIGURATION") return "configurationMutation";
+  if (owner === "OBSERVATION") return "observationRequest";
+  if (owner === "MODEL_WORKFLOW") return "modelWorkflow";
+  return "mutationReceipt";
 }
 
-export function receiptDefinition(command: string) {
-  const found = receiptDefinitions[command as keyof typeof receiptDefinitions];
+export function receiptDefinitionCommands(): readonly ReceiptCommand[] {
+  return Object.keys(receiptRegistrations) as ReceiptCommand[];
+}
+
+export function receiptDefinition(command: string): ReceiptDefinition {
+  const found = receiptRegistrations[command as ReceiptCommand] as
+    ReceiptRegistration | undefined;
   if (!found) throw new Error(`Receipt command is not registered: ${command}`);
-  return found;
+  const [registeredOwner, operationKind, method] = found;
+  const owner = (input: Record<string, unknown>) =>
+    typeof registeredOwner === "string"
+      ? registeredOwner
+      : registeredOwner(input);
+  const resolvedOwner =
+    typeof registeredOwner === "string" ? registeredOwner : "";
+  const definition: ReceiptDefinition = {
+    owner,
+    operationKind,
+    request: method.input,
+    response: method.output,
+    statusLookup: statusLookup(command as ReceiptCommand, resolvedOwner),
+    noCommitCodes: (ownerName) => ownerNoCommitCodes[ownerName] ?? [],
+  };
+  return definition;
+}
+
+function operationId(
+  command: string,
+  requestSchema: DescMessage,
+  input: Record<string, unknown>,
+) {
+  let value: unknown;
+  if (command === "cognition.reportUse") {
+    const events = input.events;
+    value =
+      Array.isArray(events) && events[0] && typeof events[0] === "object"
+        ? (events[0] as Record<string, unknown>).eventId
+        : undefined;
+  } else {
+    const field =
+      requestSchema.field.operationId ??
+      requestSchema.field.requestId ??
+      requestSchema.field.eventId;
+    value = field ? input[field.localName] : undefined;
+  }
+  if (typeof value !== "string" || !value)
+    throw new Error("Mutation request needs a stable operation identity");
+  return value;
+}
+
+function freezeMessage(schema: DescMessage, value: unknown, error: string) {
+  if (!isMessage(value, schema)) throw new Error(error);
+  return {
+    typeName: schema.typeName,
+    protoJson: toJson(schema, value as never),
+  };
+}
+
+function thawMessage(
+  schema: DescMessage,
+  typeName: string,
+  protoJson: unknown,
+  error: string,
+) {
+  if (typeName !== schema.typeName) throw new Error(error);
+  return fromJson(schema, protoJson as JsonValue);
 }
 
 export function freezeRequest(command: string, input: unknown) {
   const spec = receiptDefinition(command);
   if (!input || typeof input !== "object")
     throw new Error("Mutation request must be an object");
-  const record = input as Record<string, unknown>;
-  const request = create(spec.request as never, record as never);
-  if (!isMessage(request, spec.request))
-    throw new Error(
-      "Mutation request did not match its registered protobuf schema",
-    );
-  const requestRecord = request as unknown as Record<string, unknown>;
-  const subjectId = requestRecord.subjectId;
+  const request = create(spec.request as never, input as never);
+  const record = request as unknown as Record<string, unknown>;
+  const subjectId = record.subjectId;
   if (
-    spec.subjectScope === "required" &&
+    spec.request.field.subjectId &&
     (typeof subjectId !== "string" || !subjectId)
   )
     throw new Error("Subject-scoped mutation requires a Subject ID");
-  const operationId = spec.operationId(requestRecord);
-  return {
+  const frozen = freezeMessage(
+    spec.request,
     request,
-    operationId,
+    "Mutation request did not match its registered protobuf schema",
+  );
+  return {
+    owner: spec.owner(record),
+    operationId: operationId(command, spec.request, record),
     subjectId:
       typeof subjectId === "string" && subjectId ? subjectId : undefined,
-    frozen: {
-      typeName: spec.request.typeName,
-      protoJson: toJson(spec.request, request as never),
-    },
+    frozen,
   };
 }
 
@@ -552,29 +379,30 @@ export function thawRequest(
   protoJson: unknown,
 ) {
   const spec = receiptDefinition(command);
-  if (typeName !== spec.request.typeName)
-    throw new Error("Receipt request type does not match its command registry");
-  return fromJson(spec.request as never, protoJson as JsonValue);
+  return thawMessage(
+    spec.request,
+    typeName,
+    protoJson,
+    "Receipt request type does not match its command registry",
+  );
 }
 
 export function freezeResult(command: string, result: unknown) {
-  const spec = receiptDefinition(command);
-  if (!isMessage(result, spec.response))
-    throw new Error(
-      "Mutation response did not match its registered protobuf schema",
-    );
-  return {
-    typeName: spec.response.typeName,
-    protoJson: toJson(spec.response, result as never),
-  };
+  return freezeMessage(
+    receiptDefinition(command).response,
+    result,
+    "Mutation response did not match its registered protobuf schema",
+  );
 }
 
 export function thawResult(
   command: string,
   value: { typeName: string; protoJson: unknown },
 ) {
-  const spec = receiptDefinition(command);
-  if (value.typeName !== spec.response.typeName)
-    throw new Error("Receipt result type does not match its command registry");
-  return fromJson(spec.response as never, value.protoJson as JsonValue);
+  return thawMessage(
+    receiptDefinition(command).response,
+    value.typeName,
+    value.protoJson,
+    "Receipt result type does not match its command registry",
+  );
 }

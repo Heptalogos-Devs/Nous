@@ -14,12 +14,24 @@ pub(crate) async fn append(
     nodes: &mut HashSet<CognitiveRef>,
     edges: &mut Vec<TopologyEdgeSource>,
 ) -> Result<()> {
-    let rows = sqlx::query(r#"
-SELECT 'memory_revision' kind,current_revision_id::text value FROM memory_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
-UNION ALL SELECT 'episode_revision',current_revision_id::text FROM episode_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
-UNION ALL SELECT 'journal_revision',current_revision_id::text FROM journal_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
-UNION ALL SELECT 'cognitive_schema_revision',current_revision_id::text FROM cognitive_schemas WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
-"#).bind(subject.0).fetch_all(&mut **tx).await.map_err(db)?;
+    let rows = sqlx::query(
+        r#"
+SELECT CASE object_kind
+         WHEN 'memory' THEN 'memory_revision'
+         WHEN 'cognitive_schema' THEN 'cognitive_schema_revision'
+         WHEN 'episode' THEN 'episode_revision'
+         WHEN 'journal' THEN 'journal_revision'
+       END kind,
+       current_revision_id::text value
+FROM cognition_objects
+WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid'
+  AND suppression_state='normal' AND purge_state='normal'
+"#,
+    )
+    .bind(subject.0)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(db)?;
     let live = rows
         .into_iter()
         .map(|row| {
@@ -31,10 +43,10 @@ UNION ALL SELECT 'cognitive_schema_revision',current_revision_id::text FROM cogn
         .collect::<Result<HashSet<_>>>()?;
     nodes.extend(live.iter().cloned());
     let rows = sqlx::query(r#"
-SELECT 'memory_revision' from_kind,d.memory_revision_id::text from_value,d.target_ref_kind to_kind,d.target_ref to_value FROM memory_revision_dependencies d JOIN memory_revisions r USING(memory_revision_id) WHERE r.subject_id=$1 AND d.epistemic_relation NOT IN ('contradicts','weakens','corrects','counterexample')
-UNION ALL SELECT 'journal_revision',s.journal_revision_id::text,s.ref_kind,s.ref_value FROM journal_revision_sources s JOIN journal_revisions r USING(journal_revision_id) WHERE r.subject_id=$1
-UNION ALL SELECT 'episode_revision',m.episode_revision_id::text,m.ref_kind,m.ref_value FROM episode_revision_members m JOIN episode_revisions r USING(episode_revision_id) WHERE r.subject_id=$1
-UNION ALL SELECT 'episode_revision',s.episode_revision_id::text,s.basis_kind,s.basis_ref FROM episode_revision_basis s JOIN episode_revisions r USING(episode_revision_id) WHERE r.subject_id=$1 AND s.basis_kind<>'evidence' AND s.epistemic_relation NOT IN ('contradicts','weakens','corrects','counterexample')
+SELECT 'memory_revision' from_kind,d.memory_revision_id::text from_value,d.target_ref_kind to_kind,d.target_ref to_value FROM memory_revision_dependencies d JOIN cognition_revision_headers h ON h.revision_id=d.memory_revision_id AND h.object_kind='memory' WHERE h.subject_id=$1 AND d.epistemic_relation NOT IN ('contradicts','weakens','corrects','counterexample')
+UNION ALL SELECT 'journal_revision',s.journal_revision_id::text,s.ref_kind,s.ref_value FROM journal_revision_sources s JOIN cognition_revision_headers h ON h.revision_id=s.journal_revision_id AND h.object_kind='journal' WHERE h.subject_id=$1
+UNION ALL SELECT 'episode_revision',m.episode_revision_id::text,m.ref_kind,m.ref_value FROM episode_revision_members m JOIN cognition_revision_headers h ON h.revision_id=m.episode_revision_id AND h.object_kind='episode' WHERE h.subject_id=$1
+UNION ALL SELECT 'episode_revision',s.episode_revision_id::text,s.basis_kind,s.basis_ref FROM episode_revision_basis s JOIN cognition_revision_headers h ON h.revision_id=s.episode_revision_id AND h.object_kind='episode' WHERE h.subject_id=$1 AND s.basis_kind<>'evidence' AND s.epistemic_relation NOT IN ('contradicts','weakens','corrects','counterexample')
 UNION ALL SELECT 'cognitive_schema_revision',s.schema_revision_id::text,s.basis_kind,s.basis_ref FROM cognitive_schema_evidence_links s WHERE s.subject_id=$1 AND s.basis_kind<>'evidence' AND s.revoked_at IS NULL AND s.role='support' AND s.epistemic_relation NOT IN ('contradicts','weakens','corrects','counterexample')
 "#).bind(subject.0).fetch_all(&mut **tx).await.map_err(db)?;
     let mut pairs = HashSet::new();

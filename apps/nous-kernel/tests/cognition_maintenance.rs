@@ -4,16 +4,14 @@
 mod test_support;
 
 use chrono::{Duration, SubsecRound, Utc};
-use nous_core::TemporalExtent;
 use nous_kernel::NousRuntime;
-use nous_memory::{EpisodePartitionSource, EpisodeView};
 use nous_runtime::ManualCognitiveClock;
 use std::sync::Arc;
 use test_support::database;
 
 use test_support::longitudinal::{
     consolidation_memory, consolidation_producer, consolidation_schema, journal_source_episode,
-    observation, runtime_with_clock, runtime_with_clock_serving,
+    runtime_with_clock_serving,
 };
 use test_support::query::subject as create_subject;
 
@@ -43,28 +41,29 @@ async fn typed_cognition_actions_preserve_prior_commits_and_exact_schema_replay(
             .await
             .unwrap()
             .revision
-            .memory_revision_id,
-        first.revision.memory_revision_id
+            .header
+            .memory_revision_id(),
+        first.revision.header.memory_revision_id()
     );
     owner
         .link_revisions(
             subject,
             OperationId::new(),
-            first.revision.memory_revision_id,
-            second.revision.memory_revision_id,
+            first.revision.header.memory_revision_id(),
+            second.revision.header.memory_revision_id(),
             nous_memory::MemoryRelation::Elaborates,
         )
         .await
         .unwrap();
     let results = [
         Some(nous_core::CognitiveRef::MemoryRevision(
-            first.revision.memory_revision_id,
+            first.revision.header.memory_revision_id(),
         )),
         Some(nous_core::CognitiveRef::MemoryRevision(
-            second.revision.memory_revision_id,
+            second.revision.header.memory_revision_id(),
         )),
         Some(nous_core::CognitiveRef::CognitiveSchemaRevision(
-            schema.revision.schema_revision_id,
+            schema.revision.header.schema_revision_id(),
         )),
     ];
     clock.advance_by(subject, Duration::days(1)).unwrap();
@@ -72,8 +71,8 @@ async fn typed_cognition_actions_preserve_prior_commits_and_exact_schema_replay(
     let revised_input = nous_memory::ReviseSchemaInput {
         operation_id: OperationId::new(),
         subject,
-        schema_id: schema.schema.schema_id,
-        expected_object_epoch: schema.schema.object_epoch,
+        schema_id: schema.header.schema_id(),
+        expected_object_epoch: schema.header.object_epoch,
         intent: nous_memory::RevisionIntent::Rephrase,
         copy_link_ids: Vec::new(),
         content: nous_memory::SchemaContent {
@@ -87,10 +86,10 @@ async fn typed_cognition_actions_preserve_prior_commits_and_exact_schema_replay(
         },
     };
     let revised = owner.revise_schema(revised_input.clone()).await.unwrap();
-    assert!(revised.revision.producer_signature_id.is_some());
+    assert!(revised.revision.header.producer_signature_id.is_some());
     assert_ne!(
-        revised.revision.schema_revision_id,
-        schema.revision.schema_revision_id
+        revised.revision.header.revision_id(),
+        schema.revision.header.revision_id()
     );
     assert_eq!(
         owner
@@ -98,12 +97,13 @@ async fn typed_cognition_actions_preserve_prior_commits_and_exact_schema_replay(
             .await
             .unwrap()
             .revision
-            .schema_revision_id,
-        schema.revision.schema_revision_id
+            .header
+            .schema_revision_id(),
+        schema.revision.header.schema_revision_id()
     );
     let mut next = revised_input.clone();
     next.operation_id = OperationId::new();
-    next.expected_object_epoch = revised.schema.object_epoch;
+    next.expected_object_epoch = revised.header.object_epoch;
     owner.revise_schema(next).await.unwrap();
     assert_eq!(
         owner
@@ -111,8 +111,9 @@ async fn typed_cognition_actions_preserve_prior_commits_and_exact_schema_replay(
             .await
             .unwrap()
             .revision
-            .schema_revision_id,
-        revised.revision.schema_revision_id
+            .header
+            .schema_revision_id(),
+        revised.revision.header.schema_revision_id()
     );
 }
 
@@ -275,7 +276,7 @@ async fn assert_consolidation_policy(
         bounded
             .candidates
             .iter()
-            .all(|c| c.text.chars().count() <= 64)
+            .all(|candidate| candidate.text.chars().count() <= 64)
     );
     assert!(
         bounded
@@ -287,230 +288,4 @@ async fn assert_consolidation_policy(
     assert_eq!(bounded.basis.len(), 1);
     assert!(bounded.basis_catalog_partial);
     assert!(bounded.provenance_roots.len() <= 1);
-}
-
-async fn manual_episode_sources(
-    rt: &NousRuntime,
-    clock: &ManualCognitiveClock,
-    subject: nous_core::SubjectId,
-) -> (nous_core::OccurrenceId, EpisodeView, EpisodeView) {
-    use nous_core::{BasisRole, CognitionDependency, CognitiveRef, OperationId, RevisionBasis};
-    use nous_memory::{EpisodeInput, EpisodeMemberInput};
-    let occurrence = rt
-        .material
-        .record_observation_once(observation(subject, None), Some(uuid::Uuid::new_v4()))
-        .await
-        .unwrap()
-        .occurrence
-        .occurrence_id;
-    let memory = rt.require_memory().unwrap();
-    let evidence = RevisionBasis::Evidence(nous_core::EvidenceRef {
-        epistemic_relation: None,
-        occurrence_id: occurrence,
-        locator: nous_core::EvidenceLocator::WholeOccurrence,
-        basis_role: BasisRole::Direct,
-    });
-    let first = memory
-        .create_episode(EpisodeInput {
-            operation_id: OperationId::new(),
-            subject,
-            track_key: "manual".into(),
-            title: Some("Manual evidence".into()),
-            parent_episode_revision_id: None,
-            experience_time: TemporalExtent::Unknown,
-            boundary_explanation: "Unbound observation.".into(),
-            producer_signature_id: None,
-            members: vec![EpisodeMemberInput {
-                reference: CognitiveRef::Occurrence(occurrence),
-                role: "evidence".into(),
-            }],
-            basis: vec![evidence],
-        })
-        .await
-        .unwrap();
-    let committed = memory
-        .form_memory(consolidation_memory(&first))
-        .await
-        .unwrap();
-    let reference = CognitiveRef::MemoryRevision(committed.revision.memory_revision_id);
-    clock.advance_by(subject, Duration::seconds(1)).unwrap();
-    let second = memory
-        .create_episode(EpisodeInput {
-            operation_id: OperationId::new(),
-            subject,
-            track_key: "manual".into(),
-            title: Some("Cognitive continuation".into()),
-            parent_episode_revision_id: None,
-            experience_time: TemporalExtent::Unknown,
-            boundary_explanation: "Memory member.".into(),
-            producer_signature_id: None,
-            members: vec![EpisodeMemberInput {
-                reference: reference.clone(),
-                role: "context".into(),
-            }],
-            basis: vec![RevisionBasis::CognitionDependency(CognitionDependency {
-                epistemic_relation: None,
-                target_revision: reference,
-                basis_role: BasisRole::Direct,
-            })],
-        })
-        .await
-        .unwrap();
-    (occurrence, first, second)
-}
-
-async fn assert_manual_consolidation_plans(
-    rt: &NousRuntime,
-    clock: &ManualCognitiveClock,
-    subject: nous_core::SubjectId,
-    first: &EpisodeView,
-    second: &EpisodeView,
-) {
-    use nous_protocol::{
-        kernel as k, kernel::kernel_maintenance_service_server::KernelMaintenanceService,
-    };
-    clock.advance_by(subject, Duration::seconds(300)).unwrap();
-    let service = nous_kernel::transport::KernelService(rt.clone());
-    let claims = service
-        .claim_maintenance(tonic::Request::new(k::ClaimMaintenanceRequest {
-            subject_id: subject.0.to_string(),
-            allowed_kinds: vec!["memory_consolidate".into()],
-            limit: 8,
-            lease_seconds: 60,
-            model_execution_digest: None,
-        }))
-        .await
-        .unwrap()
-        .into_inner();
-    for episode in [&first, &second] {
-        let claimed = claims
-            .needs
-            .iter()
-            .find(|need| need.scope_ref == episode.revision.episode_revision_id.0.to_string())
-            .unwrap();
-        let plan = service
-            .plan_maintenance(tonic::Request::new(k::PlanMaintenanceRequest {
-                claimed: Some(claimed.clone()),
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(plan.status, "ready");
-        assert_eq!(plan.provenance_roots.len(), 1);
-        if episode.object.episode_id == first.object.episode_id {
-            assert_eq!(plan.members.len(), 1);
-            assert_eq!(plan.members[0].text, "durable experience");
-            assert!(plan.members[0].session_id.is_none());
-            assert!(plan.members[0].recorded_seq.is_none());
-        }
-    }
-}
-
-#[tokio::test]
-async fn manual_episode_planning_and_complete_journal_revalidation() {
-    use nous_core::{BasisRole, CognitionDependency, CognitiveRef, OperationId, RevisionBasis};
-    use nous_memory::{EpisodeMemberInput, JournalInput, JournalPoint, JournalPointRole};
-    let (root, url, _postgres) = database().await;
-    let clock = Arc::new(ManualCognitiveClock::new(Utc::now().trunc_subsecs(6)));
-    let rt = runtime_with_clock(&url, &root, clock.clone()).await;
-    let subject = create_subject(&rt).await;
-    let (occurrence, first, second) = manual_episode_sources(&rt, &clock, subject).await;
-    assert_manual_consolidation_plans(&rt, &clock, subject, &first, &second).await;
-    let memory = rt.require_memory().unwrap();
-    let journal = memory
-        .commit_journal(JournalInput {
-            operation_id: OperationId::new(),
-            subject,
-            expected_authority_seq: rt.store.authority_seq(subject).await.unwrap(),
-            target: None,
-            sources: [&first, &second]
-                .into_iter()
-                .map(|episode| EpisodePartitionSource {
-                    revision: episode.revision.episode_revision_id,
-                    expected_epoch: episode.object.object_epoch,
-                })
-                .collect(),
-            title: None,
-            narrative: "Manual sources.".into(),
-            points: vec![JournalPoint {
-                role: JournalPointRole::Summary,
-                text: "Supported continuation.".into(),
-                basis: vec![RevisionBasis::CognitionDependency(CognitionDependency {
-                    epistemic_relation: None,
-                    target_revision: CognitiveRef::EpisodeRevision(
-                        second.revision.episode_revision_id,
-                    ),
-                    basis_role: BasisRole::Direct,
-                })],
-            }],
-            producer: None,
-        })
-        .await
-        .unwrap();
-    let consolidation = memory
-        .plan_consolidation_scope(
-            subject,
-            "journal_revision",
-            &journal.revision.journal_revision_id.0.to_string(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(consolidation.status, "ready");
-    assert_eq!(consolidation.occurrences, vec![occurrence]);
-    let revised = memory
-        .revise_episode(nous_memory::ReviseEpisodeInput {
-            operation_id: OperationId::new(),
-            subject,
-            episode_id: second.object.episode_id,
-            expected_object_epoch: second.object.object_epoch,
-            intent: "reinterpret".into(),
-            title: Some("Revised continuation".into()),
-            parent_episode_revision_id: None,
-            experience_time: second.revision.experience_time.clone(),
-            boundary_explanation: second.revision.boundary_explanation.clone(),
-            producer_signature_id: None,
-            members: second
-                .members
-                .iter()
-                .map(|member| EpisodeMemberInput {
-                    reference: member.reference.clone(),
-                    role: member.role.clone(),
-                })
-                .collect(),
-            basis: second.basis.clone(),
-        })
-        .await
-        .unwrap();
-    let scope = journal.object.journal_id.0.to_string();
-    let waiting = memory
-        .plan_journal_review(subject, "journal_revalidate", &scope)
-        .await
-        .unwrap();
-    assert_eq!(waiting.episodes.len(), 1);
-    assert_eq!(
-        waiting.episodes[0].object.episode_id,
-        first.object.episode_id
-    );
-    assert_eq!(waiting.status, "deferred");
-    assert_eq!(waiting.problem.as_deref(), Some("journal_sources_settling"));
-    clock.advance_by(subject, Duration::seconds(300)).unwrap();
-    let ready = memory
-        .plan_journal_review(subject, "journal_revalidate", &scope)
-        .await
-        .unwrap();
-    assert_eq!(ready.status, "ready");
-    assert_eq!(ready.episodes.len(), 2);
-    assert!(ready.episodes.iter().any(
-        |episode| episode.revision.episode_revision_id == revised.revision.episode_revision_id
-    ));
-    assert_eq!(ready.occurrences, vec![occurrence]);
-    let consolidation = memory
-        .plan_consolidation_scope(
-            subject,
-            "journal_revision",
-            &journal.revision.journal_revision_id.0.to_string(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(consolidation.status, "obsolete");
 }

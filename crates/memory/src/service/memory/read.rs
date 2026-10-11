@@ -52,7 +52,7 @@ impl MemoryService {
                     )
                 })?
         };
-        if view.object.memory_id != memory_id {
+        if view.header.object_id() != memory_id.0 {
             return Err(Error::new(
                 nous_core::ErrorOwner::Memory,
                 nous_core::ErrorCode::NotFound,
@@ -123,7 +123,7 @@ impl MemoryService {
     ) -> Result<Vec<MemoryView>> {
         let after_revision = match after {
             Some(revision) => sqlx::query_scalar::<_, i32>(
-                "SELECT revision_no FROM memory_revisions WHERE subject_id=$1 AND memory_id=$2 AND memory_revision_id=$3",
+                "SELECT revision_no FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind='memory' AND object_id=$2 AND revision_id=$3",
             )
             .bind(subject.0).bind(memory_id.0).bind(revision.0)
             .fetch_optional(self.store.pool()).await.map_err(db)?
@@ -131,7 +131,7 @@ impl MemoryService {
             None => 0,
         };
         let ids = sqlx::query_scalar::<_, Uuid>(
-            "SELECT memory_revision_id FROM memory_revisions WHERE subject_id=$1 AND memory_id=$2 AND revision_no>$3 ORDER BY revision_no LIMIT $4",
+            "SELECT revision_id FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind='memory' AND object_id=$2 AND revision_no>$3 ORDER BY revision_no LIMIT $4",
         )
         .bind(subject.0).bind(memory_id.0).bind(after_revision).bind(limit)
         .fetch_all(self.store.pool()).await.map_err(db)?;

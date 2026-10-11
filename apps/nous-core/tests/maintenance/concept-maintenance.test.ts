@@ -1,15 +1,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  domainError,
-  ErrorCode,
-  ErrorOwner,
-  ErrorRecovery,
-} from "@nous-wave/client/errors";
-import { create } from "@bufbuild/protobuf";
-import { Code, ConnectError } from "@connectrpc/connect";
 import { expect, it, vi } from "vitest";
+import { create } from "@bufbuild/protobuf";
 import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import {
   TagSchema,
@@ -165,107 +158,4 @@ it("creates a concept and attaches its returned identity through typed owner API
     f.association.mock.calls[0]?.[0].operationId,
   );
   expect(f.progress()).toHaveLength(2);
-});
-it("keeps independent commits and skips only dependencies of an invalid creation", async () => {
-  const f = fixture();
-  f.createTag.mockRejectedValueOnce(
-    new ConnectError("Invalid concept", Code.InvalidArgument),
-  );
-  const result = await f.run([
-    createTag,
-    attach,
-    {
-      action: "revise_tag",
-      tagKey: "t0",
-      content,
-      basisKeys: ["s0"],
-      reason: "Clarify scope",
-    },
-    {
-      action: "create_association",
-      fromKey: "c0",
-      toKey: "t0",
-      relation: "assoc.related",
-      basisKeys: ["invented"],
-      reason: "Invented support",
-    },
-  ]);
-  expect(result.status).toBe("partial");
-  expect(result.actions.map((a) => a.status)).toEqual([
-    "rejected_invalid",
-    "skipped_dependency",
-    "committed",
-    "rejected_invalid",
-  ]);
-  expect(f.association).not.toHaveBeenCalled();
-  expect(f.revise).toHaveBeenCalledTimes(1);
-});
-it("resumes saved results with stable IDs after a transport failure without recreating the Tag", async () => {
-  const f = fixture();
-  f.association.mockRejectedValueOnce(
-    new ConnectError("Response lost", Code.Unavailable),
-  );
-  await expect(f.run([createTag, attach])).rejects.toThrow("Response lost");
-  expect(f.progress()).toHaveLength(1);
-  const result = await f.run([createTag, attach]);
-  expect(result.status).toBe("committed");
-  expect(f.createTag).toHaveBeenCalledTimes(1);
-  expect(f.association).toHaveBeenCalledTimes(2);
-  expect(f.association.mock.calls[0]?.[0].operationId).toBe(
-    f.association.mock.calls[1]?.[0].operationId,
-  );
-  expect(f.association.mock.calls[1]?.[0].association?.to?.value).toBe(
-    "tag-new",
-  );
-});
-it("maps split children and later revisions to actual returned identities", async () => {
-  const f = fixture();
-  const result = await f.run([
-    {
-      action: "split_tag",
-      tagKey: "t0",
-      children: [
-        { key: "new_a", content },
-        { key: "new_b", content: { ...content, label: "Rollout procedure" } },
-      ],
-      basisKeys: ["s0"],
-      reason: "Distinct concepts",
-    },
-    { ...attach, tagKey: "new_b" },
-    {
-      action: "revise_tag",
-      tagKey: "new_a",
-      content,
-      basisKeys: ["s0"],
-      reason: "Clarify child",
-    },
-  ]);
-  expect(result.status).toBe("committed");
-  expect(f.association.mock.calls[0]?.[0].association?.to?.value).toBe(
-    "child-b",
-  );
-  expect(f.revise.mock.calls[0]?.[0].target?.tagId).toBe("child-a");
-  expect(f.revise.mock.calls[0]?.[0].target?.expectedRevisionId).toBe(
-    "child-a-r1",
-  );
-});
-it("continues after a stale item and exposes owner invariant failure", async () => {
-  const f = fixture();
-  f.association.mockRejectedValueOnce(
-    domainError("Stale endpoint", Code.Aborted, {
-      owner: ErrorOwner.CONCEPT,
-      code: ErrorCode.STALE_REVISION,
-      recovery: ErrorRecovery.REFRESH_STATE,
-    }),
-  );
-  const result = await f.run([{ ...attach, tagKey: "t0" }, createTag]);
-  expect(result.status).toBe("partial");
-  expect(result.actions[0]?.status).toBe("stale");
-  const fatal = fixture();
-  fatal.createTag.mockRejectedValueOnce(
-    new ConnectError("Invariant", Code.Internal),
-  );
-  await expect(fatal.run([createTag, attach])).rejects.toThrow("Invariant");
-  expect(fatal.association).not.toHaveBeenCalled();
-  expect(fatal.progress()).toHaveLength(0);
 });

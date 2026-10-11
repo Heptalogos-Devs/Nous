@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Code, ConnectError } from "@connectrpc/connect";
+import { createWritableIterable } from "@connectrpc/connect/protocol";
 import { create, toBinary } from "@bufbuild/protobuf";
 import { AnySchema } from "@bufbuild/protobuf/wkt";
 import {
@@ -21,11 +22,12 @@ import {
   QueryHostRoleSchema,
   QueryRerankOrderSchema,
   QueryRerankResultSchema,
-  QueryRunResumeSchema,
   QueryRunStartSchema,
+  QueryRunRequestSchema,
+  EmbeddingNeedsRequestSchema,
+  CommitEmbeddingRequestSchema,
   QueryHostRequirement,
-  type QueryRunResume,
-  type QueryRunHandle,
+  type QueryRunRequest,
   type QueryRunUpdate,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { StatusSchema } from "@nous-wave/protocol/google/rpc/status_pb.js";
@@ -36,7 +38,10 @@ import type {
 import { QueryConceptOutputSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { ErrorDetailSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/errors_pb.js";
 import type { KernelClient } from "../kernel-client.js";
-import { ModelMaterialPipeline } from "../model/material.js";
+import {
+  ModelMaterialPipeline,
+  type EmbeddingMaterialChannel,
+} from "../model/material.js";
 import { ModelRuntime } from "../model/runtime.js";
 import type { ResourceRegistry } from "../resources/registry.js";
 import { executeResourceActions } from "../resources/execute.js";
@@ -69,7 +74,6 @@ export class QueryOrchestrator {
 
   async execute(input: QueryRequest, options: ExecutionOptions = {}) {
     const calls = executionOptions(this.kernel.execution.opportunity, options);
-    const opportunity = calls.opportunity;
     const generation = this.queryVectorGenerations.get(input.subjectId) ?? 0;
     const intent = input.expression ? positiveIntent(input.expression) : "";
     const host = create(QueryHostPlanSchema, {
@@ -100,31 +104,72 @@ export class QueryOrchestrator {
       rerankCandidateLimit: this.kernel.execution.query_rerank_candidate_limit,
     });
 
-    let update = await this.kernel.queryWorkflow.runQuery(
-      {
-        command: {
-          case: "start",
-          value: create(QueryRunStartSchema, {
-            query: input,
-            host,
-            leaseSeconds: opportunity.leaseSeconds,
-          }),
-        },
-      },
-      calls,
-    );
-    let handle = update.handle;
+    const requests = createWritableIterable<QueryRunRequest>();
+    const workflowTimeoutMs =
+      calls.timeoutMs ?? calls.opportunity.policy.work_timeout_ms;
+    const stream = this.kernel.queryWorkflow.runQuery(requests, {
+      ...calls,
+      timeoutMs: workflowTimeoutMs,
+    });
+    const responses = stream[Symbol.asyncIterator]();
+    const send = (frame: QueryRunRequest["frame"]) =>
+      requests.write(create(QueryRunRequestSchema, { frame }));
+    const nextUpdate = async (): Promise<QueryRunUpdate> => {
+      if (calls.signal.aborted) throw calls.signal.reason;
+      const next = await responses.next();
+      if (next.done)
+        throw new ConnectError(
+          "Query workflow stream ended early",
+          Code.Internal,
+        );
+      return next.value;
+    };
+    const exchange = async (frame: QueryRunRequest["frame"]) => {
+      const response = nextUpdate();
+      try {
+        await send(frame);
+        return await response;
+      } catch (error) {
+        await response.catch(() => {});
+        throw error;
+      }
+    };
     try {
-      while (update.next.case !== "complete") {
+      let update = await exchange({
+        case: "start",
+        value: create(QueryRunStartSchema, { query: input, host }),
+      });
+      const materialChannel: EmbeddingMaterialChannel = {
+        listEmbeddingNeeds: async (request, _options) => {
+          const response = await exchange({
+            case: "embeddingNeeds",
+            value: create(EmbeddingNeedsRequestSchema, request),
+          });
+          if (response.frame.case !== "embeddingNeeds")
+            throw new ConnectError(
+              "Historical embedding page response is missing",
+              Code.Internal,
+            );
+          return response.frame.value;
+        },
+        commitEmbedding: async (request, _options) => {
+          const response = await exchange({
+            case: "commitEmbedding",
+            value: create(CommitEmbeddingRequestSchema, request),
+          });
+          if (response.frame.case !== "embeddingCommitted")
+            throw new ConnectError(
+              "Historical embedding commit acknowledgement is missing",
+              Code.Internal,
+            );
+          return response.frame.value;
+        },
+      };
+      while (update.frame.case !== "complete") {
         if (calls.signal.aborted) throw calls.signal.reason;
-        if (!handle)
-          throw new ConnectError(
-            "QueryRun continuation handle missing",
-            Code.Internal,
-          );
 
-        if (update.next.case === "embedding") {
-          const work = update.next.value;
+        if (update.frame.case === "embedding") {
+          const work = update.frame.value;
           let outcome;
           try {
             if (!this.models.embeddingModel)
@@ -142,7 +187,7 @@ export class QueryOrchestrator {
               const prepared = await new ModelMaterialPipeline(
                 this.kernel,
                 this.models,
-              ).prepare(input.subjectId, 256, calls, handle);
+              ).prepare(input.subjectId, 256, calls, materialChannel);
               if (prepared.degradation.length)
                 throw domainError(
                   "Historical embedding material unavailable",
@@ -257,17 +302,12 @@ export class QueryOrchestrator {
               value: rpcFailure(error, "model.query_embedding"),
             };
           }
-          update = await this.resume(
-            input.subjectId,
-            handle,
-            {
-              case: "embedding",
-              value: create(QueryEmbeddingResultSchema, { outcome }),
-            },
-            calls,
-          );
-        } else if (update.next.case === "concept") {
-          const work = update.next.value;
+          update = await exchange({
+            case: "embedding",
+            value: create(QueryEmbeddingResultSchema, { outcome }),
+          });
+        } else if (update.frame.case === "concept") {
+          const work = update.frame.value;
           let outcome;
           let modelCalls = 0;
           try {
@@ -322,17 +362,12 @@ export class QueryOrchestrator {
               value: rpcFailure(error, "model.query_concept_enrichment"),
             };
           }
-          update = await this.resume(
-            input.subjectId,
-            handle,
-            {
-              case: "concept",
-              value: create(QueryConceptResultSchema, { outcome, modelCalls }),
-            },
-            calls,
-          );
-        } else if (update.next.case === "finalize") {
-          const work = update.next.value;
+          update = await exchange({
+            case: "concept",
+            value: create(QueryConceptResultSchema, { outcome, modelCalls }),
+          });
+        } else if (update.frame.case === "finalize") {
+          const work = update.frame.value;
           const profile = this.models.invocations.profile("query_rerank");
           const candidates = (work.baseline?.hits ?? [])
             .filter((hit) => hit.text?.trim() && hit.reference)
@@ -384,52 +419,26 @@ export class QueryOrchestrator {
                   work.baseline?.resourceActions ?? [],
                   calls.signal,
                 );
-          update = await this.resume(
-            input.subjectId,
-            handle,
-            {
-              case: "finalize",
-              value: create(QueryFinalizeResultSchema, { rerank, resources }),
-            },
-            calls,
+          update = await exchange({
+            case: "finalize",
+            value: create(QueryFinalizeResultSchema, { rerank, resources }),
+          });
+        } else {
+          throw new ConnectError(
+            "Unexpected query workflow frame",
+            Code.Internal,
           );
         }
-        handle = update.handle;
       }
-      return update.next.value;
+      requests.close();
+      await responses.next();
+      return update.frame.value;
     } catch (error) {
-      if (handle) {
-        await this.kernel.queryWorkflow
-          .runQuery(
-            {
-              command: {
-                case: "cancel",
-                value: { subjectId: input.subjectId, handle },
-              },
-            },
-            opportunity.cleanup(),
-          )
-          .catch(() => {});
-      }
+      await responses.return?.().catch(() => {});
       throw error;
+    } finally {
+      requests.close();
     }
-  }
-
-  private resume(
-    subjectId: string,
-    handle: QueryRunHandle,
-    outcome: QueryRunResume["outcome"],
-    options: ExecutionOptions,
-  ): Promise<QueryRunUpdate> {
-    return this.kernel.queryWorkflow.runQuery(
-      {
-        command: {
-          case: "resume",
-          value: create(QueryRunResumeSchema, { subjectId, handle, outcome }),
-        },
-      },
-      options,
-    );
   }
 }
 

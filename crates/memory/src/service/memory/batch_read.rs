@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::service::cognition::{CognitionSelection, select_cognitions_in_tx};
 use chrono::{DateTime, Utc};
 use nous_persistence::database_error as db;
 use sqlx::Row;
@@ -47,6 +48,13 @@ impl MemoryService {
         policy: AccessibilityPolicy,
         historical_view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<HashMap<CognitiveRef, MemoryView>> {
+        if references.len() > 256 {
+            return Err(Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
+                "Memory context batch exceeds 256 references",
+            ));
+        }
         if references.is_empty() {
             return Ok(HashMap::new());
         }
@@ -55,75 +63,71 @@ impl MemoryService {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let mut result = HashMap::new();
-        let now = historical_view.map_or(now, |view| view.as_of);
-        for references in references.chunks(256) {
-            let mut requested_revisions = references
-                .iter()
-                .filter_map(|reference| match reference {
-                    CognitiveRef::MemoryRevision(id) => Some(id.0),
-                    _ => None,
-                })
-                .collect::<HashSet<_>>();
-            let object_ids = references
-                .iter()
-                .filter_map(|reference| match reference {
-                    CognitiveRef::Memory(id) => Some(id.0),
-                    _ => None,
-                })
-                .collect::<HashSet<_>>();
-            let mut object_revision = HashMap::new();
-            if let Some(historical_view) = historical_view {
-                let heads = object_ids.iter().filter_map(|memory| {
-                    let state =
-                        historical_view.cognition_for(&CognitiveRef::Memory(MemoryId(*memory)))?;
-                    match state.head {
-                        CognitiveRef::MemoryRevision(revision) => Some((*memory, revision.0)),
-                        _ => None,
+        let effective = references
+            .iter()
+            .filter_map(|reference| {
+                let (kind, _, is_revision) = CognitionKind::from_reference(reference).ok()?;
+                if kind != CognitionKind::Memory {
+                    return None;
+                }
+                match historical_view {
+                    Some(snapshot) => {
+                        let state = snapshot.cognition_for(reference)?;
+                        if is_revision && snapshot.selected_cognition_for(reference).is_none() {
+                            return None;
+                        }
+                        Some(if is_revision {
+                            reference.clone()
+                        } else {
+                            state.head.clone()
+                        })
                     }
-                });
-                object_revision.extend(heads);
-                requested_revisions.extend(object_revision.values().copied());
-            } else if !object_ids.is_empty() {
-                for row in sqlx::query("SELECT memory_id,current_revision_id FROM memory_objects WHERE subject_id=$1 AND memory_id=ANY($2)")
-                    .bind(subject.0).bind(object_ids.iter().copied().collect::<Vec<_>>())
-                    .fetch_all(&mut *tx).await.map_err(db)? {
-                    let memory: Uuid = row.try_get("memory_id").map_err(db)?;
-                    let revision: Uuid = row.try_get("current_revision_id").map_err(db)?;
-                    requested_revisions.insert(revision);
-                    object_revision.insert(memory, revision);
+                    None => Some(reference.clone()),
                 }
-            }
-            let revision_ids = requested_revisions
-                .into_iter()
-                .map(MemoryRevisionId)
-                .collect::<Vec<_>>();
-            let views = self
-                .memories_by_revision_in_tx(
-                    &mut tx,
-                    subject,
-                    &revision_ids,
-                    now,
-                    policy,
-                    historical_view,
-                )
-                .await?;
-            let by_revision = views
-                .into_iter()
-                .map(|view| (view.revision.memory_revision_id.0, view))
-                .collect::<HashMap<_, _>>();
-            for reference in references {
-                let revision = match reference {
-                    CognitiveRef::MemoryRevision(id) => Some(id.0),
-                    CognitiveRef::Memory(id) => object_revision.get(&id.0).copied(),
-                    _ => None,
-                };
-                if let Some(view) = revision.and_then(|revision| by_revision.get(&revision)) {
-                    result.insert(reference.clone(), view.clone());
-                }
-            }
-        }
+            })
+            .collect::<Vec<_>>();
+        let selected = select_cognitions_in_tx(&mut tx, subject, &effective).await?;
+        let selections = unique_selections(&selected, CognitionKind::Memory);
+        let views = self
+            .memory_views_for_selections_in_tx(
+                &mut tx,
+                subject,
+                &selections,
+                historical_view.map_or(now, |view| view.as_of),
+                policy,
+                historical_view,
+            )
+            .await?;
         tx.commit().await.map_err(db)?;
+        let mut result = HashMap::new();
+        for reference in references {
+            let selection = selected.get(reference).or_else(|| {
+                let effective = historical_view
+                    .and_then(|snapshot| snapshot.cognition_for(reference))
+                    .map(|state| state.head.clone());
+                effective
+                    .as_ref()
+                    .and_then(|effective| selected.get(effective))
+            });
+            let Some(mut view) = selection
+                .and_then(|selection| views.get(selection.revision_ref()))
+                .cloned()
+            else {
+                continue;
+            };
+            if let Some(state) =
+                historical_view.and_then(|snapshot| snapshot.cognition_for(reference))
+            {
+                let purge = view.header.lifecycle.purge;
+                view.header = crate::service::cognition::historical_cognition_header(
+                    &view.header,
+                    &state.state,
+                    &state.head,
+                    purge,
+                )?;
+            }
+            result.insert(reference.clone(), view);
+        }
         Ok(result)
     }
 
@@ -159,63 +163,69 @@ impl MemoryService {
             .collect())
     }
 
-    async fn memories_by_revision_in_tx(
+    pub(in crate::service) async fn memory_views_for_selections_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
-        revisions: &[MemoryRevisionId],
+        selections: &[CognitionSelection],
         now: DateTime<Utc>,
         read_policy: AccessibilityPolicy,
         historical_view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<Vec<MemoryView>> {
-        if revisions.len() > 256 {
-            return Err(Error::new(
-                ErrorOwner::Memory,
-                ErrorCode::InvalidRequest,
-                "Memory batch exceeds 256 revisions",
-            ));
-        }
-        if revisions.is_empty() {
-            return Ok(Vec::new());
-        }
-        let ids = revisions
+    ) -> Result<HashMap<CognitiveRef, MemoryView>> {
+        let ids = selections
             .iter()
-            .map(|revision| revision.0)
+            .map(|selection| selection.revision.revision_id())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let rows = sqlx::query("SELECT o.memory_id,o.subject_id,o.cognitive_role,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,o.accessibility_mode,o.created_at,r.memory_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.formation_mode,r.grounding_occurrence_id,r.semantic_role,r.title,r.representation_text,r.epistemic_class,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM memory_objects o JOIN memory_revisions r ON r.memory_id=o.memory_id WHERE o.subject_id=$1 AND r.subject_id=$1 AND r.memory_revision_id=ANY($2)")
-            .bind(subject.0)
-            .bind(&ids)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(db)?;
-        if rows.is_empty() {
-            return Ok(Vec::new());
+        if ids.is_empty() {
+            return Ok(HashMap::new());
         }
+        let rows = sqlx::query("SELECT memory_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end FROM memory_revisions WHERE memory_revision_id=ANY($1)")
+            .bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
+        let selected = selections
+            .iter()
+            .map(|selection| (selection.revision.revision_id(), selection))
+            .collect::<HashMap<_, _>>();
         let mut decoded = HashMap::with_capacity(rows.len());
-        let mut memory_ids = HashSet::new();
-        for row in &rows {
-            let (mut object, revision) = super::decode_memory_row(row, subject)?;
-            if let Some(historical_view) = historical_view {
-                let Some(state) = historical_view
-                    .cognition_for(&CognitiveRef::MemoryRevision(revision.memory_revision_id))
-                else {
-                    continue;
-                };
-                let current_purge_state = object.purge_state;
-                object = serde_json::from_value(state.state.clone()).map_err(|error| {
-                    Error::new(
-                        ErrorOwner::Memory,
-                        ErrorCode::InternalFailure,
-                        "Could not decode historical memory state",
-                    )
-                    .with_source(error)
-                })?;
-                object.purge_state = current_purge_state;
-            }
-            memory_ids.insert(object.memory_id.0);
-            decoded.insert(revision.memory_revision_id.0, (object, revision));
+        for row in rows {
+            let revision_id: Uuid = row.try_get("memory_revision_id").map_err(db)?;
+            let Some(selection) = selected.get(&revision_id) else {
+                continue;
+            };
+            let revision = MemoryRevision {
+                header: selection.revision.clone(),
+                revision_intent: row
+                    .try_get::<Option<String>, _>("revision_intent")
+                    .map_err(db)?
+                    .map(|value| parse_enum(ErrorOwner::Memory, value, "revision intent"))
+                    .transpose()?,
+                formation_mode: parse_enum(
+                    ErrorOwner::Memory,
+                    row.try_get("formation_mode").map_err(db)?,
+                    "formation mode",
+                )?,
+                grounding_occurrence_id: row
+                    .try_get::<Option<Uuid>, _>("grounding_occurrence_id")
+                    .map_err(db)?
+                    .map(OccurrenceId),
+                semantic_role: row.try_get("semantic_role").map_err(db)?,
+                title: row.try_get("title").map_err(db)?,
+                representation_text: row.try_get("representation_text").map_err(db)?,
+                epistemic_class: parse_enum(
+                    ErrorOwner::Memory,
+                    row.try_get("epistemic_class").map_err(db)?,
+                    "epistemic class",
+                )?,
+                valid_time: temporal_from_columns(
+                    ErrorOwner::Memory,
+                    row.try_get("valid_time_kind").map_err(db)?,
+                    row.try_get("valid_time_start").map_err(db)?,
+                    row.try_get("valid_time_end").map_err(db)?,
+                )?,
+            };
+            let header = selection.header.clone();
+            decoded.insert(revision_id, (header, revision));
         }
         let loaded_ids = decoded.keys().copied().collect::<Vec<_>>();
 
@@ -294,32 +304,25 @@ impl MemoryService {
         }
 
         let accessibility = self
-            .accessibility_levels(
-                subject,
-                &memory_ids.into_iter().map(MemoryId).collect::<Vec<_>>(),
-                now,
-                read_policy,
-                historical_view,
-                tx,
-            )
+            .accessibility_levels(subject, selections, now, read_policy, historical_view, tx)
             .await?;
         let mut views = HashMap::with_capacity(decoded.len());
-        for (revision_id, (object, revision)) in decoded {
+        for (revision_id, (header, revision)) in decoded {
             let relations = relations.remove(&revision_id).unwrap_or_default();
             let relations_truncated = relations.len() > 256;
             let basis = basis.remove(&revision_id).unwrap_or_default();
             views.insert(
                 revision_id,
                 MemoryView {
-                    accessibility_level: *accessibility.get(&object.memory_id).ok_or_else(
-                        || {
+                    accessibility_level: *accessibility
+                        .get(&MemoryId(header.object_id()))
+                        .ok_or_else(|| {
                             Error::new(
                                 ErrorOwner::Memory,
                                 ErrorCode::InternalFailure,
                                 "Memory accessibility batch omitted an object",
                             )
-                        },
-                    )?,
+                        })?,
                     temporal_evidence: temporal.remove(&revision_id).unwrap_or(TemporalEvidence {
                         occurred: Vec::new(),
                         observed_at: None,
@@ -334,21 +337,21 @@ impl MemoryService {
                     relations: relations.into_iter().take(256).collect(),
                     relations_truncated,
                     basis,
-                    object,
+                    header,
                     revision,
                 },
             );
         }
-        Ok(revisions
-            .iter()
-            .filter_map(|revision| views.get(&revision.0).cloned())
+        Ok(views
+            .into_values()
+            .map(|view| (view.revision.header.revision_ref.clone(), view))
             .collect())
     }
 
     async fn accessibility_levels(
         &self,
         subject: SubjectId,
-        memories: &[MemoryId],
+        selections: &[CognitionSelection],
         now: DateTime<Utc>,
         read_policy: AccessibilityPolicy,
         historical_view: Option<&HistoricalAuthoritySnapshot>,
@@ -361,34 +364,48 @@ impl MemoryService {
         }
 
         let policy = read_policy;
-        let ids = memories.iter().map(|id| id.0).collect::<Vec<_>>();
-        let rows = sqlx::query("SELECT o.memory_id,o.accessibility_mode,o.created_at,e.use_kind,e.occurred_at FROM memory_objects o LEFT JOIN memory_revisions r ON r.memory_id=o.memory_id LEFT JOIN cognitive_use_events e ON e.subject_id=o.subject_id AND e.ref_kind='memory_revision' AND e.ref_value=r.memory_revision_id::text AND e.use_kind<>'presented' AND e.occurred_at<=$3 WHERE o.subject_id=$1 AND o.memory_id=ANY($2) ORDER BY o.memory_id,e.occurred_at")
+        let current = selections
+            .iter()
+            .map(|selection| {
+                (
+                    selection.header.memory_id(),
+                    (
+                        selection.header.details.accessibility_mode(),
+                        selection.header.created_at,
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let ids = current.keys().map(|id| id.0).collect::<Vec<_>>();
+        let rows = sqlx::query("SELECT o.object_id AS memory_id,e.use_kind,e.occurred_at FROM cognition_objects o LEFT JOIN cognition_revision_headers r ON r.subject_id=o.subject_id AND r.object_kind=o.object_kind AND r.object_id=o.object_id LEFT JOIN cognitive_use_events e ON e.subject_id=o.subject_id AND e.ref_kind='memory_revision' AND e.ref_value=r.revision_id::text AND e.use_kind<>'presented' AND e.occurred_at<=$3 WHERE o.object_kind='memory' AND o.subject_id=$1 AND o.object_id=ANY($2) ORDER BY o.object_id,e.occurred_at")
             .bind(subject.0).bind(ids).bind(now).fetch_all(&mut **tx).await.map_err(db)?;
         let mut inputs = BTreeMap::<MemoryId, ActivationInput>::new();
         for row in rows {
             let memory = MemoryId(row.try_get("memory_id").map_err(db)?);
-            let current_mode = parse_enum(
-                ErrorOwner::Memory,
-                row.try_get("accessibility_mode").map_err(db)?,
-                "accessibility mode",
-            )?;
+            let (current_mode, created) = current.get(&memory).cloned().ok_or_else(|| {
+                Error::new(
+                    ErrorOwner::Memory,
+                    ErrorCode::InternalFailure,
+                    "Memory accessibility batch omitted an object",
+                )
+            })?;
             let mode = historical_view
                 .and_then(|view| view.cognition_for(&CognitiveRef::Memory(memory)))
                 .map(|state| {
-                    serde_json::from_value::<MemoryObject>(state.state.clone())
-                        .map(|object| object.accessibility_mode)
-                        .map_err(|error| {
-                            Error::new(
-                                ErrorOwner::Memory,
-                                ErrorCode::InternalFailure,
-                                "Could not decode historical memory state",
-                            )
-                            .with_source(error)
-                        })
+                    serde_json::from_value::<AccessibilityMode>(
+                        state.state["accessibility_mode"].clone(),
+                    )
+                    .map_err(|error| {
+                        Error::new(
+                            ErrorOwner::Memory,
+                            ErrorCode::InternalFailure,
+                            "Could not decode historical Memory accessibility",
+                        )
+                        .with_source(error)
+                    })
                 })
                 .transpose()?
                 .unwrap_or(current_mode);
-            let created: DateTime<Utc> = row.try_get("created_at").map_err(db)?;
             let activation = inputs.entry(memory).or_insert_with(|| ActivationInput {
                 mode,
                 created_at: created,
@@ -440,4 +457,17 @@ fn evidence_locator(row: &sqlx::postgres::PgRow) -> Result<EvidenceLocator> {
             "Evidence locator union is invalid",
         )),
     }
+}
+
+fn unique_selections(
+    selected: &HashMap<CognitiveRef, CognitionSelection>,
+    kind: CognitionKind,
+) -> Vec<CognitionSelection> {
+    selected
+        .values()
+        .filter(|selection| selection.header.kind() == kind)
+        .map(|selection| (selection.revision.revision_ref.clone(), selection.clone()))
+        .collect::<HashMap<_, _>>()
+        .into_values()
+        .collect()
 }

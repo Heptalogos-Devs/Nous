@@ -4,10 +4,12 @@
 mod test_support;
 
 use chrono::{Duration, SubsecRound, Utc};
+use nous_core::{CognitiveRef, EpisodeId, SubjectId};
 use nous_kernel::NousRuntime;
 use nous_material::ObservationMaterial;
 use nous_memory::{
-    EpisodePartitionInput, EpisodePartitionSegment, EpisodePartitionSource, EpisodeView,
+    CognitionView, EpisodePartitionInput, EpisodePartitionSegment, EpisodePartitionSource,
+    EpisodeView, MemoryService,
 };
 use nous_runtime::{CognitiveClock, MaintenanceDisposition, ManualCognitiveClock};
 use std::sync::Arc;
@@ -15,6 +17,21 @@ use test_support::database;
 
 use test_support::longitudinal::{observation, runtime_with_clock};
 use test_support::query::subject as create_subject;
+
+async fn read_episode(
+    owner: &MemoryService,
+    subject: SubjectId,
+    episode_id: EpisodeId,
+) -> EpisodeView {
+    match owner
+        .read_cognition(subject, CognitiveRef::Episode(episode_id))
+        .await
+        .unwrap()
+    {
+        CognitionView::Episode(episode) => episode,
+        _ => panic!("common Cognition read returned the wrong view kind"),
+    }
+}
 
 async fn partition_request(
     rt: &NousRuntime,
@@ -30,8 +47,8 @@ async fn partition_request(
         sources: sources
             .iter()
             .map(|source| EpisodePartitionSource {
-                revision: source.revision.episode_revision_id,
-                expected_epoch: source.object.object_epoch,
+                revision: source.revision.header.episode_revision_id(),
+                expected_epoch: source.header.object_epoch,
             })
             .collect(),
         ordered_occurrences: occurrences.to_vec(),
@@ -98,23 +115,21 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
     assert!(
         split
             .iter()
-            .all(|part| part.object.episode_id != original[0].object.episode_id)
+            .all(|part| part.header.episode_id() != original[0].header.episode_id())
     );
-    let withdrawn = memory
-        .episode(subject, original[0].object.episode_id, None)
-        .await
-        .unwrap();
+    let withdrawn = read_episode(memory, subject, original[0].header.episode_id()).await;
     assert_eq!(
-        withdrawn.object.acceptance_state,
+        withdrawn.header.lifecycle.acceptance,
         nous_memory::AcceptanceState::Withdrawn
     );
     assert!(
         memory
-            .reaccept_episode(
+            .mutate_cognition(
                 subject,
-                withdrawn.object.episode_id,
+                nous_core::CognitiveRef::Episode(withdrawn.header.episode_id()),
                 nous_core::OperationId::new(),
-                withdrawn.object.object_epoch
+                withdrawn.header.object_epoch,
+                nous_memory::CognitionAction::Reaccept,
             )
             .await
             .is_err()
@@ -126,8 +141,8 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
     }));
     let replay = memory.apply_episode_partition(split_request).await.unwrap();
     assert_eq!(
-        replay[0].revision.episode_revision_id,
-        split[0].revision.episode_revision_id
+        replay[0].revision.header.revision_id(),
+        split[0].revision.header.revision_id()
     );
     assert_partition_rollback(&rt, subject, &split, &occurrences).await;
     let repartition_request = partition_request(
@@ -179,12 +194,13 @@ async fn assert_partition_rollback(
     let mut invalid =
         partition_request(rt, subject, sources, occurrences, &[vec![0, 1], vec![2, 3]]).await;
     invalid.segments[1].boundary_explanation = "x".repeat(20000);
-    let before: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM episode_objects WHERE subject_id=$1")
-            .bind(subject.0)
-            .fetch_one(rt.store.pool())
-            .await
-            .unwrap();
+    let before: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM cognition_objects WHERE subject_id=$1 AND object_kind='episode'",
+    )
+    .bind(subject.0)
+    .fetch_one(rt.store.pool())
+    .await
+    .unwrap();
     let watermark = rt.store.authority_seq(subject).await.unwrap();
     assert!(
         rt.require_memory()
@@ -193,27 +209,25 @@ async fn assert_partition_rollback(
             .await
             .is_err()
     );
-    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM episode_objects WHERE subject_id=$1")
-        .bind(subject.0)
-        .fetch_one(rt.store.pool())
-        .await
-        .unwrap();
+    let after: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM cognition_objects WHERE subject_id=$1 AND object_kind='episode'",
+    )
+    .bind(subject.0)
+    .fetch_one(rt.store.pool())
+    .await
+    .unwrap();
     assert_eq!(before, after);
     assert_eq!(watermark, rt.store.authority_seq(subject).await.unwrap());
     for source in sources {
-        let current = rt
-            .require_memory()
-            .unwrap()
-            .episode(subject, source.object.episode_id, None)
-            .await
-            .unwrap();
+        let memory = rt.require_memory().unwrap();
+        let current = read_episode(memory, subject, source.header.episode_id()).await;
         assert_eq!(
-            current.object.acceptance_state,
+            current.header.lifecycle.acceptance,
             nous_memory::AcceptanceState::Accepted
         );
         assert_eq!(
-            current.object.current_revision_id,
-            source.object.current_revision_id
+            current.header.current_revision_id(),
+            source.header.current_revision_id()
         );
     }
 }
@@ -231,14 +245,22 @@ async fn assert_partition_revision(
         .apply_episode_partition(revise.clone())
         .await
         .unwrap();
-    assert_eq!(revised[0].object.episode_id, merged[0].object.episode_id);
+    assert_eq!(
+        revised[0].header.episode_id(),
+        merged[0].header.episode_id()
+    );
     assert_ne!(
-        revised[0].revision.episode_revision_id,
-        merged[0].revision.episode_revision_id
+        revised[0].revision.header.revision_id(),
+        merged[0].revision.header.revision_id()
     );
     assert_eq!(
         memory
-            .episode_history(subject, revised[0].object.episode_id)
+            .cognition_history_refs(
+                subject,
+                &CognitiveRef::Episode(revised[0].header.episode_id()),
+                None,
+                201,
+            )
             .await
             .unwrap()
             .len(),
@@ -250,8 +272,8 @@ async fn assert_partition_revision(
     let watermark = rt.store.authority_seq(subject).await.unwrap();
     let no_change = memory.apply_episode_partition(unchanged).await.unwrap();
     assert_eq!(
-        no_change[0].revision.episode_revision_id,
-        revised[0].revision.episode_revision_id
+        no_change[0].revision.header.revision_id(),
+        revised[0].revision.header.revision_id()
     );
     assert_eq!(rt.store.authority_seq(subject).await.unwrap(), watermark);
     revise.operation_id = nous_core::OperationId::new();

@@ -12,7 +12,7 @@ Core owns model and Resource host calls; Material owns Artifact/Observation/Deri
 
 引用依赖从 canonical Proto 的 `reference_kind` 与 `CognitiveRef` 提取，opaque 用户 JSON 和普通正文不产生依赖。Core 在调用 canonical mutation 前登记其稳定 operation ID；领域 owner 在同一 Authority 事务中发布实际结果依赖。Purge 因此覆盖 Authority 已提交、Host 尚未保存 outcome 的窗口。Telemetry 使用正式的 attempts、usage 和省略计数；缺失 usage 保持未知，累积只保留最早 64 次 attempt。
 
-数据库升级由 `0005_workflow_envelope.sql` 一次性转换已保存的 snapshot/proposal/outcome，保留领域 payload、认知时间、maintenance 绑定和 telemetry。旧 Schema split 回执仅保存 parent 时，只有一个已记录 split 的来源可恢复其存续 child revisions，按 revision ID 返回；多次历史 split 的归属无法从旧回执唯一确定时，迁移拒绝，须先提供精确 child batch。新 split 回执保存原始结果次序。该转换不保留旧 wire 或运行时 JSON 猜测路径。
+持久状态通过 Pending / Completed 表达；Reserve 返回 Acquired（含 lease 与 pending）、Busy 或 Completed，避免 bool 与可选字段组合出非法状态。Schema split 回执保存有序 child revision 结果，重试直接复用。Fresh schema 直接声明当前字段。
 
 ## Schema 与来源
 
@@ -36,9 +36,9 @@ Selected materialization 的内容上限为 1 MiB UTF-8；query records 的 aggr
 
 Kernel Resource descriptor 保存 adapter_kind/provider_profile/provider_locator，网络与 credential 留宿主。Core adapter 负责 describe/search/materialize/checkVersion/checkAccess；宿主供给的 provider identity 不允许重复。StableExternalRef 保存 provider/profile digest/resource/entry/version(nullable)/content digest/source locator/retrieved time/access descriptor；无 provider revision 时重新读取 content digest 检查变化。
 
-Resource actions 是 QueryRun 的宿主步骤。Kernel 在 provider call 前固定 Resource action IDs、绑定 descriptor、query intent、limits、materialize/current-authority、budgets 和 ConfigSnapshot；Core 在同一 QueryRun 的最终宿主阶段调用 adapters，再用当前 Subject-bound handle 提交结果。Kernel finalization 校验 Subject/action/resource/provider identity、单次提交、数量以及 current version/access。QueryRun 期间 action IDs 与 lane/query budgets 保持固定；provider records 保留 provider rank，与 cognitive raw scores 分开。
+Resource actions 是 QueryRun 的宿主步骤。Kernel 在 provider call 前固定 Resource action IDs、绑定 descriptor、query intent、limits、materialize/current-authority、budgets 和 ConfigSnapshot；Core 在同一 QueryRun 的最终宿主阶段调用 adapters，再通过同一私有 Query 流提交结果。Kernel finalization 校验 Subject/action/resource/provider identity、单次提交、数量以及 current version/access。QueryRun 期间 action IDs 与 lane/query budgets 保持固定；provider records 保留 provider rank，与 cognitive raw scores 分开。
 
-Public QueryResponse 将 resource_records 与 cognitive hits 分开；resource_actions 保存未执行项。Adapter 未配置或调用失败时返回显式 degradation，local hits 仍可返回。Core 将 cancellation 传递给网络请求，出错或取消时取消同一 QueryRun；lease expiry 是清理兜底。Official Client 可管理 Resource、执行 query、读取 records，并 materialize/admit selected record。
+Public QueryResponse 将 resource_records 与 cognitive hits 分开；resource_actions 保存未执行项。Adapter 未配置或调用失败时返回显式 degradation，local hits 仍可返回。Core 将 cancellation 传递给网络请求，出错或取消时终止 Query 流，释放运行状态、Serving read lease 与并发名额。Official Client 可管理 Resource、执行 query、读取 records，并 materialize/admit selected record。
 
 Kernel 将单条 record 限制为 1 MiB、每次 query 的总序列化 record 限制为 2 MiB。Authority policies 为 none/prefer/required；query results 保留各 record 的版本与访问判断。
 

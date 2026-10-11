@@ -7,6 +7,7 @@ import "nous/wave/v1alpha1/journal.proto";
 import "google/protobuf/empty.proto";
 import "nous/wave/v1alpha1/management.proto";
 import "nous/wave/v1alpha1/types.proto";
+import "nous/wave/v1alpha1/cognition.proto";
 
 service SubjectService { rpc CreateSubject(CreateSubjectRequest) returns (Subject); rpc GetSubject(SubjectRequest) returns (Subject); rpc ListSubjects(ListRequest) returns (ListSubjectsResponse); rpc GetCognitiveSeed(SubjectRequest) returns (CognitiveSeedVersion); rpc AdoptCognitiveSeed(AdoptCognitiveSeedRequest) returns (CognitiveSeedVersion); }
 service RuntimeService {
@@ -33,39 +34,15 @@ service CognitionService {
   rpc BuildManagedContext(ManagedContextRequest) returns (ManagedContextResponse);
 }
 service MemoryService {
-  rpc GetJournal(ObjectRequest) returns (JournalResponse);
-  rpc GetJournalRevision(ObjectRequest) returns (JournalRevision);
-  rpc ListJournals(ListRequest) returns (ListJournalsResponse);
-  rpc ListJournalRevisions(ListJournalRevisionsRequest) returns (ListJournalRevisionsResponse);
-  rpc SuppressJournal(JournalMutationRequest) returns (JournalResponse);
-  rpc RestoreJournal(JournalMutationRequest) returns (JournalResponse);
-  rpc WithdrawJournal(JournalMutationRequest) returns (JournalResponse);
-  rpc ReacceptJournal(JournalMutationRequest) returns (JournalResponse);
-  rpc PurgeJournal(JournalMutationRequest) returns (google.protobuf.Empty);
-  rpc SetAccessibility(SetAccessibilityRequest) returns (Memory);
+  rpc ReadCognition(ReadCognitionRequest) returns (CognitionResult);
+  rpc ListCognitions(CognitionListRequest) returns (CognitionPage);
+  rpc ListCognitionHistory(CognitionHistoryRequest) returns (CognitionPage);
+  rpc MutateCognition(CognitionMutationRequest) returns (CognitionMutationResponse);
   rpc LinkRevisions(LinkRevisionsRequest) returns (google.protobuf.Empty);
-  rpc GetMemory(ObjectRequest) returns (Memory);
-  rpc ListMemories(ListRequest) returns (ListMemoriesResponse);
-  rpc GetMemoryRevision(ObjectRequest) returns (Memory);
-  rpc ListMemoryRevisions(MemoryHistoryRequest) returns (ListMemoriesResponse);
   rpc FormMemory(FormMemoryRequest) returns (Memory);
   rpc ReviseMemory(ReviseMemoryRequest) returns (Memory);
-  rpc SuppressMemory(MemoryMutationRequest) returns (Memory);
-  rpc RestoreMemory(MemoryMutationRequest) returns (Memory);
-  rpc WithdrawMemory(MemoryMutationRequest) returns (Memory);
-  rpc ReacceptMemory(MemoryMutationRequest) returns (Memory);
-  rpc PurgeMemory(MemoryMutationRequest) returns (google.protobuf.Empty);
   rpc CreateEpisode(CreateEpisodeRequest) returns (EpisodeResponse);
-  rpc GetEpisode(ObjectRequest) returns (EpisodeResponse);
-  rpc GetEpisodeRevision(ObjectRequest) returns (EpisodeRevision);
-  rpc ListEpisodes(ListRequest) returns (ListEpisodesResponse);
-  rpc ListEpisodeRevisions(ListEpisodeRevisionsRequest) returns (ListEpisodeRevisionsResponse);
   rpc ReviseEpisode(ReviseEpisodeRequest) returns (EpisodeResponse);
   rpc LinkEpisodeRevisions(LinkEpisodeRevisionsRequest) returns (google.protobuf.Empty);
-  rpc SuppressEpisode(EpisodeMutationRequest) returns (EpisodeResponse);
-  rpc RestoreEpisode(EpisodeMutationRequest) returns (EpisodeResponse);
-  rpc WithdrawEpisode(EpisodeMutationRequest) returns (EpisodeResponse);
-  rpc ReacceptEpisode(EpisodeMutationRequest) returns (EpisodeResponse);
-  rpc PurgeEpisode(EpisodeMutationRequest) returns (google.protobuf.Empty);
 }
 service MaterialService { rpc ListOccurrences(OccurrenceListRequest) returns (OccurrenceListResponse); rpc GetDerivedRegion(ObjectRequest) returns (DerivedRegion); rpc GetProducer(ObjectRequest) returns (ProducerSignature); rpc ListDerivedRepresentations(RepresentationListRequest) returns (RepresentationListResponse); rpc GetLimits(google.protobuf.Empty) returns (MaterialLimits); rpc GetOccurrence(ObjectRequest) returns (Occurrence); rpc GetSourceRegion(ObjectRequest) returns (SourceRegion); rpc GetDerivedRepresentation(ObjectRequest) returns (DerivedRepresentation); rpc GetArtifact(ObjectRequest) returns (Artifact); rpc ListArtifacts(ListRequest) returns (ListArtifactsResponse); rpc MaterializeEvidence(MaterializeRequest) returns (MaterializedEvidence); }

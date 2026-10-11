@@ -287,6 +287,12 @@ try {
       ],
     },
   });
+  const memoryId = memory.header?.objectRef?.value;
+  const revisionId = memory.revision?.header?.revisionRef?.value;
+  if (!memoryId || !revisionId)
+    throw new Error(
+      "Memory formation returned incomplete CognitionHeader data",
+    );
   const response = await client.cognition.recall(
     subjectId,
     "stable source identity $return(memory) $limit(5)",
@@ -294,11 +300,11 @@ try {
   assert(
     response.hits.some(
       (hit: { revision?: { value: string } }) =>
-        hit.revision?.value === memory.revisionId,
+        hit.revision?.value === revisionId,
     ),
   );
-  await cli("trace", `memory_revision:${memory.revisionId}`);
-  await cli("use", `memory_revision:${memory.revisionId}`);
+  await cli("trace", `memory_revision:${revisionId}`);
+  await cli("use", `memory_revision:${revisionId}`);
   const databaseState = await readFile(
     join(instanceRoot, "postgres.json"),
     "utf8",
@@ -323,7 +329,7 @@ try {
   assert(
     recalled.hits.some(
       (hit: { revision?: { value: string } }) =>
-        hit.revision?.value === memory.revisionId,
+        hit.revision?.value === revisionId,
     ),
   );
   assert.equal(
@@ -375,7 +381,7 @@ try {
       stableDatabasePort: true,
       missingPackRejected: true,
       subjectId,
-      memoryId: memory.memoryId,
+      memoryId,
       liveModel: "NOT_RUN",
       corpus: "synthetic_portable_wiring",
     }),

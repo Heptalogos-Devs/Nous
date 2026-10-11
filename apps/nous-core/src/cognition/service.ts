@@ -241,36 +241,12 @@ export class CoreCognition {
     );
   }
 
-  async purgeMemory(
-    request: Parameters<KernelClient["memory"]["purgeMemory"]>[0],
+  async mutateCognition(
+    request: Parameters<KernelClient["memory"]["mutateCognition"]>[0],
     calls: Execution,
   ) {
     if (request.subjectId) this.invalidateSubjectCaches(request.subjectId);
-    return this.kernel.memory.purgeMemory(request, calls);
-  }
-
-  async purgeEpisode(
-    request: Parameters<KernelClient["memory"]["purgeEpisode"]>[0],
-    calls: Execution,
-  ) {
-    if (request.subjectId) this.invalidateSubjectCaches(request.subjectId);
-    return this.kernel.memory.purgeEpisode(request, calls);
-  }
-
-  async purgeJournal(
-    request: Parameters<KernelClient["memory"]["purgeJournal"]>[0],
-    calls: Execution,
-  ) {
-    if (request.subjectId) this.invalidateSubjectCaches(request.subjectId);
-    return this.kernel.memory.purgeJournal(request, calls);
-  }
-
-  async purgeCognitiveSchema(
-    request: Parameters<KernelClient["concepts"]["purgeCognitiveSchema"]>[0],
-    calls: Execution,
-  ) {
-    if (request.subjectId) this.invalidateSubjectCaches(request.subjectId);
-    return this.kernel.concepts.purgeCognitiveSchema(request, calls);
+    return this.kernel.memory.mutateCognition(request, calls);
   }
 
   private invalidateSubjectCaches(subjectId: string) {

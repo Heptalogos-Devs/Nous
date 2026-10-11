@@ -8,7 +8,7 @@
 
 共享状态按 Core discovery 中的稳定 instanceId 与 `--consumer` 共同隔离，目录为 `InstanceRoot/consumers/<身份摘要>/`。Core 重启保留实例身份；同一 state root 中不同实例或 consumer 使用不同选择和回执。每条命令固定开始时的 Subject、Session、WorkContext 与输入，后续 RPC 不重读另一条命令的选择。原子写与跨进程锁仅用于本地短事务，不覆盖 RPC 或模型等待。独立字段更新合并；同字段、Subject 或 query context 冲突保留业务结果并返回 `STATE_UNSAVED` notice，后续操作使用返回的 exact references。
 
-`consumer_state` 配置提供回执容量、文件字节预算和锁时限，完整 active policy 在命令开始时固定。selection 保持本地 devalue 格式；操作回执使用 `nous.consumer.operation.v2` 与固定命令 schema 的 ProtoJSON request/result，状态为 pending、outcome_unknown、complete 或 rejected。未知结果始终复用冻结 subject、operation ID、digest 与请求；operation ID 的 owner receipt 才决定服务器状态。当前生产入口不读取旧 v1 receipt，也不把 pending/timeout/disconnect 解释为未提交。
+`consumer_state` 配置提供回执容量、文件字节预算和锁时限，完整 active policy 在命令开始时固定。selection 使用 Zod 校验的普通 JSON；操作回执使用 `nous.consumer.operation.v2` 与固定命令 schema 的 ProtoJSON request/result，状态为 pending、complete 或 rejected。`pending` 表示业务终态未确认；RPC 失败不改写回执，未知结果始终复用冻结 subject、operation ID、digest 与请求。operation ID 的 owner receipt 才决定服务器状态。回执格式不合法时报告错误；pending、timeout 或 disconnect 均不表示服务器尚未提交。
 
 按[根 README](../../README.md)准备开发环境并运行 `corepack pnpm dev`，另一个终端可执行：
 

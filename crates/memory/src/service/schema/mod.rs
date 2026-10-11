@@ -2,18 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-mod lifecycle;
 mod lineage;
 mod mutation;
 mod read;
-
-pub use lifecycle::SchemaLifecycleAction;
 
 use nous_persistence::database_error as db;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaView {
-    pub schema: CognitiveSchema,
+    pub header: CognitionHeader,
     pub revision: CognitiveSchemaRevision,
     pub evidence_links: Vec<SchemaEvidenceLink>,
 }
@@ -185,7 +182,7 @@ impl MemoryService {
             .collect();
         self.validate_basis_in_tx(ErrorOwner::Concept, tx, input.subject, &basis)
             .await?;
-        sqlx::query("INSERT INTO cognitive_schemas(schema_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,1,'accepted','valid','normal','normal',$4)")
+        sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES('cognitive_schema',$1,$2,$3,1,'accepted','valid','normal','normal',$4)")
             .bind(schema_id.0).bind(input.subject.0).bind(revision_id.0).bind(now).execute(&mut **tx).await.map_err(db)?;
         self.write_schema_revision_in(
             tx,
@@ -225,8 +222,23 @@ impl MemoryService {
             .iter()
             .map(|id| id.0)
             .collect();
-        sqlx::query("INSERT INTO cognitive_schema_revisions(schema_revision_id,schema_id,revision_no,parent_revision_id,revision_intent,title,structural_claim,applicability_description,aboutness,tags,boundary_definition,formation_kind,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)")
-            .bind(write.revision_id.0).bind(write.schema_id.0).bind(write.number).bind(write.parent.map(|id|id.0)).bind(write.intent.map(|intent|intent.as_str())).bind(&content.title).bind(&content.structural_claim).bind(&content.applicability_scope.description).bind(aboutness).bind(tags).bind(&content.boundary_definition).bind(content.formation_kind.as_str()).bind(kind).bind(start).bind(end).bind(write.formed_at).bind(write.recorded_at).bind(write.producer).execute(&mut **tx).await.map_err(db)?;
+        Self::insert_cognition_revision_header_in(
+            tx,
+            subject,
+            &CognitionRevisionHeader::new(
+                CognitionKind::CognitiveSchema,
+                write.schema_id.0,
+                write.revision_id.0,
+                write.number,
+                write.parent.map(|id| id.0),
+                write.formed_at,
+                write.recorded_at,
+                write.producer,
+            ),
+        )
+        .await?;
+        sqlx::query("INSERT INTO cognitive_schema_revisions(schema_revision_id,revision_intent,title,structural_claim,applicability_description,aboutness,tags,boundary_definition,formation_kind,valid_time_kind,valid_time_start,valid_time_end) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
+            .bind(write.revision_id.0).bind(write.intent.map(|intent|intent.as_str())).bind(&content.title).bind(&content.structural_claim).bind(&content.applicability_scope.description).bind(aboutness).bind(tags).bind(&content.boundary_definition).bind(content.formation_kind.as_str()).bind(kind).bind(start).bind(end).execute(&mut **tx).await.map_err(db)?;
         for link in &content.evidence_links {
             self.insert_schema_link(tx, subject, write.revision_id, link.clone())
                 .await?;

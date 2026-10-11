@@ -122,8 +122,8 @@ impl MemoryService {
         let now = self.cognition.now(input.subject);
         self.validate_basis_in_tx(ErrorOwner::Memory, tx, input.subject, &input.basis)
             .await?;
-        sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,accessibility_mode,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','normal','auto',$5)")
-            .bind(memory_id.0).bind(input.subject.0).bind(input.cognitive_role.as_str()).bind(revision_id.0).bind(now).execute(&mut **tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at,cognitive_role,accessibility_mode) VALUES('memory',$1,$2,$3,1,'accepted','valid','normal','normal',$4,$5,'auto')")
+            .bind(memory_id.0).bind(input.subject.0).bind(revision_id.0).bind(now).bind(input.cognitive_role.as_str()).execute(&mut **tx).await.map_err(db)?;
         self.insert_revision_in_tx(
             tx,
             input,
@@ -172,8 +172,23 @@ impl MemoryService {
             None
         };
         let (valid_kind, valid_start, valid_end) = temporal_columns(&input.valid_time);
-        sqlx::query("INSERT INTO memory_revisions(memory_revision_id,memory_id,subject_id,revision_no,parent_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)")
-            .bind(revision_id.0).bind(memory_id.0).bind(input.subject.0).bind(revision_no).bind(parent.map(|id| id.0)).bind(revision_intent.map(|value| value.as_str())).bind(input.formation_mode.as_str()).bind(input.grounding_occurrence_id.map(|id| id.0)).bind(&input.semantic_role).bind(&input.title).bind(&input.representation_text).bind(format!("{:?}",input.epistemic_class).to_lowercase()).bind(valid_kind).bind(valid_start).bind(valid_end).bind(formed_at).bind(recorded_at).bind(producer_id).execute(&mut **tx).await.map_err(db)?;
+        Self::insert_cognition_revision_header_in(
+            tx,
+            input.subject,
+            &CognitionRevisionHeader::new(
+                CognitionKind::Memory,
+                memory_id.0,
+                revision_id.0,
+                revision_no,
+                parent.map(|id| id.0),
+                formed_at,
+                recorded_at,
+                producer_id,
+            ),
+        )
+        .await?;
+        sqlx::query("INSERT INTO memory_revisions(memory_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
+            .bind(revision_id.0).bind(revision_intent.map(|value| value.as_str())).bind(input.formation_mode.as_str()).bind(input.grounding_occurrence_id.map(|id| id.0)).bind(&input.semantic_role).bind(&input.title).bind(&input.representation_text).bind(format!("{:?}",input.epistemic_class).to_lowercase()).bind(valid_kind).bind(valid_start).bind(valid_end).execute(&mut **tx).await.map_err(db)?;
         for (index, basis) in input.basis.iter().enumerate() {
             self.insert_basis_in_tx(tx, revision_id, index as i32, basis)
                 .await?;
@@ -401,7 +416,7 @@ impl MemoryService {
         input: &ReviseMemoryInput,
         formed_at: DateTime<Utc>,
     ) -> Result<(MemoryRevisionId, i64)> {
-        let row = sqlx::query("SELECT current_revision_id,object_epoch,cognitive_role,purge_state FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE")
+        let row = sqlx::query("SELECT current_revision_id,object_epoch,cognitive_role,purge_state FROM cognition_objects WHERE object_kind='memory' AND subject_id=$1 AND object_id=$2 FOR UPDATE")
             .bind(input.subject.0).bind(input.memory_id.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "memory not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         fence_epoch(ErrorOwner::Memory, epoch, input.expected_object_epoch)?;
@@ -443,7 +458,7 @@ impl MemoryService {
             ));
         }
         let revision_no: i32 = sqlx::query_scalar(
-            "SELECT revision_no+1 FROM memory_revisions WHERE memory_revision_id=$1",
+            "SELECT revision_no+1 FROM cognition_revision_headers WHERE object_kind='memory' AND revision_id=$1",
         )
         .bind(parent.0)
         .fetch_one(&mut **tx)
@@ -485,7 +500,7 @@ impl MemoryService {
             self.cognition.now(input.subject),
         )
         .await?;
-        sqlx::query("UPDATE memory_objects SET current_revision_id=$3,object_epoch=object_epoch+1,integrity_state='valid' WHERE subject_id=$1 AND memory_id=$2").bind(input.subject.0).bind(input.memory_id.0).bind(revision_id.0).execute(&mut **tx).await.map_err(db)?;
+        sqlx::query("UPDATE cognition_objects SET current_revision_id=$3,object_epoch=object_epoch+1,integrity_state='valid' WHERE object_kind='memory' AND subject_id=$1 AND object_id=$2").bind(input.subject.0).bind(input.memory_id.0).bind(revision_id.0).execute(&mut **tx).await.map_err(db)?;
         Ok((revision_id, epoch))
     }
 

@@ -3,7 +3,7 @@
 
 use super::*;
 use nous_core::{CognitiveSchemaId, EntityRef, OperationId, Result, SubjectId, TagId};
-use nous_memory::schema::{SchemaLifecycleAction, SchemaView};
+use nous_memory::schema::SchemaView;
 use nous_memory::{
     CreateSchemaInput, ReviseSchemaInput, SchemaContent, SchemaEvidenceLinkInput,
     SchemaFormationKind, SchemaScope,
@@ -67,113 +67,56 @@ fn schema_content(value: p::CognitiveSchemaContent) -> Result<SchemaContent> {
     })
 }
 
-fn schema_view(value: SchemaView) -> p::CognitiveSchema {
+pub(super) fn schema_revision_proto(value: &SchemaView) -> p::CognitiveSchemaRevision {
     let revision = &value.revision;
-    p::CognitiveSchema {
-        schema_id: value.schema.schema_id.0.to_string(),
-        subject_id: value.schema.subject_id.0.to_string(),
-        current_revision_id: value.schema.current_revision_id.0.to_string(),
-        object_epoch: value.schema.object_epoch,
-        acceptance_state: enum_name(value.schema.acceptance_state),
-        integrity_state: enum_name(value.schema.integrity_state),
-        suppression_state: enum_name(value.schema.suppression_state),
-        purge_state: enum_name(value.schema.purge_state),
-        title: revision.title.clone().unwrap_or_default(),
-        structural_claim: revision.structural_claim.clone(),
-        applicability_scope: Some(p::SchemaScope {
-            description: revision.applicability_scope.description.clone(),
-            aboutness: revision
-                .applicability_scope
-                .aboutness
+    p::CognitiveSchemaRevision {
+        header: Some(super::cognition::cognition_revision_header_proto(
+            &revision.header,
+        )),
+        revision_intent: revision.revision_intent.map(enum_name),
+        details: Some(p::CognitiveSchemaRevisionDetails {
+            title: revision.title.clone().unwrap_or_default(),
+            structural_claim: revision.structural_claim.clone(),
+            applicability_scope: Some(p::SchemaScope {
+                description: revision.applicability_scope.description.clone(),
+                aboutness: revision
+                    .applicability_scope
+                    .aboutness
+                    .iter()
+                    .map(|value| value.as_str().to_owned())
+                    .collect(),
+                tags: revision
+                    .applicability_scope
+                    .tags
+                    .iter()
+                    .map(|value| value.0.to_string())
+                    .collect(),
+                valid_time: Some(temporal_proto(&revision.applicability_scope.valid_time)),
+            }),
+            boundary_definition: revision.boundary_definition.clone(),
+            evidence_links: value
+                .evidence_links
                 .iter()
-                .map(|value| value.as_str().to_owned())
+                .cloned()
+                .map(|link| p::SchemaEvidenceLink {
+                    link_id: link.link_id.0.to_string(),
+                    role: enum_name(link.role),
+                    basis: Some(basis_proto(link.basis)),
+                })
                 .collect(),
-            tags: revision
-                .applicability_scope
-                .tags
-                .iter()
-                .map(|value| value.0.to_string())
-                .collect(),
-            valid_time: Some(temporal_proto(&revision.applicability_scope.valid_time)),
+            formation_kind: enum_name(revision.formation_kind),
         }),
-        boundary_definition: revision.boundary_definition.clone(),
-        evidence_links: value
-            .evidence_links
-            .into_iter()
-            .map(|link| p::SchemaEvidenceLink {
-                link_id: link.link_id.0.to_string(),
-                role: enum_name(link.role),
-                basis: Some(basis_proto(link.basis)),
-            })
-            .collect(),
-        formed_at: Some(timestamp(revision.formed_at)),
-        recorded_at: Some(timestamp(revision.recorded_at)),
-        formation_kind: enum_name(revision.formation_kind),
-        producer_signature_id: revision.producer_signature_id.map(|id| id.to_string()),
+    }
+}
+
+pub(super) fn schema_view(value: SchemaView) -> p::CognitiveSchema {
+    p::CognitiveSchema {
+        header: Some(super::cognition::cognition_header_proto(&value.header)),
+        revision: Some(schema_revision_proto(&value)),
     }
 }
 
 impl KernelService {
-    async fn schema_lifecycle(
-        &self,
-        input: p::CognitiveSchemaMutationRequest,
-        action: SchemaLifecycleAction,
-    ) -> Result<p::CognitiveSchema> {
-        Ok(schema_view(
-            self.require_memory()?
-                .mutate_schema_lifecycle(
-                    SubjectId(id(&input.subject_id)?),
-                    CognitiveSchemaId(id(&input.schema_id)?),
-                    OperationId(id(&input.operation_id)?),
-                    input.expected_object_epoch,
-                    action,
-                )
-                .await?,
-        ))
-    }
-
-    pub(super) async fn suppress_cognitive_schema(
-        &self,
-        input: p::CognitiveSchemaMutationRequest,
-    ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Suppress)
-            .await
-    }
-    pub(super) async fn restore_cognitive_schema(
-        &self,
-        input: p::CognitiveSchemaMutationRequest,
-    ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Restore)
-            .await
-    }
-    pub(super) async fn withdraw_cognitive_schema(
-        &self,
-        input: p::CognitiveSchemaMutationRequest,
-    ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Withdraw)
-            .await
-    }
-    pub(super) async fn reaccept_cognitive_schema(
-        &self,
-        input: p::CognitiveSchemaMutationRequest,
-    ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Reaccept)
-            .await
-    }
-    pub(super) async fn purge_cognitive_schema(
-        &self,
-        input: p::CognitiveSchemaMutationRequest,
-    ) -> Result<()> {
-        self.0
-            .purge_schema(
-                SubjectId(id(&input.subject_id)?),
-                CognitiveSchemaId(id(&input.schema_id)?),
-                OperationId(id(&input.operation_id)?),
-                input.expected_object_epoch,
-            )
-            .await
-    }
-
     pub(super) async fn create_cognitive_schema(
         &self,
         input: p::CreateCognitiveSchemaRequest,
@@ -187,34 +130,6 @@ impl KernelService {
                     OperationId(id(&input.operation_id)?),
                     schema,
                 )?)
-                .await?,
-        ))
-    }
-
-    pub(super) async fn get_cognitive_schema(
-        &self,
-        input: p::GetCognitiveSchemaRequest,
-    ) -> Result<p::CognitiveSchema> {
-        Ok(schema_view(
-            self.require_memory()?
-                .schema(
-                    SubjectId(id(&input.subject_id)?),
-                    CognitiveSchemaId(id(&input.schema_id)?),
-                )
-                .await?,
-        ))
-    }
-
-    pub(super) async fn get_cognitive_schema_revision(
-        &self,
-        input: p::ObjectRequest,
-    ) -> Result<p::CognitiveSchema> {
-        Ok(schema_view(
-            self.require_memory()?
-                .schema_revision(
-                    SubjectId(id(&input.subject_id)?),
-                    nous_core::CognitiveSchemaRevisionId(id(&input.id)?),
-                )
                 .await?,
         ))
     }

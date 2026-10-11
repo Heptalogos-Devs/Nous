@@ -1,7 +1,7 @@
 -- Copyright 2026 Aravine Zhu
 -- SPDX-License-Identifier: Apache-2.0
 
-CREATE INDEX memory_revisions_subject_time_idx ON memory_revisions(subject_id, recorded_at DESC);
+CREATE INDEX cognition_revision_subject_time_idx ON cognition_revision_headers(subject_id, object_kind, recorded_at DESC, revision_no DESC);
 CREATE INDEX memory_revision_evidence_occurrence_idx ON memory_revision_evidence(occurrence_id);
 CREATE INDEX resident_refs_session_state_idx ON resident_refs(session_id, state, last_meaningful_use_at DESC);
 -- Typed retrieval lanes use Authority-side joins instead of application-side
@@ -9,8 +9,8 @@ CREATE INDEX resident_refs_session_state_idx ON resident_refs(session_id, state,
 CREATE INDEX memory_revision_aboutness_entity_idx
     ON memory_revision_aboutness(entity_ref, memory_revision_id);
 
-CREATE INDEX memory_revisions_subject_valid_idx
-    ON memory_revisions(subject_id, valid_time_start, valid_time_end, recorded_at DESC);
+CREATE INDEX memory_revision_valid_idx
+    ON memory_revisions(valid_time_start, valid_time_end, memory_revision_id);
 
 CREATE INDEX memory_revision_evidence_revision_idx
     ON memory_revision_evidence(memory_revision_id, occurrence_id);

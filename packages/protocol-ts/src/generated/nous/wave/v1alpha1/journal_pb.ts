@@ -8,17 +8,15 @@
 import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_nous_wave_v1alpha1_presentation } from "./presentation_pb.js";
-import type { CognitiveRef, Degradation, Page, RevisionBasis, TemporalExtent } from "./types_pb.js";
+import type { CognitionHeader, CognitionRevisionHeader, CognitiveRef, Degradation, RevisionBasis, TemporalExtent } from "./types_pb.js";
 import { file_nous_wave_v1alpha1_types } from "./types_pb.js";
-import type { Timestamp } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file nous/wave/v1alpha1/journal.proto.
  */
 export const file_nous_wave_v1alpha1_journal: GenFile = /*@__PURE__*/
-  fileDesc("CiBub3VzL3dhdmUvdjFhbHBoYTEvam91cm5hbC5wcm90bxISbm91cy53YXZlLnYxYWxwaGExIm0KDEpvdXJuYWxQb2ludBIPCgdvcmRpbmFsGAEgASgFEgwKBHJvbGUYAiABKAkSDAoEdGV4dBgDIAEoCRIwCgViYXNpcxgEIAMoCzIhLm5vdXMud2F2ZS52MWFscGhhMS5SZXZpc2lvbkJhc2lzIosFCg9Kb3VybmFsUmV2aXNpb24SMQoTam91cm5hbF9yZXZpc2lvbl9pZBgBIAEoCUIUyvMYEGpvdXJuYWxfcmV2aXNpb24SHwoKam91cm5hbF9pZBgCIAEoCUILyvMYB2pvdXJuYWwSHwoKc3ViamVjdF9pZBgDIAEoCUILyvMYB3N1YmplY3QSEwoLcmV2aXNpb25fbm8YBCABKAUSNQoScGFyZW50X3JldmlzaW9uX2lkGAUgASgJQhTK8xgQam91cm5hbF9yZXZpc2lvbkgAiAEBEhwKD3JldmlzaW9uX2ludGVudBgGIAEoCUgBiAEBEhIKBXRpdGxlGAcgASgJSAKIAQESOgoOdGVtcG9yYWxfc2NvcGUYCCABKAsyIi5ub3VzLndhdmUudjFhbHBoYTEuVGVtcG9yYWxFeHRlbnQSEQoJbmFycmF0aXZlGAkgASgJEi0KCWZvcm1lZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLcmVjb3JkZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEiIKFXByb2R1Y2VyX3NpZ25hdHVyZV9pZBgMIAEoCUgDiAEBEjAKBnBvaW50cxgNIAMoCzIgLm5vdXMud2F2ZS52MWFscGhhMS5Kb3VybmFsUG9pbnQSMQoHc291cmNlcxgOIAMoCzIgLm5vdXMud2F2ZS52MWFscGhhMS5Db2duaXRpdmVSZWZCFQoTX3BhcmVudF9yZXZpc2lvbl9pZEISChBfcmV2aXNpb25faW50ZW50QggKBl90aXRsZUIYChZfcHJvZHVjZXJfc2lnbmF0dXJlX2lkIuYCCgdKb3VybmFsEh8KCmpvdXJuYWxfaWQYASABKAlCC8rzGAdqb3VybmFsEh8KCnN1YmplY3RfaWQYAiABKAlCC8rzGAdzdWJqZWN0EjEKE2N1cnJlbnRfcmV2aXNpb25faWQYAyABKAlCFMrzGBBqb3VybmFsX3JldmlzaW9uEhQKDG9iamVjdF9lcG9jaBgEIAEoAxIYChBhY2NlcHRhbmNlX3N0YXRlGAUgASgJEhcKD2ludGVncml0eV9zdGF0ZRgGIAEoCRIZChFzdXBwcmVzc2lvbl9zdGF0ZRgHIAEoCRITCgtwdXJnZV9zdGF0ZRgIIAEoCRIuCgpjcmVhdGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBI9ChBjdXJyZW50X3JldmlzaW9uGAogASgLMiMubm91cy53YXZlLnYxYWxwaGExLkpvdXJuYWxSZXZpc2lvbiJ1Cg9Kb3VybmFsUmVzcG9uc2USLAoHam91cm5hbBgBIAEoCzIbLm5vdXMud2F2ZS52MWFscGhhMS5Kb3VybmFsEjQKC2RlZ3JhZGF0aW9uGAIgAygLMh8ubm91cy53YXZlLnYxYWxwaGExLkRlZ3JhZGF0aW9uIo8BChZKb3VybmFsTXV0YXRpb25SZXF1ZXN0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRIfCgpzdWJqZWN0X2lkGAIgASgJQgvK8xgHc3ViamVjdBIfCgpqb3VybmFsX2lkGAMgASgJQgvK8xgHam91cm5hbBIdChVleHBlY3RlZF9vYmplY3RfZXBvY2gYBCABKAMiWwoUTGlzdEpvdXJuYWxzUmVzcG9uc2USKgoFaXRlbXMYASADKAsyGy5ub3VzLndhdmUudjFhbHBoYTEuSm91cm5hbBIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkihwEKG0xpc3RKb3VybmFsUmV2aXNpb25zUmVxdWVzdBIfCgpzdWJqZWN0X2lkGAEgASgJQgvK8xgHc3ViamVjdBIfCgpqb3VybmFsX2lkGAIgASgJQgvK8xgHam91cm5hbBImCgRwYWdlGAMgASgLMhgubm91cy53YXZlLnYxYWxwaGExLlBhZ2UiawocTGlzdEpvdXJuYWxSZXZpc2lvbnNSZXNwb25zZRIyCgVpdGVtcxgBIAMoCzIjLm5vdXMud2F2ZS52MWFscGhhMS5Kb3VybmFsUmV2aXNpb24SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIoMBChdNYWludGVuYW5jZUdyYW50UmVxdWVzdBIfCgpzdWJqZWN0X2lkGAEgASgJQgvK8xgHc3ViamVjdBIWCg5tYXhfb3BlcmF0aW9ucxgCIAEoDRIXCg9tYXhfbW9kZWxfY2FsbHMYAyABKA0SFgoObWF4X2VsYXBzZWRfbXMYBCABKA0idwoaTWFpbnRlbmFuY2VPcGVyYXRpb25SZXN1bHQSDwoHbmVlZF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEg4KBnN0YXR1cxgDIAEoCRIZCgxwcm9ibGVtX2NvZGUYBCABKAlIAIgBAUIPCg1fcHJvYmxlbV9jb2RlIpkBChhNYWludGVuYW5jZUdyYW50UmVzcG9uc2USPwoHcmVzdWx0cxgBIAMoCzIuLm5vdXMud2F2ZS52MWFscGhhMS5NYWludGVuYW5jZU9wZXJhdGlvblJlc3VsdBITCgttb2RlbF9jYWxscxgCIAEoDRISCgplbGFwc2VkX21zGAMgASgNEhMKC2Rpc3Bvc2l0aW9uGAQgASgJYgZwcm90bzM", [file_nous_wave_v1alpha1_presentation, file_nous_wave_v1alpha1_types, file_google_protobuf_timestamp]);
+  fileDesc("CiBub3VzL3dhdmUvdjFhbHBoYTEvam91cm5hbC5wcm90bxISbm91cy53YXZlLnYxYWxwaGExIm0KDEpvdXJuYWxQb2ludBIPCgdvcmRpbmFsGAEgASgFEgwKBHJvbGUYAiABKAkSDAoEdGV4dBgDIAEoCRIwCgViYXNpcxgEIAMoCzIhLm5vdXMud2F2ZS52MWFscGhhMS5SZXZpc2lvbkJhc2lzItICCg9Kb3VybmFsUmV2aXNpb24SOwoGaGVhZGVyGAEgASgLMisubm91cy53YXZlLnYxYWxwaGExLkNvZ25pdGlvblJldmlzaW9uSGVhZGVyEhwKD3JldmlzaW9uX2ludGVudBgCIAEoCUgAiAEBEhIKBXRpdGxlGAMgASgJSAGIAQESOgoOdGVtcG9yYWxfc2NvcGUYBCABKAsyIi5ub3VzLndhdmUudjFhbHBoYTEuVGVtcG9yYWxFeHRlbnQSEQoJbmFycmF0aXZlGAUgASgJEjAKBnBvaW50cxgGIAMoCzIgLm5vdXMud2F2ZS52MWFscGhhMS5Kb3VybmFsUG9pbnQSMQoHc291cmNlcxgHIAMoCzIgLm5vdXMud2F2ZS52MWFscGhhMS5Db2duaXRpdmVSZWZCEgoQX3JldmlzaW9uX2ludGVudEIICgZfdGl0bGUidQoHSm91cm5hbBIzCgZoZWFkZXIYASABKAsyIy5ub3VzLndhdmUudjFhbHBoYTEuQ29nbml0aW9uSGVhZGVyEjUKCHJldmlzaW9uGAIgASgLMiMubm91cy53YXZlLnYxYWxwaGExLkpvdXJuYWxSZXZpc2lvbiJ1Cg9Kb3VybmFsUmVzcG9uc2USLAoHam91cm5hbBgBIAEoCzIbLm5vdXMud2F2ZS52MWFscGhhMS5Kb3VybmFsEjQKC2RlZ3JhZGF0aW9uGAIgAygLMh8ubm91cy53YXZlLnYxYWxwaGExLkRlZ3JhZGF0aW9uIoMBChdNYWludGVuYW5jZUdyYW50UmVxdWVzdBIfCgpzdWJqZWN0X2lkGAEgASgJQgvK8xgHc3ViamVjdBIWCg5tYXhfb3BlcmF0aW9ucxgCIAEoDRIXCg9tYXhfbW9kZWxfY2FsbHMYAyABKA0SFgoObWF4X2VsYXBzZWRfbXMYBCABKA0idwoaTWFpbnRlbmFuY2VPcGVyYXRpb25SZXN1bHQSDwoHbmVlZF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEg4KBnN0YXR1cxgDIAEoCRIZCgxwcm9ibGVtX2NvZGUYBCABKAlIAIgBAUIPCg1fcHJvYmxlbV9jb2RlIpkBChhNYWludGVuYW5jZUdyYW50UmVzcG9uc2USPwoHcmVzdWx0cxgBIAMoCzIuLm5vdXMud2F2ZS52MWFscGhhMS5NYWludGVuYW5jZU9wZXJhdGlvblJlc3VsdBITCgttb2RlbF9jYWxscxgCIAEoDRISCgplbGFwc2VkX21zGAMgASgNEhMKC2Rpc3Bvc2l0aW9uGAQgASgJYgZwcm90bzM", [file_nous_wave_v1alpha1_presentation, file_nous_wave_v1alpha1_types]);
 
 /**
  * @generated from message nous.wave.v1alpha1.JournalPoint
@@ -57,72 +55,37 @@ export const JournalPointSchema: GenMessage<JournalPoint> = /*@__PURE__*/
  */
 export type JournalRevision = Message<"nous.wave.v1alpha1.JournalRevision"> & {
   /**
-   * @generated from field: string journal_revision_id = 1;
+   * @generated from field: nous.wave.v1alpha1.CognitionRevisionHeader header = 1;
    */
-  journalRevisionId: string;
+  header?: CognitionRevisionHeader | undefined;
 
   /**
-   * @generated from field: string journal_id = 2;
-   */
-  journalId: string;
-
-  /**
-   * @generated from field: string subject_id = 3;
-   */
-  subjectId: string;
-
-  /**
-   * @generated from field: int32 revision_no = 4;
-   */
-  revisionNo: number;
-
-  /**
-   * @generated from field: optional string parent_revision_id = 5;
-   */
-  parentRevisionId?: string | undefined;
-
-  /**
-   * @generated from field: optional string revision_intent = 6;
+   * @generated from field: optional string revision_intent = 2;
    */
   revisionIntent?: string | undefined;
 
   /**
-   * @generated from field: optional string title = 7;
+   * @generated from field: optional string title = 3;
    */
   title?: string | undefined;
 
   /**
-   * @generated from field: nous.wave.v1alpha1.TemporalExtent temporal_scope = 8;
+   * @generated from field: nous.wave.v1alpha1.TemporalExtent temporal_scope = 4;
    */
   temporalScope?: TemporalExtent | undefined;
 
   /**
-   * @generated from field: string narrative = 9;
+   * @generated from field: string narrative = 5;
    */
   narrative: string;
 
   /**
-   * @generated from field: google.protobuf.Timestamp formed_at = 10;
-   */
-  formedAt?: Timestamp | undefined;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp recorded_at = 11;
-   */
-  recordedAt?: Timestamp | undefined;
-
-  /**
-   * @generated from field: optional string producer_signature_id = 12;
-   */
-  producerSignatureId?: string | undefined;
-
-  /**
-   * @generated from field: repeated nous.wave.v1alpha1.JournalPoint points = 13;
+   * @generated from field: repeated nous.wave.v1alpha1.JournalPoint points = 6;
    */
   points: JournalPoint[];
 
   /**
-   * @generated from field: repeated nous.wave.v1alpha1.CognitiveRef sources = 14;
+   * @generated from field: repeated nous.wave.v1alpha1.CognitiveRef sources = 7;
    */
   sources: CognitiveRef[];
 };
@@ -139,54 +102,14 @@ export const JournalRevisionSchema: GenMessage<JournalRevision> = /*@__PURE__*/
  */
 export type Journal = Message<"nous.wave.v1alpha1.Journal"> & {
   /**
-   * @generated from field: string journal_id = 1;
+   * @generated from field: nous.wave.v1alpha1.CognitionHeader header = 1;
    */
-  journalId: string;
+  header?: CognitionHeader | undefined;
 
   /**
-   * @generated from field: string subject_id = 2;
+   * @generated from field: nous.wave.v1alpha1.JournalRevision revision = 2;
    */
-  subjectId: string;
-
-  /**
-   * @generated from field: string current_revision_id = 3;
-   */
-  currentRevisionId: string;
-
-  /**
-   * @generated from field: int64 object_epoch = 4;
-   */
-  objectEpoch: bigint;
-
-  /**
-   * @generated from field: string acceptance_state = 5;
-   */
-  acceptanceState: string;
-
-  /**
-   * @generated from field: string integrity_state = 6;
-   */
-  integrityState: string;
-
-  /**
-   * @generated from field: string suppression_state = 7;
-   */
-  suppressionState: string;
-
-  /**
-   * @generated from field: string purge_state = 8;
-   */
-  purgeState: string;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp created_at = 9;
-   */
-  createdAt?: Timestamp | undefined;
-
-  /**
-   * @generated from field: nous.wave.v1alpha1.JournalRevision current_revision = 10;
-   */
-  currentRevision?: JournalRevision | undefined;
+  revision?: JournalRevision | undefined;
 };
 
 /**
@@ -219,109 +142,6 @@ export const JournalResponseSchema: GenMessage<JournalResponse> = /*@__PURE__*/
   messageDesc(file_nous_wave_v1alpha1_journal, 3);
 
 /**
- * @generated from message nous.wave.v1alpha1.JournalMutationRequest
- */
-export type JournalMutationRequest = Message<"nous.wave.v1alpha1.JournalMutationRequest"> & {
-  /**
-   * @generated from field: string operation_id = 1;
-   */
-  operationId: string;
-
-  /**
-   * @generated from field: string subject_id = 2;
-   */
-  subjectId: string;
-
-  /**
-   * @generated from field: string journal_id = 3;
-   */
-  journalId: string;
-
-  /**
-   * @generated from field: int64 expected_object_epoch = 4;
-   */
-  expectedObjectEpoch: bigint;
-};
-
-/**
- * Describes the message nous.wave.v1alpha1.JournalMutationRequest.
- * Use `create(JournalMutationRequestSchema)` to create a new message.
- */
-export const JournalMutationRequestSchema: GenMessage<JournalMutationRequest> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_journal, 4);
-
-/**
- * @generated from message nous.wave.v1alpha1.ListJournalsResponse
- */
-export type ListJournalsResponse = Message<"nous.wave.v1alpha1.ListJournalsResponse"> & {
-  /**
-   * @generated from field: repeated nous.wave.v1alpha1.Journal items = 1;
-   */
-  items: Journal[];
-
-  /**
-   * @generated from field: string next_page_token = 2;
-   */
-  nextPageToken: string;
-};
-
-/**
- * Describes the message nous.wave.v1alpha1.ListJournalsResponse.
- * Use `create(ListJournalsResponseSchema)` to create a new message.
- */
-export const ListJournalsResponseSchema: GenMessage<ListJournalsResponse> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_journal, 5);
-
-/**
- * @generated from message nous.wave.v1alpha1.ListJournalRevisionsRequest
- */
-export type ListJournalRevisionsRequest = Message<"nous.wave.v1alpha1.ListJournalRevisionsRequest"> & {
-  /**
-   * @generated from field: string subject_id = 1;
-   */
-  subjectId: string;
-
-  /**
-   * @generated from field: string journal_id = 2;
-   */
-  journalId: string;
-
-  /**
-   * @generated from field: nous.wave.v1alpha1.Page page = 3;
-   */
-  page?: Page | undefined;
-};
-
-/**
- * Describes the message nous.wave.v1alpha1.ListJournalRevisionsRequest.
- * Use `create(ListJournalRevisionsRequestSchema)` to create a new message.
- */
-export const ListJournalRevisionsRequestSchema: GenMessage<ListJournalRevisionsRequest> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_journal, 6);
-
-/**
- * @generated from message nous.wave.v1alpha1.ListJournalRevisionsResponse
- */
-export type ListJournalRevisionsResponse = Message<"nous.wave.v1alpha1.ListJournalRevisionsResponse"> & {
-  /**
-   * @generated from field: repeated nous.wave.v1alpha1.JournalRevision items = 1;
-   */
-  items: JournalRevision[];
-
-  /**
-   * @generated from field: string next_page_token = 2;
-   */
-  nextPageToken: string;
-};
-
-/**
- * Describes the message nous.wave.v1alpha1.ListJournalRevisionsResponse.
- * Use `create(ListJournalRevisionsResponseSchema)` to create a new message.
- */
-export const ListJournalRevisionsResponseSchema: GenMessage<ListJournalRevisionsResponse> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_journal, 7);
-
-/**
  * @generated from message nous.wave.v1alpha1.MaintenanceGrantRequest
  */
 export type MaintenanceGrantRequest = Message<"nous.wave.v1alpha1.MaintenanceGrantRequest"> & {
@@ -351,7 +171,7 @@ export type MaintenanceGrantRequest = Message<"nous.wave.v1alpha1.MaintenanceGra
  * Use `create(MaintenanceGrantRequestSchema)` to create a new message.
  */
 export const MaintenanceGrantRequestSchema: GenMessage<MaintenanceGrantRequest> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_journal, 8);
+  messageDesc(file_nous_wave_v1alpha1_journal, 4);
 
 /**
  * @generated from message nous.wave.v1alpha1.MaintenanceOperationResult
@@ -383,7 +203,7 @@ export type MaintenanceOperationResult = Message<"nous.wave.v1alpha1.Maintenance
  * Use `create(MaintenanceOperationResultSchema)` to create a new message.
  */
 export const MaintenanceOperationResultSchema: GenMessage<MaintenanceOperationResult> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_journal, 9);
+  messageDesc(file_nous_wave_v1alpha1_journal, 5);
 
 /**
  * @generated from message nous.wave.v1alpha1.MaintenanceGrantResponse
@@ -415,5 +235,5 @@ export type MaintenanceGrantResponse = Message<"nous.wave.v1alpha1.MaintenanceGr
  * Use `create(MaintenanceGrantResponseSchema)` to create a new message.
  */
 export const MaintenanceGrantResponseSchema: GenMessage<MaintenanceGrantResponse> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_journal, 10);
+  messageDesc(file_nous_wave_v1alpha1_journal, 6);
 

@@ -136,7 +136,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             .await
             .unwrap();
         revisions.push(CognitiveRef::MemoryRevision(
-            view.revision.memory_revision_id,
+            view.revision.header.memory_revision_id(),
         ));
     }
     let first = claim(&rt, subject).await;
@@ -489,7 +489,7 @@ async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[Co
         .topology_projection_input(subject, true)
         .await
         .unwrap();
-    let episode_ref = CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id);
+    let episode_ref = CognitiveRef::EpisodeRevision(episode.revision.header.episode_revision_id());
     assert!(projection.nodes.contains(&episode_ref));
     for reference in revisions {
         assert!(projection.edges.iter().any(|edge| edge.from == episode_ref

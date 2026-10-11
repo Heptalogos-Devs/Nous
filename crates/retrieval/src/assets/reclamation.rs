@@ -65,14 +65,12 @@ impl ServingService {
         .await
         .map_err(nous_persistence::database_error)?;
 
-        sqlx::query("DELETE FROM serving_current c USING serving_generations g WHERE c.generation_id=g.generation_id AND c.subject_id=$1 AND g.purge_epoch<$2")
-            .bind(subject.0).bind(current_epoch).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
         sqlx::query("UPDATE serving_generations SET state='retired',published_at=COALESCE(published_at,$3),metadata=metadata-'research_pinned' WHERE subject_id=$1 AND purge_epoch<$2 AND state IN ('ready','retired','failed')")
             .bind(subject.0).bind(current_epoch).bind(chrono::Utc::now()).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
 
         // Remove process-owned references before touching bytes. Active readers
         // retain their own Arc snapshot and are checked below.
-        let retained: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT g.generation_id FROM serving_current c JOIN serving_generations g USING(generation_id) WHERE c.subject_id=$1 AND g.purge_epoch>=$2 AND g.state='ready'")
+        let retained: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT generation_id FROM serving_generations WHERE subject_id=$1 AND purge_epoch>=$2 AND state='ready' AND view_descriptor->>'kind'='current'")
             .bind(subject.0).bind(current_epoch).fetch_all(&mut *tx).await.map_err(nous_persistence::database_error)?;
         self.publisher.update_for(subject, |snapshot| {
             snapshot.retain_generations(retained.iter().copied().map(ServingGenerationId));
@@ -160,13 +158,7 @@ impl ServingService {
         let supported = super::family::AssetFamily::ALL.map(super::family::AssetFamily::as_str);
         sqlx::query("UPDATE serving_generations SET state='retired',published_at=$3 WHERE subject_id=$1 AND family<>ALL($2::text[]) AND state='ready'")
             .bind(subject.0).bind(supported).bind(chrono::Utc::now()).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
-        sqlx::query("DELETE FROM serving_current WHERE subject_id=$1 AND family<>ALL($2::text[])")
-            .bind(subject.0)
-            .bind(supported)
-            .execute(&mut *tx)
-            .await
-            .map_err(nous_persistence::database_error)?;
-        let rows = sqlx::query("SELECT generation_id,artifact_location FROM serving_generations g WHERE subject_id=$1 AND state IN ('retired','failed') AND artifact_location<>'' AND published_at<$2 AND COALESCE(metadata->>'research_pinned','false')<>'true' AND NOT EXISTS (SELECT 1 FROM serving_current c WHERE c.generation_id=g.generation_id) FOR UPDATE")
+        let rows = sqlx::query("SELECT generation_id,artifact_location FROM serving_generations WHERE subject_id=$1 AND state IN ('retired','failed') AND artifact_location<>'' AND published_at<$2 AND COALESCE(metadata->>'research_pinned','false')<>'true' FOR UPDATE")
             .bind(subject.0).bind(cutoff).fetch_all(&mut *tx).await.map_err(nous_persistence::database_error)?;
         let mut report = ReclamationReport {
             readers_active: !readers.is_empty(),

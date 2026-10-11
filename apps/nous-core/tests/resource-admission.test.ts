@@ -50,21 +50,29 @@ test("a saved external proposal is revalidated before admission while an accepte
   const kernel = {
     modelWorkflow: {
       findWorkflow: async () =>
-        outcome ? { found: true, snapshot, outcome } : { found: false },
+        outcome
+          ? { state: { case: "completed", value: { outcome } } }
+          : { state: { case: undefined } },
       reserveWorkflow: async (
         input: MessageInitShape<typeof ReserveWorkflowRequestSchema>,
       ) => {
         snapshot ??= input.snapshot;
         return outcome
-          ? { snapshot, outcome, busy: false }
+          ? { state: { case: "completed", value: { outcome } } }
           : {
-              lease: { token: "lease" },
-              snapshot,
-              proposal: workflowPayload({
-                content: "saved material",
-                mediaType: "text/plain",
-              }),
-              busy: false,
+              state: {
+                case: "acquired",
+                value: {
+                  lease: { token: "lease" },
+                  pending: {
+                    snapshot,
+                    proposal: workflowPayload({
+                      content: "saved material",
+                      mediaType: "text/plain",
+                    }),
+                  },
+                },
+              },
             };
       },
       saveWorkflow: async (value: { outcome?: WorkflowPayload }) => {

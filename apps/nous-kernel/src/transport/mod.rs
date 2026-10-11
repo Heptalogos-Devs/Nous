@@ -12,6 +12,7 @@ mod canonical_resource;
 mod canonical_runtime;
 mod canonical_subject;
 mod canonical_system;
+mod cognition;
 mod configuration;
 mod consolidation_plan;
 mod convert;

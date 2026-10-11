@@ -14,23 +14,9 @@ impl MemoryService {
         sequence: i64,
         reason: &str,
     ) -> Result<()> {
-        let (query, revision_kind) = match kind {
-            "episode" => (
-                "SELECT episode_revision_id FROM episode_revisions WHERE subject_id=$1 AND episode_id=ANY($2::uuid[])",
-                "episode_revision",
-            ),
-            "journal" => (
-                "SELECT journal_revision_id FROM journal_revisions WHERE subject_id=$1 AND journal_id=ANY($2::uuid[])",
-                "journal_revision",
-            ),
-            "memory" => (
-                "SELECT memory_revision_id FROM memory_revisions WHERE subject_id=$1 AND memory_id=ANY($2::uuid[])",
-                "memory_revision",
-            ),
-            "schema" => (
-                "SELECT r.schema_revision_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_id=ANY($2::uuid[])",
-                "cognitive_schema_revision",
-            ),
+        let object_kind = match kind {
+            "schema" => "cognitive_schema",
+            "memory" | "cognitive_schema" | "episode" | "journal" => kind,
             _ => {
                 return Err(Error::new(
                     nous_core::ErrorOwner::Memory,
@@ -39,16 +25,20 @@ impl MemoryService {
                 ));
             }
         };
-        let revisions: Vec<Uuid> = sqlx::query_scalar(query)
-            .bind(subject.0)
-            .bind(objects)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(db)?;
+        let revisions: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT revision_id FROM cognition_revision_headers WHERE subject_id=$1 AND object_kind=$2 AND object_id=ANY($3::uuid[])",
+        )
+        .bind(subject.0)
+        .bind(object_kind)
+        .bind(objects)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db)?;
+        let revision_kind = format!("{object_kind}_revision");
         self.invalidate_cognition_dependents_in(
             tx,
             subject,
-            revision_kind,
+            &revision_kind,
             &revisions,
             sequence,
             reason,
@@ -81,29 +71,29 @@ impl MemoryService {
                 "upstream_invalidated"
             };
             let rows = sqlx::query(r"
-SELECT 'memory_revision' AS kind,o.memory_id AS object_id,o.current_revision_id AS revision
-FROM memory_objects o JOIN memory_revision_dependencies d ON d.memory_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.target_ref_kind=$2 AND d.target_ref=$3
+SELECT 'memory_revision' AS kind,o.object_id AS object_id,o.current_revision_id AS revision
+FROM cognition_objects o JOIN memory_revision_dependencies d ON d.memory_revision_id=o.current_revision_id
+WHERE o.subject_id=$1 AND o.object_kind='memory' AND o.purge_state='normal' AND d.target_ref_kind=$2 AND d.target_ref=$3
 UNION
-SELECT 'cognitive_schema_revision',o.schema_id,o.current_revision_id
-FROM cognitive_schemas o JOIN cognitive_schema_evidence_links d ON d.schema_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.basis_kind=$2 AND d.basis_ref=$3 AND d.revoked_at IS NULL
+SELECT 'cognitive_schema_revision',o.object_id,o.current_revision_id
+FROM cognition_objects o JOIN cognitive_schema_evidence_links d ON d.schema_revision_id=o.current_revision_id
+WHERE o.subject_id=$1 AND o.object_kind='cognitive_schema' AND o.purge_state='normal' AND d.basis_kind=$2 AND d.basis_ref=$3 AND d.revoked_at IS NULL
 UNION
-SELECT 'episode_revision',o.episode_id,o.current_revision_id
-FROM episode_objects o JOIN episode_revision_basis d ON d.episode_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.basis_kind=$2 AND d.basis_ref=$3
+SELECT 'episode_revision',o.object_id,o.current_revision_id
+FROM cognition_objects o JOIN episode_revision_basis d ON d.episode_revision_id=o.current_revision_id
+WHERE o.subject_id=$1 AND o.object_kind='episode' AND o.purge_state='normal' AND d.basis_kind=$2 AND d.basis_ref=$3
 UNION
-SELECT 'episode_revision',o.episode_id,o.current_revision_id
-FROM episode_objects o JOIN episode_revision_members d ON d.episode_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.ref_kind=$2 AND d.ref_value=$3
+SELECT 'episode_revision',o.object_id,o.current_revision_id
+FROM cognition_objects o JOIN episode_revision_members d ON d.episode_revision_id=o.current_revision_id
+WHERE o.subject_id=$1 AND o.object_kind='episode' AND o.purge_state='normal' AND d.ref_kind=$2 AND d.ref_value=$3
 UNION
-SELECT 'journal_revision',o.journal_id,o.current_revision_id
-FROM journal_objects o JOIN journal_revision_sources d ON d.journal_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.ref_kind=$2 AND d.ref_value=$3
+SELECT 'journal_revision',o.object_id,o.current_revision_id
+FROM cognition_objects o JOIN journal_revision_sources d ON d.journal_revision_id=o.current_revision_id
+WHERE o.subject_id=$1 AND o.object_kind='journal' AND o.purge_state='normal' AND d.ref_kind=$2 AND d.ref_value=$3
 UNION
-SELECT 'journal_revision',o.journal_id,o.current_revision_id
-FROM journal_objects o JOIN journal_point_basis d ON d.journal_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.basis->>'kind'='cognition_dependency'
+SELECT 'journal_revision',o.object_id,o.current_revision_id
+FROM cognition_objects o JOIN journal_point_basis d ON d.journal_revision_id=o.current_revision_id
+WHERE o.subject_id=$1 AND o.object_kind='journal' AND o.purge_state='normal' AND d.basis->>'kind'='cognition_dependency'
     AND d.basis#>>'{value,target_revision,kind}'=$2 AND d.basis#>>'{value,target_revision,id}'=$3
 ORDER BY kind,object_id")
                 .bind(subject.0).bind(&kind).bind(source.to_string()).fetch_all(&mut **tx).await.map_err(db)?;
@@ -114,19 +104,11 @@ ORDER BY kind,object_id")
                 sqlx::query("INSERT INTO cognition_dependency_invalidations(subject_id,dependent_kind,dependent_ref,invalidated_by_kind,invalidated_by_ref,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(dependent_kind,dependent_ref,invalidated_by_kind,invalidated_by_ref) DO UPDATE SET reason=excluded.reason,created_at=excluded.created_at")
                     .bind(subject.0).bind(&dependent_kind).bind(revision.to_string()).bind(&kind).bind(source.to_string()).bind(edge_reason).bind(now)
                     .execute(&mut **tx).await.map_err(db)?;
-                let statement = match dependent_kind.as_str() {
-                    "memory_revision" => {
-                        "UPDATE memory_objects SET integrity_state='revalidation_required',object_epoch=object_epoch+1 WHERE subject_id=$1 AND memory_id=$2 AND integrity_state<>'revalidation_required'"
-                    }
-                    "cognitive_schema_revision" => {
-                        "UPDATE cognitive_schemas SET integrity_state='revalidation_required',object_epoch=object_epoch+1 WHERE subject_id=$1 AND schema_id=$2 AND integrity_state<>'revalidation_required'"
-                    }
-                    "episode_revision" => {
-                        "UPDATE episode_objects SET integrity_state='revalidation_required',object_epoch=object_epoch+1 WHERE subject_id=$1 AND episode_id=$2 AND integrity_state<>'revalidation_required'"
-                    }
-                    "journal_revision" => {
-                        "UPDATE journal_objects SET integrity_state='revalidation_required',object_epoch=object_epoch+1 WHERE subject_id=$1 AND journal_id=$2 AND integrity_state<>'revalidation_required'"
-                    }
+                let dependent_object_kind = match dependent_kind.as_str() {
+                    "memory_revision" => "memory",
+                    "cognitive_schema_revision" => "cognitive_schema",
+                    "episode_revision" => "episode",
+                    "journal_revision" => "journal",
                     _ => {
                         return Err(Error::new(
                             nous_core::ErrorOwner::Memory,
@@ -135,8 +117,10 @@ ORDER BY kind,object_id")
                         ));
                     }
                 };
+                let statement = "UPDATE cognition_objects SET integrity_state='revalidation_required',object_epoch=object_epoch+1 WHERE subject_id=$1 AND object_kind=$2 AND object_id=$3 AND integrity_state<>'revalidation_required'";
                 let changed = sqlx::query(statement)
                     .bind(subject.0)
+                    .bind(dependent_object_kind)
                     .bind(object)
                     .execute(&mut **tx)
                     .await

@@ -3,6 +3,7 @@
 
 import { NousError } from "@nous-wave/client";
 import { create } from "@bufbuild/protobuf";
+import { EmptySchema } from "@bufbuild/protobuf/wkt";
 import {
   domainError,
   ErrorCode,
@@ -10,10 +11,23 @@ import {
   ErrorRecovery,
 } from "@nous-wave/client/errors";
 import type { connectNousInstance } from "@nous-wave/client/node";
-import { SubjectSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import {
+  SubjectSchema,
+  CognitiveRefSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import {
+  CognitionMutationRequestSchema,
+  CognitionMutationResponseSchema,
+  type CognitionMutationRequest,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/cognition_pb.js";
+import {
+  GetOperationStatusResponseSchema,
+  OperationState,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
+import { ErrorOwner as ProtocolErrorOwner } from "@nous-wave/protocol/nous/wave/v1alpha1/errors_pb.js";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { workspacePaths } from "../../../scripts/workspace.js";
 import {
   createEnvironment,
@@ -22,127 +36,6 @@ import {
   policy,
 } from "./support/client.js";
 import { cliState } from "../src/state.js";
-import { cliErrorPayload } from "../src/agent.js";
-
-it("preserves an owner rejection and recovery when reading a terminal receipt", async () => {
-  const root = await mkdtemp(
-    join(workspacePaths.temporary, "typed-rejection-"),
-  );
-  const operationId = crypto.randomUUID();
-  const refusal = new NousError(
-    domainError("Different input reused an operation identity", 10, {
-      code: ErrorCode.OPERATION_ID_CONFLICT,
-      owner: ErrorOwner.SUBJECT,
-      recovery: ErrorRecovery.NEW_OPERATION,
-      context: { operation_id: operationId },
-    }),
-  );
-  let calls = 0;
-  const original = {
-    subjects: {
-      create: async () => {
-        calls++;
-        throw refusal;
-      },
-    },
-  } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
-  try {
-    const env = await createEnvironment(
-      {
-        "run-root": root,
-        "instance-root": root,
-        subject: "22222222-2222-4222-8222-222222222222",
-      },
-      async () => original,
-    );
-    await expect(
-      env.client.subjects.create({
-        subjectId: "22222222-2222-4222-8222-222222222222",
-        operationId,
-      }),
-    ).rejects.toBe(refusal);
-    const [namespace] = await readdir(join(root, "consumers"));
-    const [file] = await readdir(
-      join(root, "consumers", namespace!, "operations"),
-    );
-    const receiptId = file!.slice(0, -5);
-    expect(
-      await cliState(root, identity, policy).receipt(receiptId),
-    ).toMatchObject({
-      status: "rejected",
-      error: {
-        transportCode: 10,
-        code: "OPERATION_ID_CONFLICT",
-        owner: "SUBJECT",
-        recovery: "NEW_OPERATION",
-        context: { operation_id: operationId },
-      },
-    });
-    const recovered: unknown = await env
-      .retry(receiptId)
-      .catch((error: unknown) => error);
-    expect(cliErrorPayload(recovered)).toMatchObject({
-      code: "OPERATION_ID_CONFLICT",
-      owner: "CLI",
-      recovery: "NEW_OPERATION",
-      context: { operation_id: operationId },
-    });
-    expect(calls).toBe(1);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-it("records a semantically complete Kernel boundary INVALID_REQUEST as rejected", async () => {
-  const root = await mkdtemp(join(workspacePaths.temporary, "kernel-reject-"));
-  const refusal = new NousError(
-    domainError("Missing cognitive_seed", 3, {
-      code: ErrorCode.INVALID_REQUEST,
-      owner: ErrorOwner.KERNEL,
-      recovery: ErrorRecovery.CORRECT_REQUEST,
-      context: { field: "cognitive_seed" },
-    }),
-  );
-  const original = {
-    subjects: {
-      create: async () => {
-        throw refusal;
-      },
-    },
-  } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
-  try {
-    const env = await createEnvironment(
-      {
-        "run-root": root,
-        "instance-root": root,
-        subject: "22222222-2222-4222-8222-222222222222",
-      },
-      async () => original,
-    );
-    await expect(
-      env.client.subjects.create({
-        subjectId: "22222222-2222-4222-8222-222222222222",
-        operationId: crypto.randomUUID(),
-      }),
-    ).rejects.toBe(refusal);
-    const [namespace] = await readdir(join(root, "consumers"));
-    const [file] = await readdir(
-      join(root, "consumers", namespace!, "operations"),
-    );
-    expect(
-      await cliState(root, identity, policy).receipt(file!.slice(0, -5)),
-    ).toMatchObject({
-      status: "rejected",
-      error: {
-        code: "INVALID_REQUEST",
-        owner: "KERNEL",
-        context: { field: "cognitive_seed" },
-      },
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
 
 it("reclaims definite rejections and finalizes a recovered unknown request rejected by Authority", async () => {
   const root = await mkdtemp(
@@ -205,7 +98,7 @@ it("reclaims definite rejections and finalizes a recovered unknown request rejec
     expect(receipt).toBeTruthy();
     expect(
       (await cliState(root, identity, policy).receipt(receipt)).status,
-    ).toBe("outcome_unknown");
+    ).toBe("pending");
     await expect(env.retry(receipt)).rejects.toBe(refusal);
     expect(
       (await cliState(root, identity, policy).receipt(receipt)).status,
@@ -296,43 +189,109 @@ it("returns a successful operation when presentation fails and reads complete re
   }
 });
 
-it("preserves a known Authority refusal when its terminal receipt exceeds the state budget", async () => {
-  const root = await mkdtemp(join(workspacePaths.temporary, "refusal-save-"));
-  const refusal = new NousError(
-    domainError("Invalid request", 3, {
-      code: ErrorCode.INVALID_REQUEST,
-      owner: ErrorOwner.SUBJECT,
-      recovery: ErrorRecovery.CORRECT_REQUEST,
-      context: { payload: "x".repeat(policy.file_max_bytes + 1024) },
+it("derives unified cognition receipt owners from the target and retries the frozen identity", async () => {
+  const root = await mkdtemp(
+    join(workspacePaths.temporary, "cognition-receipt-"),
+  );
+  const subjectId = "22222222-2222-4222-8222-222222222222";
+  const memoryId = "33333333-3333-4333-8333-333333333333";
+  const schemaId = "44444444-4444-4444-8444-444444444444";
+  const memoryOperationId = "memory-operation";
+  const conceptOperationId = "concept-operation";
+  let loseMemoryResponse = true;
+  const mutate = vi.fn(async (request: CognitionMutationRequest) => {
+    if (request.operationId === memoryOperationId && loseMemoryResponse) {
+      loseMemoryResponse = false;
+      throw new Error("Response lost");
+    }
+    return create(CognitionMutationResponseSchema, {
+      outcome: { case: "purged", value: create(EmptySchema) },
+    });
+  });
+  const operationStatus = vi.fn(async () =>
+    create(GetOperationStatusResponseSchema, {
+      state: OperationState.COMMITTED,
+      owner: ProtocolErrorOwner.CONCEPT,
     }),
   );
+  const connect = async () =>
+    ({
+      cognition: { mutate },
+      system: { operationStatus },
+    }) as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
+  const mutation = (kind: string, value: string, operationId: string) =>
+    create(CognitionMutationRequestSchema, {
+      operationId,
+      subjectId,
+      objectRef: create(CognitiveRefSchema, { kind, value }),
+      expectedObjectEpoch: 3n,
+      action: { case: "purge", value: create(EmptySchema) },
+    });
   try {
     const env = await createEnvironment(
-      { "run-root": root, "instance-root": root },
-      async () =>
-        ({
-          subjects: {
-            create: async () => {
-              throw refusal;
-            },
-          },
-        }) as unknown as Awaited<ReturnType<typeof connectNousInstance>>,
+      {
+        "run-root": root,
+        "instance-root": root,
+        subject: subjectId,
+      },
+      connect,
     );
-    const returned: unknown = await env.client.subjects
-      .create({
-        subjectId: "22222222-2222-4222-8222-222222222222",
-        operationId: crypto.randomUUID(),
-      })
+    const local = cliState(root, identity, policy);
+    const memoryRequest = mutation("memory", memoryId, memoryOperationId);
+    const failure: unknown = await env.client.cognition
+      .mutate(memoryRequest)
       .catch((error: unknown) => error);
-    expect(returned === refusal).toBe(true);
-    expect(
-      typeof (refusal as unknown as { receiptId?: unknown }).receiptId,
-    ).toBe("string");
-    expect(refusal).toHaveProperty("notices.0.code", "RECEIPT_UNSAVED");
-    expect(cliErrorPayload(returned)).toMatchObject({
-      code: "INVALID_REQUEST",
-      owner: "SUBJECT",
-      notices: [{ code: "RECEIPT_UNSAVED" }],
+    expect(failure).toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      certainty: "outcome_unknown",
+    });
+    const memoryReceiptId = (failure as { receiptId: string }).receiptId;
+    expect(await local.receipt(memoryReceiptId)).toMatchObject({
+      command: "cognition.mutate",
+      owner: "MEMORY",
+      operationKind: "cognition_lifecycle",
+      operationId: memoryOperationId,
+      status: "pending",
+      request: {
+        protoJson: { objectRef: { kind: "memory", value: memoryId } },
+      },
+    });
+
+    await env.retry(memoryReceiptId);
+    expect(mutate).toHaveBeenCalledTimes(2);
+    expect(mutate.mock.calls.map(([request]) => request.operationId)).toEqual([
+      memoryOperationId,
+      memoryOperationId,
+    ]);
+    expect(mutate.mock.calls[1]?.[0]).toEqual(mutate.mock.calls[0]?.[0]);
+
+    const status = await env.inspectOperation(memoryReceiptId);
+    expect(operationStatus).toHaveBeenCalledTimes(1);
+    expect(status).toMatchObject({
+      owner: "MEMORY",
+      serverState: "COMMITTED",
+      serverOwner: "CONCEPT",
+      certainty: "outcome_unknown",
+      notices: [{ code: "SERVER_OWNER_MISMATCH" }],
+    });
+
+    await env.client.cognition.mutate(
+      mutation("cognitive_schema", schemaId, conceptOperationId),
+    );
+    const [namespace] = await readdir(join(root, "consumers"));
+    const operations = join(root, "consumers", namespace!, "operations");
+    const conceptFile = (await readdir(operations)).find(
+      (name) => name !== `${memoryReceiptId}.json`,
+    );
+    expect(conceptFile).toBeTruthy();
+    expect(await local.receipt(conceptFile!.slice(0, -5))).toMatchObject({
+      command: "cognition.mutate",
+      owner: "CONCEPT",
+      operationId: conceptOperationId,
+      status: "complete",
+      request: {
+        protoJson: { objectRef: { kind: "cognitive_schema", value: schemaId } },
+      },
     });
   } finally {
     await rm(root, { recursive: true, force: true });

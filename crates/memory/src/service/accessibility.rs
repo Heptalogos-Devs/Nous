@@ -113,7 +113,7 @@ impl AccessibilityPolicy {
         memory: MemoryId,
         now: DateTime<Utc>,
     ) -> Result<AccessibilityLevel> {
-        let row = sqlx::query("SELECT accessibility_mode,created_at FROM memory_objects WHERE subject_id=$1 AND memory_id=$2")
+        let row = sqlx::query("SELECT accessibility_mode,created_at FROM cognition_objects WHERE object_kind='memory' AND subject_id=$1 AND object_id=$2")
             .bind(subject.0)
             .bind(memory.0)
             .fetch_optional(store.pool())
@@ -140,7 +140,7 @@ impl AccessibilityPolicy {
                 AccessibilityMode::Auto => unreachable!(),
             });
         }
-        let uses = sqlx::query("SELECT use_kind,occurred_at FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind='memory_revision' AND ref_value IN (SELECT memory_revision_id::text FROM memory_revisions WHERE memory_id=$2) AND use_kind <> 'presented'")
+        let uses = sqlx::query("SELECT use_kind,occurred_at FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind='memory_revision' AND ref_value IN (SELECT revision_id::text FROM cognition_revision_headers WHERE object_kind='memory' AND object_id=$2) AND use_kind <> 'presented'")
             .bind(subject.0)
             .bind(memory.0)
             .fetch_all(store.pool())
@@ -343,58 +343,6 @@ pub fn eligible(level: AccessibilityLevel, effort: CognitiveEffort, exact: bool)
             matches!(effort, CognitiveEffort::Deep | CognitiveEffort::Maximum)
         }
         AccessibilityLevel::Explicit => false,
-    }
-}
-
-impl MemoryService {
-    pub async fn set_accessibility(
-        &self,
-        subject: SubjectId,
-        memory: MemoryId,
-        operation_id: OperationId,
-        expected_object_epoch: i64,
-        mode: AccessibilityMode,
-    ) -> Result<MemoryView> {
-        let digest = operation_digest(
-            "set_accessibility",
-            subject,
-            &serde_json::json!({"memory_id":memory,"expected_object_epoch":expected_object_epoch,"mode":mode}),
-        )?;
-        let mut mutation = match self
-            .start_mutation(
-                ErrorOwner::Memory,
-                subject,
-                operation_id,
-                "set_accessibility",
-                &digest,
-            )
-            .await?
-        {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self.memory(subject, memory, None).await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
-                    nous_core::ErrorCode::Unavailable,
-                    "accessibility operation is already in progress",
-                ));
-            }
-            MutationStart::Active(mutation) => mutation,
-        };
-        let epoch:i64=sqlx::query_scalar("SELECT object_epoch FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE").bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "memory not found"))?;
-        crate::service::state::fence_epoch(ErrorOwner::Memory, epoch, expected_object_epoch)?;
-        sqlx::query("UPDATE memory_objects SET accessibility_mode=$3,object_epoch=object_epoch+1 WHERE subject_id=$1 AND memory_id=$2").bind(subject.0).bind(memory.0).bind(format!("{mode:?}").to_lowercase()).execute(&mut **mutation.tx()).await.map_err(db)?;
-        mutation
-            .invalidate(ProjectionInvalidation {
-                ..Default::default()
-            })
-            .await?;
-
-        mutation
-            .commit("memory", Some(&memory.0.to_string()), None, Some(epoch + 1))
-            .await?;
-        self.memory(subject, memory, None).await
     }
 }
 

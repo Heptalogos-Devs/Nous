@@ -12,15 +12,15 @@ import type { KernelClient } from "../src/kernel-client.js";
 import { ResourceRegistry } from "../src/resources/registry.js";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
-  CognitiveRefSchema,
   ContextSegmentSchema,
   EvidenceSchema,
-  MemoryMutationRequestSchema,
+  CognitiveRefSchema,
   ProjectionRequestSchema,
   ProjectionSchema,
   type ContextSegment as Segment,
   type Projection,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { CognitionMutationRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/cognition_pb.js";
 import type { ConsumerPolicy } from "../src/domain.js";
 
 const segment = (id: string, text = id): Segment =>
@@ -273,7 +273,7 @@ describe("projection authority boundaries", () => {
           return batch;
         },
       },
-      memory: { purgeMemory: async () => ({}) },
+      memory: { mutateCognition: async () => ({}) },
     } as unknown as KernelClient;
     const service = new CoreCognition(
       kernel,
@@ -293,8 +293,16 @@ describe("projection authority boundaries", () => {
       calls,
     );
     await batchReady;
-    await service.purgeMemory(
-      create(MemoryMutationRequestSchema, { subjectId: "s" }),
+    await service.mutateCognition(
+      create(CognitionMutationRequestSchema, {
+        subjectId: "s",
+        operationId: "00000000-0000-0000-0000-000000000001",
+        objectRef: create(CognitiveRefSchema, {
+          kind: "memory",
+          value: "memory-id",
+        }),
+        action: { case: "purge", value: {} },
+      }),
       calls,
     );
     resolveBatch(projection(segment("after purge")));

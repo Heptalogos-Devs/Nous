@@ -128,30 +128,30 @@ impl CognitiveContributor for MemoryService {
                 continue;
             }
             let historical = bound.revision_policy.allows_historical(reference)
-                && view.object.current_revision_id != revision;
+                && view.header.current_revision_id() != revision.0;
             let exact = bound.exact_bindings.iter().any(|binding| {
                 binding.bound_ref == *reference
                     || binding.bound_ref == CognitiveRef::MemoryRevision(revision)
             });
             let state = FinalMemoryState {
-                acceptance_state: view.object.acceptance_state,
-                integrity_state: view.object.integrity_state,
-                suppression_state: view.object.suppression_state,
-                purge_state: view.object.purge_state,
-                accessibility_mode: view.object.accessibility_mode,
+                acceptance_state: view.header.lifecycle.acceptance,
+                integrity_state: view.header.lifecycle.integrity,
+                suppression_state: view.header.lifecycle.suppression,
+                purge_state: view.header.lifecycle.purge,
+                accessibility_mode: view.header.details.accessibility_mode(),
             };
             if let Some(binding) = bound
                 .exact_bindings
                 .iter()
                 .find(|binding| binding.bound_ref == *reference)
                 && binding.mutable_object
-                && (binding.bound_object_epoch != Some(view.object.object_epoch)
-                    || (!historical && view.object.current_revision_id != revision))
+                && (binding.bound_object_epoch != Some(view.header.object_epoch)
+                    || (!historical && view.header.current_revision_id() != revision.0))
             {
                 increment_drop(&mut drops, "stale_exact_binding");
                 continue;
             }
-            if !historical && view.object.current_revision_id != revision {
+            if !historical && view.header.current_revision_id() != revision.0 {
                 increment_drop(&mut drops, "stale_revision");
                 continue;
             }
@@ -225,7 +225,7 @@ async fn entity_lane(
         return Ok(output);
     }
     let rows = sqlx::query(
-        "SELECT r.memory_revision_id,r.memory_id,COUNT(DISTINCT a.entity_ref)::bigint AS matched,MIN(array_position($2::text[],a.entity_ref)) AS best_cue FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id JOIN memory_revision_aboutness a USING(memory_revision_id) WHERE o.subject_id=$1 AND a.entity_ref=ANY($2::text[]) GROUP BY r.memory_revision_id,r.memory_id ORDER BY matched DESC,best_cue ASC,r.memory_revision_id LIMIT $3",
+        "SELECT h.revision_id AS memory_revision_id,h.object_id AS memory_id,COUNT(DISTINCT a.entity_ref)::bigint AS matched,MIN(array_position($2::text[],a.entity_ref)) AS best_cue FROM cognition_objects o JOIN cognition_revision_headers h ON h.subject_id=o.subject_id AND h.object_kind=o.object_kind AND h.object_id=o.object_id AND h.revision_id=o.current_revision_id JOIN memory_revision_aboutness a ON a.memory_revision_id=h.revision_id WHERE o.object_kind='memory' AND o.subject_id=$1 AND a.entity_ref=ANY($2::text[]) GROUP BY h.revision_id,h.object_id ORDER BY matched DESC,best_cue ASC,h.revision_id LIMIT $3",
     )
     .bind(query.subject.0)
     .bind(&values)
@@ -269,7 +269,7 @@ async fn temporal_lane(
                 end: "r.valid_time_end",
             },
             "",
-            "r.recorded_at DESC,r.memory_revision_id",
+            "h.recorded_at DESC,h.revision_id",
         ),
         (
             constraints.occurred,
@@ -279,33 +279,33 @@ async fn temporal_lane(
                 end: "oc.occurred_time_end",
             },
             " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id)",
-            "r.memory_revision_id",
+            "h.revision_id",
         ),
         (
             constraints.observed,
             TimeColumns::Instant("oc.observed_at"),
             " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id)",
-            "r.memory_revision_id",
+            "h.revision_id",
         ),
         (
             constraints.formed,
-            TimeColumns::Instant("r.formed_at"),
+            TimeColumns::Instant("h.formed_at"),
             "",
-            "r.formed_at DESC,r.memory_revision_id",
+            "h.formed_at DESC,h.revision_id",
         ),
         (
             constraints.recorded,
-            TimeColumns::Instant("r.recorded_at"),
+            TimeColumns::Instant("h.recorded_at"),
             "",
-            "r.recorded_at DESC,r.memory_revision_id",
+            "h.recorded_at DESC,h.revision_id",
         ),
     ] {
         let Some(predicate) = predicate else { continue };
         let mut sql = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT DISTINCT r.memory_revision_id,r.memory_id,r.formed_at,r.recorded_at FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id",
+            "SELECT DISTINCT h.revision_id AS memory_revision_id,h.object_id AS memory_id,h.formed_at,h.recorded_at FROM cognition_objects o JOIN cognition_revision_headers h ON h.subject_id=o.subject_id AND h.object_kind=o.object_kind AND h.object_id=o.object_id AND h.revision_id=o.current_revision_id JOIN memory_revisions r ON r.memory_revision_id=h.revision_id",
         );
         sql.push(joins)
-            .push(" WHERE o.subject_id=")
+            .push(" WHERE o.object_kind='memory' AND o.subject_id=")
             .push_bind(query.subject.0);
         push_time_predicate(&mut sql, columns, predicate)?;
         sql.push(" ORDER BY ")

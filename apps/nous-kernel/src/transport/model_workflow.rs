@@ -24,15 +24,16 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                     &input.semantic_digest,
                 )
                 .await?;
-            let Some(row) = row else {
-                return Ok(k::FoundWorkflow::default());
-            };
+            use nous_persistence::WorkflowRecord;
             Ok(k::FoundWorkflow {
-                found: true,
-                snapshot: Some(envelope::snapshot_proto(row.snapshot)),
-                proposal: row.proposal.map(envelope::payload_proto),
-                outcome: row.outcome.map(envelope::payload_proto),
-                execution_telemetry: row.execution_telemetry.map(envelope::telemetry_proto),
+                state: row.map(|row| match row {
+                    WorkflowRecord::Pending(value) => {
+                        k::found_workflow::State::Pending(envelope::pending_proto(value))
+                    }
+                    WorkflowRecord::Completed(value) => {
+                        k::found_workflow::State::Completed(envelope::completed_proto(value))
+                    }
+                }),
             })
         }
         .await;
@@ -96,13 +97,22 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                     u64::from(input.lease_seconds),
                 )
                 .await?;
+            use nous_persistence::WorkflowReservation;
             Ok(k::WorkflowReservation {
-                snapshot: Some(envelope::snapshot_proto(reserved.snapshot)),
-                proposal: reserved.proposal.map(envelope::payload_proto),
-                outcome: reserved.outcome.map(envelope::payload_proto),
-                lease: reserved.lease.map(envelope::lease_proto),
-                busy: reserved.busy,
-                execution_telemetry: reserved.execution_telemetry.map(envelope::telemetry_proto),
+                state: Some(match reserved {
+                    WorkflowReservation::Acquired { pending, lease } => {
+                        k::workflow_reservation::State::Acquired(k::AcquiredWorkflow {
+                            pending: Some(envelope::pending_proto(pending)),
+                            lease: Some(envelope::lease_proto(lease)),
+                        })
+                    }
+                    WorkflowReservation::Busy(value) => {
+                        k::workflow_reservation::State::Busy(envelope::pending_proto(value))
+                    }
+                    WorkflowReservation::Completed(value) => {
+                        k::workflow_reservation::State::Completed(envelope::completed_proto(value))
+                    }
+                }),
             })
         }
         .await;

@@ -5,6 +5,7 @@
 
 mod accessibility;
 mod accretion;
+mod cognition;
 mod concept_maintenance;
 mod consolidation_context;
 mod dependencies;
@@ -50,6 +51,7 @@ pub use accessibility::{
     resolve_accessibility_policy,
 };
 pub use accretion::{ACCRETION, AccretionPolicy, AccretionSignal};
+pub use cognition::*;
 pub use concept_maintenance::*;
 pub use episode::*;
 pub use journal::*;
@@ -60,6 +62,73 @@ pub use maintenance_planning::MaintenanceScope;
 pub use nous_core::TopologyRelation;
 pub use nous_core::{CognitiveQuery, CognitiveQueryResult};
 pub use tag::*;
+
+pub(super) fn cognition_owner(kind: CognitionKind) -> ErrorOwner {
+    if kind == CognitionKind::CognitiveSchema {
+        ErrorOwner::Concept
+    } else {
+        ErrorOwner::Memory
+    }
+}
+
+pub(super) fn decode_cognition_header(
+    row: &sqlx::postgres::PgRow,
+    kind: CognitionKind,
+    object_id: Uuid,
+    current_revision_id: Uuid,
+    details: CognitionDetails,
+) -> Result<CognitionHeader> {
+    let owner = cognition_owner(kind);
+    Ok(CognitionHeader::new(
+        kind,
+        SubjectId(row.try_get("subject_id").map_err(db)?),
+        object_id,
+        current_revision_id,
+        row.try_get("object_epoch").map_err(db)?,
+        CognitionLifecycle {
+            acceptance: parse_enum(
+                owner,
+                row.try_get("acceptance_state").map_err(db)?,
+                "acceptance state",
+            )?,
+            integrity: parse_enum(
+                owner,
+                row.try_get("integrity_state").map_err(db)?,
+                "integrity state",
+            )?,
+            suppression: parse_enum(
+                owner,
+                row.try_get("suppression_state").map_err(db)?,
+                "suppression state",
+            )?,
+            purge: parse_enum(
+                owner,
+                row.try_get("purge_state").map_err(db)?,
+                "purge state",
+            )?,
+        },
+        row.try_get("created_at").map_err(db)?,
+        details,
+    ))
+}
+
+pub(super) fn decode_cognition_revision_header(
+    row: &sqlx::postgres::PgRow,
+    kind: CognitionKind,
+    object_id: Uuid,
+    revision_id: Uuid,
+) -> Result<CognitionRevisionHeader> {
+    Ok(CognitionRevisionHeader::new(
+        kind,
+        object_id,
+        revision_id,
+        row.try_get("revision_no").map_err(db)?,
+        row.try_get("parent_revision_id").map_err(db)?,
+        row.try_get("formed_at").map_err(db)?,
+        row.try_get("recorded_at").map_err(db)?,
+        row.try_get("producer_signature_id").map_err(db)?,
+    ))
+}
 
 #[derive(Clone)]
 pub struct MemoryService {
@@ -72,6 +141,27 @@ pub struct MemoryService {
 }
 
 impl MemoryService {
+    pub(in crate::service) async fn insert_cognition_revision_header_in(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        header: &CognitionRevisionHeader,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO cognition_revision_headers(revision_id,subject_id,object_kind,object_id,revision_no,parent_revision_id,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+            .bind(header.revision_id())
+            .bind(subject.0)
+            .bind(CognitionKind::from_reference(&header.object_ref)?.0.as_str())
+            .bind(header.object_id())
+            .bind(header.revision_no)
+            .bind(header.parent_revision_id())
+            .bind(header.formed_at)
+            .bind(header.recorded_at)
+            .bind(header.producer_signature_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(db)?;
+        Ok(())
+    }
+
     async fn start_mutation(
         &self,
         owner: ErrorOwner,
@@ -134,7 +224,7 @@ pub struct RuntimeStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryView {
-    pub object: MemoryObject,
+    pub header: CognitionHeader,
     pub revision: MemoryRevision,
     pub basis: Vec<RevisionBasis>,
     pub aboutness: Vec<EntityRef>,

@@ -60,85 +60,14 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         &self,
         request: Request<k::EmbeddingNeedsRequest>,
     ) -> std::result::Result<Response<k::EmbeddingNeedsResponse>, Status> {
-        let input = request.into_inner();
-        let result: Result<_> = async {
-            let config = self.embedding_config()?;
-            let subject = SubjectId(id(&input.subject_id)?);
-            let bound = self.embedding_run_context(subject, input.query_run)?;
-            let cursor = input
-                .cursor
-                .map(|cursor| -> Result<nous_retrieval::EmbeddingCursor> {
-                    Ok(nous_retrieval::EmbeddingCursor {
-                        subject: SubjectId(id(&cursor.subject_id)?),
-                        content_revision: cursor.content_revision,
-                        view_digest: cursor.view_digest,
-                        after: from_ref(required(cursor.after, "cursor reference")?)?,
-                    })
-                })
-                .transpose()?;
-            let page = self
-                .0
-                .serving
-                .embedding_needs_page(
-                    subject,
-                    input.limit as usize,
-                    cursor.as_ref(),
-                    bound
-                        .as_ref()
-                        .and_then(|bound| bound.read_context.historical_view()),
-                )
-                .await?;
-            Ok(k::EmbeddingNeedsResponse {
-                config: Some(config),
-                needs: page
-                    .needs
-                    .into_iter()
-                    .map(|need| k::EmbeddingNeed {
-                        references: need.references.into_iter().map(to_ref).collect(),
-                        text: need.text,
-                        digest: need.digest,
-                    })
-                    .collect(),
-                next_cursor: page.next_cursor.map(|cursor| k::EmbeddingCursor {
-                    subject_id: cursor.subject.0.to_string(),
-                    content_revision: cursor.content_revision,
-                    view_digest: cursor.view_digest,
-                    after: Some(to_ref(cursor.after)),
-                }),
-            })
-        }
-        .await;
+        let result = self.embedding_needs(request.into_inner(), None).await;
         result.map(Response::new).map_err(status)
     }
     async fn commit_embedding(
         &self,
         request: Request<k::CommitEmbeddingRequest>,
     ) -> std::result::Result<Response<()>, Status> {
-        let input = request.into_inner();
-        let result: Result<_> = async {
-            let material = required(input.material, "material")?;
-            let subject = SubjectId(id(&input.subject_id)?);
-            let bound = self.embedding_run_context(subject, input.query_run)?;
-            self.0
-                .serving
-                .commit_embedding_in_view(
-                    subject,
-                    input
-                        .binding_references
-                        .into_iter()
-                        .map(from_ref)
-                        .collect::<Result<Vec<_>>>()?,
-                    material.text,
-                    &material.space_hash,
-                    &material.producer_hash,
-                    material.vector,
-                    bound
-                        .as_ref()
-                        .and_then(|b| b.read_context.historical_view()),
-                )
-                .await
-        }
-        .await;
+        let result = self.commit_embedding(request.into_inner(), None).await;
         result.map(Response::new).map_err(status)
     }
     async fn commit_interpretation(
@@ -205,31 +134,70 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
 }
 
 impl KernelService {
-    fn embedding_run_context(
+    pub(super) async fn embedding_needs(
         &self,
-        subject: SubjectId,
-        handle: Option<k::QueryRunHandle>,
-    ) -> Result<Option<nous_runtime::BoundQuery>> {
-        let Some(handle) = handle else {
-            return Ok(None);
-        };
-        let bound = self.0.cognition.query_run_bound(
-            subject,
-            nous_runtime::QueryRunHandle {
-                query_run_id: id(&handle.query_run_id)?,
-                revision: handle.revision,
-            },
-            nous_runtime::QueryRunStage::Embedding,
-        )?;
-        if bound.source_query.capabilities.text_embedding
-            == nous_core::RequirementStrength::Forbidden
-        {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::CapabilityUnavailable,
-                "QueryRun forbids embedding material activity",
-            ));
-        }
-        Ok(Some(bound))
+        input: k::EmbeddingNeedsRequest,
+        view: Option<&nous_core::HistoricalAuthoritySnapshot>,
+    ) -> Result<k::EmbeddingNeedsResponse> {
+        let config = self.embedding_config()?;
+        let subject = SubjectId(id(&input.subject_id)?);
+        let cursor = input
+            .cursor
+            .map(|cursor| -> Result<nous_retrieval::EmbeddingCursor> {
+                Ok(nous_retrieval::EmbeddingCursor {
+                    subject: SubjectId(id(&cursor.subject_id)?),
+                    content_revision: cursor.content_revision,
+                    view_digest: cursor.view_digest,
+                    after: from_ref(required(cursor.after, "cursor reference")?)?,
+                })
+            })
+            .transpose()?;
+        let page = self
+            .0
+            .serving
+            .embedding_needs_page(subject, input.limit as usize, cursor.as_ref(), view)
+            .await?;
+        Ok(k::EmbeddingNeedsResponse {
+            config: Some(config),
+            needs: page
+                .needs
+                .into_iter()
+                .map(|need| k::EmbeddingNeed {
+                    references: need.references.into_iter().map(to_ref).collect(),
+                    text: need.text,
+                    digest: need.digest,
+                })
+                .collect(),
+            next_cursor: page.next_cursor.map(|cursor| k::EmbeddingCursor {
+                subject_id: cursor.subject.0.to_string(),
+                content_revision: cursor.content_revision,
+                view_digest: cursor.view_digest,
+                after: Some(to_ref(cursor.after)),
+            }),
+        })
+    }
+
+    pub(super) async fn commit_embedding(
+        &self,
+        input: k::CommitEmbeddingRequest,
+        view: Option<&nous_core::HistoricalAuthoritySnapshot>,
+    ) -> Result<()> {
+        let material = required(input.material, "material")?;
+        self.0
+            .serving
+            .commit_embedding_in_view(
+                SubjectId(id(&input.subject_id)?),
+                input
+                    .binding_references
+                    .into_iter()
+                    .map(from_ref)
+                    .collect::<Result<Vec<_>>>()?,
+                material.text,
+                &material.space_hash,
+                &material.producer_hash,
+                material.vector,
+                view,
+            )
+            .await
     }
 }

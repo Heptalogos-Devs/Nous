@@ -201,7 +201,7 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let row=sqlx::query("SELECT current_revision_id,object_epoch FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
+        let row=sqlx::query("SELECT current_revision_id,object_epoch FROM cognition_objects WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(ErrorOwner::Concept, epoch, expected_object_epoch)?;
         self.validate_basis_in_tx(
@@ -218,7 +218,7 @@ impl MemoryService {
             link,
         )
         .await?;
-        sqlx::query("UPDATE cognitive_schemas SET object_epoch=object_epoch+1 WHERE subject_id=$1 AND schema_id=$2").bind(subject.0).bind(schema_id.0).execute(&mut **mutation.tx()).await.map_err(db)?;
+        sqlx::query("UPDATE cognition_objects SET object_epoch=object_epoch+1 WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2").bind(subject.0).bind(schema_id.0).execute(&mut **mutation.tx()).await.map_err(db)?;
         let sequence = mutation
             .invalidate(ProjectionInvalidation::topology())
             .await?;
@@ -292,7 +292,7 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let row = sqlx::query(
-            "SELECT current_revision_id,object_epoch FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE",
+            "SELECT current_revision_id,object_epoch FROM cognition_objects WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2 FOR UPDATE",
         )
         .bind(input.subject.0)
         .bind(input.schema_id.0)
@@ -308,7 +308,7 @@ impl MemoryService {
         )?;
         let parent = CognitiveSchemaRevisionId(row.try_get("current_revision_id").map_err(db)?);
         let revision_no: i32 = sqlx::query_scalar(
-            "SELECT revision_no+1 FROM cognitive_schema_revisions WHERE schema_revision_id=$1",
+            "SELECT revision_no+1 FROM cognition_revision_headers WHERE object_kind='cognitive_schema' AND revision_id=$1",
         )
         .bind(parent.0)
         .fetch_one(&mut **mutation.tx())
@@ -408,7 +408,7 @@ impl MemoryService {
             },
         )
         .await?;
-        sqlx::query("UPDATE cognitive_schemas SET current_revision_id=$3,object_epoch=object_epoch+1,integrity_state='valid' WHERE subject_id=$1 AND schema_id=$2")
+        sqlx::query("UPDATE cognition_objects SET current_revision_id=$3,object_epoch=object_epoch+1,integrity_state='valid' WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2")
             .bind(input.subject.0)
             .bind(input.schema_id.0)
             .bind(revision_id.0)

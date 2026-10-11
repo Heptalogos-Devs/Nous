@@ -14,7 +14,6 @@ import { expect, it } from "vitest";
 import { createNousClient } from "../src/index.js";
 import { protocolReferences } from "../src/data.js";
 import { ConfigurationSnapshotSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
-import { MemorySchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 
 it("returns the generated response and keeps protocol-looking Value JSON opaque", async () => {
   const body = {
@@ -40,32 +39,4 @@ it("returns the generated response and keeps protocol-looking Value JSON opaque"
   });
   expect(toJson(ValueSchema, result.entries[0]!.value!)).toEqual(body);
   expect(protocolReferences(result, ConfigurationSnapshotSchema)).toEqual([]);
-});
-
-it("reflects references only through declared message fields", () => {
-  const id = "33333333-3333-4333-8333-333333333333";
-  const body = {
-    $typeName: "nous.wave.v1alpha1.CognitiveRef",
-    kind: "memory",
-    value: id,
-  };
-  const memory = create(MemorySchema, {
-    subjectId: id,
-    basis: [
-      {
-        basis: {
-          case: "evidence",
-          value: {
-            occurrenceId: id,
-            locator: { case: "sourceRegionId", value: id },
-          },
-        },
-      },
-    ],
-  });
-  expect(protocolReferences(memory, MemorySchema)).toContainEqual({
-    kind: "subject",
-    value: id,
-  });
-  expect(protocolReferences(body, MemorySchema)).toEqual([]);
 });

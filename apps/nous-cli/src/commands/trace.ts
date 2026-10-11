@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CliError } from "../agent.js";
-import type { NousClient } from "@nous-wave/client";
 import type { CliEnvironment } from "../runtime.js";
 import { create } from "@bufbuild/protobuf";
-import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import {
+  CognitiveRefSchema,
+  type RevisionBasis,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { isCognitionRevisionReference, typedCognition } from "./cognition.js";
 
 export async function traceCommands(
   env: CliEnvironment,
@@ -14,40 +17,56 @@ export async function traceCommands(
   const { client, subjectId, required, resolveReference } = env;
   const refText = required(action, "Reference");
   const reference = await resolveReference(refText);
-  const input = { subjectId, id: reference.value };
+  if (!isCognitionRevisionReference(reference))
+    throw new CliError(
+      "REFERENCE_TYPE_MISMATCH",
+      "Trace requires an exact cognition revision",
+    );
   let cognition: unknown;
-  let bases: Awaited<ReturnType<NousClient["memory"]["revision"]>>["basis"] =
-    [];
+  let bases: RevisionBasis[] = [];
   let producerSignatureId: string | undefined;
   switch (reference.kind) {
     case "memory_revision": {
-      const value = await client.memory.revision(input);
+      const value = await typedCognition.read(env, {
+        kind: "memory_revision",
+        value: reference.value,
+      });
       cognition = value;
-      bases = value.basis;
-      producerSignatureId = value.producerSignatureId;
+      bases = value.revision?.details?.basis ?? [];
+      producerSignatureId = value.revision?.header?.producerSignatureId;
       break;
     }
     case "cognitive_schema_revision": {
-      const value = await client.concepts.getSchemaRevision(input);
+      const value = await typedCognition.read(env, {
+        kind: "cognitive_schema_revision",
+        value: reference.value,
+      });
       cognition = value;
-      bases = value.evidenceLinks.flatMap((link) =>
-        link.basis ? [link.basis] : [],
-      );
-      producerSignatureId = value.producerSignatureId;
+      bases =
+        value.revision?.details?.evidenceLinks.flatMap((link) =>
+          link.basis ? [link.basis] : [],
+        ) ?? [];
+      producerSignatureId = value.revision?.header?.producerSignatureId;
       break;
     }
     case "episode_revision": {
-      const value = await client.memory.getEpisodeRevision(input);
+      const value = await typedCognition.read(env, {
+        kind: "episode_revision",
+        value: reference.value,
+      });
       cognition = value;
-      bases = value.basis;
-      producerSignatureId = value.producerSignatureId;
+      bases = value.revision?.basis ?? [];
+      producerSignatureId = value.revision?.header?.producerSignatureId;
       break;
     }
     case "journal_revision": {
-      const value = await client.memory.getJournalRevision(input);
+      const value = await typedCognition.read(env, {
+        kind: "journal_revision",
+        value: reference.value,
+      });
       cognition = value;
-      bases = value.points.flatMap((point) => point.basis);
-      producerSignatureId = value.producerSignatureId;
+      bases = value.revision?.points.flatMap((point) => point.basis) ?? [];
+      producerSignatureId = value.revision?.header?.producerSignatureId;
       break;
     }
     default:

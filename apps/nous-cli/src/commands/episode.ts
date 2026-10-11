@@ -6,19 +6,15 @@ import { TemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/typ
 import {
   CreateEpisodeRequestSchema,
   EpisodeMemberSchema,
-  EpisodeMutationRequestSchema,
-  ListEpisodeRevisionsRequestSchema,
   LinkEpisodeRevisionsRequestSchema,
-  ListRequestSchema,
-  ObjectRequestSchema,
-  PageSchema,
   ReviseEpisodeRequestSchema,
   CognitiveRefSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { z } from "zod";
-import { nonnegativeInt64, CliError, boundedInteger } from "../agent.js";
+import { nonnegativeInt64, CliError } from "../agent.js";
 import { revisionBasis } from "../mutation-input.js";
 import type { CliEnvironment } from "../runtime.js";
+import { typedCognition } from "./cognition.js";
 
 const reference = z.string().min(1).max(2048);
 const basisInput = z.strictObject({
@@ -64,42 +60,14 @@ export async function episodeCommands(
     resolveReference,
     requestPayload,
   } = env;
-  const page = create(PageSchema, {
-    pageSize: boundedInteger(values["page-size"], 1, 200, "--page-size"),
-    pageToken: values["page-token"],
-  });
-  if (action === "list")
-    return client.memory.listEpisodes(
-      create(ListRequestSchema, {
-        subjectId,
-        page,
-        status: values.status ?? "",
-      }),
-    );
-  if (action === "get" || action === "revision") {
-    const kind = action === "get" ? "episode" : "episode_revision";
-    const ref = await resolveReference(
-      required(argument, `${kind} reference`),
-      kind,
-    );
-    const request = create(ObjectRequestSchema, { subjectId, id: ref.value });
-    return action === "get"
-      ? client.memory.getEpisode(request)
-      : client.memory.getEpisodeRevision(request);
-  }
-  if (action === "history") {
-    const ref = await resolveReference(
-      required(argument, "Episode reference"),
-      "episode",
-    );
-    return client.memory.listEpisodeRevisions(
-      create(ListEpisodeRevisionsRequestSchema, {
-        subjectId,
-        episodeId: ref.value,
-        page,
-      }),
-    );
-  }
+  const common = await typedCognition.commonCommand(
+    env,
+    "episode",
+    action,
+    argument,
+    { list: true, history: true },
+  );
+  if (common.handled) return common.value;
   if (action === "create" || action === "revise") {
     const parsed = episodeInput.parse(
       await requestPayload(values["request-file"]),
@@ -191,37 +159,6 @@ export async function episodeCommands(
         relation: required(values.relation, "--relation"),
       }),
     );
-  }
-  if (
-    ["suppress", "restore", "withdraw", "reaccept", "purge"].includes(
-      action ?? "",
-    )
-  ) {
-    const ref = await resolveReference(
-      required(argument, "Episode reference"),
-      "episode",
-    );
-    const request = create(EpisodeMutationRequestSchema, {
-      operationId: values["operation-id"] ?? crypto.randomUUID(),
-      subjectId,
-      episodeId: ref.value,
-      expectedObjectEpoch: nonnegativeInt64(
-        values["expected-epoch"],
-        "--expected-epoch",
-      ),
-    });
-    switch (action) {
-      case "suppress":
-        return client.memory.suppressEpisode(request);
-      case "restore":
-        return client.memory.restoreEpisode(request);
-      case "withdraw":
-        return client.memory.withdrawEpisode(request);
-      case "reaccept":
-        return client.memory.reacceptEpisode(request);
-      case "purge":
-        return client.memory.purgeEpisode(request);
-    }
   }
   throw new CliError(
     "INVALID_ARGUMENT",

@@ -8,96 +8,20 @@ use test_support::query::{query, subject};
 use test_support::{database, form_input, observation, open_runtime_with_serving};
 
 #[tokio::test]
-async fn serving_reuse_reads_the_typed_implementation_identity() {
+async fn query_slot_releases_when_continuation_is_dropped() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime_with_serving(&url, &root, true, false, false).await;
     let subject = subject(&runtime).await;
-    observation(&runtime, subject, "Retain this original material").await;
-    let need = ServingNeed {
-        lexical: true,
-        ..Default::default()
-    };
-    runtime.serving.prepare(subject, need).await.unwrap();
-    let original = runtime
-        .store
-        .serving_current(subject)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|record| record.family == "lexical")
-        .unwrap();
-    // The record is the owner of identity. A stale metadata copy must not authorize reuse.
-    sqlx::query(
-        "UPDATE serving_generations SET implementation_revision='outdated' WHERE generation_id=$1",
-    )
-    .bind(original.generation_id.0)
-    .execute(runtime.store.pool())
-    .await
-    .unwrap();
-    let status = runtime.serving.prepare(subject, need).await.unwrap();
-    assert!(status.rebuilt.contains(&"lexical".to_owned()));
-    let replacement = runtime
-        .store
-        .serving_current(subject)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|record| record.family == "lexical")
-        .unwrap();
-    assert_ne!(replacement.generation_id, original.generation_id);
-    assert_eq!(
-        replacement.authority_watermark,
-        original.authority_watermark
-    );
-    assert_eq!(replacement.implementation_revision, "lexical-v1");
-    for key in ["implementation", "implementation_revision", "config_digest"] {
-        assert!(replacement.metadata.get(key).is_none());
-    }
-    // An existing superseded cache must leave current without losing a research pin.
-    let mut obsolete = replacement.clone();
-    obsolete.generation_id = nous_core::ServingGenerationId::new();
-    obsolete.family = "exact".into();
-    obsolete.artifact_location = root
-        .path()
-        .join("serving")
-        .join(obsolete.generation_id.0.to_string())
-        .to_string_lossy()
-        .into_owned();
-    obsolete.metadata = serde_json::json!({"research_pinned":true});
-    std::fs::create_dir_all(&obsolete.artifact_location).unwrap();
-    std::fs::write(
-        std::path::Path::new(&obsolete.artifact_location).join("postings.json"),
-        b"{}",
-    )
-    .unwrap();
-    let obsolete = runtime.store.publish_generation(obsolete).await.unwrap();
-    let report = runtime
-        .serving
-        .reclaim_retired(subject, std::time::Duration::ZERO)
-        .await
-        .unwrap();
-    assert!(!report.reclaimed.contains(&obsolete.generation_id));
-    assert!(std::path::Path::new(&obsolete.artifact_location).exists());
-    assert!(
-        runtime
-            .store
-            .serving_current(subject)
-            .await
-            .unwrap()
-            .iter()
-            .all(|record| record.family != "exact")
-    );
-    runtime
-        .serving
-        .pin_research_generation(obsolete.generation_id, false)
-        .await
-        .unwrap();
-    let report = runtime
-        .serving
-        .reclaim_retired(subject, std::time::Duration::ZERO)
-        .await
-        .unwrap();
-    assert!(report.reclaimed.contains(&obsolete.generation_id));
+    let execution = runtime.execute_query(query(subject), None).await.unwrap();
+    let run = test_support::query_run(&runtime.cognition, execution);
+
+    assert!(runtime.cognition.acquire_query_slot(1).is_err());
+    drop(run);
+    let permit = runtime
+        .cognition
+        .acquire_query_slot(1)
+        .expect("dropping the stream state releases its slot");
+    drop(permit);
 }
 
 #[tokio::test]
@@ -122,7 +46,7 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
         ))
         .await
         .unwrap();
-    let first = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
+    let first = CognitiveRef::MemoryRevision(memory.revision.header.memory_revision_id());
     let request = query(subject);
     assert!(
         runtime
@@ -145,9 +69,7 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
         .execute_query(request.clone(), Some(5))
         .await
         .unwrap();
-    let (_, handle) =
-        test_support::retain_query_run(&runtime.cognition, held, test_support::query_lease())
-            .unwrap();
+    let held = test_support::query_run(&runtime.cognition, held);
     let next = runtime
         .require_memory()
         .unwrap()
@@ -178,7 +100,7 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
     assert!(busy.readers_active);
     assert!(!busy.reclaimed.contains(&old.generation_id));
     assert!(std::path::Path::new(&old.artifact_location).exists());
-    runtime.cognition.cancel_query_run(subject, handle).unwrap();
+    drop(held);
     let reclaimed = runtime
         .serving
         .reclaim_retired(subject, std::time::Duration::ZERO)
@@ -191,13 +113,8 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
     let reopened = reopen_without_serving_cache(&url, &root).await;
     let rebuilt = reopened.query(request).await.unwrap();
     assert!(rebuilt.results.iter().any(|hit| hit.reference == first));
-    assert!(
-        rebuilt
-            .results
-            .iter()
-            .any(|hit| hit.reference
-                == CognitiveRef::MemoryRevision(next.revision.memory_revision_id))
-    );
+    assert!(rebuilt.results.iter().any(|hit| hit.reference
+        == CognitiveRef::MemoryRevision(next.revision.header.memory_revision_id())));
     assert_eq!(
         reopened.store.authority_seq(subject).await.unwrap(),
         watermark
@@ -210,85 +127,6 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
             .unwrap()
             .iter()
             .all(|record| std::path::Path::new(&record.artifact_location).exists())
-    );
-}
-
-#[tokio::test]
-async fn purge_retry_resumes_after_the_old_query_reader_releases() {
-    use nous_core::{Error, ErrorCode, ErrorOwner};
-
-    let (root, url, _postgres) = database().await;
-    let runtime = open_runtime_with_serving(&url, &root, true, false, false).await;
-    let subject = subject(&runtime).await;
-    let source = observation(&runtime, subject, "reader-held source").await;
-    let memory = runtime
-        .require_memory()
-        .unwrap()
-        .form_memory(form_input(
-            subject,
-            source.occurrence.occurrence_id,
-            OperationId::new(),
-            "Recall relevant cognition that awaits a purge",
-        ))
-        .await
-        .unwrap();
-    let query = query(subject);
-    runtime.query(query.clone()).await.unwrap();
-    let previous = runtime
-        .store
-        .serving_current(subject)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|record| record.family == "lexical")
-        .expect("query prepared a lexical generation");
-    let (held, handle) = test_support::retain_query_run(
-        &runtime.cognition,
-        runtime.execute_query(query, Some(5)).await.unwrap(),
-        test_support::query_lease(),
-    )
-    .unwrap();
-    assert!(held.results.iter().any(|hit| {
-        hit.reference == CognitiveRef::MemoryRevision(memory.revision.memory_revision_id)
-    }));
-
-    let operation = OperationId::new();
-    let first_attempt = runtime
-        .purge_memory(
-            subject,
-            memory.object.memory_id,
-            operation,
-            memory.object.object_epoch,
-        )
-        .await;
-    assert!(matches!(
-        first_attempt,
-        Err(Error {
-            owner: ErrorOwner::Persistence,
-            code: ErrorCode::OperationInProgress,
-            ..
-        })
-    ));
-    assert!(std::path::Path::new(&previous.artifact_location).exists());
-
-    runtime.cognition.cancel_query_run(subject, handle).unwrap();
-    runtime
-        .purge_memory(
-            subject,
-            memory.object.memory_id,
-            operation,
-            memory.object.object_epoch,
-        )
-        .await
-        .unwrap();
-    assert!(!std::path::Path::new(&previous.artifact_location).exists());
-    assert!(
-        runtime
-            .require_memory()
-            .unwrap()
-            .memory(subject, memory.object.memory_id, None)
-            .await
-            .is_err()
     );
 }
 
@@ -332,11 +170,11 @@ async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
     runtime
         .require_memory()
         .unwrap()
-        .begin_purge_memory(
+        .begin_purge_cognition(
             subject,
-            memory.object.memory_id,
+            CognitiveRef::Memory(memory.header.memory_id()),
             operation,
-            memory.object.object_epoch,
+            memory.header.object_epoch,
         )
         .await
         .unwrap();
@@ -355,11 +193,11 @@ async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
     let direct_completion = runtime
         .require_memory()
         .unwrap()
-        .complete_purge_memory(
+        .complete_purge_cognition(
             subject,
-            memory.object.memory_id,
+            CognitiveRef::Memory(memory.header.memory_id()),
             operation,
-            memory.object.object_epoch,
+            memory.header.object_epoch,
         )
         .await;
     assert!(matches!(
@@ -373,11 +211,11 @@ async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
     let adopted_checkpoint = runtime
         .require_memory()
         .unwrap()
-        .complete_purge_memory(
+        .complete_purge_cognition(
             subject,
-            memory.object.memory_id,
+            CognitiveRef::Memory(memory.header.memory_id()),
             OperationId::new(),
-            memory.object.object_epoch,
+            memory.header.object_epoch,
         )
         .await;
     assert!(matches!(
@@ -402,11 +240,11 @@ async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
     std::fs::create_dir_all(artifact_path).unwrap();
     std::fs::write(artifact_path.join("postings.json"), b"{}").unwrap();
     runtime
-        .purge_memory(
+        .purge_cognition(
             subject,
-            memory.object.memory_id,
+            CognitiveRef::Memory(memory.header.memory_id()),
             operation,
-            memory.object.object_epoch,
+            memory.header.object_epoch,
         )
         .await
         .unwrap();

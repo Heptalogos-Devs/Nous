@@ -11,6 +11,13 @@ ALTER TABLE serving_generations
     ADD COLUMN purge_epoch bigint NOT NULL DEFAULT 0
     CHECK (purge_epoch >= 0);
 
+-- `ready` is the current generation state. Keep one current artifact per
+-- family/space within each purge epoch; prior epochs remain physically
+-- reclaimable without blocking publication after a purge checkpoint.
+CREATE UNIQUE INDEX serving_one_ready_current_generation
+    ON serving_generations(subject_id, family, (COALESCE(space_signature, '')), purge_epoch)
+    WHERE state = 'ready' AND view_descriptor->>'kind' = 'current';
+
 -- Embeddings are content-addressed and shared by all canonical refs with the
 -- same representation. This join records exact ownership without duplicating
 -- the vector or its content identity.

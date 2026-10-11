@@ -26,15 +26,19 @@ it("uses the reservation winner snapshot and checkpoints each owner ID before co
   });
   const reserveWorkflow = vi.fn(
     async (_input: MessageInitShape<typeof ReserveWorkflowRequestSchema>) => ({
-      snapshot: persistedSnapshot,
-      lease: { token: "child-token" },
-      busy: false,
+      state: {
+        case: "acquired",
+        value: {
+          pending: { snapshot: persistedSnapshot },
+          lease: { token: "child-token" },
+        },
+      },
     }),
   );
   const kernel = {
     execution: coreExecutionSchema.parse(undefined),
     modelWorkflow: {
-      findWorkflow: vi.fn(async () => ({ found: false })),
+      findWorkflow: vi.fn(async () => ({ state: { case: undefined } })),
       reserveWorkflow,
       saveWorkflow: vi.fn(async (input: { mutationOperations?: string[] }) => {
         events.push(`checkpoint:${input.mutationOperations?.[0]}`);
@@ -73,7 +77,9 @@ it("replays a found terminal outcome without rebuilding a snapshot or reserving"
   const kernel = {
     execution: coreExecutionSchema.parse(undefined),
     modelWorkflow: {
-      findWorkflow: vi.fn(async () => ({ found: true, outcome })),
+      findWorkflow: vi.fn(async () => ({
+        state: { case: "completed", value: { outcome } },
+      })),
       reserveWorkflow,
     },
   } as unknown as KernelClient;

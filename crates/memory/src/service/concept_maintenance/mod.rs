@@ -85,7 +85,7 @@ impl MemoryService {
         sequence: i64,
     ) -> Result<()> {
         if let CognitiveRef::CognitiveSchema(id) = reference {
-            let revision:Uuid = sqlx::query_scalar("SELECT current_revision_id FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2")
+            let revision:Uuid = sqlx::query_scalar("SELECT current_revision_id FROM cognition_objects WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2")
                 .bind(subject.0).bind(id.0).fetch_one(&mut **tx).await.map_err(db)?;
             reference = CognitiveRef::CognitiveSchemaRevision(CognitiveSchemaRevisionId(revision));
         }
