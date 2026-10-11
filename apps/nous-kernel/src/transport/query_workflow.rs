@@ -213,14 +213,10 @@ impl KernelService {
             Some(k::query_run_resume::Outcome::Finalize(_)) => QueryRunStage::Finalize,
             None => return Err(Status::invalid_argument("query run outcome is required")),
         };
-        self.0
-            .cognition
-            .query_run_bound(subject, handle, expected_stage)
-            .map_err(status)?;
         let mut run = self
             .0
             .cognition
-            .take_query_run(subject, handle)
+            .take_query_run(subject, handle, expected_stage)
             .map_err(status)?;
         match input.outcome.expect("validated outcome") {
             k::query_run_resume::Outcome::Embedding(value) => {
@@ -476,16 +472,7 @@ impl KernelService {
 
     async fn concept_update(&self, mut run: QueryRun) -> Result<k::QueryRunUpdate> {
         let bound = run.bound();
-        let representation =
-            super::query_projection::inspect_bound_query_with_plan(bound, run.plan())?
-                .representation
-                .ok_or_else(|| {
-                    nous_core::Error::new(
-                        nous_core::ErrorOwner::Runtime,
-                        nous_core::ErrorCode::InvalidRequest,
-                        "query representation is unavailable",
-                    )
-                })?;
+        let representation = super::query_projection::query_representation(&bound.representation);
         let existing_tags = bound
             .activation
             .concept_catalog

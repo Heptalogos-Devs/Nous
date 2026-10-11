@@ -74,8 +74,9 @@ import {
   FormationRequestSchema,
   FormationResponseSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
+import type { NousClient } from "@nous-wave/client";
 
-export type ReceiptStatusLookup =
+type ReceiptStatusLookup =
   | "subjectCreate"
   | "configurationMutation"
   | "observationRequest"
@@ -164,6 +165,12 @@ const definition = (
       ],
     }[owner] ?? [],
 });
+
+type ReceiptClientMethodPath = {
+  [
+    Namespace in keyof NousClient
+  ]: `${Namespace}.${Extract<keyof NousClient[Namespace], string>}`;
+}[keyof NousClient];
 
 /** Static request/response and status identities share one receipt registry. */
 const receiptDefinitions = {
@@ -495,19 +502,18 @@ const receiptDefinitions = {
     ResourceMaterializationSchema,
     { statusLookup: "modelWorkflow" },
   ),
-} satisfies Record<string, ReceiptDefinition>;
+} satisfies Partial<Record<ReceiptClientMethodPath, ReceiptDefinition>>;
+
+type ReceiptCommand = keyof typeof receiptDefinitions;
+
+export function receiptDefinitionCommands(): readonly ReceiptCommand[] {
+  return Object.keys(receiptDefinitions) as ReceiptCommand[];
+}
 
 export function receiptDefinition(command: string) {
   const found = receiptDefinitions[command as keyof typeof receiptDefinitions];
   if (!found) throw new Error(`Receipt command is not registered: ${command}`);
   return found;
-}
-
-export function receiptStatusLookup(command: string): ReceiptStatusLookup {
-  const found = receiptDefinitions[command as keyof typeof receiptDefinitions];
-  if (!found)
-    throw new Error(`Receipt status lookup is not registered: ${command}`);
-  return found.statusLookup;
 }
 
 export function freezeRequest(command: string, input: unknown) {

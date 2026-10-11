@@ -413,7 +413,7 @@ pub(crate) async fn finish_query_run(
     external_results: Vec<nous_core::ExternalResourceResult>,
     contributors: nous_runtime::CognitiveContributors<'_>,
 ) -> nous_core::Result<nous_core::CognitiveQueryResult> {
-    let run = cognition.take_query_run(subject, handle)?;
+    let run = cognition.take_query_run(subject, handle, nous_runtime::QueryRunStage::Finalize)?;
     cognition
         .finish_query_run(run, order, external_results, contributors)
         .await

@@ -25,22 +25,6 @@ impl MemoryService {
         references: &[CognitiveRef],
         now: DateTime<Utc>,
     ) -> Result<HashMap<CognitiveRef, MemoryView>> {
-        let snapshot = self.configuration.snapshot_for_subject(subject)?;
-        let policy = super::super::resolve_accessibility_policy(&snapshot)?;
-        self.memory_views_for_references_at_policy(subject, references, now, policy)
-            .await
-    }
-
-    /// Load complete Memory views using caller-frozen read policy and clock.
-    /// Query projections pass their ReadContext snapshot here so owner policy
-    /// changes after binding cannot alter the projection.
-    pub(super) async fn memory_views_for_references_at_policy(
-        &self,
-        subject: SubjectId,
-        references: &[CognitiveRef],
-        now: DateTime<Utc>,
-        policy: AccessibilityPolicy,
-    ) -> Result<HashMap<CognitiveRef, MemoryView>> {
         if references.len() > 256 {
             return Err(Error::new(
                 ErrorOwner::Memory,
@@ -48,59 +32,98 @@ impl MemoryService {
                 "Memory context batch exceeds 256 references",
             ));
         }
-        let mut requested_revisions = references
-            .iter()
-            .filter_map(|reference| match reference {
-                CognitiveRef::MemoryRevision(id) => Some(id.0),
-                _ => None,
-            })
-            .collect::<HashSet<_>>();
-        let object_ids = references
-            .iter()
-            .filter_map(|reference| match reference {
-                CognitiveRef::Memory(id) => Some(id.0),
-                _ => None,
-            })
-            .collect::<HashSet<_>>();
+        let snapshot = self.configuration.snapshot_for_subject(subject)?;
+        let policy = super::super::resolve_accessibility_policy(&snapshot)?;
+        self.memory_views_for_references_at_policy(subject, references, now, policy, None)
+            .await
+    }
+
+    /// Load complete Memory views using the caller's frozen read policy and clock.
+    pub(in crate::service) async fn memory_views_for_references_at_policy(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        now: DateTime<Utc>,
+        policy: AccessibilityPolicy,
+        historical_view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<HashMap<CognitiveRef, MemoryView>> {
+        if references.is_empty() {
+            return Ok(HashMap::new());
+        }
         let mut tx = self.store.pool().begin().await.map_err(db)?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let mut object_revision = HashMap::new();
-        if !object_ids.is_empty() {
-            for row in sqlx::query("SELECT memory_id,current_revision_id FROM memory_objects WHERE subject_id=$1 AND memory_id=ANY($2)")
-                .bind(subject.0).bind(object_ids.iter().copied().collect::<Vec<_>>())
-                .fetch_all(&mut *tx).await.map_err(db)? {
-                let memory: Uuid = row.try_get("memory_id").map_err(db)?;
-                let revision: Uuid = row.try_get("current_revision_id").map_err(db)?;
-                requested_revisions.insert(revision);
-                object_revision.insert(memory, revision);
-            }
-        }
-        let revision_ids = requested_revisions
-            .into_iter()
-            .map(MemoryRevisionId)
-            .collect::<Vec<_>>();
-        let views = self
-            .memories_by_revision_in_tx(&mut tx, subject, &revision_ids, now, policy)
-            .await?;
-        tx.commit().await.map_err(db)?;
-        let by_revision = views
-            .into_iter()
-            .map(|view| (view.revision.memory_revision_id.0, view))
-            .collect::<HashMap<_, _>>();
         let mut result = HashMap::new();
-        for reference in references {
-            let revision = match reference {
-                CognitiveRef::MemoryRevision(id) => Some(id.0),
-                CognitiveRef::Memory(id) => object_revision.get(&id.0).copied(),
-                _ => None,
-            };
-            if let Some(view) = revision.and_then(|revision| by_revision.get(&revision)) {
-                result.insert(reference.clone(), view.clone());
+        let now = historical_view.map_or(now, |view| view.as_of);
+        for references in references.chunks(256) {
+            let mut requested_revisions = references
+                .iter()
+                .filter_map(|reference| match reference {
+                    CognitiveRef::MemoryRevision(id) => Some(id.0),
+                    _ => None,
+                })
+                .collect::<HashSet<_>>();
+            let object_ids = references
+                .iter()
+                .filter_map(|reference| match reference {
+                    CognitiveRef::Memory(id) => Some(id.0),
+                    _ => None,
+                })
+                .collect::<HashSet<_>>();
+            let mut object_revision = HashMap::new();
+            if let Some(historical_view) = historical_view {
+                let heads = object_ids.iter().filter_map(|memory| {
+                    let state =
+                        historical_view.cognition_for(&CognitiveRef::Memory(MemoryId(*memory)))?;
+                    match state.head {
+                        CognitiveRef::MemoryRevision(revision) => Some((*memory, revision.0)),
+                        _ => None,
+                    }
+                });
+                object_revision.extend(heads);
+                requested_revisions.extend(object_revision.values().copied());
+            } else if !object_ids.is_empty() {
+                for row in sqlx::query("SELECT memory_id,current_revision_id FROM memory_objects WHERE subject_id=$1 AND memory_id=ANY($2)")
+                    .bind(subject.0).bind(object_ids.iter().copied().collect::<Vec<_>>())
+                    .fetch_all(&mut *tx).await.map_err(db)? {
+                    let memory: Uuid = row.try_get("memory_id").map_err(db)?;
+                    let revision: Uuid = row.try_get("current_revision_id").map_err(db)?;
+                    requested_revisions.insert(revision);
+                    object_revision.insert(memory, revision);
+                }
+            }
+            let revision_ids = requested_revisions
+                .into_iter()
+                .map(MemoryRevisionId)
+                .collect::<Vec<_>>();
+            let views = self
+                .memories_by_revision_in_tx(
+                    &mut tx,
+                    subject,
+                    &revision_ids,
+                    now,
+                    policy,
+                    historical_view,
+                )
+                .await?;
+            let by_revision = views
+                .into_iter()
+                .map(|view| (view.revision.memory_revision_id.0, view))
+                .collect::<HashMap<_, _>>();
+            for reference in references {
+                let revision = match reference {
+                    CognitiveRef::MemoryRevision(id) => Some(id.0),
+                    CognitiveRef::Memory(id) => object_revision.get(&id.0).copied(),
+                    _ => None,
+                };
+                if let Some(view) = revision.and_then(|revision| by_revision.get(&revision)) {
+                    result.insert(reference.clone(), view.clone());
+                }
             }
         }
+        tx.commit().await.map_err(db)?;
         Ok(result)
     }
 
@@ -122,24 +145,18 @@ impl MemoryService {
         if revisions.is_empty() {
             return Ok(Vec::new());
         }
-        let mut tx = self.store.pool().begin().await.map_err(db)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let references = revisions
+            .iter()
+            .copied()
+            .map(CognitiveRef::MemoryRevision)
+            .collect::<Vec<_>>();
         let views = self
-            .memories_by_revision_in_tx(
-                &mut tx,
-                subject,
-                revisions,
-                self.cognition.now(subject),
-                super::super::resolve_accessibility_policy(
-                    &self.configuration.snapshot_for_subject(subject)?,
-                )?,
-            )
+            .memory_views_for_references(subject, &references)
             .await?;
-        tx.commit().await.map_err(db)?;
-        Ok(views)
+        Ok(revisions
+            .iter()
+            .filter_map(|revision| views.get(&CognitiveRef::MemoryRevision(*revision)).cloned())
+            .collect())
     }
 
     async fn memories_by_revision_in_tx(
@@ -149,6 +166,7 @@ impl MemoryService {
         revisions: &[MemoryRevisionId],
         now: DateTime<Utc>,
         read_policy: AccessibilityPolicy,
+        historical_view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<Vec<MemoryView>> {
         if revisions.len() > 256 {
             return Err(Error::new(
@@ -178,7 +196,24 @@ impl MemoryService {
         let mut decoded = HashMap::with_capacity(rows.len());
         let mut memory_ids = HashSet::new();
         for row in &rows {
-            let (object, revision) = super::decode_memory_row(row, subject)?;
+            let (mut object, revision) = super::decode_memory_row(row, subject)?;
+            if let Some(historical_view) = historical_view {
+                let Some(state) = historical_view
+                    .cognition_for(&CognitiveRef::MemoryRevision(revision.memory_revision_id))
+                else {
+                    continue;
+                };
+                let current_purge_state = object.purge_state;
+                object = serde_json::from_value(state.state.clone()).map_err(|error| {
+                    Error::new(
+                        ErrorOwner::Memory,
+                        ErrorCode::InternalFailure,
+                        "Could not decode historical memory state",
+                    )
+                    .with_source(error)
+                })?;
+                object.purge_state = current_purge_state;
+            }
             memory_ids.insert(object.memory_id.0);
             decoded.insert(revision.memory_revision_id.0, (object, revision));
         }
@@ -264,6 +299,7 @@ impl MemoryService {
                 &memory_ids.into_iter().map(MemoryId).collect::<Vec<_>>(),
                 now,
                 read_policy,
+                historical_view,
                 tx,
             )
             .await?;
@@ -315,6 +351,7 @@ impl MemoryService {
         memories: &[MemoryId],
         now: DateTime<Utc>,
         read_policy: AccessibilityPolicy,
+        historical_view: Option<&HistoricalAuthoritySnapshot>,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<HashMap<MemoryId, AccessibilityLevel>> {
         struct ActivationInput {
@@ -325,16 +362,32 @@ impl MemoryService {
 
         let policy = read_policy;
         let ids = memories.iter().map(|id| id.0).collect::<Vec<_>>();
-        let rows = sqlx::query("SELECT o.memory_id,o.accessibility_mode,o.created_at,e.use_kind,e.occurred_at FROM memory_objects o LEFT JOIN memory_revisions r ON r.memory_id=o.memory_id LEFT JOIN cognitive_use_events e ON e.subject_id=o.subject_id AND e.ref_kind='memory_revision' AND e.ref_value=r.memory_revision_id::text AND e.use_kind<>'presented' WHERE o.subject_id=$1 AND o.memory_id=ANY($2) ORDER BY o.memory_id,e.occurred_at")
-            .bind(subject.0).bind(ids).fetch_all(&mut **tx).await.map_err(db)?;
+        let rows = sqlx::query("SELECT o.memory_id,o.accessibility_mode,o.created_at,e.use_kind,e.occurred_at FROM memory_objects o LEFT JOIN memory_revisions r ON r.memory_id=o.memory_id LEFT JOIN cognitive_use_events e ON e.subject_id=o.subject_id AND e.ref_kind='memory_revision' AND e.ref_value=r.memory_revision_id::text AND e.use_kind<>'presented' AND e.occurred_at<=$3 WHERE o.subject_id=$1 AND o.memory_id=ANY($2) ORDER BY o.memory_id,e.occurred_at")
+            .bind(subject.0).bind(ids).bind(now).fetch_all(&mut **tx).await.map_err(db)?;
         let mut inputs = BTreeMap::<MemoryId, ActivationInput>::new();
         for row in rows {
             let memory = MemoryId(row.try_get("memory_id").map_err(db)?);
-            let mode = parse_enum(
+            let current_mode = parse_enum(
                 ErrorOwner::Memory,
                 row.try_get("accessibility_mode").map_err(db)?,
                 "accessibility mode",
             )?;
+            let mode = historical_view
+                .and_then(|view| view.cognition_for(&CognitiveRef::Memory(memory)))
+                .map(|state| {
+                    serde_json::from_value::<MemoryObject>(state.state.clone())
+                        .map(|object| object.accessibility_mode)
+                        .map_err(|error| {
+                            Error::new(
+                                ErrorOwner::Memory,
+                                ErrorCode::InternalFailure,
+                                "Could not decode historical memory state",
+                            )
+                            .with_source(error)
+                        })
+                })
+                .transpose()?
+                .unwrap_or(current_mode);
             let created: DateTime<Utc> = row.try_get("created_at").map_err(db)?;
             let activation = inputs.entry(memory).or_insert_with(|| ActivationInput {
                 mode,

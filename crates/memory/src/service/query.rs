@@ -72,7 +72,6 @@ impl CognitiveContributor for MemoryService {
                 BTreeMap::from([("current_permission_denied".into(), references.len())]),
             ));
         }
-        let accessibility_policy = resolve_accessibility_policy(&bound.config_snapshot)?;
         let memory_references = references
             .iter()
             .filter(|reference| {
@@ -94,11 +93,18 @@ impl CognitiveContributor for MemoryService {
             .values()
             .map(|(_, revision)| revision.0)
             .collect::<Vec<_>>();
+        let revisions = revision_ids
+            .iter()
+            .copied()
+            .map(MemoryRevisionId)
+            .map(CognitiveRef::MemoryRevision)
+            .collect::<Vec<_>>();
         let views = self
-            .memories_for_query(
+            .memory_views_for_references_at_policy(
                 subject,
-                &revision_ids,
-                &accessibility_policy,
+                &revisions,
+                bound.read_context.temporal.clock_now,
+                resolve_accessibility_policy(&bound.read_context.config_snapshot)?,
                 bound.read_context.historical_view(),
             )
             .await?;
@@ -112,12 +118,11 @@ impl CognitiveContributor for MemoryService {
                 increment_drop(&mut drops, "not_in_subject");
                 continue;
             };
-            let Some(mut view) = views.get(&revision.0).cloned() else {
+            let Some(view) = views.get(&CognitiveRef::MemoryRevision(revision)).cloned() else {
                 increment_drop(&mut drops, "not_materialized");
                 continue;
             };
-            if let Some(reason) =
-                super::query_materialization::apply_historical_header(&mut view, bound)?
+            if let Some(reason) = super::query_materialization::historical_drop_reason(&view, bound)
             {
                 increment_drop(&mut drops, reason);
                 continue;

@@ -4,7 +4,10 @@
 use super::{BoundQuery, CognitiveContributors, QueryExecution, QueryPlan};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{
+    HashMap, HashSet,
+    hash_map::{Entry, OccupiedEntry},
+};
 use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
@@ -228,6 +231,38 @@ fn unavailable_run(reason: &'static str) -> Error {
     .with_context("reason", reason)
 }
 
+fn query_run_entry(
+    runs: &mut HashMap<Uuid, QueryRun>,
+    subject: SubjectId,
+    handle: QueryRunHandle,
+    expected_stage: Option<QueryRunStage>,
+) -> Result<OccupiedEntry<'_, Uuid, QueryRun>> {
+    let Entry::Occupied(entry) = runs.entry(handle.query_run_id) else {
+        return Err(unavailable_run("query_run_unavailable"));
+    };
+    let run = entry.get();
+    if run.subject != subject {
+        return Err(Error::new(
+            ErrorOwner::Runtime,
+            ErrorCode::InvalidRequest,
+            "QueryRun subject does not match",
+        ));
+    }
+    if run.revision != handle.revision {
+        return Err(unavailable_run("query_run_stale_revision"));
+    }
+    let lease_live = run.lease.live();
+    let stage = run.stage;
+    if !lease_live {
+        entry.remove();
+        return Err(unavailable_run("query_run_unavailable"));
+    }
+    if expected_stage.is_some_and(|expected| stage != expected) {
+        return Err(unavailable_run("query_run_stale_revision"));
+    }
+    Ok(entry)
+}
+
 impl CognitiveRuntimeService {
     pub async fn ensure_read_context_current(&self, context: &super::ReadContext) -> Result<()> {
         let current_epoch = self.store.serving_purge_epoch(context.subject).await?;
@@ -307,7 +342,12 @@ impl CognitiveRuntimeService {
         Ok(handle)
     }
 
-    pub fn take_query_run(&self, subject: SubjectId, handle: QueryRunHandle) -> Result<QueryRun> {
+    pub fn take_query_run(
+        &self,
+        subject: SubjectId,
+        handle: QueryRunHandle,
+        expected_stage: QueryRunStage,
+    ) -> Result<QueryRun> {
         let mut runs = self.query_runs.lock().map_err(|_| {
             Error::new(
                 ErrorOwner::Runtime,
@@ -315,25 +355,7 @@ impl CognitiveRuntimeService {
                 "Query continuation state is unavailable",
             )
         })?;
-        let Some(run) = runs.get(&handle.query_run_id) else {
-            return Err(unavailable_run("query_run_unavailable"));
-        };
-        if run.subject != subject {
-            return Err(Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::InvalidRequest,
-                "QueryRun subject does not match",
-            ));
-        }
-        if run.revision != handle.revision {
-            return Err(unavailable_run("query_run_stale_revision"));
-        }
-        if !run.lease.live() {
-            runs.remove(&handle.query_run_id);
-            return Err(unavailable_run("query_run_unavailable"));
-        }
-        runs.remove(&handle.query_run_id)
-            .ok_or_else(|| unavailable_run("query_run_unavailable"))
+        query_run_entry(&mut runs, subject, handle, Some(expected_stage)).map(OccupiedEntry::remove)
     }
 
     /// Read-only owner-material access while one Core embedding handoff is
@@ -351,31 +373,21 @@ impl CognitiveRuntimeService {
                 "Query continuation state is unavailable",
             )
         })?;
-        let Some(run) = runs.get(&handle.query_run_id) else {
-            return Err(unavailable_run("query_run_unavailable"));
-        };
-        if run.subject != subject {
-            return Err(Error::new(
-                ErrorOwner::Runtime,
-                ErrorCode::InvalidRequest,
-                "QueryRun subject does not match",
-            ));
-        }
-        if run.revision != handle.revision {
-            return Err(unavailable_run("query_run_stale_revision"));
-        }
-        if !run.lease.live() {
-            runs.remove(&handle.query_run_id);
-            return Err(unavailable_run("query_run_unavailable"));
-        }
-        if run.stage != expected_stage {
-            return Err(unavailable_run("query_run_stale_revision"));
-        }
-        Ok(run.bound().clone())
+        let entry = query_run_entry(&mut runs, subject, handle, Some(expected_stage))?;
+        Ok(entry.get().bound().clone())
     }
 
     pub fn cancel_query_run(&self, subject: SubjectId, handle: QueryRunHandle) -> Result<()> {
-        self.take_query_run(subject, handle).map(drop)
+        let mut runs = self.query_runs.lock().map_err(|_| {
+            Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::InternalFailure,
+                "Query continuation state is unavailable",
+            )
+        })?;
+        query_run_entry(&mut runs, subject, handle, None)
+            .map(OccupiedEntry::remove)
+            .map(drop)
     }
 
     pub async fn finish_query_run(

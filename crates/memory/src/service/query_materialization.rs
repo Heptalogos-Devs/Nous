@@ -175,35 +175,28 @@ pub(super) fn lifecycle_drop_reason(state: &FinalMemoryState) -> String {
     }
 }
 
-pub(super) fn apply_historical_header(
-    view: &mut MemoryView,
+pub(super) fn historical_drop_reason(
+    view: &MemoryView,
     bound: &nous_runtime::BoundQuery,
-) -> Result<Option<&'static str>> {
-    let Some(snapshot) = bound.read_context.historical_view() else {
-        return Ok(None);
-    };
-    let Some(state) = snapshot.cognition_for(&CognitiveRef::MemoryRevision(
-        view.revision.memory_revision_id,
-    )) else {
-        return Ok(Some("outside_historical_view"));
-    };
-    if view.object.purge_state != PurgeState::Normal {
-        return Ok(Some("purged"));
+) -> Option<&'static str> {
+    let snapshot = bound.read_context.historical_view()?;
+    if snapshot
+        .cognition_for(&CognitiveRef::MemoryRevision(
+            view.revision.memory_revision_id,
+        ))
+        .is_none()
+    {
+        return Some("outside_historical_view");
     }
-    view.object = serde_json::from_value(state.state.clone()).map_err(|e| {
-        Error::new(
-            nous_core::ErrorOwner::Memory,
-            nous_core::ErrorCode::InternalFailure,
-            "Could not decode historical memory state",
-        )
-        .with_source(e)
-    })?;
+    if view.object.purge_state != PurgeState::Normal {
+        return Some("purged");
+    }
     if view.object.acceptance_state != AcceptanceState::Accepted
         || view.object.integrity_state != IntegrityState::Valid
         || (view.object.suppression_state != SuppressionState::Normal
             && !bound.source_query.expression.constraints.include_suppressed)
     {
-        return Ok(Some("historical_lifecycle"));
+        return Some("historical_lifecycle");
     }
-    Ok(None)
+    None
 }

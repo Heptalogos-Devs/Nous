@@ -9,8 +9,8 @@ import { receiptSchema, type OperationReceipt } from "./state.js";
 import {
   freezeRequest,
   freezeResult,
+  receiptDefinitionCommands,
   receiptDefinition,
-  receiptStatusLookup,
   thawRequest,
   thawResult,
 } from "./receipt-codec.js";
@@ -31,6 +31,7 @@ import { ErrorOwner } from "@nous-wave/protocol/nous/wave/v1alpha1/errors_pb.js"
 type ConnectedClient = Awaited<ReturnType<typeof connectNousInstance>>;
 type Local = Awaited<ReturnType<typeof cliState>>;
 type Notice = { code: string; message: string; receipt?: string };
+type ReceiptCommand = ReturnType<typeof receiptDefinitionCommands>[number];
 
 export function createReceiptLifecycle(
   original: ConnectedClient,
@@ -161,15 +162,23 @@ export function createReceiptLifecycle(
     return result;
   }
   function mutation<I extends object, O>(
-    name: string,
+    name: ReceiptCommand,
     fn: ((request: I) => Promise<O>) | undefined,
   ) {
     replay[name] = (request) => {
       if (!fn)
-        throw new CliError("INVALID_ARGUMENT", "Client method unavailable");
+        throw new CliError(
+          "INVALID_ARGUMENT",
+          `Registered receipt client method unavailable: ${name}`,
+        );
       return fn(request as I);
     };
     return async (request: I) => {
+      if (!fn)
+        throw new CliError(
+          "INVALID_ARGUMENT",
+          `Registered receipt client method unavailable: ${name}`,
+        );
       const id = crypto.randomUUID();
       const spec = receiptDefinition(name);
       const frozen = freezeRequest(name, request);
@@ -197,195 +206,46 @@ export function createReceiptLifecycle(
   }
   const client: NousClient & Pick<typeof original, "artifacts"> = {
     ...original,
-    subjects: {
-      ...original.subjects,
-      create: mutation("subjects.create", original.subjects?.create),
-      adoptSeed: mutation("subjects.adoptSeed", original.subjects?.adoptSeed),
-    },
-    configuration: {
-      ...original.configuration,
-      setSystem: mutation(
-        "configuration.setSystem",
-        original.configuration?.setSystem,
-      ),
-      setSubject: mutation(
-        "configuration.setSubject",
-        original.configuration?.setSubject,
-      ),
-      clearSystem: mutation(
-        "configuration.clearSystem",
-        original.configuration?.clearSystem,
-      ),
-      clearSubject: mutation(
-        "configuration.clearSubject",
-        original.configuration?.clearSubject,
-      ),
-    },
-    model: {
-      ...original.model,
-      formFromObservation: mutation(
-        "model.formFromObservation",
-        original.model?.formFromObservation,
-      ),
-    },
-    resources: {
-      ...original.resources,
-      materialize: mutation(
-        "resources.materialize",
-        original.resources?.materialize,
-      ),
-    },
-    cognition: {
-      ...original.cognition,
-      observe: mutation("cognition.observe", original.cognition?.observe),
-      reportUse: mutation("cognition.reportUse", original.cognition?.reportUse),
-      createWorkContext: mutation(
-        "cognition.createWorkContext",
-        original.cognition?.createWorkContext,
-      ),
-      updateWorkContext: mutation(
-        "cognition.updateWorkContext",
-        original.cognition?.updateWorkContext,
-      ),
-      pauseWorkContext: mutation(
-        "cognition.pauseWorkContext",
-        original.cognition?.pauseWorkContext,
-      ),
-      resumeWorkContext: mutation(
-        "cognition.resumeWorkContext",
-        original.cognition?.resumeWorkContext,
-      ),
-      endWorkContext: mutation(
-        "cognition.endWorkContext",
-        original.cognition?.endWorkContext,
-      ),
-      setActiveWorkContext: mutation(
-        "cognition.setActiveWorkContext",
-        original.cognition?.setActiveWorkContext,
-      ),
-    },
-    memory: {
-      ...original.memory,
-      revise: mutation("memory.revise", original.memory?.revise),
-      setAccessibility: mutation(
-        "memory.setAccessibility",
-        original.memory?.setAccessibility,
-      ),
-      linkRevisions: mutation(
-        "memory.linkRevisions",
-        original.memory?.linkRevisions,
-      ),
-      suppress: mutation("memory.suppress", original.memory?.suppress),
-      restore: mutation("memory.restore", original.memory?.restore),
-      withdraw: mutation("memory.withdraw", original.memory?.withdraw),
-      reaccept: mutation("memory.reaccept", original.memory?.reaccept),
-      purge: mutation("memory.purge", original.memory?.purge),
-      createEpisode: mutation(
-        "memory.createEpisode",
-        original.memory?.createEpisode,
-      ),
-      reviseEpisode: mutation(
-        "memory.reviseEpisode",
-        original.memory?.reviseEpisode,
-      ),
-      linkEpisodeRevisions: mutation(
-        "memory.linkEpisodeRevisions",
-        original.memory?.linkEpisodeRevisions,
-      ),
-      suppressEpisode: mutation(
-        "memory.suppressEpisode",
-        original.memory?.suppressEpisode,
-      ),
-      restoreEpisode: mutation(
-        "memory.restoreEpisode",
-        original.memory?.restoreEpisode,
-      ),
-      withdrawEpisode: mutation(
-        "memory.withdrawEpisode",
-        original.memory?.withdrawEpisode,
-      ),
-      reacceptEpisode: mutation(
-        "memory.reacceptEpisode",
-        original.memory?.reacceptEpisode,
-      ),
-      purgeEpisode: mutation(
-        "memory.purgeEpisode",
-        original.memory?.purgeEpisode,
-      ),
-      suppressJournal: mutation(
-        "memory.suppressJournal",
-        original.memory?.suppressJournal,
-      ),
-      restoreJournal: mutation(
-        "memory.restoreJournal",
-        original.memory?.restoreJournal,
-      ),
-      withdrawJournal: mutation(
-        "memory.withdrawJournal",
-        original.memory?.withdrawJournal,
-      ),
-      reacceptJournal: mutation(
-        "memory.reacceptJournal",
-        original.memory?.reacceptJournal,
-      ),
-      purgeJournal: mutation(
-        "memory.purgeJournal",
-        original.memory?.purgeJournal,
-      ),
-    },
-    concepts: {
-      ...original.concepts,
-      createTag: mutation("concepts.createTag", original.concepts?.createTag),
-      reviseTag: mutation("concepts.reviseTag", original.concepts?.reviseTag),
-      mergeTags: mutation("concepts.mergeTags", original.concepts?.mergeTags),
-      splitTag: mutation("concepts.splitTag", original.concepts?.splitTag),
-      associate: mutation("concepts.associate", original.concepts?.associate),
-      revokeAssociation: mutation(
-        "concepts.revokeAssociation",
-        original.concepts?.revokeAssociation,
-      ),
-      createSchema: mutation(
-        "concepts.createSchema",
-        original.concepts?.createSchema,
-      ),
-      addSchemaEvidence: mutation(
-        "concepts.addSchemaEvidence",
-        original.concepts?.addSchemaEvidence,
-      ),
-      reviseSchema: mutation(
-        "concepts.reviseSchema",
-        original.concepts?.reviseSchema,
-      ),
-      splitSchema: mutation(
-        "concepts.splitSchema",
-        original.concepts?.splitSchema,
-      ),
-      mergeSchemas: mutation(
-        "concepts.mergeSchemas",
-        original.concepts?.mergeSchemas,
-      ),
-      suppressSchema: mutation(
-        "concepts.suppressSchema",
-        original.concepts?.suppressSchema,
-      ),
-      restoreSchema: mutation(
-        "concepts.restoreSchema",
-        original.concepts?.restoreSchema,
-      ),
-      withdrawSchema: mutation(
-        "concepts.withdrawSchema",
-        original.concepts?.withdrawSchema,
-      ),
-      reacceptSchema: mutation(
-        "concepts.reacceptSchema",
-        original.concepts?.reacceptSchema,
-      ),
-      purgeSchema: mutation(
-        "concepts.purgeSchema",
-        original.concepts?.purgeSchema,
-      ),
-    },
   };
+  const clonedNamespaces = new Set<string>();
+  for (const name of receiptDefinitionCommands()) {
+    const [namespaceName, methodName] = name.split(".") as [
+      keyof NousClient,
+      string,
+    ];
+    const namespace = namespaceName;
+    const source = original[namespace];
+    if (!clonedNamespaces.has(namespaceName)) {
+      Object.assign(client, { [namespaceName]: { ...source } });
+      clonedNamespaces.add(namespaceName);
+    }
+    const method: unknown = source
+      ? Reflect.get(source, methodName)
+      : undefined;
+    const invoke: ((request: object) => Promise<unknown>) | undefined =
+      typeof method === "function"
+        ? (request) =>
+            Reflect.apply(method, source, [request]) as Promise<unknown>
+        : undefined;
+    Reflect.set(
+      client[namespace],
+      methodName,
+      mutation<object, unknown>(name, invoke),
+    );
+  }
+  function unavailableOperationStatus() {
+    return {
+      serverState: "UNKNOWN",
+      certainty: "outcome_unknown",
+      notices: [
+        {
+          code: "STATUS_LOOKUP_UNAVAILABLE",
+          message:
+            "Server status could not be confirmed; this does not establish whether the operation committed.",
+        },
+      ],
+    };
+  }
   function operationStatusProjection(
     remote: Awaited<ReturnType<typeof original.system.operationStatus>>,
     unknownMessage: string,
@@ -435,7 +295,7 @@ export function createReceiptLifecycle(
   async function inspectOperation(receiptId: string) {
     const receipt = await local.receipt(receiptId);
     const receiptSubjectId = receipt.subjectId ?? "";
-    const statusLookup = receiptStatusLookup(receipt.command);
+    const statusLookup = receiptDefinition(receipt.command).statusLookup;
     if (statusLookup === "unsupported")
       return {
         receiptId,
@@ -524,15 +384,7 @@ export function createReceiptLifecycle(
           operationId: receipt.operationId,
           ...(receipt.subjectId ? { subjectId: receipt.subjectId } : {}),
           localStatus: receipt.status,
-          serverState: "outcome_unknown",
-          certainty: "outcome_unknown",
-          notices: [
-            {
-              code: "STATUS_LOOKUP_UNAVAILABLE",
-              message:
-                "Server status could not be confirmed; this does not establish whether the operation committed.",
-            },
-          ],
+          ...unavailableOperationStatus(),
         };
       }
       throw error;
@@ -617,15 +469,7 @@ export function createReceiptLifecycle(
       if (!(error instanceof NousError)) throw error;
       return {
         identity: safeIdentity,
-        serverState: "UNKNOWN",
-        certainty: "outcome_unknown",
-        notices: [
-          {
-            code: "STATUS_LOOKUP_UNAVAILABLE",
-            message:
-              "Server status could not be confirmed; this does not establish whether the operation committed.",
-          },
-        ],
+        ...unavailableOperationStatus(),
       };
     }
   }

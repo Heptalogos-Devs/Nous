@@ -5,7 +5,6 @@
 
 mod accessibility;
 mod accretion;
-mod batch;
 mod concept_maintenance;
 mod consolidation_context;
 mod dependencies;

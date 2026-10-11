@@ -56,7 +56,11 @@ async fn rerank_revalidates_original_candidates_after_revise_and_suppress() {
     assert!(
         runtime
             .cognition
-            .take_query_run(subject, expired_handle)
+            .take_query_run(
+                subject,
+                expired_handle,
+                nous_runtime::QueryRunStage::Finalize
+            )
             .is_err(),
         "validation must retain the original opportunity deadline"
     );

@@ -37,6 +37,7 @@ impl MemoryService {
                 &references,
                 context.temporal.clock_now,
                 super::super::resolve_accessibility_policy(context.config_snapshot.as_ref())?,
+                context.historical_view(),
             )
             .await?;
         let mut remaining = max_text_bytes;
@@ -81,27 +82,7 @@ impl MemoryService {
                 remaining = remaining.saturating_sub(bounded.len());
                 Some(bounded)
             };
-            let evidence = view
-                .basis
-                .iter()
-                .map(|basis| match basis {
-                    RevisionBasis::Evidence(value) => EvidenceHandle {
-                        epistemic_relation: value.epistemic_relation,
-                        reference: value.cognitive_ref(),
-                        basis_role: value.basis_role.as_str().into(),
-                    },
-                    RevisionBasis::CognitionDependency(value) => EvidenceHandle {
-                        epistemic_relation: value.epistemic_relation,
-                        reference: value.target_revision.clone(),
-                        basis_role: value.basis_role.as_str().into(),
-                    },
-                    RevisionBasis::Seed(value) => EvidenceHandle {
-                        epistemic_relation: None,
-                        reference: CognitiveRef::CognitiveSeedVersion(value.seed_version_id),
-                        basis_role: "seed".into(),
-                    },
-                })
-                .collect::<Vec<_>>();
+            let evidence = basis_handles(&view.basis);
             let source_revision = CognitiveRef::MemoryRevision(view.revision.memory_revision_id);
             contributions.push(ContextContribution {
                 source_revision: Some(source_revision),

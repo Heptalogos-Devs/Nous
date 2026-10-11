@@ -360,6 +360,25 @@ pub(super) fn query_temporal(value: &TemporalFrame) -> p::QueryTemporalFrame {
     }
 }
 
+pub(super) fn query_representation(
+    representation: &nous_runtime::QueryRepresentation,
+) -> p::QueryRepresentation {
+    p::QueryRepresentation {
+        version: representation.representation_version.clone(),
+        text: representation.text.clone(),
+        sha256: representation.sha256.clone(),
+        source_refs: representation
+            .source_refs
+            .iter()
+            .map(|(reference, source)| p::QuerySourceRef {
+                reference: Some(to_ref(reference.clone())),
+                source: source.clone(),
+            })
+            .collect(),
+        truncation_flags: representation.truncation_flags.clone(),
+    }
+}
+
 pub(super) fn inspect_bound_query(bound: &nous_runtime::BoundQuery) -> Result<p::QueryInspection> {
     let plan = nous_runtime::QueryPlan::for_bound_query(bound);
     inspect_bound_query_with_plan(bound, &plan)
@@ -402,20 +421,7 @@ pub(super) fn inspect_bound_query_with_plan(
     Ok(p::QueryInspection {
         query_id: bound.query_id.to_string(),
         canonical_query: Some(query_expr(&query.expression, true, query)?),
-        representation: Some(p::QueryRepresentation {
-            version: representation.representation_version.clone(),
-            text: representation.text.clone(),
-            sha256: representation.sha256.clone(),
-            source_refs: representation
-                .source_refs
-                .iter()
-                .map(|(reference, source)| p::QuerySourceRef {
-                    reference: Some(to_ref(reference.clone())),
-                    source: source.clone(),
-                })
-                .collect(),
-            truncation_flags: representation.truncation_flags.clone(),
-        }),
+        representation: Some(query_representation(representation)),
         context: Some(p::QueryContextSnapshot {
             session: context.session.as_ref().map(|session| p::Session {
                 session_id: session.session_id.0.to_string(),

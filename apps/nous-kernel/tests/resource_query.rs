@@ -135,7 +135,18 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
             shared: None,
             memory: Some(runtime.require_memory().unwrap()),
         };
-        assert!(runtime.cognition.take_query_run(other, handle).is_err());
+        assert!(
+            runtime
+                .cognition
+                .take_query_run(owner, handle, nous_runtime::QueryRunStage::Embedding)
+                .is_err()
+        );
+        assert!(
+            runtime
+                .cognition
+                .take_query_run(other, handle, nous_runtime::QueryRunStage::Finalize)
+                .is_err()
+        );
         let outcome = test_support::finish_query_run(
             &runtime.cognition,
             owner,
@@ -167,6 +178,11 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
         } else {
             assert!(outcome.is_err(), "must reject {case}");
         }
-        assert!(runtime.cognition.take_query_run(owner, handle).is_err());
+        assert!(
+            runtime
+                .cognition
+                .take_query_run(owner, handle, nous_runtime::QueryRunStage::Finalize)
+                .is_err()
+        );
     }
 }

@@ -120,7 +120,7 @@ pub(crate) async fn check_historical_binding(
         .await
         .unwrap();
     check_historical_serving(rt, &discovery, &old, &future, tag).await;
-    check_historical_execution(rt, query.clone(), &old, &future).await;
+    check_historical_execution(rt, query.clone(), &old, &future, tag).await;
     let mut future_query = query;
     future_query
         .expression
@@ -148,6 +148,7 @@ pub(super) async fn check_historical_execution(
     query: CognitiveQuery,
     old: &CognitiveRef,
     future: &CognitiveRef,
+    tag: TagId,
 ) {
     let execution = rt.execute_query(query, None).await.unwrap();
     assert!(
@@ -160,7 +161,8 @@ pub(super) async fn check_historical_execution(
             .results
             .iter()
             .any(|hit| &hit.reference == old
-                && hit.representation.as_deref() == Some("original authority fact"))
+                && hit.representation.as_deref() == Some("original authority fact")
+                && hit.preference_refs.contains(&CognitiveRef::Tag(tag)))
     );
     assert!(
         !execution
