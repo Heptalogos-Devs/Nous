@@ -33,10 +33,6 @@ async fn lookup(
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one database scenario verifies each persisted owner receipt through the canonical RPC"
-)]
 async fn operation_status_reads_owner_rows_and_keeps_workflow_outcome_opaque() {
     let (root, url, _postgres) = test_support::database().await;
     let runtime = test_support::open_runtime(&url, &root).await;

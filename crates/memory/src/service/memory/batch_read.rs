@@ -317,12 +317,17 @@ impl MemoryService {
         read_policy: AccessibilityPolicy,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<HashMap<MemoryId, AccessibilityLevel>> {
+        struct ActivationInput {
+            mode: AccessibilityMode,
+            created_at: DateTime<Utc>,
+            uses: Vec<(String, f64)>,
+        }
+
         let policy = read_policy;
         let ids = memories.iter().map(|id| id.0).collect::<Vec<_>>();
         let rows = sqlx::query("SELECT o.memory_id,o.accessibility_mode,o.created_at,e.use_kind,e.occurred_at FROM memory_objects o LEFT JOIN memory_revisions r ON r.memory_id=o.memory_id LEFT JOIN cognitive_use_events e ON e.subject_id=o.subject_id AND e.ref_kind='memory_revision' AND e.ref_value=r.memory_revision_id::text AND e.use_kind<>'presented' WHERE o.subject_id=$1 AND o.memory_id=ANY($2) ORDER BY o.memory_id,e.occurred_at")
             .bind(subject.0).bind(ids).fetch_all(&mut **tx).await.map_err(db)?;
-        let mut inputs: BTreeMap<MemoryId, (AccessibilityMode, DateTime<Utc>, Vec<(String, f64)>)> =
-            BTreeMap::new();
+        let mut inputs = BTreeMap::<MemoryId, ActivationInput>::new();
         for row in rows {
             let memory = MemoryId(row.try_get("memory_id").map_err(db)?);
             let mode = parse_enum(
@@ -331,26 +336,30 @@ impl MemoryService {
                 "accessibility mode",
             )?;
             let created: DateTime<Utc> = row.try_get("created_at").map_err(db)?;
-            let uses = inputs.entry(memory).or_insert((mode, created, Vec::new()));
+            let activation = inputs.entry(memory).or_insert_with(|| ActivationInput {
+                mode,
+                created_at: created,
+                uses: Vec::new(),
+            });
             if let Some(kind) = row.try_get::<Option<String>, _>("use_kind").map_err(db)? {
                 let at: DateTime<Utc> = row.try_get("occurred_at").map_err(db)?;
-                uses.2
+                activation
+                    .uses
                     .push((kind, (now - at).num_seconds().max(0) as f64 / 86400.0));
             }
         }
         inputs
             .into_iter()
-            .map(|(memory, (mode, created, uses))| {
-                let level =
-                    match mode {
-                        AccessibilityMode::Normal => AccessibilityLevel::Normal,
-                        AccessibilityMode::Deep => AccessibilityLevel::Deep,
-                        AccessibilityMode::Explicit => AccessibilityLevel::Explicit,
-                        AccessibilityMode::Auto => policy.level_from_activation(policy.activation(
-                            (now - created).num_seconds().max(0) as f64 / 86400.0,
-                            &uses,
-                        )),
-                    };
+            .map(|(memory, activation)| {
+                let level = match activation.mode {
+                    AccessibilityMode::Normal => AccessibilityLevel::Normal,
+                    AccessibilityMode::Deep => AccessibilityLevel::Deep,
+                    AccessibilityMode::Explicit => AccessibilityLevel::Explicit,
+                    AccessibilityMode::Auto => policy.level_from_activation(policy.activation(
+                        (now - activation.created_at).num_seconds().max(0) as f64 / 86400.0,
+                        &activation.uses,
+                    )),
+                };
                 Ok((memory, level))
             })
             .collect()

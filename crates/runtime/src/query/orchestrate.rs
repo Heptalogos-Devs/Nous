@@ -161,10 +161,6 @@ impl CognitiveRuntimeService {
         })
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "query orchestration keeps single fusion, owner batching, and final ordering in one semantic boundary"
-    )]
     pub(super) async fn query_atom_with_plan(
         &self,
         bound: BoundQuery,

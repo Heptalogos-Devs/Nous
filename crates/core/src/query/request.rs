@@ -79,23 +79,46 @@ impl CognitiveQuery {
             return Err(Error::new(
                 crate::ErrorOwner::Core,
                 crate::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "query result limit must be between 1 and 2048",
             ));
         }
         let mut nodes = vec![(&self.expression, 0)];
         let mut count = 0;
         while let Some((node, depth)) = nodes.pop() {
             count += 1;
-            if count > 64
-                || depth > 16
-                || node.cues.len() > 256
-                || node.targets.len() > 128
-                || node.preferences.len() > 16
-            {
+            if count > 64 {
                 return Err(Error::new(
                     crate::ErrorOwner::Core,
                     crate::ErrorCode::InvalidRequest,
-                    "Invalid request",
+                    "query expression exceeds the 64-node limit",
+                ));
+            }
+            if depth > 16 {
+                return Err(Error::new(
+                    crate::ErrorOwner::Core,
+                    crate::ErrorCode::InvalidRequest,
+                    "query expression exceeds the 16-level depth limit",
+                ));
+            }
+            if node.cues.len() > 256 {
+                return Err(Error::new(
+                    crate::ErrorOwner::Core,
+                    crate::ErrorCode::InvalidRequest,
+                    "query expression node exceeds the 256-cue limit",
+                ));
+            }
+            if node.targets.len() > 128 {
+                return Err(Error::new(
+                    crate::ErrorOwner::Core,
+                    crate::ErrorCode::InvalidRequest,
+                    "query expression node exceeds the 128-target limit",
+                ));
+            }
+            if node.preferences.len() > 16 {
+                return Err(Error::new(
+                    crate::ErrorOwner::Core,
+                    crate::ErrorCode::InvalidRequest,
+                    "query expression node exceeds the 16-preference limit",
                 ));
             }
             if (node.operation == QueryOperation::Atom && !node.children.is_empty())
@@ -128,7 +151,7 @@ impl CognitiveQuery {
             return Err(Error::new(
                 crate::ErrorOwner::Core,
                 crate::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "Residual sensing cannot be required when text embedding is forbidden",
             ));
         }
         Ok(())

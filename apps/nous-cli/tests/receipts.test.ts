@@ -11,7 +11,7 @@ import {
 } from "@nous-wave/client/errors";
 import type { connectNousInstance } from "@nous-wave/client/node";
 import { SubjectSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { workspacePaths } from "../../../scripts/workspace.js";
@@ -88,6 +88,57 @@ it("preserves an owner rejection and recovery when reading a terminal receipt", 
       context: { operation_id: operationId },
     });
     expect(calls).toBe(1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("records a semantically complete Kernel boundary INVALID_REQUEST as rejected", async () => {
+  const root = await mkdtemp(join(workspacePaths.temporary, "kernel-reject-"));
+  const refusal = new NousError(
+    domainError("Missing cognitive_seed", 3, {
+      code: ErrorCode.INVALID_REQUEST,
+      owner: ErrorOwner.KERNEL,
+      recovery: ErrorRecovery.CORRECT_REQUEST,
+      context: { field: "cognitive_seed" },
+    }),
+  );
+  const original = {
+    subjects: {
+      create: async () => {
+        throw refusal;
+      },
+    },
+  } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
+  try {
+    const env = await createEnvironment(
+      {
+        "run-root": root,
+        "instance-root": root,
+        subject: "22222222-2222-4222-8222-222222222222",
+      },
+      async () => original,
+    );
+    await expect(
+      env.client.subjects.create({
+        subjectId: "22222222-2222-4222-8222-222222222222",
+        operationId: crypto.randomUUID(),
+      }),
+    ).rejects.toBe(refusal);
+    const [namespace] = await readdir(join(root, "consumers"));
+    const [file] = await readdir(
+      join(root, "consumers", namespace!, "operations"),
+    );
+    expect(
+      await cliState(root, identity, policy).receipt(file!.slice(0, -5)),
+    ).toMatchObject({
+      status: "rejected",
+      error: {
+        code: "INVALID_REQUEST",
+        owner: "KERNEL",
+        context: { field: "cognitive_seed" },
+      },
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -175,6 +226,16 @@ it("returns a successful operation when presentation fails and reads complete re
     subjectId: "33333333-3333-4333-8333-333333333333",
     status: "active",
   };
+  const requestPath = join(root, "subject.toml");
+  await writeFile(
+    requestPath,
+    [
+      "[cognitive_seed]",
+      'text = "schema_version = 1"',
+      'format = "application/vnd.nous-wave.cognitive-seed+toml;version=1"',
+      "",
+    ].join("\n"),
+  );
   let calls = 0;
   const connect = async () =>
     ({
@@ -190,7 +251,16 @@ it("returns a successful operation when presentation fails and reads complete re
     }) as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   try {
     const output = await runCli(
-      ["subject", "create", "--run-root", root, "--instance-root", root],
+      [
+        "subject",
+        "create",
+        "--request-file",
+        requestPath,
+        "--run-root",
+        root,
+        "--instance-root",
+        root,
+      ],
       connect,
       async () => {
         throw new Error("Directory unavailable");

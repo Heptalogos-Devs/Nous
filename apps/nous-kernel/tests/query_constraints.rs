@@ -12,10 +12,6 @@ use test_support::query::{query, subject};
 use test_support::{database, form_input, observation, open_runtime};
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "shared entity cohort verifies Boolean scope and soft preference eligibility without duplicate database setup"
-)]
 async fn entity_lane_uses_aboutness_and_multi_value_include() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;

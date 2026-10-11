@@ -16,7 +16,7 @@ import {
   CognitiveRefSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { z } from "zod";
-import { CliError, boundedInteger } from "../agent.js";
+import { nonnegativeInt64, CliError, boundedInteger } from "../agent.js";
 import { revisionBasis } from "../mutation-input.js";
 import type { CliEnvironment } from "../runtime.js";
 
@@ -50,17 +50,6 @@ const episodeInput = z.strictObject({
   members: z.array(memberInput).min(1).max(512),
   basis: z.array(basisInput).min(1).max(512),
 });
-function epoch(value: string | undefined) {
-  if (!value || !/^(0|[1-9][0-9]*)$/.test(value))
-    throw new CliError(
-      "INVALID_ARGUMENT",
-      "--expected-epoch must be a nonnegative int64",
-    );
-  const parsed = BigInt(value);
-  if (parsed > 9223372036854775807n)
-    throw new CliError("INVALID_ARGUMENT", "Expected epoch exceeds int64");
-  return parsed;
-}
 
 export async function episodeCommands(
   env: CliEnvironment,
@@ -168,7 +157,10 @@ export async function episodeCommands(
         operationId,
         subjectId,
         episodeId: ref.value,
-        expectedObjectEpoch: epoch(values["expected-epoch"]),
+        expectedObjectEpoch: nonnegativeInt64(
+          values["expected-epoch"],
+          "--expected-epoch",
+        ),
         intent: z
           .enum(["resegment", "reinterpret"])
           .parse(required(values.intent, "--intent resegment|reinterpret")),
@@ -213,7 +205,10 @@ export async function episodeCommands(
       operationId: values["operation-id"] ?? crypto.randomUUID(),
       subjectId,
       episodeId: ref.value,
-      expectedObjectEpoch: epoch(values["expected-epoch"]),
+      expectedObjectEpoch: nonnegativeInt64(
+        values["expected-epoch"],
+        "--expected-epoch",
+      ),
     });
     switch (action) {
       case "suppress":

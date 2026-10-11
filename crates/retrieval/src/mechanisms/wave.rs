@@ -165,10 +165,6 @@ pub fn propagate_weighted_with_budget(
     clippy::collapsible_if,
     reason = "bounded Wave propagation keeps the pruning predicate readable"
 )]
-#[expect(
-    clippy::too_many_lines,
-    reason = "bounded Wave state propagation is one semantic kernel"
-)]
 pub fn propagate_with_budget(
     graph: &WaveGraphGeneration,
     seeds: &[SourceSeed],

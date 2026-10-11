@@ -169,10 +169,6 @@ fn allocation(total: usize, index: usize, branches: usize) -> usize {
 }
 
 impl CognitiveRuntimeService {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "tree execution keeps fixed allocation, leaf snapshots and diagnostic aggregation in one boundary"
-    )]
     pub(super) async fn query_tree(
         &self,
         bound: BoundQuery,

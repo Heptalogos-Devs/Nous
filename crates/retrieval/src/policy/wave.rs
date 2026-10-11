@@ -110,10 +110,6 @@ pub const WAVE_READOUT_CONFIG_KEYS: &[&str] = &[
     SEED_DENSE_KEY.path(),
 ];
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "Wave registration keeps the complete reference policy catalog in one owner boundary"
-)]
 pub fn register_wave_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()> {
     let reference = nous_configuration::ReferenceProfile::parse(include_str!(
         "../../../../config/reference/topology-wave.json"

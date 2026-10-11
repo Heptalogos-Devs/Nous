@@ -7,6 +7,11 @@ import {
   MemorySchema,
   CognitiveRefSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import {
+  GetIdentityAddressesResponseSchema,
+  IdentityAddressSchema,
+  IdentityAddressTargetSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
 import { protocolReferences } from "@nous-wave/client/data";
 import { expect, it, vi } from "vitest";
 import { friendlyOutput } from "../src/friendly.js";
@@ -45,18 +50,24 @@ it("keeps canonical reference data and adds lexical refs only as display metadat
         subjectId: string;
         canonical: { kind: string; value: string };
       }[];
-    }) => ({
-      addresses: request.targets.map((target) => ({
-        target,
-        status: "BOUND",
-        lexicalRef:
-          target.canonical.kind === "occurrence"
-            ? "obs:fakoh-todud-rovor"
-            : target.canonical.kind === "subject"
-              ? "sub:tujap-vibuz-gozod"
-              : "src:vahol-gutij-nakur",
-      })),
-    }),
+    }) =>
+      create(GetIdentityAddressesResponseSchema, {
+        addresses: request.targets.map((target) =>
+          create(IdentityAddressSchema, {
+            target: create(IdentityAddressTargetSchema, {
+              subjectId: target.subjectId,
+              canonical: create(CognitiveRefSchema, target.canonical),
+            }),
+            status: "BOUND",
+            lexicalRef:
+              target.canonical.kind === "occurrence"
+                ? "obs:fakoh-todud-rovor"
+                : target.canonical.kind === "subject"
+                  ? "sub:tujap-vibuz-gozod"
+                  : "src:vahol-gutij-nakur",
+          }),
+        ),
+      }),
   );
   const bind = vi.fn();
   const cognition = create(MemorySchema, {
@@ -136,4 +147,5 @@ it("keeps canonical reference data and adds lexical refs only as display metadat
       cognition.basis[0].basis.value.occurrenceId,
   ).toBe(id);
   expect(renderText(result)).toContain("src:vahol-gutij-nakur");
+  expect(renderText(result)).toContain("subjectId: sub:tujap-vibuz-gozod");
 });

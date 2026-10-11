@@ -10,10 +10,6 @@ use test_support::{database, open_runtime};
 use uuid::Uuid;
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one frozen Resource cohort exercises forged results, single-use tickets and descriptor drift without repeated database setup"
-)]
 async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
     use nous_core::{
         ExternalResourceRecord, ExternalResourceResult, ResourceRef, StableExternalRef,

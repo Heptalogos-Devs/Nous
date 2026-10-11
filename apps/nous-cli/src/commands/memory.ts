@@ -15,7 +15,7 @@ import {
   SetAccessibilityRequestSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { z } from "zod";
-import { CliError, boundedInteger } from "../agent.js";
+import { nonnegativeInt64, CliError, boundedInteger } from "../agent.js";
 import { revisionBasis } from "../mutation-input.js";
 import type { CliEnvironment } from "../runtime.js";
 
@@ -128,15 +128,10 @@ export async function memoryCommands(
     const parsed = semanticMemory.parse(
       await requestPayload(values["request-file"]),
     );
-    const epochText = required(values["expected-epoch"], "--expected-epoch");
-    if (!/^(0|[1-9][0-9]*)$/.test(epochText))
-      throw new CliError(
-        "INVALID_ARGUMENT",
-        "Expected epoch must be a nonnegative integer",
-      );
-    const expectedObjectEpoch = BigInt(epochText);
-    if (expectedObjectEpoch > 9223372036854775807n)
-      throw new CliError("INVALID_ARGUMENT", "Expected epoch exceeds int64");
+    const expectedObjectEpoch = nonnegativeInt64(
+      values["expected-epoch"],
+      "--expected-epoch",
+    );
     const basis = await Promise.all(
       parsed.basis.map((item) => revisionBasis(env, item)),
     );
@@ -190,20 +185,15 @@ export async function memoryCommands(
       required(argument, "Memory reference"),
       "memory",
     );
-    const epoch = required(values["expected-epoch"], "--expected-epoch");
-    if (
-      !/^(0|[1-9][0-9]*)$/.test(epoch) ||
-      BigInt(epoch) > 9223372036854775807n
-    )
-      throw new CliError(
-        "INVALID_ARGUMENT",
-        "--expected-epoch must be a nonnegative int64",
-      );
+    const epoch = nonnegativeInt64(
+      values["expected-epoch"],
+      "--expected-epoch",
+    );
     const request = create(MemoryMutationRequestSchema, {
       operationId: values["operation-id"] ?? crypto.randomUUID(),
       subjectId,
       memoryId: ref.value,
-      expectedObjectEpoch: BigInt(epoch),
+      expectedObjectEpoch: epoch,
     });
     switch (action) {
       case "suppress":
@@ -223,15 +213,10 @@ export async function memoryCommands(
       required(argument, "Memory reference"),
       "memory",
     );
-    const epoch = required(values["expected-epoch"], "--expected-epoch");
-    if (
-      !/^(0|[1-9][0-9]*)$/.test(epoch) ||
-      BigInt(epoch) > 9223372036854775807n
-    )
-      throw new CliError(
-        "INVALID_ARGUMENT",
-        "--expected-epoch must be a nonnegative int64",
-      );
+    const epoch = nonnegativeInt64(
+      values["expected-epoch"],
+      "--expected-epoch",
+    );
     const mode = z
       .enum(["auto", "normal", "deep", "explicit"])
       .parse(required(values.mode, "--mode auto|normal|deep|explicit"));
@@ -240,7 +225,7 @@ export async function memoryCommands(
         operationId: values["operation-id"] ?? crypto.randomUUID(),
         subjectId,
         memoryId: ref.value,
-        expectedObjectEpoch: BigInt(epoch),
+        expectedObjectEpoch: epoch,
         mode,
       }),
     );

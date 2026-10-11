@@ -128,10 +128,6 @@ impl AuthorityStore {
         Self::reference_in_subject_executor(&mut **tx, subject, reference).await
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "subject ownership checks are explicit per cognitive reference owner"
-    )]
     async fn reference_in_subject_executor<'e, E>(
         executor: E,
         subject: SubjectId,

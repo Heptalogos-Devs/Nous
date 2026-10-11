@@ -35,7 +35,7 @@ pub fn enum_value<T: DeserializeOwned>(value: &str) -> Result<T> {
         Error::new(
             nous_core::ErrorOwner::Kernel,
             nous_core::ErrorCode::InvalidRequest,
-            "Invalid request",
+            "Enum value is not recognized",
         )
         .with_source(error)
     })
@@ -176,7 +176,7 @@ pub fn basis(value: p::RevisionBasis) -> Result<RevisionBasis> {
                 _ => Err(Error::new(
                     nous_core::ErrorOwner::Kernel,
                     nous_core::ErrorCode::InvalidRequest,
-                    "Invalid request",
+                    "Seed basis must reference a Cognitive Seed version",
                 )),
             }
         }
@@ -328,7 +328,7 @@ pub fn page(page: Option<p::Page>, scope: &str) -> Result<(i64, Option<Uuid>)> {
             return Err(Error::new(
                 nous_core::ErrorOwner::Kernel,
                 nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "Page token does not match this list scope",
             ));
         }
         Some(id(last)?)

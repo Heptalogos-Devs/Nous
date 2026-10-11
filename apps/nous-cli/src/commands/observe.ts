@@ -42,7 +42,10 @@ export async function observeCommands(
       ...input,
       material: { case: "artifactId", value: artifact.artifactId },
     });
-    return { artifact, observation };
+    return {
+      artifact: { ...artifact, byteLength: artifact.byteLength.toString() },
+      observation,
+    };
   }
 
   throw new CliError("INVALID_ARGUMENT", "Unknown observe command");

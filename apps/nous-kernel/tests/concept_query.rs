@@ -110,10 +110,6 @@ fn query(subject: SubjectId, mut cues: Vec<Cue>) -> CognitiveQuery {
     }
 }
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one integration scenario distinguishes bare/direct/explore, shared vectors and ephemeral enrichment"
-)]
 async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_profiles() {
     let (root, url, _pg) = database().await;
     let probe = Arc::new(Probe::default());
@@ -466,7 +462,10 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .iter()
             .any(|hit| hit.reference == revision)
     );
-    check_model_catalog_activity(&rt, subject, tag.tag_id, &probe).await;
+    Box::pin(check_model_catalog_activity(
+        &rt, subject, tag.tag_id, &probe,
+    ))
+    .await;
     check_historical_profiles(&rt, subject, tag.tag_id, &revision, historical_cut).await;
     Box::pin(check_activation_configuration(&rt, subject)).await;
 }

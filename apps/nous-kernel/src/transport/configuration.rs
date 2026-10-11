@@ -178,23 +178,26 @@ impl ConfigurationService for KernelService {
                     return Err(Error::new(
                         nous_core::ErrorOwner::Configuration,
                         nous_core::ErrorCode::InvalidRequest,
-                        "Invalid request",
-                    ));
+                        "Configuration path is not registered",
+                    )
+                    .with_context("path", path));
                 }
             }
-            let projection_status = if subject.is_some()
-                && snapshot.descriptors().any(|d| {
-                    d.apply_mode == ConfigApplyMode::ServingRebuild
-                        && (r.paths.is_empty() || r.paths.contains(&d.path))
-                }) {
-                Some(
-                    self.get_projection_status(p::SubjectRequest {
-                        subject_id: subject.expect("subject scope was checked").0.to_string(),
-                    })
-                    .await?,
-                )
-            } else {
-                None
+            let projection_status = match subject {
+                Some(subject)
+                    if snapshot.descriptors().any(|d| {
+                        d.apply_mode == ConfigApplyMode::ServingRebuild
+                            && (r.paths.is_empty() || r.paths.contains(&d.path))
+                    }) =>
+                {
+                    Some(
+                        self.get_projection_status(p::SubjectRequest {
+                            subject_id: subject.0.to_string(),
+                        })
+                        .await?,
+                    )
+                }
+                _ => None,
             };
             let entries = snapshot
                 .descriptors()

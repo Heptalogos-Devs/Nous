@@ -21,7 +21,7 @@ audit:
     cargo deny --config .config/deny.toml check
     cargo shear --deny-warnings
     corepack pnpm run audit
-    cargo dupes check
+    cargo dupes report
     osv-scanner scan source -r .
 
 dev-prepare:

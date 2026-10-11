@@ -15,10 +15,6 @@ use test_support::*;
 use tonic::Request;
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one Subject scenario verifies paging and supported graph lifecycle"
-)]
 async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime(&url, &root).await;

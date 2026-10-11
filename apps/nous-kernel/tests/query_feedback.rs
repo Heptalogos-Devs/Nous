@@ -87,10 +87,6 @@ fn feedback(
     }
 }
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one owner scenario verifies final membership, Subject isolation, idempotency and expiry without persisting retrieved text"
-)]
 async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     let (root, url, _pg) = database().await;
     let mut rt = open_runtime(&url, &root).await;

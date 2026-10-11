@@ -18,10 +18,6 @@ use nous_subject::{CognitiveSeedInput, CreateSubject};
 use std::sync::Arc;
 use test_support::*;
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one historical owner timeline verifies revisions, lifecycle, concepts, aliases and state digest independence from requested timestamps"
-)]
 async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     let (root, url, _pg) = database().await;
     let mut rt = open_runtime_with_serving(&url, &root, true, false, true).await;

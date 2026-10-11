@@ -27,7 +27,7 @@ async fn execute_with_concept_output(
             producer: probe_producer(rt),
         },
     };
-    nous_retrieval::with_query_material(vec![material], async {
+    let execution = nous_retrieval::with_query_material(vec![material], async {
         use nous_runtime::SharedLaneProvider;
         let (projection, view) = rt.serving.prepare_query(&bound, &plan).await?;
         let activation = view.activate(&bound).await?;
@@ -66,7 +66,10 @@ async fn execute_with_concept_output(
         bound.activation_view = Some(view);
         rt.execute_bound_query_with_plan(bound, plan, None).await
     })
-    .await
+    .await?;
+    // The helper bypasses the transport's QueryRun controller, so route this
+    // one-shot result through Runtime's canonical terminal completion path.
+    rt.cognition.complete_query_execution(execution).await
 }
 
 fn probe_space(rt: &NousRuntime) -> nous_core::EmbeddingSpaceSignature {

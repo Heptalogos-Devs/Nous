@@ -8,10 +8,6 @@ use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "schema direct lane batches schema and support projection semantics"
-)]
 pub(crate) async fn schema_direct_lane(
     service: &MemoryService,
     bound: &BoundQuery,
@@ -163,10 +159,6 @@ pub(crate) async fn schema_direct_lane(
     Ok(output)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "Schema owner batch materialization keeps lifecycle, constraints, and payload aligned"
-)]
 pub(crate) async fn materialize_schema_revisions(
     service: &MemoryService,
     bound: &BoundQuery,

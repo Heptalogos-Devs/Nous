@@ -15,10 +15,6 @@ use test_support::query::{query, subject};
 use test_support::{database, form_input, observation, open_runtime, open_runtime_with_serving};
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one retained query is finalized after revision and suppression change its original candidate pool"
-)]
 async fn rerank_revalidates_original_candidates_after_revise_and_suppress() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
@@ -138,10 +134,6 @@ async fn rerank_revalidates_original_candidates_after_revise_and_suppress() {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "purge must scrub dependent durable workflow data and reject the entire bound query at completion"
-)]
 async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
@@ -281,10 +273,6 @@ async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one exact-read cohort checks candidate closure, immutable history, as-of heads and mutation fencing against the same unrelated resident"
-)]
 async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;

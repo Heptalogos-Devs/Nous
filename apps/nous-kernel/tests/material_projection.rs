@@ -17,10 +17,6 @@ use test_support::query::{query, subject};
 use test_support::{database, form_input};
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one real owner cohort checks selected text, source independence and bounded cache work across current/history"
-)]
 async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and_embedding() {
     let (root, url, _postgres) = database().await;
     let clock = Arc::new(ManualCognitiveClock::new(Utc::now().trunc_subsecs(6)));

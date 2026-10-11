@@ -51,10 +51,6 @@ impl MaterialService {
     }
 
     // Observation admission keeps Authority, CAS and runtime ordering explicit.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "observation admission owns one transaction and its runtime handoff"
-    )]
     pub async fn record_observation_once(
         &self,
         input: ObservationInput,

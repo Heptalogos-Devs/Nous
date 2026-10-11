@@ -242,10 +242,6 @@ impl MemoryService {
         self.schema(subject, schema_id).await
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "schema content revision owns one atomic Authority transaction"
-    )]
     pub async fn revise_schema(&self, mut input: ReviseSchemaInput) -> Result<SchemaView> {
         self.store.require_subject(input.subject).await?;
         input.content.producer = canonical_schema_producer(input.content.producer.as_ref())?;

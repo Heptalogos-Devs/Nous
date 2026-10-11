@@ -10,10 +10,6 @@ use test_support::query::{query, subject};
 use test_support::{database, open_runtime, open_runtime_with_serving};
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one real evidence cohort verifies past/future occurrence and region filters through finalization"
-)]
 async fn evidence_time_constraints_filter_occurrences_and_regions_through_finalization() {
     use nous_material::{
         ObservationInput, ObservationMaterial, OccurrenceDescriptor, RuntimeDirective,
@@ -182,10 +178,6 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one real Material cohort protects joint source axes and derived owner timestamps"
-)]
 async fn material_query_keeps_joint_observation_axes_and_derived_formation_time() {
     use nous_material::{
         DerivationInput, DerivedRepresentation, ObservationInput, ObservationMaterial,

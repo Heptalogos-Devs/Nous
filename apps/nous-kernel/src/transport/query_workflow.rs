@@ -89,10 +89,12 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
     ) -> std::result::Result<Response<k::QueryRunUpdate>, Status> {
         let update = match request.into_inner().command {
             Some(k::query_run_request::Command::Start(input)) => {
-                self.start_query_run(input).await.map_err(status)?
+                Box::pin(self.start_query_run(input))
+                    .await
+                    .map_err(status)?
             }
             Some(k::query_run_request::Command::Resume(input)) => {
-                self.resume_query_run(input).await?
+                Box::pin(self.resume_query_run(input)).await?
             }
             Some(k::query_run_request::Command::Cancel(input)) => {
                 let subject = SubjectId(id(&input.subject_id).map_err(status)?);
@@ -184,17 +186,17 @@ impl KernelService {
             });
         }
         let first_stage = if embedding_handoff {
-            QueryRunStage::AwaitEmbedding
+            QueryRunStage::Embedding
         } else if concept_handoff {
-            QueryRunStage::AwaitConcept
+            QueryRunStage::Concept
         } else {
-            QueryRunStage::AwaitFinalize
+            QueryRunStage::Finalize
         };
         let run = QueryRun::new(bound, lease, effective_host, first_stage, plan)?;
         if embedding_handoff {
             self.embedding_update(run).await
         } else {
-            self.activate_and_advance(run, Vec::new()).await
+            Box::pin(self.activate_and_advance(run, Vec::new())).await
         }
     }
 
@@ -206,9 +208,9 @@ impl KernelService {
         let handle = query_run_handle(required(input.handle, "query run handle").map_err(status)?)
             .map_err(status)?;
         let expected_stage = match input.outcome.as_ref() {
-            Some(k::query_run_resume::Outcome::Embedding(_)) => QueryRunStage::AwaitEmbedding,
-            Some(k::query_run_resume::Outcome::Concept(_)) => QueryRunStage::AwaitConcept,
-            Some(k::query_run_resume::Outcome::Finalize(_)) => QueryRunStage::AwaitFinalize,
+            Some(k::query_run_resume::Outcome::Embedding(_)) => QueryRunStage::Embedding,
+            Some(k::query_run_resume::Outcome::Concept(_)) => QueryRunStage::Concept,
+            Some(k::query_run_resume::Outcome::Finalize(_)) => QueryRunStage::Finalize,
             None => return Err(Status::invalid_argument("query run outcome is required")),
         };
         self.0
@@ -249,7 +251,7 @@ impl KernelService {
                         ));
                     }
                 }
-                self.activate_and_advance(run, Vec::new())
+                Box::pin(self.activate_and_advance(run, Vec::new()))
                     .await
                     .map_err(status)
             }
@@ -304,7 +306,9 @@ impl KernelService {
                     }
                 }
                 run.bound_mut().activation.frozen = true;
-                self.execute_and_advance(run).await.map_err(status)
+                Box::pin(self.execute_and_advance(run))
+                    .await
+                    .map_err(status)
             }
             k::query_run_resume::Outcome::Finalize(value) => {
                 let rerank = value.rerank.unwrap_or_default();
@@ -412,7 +416,7 @@ impl KernelService {
         let representation = run.bound().representation.text.clone();
         let historical_view = run.bound().read_context.is_historical();
         let effective_requirement = wire_requirement(run.host_policy.embedding.requirement);
-        run.set_stage(QueryRunStage::AwaitEmbedding);
+        run.set_stage(QueryRunStage::Embedding);
         let handle = self.0.cognition.retain_query_run(run)?;
         let update = k::QueryEmbeddingWork {
             representation,
@@ -467,7 +471,7 @@ impl KernelService {
             return self.concept_update(run).await;
         }
         run.bound_mut().activation.frozen = true;
-        self.execute_and_advance(run).await
+        Box::pin(self.execute_and_advance(run)).await
     }
 
     async fn concept_update(&self, mut run: QueryRun) -> Result<k::QueryRunUpdate> {
@@ -497,7 +501,7 @@ impl KernelService {
             &bound.source_query.temporal_frame,
         ));
         let requirement = wire_requirement(run.host_policy.concept_enrichment.requirement);
-        run.set_stage(QueryRunStage::AwaitConcept);
+        run.set_stage(QueryRunStage::Concept);
         let handle = self.0.cognition.retain_query_run(run)?;
         Ok(k::QueryRunUpdate {
             handle: Some(wire_query_run_handle(handle)),
@@ -537,11 +541,11 @@ impl KernelService {
                 }]
             })
             .unwrap_or_default();
-        let execution = nous_retrieval::with_query_material(
+        let execution = Box::pin(nous_retrieval::with_query_material(
             materials,
             self.0
                 .execute_bound_query_with_plan(bound, plan, pool_limit),
-        )
+        ))
         .await?;
         run.set_execution(execution);
         let result = &run
@@ -591,7 +595,7 @@ impl KernelService {
             let baseline = super::query_projection::query_response(execution.result.clone());
             let rerank_query = run.bound().representation.text.clone();
             let requirement = wire_requirement(run.host_policy.rerank.requirement);
-            run.set_stage(QueryRunStage::AwaitFinalize);
+            run.set_stage(QueryRunStage::Finalize);
             let candidate_limit = run.host_policy.rerank_candidate_limit as u32;
             let handle = self.0.cognition.retain_query_run(run)?;
             Ok(k::QueryRunUpdate {

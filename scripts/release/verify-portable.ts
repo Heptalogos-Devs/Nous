@@ -212,16 +212,33 @@ async function cli(...args: string[]) {
   );
   const envelope = JSON.parse(result.stdout) as {
     schemaVersion: string;
+    kind: string;
     data: Record<string, unknown>;
   };
-  assert.equal(envelope.schemaVersion, "nous.cli.v1");
+  assert.equal(envelope.schemaVersion, "nous.cli.v2");
+  assert.equal(typeof envelope.kind, "string");
   return envelope.data;
 }
 try {
   await boot();
   const status = await cli("status");
   assert(status.status);
-  const subject = await cli("subject", "create");
+  const subjectRequestPath = join(verificationRoot, "subject.toml");
+  await writeFile(
+    subjectRequestPath,
+    [
+      "[cognitive_seed]",
+      'text = "schema_version = 1"',
+      'format = "application/vnd.nous-wave.cognitive-seed+toml;version=1"',
+      "",
+    ].join("\n"),
+  );
+  const subject = await cli(
+    "subject",
+    "create",
+    "--request-file",
+    subjectRequestPath,
+  );
   const subjectId = String(subject.subjectId);
   await cli("session", "open");
   const observation = await cli(

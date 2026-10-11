@@ -4,10 +4,6 @@
 use super::*;
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one regression covers blocked source scopes and their event-driven recovery"
-)]
 async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
     use nous_core::{BasisRole, CognitionDependency, CognitiveRef, OperationId, RevisionBasis};
     use nous_memory::{JournalInput, JournalPoint, JournalPointRole};

@@ -219,7 +219,7 @@ impl KernelService {
                 query_run_id: id(&handle.query_run_id)?,
                 revision: handle.revision,
             },
-            nous_runtime::QueryRunStage::AwaitEmbedding,
+            nous_runtime::QueryRunStage::Embedding,
         )?;
         if bound.source_query.capabilities.text_embedding
             == nous_core::RequirementStrength::Forbidden

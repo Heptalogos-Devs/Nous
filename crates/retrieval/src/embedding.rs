@@ -49,18 +49,27 @@ impl ServingService {
                 break;
             };
             for subject in &subjects {
-                let pending = self
-                    .store
-                    .unbound_embedding_material_count(*subject)
+                self.migrate_legacy_embedding_subject(*subject, &mut report)
                     .await?;
-                if pending == 0 {
-                    continue;
-                }
-                report.legacy_rows_examined += pending as u64;
-                let mut tx = self.store.begin().await?;
-                let status: String = sqlx::query_scalar(
-                    "SELECT status FROM subjects WHERE subject_id=$1 FOR UPDATE",
-                )
+            }
+            after_subject = Some(last_subject);
+        }
+        Ok(report)
+    }
+
+    async fn migrate_legacy_embedding_subject(
+        &self,
+        subject: SubjectId,
+        report: &mut LegacyEmbeddingUpgradeReport,
+    ) -> Result<()> {
+        let pending = self.store.unbound_embedding_material_count(subject).await?;
+        if pending == 0 {
+            return Ok(());
+        }
+        report.legacy_rows_examined += pending as u64;
+        let mut tx = self.store.begin().await?;
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM subjects WHERE subject_id=$1 FOR UPDATE")
                 .bind(subject.0)
                 .fetch_optional(&mut *tx)
                 .await
@@ -72,55 +81,55 @@ impl ServingService {
                         "subject not found",
                     )
                 })?;
-                // The lock makes the complete source scan, ownership binding
-                // and unknown-row backup atomic per Subject. All page buffers
-                // remain bounded; interruption cannot leave a partial set of
-                // bindings that prevents a later retry from finding the Subject.
-                let active = status == "active";
-                if active {
-                    let memory_enabled = self.projection_capabilities(*subject).await?.memory;
-                    let mut after_instant = None;
-                    loop {
-                        let page = self
-                            .store
-                            .embedding_document_change_page(*subject, after_instant, 256)
-                            .await?;
-                        let Some(last_instant) = page.instants.last().copied() else {
-                            break;
-                        };
-                        for instant in &page.instants {
-                            let view = self
-                                .legacy_historical_view(*subject, *instant, memory_enabled)
-                                .await?;
-                            report.references_examined +=
-                                self.bind_legacy_document_pages(
-                                    *subject,
-                                    memory_enabled,
-                                    Some(&view),
-                                    &mut tx,
-                                )
-                                .await? as u64;
-                        }
-                        after_instant = Some(last_instant);
-                    }
+        // The lock makes the complete source scan, ownership binding and
+        // unknown-row backup atomic per Subject. All page buffers remain
+        // bounded; interruption cannot leave an unresumable partial binding.
+        if status == "active" {
+            let memory_enabled = self.projection_capabilities(subject).await?.memory;
+            self.bind_legacy_historical_documents(subject, memory_enabled, &mut tx, report)
+                .await?;
 
-                    // The current projection can differ from an as-of view if
-                    // persisted event timestamps are in the future.
-                    report.references_examined += self
-                        .bind_legacy_document_pages(*subject, memory_enabled, None, &mut tx)
-                        .await? as u64;
-                }
-
-                let backed_up =
-                    AuthorityStore::back_up_unbound_embedding_materials_in(&mut tx, *subject)
-                        .await?;
-                report.backed_up_rows += backed_up as u64;
-                report.recovered_rows += (pending - backed_up).max(0) as u64;
-                tx.commit().await.map_err(db)?;
-            }
-            after_subject = Some(last_subject);
+            // The current projection can differ from an as-of view if
+            // persisted event timestamps are in the future.
+            report.references_examined += self
+                .bind_legacy_document_pages(subject, memory_enabled, None, &mut tx)
+                .await? as u64;
         }
-        Ok(report)
+
+        let backed_up =
+            AuthorityStore::back_up_unbound_embedding_materials_in(&mut tx, subject).await?;
+        report.backed_up_rows += backed_up as u64;
+        report.recovered_rows += (pending - backed_up).max(0) as u64;
+        tx.commit().await.map_err(db)
+    }
+
+    async fn bind_legacy_historical_documents(
+        &self,
+        subject: SubjectId,
+        memory_enabled: bool,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        report: &mut LegacyEmbeddingUpgradeReport,
+    ) -> Result<()> {
+        let mut after_instant = None;
+        loop {
+            let page = self
+                .store
+                .embedding_document_change_page(subject, after_instant, 256)
+                .await?;
+            let Some(last_instant) = page.instants.last().copied() else {
+                break;
+            };
+            for instant in &page.instants {
+                let view = self
+                    .legacy_historical_view(subject, *instant, memory_enabled)
+                    .await?;
+                report.references_examined += self
+                    .bind_legacy_document_pages(subject, memory_enabled, Some(&view), tx)
+                    .await? as u64;
+            }
+            after_instant = Some(last_instant);
+        }
+        Ok(())
     }
 
     async fn legacy_historical_view(

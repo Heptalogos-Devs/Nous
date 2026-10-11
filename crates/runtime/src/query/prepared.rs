@@ -5,6 +5,8 @@ use super::{BoundQuery, CognitiveContributors, QueryExecution, QueryPlan};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -76,9 +78,9 @@ impl QueryRunHostPolicy {
                 || role.requirement == RequirementStrength::Forbidden
             {
                 RequirementStrength::Forbidden
-            } else if requested == RequirementStrength::Required {
-                RequirementStrength::Required
-            } else if role.requirement == RequirementStrength::Required {
+            } else if requested == RequirementStrength::Required
+                || role.requirement == RequirementStrength::Required
+            {
                 RequirementStrength::Required
             } else {
                 RequirementStrength::Optional
@@ -121,9 +123,9 @@ impl QueryRunHostPolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryRunStage {
-    AwaitEmbedding,
-    AwaitConcept,
-    AwaitFinalize,
+    Embedding,
+    Concept,
+    Finalize,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueryRunHandle {
@@ -383,7 +385,7 @@ impl CognitiveRuntimeService {
         external_results: Vec<ExternalResourceResult>,
         contributors: CognitiveContributors<'_>,
     ) -> Result<CognitiveQueryResult> {
-        if run.stage() != QueryRunStage::AwaitFinalize {
+        if run.stage() != QueryRunStage::Finalize {
             return Err(Error::new(
                 ErrorOwner::Runtime,
                 ErrorCode::FailedPrecondition,
@@ -504,24 +506,46 @@ impl CognitiveRuntimeService {
                 execution.bound.retrieval_policy.rrf_k,
             );
         }
-        result
-            .results
-            .truncate(execution.bound.source_query.result_need.limit);
-        for (rank, hit) in result.results.iter_mut().enumerate() {
-            hit.match_evidence.final_rank = (rank + 1) as u32;
-        }
+        result = finalize_query_response(&execution.bound, result);
         lease.require_live()?;
         self.finalize_resources(subject, &mut result, external_results)
             .await?;
-        lease.require_live()?;
-        self.ensure_read_context_current(&execution.bound.read_context)
-            .await?;
-        self.record_query_feedback(&execution.bound, &result)
-            .await?;
-        lease.require_live()?;
-        self.ensure_read_context_current(&execution.bound.read_context)
+        self.record_finalized_query_feedback(&execution.bound, &result, Some(lease))
             .await?;
         Ok(result)
+    }
+
+    /// Complete a direct one-shot query execution at the same response fence as
+    /// a QueryRun. Candidate pools must instead be retained and finalized by a
+    /// QueryRun so only the final membership is recorded.
+    pub fn complete_query_execution<'a>(
+        &'a self,
+        execution: QueryExecution,
+    ) -> Pin<Box<dyn Future<Output = Result<QueryExecution>> + Send + 'a>> {
+        Box::pin(async move {
+            let QueryExecution {
+                read_lease,
+                result,
+                bound,
+                leaves,
+            } = execution;
+            if !result.resource_actions.is_empty() {
+                return Err(Error::new(
+                    ErrorOwner::Runtime,
+                    ErrorCode::FailedPrecondition,
+                    "Query resources must be finalized through QueryRun",
+                ));
+            }
+            let result = finalize_query_response(&bound, result);
+            self.record_finalized_query_feedback(&bound, &result, None)
+                .await?;
+            Ok(QueryExecution {
+                read_lease,
+                result,
+                bound,
+                leaves,
+            })
+        })
     }
 
     /// Complete a run that needed no host model or resource continuation.
@@ -529,22 +553,30 @@ impl CognitiveRuntimeService {
     /// only the purge fence and feedback remain at the response boundary.
     pub async fn complete_query_run(&self, mut run: QueryRun) -> Result<CognitiveQueryResult> {
         let execution = run.take_execution()?;
-        run.lease().require_live()?;
-        self.ensure_read_context_current(&execution.bound.read_context)
-            .await?;
-        let mut result = execution.result;
-        result
-            .results
-            .truncate(execution.bound.source_query.result_need.limit);
-        for (rank, hit) in result.results.iter_mut().enumerate() {
-            hit.match_evidence.final_rank = (rank + 1) as u32;
-        }
-        self.record_query_feedback(&execution.bound, &result)
-            .await?;
-        run.lease().require_live()?;
-        self.ensure_read_context_current(&execution.bound.read_context)
+        let result = finalize_query_response(&execution.bound, execution.result);
+        self.record_finalized_query_feedback(&execution.bound, &result, Some(run.lease()))
             .await?;
         Ok(result)
+    }
+
+    async fn record_finalized_query_feedback(
+        &self,
+        bound: &BoundQuery,
+        result: &CognitiveQueryResult,
+        lease: Option<QueryLease>,
+    ) -> Result<()> {
+        if let Some(lease) = lease {
+            lease.require_live()?;
+        }
+        self.ensure_read_context_current(&bound.read_context)
+            .await?;
+        self.record_query_feedback(bound, result).await?;
+        if let Some(lease) = lease {
+            lease.require_live()?;
+        }
+        self.ensure_read_context_current(&bound.read_context)
+            .await?;
+        Ok(())
     }
 
     async fn generic_still_valid(
@@ -605,6 +637,19 @@ fn same_stamp(current: Option<&CognitiveHit>, old: &super::types::CandidateStamp
     current.is_some_and(|current| {
         current.authority_epoch == old.authority_epoch && current.revision == old.revision
     })
+}
+
+fn finalize_query_response(
+    bound: &BoundQuery,
+    mut result: CognitiveQueryResult,
+) -> CognitiveQueryResult {
+    result
+        .results
+        .truncate(bound.source_query.result_need.limit);
+    for (rank, hit) in result.results.iter_mut().enumerate() {
+        hit.match_evidence.final_rank = (rank + 1) as u32;
+    }
+    result
 }
 
 fn apply_model_order(hits: &mut Vec<CognitiveHit>, mut order: Vec<(CognitiveRef, f64)>, k: f64) {

@@ -13,10 +13,6 @@ pub struct HistoricalProjectionInput {
 }
 
 impl AuthorityStore {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one repeatable-read projection assembles only owner-selected historical identities and their immutable content"
-    )]
     pub async fn historical_projection_input(
         &self,
         view: &HistoricalAuthoritySnapshot,

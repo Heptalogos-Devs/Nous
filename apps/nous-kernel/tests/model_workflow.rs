@@ -8,10 +8,6 @@ use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::{workflow_payload as payload, workflow_snapshot as snapshot};
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one workflow scenario covers reservation concurrency, proposal recovery and terminal replay"
-)]
 async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
     let (root, url, _postgres) = test_support::database().await;
     let runtime = test_support::open_runtime(&url, &root).await;

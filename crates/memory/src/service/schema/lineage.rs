@@ -176,10 +176,6 @@ impl MemoryService {
         Ok(views)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "schema merge owns stable locking, union, lineage, and one commit"
-    )]
     pub async fn merge_schemas(
         &self,
         subject: SubjectId,

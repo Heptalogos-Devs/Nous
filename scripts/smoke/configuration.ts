@@ -12,9 +12,10 @@ import {
   ConfigurationView,
   configurationValue,
 } from "@nous-wave/client";
-import { create, toJson, type JsonValue } from "@bufbuild/protobuf";
+import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { CreateSubjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { ListConfigDescriptorsResponseSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import { boot, prepare, stop, type Boot } from "./support.js";
 import { workspaceTemp } from "../workspace.js";
 import { resolveLocations } from "../../apps/nous-core/src/locations.js";
@@ -35,6 +36,16 @@ try {
   );
   current = await boot(locator);
   let client = current.client;
+  const subjectRequestPath = join(root, "subject.toml");
+  await writeFile(
+    subjectRequestPath,
+    [
+      "[cognitive_seed]",
+      'text = "schema_version = 1"',
+      'format = "application/vnd.nous-wave.cognitive-seed+toml;version=1"',
+      "",
+    ].join("\n"),
+  );
   const firstSubject = await promisify(execFile)(
     process.execPath,
     [
@@ -46,6 +57,8 @@ try {
       locator,
       "subject",
       "create",
+      "--request-file",
+      subjectRequestPath,
     ],
     { maxBuffer: 2 * 1024 * 1024, windowsHide: true },
   );
@@ -75,18 +88,22 @@ try {
     if (args[0] !== "check") assert.equal(parsed.schemaVersion, "nous.cli.v2");
     return (args[0] === "check" ? parsed : parsed.data) as {
       valid?: boolean;
-      descriptors?: { path: string; exposure: number }[];
+      descriptors?: { path: string; exposure: string }[];
     };
   };
+  const cliDescriptors = async (...args: string[]) =>
+    fromJson(
+      ListConfigDescriptorsResponseSchema,
+      (await cli(...args)) as JsonValue,
+    ).descriptors;
   assert.equal((await cli("check")).valid, true);
-  const standardCli = (await cli("list", "--json")).descriptors!;
+  const standardCli = await cliDescriptors("list", "--json");
   assert(standardCli.length > 0);
   assert(standardCli.every((d) => d.exposure === ConfigExposure.STANDARD));
-  const advancedCli = (await cli("list", "--advanced", "--json")).descriptors!;
+  const advancedCli = await cliDescriptors("list", "--advanced", "--json");
   assert(advancedCli.some((d) => d.exposure === ConfigExposure.ADVANCED));
   assert(advancedCli.every((d) => d.exposure !== ConfigExposure.DEVELOPER));
-  const developerCli = (await cli("list", "--developer", "--json"))
-    .descriptors!;
+  const developerCli = await cliDescriptors("list", "--developer", "--json");
   assert(developerCli.some((d) => d.exposure === ConfigExposure.DEVELOPER));
   const standard = await client.configuration.list({});
   assert(standard.descriptors.some((d) => d.path === "models"));

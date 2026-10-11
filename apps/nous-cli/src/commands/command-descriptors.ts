@@ -79,8 +79,8 @@ export const commandDescriptors: readonly CommandDescriptor[] = [
   command(
     "subject create",
     [...string("request-file")],
-    ["[--request-file <semantic TOML: seed, metadata, capabilities>]"],
-    "Create a Subject with a stable ID frozen before the operation receipt; omitted values use configured defaults.",
+    ["--request-file <semantic TOML> (required)"],
+    "Create a Subject with a stable ID and an explicit valid Cognitive Seed frozen before the operation receipt; metadata and capabilities are optional.",
   ),
   command("subject list"),
   command("subject get", [], ["<Subject reference>"]),

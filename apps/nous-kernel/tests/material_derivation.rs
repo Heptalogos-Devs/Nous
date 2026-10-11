@@ -63,10 +63,6 @@ async fn assert_representation_exposes_gettable_producer(
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one database journey checks shared provenance, stable segments, structured payload and schema-bound replay"
-)]
 async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     let (root, url, _postgres) = test_support::database().await;
     let runtime = test_support::open_runtime(&url, &root).await;

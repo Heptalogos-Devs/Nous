@@ -14,13 +14,11 @@ import {
 import { z } from "zod";
 
 const subjectInput = z.strictObject({
-  cognitive_seed: z
-    .strictObject({
-      text: z.string().min(1).max(65536),
-      format: z.string().min(1).max(256),
-      provenance: z.record(z.string(), z.json()).optional(),
-    })
-    .optional(),
+  cognitive_seed: z.strictObject({
+    text: z.string().min(1).max(65536),
+    format: z.string().min(1).max(256),
+    provenance: z.record(z.string(), z.json()).optional(),
+  }),
   metadata: z.record(z.string(), z.json()).optional(),
   capabilities: z.strictObject({ memory: z.boolean() }).optional(),
 });
@@ -66,9 +64,19 @@ export async function subjectCommands(
     );
   }
   if (action === "create") {
-    const request = values["request-file"]
-      ? subjectInput.parse(await requestPayload(values["request-file"]))
-      : {};
+    const requestFile = values["request-file"];
+    if (!requestFile)
+      throw new CliError(
+        "INVALID_ARGUMENT",
+        "subject create requires --request-file with a [cognitive_seed] section containing text and format",
+      );
+    const parsed = subjectInput.safeParse(await requestPayload(requestFile));
+    if (!parsed.success)
+      throw new CliError(
+        "INVALID_ARGUMENT",
+        "subject request TOML must include [cognitive_seed].text and [cognitive_seed].format, plus optional metadata and capabilities",
+      );
+    const request = parsed.data;
     const subject = await client.subjects.create(
       create(CreateSubjectRequestSchema, {
         subjectId: crypto.randomUUID(),
@@ -81,15 +89,11 @@ export async function subjectCommands(
               ),
             }
           : {}),
-        ...(request.cognitive_seed
-          ? {
-              cognitiveSeed: create(CognitiveSeedSchema, {
-                text: request.cognitive_seed.text,
-                format: request.cognitive_seed.format,
-                provenance: request.cognitive_seed.provenance,
-              }),
-            }
-          : {}),
+        cognitiveSeed: create(CognitiveSeedSchema, {
+          text: request.cognitive_seed.text,
+          format: request.cognitive_seed.format,
+          provenance: request.cognitive_seed.provenance,
+        }),
         ...(request.metadata ? { metadata: request.metadata } : {}),
       }),
     );

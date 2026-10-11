@@ -23,7 +23,7 @@ pub(crate) fn register(registry: &mut ConfigRegistryBuilder) -> Result<()> {
                 Err(Error::new(
                     nous_core::ErrorOwner::Runtime,
                     nous_core::ErrorCode::InvalidRequest,
-                    "Invalid request",
+                    "query feedback retention must be between 1 and 31,536,000 seconds",
                 ))
             }
         },
@@ -39,7 +39,7 @@ impl CognitiveRuntimeService {
             return Err(Error::new(
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "Query feedback result ID does not match the bound query",
             ));
         }
         let subject = bound.source_query.subject;
@@ -82,7 +82,7 @@ impl CognitiveRuntimeService {
             return Err(Error::new(
                 nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "Query feedback cannot include more than 256 revision references",
             ));
         }
         let activation = &bound.activation;
@@ -130,7 +130,7 @@ pub(crate) async fn validate_query_use_in(
         return Err(Error::new(
             nous_core::ErrorOwner::Runtime,
             nous_core::ErrorCode::InvalidRequest,
-            "Invalid request",
+            "Reference is not part of a live query result",
         ));
     }
     Ok(())

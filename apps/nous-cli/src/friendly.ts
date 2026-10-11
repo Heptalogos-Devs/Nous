@@ -23,6 +23,12 @@ export async function friendlyOutput(
     key: string | number;
     target: string;
   }[] = [];
+  const targetKey = (target: Target) =>
+    JSON.stringify([
+      target.subjectId,
+      target.canonical.kind,
+      target.canonical.value,
+    ]);
 
   function visit(value: unknown, scope: string): unknown {
     if (!value || typeof value !== "object" || value instanceof Uint8Array)
@@ -95,7 +101,7 @@ export async function friendlyOutput(
             canonical: { kind, value: canonical },
           };
           if (!target.subjectId) return undefined;
-          const id = JSON.stringify(target);
+          const id = targetKey(target);
           targets.set(id, target);
           return id;
         };
@@ -154,9 +160,17 @@ export async function friendlyOutput(
     const response = await env.client.identity.addresses({
       targets: requests.slice(start, start + 2048),
     });
-    for (const address of response.addresses)
-      if (address.status === "BOUND" && address.target && address.lexicalRef)
-        addresses.set(JSON.stringify(address.target), address.lexicalRef);
+    for (const address of response.addresses) {
+      const target = address.target;
+      if (address.status === "BOUND" && target?.canonical && address.lexicalRef)
+        addresses.set(
+          targetKey({
+            subjectId: target.subjectId,
+            canonical: target.canonical,
+          }),
+          address.lexicalRef,
+        );
+    }
   }
   for (const slot of slots) {
     const address = addresses.get(slot.target);

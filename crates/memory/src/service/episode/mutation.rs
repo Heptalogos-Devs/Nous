@@ -215,10 +215,6 @@ impl MemoryService {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Episode revision keeps fencing, hierarchy, members, basis, and receipt commit together"
-    )]
     pub async fn revise_episode(&self, input: ReviseEpisodeInput) -> Result<EpisodeView> {
         let started_at = self.cognition.now(input.subject);
         validate_episode_input(

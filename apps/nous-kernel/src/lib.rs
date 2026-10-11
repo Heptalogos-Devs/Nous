@@ -19,6 +19,8 @@ use nous_retrieval::{ServingOptions, ServingService, TextEmbeddingProvider};
 use nous_runtime::CognitiveRuntimeService;
 use nous_subject::SubjectCoreService;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -291,116 +293,127 @@ impl NousRuntime {
     ) -> Result<nous_runtime::QueryExecution> {
         let snapshot = self.configuration.snapshot_for_subject(query.subject)?;
         let bound = Box::pin(self.bind_query_with_snapshot(query, snapshot)).await?;
-        Box::pin(self.execute_bound_query(bound, pool_limit)).await
+        let execution = self.execute_bound_query(bound, pool_limit).await?;
+        // A bounded pool is an intermediate candidate set for QueryRun
+        // finalization. With no pool override, this convenience API returns
+        // its terminal result directly, so persist only that final membership.
+        if pool_limit.is_none() && execution.result.resource_actions.is_empty() {
+            return self.cognition.complete_query_execution(execution).await;
+        }
+        Ok(execution)
     }
-    pub async fn execute_bound_query(
-        &self,
+    pub fn execute_bound_query<'a>(
+        &'a self,
         mut bound: nous_runtime::BoundQuery,
         pool_limit: Option<usize>,
-    ) -> Result<nous_runtime::QueryExecution> {
-        if bound.selected_embedding_space.is_none() {
-            bound.selected_embedding_space =
-                self.serving.embedding().map(|provider| provider.space());
-        }
-        let plan = nous_runtime::QueryPlan::for_bound_query(&bound);
-        self.execute_bound_query_with_plan(bound, plan, pool_limit)
-            .await
+    ) -> Pin<Box<dyn Future<Output = Result<nous_runtime::QueryExecution>> + Send + 'a>> {
+        Box::pin(async move {
+            if bound.selected_embedding_space.is_none() {
+                bound.selected_embedding_space =
+                    self.serving.embedding().map(|provider| provider.space());
+            }
+            let plan = nous_runtime::QueryPlan::for_bound_query(&bound);
+            self.execute_bound_query_with_plan(bound, plan, pool_limit)
+                .await
+        })
     }
 
-    pub async fn execute_bound_query_with_plan(
-        &self,
+    pub fn execute_bound_query_with_plan<'a>(
+        &'a self,
         mut bound: nous_runtime::BoundQuery,
         plan: nous_runtime::QueryPlan,
         pool_limit: Option<usize>,
-    ) -> Result<nous_runtime::QueryExecution> {
-        if bound.source_query.is_exact_read() {
+    ) -> Pin<Box<dyn Future<Output = Result<nous_runtime::QueryExecution>> + Send + 'a>> {
+        Box::pin(async move {
+            if bound.source_query.is_exact_read() {
+                self.cognition.expire_query_leases()?;
+                let capabilities = self
+                    .subjects
+                    .subject(bound.source_query.subject)
+                    .await?
+                    .capabilities;
+                return self
+                    .cognition
+                    .execute_query_with_plan(
+                        bound,
+                        nous_runtime::CognitiveContributors {
+                            material: Some(&self.material),
+                            shared: None,
+                            memory: self
+                                .memory
+                                .as_ref()
+                                .filter(|_| capabilities.memory)
+                                .map(|memory| memory as &dyn nous_runtime::CognitiveContributor),
+                        },
+                        plan,
+                        pool_limit,
+                    )
+                    .await;
+            }
+            if bound.selected_embedding_space.is_none() {
+                bound.selected_embedding_space =
+                    self.serving.embedding().map(|provider| provider.space());
+            }
             self.cognition.expire_query_leases()?;
-            let capabilities = self
+            self.serving
+                .reclaim_retired(
+                    bound.source_query.subject,
+                    std::time::Duration::from_secs(
+                        bound
+                            .config_snapshot
+                            .get(nous_retrieval::RETIRED_GRACE_SECONDS)?,
+                    ),
+                )
+                .await?;
+            let subject_capabilities = self
                 .subjects
                 .subject(bound.source_query.subject)
                 .await?
                 .capabilities;
-            return self
+            let (projection, serving_query): (_, Arc<dyn nous_runtime::QueryActivationView>) =
+                if let Some(view) = &bound.activation_view {
+                    (nous_retrieval::ProjectionStatus::default(), view.clone())
+                } else {
+                    let (projection, view) = self.serving.prepare_query(&bound, &plan).await?;
+                    (projection, view)
+                };
+            let mut execution = self
                 .cognition
                 .execute_query_with_plan(
                     bound,
                     nous_runtime::CognitiveContributors {
                         material: Some(&self.material),
-                        shared: None,
-                        memory: self
+                        shared: Some(serving_query.provider()),
+                        memory: subject_capabilities
                             .memory
-                            .as_ref()
-                            .filter(|_| capabilities.memory)
-                            .map(|memory| memory as &dyn nous_runtime::CognitiveContributor),
+                            .then(|| {
+                                self.memory
+                                    .as_ref()
+                                    .map(|memory| memory as &dyn nous_runtime::CognitiveContributor)
+                            })
+                            .flatten(),
                     },
                     plan,
                     pool_limit,
                 )
-                .await;
-        }
-        if bound.selected_embedding_space.is_none() {
-            bound.selected_embedding_space =
-                self.serving.embedding().map(|provider| provider.space());
-        }
-        self.cognition.expire_query_leases()?;
-        self.serving
-            .reclaim_retired(
-                bound.source_query.subject,
-                std::time::Duration::from_secs(
-                    bound
-                        .config_snapshot
-                        .get(nous_retrieval::RETIRED_GRACE_SECONDS)?,
-                ),
-            )
-            .await?;
-        let subject_capabilities = self
-            .subjects
-            .subject(bound.source_query.subject)
-            .await?
-            .capabilities;
-        let (projection, serving_query): (_, Arc<dyn nous_runtime::QueryActivationView>) =
-            if let Some(view) = &bound.activation_view {
-                (nous_retrieval::ProjectionStatus::default(), view.clone())
-            } else {
-                let (projection, view) = self.serving.prepare_query(&bound, &plan).await?;
-                (projection, view)
-            };
-        let mut execution = self
-            .cognition
-            .execute_query_with_plan(
-                bound,
-                nous_runtime::CognitiveContributors {
-                    material: Some(&self.material),
-                    shared: Some(serving_query.provider()),
-                    memory: subject_capabilities
-                        .memory
-                        .then(|| {
-                            self.memory
-                                .as_ref()
-                                .map(|memory| memory as &dyn nous_runtime::CognitiveContributor)
-                        })
-                        .flatten(),
-                },
-                plan,
-                pool_limit,
-            )
-            .await?;
-        execution.result.generation = serving_query.generation_trace();
-        execution.read_lease = Some(serving_query);
-        let result = &mut execution.result;
-        result.degradation.extend(projection.degradation);
-        if !result.degradation.is_empty() && result.status != QueryStatus::Partial {
-            result.status = if result
-                .degradation
-                .iter()
-                .any(|d| d.code == "required_external_authority_unresolved")
-            {
-                QueryStatus::Partial
-            } else {
-                QueryStatus::Degraded
-            };
-        }
-        Ok(execution)
+                .await?;
+            execution.result.generation = serving_query.generation_trace();
+            execution.read_lease = Some(serving_query);
+            let result = &mut execution.result;
+            result.degradation.extend(projection.degradation);
+            if !result.degradation.is_empty() && result.status != QueryStatus::Partial {
+                result.status = if result
+                    .degradation
+                    .iter()
+                    .any(|d| d.code == "required_external_authority_unresolved")
+                {
+                    QueryStatus::Partial
+                } else {
+                    QueryStatus::Degraded
+                };
+            }
+            Ok(execution)
+        })
     }
 
     pub async fn status(&self) -> RuntimeStatus {

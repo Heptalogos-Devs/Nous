@@ -127,10 +127,6 @@ struct State {
 
 /// Neutral numerical Sense contract. Merged states do not claim a unique root
 /// lineage: frozen VCP's first-encounter lineage is nondeterministic.
-#[expect(
-    clippy::too_many_lines,
-    reason = "Finite-hop state admission, edge accounting and FIR accumulation form one reference solver"
-)]
 pub fn reference_sense(
     graph: &ReferenceSenseGraph,
     input: &ReferenceSenseInput,

@@ -246,10 +246,6 @@ impl ConfigurationService {
             .await
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "configuration mutation keeps authorization, receipt, persistence, and cache update in one transaction contract"
-    )]
     async fn mutate(
         &self,
         operation_id: OperationId,

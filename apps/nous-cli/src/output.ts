@@ -50,10 +50,19 @@ export function renderText(value: unknown, depth = 0): string {
     "value" in value &&
     typeof value.kind === "string" &&
     typeof value.value === "string"
-  )
+  ) {
+    const displayReferences =
+      "displayReferences" in value &&
+      value.displayReferences &&
+      typeof value.displayReferences === "object"
+        ? (value.displayReferences as Record<string, unknown>)
+        : undefined;
+    const displayed = displayReferences?.value;
+    if (typeof displayed === "string") return displayed;
     return value.value.includes(":")
       ? value.value
       : `${value.kind}:${value.value}`;
+  }
   if ("case" in value && "value" in value && typeof value.case === "string") {
     const body = renderText(value.value, depth + 1);
     if (!body) return "";
@@ -61,7 +70,13 @@ export function renderText(value: unknown, depth = 0): string {
       ? `${"  ".repeat(depth)}${value.case}:\n${body}`
       : `${"  ".repeat(depth)}${value.case}: ${body.trimStart()}`;
   }
-  return Object.entries(value)
+  const record = value as Record<string, unknown>;
+  const displayReferences =
+    record.displayReferences && typeof record.displayReferences === "object"
+      ? (record.displayReferences as Record<string, unknown>)
+      : undefined;
+  return Object.entries(record)
+    .filter(([key]) => key !== "displayReferences")
     .filter(
       ([, item]) =>
         item !== undefined &&
@@ -69,7 +84,17 @@ export function renderText(value: unknown, depth = 0): string {
         (!Array.isArray(item) || item.length),
     )
     .map(([key, item]) => {
-      const body = renderText(item, depth + 1);
+      const displayed = displayReferences?.[key];
+      const body = renderText(
+        typeof displayed === "string"
+          ? displayed
+          : Array.isArray(displayed) && Array.isArray(item)
+            ? (item as unknown[]).map(
+                (member, index) => (displayed as unknown[])[index] ?? member,
+              )
+            : item,
+        depth + 1,
+      );
       if (!body) return "";
       return body.includes("\n") || Array.isArray(item)
         ? `${"  ".repeat(depth)}${key}:\n${body}`

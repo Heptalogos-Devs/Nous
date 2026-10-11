@@ -80,10 +80,6 @@ async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one temporary Schema cohort checks visibility and replay across lifecycle changes and irreversible purge without redundant database setup"
-)]
 async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
     use nous_memory::schema::SchemaLifecycleAction as Action;
     let (root, url, _postgres) = database().await;
@@ -369,10 +365,6 @@ async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "association contract keeps invalid and valid producer paths together"
-)]
 async fn association_requires_exact_cognition_and_valid_basis_class() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime_with_serving(&url, &root, false, false, true).await;

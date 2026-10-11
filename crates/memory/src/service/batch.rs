@@ -9,10 +9,6 @@ impl MemoryService {
     /// Materialize the selected revision set through owner-batched Authority
     /// reads. Query orchestration must not turn a candidate list into one
     /// `memory(...)` call per candidate.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one owner-level batch materializer keeps all candidate projections consistent"
-    )]
     pub(crate) async fn memories_for_query(
         &self,
         subject: SubjectId,

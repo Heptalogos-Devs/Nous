@@ -44,6 +44,23 @@ export function boundedInteger(
   return parsed;
 }
 
+/** Parse an unsigned identity counter carried by the signed int64 protocol field. */
+export function nonnegativeInt64(
+  value: string | undefined,
+  name: string,
+): bigint {
+  if (
+    !value ||
+    !/^(0|[1-9][0-9]*)$/.test(value) ||
+    BigInt(value) > 9223372036854775807n
+  )
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      `${name} must be a nonnegative int64`,
+    );
+  return BigInt(value);
+}
+
 export function cliErrorPayload(error: unknown) {
   const record =
     error && typeof error === "object"

@@ -259,10 +259,6 @@ async fn assert_partition_revision(
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one regression spans capture, planning and atomic repair of historical chronology"
-)]
 async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
     use nous_core::CognitiveRef;
     use nous_protocol::{

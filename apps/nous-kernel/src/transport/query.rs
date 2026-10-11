@@ -200,7 +200,7 @@ fn compile_expression(
                     return Err(Error::new(
                         nous_core::ErrorOwner::Runtime,
                         nous_core::ErrorCode::InvalidRequest,
-                        "Invalid request",
+                        "Unsupported recent preference; expected recent:occurred, recent:observed, recent:valid, recent:formed, or recent:recorded",
                     ));
                 }
             })

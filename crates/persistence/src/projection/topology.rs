@@ -108,10 +108,6 @@ impl AuthorityStore {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "topology projection assembles one repeatable-read Authority snapshot"
-)]
 async fn topology_snapshot_in(
     tx: &mut Transaction<'_, Postgres>,
     subject: SubjectId,

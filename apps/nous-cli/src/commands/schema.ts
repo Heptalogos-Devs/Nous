@@ -17,7 +17,7 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { ObjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { z } from "zod";
-import { CliError } from "../agent.js";
+import { nonnegativeInt64, CliError } from "../agent.js";
 import { revisionBasis } from "../mutation-input.js";
 import type { CliEnvironment } from "../runtime.js";
 
@@ -106,17 +106,6 @@ async function content(env: CliEnvironment, raw: unknown) {
     evidenceLinks,
   });
 }
-function expectedEpoch(value: string | undefined) {
-  if (!value || !/^(0|[1-9][0-9]*)$/.test(value))
-    throw new CliError(
-      "INVALID_ARGUMENT",
-      "--expected-epoch must be a nonnegative int64",
-    );
-  const epoch = BigInt(value);
-  if (epoch > 9223372036854775807n)
-    throw new CliError("INVALID_ARGUMENT", "Expected epoch exceeds int64");
-  return epoch;
-}
 
 export async function schemaCommands(
   env: CliEnvironment,
@@ -181,7 +170,10 @@ export async function schemaCommands(
         operationId,
         subjectId,
         schemaId: ref.value,
-        expectedObjectEpoch: expectedEpoch(values["expected-epoch"]),
+        expectedObjectEpoch: nonnegativeInt64(
+          values["expected-epoch"],
+          "--expected-epoch",
+        ),
         link: create(SchemaEvidenceLinkSchema, {
           linkId: "",
           role: input.role,
@@ -211,7 +203,10 @@ export async function schemaCommands(
         operationId,
         subjectId,
         schemaId: ref.value,
-        expectedObjectEpoch: expectedEpoch(values["expected-epoch"]),
+        expectedObjectEpoch: nonnegativeInt64(
+          values["expected-epoch"],
+          "--expected-epoch",
+        ),
         intent: request.intent,
         schema: await content(env, request.schema),
         copyLinkIds: request.copy_link_ids,
@@ -231,7 +226,10 @@ export async function schemaCommands(
         operationId,
         subjectId,
         schemaId: ref.value,
-        expectedObjectEpoch: expectedEpoch(values["expected-epoch"]),
+        expectedObjectEpoch: nonnegativeInt64(
+          values["expected-epoch"],
+          "--expected-epoch",
+        ),
         children: await Promise.all(
           request.children.map((item) => content(env, item)),
         ),
@@ -281,7 +279,10 @@ export async function schemaCommands(
       operationId,
       subjectId,
       schemaId: ref.value,
-      expectedObjectEpoch: expectedEpoch(values["expected-epoch"]),
+      expectedObjectEpoch: nonnegativeInt64(
+        values["expected-epoch"],
+        "--expected-epoch",
+      ),
     });
     switch (action) {
       case "suppress":

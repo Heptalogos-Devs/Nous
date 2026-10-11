@@ -36,7 +36,7 @@ impl KernelService {
             return Err(Error::new(
                 nous_core::ErrorOwner::ModelWorkflow,
                 nous_core::ErrorCode::InvalidRequest,
-                "Invalid request",
+                "Query accepts at most one supplied embedding",
             ));
         }
         let mut materials = vec![];
@@ -60,17 +60,46 @@ impl KernelService {
                         "query embedding producer is not authorized",
                     )
                 })?;
-            if material.text != bound.representation.text
-                || material.text.len() > 131072
-                || material.space_hash != space.space_hash
-                || material.producer_hash != producer.signature_hash
-                || material.vector.len() != space.dimension as usize
-                || material.vector.iter().any(|v| !v.is_finite())
-            {
+            if material.text != bound.representation.text {
                 return Err(Error::new(
                     nous_core::ErrorOwner::ModelWorkflow,
                     nous_core::ErrorCode::InvalidRequest,
-                    "Invalid request",
+                    "Query embedding text does not match the prepared query representation",
+                ));
+            }
+            if material.text.len() > 131072 {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Query embedding text exceeds the 131,072-byte limit",
+                ));
+            }
+            if material.space_hash != space.space_hash {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Query embedding space does not match the configured space",
+                ));
+            }
+            if material.producer_hash != producer.signature_hash {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Query embedding producer is not authorized",
+                ));
+            }
+            if material.vector.len() != space.dimension as usize {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Query embedding vector dimension does not match the configured space",
+                ));
+            }
+            if material.vector.iter().any(|v| !v.is_finite()) {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Query embedding vector contains a non-finite value",
                 ));
             }
             materials.push(QueryEmbedding {
@@ -112,7 +141,7 @@ pub(super) fn private_workflow_owner(owner: &str) -> Result<()> {
         Err(Error::new(
             nous_core::ErrorOwner::ModelWorkflow,
             nous_core::ErrorCode::InvalidRequest,
-            "Invalid request",
+            "Only Memory and Material workflow owners are supported here",
         ))
     }
 }

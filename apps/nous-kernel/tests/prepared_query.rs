@@ -31,10 +31,6 @@ fn query(subject: SubjectId) -> CognitiveQuery {
     }
 }
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one owner scenario preserves WorkContext mutation and query snapshot ordering"
-)]
 async fn preparation_captures_work_context_exact_sources_and_frozen_policy_without_serving() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
@@ -322,7 +318,8 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         })
         .await
         .unwrap();
-    let frozen_results = Box::pin(runtime.execute_bound_query(frozen_runtime, None))
+    let frozen_results = runtime
+        .execute_bound_query(frozen_runtime, None)
         .await
         .unwrap()
         .result;

@@ -7,10 +7,6 @@ use sqlx::Row;
 use std::collections::BTreeSet;
 
 impl KernelService {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one bounded snapshot captures source, owner identities, candidates and eligible support catalogs"
-    )]
     pub(super) async fn consolidation_context(&self, plan: &mut k::MaintenancePlan) -> Result<()> {
         let subject = SubjectId(id(&plan.subject_id)?);
         let snapshot = self.0.configuration.snapshot_for_subject(subject)?;

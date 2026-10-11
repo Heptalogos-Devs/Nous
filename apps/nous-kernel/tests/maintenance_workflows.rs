@@ -129,10 +129,6 @@ async fn drafts_commit_replay_and_ack_reclaim_runtime_rows() {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one regression follows runtime state across acknowledgement, replay and expiration"
-)]
 async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff() {
     let (root, url, _postgres) = database().await;
     let at = Utc::now().trunc_subsecs(6);

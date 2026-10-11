@@ -52,10 +52,6 @@ fn workflow_owner(owner: &str) -> Option<p::ErrorOwner> {
 }
 
 impl KernelService {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "oneof dispatch keeps each lookup scoped to its existing owner receipt"
-    )]
     pub(super) async fn get_operation_status(
         &self,
         input: p::GetOperationStatusRequest,

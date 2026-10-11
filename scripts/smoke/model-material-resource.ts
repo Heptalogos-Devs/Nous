@@ -288,15 +288,32 @@ async function cli(...args: string[]) {
   if (code !== 0) throw new Error(`CLI ${args[0]} failed: ${errors}`);
   const envelope = JSON.parse(output) as {
     schemaVersion: string;
+    kind: string;
     data: Record<string, unknown>;
   };
-  assert.equal(envelope.schemaVersion, "nous.cli.v1");
+  assert.equal(envelope.schemaVersion, "nous.cli.v2");
+  assert.equal(typeof envelope.kind, "string");
   return envelope.data;
 }
 try {
   await boot();
   await cli("status");
-  const subject = await cli("subject", "create");
+  const subjectRequestPath = join(dataRoot, "subject.toml");
+  await writeFile(
+    subjectRequestPath,
+    [
+      "[cognitive_seed]",
+      'text = "schema_version = 1"',
+      'format = "application/vnd.nous-wave.cognitive-seed+toml;version=1"',
+      "",
+    ].join("\n"),
+  );
+  const subject = await cli(
+    "subject",
+    "create",
+    "--request-file",
+    subjectRequestPath,
+  );
   const subjectId = String(subject.subjectId);
   const session = await cli("session", "open");
   // Synthetic local wiring wiring; it is never real corpus or live-model evidence.
@@ -627,9 +644,11 @@ try {
   const file = join(dataRoot, "source.txt");
   await writeFile(file, "Streaming artifact consumer wiring.");
   const uploaded = await cli("observe", "file", file);
+  const uploadedObservation = uploaded.observation as Record<string, unknown>;
+  const uploadedOccurrenceId = String(uploadedObservation.occurrenceId);
   assert(
-    typeof uploaded.occurrenceId === "string" &&
-      typeof uploaded.sourceRegionId === "string",
+    typeof uploadedObservation.occurrenceId === "string" &&
+      typeof uploadedObservation.sourceRegionId === "string",
   );
   await stop();
   await appendFile(
@@ -679,7 +698,7 @@ routes = ["memory_formation"]
   const formationRequest = {
     subjectId,
     operationId: crypto.randomUUID(),
-    occurrenceId: uploaded.occurrenceId,
+    occurrenceId: uploadedOccurrenceId,
     aboutnessMode: "none",
   };
   const unavailableFormation =

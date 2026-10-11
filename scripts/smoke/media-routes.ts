@@ -7,6 +7,7 @@ import { readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
+import { NousError } from "@nous-wave/client";
 import { CreateSubjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { parse, stringify } from "smol-toml";
 import { workspaceTemp } from "../workspace.js";
@@ -236,13 +237,7 @@ try {
   holdFallback = true;
   await assert.rejects(
     current.client.model.deriveMaterial(timedInput),
-    (error: unknown) =>
-      Boolean(
-        error &&
-        typeof error === "object" &&
-        "code" in error &&
-        error.code === 4,
-      ),
+    (error: unknown) => error instanceof NousError && error.transportCode === 4,
   );
   assert.deepEqual(calls.slice(beforeCancel), ["preferred", "fallback"]);
   holdFallback = false;

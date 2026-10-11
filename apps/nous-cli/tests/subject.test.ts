@@ -12,8 +12,9 @@ import { expect, it, vi } from "vitest";
 import type { connectNousInstance } from "@nous-wave/client/node";
 import { workspacePaths } from "../../../scripts/workspace.js";
 import { runCli } from "./support/client.js";
+import { CliError } from "../src/agent.js";
 
-it("lets configured defaults own omitted Subject seed and capabilities", async () => {
+it("requires a semantic seed before creating a Subject", async () => {
   const root = await mkdtemp(
     join(workspacePaths.temporary, "subject-defaults-"),
   );
@@ -24,19 +25,19 @@ it("lets configured defaults own omitted Subject seed and capabilities", async (
     }),
   );
   try {
-    await runCli(
+    const outcome = await runCli(
       ["subject", "create", "--run-root", root, "--instance-root", root],
       async () =>
         ({ subjects: { create: createSubject } }) as unknown as Awaited<
           ReturnType<typeof connectNousInstance>
         >,
-    );
-    expect(createSubject).toHaveBeenCalledOnce();
-    const request = createSubject.mock.calls[0]![0];
-    expect(request.subjectId).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(request.operationId).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(request).not.toHaveProperty("capabilities");
-    expect(request).not.toHaveProperty("cognitiveSeed");
+    ).catch((error: unknown) => error);
+    expect(outcome).toBeInstanceOf(CliError);
+    if (!(outcome instanceof CliError))
+      throw new Error("Expected subject create to reject missing seed input");
+    expect(outcome.code).toBe("INVALID_ARGUMENT");
+    expect(outcome.message).toContain("--request-file");
+    expect(createSubject).not.toHaveBeenCalled();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -49,8 +50,8 @@ it("parses explicit Subject seed, provenance, metadata and capabilities from TOM
     requestPath,
     [
       "[cognitive_seed]",
-      'text = "seed content"',
-      'format = "text/plain"',
+      'text = "schema_version = 1"',
+      'format = "application/vnd.nous-wave.cognitive-seed+toml;version=1"',
       "[cognitive_seed.provenance]",
       'source = "approved-import"',
       "[metadata]",
@@ -86,8 +87,10 @@ it("parses explicit Subject seed, provenance, metadata and capabilities from TOM
     const request = createSubject.mock.calls[0]![0];
     expect(request.subjectId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(request.operationId).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(request.cognitiveSeed?.text).toBe("seed content");
-    expect(request.cognitiveSeed?.format).toBe("text/plain");
+    expect(request.cognitiveSeed?.text).toBe("schema_version = 1");
+    expect(request.cognitiveSeed?.format).toBe(
+      "application/vnd.nous-wave.cognitive-seed+toml;version=1",
+    );
     expect(request.cognitiveSeed?.provenance).toEqual({
       source: "approved-import",
     });

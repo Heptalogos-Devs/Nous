@@ -217,147 +217,155 @@ impl MemoryService {
         for reference in selected {
             let contribution = match &reference {
                 CognitiveRef::Episode(_) | CognitiveRef::EpisodeRevision(_) => {
-                    episodes.get(&reference).and_then(|view| {
-                        contextual_state_eligible(
-                            view.object.acceptance_state,
-                            view.object.integrity_state,
-                            view.object.suppression_state,
-                            view.object.purge_state,
-                        )
-                        .then(|| {
-                            let text = [
-                                view.revision.title.as_deref(),
-                                Some(&view.revision.boundary_explanation),
-                            ]
-                            .into_iter()
-                            .flatten()
-                            .filter(|value| !value.trim().is_empty())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                            owner_contribution(
-                                reference.clone(),
-                                CognitiveRef::EpisodeRevision(view.revision.episode_revision_id),
-                                "episode_summary",
-                                text,
-                                FreshnessDescriptor {
-                                    occurred: vec![view.revision.experience_time.clone()],
-                                    observed_at: None,
-                                    valid_time: TemporalExtent::Unknown,
-                                    formed_at: Some(view.revision.formed_at),
-                                    recorded_at: Some(view.revision.recorded_at),
-                                },
-                                basis_handles(&view.basis),
-                                remaining,
-                            )
-                        })
-                    })
+                    let Some(view) = episodes.get(&reference) else {
+                        degradation.push(unavailable_context_source(&reference));
+                        continue;
+                    };
+                    if !contextual_state_eligible(
+                        view.object.acceptance_state,
+                        view.object.integrity_state,
+                        view.object.suppression_state,
+                        view.object.purge_state,
+                    ) {
+                        degradation.push(unavailable_context_source(&reference));
+                        continue;
+                    }
+                    let text = [
+                        view.revision.title.as_deref(),
+                        Some(&view.revision.boundary_explanation),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .filter(|value| !value.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                    owner_contribution(
+                        reference.clone(),
+                        CognitiveRef::EpisodeRevision(view.revision.episode_revision_id),
+                        "episode_summary",
+                        text,
+                        FreshnessDescriptor {
+                            occurred: vec![view.revision.experience_time.clone()],
+                            observed_at: None,
+                            valid_time: TemporalExtent::Unknown,
+                            formed_at: Some(view.revision.formed_at),
+                            recorded_at: Some(view.revision.recorded_at),
+                        },
+                        basis_handles(&view.basis),
+                        remaining,
+                    )
                 }
                 CognitiveRef::Journal(_) | CognitiveRef::JournalRevision(_) => {
-                    journals.get(&reference).and_then(|view| {
-                        contextual_state_eligible(
-                            view.object.acceptance_state,
-                            view.object.integrity_state,
-                            view.object.suppression_state,
-                            view.object.purge_state,
-                        )
-                        .then(|| {
-                            let mut text = view.revision.narrative.clone();
-                            for point in &view.points {
-                                if !point.text.trim().is_empty() {
-                                    if !text.is_empty() {
-                                        text.push('\n');
-                                    }
-                                    text.push_str(&point.text);
-                                }
-                            }
-                            let mut evidence = view
-                                .sources
+                    let Some(view) = journals.get(&reference) else {
+                        degradation.push(unavailable_context_source(&reference));
+                        continue;
+                    };
+                    if !contextual_state_eligible(
+                        view.object.acceptance_state,
+                        view.object.integrity_state,
+                        view.object.suppression_state,
+                        view.object.purge_state,
+                    ) {
+                        degradation.push(unavailable_context_source(&reference));
+                        continue;
+                    }
+                    let text = std::iter::once(view.revision.narrative.as_str())
+                        .filter(|text| !text.is_empty())
+                        .chain(
+                            view.points
                                 .iter()
-                                .cloned()
-                                .map(|source| EvidenceHandle {
-                                    epistemic_relation: None,
-                                    reference: source,
-                                    basis_role: "journal_source".into(),
-                                })
-                                .collect::<Vec<_>>();
-                            for point in &view.points {
-                                evidence.extend(basis_handles(&point.basis));
-                            }
-                            owner_contribution(
-                                reference.clone(),
-                                CognitiveRef::JournalRevision(view.revision.journal_revision_id),
-                                "journal_narrative",
-                                text,
-                                FreshnessDescriptor {
-                                    occurred: vec![view.revision.temporal_scope.clone()],
-                                    observed_at: None,
-                                    valid_time: TemporalExtent::Unknown,
-                                    formed_at: Some(view.revision.formed_at),
-                                    recorded_at: Some(view.revision.recorded_at),
-                                },
-                                evidence,
-                                remaining,
-                            )
+                                .map(|point| point.text.as_str())
+                                .filter(|text| !text.trim().is_empty()),
+                        )
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let mut evidence = view
+                        .sources
+                        .iter()
+                        .cloned()
+                        .map(|source| EvidenceHandle {
+                            epistemic_relation: None,
+                            reference: source,
+                            basis_role: "journal_source".into(),
                         })
-                    })
+                        .collect::<Vec<_>>();
+                    for point in &view.points {
+                        evidence.extend(basis_handles(&point.basis));
+                    }
+                    owner_contribution(
+                        reference.clone(),
+                        CognitiveRef::JournalRevision(view.revision.journal_revision_id),
+                        "journal_narrative",
+                        text,
+                        FreshnessDescriptor {
+                            occurred: vec![view.revision.temporal_scope.clone()],
+                            observed_at: None,
+                            valid_time: TemporalExtent::Unknown,
+                            formed_at: Some(view.revision.formed_at),
+                            recorded_at: Some(view.revision.recorded_at),
+                        },
+                        evidence,
+                        remaining,
+                    )
                 }
                 CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_) => {
-                    schemas.get(&reference).and_then(|view| {
-                        contextual_state_eligible(
-                            view.schema.acceptance_state,
-                            view.schema.integrity_state,
-                            view.schema.suppression_state,
-                            view.schema.purge_state,
-                        )
-                        .then(|| {
-                            let evidence = view
-                                .evidence_links
-                                .iter()
-                                .flat_map(|link| basis_handles(std::slice::from_ref(&link.basis)))
-                                .collect();
-                            owner_contribution(
-                                reference.clone(),
-                                CognitiveRef::CognitiveSchemaRevision(
-                                    view.revision.schema_revision_id,
-                                ),
-                                "schema_claim",
-                                schema_context_text(&view.revision),
-                                FreshnessDescriptor {
-                                    occurred: Vec::new(),
-                                    observed_at: None,
-                                    valid_time: view
-                                        .revision
-                                        .applicability_scope
-                                        .valid_time
-                                        .clone(),
-                                    formed_at: Some(view.revision.formed_at),
-                                    recorded_at: Some(view.revision.recorded_at),
-                                },
-                                evidence,
-                                remaining,
-                            )
-                        })
-                    })
+                    let Some(view) = schemas.get(&reference) else {
+                        degradation.push(unavailable_context_source(&reference));
+                        continue;
+                    };
+                    if !contextual_state_eligible(
+                        view.schema.acceptance_state,
+                        view.schema.integrity_state,
+                        view.schema.suppression_state,
+                        view.schema.purge_state,
+                    ) {
+                        degradation.push(unavailable_context_source(&reference));
+                        continue;
+                    }
+                    let evidence = view
+                        .evidence_links
+                        .iter()
+                        .flat_map(|link| basis_handles(std::slice::from_ref(&link.basis)))
+                        .collect();
+                    owner_contribution(
+                        reference.clone(),
+                        CognitiveRef::CognitiveSchemaRevision(view.revision.schema_revision_id),
+                        "schema_claim",
+                        schema_context_text(&view.revision),
+                        FreshnessDescriptor {
+                            occurred: Vec::new(),
+                            observed_at: None,
+                            valid_time: view.revision.applicability_scope.valid_time.clone(),
+                            formed_at: Some(view.revision.formed_at),
+                            recorded_at: Some(view.revision.recorded_at),
+                        },
+                        evidence,
+                        remaining,
+                    )
                 }
-                _ => None,
+                _ => {
+                    degradation.push(unavailable_context_source(&reference));
+                    continue;
+                }
             };
-            if let Some(mut contribution) = contribution {
-                if let Some(text) = contribution.text.take() {
-                    let bounded = bounded_text(text, remaining);
-                    remaining = remaining.saturating_sub(bounded.len());
-                    contribution.estimated_tokens =
-                        Some(((bounded.len().saturating_add(3)) / 4).min(u32::MAX as usize) as u32);
-                    contribution.text = Some(bounded);
-                }
-                contributions.push(contribution);
-            } else {
-                degradation.push(Degradation {
-                    code: "projection_source_unavailable".into(),
-                    detail: Some(reference.to_string()),
-                });
+            let mut contribution = contribution;
+            if let Some(text) = contribution.text.take() {
+                let bounded = bounded_text(text, remaining);
+                remaining = remaining.saturating_sub(bounded.len());
+                contribution.estimated_tokens =
+                    Some(((bounded.len().saturating_add(3)) / 4).min(u32::MAX as usize) as u32);
+                contribution.text = Some(bounded);
             }
+            contributions.push(contribution);
         }
         Ok((contributions, degradation))
+    }
+}
+
+fn unavailable_context_source(reference: &CognitiveRef) -> Degradation {
+    Degradation {
+        code: "projection_source_unavailable".into(),
+        detail: Some(reference.to_string()),
     }
 }
 

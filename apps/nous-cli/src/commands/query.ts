@@ -4,6 +4,8 @@ import { CliError, boundedInteger } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { toJson } from "@bufbuild/protobuf";
+import { QueryDiagnosticsSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 const cognitionKinds = new Set([
   "memory_revision",
   "cognitive_schema_revision",
@@ -99,6 +101,12 @@ export async function queryCommands(
   // A failed new query must not leave result:N pointing at an unrelated old answer.
   await save({ ...state, lastQuery: undefined });
   const response = await client.cognition.query(request);
+  const diagnostics = response.diagnostics
+    ? (toJson(QueryDiagnosticsSchema, response.diagnostics) as Record<
+        string,
+        unknown
+      >)
+    : undefined;
   const refs = response.hits.map((hit) => hit.revision ?? hit.reference);
   if (refs.some((ref) => !ref))
     throw new CliError(
@@ -145,19 +153,19 @@ export async function queryCommands(
     resourceRecords: response.resourceRecords,
     resourceActions: response.resourceActions,
     diagnostics:
-      response.diagnostics &&
+      diagnostics &&
       (values.developer
         ? {
-            ...response.diagnostics,
-            ...(response.diagnostics.trace
+            ...diagnostics,
+            ...(response.diagnostics?.trace
               ? { trace: JSON.parse(response.diagnostics.trace) as unknown }
               : {}),
           }
         : {
-            candidateCounts: response.diagnostics.candidateCounts,
-            laneStatus: response.diagnostics.laneStatus,
-            topologyComplete: response.diagnostics.topologyComplete,
-            topologyDiscardedMass: response.diagnostics.topologyDiscardedMass,
+            candidateCounts: diagnostics.candidateCounts,
+            laneStatus: diagnostics.laneStatus,
+            topologyComplete: diagnostics.topologyComplete,
+            topologyDiscardedMass: diagnostics.topologyDiscardedMass,
           }),
     degradation: response.degradation,
   };

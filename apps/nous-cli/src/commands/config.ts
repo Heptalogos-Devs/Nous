@@ -9,7 +9,7 @@ import {
 } from "@nous-wave/client";
 import { GetConfigurationRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import type { CliEnvironment } from "../runtime.js";
-import { CliError } from "../agent.js";
+import { CliError, nonnegativeInt64 } from "../agent.js";
 
 export async function configCommands(
   env: CliEnvironment,
@@ -61,7 +61,9 @@ export async function configCommands(
       desired,
       activeDigest: active?.effectiveDigest,
       desiredDigest: desired?.effectiveDigest,
-      revision: desired?.configurationRevision ?? active?.configurationRevision,
+      revision: (
+        desired?.configurationRevision ?? active?.configurationRevision
+      )?.toString(),
     };
   }
   if (action !== "set" && action !== "clear")
@@ -70,18 +72,10 @@ export async function configCommands(
       "Use config list|describe|get|set|clear",
     );
   const operationId = values["operation-id"] ?? crypto.randomUUID();
-  const suppliedRevision = required(
+  const expectedRevision = nonnegativeInt64(
     values["expected-revision"],
     "--expected-revision from config get --view desired",
   );
-  if (!/^(0|[1-9][0-9]*)$/.test(suppliedRevision))
-    throw new CliError(
-      "INVALID_ARGUMENT",
-      "Expected revision must be a nonnegative integer",
-    );
-  const expectedRevision = BigInt(suppliedRevision);
-  if (expectedRevision > 9223372036854775807n)
-    throw new CliError("INVALID_ARGUMENT", "Expected revision exceeds int64");
   let change;
   if (action === "set") {
     const value = configurationValue(

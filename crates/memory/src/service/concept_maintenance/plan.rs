@@ -34,10 +34,6 @@ impl MemoryService {
             .await
             .map_err(db)
     }
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one local plan joins focus, one-hop endpoints and typed catalogs"
-    )]
     pub async fn plan_concepts(
         &self,
         subject: SubjectId,

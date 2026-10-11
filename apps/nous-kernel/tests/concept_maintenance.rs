@@ -72,10 +72,6 @@ async fn assert_subject_producer(rt: &NousRuntime, subject: SubjectId, implement
     assert_eq!(foreign.code(), tonic::Code::NotFound);
 }
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one live owner and Serving scenario verifies local plans, derived signals and real policy effects"
-)]
 async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_commit() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime_with_serving(&url, &root, true, false, true).await;

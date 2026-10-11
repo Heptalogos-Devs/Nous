@@ -29,10 +29,6 @@ fn expectation(tag: &nous_memory::Tag) -> TagExpectation {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one lifecycle scenario verifies history, aliases, merge interpretation and split scope"
-)]
 async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_serving() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime(&url, &root).await;

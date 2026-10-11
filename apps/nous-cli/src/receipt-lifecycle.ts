@@ -71,9 +71,13 @@ export function createReceiptLifecycle(
         typeof record.owner === "string" ? record.owner : undefined;
       const noCommit =
         error instanceof NousError &&
-        errorOwner === receiptOwner &&
+        error.semanticComplete &&
         !!errorCode &&
-        receiptDefinition(receipt.command).noCommitCodes.includes(errorCode);
+        ((errorOwner === receiptOwner &&
+          receiptDefinition(receipt.command).noCommitCodes.includes(
+            errorCode,
+          )) ||
+          (errorOwner === "KERNEL" && errorCode === "INVALID_REQUEST"));
       if (noCommit) {
         try {
           await local.writeReceipt(id, {

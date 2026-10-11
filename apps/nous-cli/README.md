@@ -13,7 +13,12 @@
 按[根 README](../../README.md)准备开发环境并运行 `corepack pnpm dev`，另一个终端可执行：
 
 ```sh
-corepack pnpm nous subject create
+cat > subject.toml <<'EOF'
+[cognitive_seed]
+text = "schema_version = 1"
+format = "application/vnd.nous-wave.cognitive-seed+toml;version=1"
+EOF
+corepack pnpm nous subject create --request-file subject.toml
 corepack pnpm nous session open
 corepack pnpm nous observe text --text "实际来源的有界原文" --source "https://example.com/source"
 corepack pnpm nous form <返回的 obs:词汇引用> --tag <返回的 Tag 词汇引用>
@@ -86,11 +91,19 @@ role = "contextual"
 
 Memory 生命周期由 `memory suppress|restore|withdraw|reaccept|purge <ref> --expected-epoch <epoch>` 显式管理；`memory accessibility <ref> --mode auto|normal|deep|explicit --expected-epoch <epoch>` 只调整可访问性。`memory link --from <exact revision> --to <exact revision> --relation <relation>` 建立修订关系。每个修改都保存稳定 operation identity 并通过 `retry <receipt-id>` 原样恢复。
 
-`subject create [--request-file <subject.toml>]` 在本地 pending receipt 前生成固定 Subject ID 和 operation ID。无输入文件时，seed、metadata 和 capabilities 都留给 Core 的 `new_subject_defaults` 配置决定；CLI 不会强行开启 Memory 或伪造 schema seed。需要自定义时可填写：
+`subject create --request-file <subject.toml>` 必须显式提供 Cognitive Seed；CLI 不会在传输层注入种子，也不会从不存在的默认值推断内容。它会先验证请求，再于本地 pending receipt 与 RPC 前生成并固定 Subject ID 和 operation ID。最小文件为：
 
 ```toml
 [cognitive_seed]
-text = "初始认知种子正文"
+text = "schema_version = 1"
+format = "application/vnd.nous-wave.cognitive-seed+toml;version=1"
+```
+
+`text` 本身必须是符合 Cognitive Seed TOML schema 的文档。可按需要加上 provenance、metadata 和 capabilities：
+
+```toml
+[cognitive_seed]
+text = "schema_version = 1"
 format = "application/vnd.nous-wave.cognitive-seed+toml;version=1"
 
 [cognitive_seed.provenance]

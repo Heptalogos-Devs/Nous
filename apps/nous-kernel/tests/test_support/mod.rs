@@ -384,7 +384,7 @@ pub(crate) fn query_run(
         bound.clone(),
         lease,
         host_policy,
-        QueryRunStage::AwaitFinalize,
+        QueryRunStage::Finalize,
         QueryPlan::for_bound_query(&bound),
     )
     .unwrap();
