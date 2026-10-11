@@ -32,7 +32,7 @@ impl CognitiveRuntimeService {
         .fetch_optional(&mut **tx)
         .await
         .map_err(db)?
-        .ok_or_else(|| Error::FailedPrecondition("experience Session is closed or foreign".into()))?;
+        .ok_or_else(|| crate::sessions::stale_session(input.session))?;
         sqlx::query(
             "INSERT INTO experience_items(subject_id,recorded_seq,occurrence_id,session_id,observed_at,source_class,conversation_ref,actor_entity_ref,active_work_context_id,active_work_context_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
         )

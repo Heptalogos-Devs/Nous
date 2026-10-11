@@ -3,7 +3,22 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import type { ContextPatch, Cursor, Projection, Segment } from "../domain.js";
+import { create, type Message } from "@bufbuild/protobuf";
+import {
+  ContextCursorSchema,
+  type ContextCursor as Cursor,
+  type Projection,
+  type ContextSegment as Segment,
+  type ManagedContextResponse,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+
+type ContextPatch = Omit<
+  ManagedContextResponse,
+  keyof Message | "cursor" | "projection"
+> & {
+  cursor: Cursor;
+  projection: Projection;
+};
 
 interface Track {
   cursor: Cursor;
@@ -49,7 +64,11 @@ export class ContextCompiler {
           digest(segment) === digest(projection.segments[index]),
       );
     if (!appendable) {
-      const cursor = { trackId, epochId: randomUUID(), revision: 1 };
+      const cursor = create(ContextCursorSchema, {
+        trackId,
+        epochId: randomUUID(),
+        revision: 1,
+      });
       this.save(trackId, {
         cursor,
         segments: structuredClone(projection.segments),

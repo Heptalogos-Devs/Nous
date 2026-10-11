@@ -1,5 +1,7 @@
 # Memory Authority & Provenance
 
+[返回文档目录](../../INDEX.md)
+
 ## Owner
 
 Memory (crates/memory) owns Memory/CognitiveSchema/Episode/Journal/Tag/AssociationEvidence Authority, provenance and lifecycle. Subject and Material provide the referenced identities and source records.
@@ -28,7 +30,7 @@ Memory (crates/memory) owns Memory/CognitiveSchema/Episode/Journal/Tag/Associati
 
 ## CognitiveSchema、Tag 与 AssociationEvidence
 
-- CognitiveSchema 属于 Memory owner，具有独立 object/revision、applicability、support、counterexample/boundary evidence 和 lifecycle。create/revise/split/merge 使用 `CognitiveSchemaContent` 输入；formed/recorded time 由 owner 的 CognitiveClock 分配。canonical create/revise 可以携带经过规范化的 consolidation ProducerSignature；revision 接受新的 exact evidence links 与明确 copy links，保持 formation kind 和 aboutness continuity。Receipt replay 返回原 exact SchemaRevision，不因为后续 head 变化重绑。
+- CognitiveSchema 属于 Memory owner，具有独立 object/revision、applicability、support、counterexample/boundary evidence 和 lifecycle。create/revise/split/merge 使用 `CognitiveSchemaContent` 输入；formed/recorded time 由 owner 的 CognitiveClock 分配。同一 content 的 evidence_links 是唯一 evidence 输入位置，create 请求根层不重复定义它。create/revise/split/merge 共用内容与 formation 校验、revision writer，并保存规范化的 consolidation ProducerSignature；split/merge 自己持有 source locks、lineage、epoch fences 与单次原子提交。revision 接受新的 exact evidence links 与明确 copy links，保持 formation kind 和 aboutness continuity。Receipt replay 返回原 exact SchemaRevision，不因为后续 head 变化重绑。
 - `explicit_import` 至少有一条有效 evidence；`synthesized` 需要至少两个 normalized inputs、至少两个 known independent provenance roots 和无 cycle；UnknownDependency 不增加独立 root。
 - synthesized Memory 与 CognitiveSchema 共用同一 provenance root traversal；同一 Artifact 的派生表示、同源重述、部分共享根和未知依赖均不能凑成两个独立根。
 - 增补/撤回 Schema evidence 改变 object epoch 和 projection invalidation，不伪造 content revision。
@@ -56,9 +58,10 @@ Memory、CognitiveSchema、Episode 和 Journal 的 mutation 使用 Persistence `
 
 Mutation replay 的 immutable result revision 保持原身份，当前 lifecycle/epoch 作为管理读取的可变 overlay 返回；不会重做后来已恢复的 lifecycle change。管理 get/revision 可读取带状态的 suppressed/withdrawn 内容以供修正；普通 query（包括 exact target）执行 suppression/withdrawal fences，purge 不能由管理或历史视图绕过。
 
+Schema split 回执保存按输入次序创建的 exact child revisions，merge 回执保存 exact merged revision。已提交回放先读取回执，不重新验证后来已 withdrawn、修订或失效的来源，也不改读结果对象的最新 head。领域提交同时发布关联 workflow 的实际结果依赖；其共享合同与一次性数据转换见 [持久操作](../model-runtime/cognitive-io-and-resources.md#持久操作)。
+
 Authority commit 只发布 projection invalidation/watermark；lexical、dense、topology 和 runtime serving 均可重建，不拥有 cognition truth。Memory owner 不持有 concrete Retrieval/Serving；topology candidate generation 属于 Retrieval shared contributor。
 
-[返回文档目录](../../INDEX.md)
 
 ## Semantic Concept 与显式 Tag
 

@@ -88,6 +88,9 @@ impl MemoryService {
             .await?;
         mutation.invalidate(ProjectionInvalidation::all()).await?;
         mutation
+            .publish_workflow_results("memory", &[CognitiveRef::Tag(tag.tag_id)])
+            .await?;
+        mutation
             .commit(
                 "tag",
                 Some(&tag.tag_id.0.to_string()),
@@ -123,6 +126,9 @@ impl MemoryService {
             .await?;
         mutation.invalidate(ProjectionInvalidation::all()).await?;
         mutation
+            .publish_workflow_results("memory", &[CognitiveRef::Tag(input.target.tag_id)])
+            .await?;
+        mutation
             .commit(
                 "tag",
                 Some(&input.target.tag_id.0.to_string()),
@@ -145,6 +151,9 @@ impl MemoryService {
         };
         self.merge_tags_in(mutation.tx(), subject, &input).await?;
         mutation.invalidate(ProjectionInvalidation::all()).await?;
+        mutation
+            .publish_workflow_results("memory", &[CognitiveRef::Tag(input.survivor.tag_id)])
+            .await?;
         mutation
             .commit(
                 "tag",
@@ -190,6 +199,15 @@ impl MemoryService {
             .split_tag_in(mutation.tx(), subject, &input, input.producer.as_ref())
             .await?;
         mutation.invalidate(ProjectionInvalidation::all()).await?;
+        mutation
+            .publish_workflow_results(
+                "memory",
+                &children
+                    .iter()
+                    .map(|child| CognitiveRef::Tag(child.tag_id))
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
         mutation
             .commit(
                 "tag_split",
@@ -289,9 +307,13 @@ impl MemoryService {
         if row.try_get::<Uuid, _>("current_revision_id").map_err(db)? != target.expected_revision_id
             || row.try_get::<String, _>("status").map_err(db)? != "active"
         {
-            return Err(Error::Conflict(
-                "STALE_CONTEXT: Tag head or status changed".into(),
-            ));
+            return Err(DomainError::new(
+                DomainErrorCode::StaleRevision,
+                "Tag head or status changed",
+            )
+            .with_context("tag_id", target.tag_id.0)
+            .with_context("expected_revision_id", target.expected_revision_id)
+            .into());
         }
         Ok(())
     }

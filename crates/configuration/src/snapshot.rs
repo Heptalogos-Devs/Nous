@@ -17,7 +17,7 @@ pub struct ResolvedConfigValue {
 pub struct ConfigSnapshot {
     pub subject_id: Option<SubjectId>,
     pub revision: i64,
-    pub registry_digest: String,
+    pub catalog_digest: String,
     pub effective_digest: String,
     values: Arc<BTreeMap<String, ResolvedConfigValue>>,
     registry: ConfigRegistry,
@@ -29,7 +29,7 @@ impl fmt::Debug for ConfigSnapshot {
             .debug_struct("ConfigSnapshot")
             .field("subject_id", &self.subject_id)
             .field("revision", &self.revision)
-            .field("registry_digest", &self.registry_digest)
+            .field("catalog_digest", &self.catalog_digest)
             .field("effective_digest", &self.effective_digest)
             .field("values", &self.values)
             .finish()
@@ -41,14 +41,17 @@ impl ConfigSnapshot {
         subject_id: Option<SubjectId>,
         revision: i64,
         registry: ConfigRegistry,
-        values: BTreeMap<String, ResolvedConfigValue>,
+        mut values: BTreeMap<String, ResolvedConfigValue>,
     ) -> Result<Self> {
+        for (path, value) in &mut values {
+            value.json = registry.normalize(path, &value.json)?;
+        }
         let digest_input = values
             .iter()
             .map(|(key, value)| serde_json::json!({"key": key, "value": value.json}))
             .collect::<Vec<_>>();
         let effective_digest = blake3::hash(
-            serde_json::to_string(&(registry.digest(), &digest_input))
+            serde_json::to_string(&(registry.semantic_digest(), &digest_input))
                 .map_err(|error| Error::Internal(error.to_string()))?
                 .as_bytes(),
         )
@@ -57,7 +60,7 @@ impl ConfigSnapshot {
         Ok(Self {
             subject_id,
             revision,
-            registry_digest: registry.digest().to_owned(),
+            catalog_digest: registry.catalog_digest().to_owned(),
             effective_digest,
             values: Arc::new(values),
             registry,
@@ -94,12 +97,15 @@ impl ConfigSnapshot {
     pub fn digest_for(&self, keys: &[&str]) -> Result<String> {
         let values = keys
             .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .map(|key| {
                 let value = self.json(key).ok_or_else(|| {
                     Error::Invalid(format!("configuration key is not resolved: {key}"))
                 })?;
                 let descriptor = self.registry.descriptor(key).expect("snapshot descriptor");
-                Ok(serde_json::json!({"key": key, "value": value, "json_schema": descriptor.json_schema, "reference_profile": descriptor.reference_profile, "unit": descriptor.unit}))
+                Ok(serde_json::json!({"key": key, "value": value, "contract": crate::identity::descriptor_identity(descriptor)}))
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(blake3::hash(

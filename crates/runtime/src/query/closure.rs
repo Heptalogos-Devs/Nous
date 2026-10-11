@@ -20,7 +20,11 @@ pub(super) fn validate_query_input(query: &CognitiveQuery) -> Result<()> {
         .flat_map(|scope| &scope.cues)
         .any(|cue| matches!(cue, Cue::Text(text) if text.text.contains("<UNRESOLVED:")))
     {
-        return Err(Error::Invalid("UNRESOLVED_MACHINE_PLACEHOLDER".into()));
+        return Err(DomainError::new(
+            DomainErrorCode::UnresolvedMachinePlaceholder,
+            "Resolve machine placeholders before querying",
+        )
+        .into());
     }
     Ok(())
 }

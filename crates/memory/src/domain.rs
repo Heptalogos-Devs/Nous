@@ -532,10 +532,8 @@ pub struct SchemaLineage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateSchemaInput {
+pub struct SchemaContent {
     pub producer: Option<nous_core::ProducerSignature>,
-    pub operation_id: OperationId,
-    pub subject: SubjectId,
     pub title: Option<String>,
     pub structural_claim: String,
     pub applicability_scope: SchemaScope,
@@ -546,6 +544,14 @@ pub struct CreateSchemaInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateSchemaInput {
+    pub operation_id: OperationId,
+    pub subject: SubjectId,
+    #[serde(flatten)]
+    pub content: SchemaContent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaEvidenceLinkInput {
     pub role: SchemaEvidenceRole,
     pub basis: RevisionBasis,
@@ -553,18 +559,13 @@ pub struct SchemaEvidenceLinkInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviseSchemaInput {
-    pub formation_kind: SchemaFormationKind,
-    pub producer: Option<nous_core::ProducerSignature>,
-    pub evidence_links: Vec<SchemaEvidenceLinkInput>,
     pub operation_id: OperationId,
     pub subject: SubjectId,
     pub schema_id: CognitiveSchemaId,
     pub expected_object_epoch: i64,
     pub intent: RevisionIntent,
-    pub title: Option<String>,
-    pub structural_claim: String,
-    pub applicability_scope: SchemaScope,
-    pub boundary_definition: String,
+    #[serde(flatten)]
+    pub content: SchemaContent,
     pub copy_link_ids: Vec<SchemaEvidenceLinkId>,
 }
 

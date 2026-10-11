@@ -1,32 +1,17 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { runCli } from "./commands/index.js";
+import { friendlyOutput } from "./friendly.js";
+import { formatError, formatResult } from "./format.js";
 
 type Execute = (args: string[]) => Promise<CallToolResult>;
 
-/** Honor an explicit opportunity through the process boundary; ordinary calls stay bounded. */
-export function cliCommandTimeoutMs(args: readonly string[]) {
-  const command = args.indexOf("maintenance");
-  if (command < 0 || args[command + 1] !== "grant") return 360000;
-  const option = args.findIndex((arg) => /^--max-elapsed-ms(?:=|$)/.test(arg));
-  if (option < 0) return 360000;
-  const text = args[option]!.includes("=")
-    ? args[option]!.slice(args[option]!.indexOf("=") + 1)
-    : args[option + 1];
-  const elapsed = text && /^\d+$/.test(text) ? Number(text) : NaN;
-  return Number.isSafeInteger(elapsed) && elapsed > 0 && elapsed <= 900000
-    ? Math.max(360000, elapsed + 15000)
-    : 360000;
-}
-
-/** One connection owns one CLI working set; concurrent tool requests cannot race it. */
+/** Each command freezes its selection; shared state owns short transactions. */
 export function createMcpServer(execute: Execute) {
   const server = new McpServer({ name: "nous", version: "0.1.0" });
-  let pending: Promise<unknown> = Promise.resolve();
   const invoke = (args: string[]) => {
     if (
       args[0] === "mcp" ||
@@ -43,9 +28,7 @@ export function createMcpServer(execute: Execute) {
         ],
         isError: true,
       });
-    const result = pending.then(() => execute(args));
-    pending = result.catch(() => undefined);
-    return result;
+    return execute(args);
   };
   server.registerTool(
     "nous_help",
@@ -89,49 +72,33 @@ export function createMcpServer(execute: Execute) {
   return server;
 }
 
-/** A process boundary keeps citty's help/error output out of the MCP protocol stream. */
+/** MCP and Terminal use one command core; only the host owns stdout and stdin. */
 export function cliExecutor(options: {
-  entry: string;
   runRoot: string;
   stateRoot: string;
   consumer: string;
 }): Execute {
   return async (args) => {
+    const command = [
+      "--run-root",
+      options.runRoot,
+      "--instance-root",
+      options.stateRoot,
+      "--consumer",
+      options.consumer,
+      ...args,
+    ];
     try {
-      const result = await promisify(execFile)(
-        process.execPath,
-        [
-          ...process.execArgv,
-          options.entry,
-          "--run-root",
-          options.runRoot,
-          "--instance-root",
-          options.stateRoot,
-          "--consumer",
-          options.consumer,
-          ...args,
-        ],
-        {
-          windowsHide: true,
-          maxBuffer: 8 * 1024 * 1024,
-          timeout: cliCommandTimeoutMs(args),
-        },
-      );
+      const result = await runCli(command, undefined, friendlyOutput);
       return {
-        content: [
-          { type: "text", text: result.stdout.trim() || result.stderr.trim() },
-        ],
+        content: [{ type: "text", text: formatResult(result, command) }],
       };
     } catch (error) {
-      const failure = error as Error & { stdout?: string; stderr?: string };
       return {
         content: [
           {
             type: "text",
-            text:
-              failure.stderr?.trim() ||
-              failure.stdout?.trim() ||
-              failure.message,
+            text: formatError(error, command),
           },
         ],
         isError: true,

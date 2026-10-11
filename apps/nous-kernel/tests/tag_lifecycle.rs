@@ -261,6 +261,22 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .await
         .unwrap();
     assert_eq!(binding[0].canonical, CognitiveRef::Tag(tags[0].tag_id));
+    let addresses = rt
+        .store
+        .identity_addresses(&[
+            nous_persistence::IdentityAddressTarget {
+                subject,
+                reference: CognitiveRef::Tag(tags[1].tag_id),
+            },
+            nous_persistence::IdentityAddressTarget {
+                subject,
+                reference: CognitiveRef::Tag(tags[0].tag_id),
+            },
+        ])
+        .await
+        .unwrap();
+    assert_eq!(addresses[0].status, "BOUND");
+    assert_eq!(addresses[0].lexical_ref, addresses[1].lexical_ref);
     let catalog = owner
         .plan_concepts(subject, CognitiveRef::MemoryRevision(revisions[0]))
         .await
@@ -323,7 +339,6 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     let bound = rt
         .cognition
         .bind_query(CognitiveQuery {
-            api_version: API_VERSION,
             subject,
             projection: Default::default(),
             temporal_frame: Default::default(),
@@ -542,4 +557,58 @@ async fn lexical_allocation_retries_unique_conflicts_and_rolls_back_exhaustion()
         .await
         .unwrap();
     assert_eq!(status, "UNKNOWN_REFERENCE");
+}
+
+#[tokio::test]
+async fn address_batch_reads_preserve_directory_and_enforce_visibility() {
+    let (root, url, _postgres) = database().await;
+    let rt = open_runtime(&url, &root).await;
+    let subject = test_support::query::subject(&rt).await;
+    let reference = |value| CognitiveRef::Entity(EntityRef::new(value).unwrap());
+    let resident = rt
+        .store
+        .bind_identity(
+            subject,
+            reference("entity:proquint:resident"),
+            "Resident identity".into(),
+            vec!["Resident alias".into()],
+        )
+        .await
+        .unwrap();
+    let before: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM lexical_bindings),(SELECT count(*) FROM lexical_visibility),(SELECT count(*) FROM authority_object_states)").fetch_one(rt.store.pool()).await.unwrap();
+    let targets = vec![
+        nous_persistence::IdentityAddressTarget {
+            subject,
+            reference: resident.canonical.clone(),
+        },
+        nous_persistence::IdentityAddressTarget {
+            subject,
+            reference: reference("entity:proquint:missing"),
+        },
+        nous_persistence::IdentityAddressTarget {
+            subject: nous_core::SubjectId(uuid::Uuid::new_v4()),
+            reference: resident.canonical.clone(),
+        },
+    ];
+    let addresses = rt.store.identity_addresses(&targets).await.unwrap();
+    assert_eq!(addresses.len(), 3);
+    assert_eq!(
+        addresses[0].lexical_ref.as_ref(),
+        Some(&resident.lexical_ref)
+    );
+    assert_eq!(addresses[0].status, "BOUND");
+    assert_eq!(addresses[1].lexical_ref, None);
+    assert_eq!(addresses[1].status, "UNKNOWN_REFERENCE");
+    assert_eq!(addresses[2].lexical_ref, None);
+    assert_eq!(addresses[2].status, "UNKNOWN_REFERENCE");
+    let after: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM lexical_bindings),(SELECT count(*) FROM lexical_visibility),(SELECT count(*) FROM authority_object_states)").fetch_one(rt.store.pool()).await.unwrap();
+    assert_eq!(after, before);
+    sqlx::query("UPDATE lexical_bindings SET tombstoned_at=now() WHERE lexical_ref=$1")
+        .bind(&resident.lexical_ref)
+        .execute(rt.store.pool())
+        .await
+        .unwrap();
+    let tombstone = rt.store.identity_addresses(&targets[..1]).await.unwrap();
+    assert_eq!(tombstone[0].lexical_ref, None);
+    assert_eq!(tombstone[0].status, "REFERENCE_TOMBSTONED");
 }

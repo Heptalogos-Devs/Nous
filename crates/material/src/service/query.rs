@@ -34,7 +34,7 @@ impl EvidenceTimes {
             || self.sources.iter().any(|(occurred, observed, recorded)| {
                 constraints
                     .occurred
-                    .is_none_or(|interval| occurred.overlaps_interval(&interval))
+                    .is_none_or(|interval| interval.matches_extent(occurred))
                     && constraints
                         .observed
                         .is_none_or(|interval| interval.contains(*observed))
@@ -236,25 +236,21 @@ impl nous_runtime::CognitiveContributor for MaterialService {
                 .collect();
             sql.push(" AND occurrence_id=ANY(").push_bind(ids).push(")");
         }
-        if let Some(interval) = c.occurred {
-            sql.push(" AND occurred_time_kind <> 'unknown'");
-            if let Some(start) = interval.start {
-                sql.push(" AND (occurred_time_kind='instant' AND occurred_time_start>=").push_bind(start).push(" OR occurred_time_kind='interval' AND (occurred_time_end IS NULL OR occurred_time_end>").push_bind(start).push("))");
-            }
-            if let Some(end) = interval.end {
-                sql.push(" AND (occurred_time_start IS NULL OR occurred_time_start<")
-                    .push_bind(end)
-                    .push(")");
-            }
+        use nous_persistence::{TimeColumns, push_time_predicate};
+        if let Some(predicate) = c.occurred {
+            push_time_predicate(
+                &mut sql,
+                TimeColumns::Extent {
+                    kind: "occurred_time_kind",
+                    start: "occurred_time_start",
+                    end: "occurred_time_end",
+                },
+                predicate,
+            )?;
         }
-        for (column, interval) in [("observed_at", c.observed), ("created_at", c.recorded)] {
-            if let Some(interval) = interval {
-                if let Some(start) = interval.start {
-                    sql.push(" AND ").push(column).push(">=").push_bind(start);
-                }
-                if let Some(end) = interval.end {
-                    sql.push(" AND ").push(column).push("<").push_bind(end);
-                }
+        for (column, predicate) in [("observed_at", c.observed), ("created_at", c.recorded)] {
+            if let Some(predicate) = predicate {
+                push_time_predicate(&mut sql, TimeColumns::Instant(column), predicate)?;
             }
         }
         if !c.source_classes_include.is_empty() {
@@ -371,24 +367,17 @@ SELECT * FROM records
             } else {
                 Modality::Binary
             };
-            if (!c.source_classes_include.is_empty()
-                && !c
-                    .source_classes_include
-                    .iter()
-                    .any(|value| metadata.source_classes.contains(value)))
-                || c.source_classes_exclude
-                    .iter()
-                    .any(|value| metadata.source_classes.contains(value))
-                || !metadata.matches(&source_constraints)
+            if !c.matches_common(QueryFacts {
+                authority: hit.authority,
+                entities: &[],
+                source_classes: &metadata.source_classes,
+                modality,
+                cognitive_role: None,
+                formation_mode: None,
+                epistemic_class: None,
+            }) || !metadata.matches(&source_constraints)
                 || c.recorded
-                    .is_some_and(|interval| !interval.contains(recorded_at))
-                || c.authority
-                    .is_some_and(|authority| authority != hit.authority)
-                || (!c.modalities.is_empty() && !c.modalities.contains(&modality))
-                || !c.cognitive_roles_include.is_empty()
-                || !c.formation_modes_include.is_empty()
-                || !c.entity_requirements.is_empty()
-                || !c.evidence_classes.is_empty()
+                    .is_some_and(|predicate| !predicate.contains(recorded_at))
             {
                 *drops
                     .entry("material_constraint_ineligible".into())
@@ -413,42 +402,5 @@ SELECT * FROM records
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn correlated_axes_do_not_combine_different_origins_or_invent_unknown_times() {
-        let early = DateTime::parse_from_rfc3339("2026-09-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let late = early + chrono::Duration::days(10);
-        let times = EvidenceTimes {
-            sources: vec![
-                (TemporalExtent::Instant { at: early }, late, late),
-                (TemporalExtent::Instant { at: late }, early, early),
-            ],
-            formed_at: None,
-            ..Default::default()
-        };
-        let constraints = QueryConstraints {
-            occurred: Some(TimeInterval {
-                start: None,
-                end: Some(late),
-            }),
-            observed: Some(TimeInterval {
-                start: None,
-                end: Some(late),
-            }),
-            ..Default::default()
-        };
-        assert!(!times.matches(&constraints));
-        assert!(!EvidenceTimes::default().matches(&constraints));
-        assert!(times.matches(&QueryConstraints::default()));
-        assert!(!times.matches(&QueryConstraints {
-            valid: Some(TimeInterval {
-                start: None,
-                end: Some(late)
-            }),
-            ..Default::default()
-        }));
-    }
-}
+#[path = "../../tests/unit/query.rs"]
+mod tests;

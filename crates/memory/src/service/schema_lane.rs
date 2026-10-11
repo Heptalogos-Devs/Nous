@@ -5,7 +5,7 @@ use super::lane::{LaneCandidate, LaneOutput, LaneStatus};
 use super::*;
 use nous_runtime::{BoundQuery, QueryPlan};
 use sqlx::Row;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 #[expect(
@@ -68,27 +68,14 @@ pub(crate) async fn schema_direct_lane(
         .iter()
         .filter_map(|row| row.try_get::<Uuid, _>("schema_revision_id").ok())
         .collect::<Vec<_>>();
-    let source_rows = sqlx::query(
-        "SELECT l.schema_revision_id,o.source_class FROM cognitive_schema_evidence_links l JOIN observation_occurrences o USING(occurrence_id) WHERE l.subject_id=$1 AND l.schema_revision_id=ANY($2::uuid[]) AND l.revoked_at IS NULL",
+    let mut metadata = super::longitudinal_query::longitudinal_metadata(
+        service,
+        query.subject,
+        "cognitive_schema",
+        &revision_keys,
+        bound.historical_authority.as_deref(),
     )
-    .bind(query.subject.0)
-    .bind(&revision_keys)
-    .fetch_all(service.store.pool())
-    .await
-    .map_err(nous_persistence::database_error)?;
-    let mut schema_sources = HashMap::<Uuid, Vec<SourceClass>>::new();
-    for row in source_rows {
-        let revision: Uuid = row
-            .try_get("schema_revision_id")
-            .map_err(nous_persistence::database_error)?;
-        let source_class: String = row
-            .try_get("source_class")
-            .map_err(nous_persistence::database_error)?;
-        schema_sources
-            .entry(revision)
-            .or_default()
-            .push(SourceClass::from(source_class));
-    }
+    .await?;
     let mut revision_ids = Vec::new();
     for (index, row) in rows.into_iter().enumerate() {
         let revision = CognitiveSchemaRevisionId(
@@ -121,48 +108,21 @@ pub(crate) async fn schema_direct_lane(
             .try_get::<String, _>("purge_state")
             .map_err(nous_persistence::database_error)?
             == "normal";
-        let requirements_match = query
-            .expression
-            .constraints
-            .entity_requirements
-            .iter()
-            .all(|entity| aboutness.contains(entity));
-        let source_matches = schema_sources.get(&revision.0).cloned().unwrap_or_default();
-        let source_constraints_match = (query
-            .expression
-            .constraints
-            .source_classes_include
-            .is_empty()
-            || query
-                .expression
-                .constraints
-                .source_classes_include
-                .iter()
-                .any(|value| source_matches.contains(value)))
-            && !query
-                .expression
-                .constraints
-                .source_classes_exclude
-                .iter()
-                .any(|value| source_matches.contains(value));
-        let modality_matches = query.expression.constraints.modalities.is_empty()
-            || query
-                .expression
-                .constraints
-                .modalities
-                .contains(&Modality::Text);
-        let evidence_matches = query.expression.constraints.evidence_classes.is_empty();
+        let facts = metadata.remove(&revision.0).unwrap_or_default();
+        let constraints_match = query.expression.constraints.matches_common(QueryFacts {
+            authority: AuthorityClass::SubjectCognition,
+            entities: &aboutness,
+            source_classes: &facts.source_classes,
+            modality: Modality::Text,
+            cognitive_role: None,
+            formation_mode: None,
+            epistemic_class: None,
+        });
         let current = row
             .try_get::<Uuid, _>("current_revision_id")
             .map_err(nous_persistence::database_error)?
             == revision.0;
-        if purge
-            && (historical || (accepted && valid && normal && current))
-            && requirements_match
-            && source_constraints_match
-            && modality_matches
-            && evidence_matches
-        {
+        if purge && (historical || (accepted && valid && normal && current)) && constraints_match {
             let reference = CognitiveRef::CognitiveSchemaRevision(revision);
             output.candidates.push(LaneCandidate {
                 reference: reference.clone(),
@@ -290,36 +250,24 @@ pub(crate) async fn materialize_schema_revisions(
             .into_iter()
             .map(EntityRef::new)
             .collect::<Result<Vec<_>>>()?;
+        let source_times = metadata.remove(&revision.0).unwrap_or_default();
         if !bound
             .source_query
             .expression
             .constraints
-            .entity_requirements
-            .iter()
-            .all(|entity| aboutness.contains(entity))
-            || (!bound
-                .source_query
-                .expression
-                .constraints
-                .modalities
-                .is_empty()
-                && !bound
-                    .source_query
-                    .expression
-                    .constraints
-                    .modalities
-                    .contains(&Modality::Text))
-            || !bound
-                .source_query
-                .expression
-                .constraints
-                .evidence_classes
-                .is_empty()
+            .matches_common(QueryFacts {
+                authority: AuthorityClass::SubjectCognition,
+                entities: &aboutness,
+                source_classes: &source_times.source_classes,
+                modality: Modality::Text,
+                cognitive_role: None,
+                formation_mode: None,
+                epistemic_class: None,
+            })
         {
             *drops.entry("query_constraints".into()).or_default() += 1;
             continue;
         }
-        let source_times = metadata.remove(&revision.0).unwrap_or_default();
         let freshness = FreshnessDescriptor {
             occurred: source_times.occurred,
             observed_at: source_times.observed_at,
@@ -345,14 +293,14 @@ pub(crate) async fn materialize_schema_revisions(
             freshness
                 .occurred
                 .iter()
-                .any(|time| time.overlaps_interval(&interval))
+                .any(|time| interval.matches_extent(time))
         }) || !constraints.observed.is_none_or(|interval| {
             freshness
                 .observed_at
                 .is_some_and(|at| interval.contains(at))
         }) || !constraints
             .valid
-            .is_none_or(|interval| freshness.valid_time.overlaps_interval(&interval))
+            .is_none_or(|interval| interval.matches_extent(&freshness.valid_time))
             || !constraints
                 .formed
                 .is_none_or(|interval| freshness.formed_at.is_some_and(|at| interval.contains(at)))

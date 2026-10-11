@@ -47,7 +47,6 @@ pub struct RuntimeOptions {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeStatus {
-    pub api_version: u32,
     pub ready: bool,
     pub capabilities: Vec<CapabilityStatus>,
 }
@@ -106,9 +105,12 @@ impl NousRuntime {
         serving_options.lexical = system_snapshot.get(nous_retrieval::LEXICAL_ENABLED_KEY)?;
         serving_options.dense = system_snapshot.get(nous_retrieval::DENSE_ENABLED_KEY)?;
         serving_options.topology = system_snapshot.get(nous_retrieval::TOPOLOGY_ENABLED_KEY)?;
+        let memory = process_capabilities
+            .memory
+            .then(|| MemoryService::new(material.clone(), configuration.clone()));
         let serving = ServingService::new(
-            store.clone(),
-            objects.clone(),
+            material.clone(),
+            memory.clone(),
             serving_options,
             match options.stored_embedding {
                 Some(config) => Some(Arc::new(nous_retrieval::StoredEmbeddingProvider::new(
@@ -119,20 +121,6 @@ impl NousRuntime {
             },
             configuration.clone(),
         )?;
-        let memory = process_capabilities.memory.then(|| {
-            MemoryService::new(
-                store.clone(),
-                objects.clone(),
-                cognition.clone(),
-                configuration.clone(),
-            )
-        });
-        for subject in store.active_subjects().await? {
-            let status = serving.refresh(subject).await?;
-            for degradation in status.degradation {
-                tracing::warn!(code=%degradation.code, detail=?degradation.detail, "serving projection degraded");
-            }
-        }
         Ok(Self {
             configuration,
             store,
@@ -146,9 +134,14 @@ impl NousRuntime {
     }
 
     pub fn require_memory(&self) -> Result<&MemoryService> {
-        self.memory
-            .as_ref()
-            .ok_or_else(|| Error::Unavailable("Memory MicroSystem is disabled".into()))
+        self.memory.as_ref().ok_or_else(|| {
+            DomainError::new(
+                DomainErrorCode::CapabilityUnavailable,
+                "Memory MicroSystem is disabled",
+            )
+            .with_context("capability", "memory")
+            .into()
+        })
     }
 
     pub async fn query(&self, query: CognitiveQuery) -> Result<CognitiveQueryResult> {
@@ -339,7 +332,6 @@ impl NousRuntime {
             capabilities.extend(memory.status().await.capabilities);
         }
         RuntimeStatus {
-            api_version: API_VERSION,
             ready: self.store.check().await.is_ok(),
             capabilities,
         }

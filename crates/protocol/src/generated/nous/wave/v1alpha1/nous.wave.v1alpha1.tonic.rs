@@ -561,6 +561,14 @@ pub mod identity_service_server {
             tonic::Response<super::ResolveIdentityResponse>,
             tonic::Status,
         >;
+        ///
+        async fn get_identity_addresses(
+            &self,
+            request: tonic::Request<super::GetIdentityAddressesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetIdentityAddressesResponse>,
+            tonic::Status,
+        >;
     }
     ///
     #[derive(Debug)]
@@ -760,6 +768,55 @@ pub mod identity_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ResolveIdentitySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.v1alpha1.IdentityService/GetIdentityAddresses" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetIdentityAddressesSvc<T: IdentityService>(pub Arc<T>);
+                    impl<
+                        T: IdentityService,
+                    > tonic::server::UnaryService<super::GetIdentityAddressesRequest>
+                    for GetIdentityAddressesSvc<T> {
+                        type Response = super::GetIdentityAddressesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetIdentityAddressesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as IdentityService>::get_identity_addresses(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetIdentityAddressesSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

@@ -5,15 +5,23 @@ use super::*;
 use nous_core::{CognitiveSchemaId, EntityRef, OperationId, Result, SubjectId, TagId};
 use nous_memory::schema::{SchemaLifecycleAction, SchemaView};
 use nous_memory::{
-    CreateSchemaInput, ReviseSchemaInput, SchemaEvidenceLinkInput, SchemaFormationKind, SchemaScope,
+    CreateSchemaInput, ReviseSchemaInput, SchemaContent, SchemaEvidenceLinkInput,
+    SchemaFormationKind, SchemaScope,
 };
 
 fn schema_input(
     subject: SubjectId,
     operation_id: OperationId,
     value: p::CognitiveSchemaContent,
-    evidence_links: Vec<p::SchemaEvidenceLink>,
 ) -> Result<CreateSchemaInput> {
+    Ok(CreateSchemaInput {
+        subject,
+        operation_id,
+        content: schema_content(value)?,
+    })
+}
+
+fn schema_content(value: p::CognitiveSchemaContent) -> Result<SchemaContent> {
     let scope = value
         .applicability_scope
         .ok_or_else(|| Error::Invalid("applicability_scope is required".into()))?;
@@ -22,10 +30,8 @@ fn schema_input(
     } else {
         enum_value(&value.formation_kind)?
     };
-    Ok(CreateSchemaInput {
+    Ok(SchemaContent {
         producer: value.producer.map(from_producer).transpose()?,
-        operation_id,
-        subject,
         title: (!value.title.is_empty()).then_some(value.title),
         structural_claim: value.structural_claim,
         applicability_scope: SchemaScope {
@@ -44,7 +50,8 @@ fn schema_input(
         },
         boundary_definition: value.boundary_definition,
         formation_kind,
-        evidence_links: evidence_links
+        evidence_links: value
+            .evidence_links
             .into_iter()
             .map(|link| {
                 Ok(SchemaEvidenceLinkInput {
@@ -175,7 +182,6 @@ impl KernelService {
                     subject,
                     OperationId(id(&input.operation_id)?),
                     schema,
-                    input.evidence_links,
                 )?)
                 .await?,
         ))
@@ -238,50 +244,19 @@ impl KernelService {
     ) -> Result<p::CognitiveSchema> {
         let subject = SubjectId(id(&input.subject_id)?);
         let schema = required(input.schema, "schema")?;
-        let scope = schema
-            .applicability_scope
-            .clone()
-            .ok_or_else(|| Error::Invalid("applicability_scope is required".into()))?;
+        let content = schema_content(schema)?;
         let copy_link_ids = input
             .copy_link_ids
             .iter()
             .map(|value| Ok(nous_core::SchemaEvidenceLinkId(id(value)?)))
             .collect::<Result<Vec<_>>>()?;
         let value = ReviseSchemaInput {
-            formation_kind: enum_value(&schema.formation_kind)?,
-            producer: schema.producer.map(from_producer).transpose()?,
-            evidence_links: schema
-                .evidence_links
-                .into_iter()
-                .map(|link| {
-                    Ok(SchemaEvidenceLinkInput {
-                        role: enum_value(&link.role)?,
-                        basis: basis(required(link.basis, "basis")?)?,
-                    })
-                })
-                .collect::<Result<_>>()?,
+            content,
             operation_id: OperationId(id(&input.operation_id)?),
             subject,
             schema_id: CognitiveSchemaId(id(&input.schema_id)?),
             expected_object_epoch: input.expected_object_epoch,
             intent: enum_value(&input.intent)?,
-            title: (!schema.title.is_empty()).then_some(schema.title),
-            structural_claim: schema.structural_claim,
-            applicability_scope: SchemaScope {
-                description: scope.description,
-                aboutness: scope
-                    .aboutness
-                    .into_iter()
-                    .map(EntityRef::new)
-                    .collect::<Result<_>>()?,
-                tags: scope
-                    .tags
-                    .into_iter()
-                    .map(|value| Ok(TagId(id(&value)?)))
-                    .collect::<Result<_>>()?,
-                valid_time: temporal(scope.valid_time)?,
-            },
-            boundary_definition: schema.boundary_definition,
             copy_link_ids,
         };
         Ok(schema_view(
@@ -298,10 +273,7 @@ impl KernelService {
         let children = input
             .children
             .into_iter()
-            .map(|child| {
-                let links = child.evidence_links.clone();
-                schema_input(subject, operation, child, links)
-            })
+            .map(|child| schema_input(subject, operation, child))
             .collect::<Result<Vec<_>>>()?;
         let values = self
             .require_memory()?
@@ -330,12 +302,7 @@ impl KernelService {
             .map(|value| Ok(CognitiveSchemaId(id(value)?)))
             .collect::<Result<Vec<_>>>()?;
         let merged_value = required(input.merged, "merged")?;
-        let merged = schema_input(
-            subject,
-            operation,
-            merged_value.clone(),
-            merged_value.evidence_links.clone(),
-        )?;
+        let merged = schema_input(subject, operation, merged_value)?;
         Ok(schema_view(
             self.require_memory()?
                 .merge_schemas(

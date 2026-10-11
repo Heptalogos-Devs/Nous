@@ -16,6 +16,29 @@ pub enum ConceptEnrichment {
 }
 pub const CONCEPT_ENRICHMENT: ConfigKey<ConceptEnrichment> =
     ConfigKey::new("retrieval.query.concept_enrichment");
+pub const MAX_ACTIVATED_TAGS: ConfigKey<usize> =
+    ConfigKey::new("retrieval.query.concept_activation.max_activated_tags");
+pub const CONCEPT_MINIMUM_SIMILARITY: ConfigKey<f64> =
+    ConfigKey::new("retrieval.query.concept_activation.minimum_similarity");
+pub const CONCEPT_MODEL_CATALOG_LIMIT: ConfigKey<usize> =
+    ConfigKey::new("retrieval.query.concept_activation.model_catalog_limit");
+
+#[derive(Debug, Clone)]
+pub struct ConceptActivationPolicy {
+    pub max_activated_tags: usize,
+    pub minimum_similarity: f64,
+    pub model_catalog_limit: usize,
+}
+impl ConceptActivationPolicy {
+    pub fn from_snapshot(snapshot: &ConfigSnapshot) -> Result<Self> {
+        Ok(Self {
+            max_activated_tags: snapshot.get(MAX_ACTIVATED_TAGS)?,
+            minimum_similarity: snapshot.get(CONCEPT_MINIMUM_SIMILARITY)?,
+            model_catalog_limit: snapshot.get(CONCEPT_MODEL_CATALOG_LIMIT)?,
+        })
+    }
+}
+
 pub(super) fn register(registry: &mut ConfigRegistryBuilder) -> Result<()> {
     registry.register(
         CONCEPT_ENRICHMENT,
@@ -27,7 +50,63 @@ pub(super) fn register(registry: &mut ConfigRegistryBuilder) -> Result<()> {
         ConfigApplyMode::Live,
         ConfigSemanticEffect::QueryPolicy,
         |_: &ConceptEnrichment| Ok(()),
-    )
+    )?;
+    let reference = ReferenceProfile::parse(include_str!(
+        "../../../../config/reference/query-concept-activation.json"
+    ))?;
+    for (key, description) in [
+        (
+            MAX_ACTIVATED_TAGS,
+            "Maximum inferred concepts retained by one query.",
+        ),
+        (
+            CONCEPT_MODEL_CATALOG_LIMIT,
+            "Maximum frozen concept catalog entries supplied to the query model.",
+        ),
+    ] {
+        registry.register(
+            key,
+            "runtime",
+            description,
+            reference.get(key)?,
+            ConfigExposure::Advanced,
+            ConfigScopePolicy::SubjectOverrideAllowed,
+            ConfigApplyMode::Live,
+            ConfigSemanticEffect::QueryPolicy,
+            |value| {
+                if *value > 0 {
+                    Ok(())
+                } else {
+                    Err(Error::Invalid("concept budget must be positive".into()))
+                }
+            },
+        )?;
+        registry.describe(key.path(), |descriptor| {
+            descriptor.json_schema["minimum"] = serde_json::json!(1);
+            descriptor.unit = Some("items".into());
+        })?;
+    }
+    registry.register(
+        CONCEPT_MINIMUM_SIMILARITY,
+        "runtime",
+        "Minimum cosine similarity for existing concept activation.",
+        reference.get(CONCEPT_MINIMUM_SIMILARITY)?,
+        ConfigExposure::Advanced,
+        ConfigScopePolicy::SubjectOverrideAllowed,
+        ConfigApplyMode::Live,
+        ConfigSemanticEffect::QueryPolicy,
+        |value| {
+            if value.is_finite() && (-1.0..=1.0).contains(value) {
+                Ok(())
+            } else {
+                Err(Error::Invalid(
+                    "concept similarity must be finite and within -1..1".into(),
+                ))
+            }
+        },
+    )?;
+    registry.bounds(CONCEPT_MINIMUM_SIMILARITY, -1.0, 1.0, Some("cosine"))?;
+    reference.describe(registry)
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -1,0 +1,1077 @@
+{
+  "purpose": "Actual current Windows source-less program continuation, restart, query/feedback and preserved failures. Public Client consumption is distinct from blocked external Codex MCP attempts.",
+  "observedAt": "2026-10-10T02:37:17.423Z",
+  "program": {
+    "name": "Nous Wave",
+    "version": "0.1.0",
+    "platform": "win32",
+    "arch": "x64",
+    "source_head": "c544a46b0f93006a0bd46c614384942c2e16b534",
+    "source_input_sha256": "8ce904c6524082ef0ca511376e1e8ce98160c67988726d9f34c7ec7bebd71eba",
+    "source_dirty": false,
+    "source_tree": "working-tree",
+    "launcher": "bin/nous.cmd",
+    "application_license": "Apache-2.0"
+  },
+  "archiveSha256": "a7e07e96d03ab51263448e1b4010c22a0bffbda812896aa22991067096af30ac",
+  "instanceId": "ffe03b02-8997-476e-b8d1-370e88aac1a2",
+  "subject": "sub:tujap-vibuz-gozod",
+  "workContext": "ctx:raraf-romup-hasal",
+  "limits": [
+    "Portable verifier uses synthetic wiring; liveModel NOT_RUN.",
+    "External Codex tool gate rejected before any Nous operation; no external MCP success inferred.",
+    "Full original Context and bound query bytes remain in ignored persistent results; this corpus projects operation/results without duplicate context.",
+    "Dense query initially degraded; explicit existing-content embedding repair and successful query recorded separately.",
+    "Linux target is retained, unread from current Windows process. Directory deletion was automatically rejected before execution."
+  ],
+  "portableQualification": [
+    {
+      "observedAt": "2026-10-10T02:07:59.607Z",
+      "result": "PASS",
+      "platform": "win32",
+      "bundle": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\temp\\portable\\verification-8JEKHe\\installation",
+      "archive": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\releases\\windows-x64\\current.zip",
+      "layout": "home",
+      "relocated": false,
+      "verificationRootRepository": true,
+      "developerPath": false,
+      "sourceLess": true,
+      "restart": true,
+      "stableDatabasePort": true,
+      "missingPackRejected": true,
+      "subjectId": "01a12390-32b4-7b70-977a-d90f529d08ef",
+      "memoryId": "01a12390-39d2-7940-9828-dca2fe9d9e87",
+      "liveModel": "NOT_RUN",
+      "corpus": "synthetic_portable_wiring"
+    },
+    {
+      "observedAt": "2026-10-10T02:09:59.410Z",
+      "result": "PASS",
+      "platform": "win32",
+      "bundle": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\temp\\portable\\verification-zISqLV\\installation",
+      "archive": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\releases\\windows-x64\\current.zip",
+      "layout": "colocated",
+      "relocated": false,
+      "verificationRootRepository": true,
+      "developerPath": false,
+      "sourceLess": true,
+      "restart": true,
+      "stableDatabasePort": true,
+      "missingPackRejected": true,
+      "subjectId": "01a12391-1e0e-7df3-b7e7-66a8132a7605",
+      "memoryId": "01a12391-2539-7fa0-963e-1f5833ff52b4",
+      "liveModel": "NOT_RUN",
+      "corpus": "synthetic_portable_wiring"
+    },
+    {
+      "observedAt": "2026-10-10T02:09:59.410Z",
+      "result": "PASS",
+      "platform": "win32",
+      "bundle": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\temp\\portable\\verification-m8cqGp\\moved-installation",
+      "archive": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\releases\\windows-x64\\current.zip",
+      "layout": "locator",
+      "relocated": true,
+      "verificationRootRepository": true,
+      "developerPath": false,
+      "sourceLess": true,
+      "restart": true,
+      "stableDatabasePort": true,
+      "missingPackRejected": true,
+      "subjectId": "01a12392-147c-7950-bbde-8e8f30f3309b",
+      "memoryId": "01a12392-1b4e-73e0-9c4a-63d5db123a02",
+      "liveModel": "NOT_RUN",
+      "corpus": "synthetic_portable_wiring"
+    }
+  ],
+  "originalTraceContinuity": [
+    {
+      "reference": "memrev:sajot-zujup-muhug",
+      "unchanged": true,
+      "sha256": "e8f8d3f47645f2757ff9457fc265c168f5bb8fc32245ff1f7001fafd86b5d678",
+      "originalSha256": "e8f8d3f47645f2757ff9457fc265c168f5bb8fc32245ff1f7001fafd86b5d678"
+    },
+    {
+      "reference": "memrev:raman-zajos-ruvuj",
+      "unchanged": true,
+      "sha256": "799c7cb406ad8da2329d4afc4ef0bcada105b6896c637f2c0cd59fb92612a91f",
+      "originalSha256": "799c7cb406ad8da2329d4afc4ef0bcada105b6896c637f2c0cd59fb92612a91f"
+    },
+    {
+      "reference": "memrev:bufor-rurov-pupik",
+      "unchanged": true,
+      "sha256": "ac6d8fa46e8bb33ed674b5e36a8356bc73077815a05f302252e61a58f93305a7",
+      "originalSha256": "ac6d8fa46e8bb33ed674b5e36a8356bc73077815a05f302252e61a58f93305a7"
+    }
+  ],
+  "maintenance": {
+    "catalogDigest": "afa4cbe81d5b5444903d4bcb65af482a7e792ebb62f214ec9000dd805db3f573",
+    "configurationRevision": "5",
+    "entries": [
+      {
+        "path": "maintenance.enabled",
+        "source": "deployment_file",
+        "owner": "cognitive-runtime",
+        "applyMode": "live",
+        "value": false
+      }
+    ],
+    "effectiveDigest": "14858944a9a0e52a401eb3e11df83a2fc9261e28bb900126df6ae59738c9a602",
+    "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9"
+  },
+  "originalSources": [
+    {
+      "args": ["read", "obs:lihih-titij-popad"],
+      "output": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "read",
+        "data": {
+          "reference": {
+            "kind": "occurrence",
+            "value": "01a11f1c-fd73-7e60-a4b3-8eb9882e63c0"
+          },
+          "mediaType": "text/plain",
+          "totalBytes": "657",
+          "rangeStart": "0",
+          "rangeEnd": "657",
+          "partial": false,
+          "text": "On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity, and subset keys are sorted and deduplicated. A clean configuration instance verified that omitted video defaults and explicit complete defaults using the same operation ID return the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, and read back as the complete normalized values after restart. Leaf configuration organization and reference graph validation are still pending.",
+          "evidence": [
+            {
+              "basisRole": "direct",
+              "reference": {
+                "kind": "occurrence",
+                "value": "01a11f1c-fd73-7e60-a4b3-8eb9882e63c0"
+              }
+            },
+            {
+              "basisRole": "direct",
+              "reference": {
+                "kind": "artifact",
+                "value": "01a11f1c-fd73-7e60-a4b3-8ea8b24c261f"
+              }
+            }
+          ],
+          "degradation": []
+        }
+      },
+      "readTextSha256": "c720c705888d75a75abee205a045be7955dabb9148ea391a37100ed81d68910e"
+    },
+    {
+      "args": ["read", "obs:dutob-dasad-pokol"],
+      "output": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "read",
+        "data": {
+          "reference": {
+            "kind": "occurrence",
+            "value": "01a11f1c-fe0d-7c41-958c-b1b997d83197"
+          },
+          "mediaType": "text/plain",
+          "totalBytes": "812",
+          "rangeStart": "0",
+          "rangeEnd": "812",
+          "partial": false,
+          "text": "On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls are outside those locks. Each command freezes its chosen Subject, Session, WorkContext and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. A clean Core/Kernel/PostgreSQL instance verified concurrent real CLI Session opening and MCP WorkContext creation into one shared state root, both selections surviving and remaining readable across both entry points and a Core restart. Real Codex/model continuity and Windows Portable continuation remain pending.",
+          "evidence": [
+            {
+              "basisRole": "direct",
+              "reference": {
+                "kind": "occurrence",
+                "value": "01a11f1c-fe0d-7c41-958c-b1b997d83197"
+              }
+            },
+            {
+              "basisRole": "direct",
+              "reference": {
+                "kind": "artifact",
+                "value": "01a11f1c-fe0d-7c41-958c-b1a27ad1a1b3"
+              }
+            }
+          ],
+          "degradation": []
+        }
+      },
+      "readTextSha256": "f3630cbaa375da3ab253b22b9d88c90f8ac8e7367d9623cbf8fd82cbe153de46"
+    },
+    {
+      "args": ["read", "obs:bojin-gagof-pujaz"],
+      "output": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "read",
+        "data": {
+          "reference": {
+            "kind": "occurrence",
+            "value": "01a11f8b-81b0-7f22-93fc-298b6547bc65"
+          },
+          "mediaType": "text/plain",
+          "totalBytes": "531",
+          "rangeStart": "0",
+          "rangeEnd": "531",
+          "partial": false,
+          "text": "材料证据访问必须按实际成功路由和实际物理输入记录。visual、audio、source_text 分别使用 original、representation 或 unavailable。原始视频或帧不使附带的 Transcript 自动成为直接听到的音频；转录文本的音频访问只能为 representation。多路 fallback 后不能继续使用首选模型能力判断成功结果。工作预算到期后，清理保存和维护确认使用各自有界预算；已传输而结果不明的 attempt 保留 unknown，未知 usage 不写成零。",
+          "evidence": [
+            {
+              "basisRole": "direct",
+              "reference": {
+                "kind": "occurrence",
+                "value": "01a11f8b-81b0-7f22-93fc-298b6547bc65"
+              }
+            },
+            {
+              "basisRole": "direct",
+              "reference": {
+                "kind": "artifact",
+                "value": "01a11f8b-81b0-7f22-93fc-2976c7a78e61"
+              }
+            }
+          ],
+          "degradation": []
+        }
+      },
+      "readTextSha256": "229d689df23ff95789fe9b9c34a9fd4cae413f48d8c4a914d5bb0e1b9a5295a3"
+    },
+    {
+      "args": ["read", "obs:lalof-sarus-muzis"],
+      "output": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "read",
+        "data": {
+          "reference": {
+            "kind": "occurrence",
+            "value": "01a1205c-829a-7002-8d5b-31be3f2a3d0c"
+          },
+          "mediaType": "text/plain",
+          "totalBytes": "545",
+          "rangeStart": "0",
+          "rangeEnd": "545",
+          "partial": false,
+          "text": "开发期数据库重整使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份先保全，旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后的公开读取应继续找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位，普通启动只使用已安装的运行包。",
+          "evidence": [
+            {
+              "basisRole": "direct",
+              "reference": {
+                "kind": "occurrence",
+                "value": "01a1205c-829a-7002-8d5b-31be3f2a3d0c"
+              }
+            },
+            {
+              "basisRole": "direct",
+              "reference": {
+                "kind": "artifact",
+                "value": "01a1205c-829a-7002-8d5b-31a69da54cd7"
+              }
+            }
+          ],
+          "degradation": []
+        }
+      },
+      "readTextSha256": "4061e2140d38450d2ba80601703956ffb6cc388505fa8a0dd03bd1c0f2b68be7"
+    }
+  ],
+  "originalTraces": [
+    {
+      "args": ["trace", "memrev:sajot-zujup-muhug"],
+      "output": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "trace",
+        "data": {
+          "reference": {
+            "kind": "memory_revision",
+            "value": "01a11f22-0e18-7c83-9be4-7f9df0d98260"
+          },
+          "cognition": {
+            "revisionId": "01a11f22-0e18-7c83-9be4-7f9df0d98260",
+            "revisionNo": 1,
+            "objectEpoch": "1",
+            "memoryId": "01a11f22-0e18-7c83-9be4-7f827d2c4b68",
+            "title": "Nous Wave configuration normalization rebase",
+            "text": "On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity; subset keys are sorted and deduplicated. In a clean configuration instance, omitted video defaults and explicit complete defaults using the same operation ID returned the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, then read back as complete normalized values. Leaf configuration organization and reference graph validation remained pending.",
+            "producerSignatureId": "01a11f22-0e1b-79a3-a409-46f4809ec060",
+            "cognitiveRole": "declarative",
+            "semanticRole": "reported_fact",
+            "epistemicClass": "derived",
+            "groundingOccurrenceId": "01a11f1c-fd73-7e60-a4b3-8eb9882e63c0",
+            "formationMode": "grounded",
+            "acceptanceState": "accepted",
+            "integrityState": "valid",
+            "suppressionState": "normal",
+            "purgeState": "normal",
+            "basis": [
+              {
+                "basis": {
+                  "case": "evidence",
+                  "value": {
+                    "occurrenceId": "01a11f1c-fd73-7e60-a4b3-8eb9882e63c0",
+                    "locator": {
+                      "case": "wholeOccurrence",
+                      "value": true
+                    },
+                    "basisRole": "interpretation"
+                  }
+                }
+              }
+            ],
+            "aboutness": [],
+            "tags": [],
+            "formedAt": {
+              "seconds": "1791523684",
+              "nanos": 603176000
+            },
+            "recordedAt": {
+              "seconds": "1791523687",
+              "nanos": 960513000
+            },
+            "validTime": {
+              "value": {}
+            },
+            "temporalEvidence": {
+              "occurred": [
+                {
+                  "value": {}
+                }
+              ],
+              "observedAt": {
+                "seconds": "1791523356",
+                "nanos": 0
+              }
+            }
+          },
+          "producer": {
+            "signatureHash": "bcd888f2e3a08648e99a9e0aba94d84f05b514d561478cea91cec3f6a5a13aa5",
+            "providerClass": "openai-chat",
+            "operation": "memory_formation_text",
+            "implementation": "ai-sdk@7.0.102/openai@4.0.67",
+            "preprocessingIdentity": "program/memory/formation.md",
+            "preprocessingRevision": "06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a",
+            "configDigest": "5b673d9671ec0ba2f1b37d7f9638e76b45aa8f42649e949e911d0cfed9bfa0e5",
+            "modelIdentity": "doubao-seed-2.1-pro",
+            "outputSchemaDigest": "9a7c9e5c98c5f2c9e89a0ea8d08afa755156889e36df37dd85b5ba1bb4be6014",
+            "modelRole": "memory_formation",
+            "modelProfile": "pro",
+            "executionProfile": "pro_minimal",
+            "inferenceControlsDigest": "94750d6f77f42326946aad2a9d92a8956c418bdaa89f8f131c3a2600b0965eb5",
+            "rolePolicyDigest": "adf8f6dff917474c3330c8fb5d753a36687213d0d0c9f0e436f7ce9ec4c226ef",
+            "promptId": "program/memory/formation.md",
+            "promptDigest": "06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a"
+          },
+          "sources": [
+            {
+              "evidence": {
+                "occurrenceId": "01a11f1c-fd73-7e60-a4b3-8eb9882e63c0",
+                "locator": {
+                  "case": "wholeOccurrence",
+                  "value": true
+                },
+                "basisRole": "interpretation"
+              },
+              "occurrence": {
+                "occurrenceId": "01a11f1c-fd73-7e60-a4b3-8eb9882e63c0",
+                "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+                "sourceClass": "file",
+                "artifactId": "01a11f1c-fd73-7e60-a4b3-8ea8b24c261f",
+                "occurredTime": {
+                  "value": {}
+                },
+                "observedAt": {
+                  "seconds": "1791523356",
+                  "nanos": 0
+                },
+                "context": {}
+              },
+              "artifact": {
+                "artifactId": "01a11f1c-fd73-7e60-a4b3-8ea8b24c261f",
+                "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+                "contentHash": "cea9bdb9c07d46463a53521b9b7ebeb1ed18652f04cc42c8eb0bd8763eaf8ed2",
+                "byteLength": "657",
+                "mediaType": "text/plain",
+                "createdAt": {
+                  "seconds": "1791523356",
+                  "nanos": 16043000
+                },
+                "metadata": {}
+              }
+            }
+          ],
+          "derivations": []
+        }
+      }
+    },
+    {
+      "args": ["trace", "memrev:raman-zajos-ruvuj"],
+      "output": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "trace",
+        "data": {
+          "reference": {
+            "kind": "memory_revision",
+            "value": "01a11f22-2bbe-7111-8ddf-023da7f18de4"
+          },
+          "cognition": {
+            "revisionId": "01a11f22-2bbe-7111-8ddf-023da7f18de4",
+            "revisionNo": 1,
+            "objectEpoch": "1",
+            "memoryId": "01a11f22-2bbe-7111-8ddf-0229e23d0713",
+            "title": "Nous Wave local state isolation and concurrency verification",
+            "text": "On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls remain outside those locks. Each command freezes its chosen Subject, Session, WorkContext, and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. On a clean Core/Kernel/PostgreSQL instance, concurrent real CLI Session opening and MCP WorkContext creation were verified to write into one shared state root, with both selections surviving and remaining readable across both entry points and after a Core restart. Real Codex/model continuity and Windows Portable continuation remained pending.",
+            "producerSignatureId": "01a11f22-0e1b-79a3-a409-46f4809ec060",
+            "cognitiveRole": "declarative",
+            "semanticRole": "reported_fact",
+            "epistemicClass": "derived",
+            "groundingOccurrenceId": "01a11f1c-fe0d-7c41-958c-b1b997d83197",
+            "formationMode": "grounded",
+            "acceptanceState": "accepted",
+            "integrityState": "valid",
+            "suppressionState": "normal",
+            "purgeState": "normal",
+            "basis": [
+              {
+                "basis": {
+                  "case": "evidence",
+                  "value": {
+                    "occurrenceId": "01a11f1c-fe0d-7c41-958c-b1b997d83197",
+                    "locator": {
+                      "case": "wholeOccurrence",
+                      "value": true
+                    },
+                    "basisRole": "interpretation"
+                  }
+                }
+              }
+            ],
+            "aboutness": [],
+            "tags": [],
+            "formedAt": {
+              "seconds": "1791523691",
+              "nanos": 32208000
+            },
+            "recordedAt": {
+              "seconds": "1791523695",
+              "nanos": 550090000
+            },
+            "validTime": {
+              "value": {}
+            },
+            "temporalEvidence": {
+              "occurred": [
+                {
+                  "value": {}
+                }
+              ],
+              "observedAt": {
+                "seconds": "1791523356",
+                "nanos": 0
+              }
+            }
+          },
+          "producer": {
+            "signatureHash": "bcd888f2e3a08648e99a9e0aba94d84f05b514d561478cea91cec3f6a5a13aa5",
+            "providerClass": "openai-chat",
+            "operation": "memory_formation_text",
+            "implementation": "ai-sdk@7.0.102/openai@4.0.67",
+            "preprocessingIdentity": "program/memory/formation.md",
+            "preprocessingRevision": "06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a",
+            "configDigest": "5b673d9671ec0ba2f1b37d7f9638e76b45aa8f42649e949e911d0cfed9bfa0e5",
+            "modelIdentity": "doubao-seed-2.1-pro",
+            "outputSchemaDigest": "9a7c9e5c98c5f2c9e89a0ea8d08afa755156889e36df37dd85b5ba1bb4be6014",
+            "modelRole": "memory_formation",
+            "modelProfile": "pro",
+            "executionProfile": "pro_minimal",
+            "inferenceControlsDigest": "94750d6f77f42326946aad2a9d92a8956c418bdaa89f8f131c3a2600b0965eb5",
+            "rolePolicyDigest": "adf8f6dff917474c3330c8fb5d753a36687213d0d0c9f0e436f7ce9ec4c226ef",
+            "promptId": "program/memory/formation.md",
+            "promptDigest": "06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a"
+          },
+          "sources": [
+            {
+              "evidence": {
+                "occurrenceId": "01a11f1c-fe0d-7c41-958c-b1b997d83197",
+                "locator": {
+                  "case": "wholeOccurrence",
+                  "value": true
+                },
+                "basisRole": "interpretation"
+              },
+              "occurrence": {
+                "occurrenceId": "01a11f1c-fe0d-7c41-958c-b1b997d83197",
+                "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+                "sourceClass": "file",
+                "artifactId": "01a11f1c-fe0d-7c41-958c-b1a27ad1a1b3",
+                "occurredTime": {
+                  "value": {}
+                },
+                "observedAt": {
+                  "seconds": "1791523356",
+                  "nanos": 0
+                },
+                "context": {}
+              },
+              "artifact": {
+                "artifactId": "01a11f1c-fe0d-7c41-958c-b1a27ad1a1b3",
+                "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+                "contentHash": "399392d49fcf4d97e3b2b140c1f804948f0a60a7ec3385e712bb2138ceb8ac36",
+                "byteLength": "812",
+                "mediaType": "text/plain",
+                "createdAt": {
+                  "seconds": "1791523356",
+                  "nanos": 171118000
+                },
+                "metadata": {}
+              }
+            }
+          ],
+          "derivations": []
+        }
+      }
+    },
+    {
+      "args": ["trace", "memrev:bufor-rurov-pupik"],
+      "output": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "trace",
+        "data": {
+          "reference": {
+            "kind": "memory_revision",
+            "value": "01a11f8b-a8ff-7261-8558-5e1797aa1b56"
+          },
+          "cognition": {
+            "revisionId": "01a11f8b-a8ff-7261-8558-5e1797aa1b56",
+            "revisionNo": 1,
+            "objectEpoch": "1",
+            "memoryId": "01a11f8b-a8ff-7261-8558-5e0c2bf4a723",
+            "title": "材料证据访问与预算记录规则",
+            "text": "材料证据访问记录规则：必须按实际成功路由和实际物理输入记录。对 visual、audio、source_text，访问状态分别只能记为 original、representation 或 unavailable。原始视频或帧不会使其附带的 Transcript 自动成为直接听到的音频；转录文本对应的音频访问只能记为 representation。经历多路 fallback 后，不能继续用首选模型的能力判断成功结果。工作预算到期后，清理保存与维护确认分别使用各自的有界预算；已经传输但结果不明的 attempt 保留为 unknown，未知 usage 不得写成零。",
+            "producerSignatureId": "01a11f8b-a902-7cc0-ae82-d09cd6c11c49",
+            "cognitiveRole": "declarative",
+            "semanticRole": "working_practice",
+            "epistemicClass": "derived",
+            "groundingOccurrenceId": "01a11f8b-81b0-7f22-93fc-298b6547bc65",
+            "formationMode": "grounded",
+            "acceptanceState": "accepted",
+            "integrityState": "valid",
+            "suppressionState": "normal",
+            "purgeState": "normal",
+            "basis": [
+              {
+                "basis": {
+                  "case": "evidence",
+                  "value": {
+                    "occurrenceId": "01a11f8b-81b0-7f22-93fc-298b6547bc65",
+                    "locator": {
+                      "case": "wholeOccurrence",
+                      "value": true
+                    },
+                    "basisRole": "interpretation"
+                  }
+                }
+              }
+            ],
+            "aboutness": [],
+            "tags": [],
+            "formedAt": {
+              "seconds": "1791530604",
+              "nanos": 77350000
+            },
+            "recordedAt": {
+              "seconds": "1791530608",
+              "nanos": 895041000
+            },
+            "validTime": {
+              "value": {}
+            },
+            "temporalEvidence": {
+              "occurred": [
+                {
+                  "value": {}
+                }
+              ],
+              "observedAt": {
+                "seconds": "1791530598",
+                "nanos": 0
+              }
+            }
+          },
+          "producer": {
+            "signatureHash": "ef4c38b2e885d624c6aaeda09de019892488826c9ddec68cda74cc431bf3aec9",
+            "providerClass": "openai-chat",
+            "operation": "memory_formation_text",
+            "implementation": "ai-sdk@7.0.102/openai@4.0.67",
+            "preprocessingIdentity": "program/memory/formation.md",
+            "preprocessingRevision": "06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a",
+            "configDigest": "c2271c5021b7ebb1e38a60183628865a07ee60388293385e5b4afab28e0c6071",
+            "modelIdentity": "doubao-seed-2.1-pro",
+            "outputSchemaDigest": "9a7c9e5c98c5f2c9e89a0ea8d08afa755156889e36df37dd85b5ba1bb4be6014",
+            "modelRole": "memory_formation",
+            "modelProfile": "pro",
+            "executionProfile": "pro_minimal",
+            "inferenceControlsDigest": "94750d6f77f42326946aad2a9d92a8956c418bdaa89f8f131c3a2600b0965eb5",
+            "rolePolicyDigest": "adf8f6dff917474c3330c8fb5d753a36687213d0d0c9f0e436f7ce9ec4c226ef",
+            "promptId": "program/memory/formation.md",
+            "promptDigest": "06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a"
+          },
+          "sources": [
+            {
+              "evidence": {
+                "occurrenceId": "01a11f8b-81b0-7f22-93fc-298b6547bc65",
+                "locator": {
+                  "case": "wholeOccurrence",
+                  "value": true
+                },
+                "basisRole": "interpretation"
+              },
+              "occurrence": {
+                "occurrenceId": "01a11f8b-81b0-7f22-93fc-298b6547bc65",
+                "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+                "sourceClass": "file",
+                "artifactId": "01a11f8b-81b0-7f22-93fc-2976c7a78e61",
+                "occurredTime": {
+                  "value": {}
+                },
+                "observedAt": {
+                  "seconds": "1791530598",
+                  "nanos": 0
+                },
+                "context": {}
+              },
+              "artifact": {
+                "artifactId": "01a11f8b-81b0-7f22-93fc-2976c7a78e61",
+                "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+                "contentHash": "950fed83a7c2d2cfcbc3909a0dc4a459da40c93ea3e1eb7c13dda360a0426251",
+                "byteLength": "531",
+                "mediaType": "text/plain",
+                "createdAt": {
+                  "seconds": "1791530598",
+                  "nanos": 828652000
+                },
+                "metadata": {}
+              }
+            }
+          ],
+          "derivations": []
+        }
+      }
+    }
+  ],
+  "publicClientContinuation": {
+    "sessionId": "01a123a5-1947-7821-8eb1-d86125df96a2",
+    "contextBefore": {
+      "revision": "12",
+      "state": "open"
+    },
+    "foreground": {
+      "operation": "setActiveWorkContext",
+      "input": {
+        "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+        "sessionId": "01a123a5-1947-7821-8eb1-d86125df96a2",
+        "workContextId": "01a11f1c-750b-7c40-a00b-532cd8435c66",
+        "operationId": "b18f0205-eacb-4b48-9ca2-13922c45aaf2",
+        "expectedRuntimeRevision": "0"
+      },
+      "result": {
+        "sessionId": "01a123a5-1947-7821-8eb1-d86125df96a2",
+        "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+        "runtimeRevision": "1",
+        "closed": false,
+        "residentRefs": [],
+        "activeWorkContextId": "01a11f1c-750b-7c40-a00b-532cd8435c66"
+      }
+    },
+    "query": {
+      "operation": "query",
+      "input": {
+        "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+        "sessionId": "01a123a5-1947-7821-8eb1-d86125df96a2",
+        "workContextId": "01a11f1c-750b-7c40-a00b-532cd8435c66",
+        "nousql": "程序和运行包更换后，原持续重构观察如何保持认知与来源连续？ @ref(memrev:jazop-nakis-tipum) $return(memory)"
+      },
+      "result": {
+        "queryId": "01a123a5-f9b0-7cf2-a638-c2650ff20221",
+        "status": "complete",
+        "hits": [
+          {
+            "authority": "subject_cognition",
+            "evidence": [
+              {
+                "basisRole": "interpretation",
+                "reference": {
+                  "kind": "occurrence",
+                  "value": "01a1205c-829a-7002-8d5b-31be3f2a3d0c"
+                }
+              }
+            ],
+            "evidenceFamilies": ["exact"],
+            "entityRefs": [],
+            "reference": {
+              "kind": "memory_revision",
+              "value": "01a1205c-a4bb-7661-95cd-797e06b0289c"
+            },
+            "revision": {
+              "kind": "memory_revision",
+              "value": "01a1205c-a4bb-7661-95cd-797e06b0289c"
+            },
+            "text": "开发期数据库重整方案：使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份须先保全；旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后，公开读取仍应找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位；普通启动只使用已安装的运行包。",
+            "lexicalRef": "memrev:jazop-nakis-tipum",
+            "semanticRole": "working_practice",
+            "cognitiveRole": "declarative",
+            "formationMode": "grounded",
+            "formedAt": "1791544301",
+            "recordedAt": "1791544304",
+            "score": {
+              "baseline": 1,
+              "preference": 0,
+              "final": 1,
+              "baselineRank": 1,
+              "finalRank": 1,
+              "bestLaneRank": 1,
+              "variants": []
+            }
+          }
+        ],
+        "resourceActions": [],
+        "degradation": [],
+        "resourceRecords": [],
+        "diagnostics": {
+          "candidateCounts": {
+            "planned_candidate_bound": "48",
+            "exact_candidates": "1"
+          },
+          "laneStatus": {
+            "topology_plan": "skipped",
+            "resource_plan": "limit=4,synopsis_preferred=false",
+            "cue_sensing_plan": "skipped",
+            "exact": "ready",
+            "effort": "normal"
+          },
+          "trace": ""
+        }
+      },
+      "fullBoundQuerySha256": "9c2f6aadade15684ff73010cfdc9ff97c600f85106a2a21a18f89e20e280ed8b"
+    },
+    "use": {
+      "operation": "reportUse",
+      "input": {
+        "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+        "sessionId": "01a123a5-1947-7821-8eb1-d86125df96a2",
+        "consumerRef": "consumer:codex:deep-rebase-current",
+        "events": [
+          {
+            "eventId": "d89ed222-3e71-4514-b8fe-e5cfffdb5066",
+            "queryId": "01a123a5-f9b0-7cf2-a638-c2650ff20221",
+            "reference": {
+              "kind": "memory_revision",
+              "value": "01a1205c-a4bb-7661-95cd-797e06b0289c"
+            },
+            "kind": "result_supported",
+            "occurredAt": {
+              "seconds": "1791599442",
+              "nanos": 378000000
+            }
+          }
+        ]
+      },
+      "result": {
+        "acceptedCount": 1,
+        "duplicateCount": 0,
+        "sessionRuntimeRevision": "2"
+      }
+    },
+    "closedSession": {
+      "operation": "getSession",
+      "input": {
+        "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+        "id": "01a123a5-1947-7821-8eb1-d86125df96a2"
+      },
+      "result": {
+        "sessionId": "01a123a5-1947-7821-8eb1-d86125df96a2",
+        "subjectId": "01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9",
+        "runtimeRevision": "3",
+        "closed": true,
+        "residentRefs": [
+          {
+            "kind": "memory_revision",
+            "value": "01a1205c-a4bb-7661-95cd-797e06b0289c"
+          }
+        ],
+        "activeWorkContextId": "01a11f1c-750b-7c40-a00b-532cd8435c66"
+      }
+    },
+    "contextAfter": {
+      "revision": "13",
+      "state": "open",
+      "appendedText": "\n\nCurrent Work — 2026-10-10 Windows continuation (supersedes obsolete remaining-work notes; preserves historical observations above):\nLinux SAUC patch/source and both-platform unique outputs have been preserved, including all43 exact original VCP numerical files; 45 retired roots were already cleaned. Linux Serving content identity, Runtime concept freezing, lazy preparation and shutdown fixes are implemented. The final repeated Rust api_version/status fields and unused ready_status wrapper were removed. Current source-less Windows program was assembled from clean c544a46 with current shipping Kernel and SHA-verified runtimes. Home, colocated and relocated locator layouts, restart and missing-pack rejection all passed. The same instanceId, original four sources and three original trace bytes/SHA survived the program switch and a normal restart. This parent Codex used the distributed public Client for exact Unicode recall and actual result_supported feedback. The fresh external Codex CLI consumer attempts failed at nous_help before any state mutation because the active MCP gate requires approval while approval policy is never; those failures remain failures. This public continuation is not relabeled as a successful external MCP consumer. Maintenance remains deployment_file false at configurationRevision5; no new model formation, embedding preparation or maintenance grant was repeated. Final scoped build/temp cleanup, final report/CI/squash delivery and Docker/New API recovery remain outstanding. Docker was stopped through its official CLI; stale socket deletion remained rejected by automatic approval even after the human authorized it, and manual recovery was requested. Keep the full rebase active until its required work and actual use are complete."
+    }
+  },
+  "externalCodexAttempts": [
+    {
+      "file": "consumer-denied-events.jsonl",
+      "threadId": "01a12396-ba4b-7542-9cb8-a0473542a990",
+      "outcomes": [
+        {
+          "id": "item_1",
+          "type": "agent_message",
+          "text": "I’ll use only Nous to read the live context, check continuity against an exact reference, record a Use if the returned revision supports the decision, and update the context before closing the fresh Session.\n"
+        },
+        {
+          "id": "item_2",
+          "type": "mcp_tool_call",
+          "server": "nous",
+          "tool": "nous_help",
+          "arguments": {},
+          "result": null,
+          "error": {
+            "message": "MCP tool call requires approval, but approval policy is never"
+          },
+          "status": "failed"
+        },
+        {
+          "id": "item_3",
+          "type": "agent_message",
+          "text": "The Nous tool gate blocked this task before any live read or mutation. The `nous_help` call returned:\n\n> MCP tool call requires approval, but approval policy is never\n\nNo `nous_command` was executed. I stopped without retries or background work.\n\n- **Selection:** Subject `sub:tujap-vibuz-gozod` and WorkContext `ctx:raraf-romup-hasal` were not selected or read.\n- **Session/query:** No Session was opened and no NousQL query ran; there are no new Session or query IDs.\n- **Continuity evidence:** I could not verify `obs:lalof-sarus-muzis`, `memrev:jazop-nakis-tipum`, source text, exact membership, historical views, provenance, Pro producer, or existing episode/concept outcomes.\n- **Use:** No Use was submitted; there is no accepted/duplicate outcome.\n- **WorkContext:** No update was submitted. Revision12/open remains your supplied live readback, not something I independently verified.\n- **Session closure:** No fresh Session exists to close or read back.\n\nThe bounded task remains unperformed because the Nous tool requires approval while this session’s approval policy forbids it. I made no configuration, cognition, maintenance, repository, or cleanup changes."
+        }
+      ]
+    },
+    {
+      "file": "consumer-events.jsonl",
+      "threadId": "01a1239c-da23-7d41-9193-e7dabf16402b",
+      "outcomes": [
+        {
+          "id": "item_1",
+          "type": "agent_message",
+          "text": "I’ll use only `nous_help` and `nous_command` to read the live context, verify continuity through an exact reference, record a supported Use if warranted, update the remaining-work statements, and close the fresh Session.\n"
+        },
+        {
+          "id": "item_2",
+          "type": "mcp_tool_call",
+          "server": "nous",
+          "tool": "nous_help",
+          "arguments": {},
+          "result": null,
+          "error": {
+            "message": "MCP tool call requires approval, but approval policy is never"
+          },
+          "status": "failed"
+        },
+        {
+          "id": "item_3",
+          "type": "mcp_tool_call",
+          "server": "nous",
+          "tool": "nous_help",
+          "arguments": {
+            "topic": "nousql"
+          },
+          "result": null,
+          "error": {
+            "message": "MCP tool call requires approval, but approval policy is never"
+          },
+          "status": "failed"
+        },
+        {
+          "id": "item_4",
+          "type": "agent_message",
+          "text": "The Nous tools were blocked before I could read or change live state.\n\nBoth `nous_help` calls—general help and `topic=nousql`—returned the same error:\n\n> MCP tool call requires approval, but approval policy is never\n\nNo `nous_command` ran. No Session or query ID was created, no Use was recorded, and no WorkContext revision was read or updated. I could not verify the source text, provenance, producer, historical views, or existing episode/concept outcomes.\n\nThe instance, Subject, WorkContext, revision12/open state, and repository delivery facts remain information supplied by you, not independently verified in this turn. I made no state changes and stopped without retries.\n\nCompletion requires these two Nous tools to be callable under the active tool policy; that policy currently requires approval while prohibiting approval requests."
+        }
+      ]
+    }
+  ],
+  "realModelQuery": {
+    "question": "配置的 exposure 身份与 execution 身份如何分开？重启后读取完整规范化 defaults 有哪些依据？",
+    "initial": {
+      "schemaVersion": "nous.cli.v1",
+      "kind": "query",
+      "data": {
+        "queryId": "01a123ac-0253-73a0-b62e-7e8c944c88fc",
+        "queryRef": "query:last",
+        "status": "degraded",
+        "results": [
+          {
+            "lexicalRef": "eprev:bidis-jaram-finog",
+            "result": "result:1",
+            "ref": {
+              "kind": "episode_revision",
+              "value": "01a12089-8427-7971-84a0-9e5f623ad413"
+            },
+            "text": "\nhard_idle\n\nOn 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity, and subset keys are sorted and deduplicated. A clean configuration instance verified that omitted video defaults and explicit complete defaults using the same operation ID return the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, and read back as the complete normalized values after restart. Leaf configuration organization and reference graph validation are still pending.\nOn 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls are outside those locks. Each command freezes its chosen Subject, Session, WorkContext and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. A clean Core/Kernel/PostgreSQL instance verified concurrent real CLI Session opening and MCP WorkContext creation into one shared state root, both selections surviving and remaining readable across both entry points and a Core restart. Real Codex/model continuity and Windows Portable continuation remain pending.",
+            "authority": "subject_cognition",
+            "evidenceFamilies": ["lexical", "language_rerank"],
+            "next": "show result:1 | trace result:1 | use result:1 | context pin --cognition result:1"
+          },
+          {
+            "lexicalRef": "memrev:sajot-zujup-muhug",
+            "result": "result:2",
+            "ref": {
+              "kind": "memory_revision",
+              "value": "01a11f22-0e18-7c83-9be4-7f9df0d98260"
+            },
+            "text": "On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity; subset keys are sorted and deduplicated. In a clean configuration instance, omitted video defaults and explicit complete defaults using the same operation ID returned the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, then read back as complete normalized values. Leaf configuration organization and reference graph validation remained pending.",
+            "authority": "subject_cognition",
+            "cognitiveRole": "declarative",
+            "formationMode": "grounded",
+            "evidenceFamilies": ["lexical", "language_rerank"],
+            "next": "show result:2 | trace result:2 | use result:2 | context pin --cognition result:2"
+          }
+        ],
+        "resourceRecords": [],
+        "resourceActions": [],
+        "diagnostics": {
+          "candidateCounts": {
+            "lexical_candidates": "2",
+            "planned_candidate_bound": "48",
+            "dense_candidates": "0"
+          },
+          "laneStatus": {
+            "cue_sensing_plan": "skipped",
+            "dense": "unavailable",
+            "effort": "normal",
+            "lexical": "ready",
+            "resource_plan": "limit=4,synopsis_preferred=false",
+            "topology_plan": "skipped"
+          }
+        },
+        "degradation": [
+          {
+            "code": "dense_lane_unavailable",
+            "detail": "dense serving generation is unavailable"
+          },
+          {
+            "code": "dense_projection_unavailable",
+            "detail": "Host did not supply compatible embedding material"
+          }
+        ]
+      }
+    },
+    "explicitExistingContentPreparation": {
+      "schemaVersion": "nous.cli.v1",
+      "kind": "embeddings.prepare",
+      "data": {
+        "committed": 3,
+        "requests": 2,
+        "degradation": []
+      }
+    },
+    "afterPreparation": {
+      "schemaVersion": "nous.cli.v1",
+      "kind": "query",
+      "data": {
+        "queryId": "01a123ad-3d86-7fa3-8c9f-ba5cf7110090",
+        "queryRef": "query:last",
+        "status": "complete",
+        "results": [
+          {
+            "lexicalRef": "eprev:bidis-jaram-finog",
+            "result": "result:1",
+            "ref": {
+              "kind": "episode_revision",
+              "value": "01a12089-8427-7971-84a0-9e5f623ad413"
+            },
+            "text": "\nhard_idle\n\nOn 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity, and subset keys are sorted and deduplicated. A clean configuration instance verified that omitted video defaults and explicit complete defaults using the same operation ID return the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, and read back as the complete normalized values after restart. Leaf configuration organization and reference graph validation are still pending.\nOn 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls are outside those locks. Each command freezes its chosen Subject, Session, WorkContext and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. A clean Core/Kernel/PostgreSQL instance verified concurrent real CLI Session opening and MCP WorkContext creation into one shared state root, both selections surviving and remaining readable across both entry points and a Core restart. Real Codex/model continuity and Windows Portable continuation remain pending.",
+            "authority": "subject_cognition",
+            "evidenceFamilies": ["lexical", "dense", "language_rerank"],
+            "next": "show result:1 | trace result:1 | use result:1 | context pin --cognition result:1"
+          },
+          {
+            "lexicalRef": "memrev:sajot-zujup-muhug",
+            "result": "result:2",
+            "ref": {
+              "kind": "memory_revision",
+              "value": "01a11f22-0e18-7c83-9be4-7f9df0d98260"
+            },
+            "text": "On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity; subset keys are sorted and deduplicated. In a clean configuration instance, omitted video defaults and explicit complete defaults using the same operation ID returned the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, then read back as complete normalized values. Leaf configuration organization and reference graph validation remained pending.",
+            "authority": "subject_cognition",
+            "cognitiveRole": "declarative",
+            "formationMode": "grounded",
+            "evidenceFamilies": ["lexical", "dense", "language_rerank"],
+            "next": "show result:2 | trace result:2 | use result:2 | context pin --cognition result:2"
+          },
+          {
+            "lexicalRef": "eprev:pubos-hobik-hajuj",
+            "result": "result:3",
+            "ref": {
+              "kind": "episode_revision",
+              "value": "01a12089-8444-7970-9cae-34ecfe88618c"
+            },
+            "text": "\nhard_idle\n\n开发期数据库重整使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份先保全，旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后的公开读取应继续找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位，普通启动只使用已安装的运行包。",
+            "authority": "subject_cognition",
+            "evidenceFamilies": ["dense", "language_rerank"],
+            "next": "show result:3 | trace result:3 | use result:3 | context pin --cognition result:3"
+          },
+          {
+            "lexicalRef": "memrev:jazop-nakis-tipum",
+            "result": "result:4",
+            "ref": {
+              "kind": "memory_revision",
+              "value": "01a1205c-a4bb-7661-95cd-797e06b0289c"
+            },
+            "text": "开发期数据库重整方案：使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份须先保全；旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后，公开读取仍应找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位；普通启动只使用已安装的运行包。",
+            "authority": "subject_cognition",
+            "cognitiveRole": "declarative",
+            "formationMode": "grounded",
+            "evidenceFamilies": ["dense", "language_rerank"],
+            "next": "show result:4 | trace result:4 | use result:4 | context pin --cognition result:4"
+          },
+          {
+            "lexicalRef": "memrev:raman-zajos-ruvuj",
+            "result": "result:5",
+            "ref": {
+              "kind": "memory_revision",
+              "value": "01a11f22-2bbe-7111-8ddf-023da7f18de4"
+            },
+            "text": "On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls remain outside those locks. Each command freezes its chosen Subject, Session, WorkContext, and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. On a clean Core/Kernel/PostgreSQL instance, concurrent real CLI Session opening and MCP WorkContext creation were verified to write into one shared state root, with both selections surviving and remaining readable across both entry points and after a Core restart. Real Codex/model continuity and Windows Portable continuation remained pending.",
+            "authority": "subject_cognition",
+            "cognitiveRole": "declarative",
+            "formationMode": "grounded",
+            "evidenceFamilies": ["dense", "language_rerank"],
+            "next": "show result:5 | trace result:5 | use result:5 | context pin --cognition result:5"
+          },
+          {
+            "lexicalRef": "eprev:tutup-nojoz-nupuh",
+            "result": "result:6",
+            "ref": {
+              "kind": "episode_revision",
+              "value": "01a12089-8438-77e1-981e-e86f348ca9a1"
+            },
+            "text": "\nhard_idle\n\n材料证据访问必须按实际成功路由和实际物理输入记录。visual、audio、source_text 分别使用 original、representation 或 unavailable。原始视频或帧不使附带的 Transcript 自动成为直接听到的音频；转录文本的音频访问只能为 representation。多路 fallback 后不能继续使用首选模型能力判断成功结果。工作预算到期后，清理保存和维护确认使用各自有界预算；已传输而结果不明的 attempt 保留 unknown，未知 usage 不写成零。",
+            "authority": "subject_cognition",
+            "evidenceFamilies": ["dense", "language_rerank"],
+            "next": "show result:6 | trace result:6 | use result:6 | context pin --cognition result:6"
+          },
+          {
+            "lexicalRef": "memrev:bufor-rurov-pupik",
+            "result": "result:7",
+            "ref": {
+              "kind": "memory_revision",
+              "value": "01a11f8b-a8ff-7261-8558-5e1797aa1b56"
+            },
+            "text": "材料证据访问记录规则：必须按实际成功路由和实际物理输入记录。对 visual、audio、source_text，访问状态分别只能记为 original、representation 或 unavailable。原始视频或帧不会使其附带的 Transcript 自动成为直接听到的音频；转录文本对应的音频访问只能记为 representation。经历多路 fallback 后，不能继续用首选模型的能力判断成功结果。工作预算到期后，清理保存与维护确认分别使用各自的有界预算；已经传输但结果不明的 attempt 保留为 unknown，未知 usage 不得写成零。",
+            "authority": "subject_cognition",
+            "cognitiveRole": "declarative",
+            "formationMode": "grounded",
+            "evidenceFamilies": ["dense", "language_rerank"],
+            "next": "show result:7 | trace result:7 | use result:7 | context pin --cognition result:7"
+          }
+        ],
+        "resourceRecords": [],
+        "resourceActions": [],
+        "diagnostics": {
+          "candidateCounts": {
+            "dense_candidates": "7",
+            "planned_candidate_bound": "48",
+            "lexical_candidates": "2"
+          },
+          "laneStatus": {
+            "effort": "normal",
+            "dense": "ready",
+            "lexical": "ready",
+            "topology_plan": "skipped",
+            "resource_plan": "limit=4,synopsis_preferred=false",
+            "cue_sensing_plan": "skipped"
+          }
+        },
+        "degradation": []
+      }
+    }
+  },
+  "persistence": {
+    "resultsRoot": "data/research/results/deep-rebase-preservation/windows-current-2026-10-10",
+    "fullContextAndCommands": "public-continuation.json",
+    "fullOriginalReadback": "current-after-docker.json"
+  }
+}

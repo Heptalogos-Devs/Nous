@@ -21,20 +21,6 @@ CREATE TABLE artifacts (
     UNIQUE(subject_id, content_hash)
 );
 
-CREATE TABLE model_workflow_operations (
-    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    owner text NOT NULL CHECK (owner ~ '^[a-z][a-z0-9_]{0,63}$'),
-    operation_key text NOT NULL CHECK (length(operation_key) BETWEEN 1 AND 256),
-    semantic_digest text NOT NULL CHECK (length(semantic_digest) BETWEEN 1 AND 128),
-    snapshot jsonb NOT NULL,
-    proposal jsonb NULL,
-    outcome jsonb NULL,
-    lease_token uuid NULL,
-    lease_until timestamptz NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY(subject_id,owner,operation_key)
-);
 
 CREATE TABLE observation_occurrences (
     occurrence_id uuid PRIMARY KEY,
@@ -79,6 +65,13 @@ CREATE TABLE producer_signatures (
     implementation text NOT NULL,
     model_identity text NULL,
     model_revision text NULL,
+    model_role text NULL,
+    model_profile text NULL,
+    execution_profile text NULL,
+    inference_controls_digest text NULL,
+    role_policy_digest text NULL,
+    prompt_id text NULL,
+    prompt_digest text NULL,
     output_schema_digest text NULL CHECK (output_schema_digest ~ '^[0-9a-f]{64}$'),
     preprocessing_identity text NOT NULL,
     preprocessing_revision text NOT NULL,

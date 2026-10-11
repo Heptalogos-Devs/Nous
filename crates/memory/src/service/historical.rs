@@ -63,20 +63,15 @@ impl MemoryService {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let mut snapshot = HistoricalAuthoritySnapshot {
-            subject,
-            as_of,
-            revision_view,
-            cognition,
-            tags,
-            associations: rows.associations,
-            schema_evidence_links: rows.schema_evidence_links,
-            entity_bindings: rows.entity_bindings,
-            material_documents: rows.material.clone(),
-            material_visibility: rows.material,
-            lexical_visibility: rows.lexical,
-            snapshot_digest: String::new(),
-        };
+        let mut snapshot = HistoricalAuthoritySnapshot::empty(subject, as_of, revision_view);
+        snapshot.cognition = cognition;
+        snapshot.tags = tags;
+        snapshot.associations = rows.associations;
+        snapshot.schema_evidence_links = rows.schema_evidence_links;
+        snapshot.entity_bindings = rows.entity_bindings;
+        snapshot.material_documents = rows.material.clone();
+        snapshot.material_visibility = rows.material;
+        snapshot.lexical_visibility = rows.lexical;
         snapshot.refresh_digest()?;
         Ok(snapshot)
     }

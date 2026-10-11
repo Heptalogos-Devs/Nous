@@ -145,6 +145,16 @@ impl MaterialService {
             ProjectionInvalidation::text(),
         )
         .await?;
+        self.store
+            .ensure_identity_addresses_in(
+                &mut tx,
+                representation.subject_id,
+                &[CognitiveRef::DerivedRepresentation(
+                    representation.derived_representation_id,
+                )],
+                "",
+            )
+            .await?;
         tx.commit().await.map_err(db)?;
         Ok(representation)
     }
@@ -217,6 +227,15 @@ impl MaterialService {
             .fetch_one(&mut **tx)
             .await
             .map_err(db)?;
-        Ok(DerivedRegionId(actual_id))
+        let actual_id = DerivedRegionId(actual_id);
+        self.store
+            .ensure_identity_addresses_in(
+                tx,
+                region.subject_id,
+                &[CognitiveRef::DerivedRegion(actual_id)],
+                "",
+            )
+            .await?;
+        Ok(actual_id)
     }
 }

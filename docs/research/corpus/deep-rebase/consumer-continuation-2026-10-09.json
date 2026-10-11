@@ -1,0 +1,143 @@
+{
+  "purpose": "Preserve actual first-party consumer/model/source/retrieval outcomes from the clean 2026-10-09 continuing research task.",
+  "subject": "sub:tujap-vibuz-gozod",
+  "workContext": "ctx:raraf-romup-hasal",
+  "notes": [
+    "The first task used a retired local proxy and returned no Memory; those definitive failures remain in this result.",
+    "After the task instance gateway was corrected and Core restarted, a fresh Codex process recovered the original Subject and WorkContext, formed both original sources through real Doubao Pro and completed embedding/query/use.",
+    "Outputs below are verbatim public consumer results; this file does not replay or migrate internal runtime records."
+  ],
+  "outcomes": [
+    {
+      "run": "task-1-scoped",
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "form",
+          "obs:lihih-titij-popad",
+          "--operation-id",
+          "7ad75a6c-95a7-4975-b922-202610090001",
+          "--json"
+        ]
+      },
+      "output": "{\"schemaVersion\":\"nous.cli.v1\",\"kind\":\"form\",\"data\":{\"degradation\":[{\"code\":\"memory_formation_failed\",\"detail\":\"Model role memory_formation invocation failed: all_execution_routes_failed:validation_or_transport\"}],\"operationId\":\"7ad75a6c-95a7-4975-b922-202610090001\"}}"
+    },
+    {
+      "run": "task-1-scoped",
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "form",
+          "obs:dutob-dasad-pokol",
+          "--operation-id",
+          "7ad75a6c-95a7-4975-b922-202610090002"
+        ]
+      },
+      "output": "degradation:\n  1. code: memory_formation_failed\n    detail: Model role memory_formation invocation failed: all_execution_routes_failed:validation_or_transport\noperationId: 7ad75a6c-95a7-4975-b922-202610090002"
+    },
+    {
+      "run": "task-1-scoped",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["read", "obs:lihih-titij-popad"]
+      },
+      "output": "reference: obs:lihih-titij-popad\nmediaType: text/plain\ntotalBytes: 657\nrangeStart: 0\nrangeEnd: 657\npartial: false\ntext: On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity, and subset keys are sorted and deduplicated. A clean configuration instance verified that omitted video defaults and explicit complete defaults using the same operation ID return the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, and read back as the complete normalized values after restart. Leaf configuration organization and reference graph validation are still pending.\nevidence:\n  1. basisRole: direct\n    reference: obs:lihih-titij-popad\n  2. basisRole: direct\n    reference: art:hadiv-jagap-zidir"
+    },
+    {
+      "run": "task-1-scoped",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["read", "obs:dutob-dasad-pokol"]
+      },
+      "output": "reference: obs:dutob-dasad-pokol\nmediaType: text/plain\ntotalBytes: 812\nrangeStart: 0\nrangeEnd: 812\npartial: false\ntext: On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls are outside those locks. Each command freezes its chosen Subject, Session, WorkContext and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. A clean Core/Kernel/PostgreSQL instance verified concurrent real CLI Session opening and MCP WorkContext creation into one shared state root, both selections surviving and remaining readable across both entry points and a Core restart. Real Codex/model continuity and Windows Portable continuation remain pending.\nevidence:\n  1. basisRole: direct\n    reference: obs:dutob-dasad-pokol\n  2. basisRole: direct\n    reference: art:zomal-gobob-vafiz"
+    },
+    {
+      "run": "task-1-scoped",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["embeddings", "prepare", "--max-batches", "2"]
+      },
+      "output": "committed: 0\nrequests: 1\ndegradation:\n  1. code: embedding_batch_incomplete\n    detail: Model role query_embedding invocation failed: all_execution_routes_failed:embedding_validation_or_transport"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["read", "obs:lihih-titij-popad"]
+      },
+      "output": "reference: obs:lihih-titij-popad\nmediaType: text/plain\ntotalBytes: 657\nrangeStart: 0\nrangeEnd: 657\npartial: false\ntext: On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity, and subset keys are sorted and deduplicated. A clean configuration instance verified that omitted video defaults and explicit complete defaults using the same operation ID return the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, and read back as the complete normalized values after restart. Leaf configuration organization and reference graph validation are still pending.\nevidence:\n  1. basisRole: direct\n    reference: obs:lihih-titij-popad\n  2. basisRole: direct\n    reference: art:hadiv-jagap-zidir"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["read", "obs:dutob-dasad-pokol"]
+      },
+      "output": "reference: obs:dutob-dasad-pokol\nmediaType: text/plain\ntotalBytes: 812\nrangeStart: 0\nrangeEnd: 812\npartial: false\ntext: On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls are outside those locks. Each command freezes its chosen Subject, Session, WorkContext and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. A clean Core/Kernel/PostgreSQL instance verified concurrent real CLI Session opening and MCP WorkContext creation into one shared state root, both selections surviving and remaining readable across both entry points and a Core restart. Real Codex/model continuity and Windows Portable continuation remain pending.\nevidence:\n  1. basisRole: direct\n    reference: obs:dutob-dasad-pokol\n  2. basisRole: direct\n    reference: art:zomal-gobob-vafiz"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["form", "obs:lihih-titij-popad"]
+      },
+      "output": "memory:\n  memoryId: mem:fipal-fudom-vugoh\n  revisionId: memrev:sajot-zujup-muhug\n  subjectId: sub:tujap-vibuz-gozod\n  cognitiveRole: declarative\n  objectEpoch: 1\n  acceptanceState: accepted\n  integrityState: valid\n  suppressionState: normal\n  purgeState: normal\n  accessibilityMode: auto\n  accessibilityLevel: normal\n  semanticRole: reported_fact\n  text: On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity; subset keys are sorted and deduplicated. In a clean configuration instance, omitted video defaults and explicit complete defaults using the same operation ID returned the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, then read back as complete normalized values. Leaf configuration organization and reference graph validation remained pending.\n  basis:\n    1. basis:\n        evidence:\n          occurrenceId: obs:lihih-titij-popad\n          locator: wholeOccurrence: true\n          basisRole: interpretation\n  formationMode: grounded\n  revisionNo: 1\n  relationsTruncated: false\n  epistemicClass: derived\n  title: Nous Wave configuration normalization rebase\n  createdAt: 2026-10-09T05:28:07.960Z\n  temporalEvidence: observedAt: 2026-10-09T05:22:36.000Z\n  formedAt: 2026-10-09T05:28:04.603Z\n  recordedAt: 2026-10-09T05:28:07.960Z\n  producerSignatureId: 01a11f22-0e1b-79a3-a409-46f4809ec060\n  groundingOccurrenceId: obs:lihih-titij-popad\noperationId: 09f6377a-282e-418d-9475-b1e73836466c"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["form", "obs:dutob-dasad-pokol"]
+      },
+      "output": "memory:\n  memoryId: mem:gumoh-vihif-fovob\n  revisionId: memrev:raman-zajos-ruvuj\n  subjectId: sub:tujap-vibuz-gozod\n  cognitiveRole: declarative\n  objectEpoch: 1\n  acceptanceState: accepted\n  integrityState: valid\n  suppressionState: normal\n  purgeState: normal\n  accessibilityMode: auto\n  accessibilityLevel: normal\n  semanticRole: reported_fact\n  text: On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls remain outside those locks. Each command freezes its chosen Subject, Session, WorkContext, and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. On a clean Core/Kernel/PostgreSQL instance, concurrent real CLI Session opening and MCP WorkContext creation were verified to write into one shared state root, with both selections surviving and remaining readable across both entry points and after a Core restart. Real Codex/model continuity and Windows Portable continuation remained pending.\n  basis:\n    1. basis:\n        evidence:\n          occurrenceId: obs:dutob-dasad-pokol\n          locator: wholeOccurrence: true\n          basisRole: interpretation\n  formationMode: grounded\n  revisionNo: 1\n  relationsTruncated: false\n  epistemicClass: derived\n  title: Nous Wave local state isolation and concurrency verification\n  createdAt: 2026-10-09T05:28:15.550Z\n  temporalEvidence: observedAt: 2026-10-09T05:22:36.000Z\n  formedAt: 2026-10-09T05:28:11.032Z\n  recordedAt: 2026-10-09T05:28:15.550Z\n  producerSignatureId: 01a11f22-0e1b-79a3-a409-46f4809ec060\n  groundingOccurrenceId: obs:dutob-dasad-pokol\noperationId: 6fd87cb4-3610-4cce-b7ab-905802faa0c1"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["trace", "memrev:sajot-zujup-muhug"]
+      },
+      "output": "reference: memrev:sajot-zujup-muhug\ncognition:\n  revisionId: memrev:sajot-zujup-muhug\n  revisionNo: 1\n  objectEpoch: 1\n  memoryId: mem:fipal-fudom-vugoh\n  title: Nous Wave configuration normalization rebase\n  text: On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity; subset keys are sorted and deduplicated. In a clean configuration instance, omitted video defaults and explicit complete defaults using the same operation ID returned the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, then read back as complete normalized values. Leaf configuration organization and reference graph validation remained pending.\n  producerSignatureId: 01a11f22-0e1b-79a3-a409-46f4809ec060\n  cognitiveRole: declarative\n  semanticRole: reported_fact\n  epistemicClass: derived\n  groundingOccurrenceId: obs:lihih-titij-popad\n  formationMode: grounded\n  acceptanceState: accepted\n  integrityState: valid\n  suppressionState: normal\n  purgeState: normal\n  basis:\n    1. basis:\n        evidence:\n          occurrenceId: obs:lihih-titij-popad\n          locator: wholeOccurrence: true\n          basisRole: interpretation\n  formedAt: 2026-10-09T05:28:04.603Z\n  recordedAt: 2026-10-09T05:28:07.960Z\n  temporalEvidence: observedAt: 2026-10-09T05:22:36.000Z\nproducer:\n  signatureHash: bcd888f2e3a08648e99a9e0aba94d84f05b514d561478cea91cec3f6a5a13aa5\n  providerClass: openai-chat\n  operation: memory_formation_text\n  implementation: ai-sdk@7.0.102/openai@4.0.67\n  preprocessingIdentity: program/memory/formation.md\n  preprocessingRevision: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\n  configDigest: 5b673d9671ec0ba2f1b37d7f9638e76b45aa8f42649e949e911d0cfed9bfa0e5\n  modelIdentity: doubao-seed-2.1-pro\n  outputSchemaDigest: 9a7c9e5c98c5f2c9e89a0ea8d08afa755156889e36df37dd85b5ba1bb4be6014\n  modelRole: memory_formation\n  modelProfile: pro\n  executionProfile: pro_minimal\n  inferenceControlsDigest: 94750d6f77f42326946aad2a9d92a8956c418bdaa89f8f131c3a2600b0965eb5\n  rolePolicyDigest: adf8f6dff917474c3330c8fb5d753a36687213d0d0c9f0e436f7ce9ec4c226ef\n  promptId: program/memory/formation.md\n  promptDigest: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\nsources:\n  1. evidence:\n      occurrenceId: obs:lihih-titij-popad\n      locator: wholeOccurrence: true\n      basisRole: interpretation\n    occurrence:\n      occurrenceId: obs:lihih-titij-popad\n      subjectId: sub:tujap-vibuz-gozod\n      sourceClass: file\n      artifactId: art:hadiv-jagap-zidir\n      observedAt: 2026-10-09T05:22:36.000Z\n    artifact:\n      artifactId: art:hadiv-jagap-zidir\n      subjectId: sub:tujap-vibuz-gozod\n      contentHash: cea9bdb9c07d46463a53521b9b7ebeb1ed18652f04cc42c8eb0bd8763eaf8ed2\n      byteLength: 657\n      mediaType: text/plain\n      createdAt: 2026-10-09T05:22:36.016Z"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["trace", "memrev:raman-zajos-ruvuj"]
+      },
+      "output": "reference: memrev:raman-zajos-ruvuj\ncognition:\n  revisionId: memrev:raman-zajos-ruvuj\n  revisionNo: 1\n  objectEpoch: 1\n  memoryId: mem:gumoh-vihif-fovob\n  title: Nous Wave local state isolation and concurrency verification\n  text: On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls remain outside those locks. Each command freezes its chosen Subject, Session, WorkContext, and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. On a clean Core/Kernel/PostgreSQL instance, concurrent real CLI Session opening and MCP WorkContext creation were verified to write into one shared state root, with both selections surviving and remaining readable across both entry points and after a Core restart. Real Codex/model continuity and Windows Portable continuation remained pending.\n  producerSignatureId: 01a11f22-0e1b-79a3-a409-46f4809ec060\n  cognitiveRole: declarative\n  semanticRole: reported_fact\n  epistemicClass: derived\n  groundingOccurrenceId: obs:dutob-dasad-pokol\n  formationMode: grounded\n  acceptanceState: accepted\n  integrityState: valid\n  suppressionState: normal\n  purgeState: normal\n  basis:\n    1. basis:\n        evidence:\n          occurrenceId: obs:dutob-dasad-pokol\n          locator: wholeOccurrence: true\n          basisRole: interpretation\n  formedAt: 2026-10-09T05:28:11.032Z\n  recordedAt: 2026-10-09T05:28:15.550Z\n  temporalEvidence: observedAt: 2026-10-09T05:22:36.000Z\nproducer:\n  signatureHash: bcd888f2e3a08648e99a9e0aba94d84f05b514d561478cea91cec3f6a5a13aa5\n  providerClass: openai-chat\n  operation: memory_formation_text\n  implementation: ai-sdk@7.0.102/openai@4.0.67\n  preprocessingIdentity: program/memory/formation.md\n  preprocessingRevision: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\n  configDigest: 5b673d9671ec0ba2f1b37d7f9638e76b45aa8f42649e949e911d0cfed9bfa0e5\n  modelIdentity: doubao-seed-2.1-pro\n  outputSchemaDigest: 9a7c9e5c98c5f2c9e89a0ea8d08afa755156889e36df37dd85b5ba1bb4be6014\n  modelRole: memory_formation\n  modelProfile: pro\n  executionProfile: pro_minimal\n  inferenceControlsDigest: 94750d6f77f42326946aad2a9d92a8956c418bdaa89f8f131c3a2600b0965eb5\n  rolePolicyDigest: adf8f6dff917474c3330c8fb5d753a36687213d0d0c9f0e436f7ce9ec4c226ef\n  promptId: program/memory/formation.md\n  promptDigest: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\nsources:\n  1. evidence:\n      occurrenceId: obs:dutob-dasad-pokol\n      locator: wholeOccurrence: true\n      basisRole: interpretation\n    occurrence:\n      occurrenceId: obs:dutob-dasad-pokol\n      subjectId: sub:tujap-vibuz-gozod\n      sourceClass: file\n      artifactId: art:zomal-gobob-vafiz\n      observedAt: 2026-10-09T05:22:36.000Z\n    artifact:\n      artifactId: art:zomal-gobob-vafiz\n      subjectId: sub:tujap-vibuz-gozod\n      contentHash: 399392d49fcf4d97e3b2b140c1f804948f0a60a7ec3385e712bb2138ceb8ac36\n      byteLength: 812\n      mediaType: text/plain\n      createdAt: 2026-10-09T05:22:36.171Z"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["embeddings", "prepare", "--max-batches", "2"]
+      },
+      "output": "committed: 6\nrequests: 2"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_query",
+      "arguments": {
+        "query": "What mechanism prevents a concurrent Nous Wave consumer state update from redirecting an operation to another Subject?"
+      },
+      "output": "queryId: 01a11f22-6dc2-7101-9d12-505d2496c0df\nqueryRef: query:last\nstatus: complete\nresults:\n  1. lexicalRef: memrev:raman-zajos-ruvuj\n    result: result:1\n    ref: memory_revision:01a11f22-2bbe-7111-8ddf-023da7f18de4\n    text: On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls remain outside those locks. Each command freezes its chosen Subject, Session, WorkContext, and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. On a clean Core/Kernel/PostgreSQL instance, concurrent real CLI Session opening and MCP WorkContext creation were verified to write into one shared state root, with both selections surviving and remaining readable across both entry points and after a Core restart. Real Codex/model continuity and Windows Portable continuation remained pending.\n    authority: subject_cognition\n    cognitiveRole: declarative\n    formationMode: grounded\n    evidenceFamilies:\n      1. lexical\n      2. dense\n      3. language_rerank\n    next: show result:1 | trace result:1 | use result:1 | context pin --cognition result:1\n  2. lexicalRef: memrev:sajot-zujup-muhug\n    result: result:2\n    ref: memory_revision:01a11f22-0e18-7c83-9be4-7f9df0d98260\n    text: On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity; subset keys are sorted and deduplicated. In a clean configuration instance, omitted video defaults and explicit complete defaults using the same operation ID returned the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, then read back as complete normalized values. Leaf configuration organization and reference graph validation remained pending.\n    authority: subject_cognition\n    cognitiveRole: declarative\n    formationMode: grounded\n    evidenceFamilies:\n      1. lexical\n      2. dense\n      3. language_rerank\n    next: show result:2 | trace result:2 | use result:2 | context pin --cognition result:2\ndiagnostics:\n  candidateCounts:\n    dense_candidates: 2\n    planned_candidate_bound: 48\n    lexical_candidates: 2\n  laneStatus:\n    cue_sensing_plan: skipped\n    dense: ready\n    lexical: ready\n    topology_plan: skipped\n    effort: normal\n    resource_plan: limit=4,synopsis_preferred=false"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["use", "result:1", "--kind", "referenced"]
+      },
+      "output": "acceptedCount: 1\nduplicateCount: 0\nsessionRuntimeRevision: 2"
+    },
+    {
+      "run": "task-2",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["trace", "result:1"]
+      },
+      "output": "reference: memrev:raman-zajos-ruvuj\ncognition:\n  revisionId: memrev:raman-zajos-ruvuj\n  revisionNo: 1\n  objectEpoch: 1\n  memoryId: mem:gumoh-vihif-fovob\n  title: Nous Wave local state isolation and concurrency verification\n  text: On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls remain outside those locks. Each command freezes its chosen Subject, Session, WorkContext, and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. On a clean Core/Kernel/PostgreSQL instance, concurrent real CLI Session opening and MCP WorkContext creation were verified to write into one shared state root, with both selections surviving and remaining readable across both entry points and after a Core restart. Real Codex/model continuity and Windows Portable continuation remained pending.\n  producerSignatureId: 01a11f22-0e1b-79a3-a409-46f4809ec060\n  cognitiveRole: declarative\n  semanticRole: reported_fact\n  epistemicClass: derived\n  groundingOccurrenceId: obs:dutob-dasad-pokol\n  formationMode: grounded\n  acceptanceState: accepted\n  integrityState: valid\n  suppressionState: normal\n  purgeState: normal\n  basis:\n    1. basis:\n        evidence:\n          occurrenceId: obs:dutob-dasad-pokol\n          locator: wholeOccurrence: true\n          basisRole: interpretation\n  formedAt: 2026-10-09T05:28:11.032Z\n  recordedAt: 2026-10-09T05:28:15.550Z\n  temporalEvidence: observedAt: 2026-10-09T05:22:36.000Z\nproducer:\n  signatureHash: bcd888f2e3a08648e99a9e0aba94d84f05b514d561478cea91cec3f6a5a13aa5\n  providerClass: openai-chat\n  operation: memory_formation_text\n  implementation: ai-sdk@7.0.102/openai@4.0.67\n  preprocessingIdentity: program/memory/formation.md\n  preprocessingRevision: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\n  configDigest: 5b673d9671ec0ba2f1b37d7f9638e76b45aa8f42649e949e911d0cfed9bfa0e5\n  modelIdentity: doubao-seed-2.1-pro\n  outputSchemaDigest: 9a7c9e5c98c5f2c9e89a0ea8d08afa755156889e36df37dd85b5ba1bb4be6014\n  modelRole: memory_formation\n  modelProfile: pro\n  executionProfile: pro_minimal\n  inferenceControlsDigest: 94750d6f77f42326946aad2a9d92a8956c418bdaa89f8f131c3a2600b0965eb5\n  rolePolicyDigest: adf8f6dff917474c3330c8fb5d753a36687213d0d0c9f0e436f7ce9ec4c226ef\n  promptId: program/memory/formation.md\n  promptDigest: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\nsources:\n  1. evidence:\n      occurrenceId: obs:dutob-dasad-pokol\n      locator: wholeOccurrence: true\n      basisRole: interpretation\n    occurrence:\n      occurrenceId: obs:dutob-dasad-pokol\n      subjectId: sub:tujap-vibuz-gozod\n      sourceClass: file\n      artifactId: art:zomal-gobob-vafiz\n      observedAt: 2026-10-09T05:22:36.000Z\n    artifact:\n      artifactId: art:zomal-gobob-vafiz\n      subjectId: sub:tujap-vibuz-gozod\n      contentHash: 399392d49fcf4d97e3b2b140c1f804948f0a60a7ec3385e712bb2138ceb8ac36\n      byteLength: 812\n      mediaType: text/plain\n      createdAt: 2026-10-09T05:22:36.171Z"
+    }
+  ]
+}

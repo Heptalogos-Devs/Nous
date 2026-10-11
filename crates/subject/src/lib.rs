@@ -109,14 +109,21 @@ impl SubjectCoreService {
             .await
             .map_err(nous_persistence::database_error)?;
         seed::insert_seed(
+            &self.store,
             &mut tx,
-            subject,
-            input.operation_id,
             input.cognitive_seed,
             hash,
-            SeedAdoptionKind::Initial,
-            &nous_core::canonical_request_digest("subject.create", subject, &input.operation_id)?,
-            self.clock.now(subject),
+            seed::SeedAdoptionWrite {
+                subject,
+                operation_id: input.operation_id,
+                kind: SeedAdoptionKind::Initial,
+                digest: &nous_core::canonical_request_digest(
+                    "subject.create",
+                    subject,
+                    &input.operation_id,
+                )?,
+                now: self.clock.now(subject),
+            },
         )
         .await?;
         tx.commit()

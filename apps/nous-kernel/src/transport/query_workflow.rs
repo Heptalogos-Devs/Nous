@@ -61,7 +61,16 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                 enum_name(bound.source_query.capabilities.query_concept_enrichment);
             let historical_view = bound.historical_authority.is_some();
             let token = if input.reserve_execution {
-                Some(self.0.cognition.retain_prepared_query(bound)?.to_string())
+                let lease = nous_runtime::QueryLease::new(std::time::Duration::from_secs(
+                    u64::from(input.lease_seconds),
+                ))?;
+                let reservation = nous_runtime::QueryReservation::new(bound, lease)?;
+                Some(
+                    self.0
+                        .cognition
+                        .retain_prepared_query(reservation)?
+                        .to_string(),
+                )
             } else {
                 None
             };

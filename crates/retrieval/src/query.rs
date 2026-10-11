@@ -247,7 +247,7 @@ async fn prepare_signals(
 #[async_trait::async_trait]
 impl SharedLaneProvider for ServingService {
     async fn activate(&self, bound: &BoundQuery) -> Result<nous_runtime::QueryActivation> {
-        concept_lane::activate(
+        crate::concept::lane::activate(
             &self.publisher.snapshot_for(bound.source_query.subject),
             bound,
             self.embedding().map(|p| p.as_ref()),
@@ -314,7 +314,7 @@ impl ServingService {
         let mut outputs = signals.into_lanes();
         outputs.extend(topology);
         if bound.lane_enabled(EvidenceFamily::TagDirect) {
-            outputs.push(concept_lane::direct_lane(snapshot, bound, plan));
+            outputs.push(crate::concept::lane::direct_lane(snapshot, bound, plan));
         }
         Ok(outputs)
     }
@@ -338,7 +338,7 @@ fn domain_dense_matches(
 }
 
 #[cfg(test)]
-#[path = "query_signals_tests.rs"]
+#[path = "../tests/unit/query_signals.rs"]
 mod tests;
 
 /// Request-scoped immutable Serving view, retained through final validation.
@@ -367,7 +367,7 @@ impl nous_runtime::QueryActivationView for ServingQuery {
 #[async_trait::async_trait]
 impl SharedLaneProvider for ServingQuery {
     async fn activate(&self, bound: &BoundQuery) -> Result<nous_runtime::QueryActivation> {
-        concept_lane::activate(
+        crate::concept::lane::activate(
             &self.snapshot,
             bound,
             self.embedding
@@ -425,38 +425,7 @@ impl ServingService {
             if current.contains_generation(record.generation_id) {
                 continue;
             }
-            match self.open_record(record)? {
-                crate::lifecycle::OpenArtifact::Lexical(index) => snapshot.lexical = Some(index),
-                crate::lifecycle::OpenArtifact::Dense(index, basis) => {
-                    snapshot
-                        .dense
-                        .retain(|old| old.space.space_hash != index.space.space_hash);
-                    snapshot
-                        .epa
-                        .retain(|old| old.basis.embedding_space != index.space.space_hash);
-                    snapshot.dense.push(index);
-                    snapshot.epa.extend(basis);
-                }
-                crate::lifecycle::OpenArtifact::Topology(graph) => {
-                    snapshot.topology = Some(graph);
-                    snapshot.vcp = None;
-                }
-                crate::lifecycle::OpenArtifact::Vcp(assets) => {
-                    snapshot.vcp = Some(assets);
-                    snapshot.topology = None;
-                }
-                crate::lifecycle::OpenArtifact::Concept(generation) => {
-                    snapshot.concept.retain(|old| {
-                        old.space.as_ref().map(|s| &s.space_hash)
-                            != generation.space.as_ref().map(|s| &s.space_hash)
-                    });
-                    snapshot.concept.push(generation);
-                }
-                crate::lifecycle::OpenArtifact::Exact(postings) => {
-                    snapshot.postings = postings;
-                    snapshot.postings_generation = Some(record.generation_id);
-                }
-            }
+            snapshot.install(self.open_record(record)?);
         }
         snapshot.retain_generations(status.generations.values().copied());
         let reader = self.query_reader(bound, snapshot)?;

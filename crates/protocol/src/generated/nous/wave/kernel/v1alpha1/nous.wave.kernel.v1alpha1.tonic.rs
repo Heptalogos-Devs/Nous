@@ -473,7 +473,6 @@ pub mod kernel_model_workflow_service_server {
             request: tonic::Request<super::ReleaseWorkflowRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status>;
     }
-    ///
     #[derive(Debug)]
     pub struct KernelModelWorkflowServiceServer<T> {
         inner: Arc<T>,

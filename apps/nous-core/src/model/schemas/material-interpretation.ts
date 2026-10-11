@@ -4,6 +4,8 @@
 import { z } from "zod";
 import { structuredOutputContract } from "./provider.js";
 import type { JsonObject } from "@bufbuild/protobuf";
+import { channelAccessSchema, type ChannelAccess } from "../input.js";
+import { modelImplementations } from "../implementation.js";
 
 const coverage = z
   .enum(["not_available", "observed", "reported", "limited", "uncertain"])
@@ -161,14 +163,9 @@ export type MaterialInterpretation = z.infer<
 >;
 const contract = structuredOutputContract(materialInterpretationSchema);
 export const materialInterpretationSchemaDigest = contract.digest;
-export const materialProjectionIdentity = "material-interpretation-text-v4";
-// Semantic checks are outside JSON Schema and must invalidate successful workflow reuse too.
-export const materialValidationIdentity = "material-interpretation-policy-v2";
+export const materialInterpretationIdentity = modelImplementations.material;
 type InterpretationInput = {
-  evidenceAccess: "original" | "representation";
-  visual: boolean;
-  audio: boolean;
-  sourceText: boolean;
+  access: ChannelAccess;
   basisKeys: ReadonlySet<string>;
   durationMs?: number;
 };
@@ -198,7 +195,7 @@ export function structuredMaterialResult(
   });
   const payload: Record<string, unknown> = {
     ...output,
-    evidence_access: context.evidenceAccess,
+    evidence_access: channelAccessSchema.parse(context.access),
     summary: mapBasis(output.summary),
   };
   for (const group of [
@@ -212,7 +209,9 @@ export function structuredMaterialResult(
   ] as const)
     payload[group] = output[group].map(mapBasis);
   return {
-    text: `Evidence access: ${context.evidenceAccess}\n${projectMaterialInterpretation(output)}`,
+    text: `Evidence access: ${Object.entries(context.access)
+      .map(([channel, mode]) => `${channel}=${mode}`)
+      .join("; ")}\n${projectMaterialInterpretation(output)}`,
     structuredPayload: JSON.parse(JSON.stringify(payload)) as JsonObject,
   };
 }
@@ -223,12 +222,22 @@ function validateMaterialInterpretation(
   input: InterpretationInput,
 ): MaterialInterpretation {
   const output = materialInterpretationSchema.parse(value);
+  const access = channelAccessSchema.parse(input.access);
   if (
-    input.evidenceAccess === "representation" &&
-    (Object.values(output.coverage).some(
-      (coverageStatus) => coverageStatus === "observed",
+    Object.entries(output.coverage).some(
+      ([channel, coverageStatus]) =>
+        coverageStatus === "observed" &&
+        access[
+          channel === "embedded_text"
+            ? "visual"
+            : (channel as keyof ChannelAccess)
+        ] === "representation",
     ) ||
-      output.observations.some((item) => item.basis === "direct"))
+    output.observations.some(
+      (item) =>
+        item.basis === "direct" &&
+        access[item.evidence_channel] === "representation",
+    )
   )
     throw new Error(
       "Committed representation cannot establish direct source observation",
@@ -299,9 +308,9 @@ function validateMaterialInterpretation(
     }
   }
   const channels = {
-    visual: input.visual,
-    audio: input.audio,
-    source_text: input.sourceText,
+    visual: access.visual !== "unavailable",
+    audio: access.audio !== "unavailable",
+    source_text: access.source_text !== "unavailable",
   };
   for (const observation of output.observations)
     if (
@@ -312,24 +321,24 @@ function validateMaterialInterpretation(
         `Structured material invents unavailable ${observation.evidence_channel} evidence`,
       );
   if (
-    !input.sourceText &&
+    !channels.source_text &&
     (output.coverage.source_text !== "not_available" ||
       output.source_text.length)
   )
     throw new Error(
       "Structured material invents unavailable source text input",
     );
-  if (!input.visual && output.coverage.embedded_text !== "not_available")
+  if (!channels.visual && output.coverage.embedded_text !== "not_available")
     throw new Error(
       "Structured material invents unavailable embedded visual text",
     );
   if (
-    !input.visual &&
+    !channels.visual &&
     (output.coverage.visual !== "not_available" || output.embedded_text.length)
   )
     throw new Error("Structured material invents unavailable visual input");
   if (
-    !input.audio &&
+    !channels.audio &&
     (output.coverage.audio !== "not_available" || output.speech.length)
   )
     throw new Error("Structured material invents unavailable audio input");

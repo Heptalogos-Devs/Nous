@@ -51,20 +51,26 @@ impl CognitiveRuntimeService {
         sqlx::query("INSERT INTO resources(subject_id,resource_ref,display_label,authority_class,coverage,query_dimensions,modalities,freshness_policy,access_cost_class,readiness,updated_at,adapter_kind,provider_profile,provider_locator) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(subject_id,resource_ref) DO UPDATE SET display_label=excluded.display_label,authority_class=excluded.authority_class,coverage=excluded.coverage,query_dimensions=excluded.query_dimensions,modalities=excluded.modalities,freshness_policy=excluded.freshness_policy,access_cost_class=excluded.access_cost_class,readiness=excluded.readiness,updated_at=excluded.updated_at,adapter_kind=excluded.adapter_kind,provider_profile=excluded.provider_profile,provider_locator=excluded.provider_locator")
             .bind(subject.0).bind(input.resource_ref.as_str()).bind(input.display_label).bind(input.authority_class).bind(input.coverage).bind(input.query_dimensions).bind(input.modalities).bind(input.freshness_policy).bind(input.access_cost_class).bind(input.readiness).bind(self.now(subject)).bind(input.adapter_kind).bind(input.provider_profile).bind(input.provider_locator).execute(&mut *tx).await.map_err(db)?;
         let row=sqlx::query("SELECT resource_ref,display_label,authority_class,coverage,query_dimensions,modalities,freshness_policy,access_cost_class,readiness,updated_at,adapter_kind,provider_profile,provider_locator FROM resources WHERE subject_id=$1 AND resource_ref=$2").bind(subject.0).bind(input.resource_ref.as_str()).fetch_one(&mut *tx).await.map_err(db)?;
+        let descriptor = decode_resource(subject, row)?;
+        self.store
+            .ensure_identity_addresses_in(
+                &mut tx,
+                subject,
+                &[CognitiveRef::Resource(input.resource_ref.clone())],
+                descriptor.display_label.as_deref().unwrap_or_default(),
+            )
+            .await?;
         nous_persistence::AuthorityStore::invalidate_in(
             &mut tx,
             subject,
             ProjectionInvalidation {
-                exact: true,
                 topology: true,
                 ..ProjectionInvalidation::default()
             },
         )
         .await?;
         tx.commit().await.map_err(db)?;
-        Ok(ResourceView {
-            descriptor: decode_resource(subject, row)?,
-        })
+        Ok(ResourceView { descriptor })
     }
 
     pub async fn delete_resource(&self, subject: SubjectId, resource: ResourceRef) -> Result<()> {
@@ -85,7 +91,6 @@ impl CognitiveRuntimeService {
             &mut tx,
             subject,
             ProjectionInvalidation {
-                exact: true,
                 topology: true,
                 ..ProjectionInvalidation::default()
             },

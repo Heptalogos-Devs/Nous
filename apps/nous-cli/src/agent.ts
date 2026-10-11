@@ -9,6 +9,8 @@ export class CliError extends Error {
     message: string,
     readonly details: unknown[] = [],
     readonly candidates: unknown[] = [],
+    readonly recovery?: string,
+    readonly context: Readonly<Record<string, string>> = {},
   ) {
     super(message);
   }
@@ -42,51 +44,46 @@ export function boundedInteger(
 }
 
 export function cliErrorPayload(error: unknown) {
+  const recovery =
+    error && typeof error === "object"
+      ? {
+          ...("receipt" in error ? { receipt: error.receipt } : {}),
+          ...("notices" in error ? { notices: error.notices } : {}),
+        }
+      : {};
   if (error instanceof CliError)
     return {
       code: error.code,
       message: error.message,
-      ...("receipt" in error ? { receipt: error.receipt } : {}),
+      ...recovery,
       details: error.details,
       candidates: error.candidates,
+      recovery: error.recovery,
+      context: error.context,
     };
   const message =
     error instanceof Error ? error.message : "CLI operation failed";
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(message);
-  } catch {
-    /* Plain transport/local message. */
-  }
-  if (
-    parsed &&
-    typeof parsed === "object" &&
-    "code" in parsed &&
-    typeof parsed.code === "string"
-  )
-    return { message, details: [], candidates: [], ...parsed };
-  const domainCode =
-    /\b(?:UNKNOWN_REFERENCE|AMBIGUOUS_REFERENCE|REFERENCE_TYPE_MISMATCH|REFERENCE_TOMBSTONED|STALE_CONTEXT|UNAVAILABLE)\b/.exec(
-      message,
-    )?.[0];
   const transportCodes: Record<number, string> = {
     3: "INVALID_ARGUMENT",
     5: "NOT_FOUND",
     8: "RESOURCE_EXHAUSTED",
     9: "FAILED_PRECONDITION",
-    10: "STALE_CONTEXT",
+    10: "ABORTED",
     14: "UNAVAILABLE",
     4: "DEADLINE_EXCEEDED",
   };
   return {
     code:
-      domainCode ??
-      (error instanceof NousError
-        ? (transportCodes[error.code] ?? "RPC_ERROR")
-        : "INVALID_ARGUMENT"),
+      error instanceof NousError
+        ? (error.domainCode ?? transportCodes[error.code] ?? "RPC_ERROR")
+        : "INVALID_ARGUMENT",
     message,
     details: error instanceof NousError ? error.details : [],
     candidates: error instanceof NousError ? error.candidates : [],
+    ...(error instanceof NousError
+      ? { recovery: error.recovery, context: error.context }
+      : {}),
+    ...recovery,
   };
 }
 
@@ -212,6 +209,7 @@ export const commandInventory = {
         "[path] [JSON value]",
         "--subject <Subject lexical reference>",
         "--desired",
+        "--expected-revision <revision from desired view> (required for set/clear)",
         "--advanced|--developer",
       ],
     },
@@ -249,7 +247,7 @@ export const commandInventory = {
         "--strategy description_only|direct_structured|describe_then_structure",
       ],
       description:
-        "Select the derived output pipeline. Video input_mode is direct|frames in the video configuration object; inspect it with config describe video / config get video. Frame sampling records source/timestamp coverage in the interpretation, without providing a separate frame Artifact export.",
+        "Select the derived output pipeline. Inspect video.input_mode (direct|frames) with config describe video.input_mode / config get video.input_mode. Frame sampling records source/timestamp coverage in the interpretation, without providing a separate frame Artifact export.",
     },
     { command: "embeddings prepare", parameters: ["--max-batches <n>"] },
     { command: "trace", parameters: ["<canonical-or-lexical-ref>"] },

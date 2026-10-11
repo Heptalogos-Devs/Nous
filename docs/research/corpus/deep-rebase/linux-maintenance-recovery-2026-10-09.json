@@ -1,0 +1,109 @@
+{
+  "date": "2026-10-09",
+  "source_commit": "1e6e8dc",
+  "host": "Linux",
+  "scope": "Public CLI; Subject-only bounded maintenance authorization and explicit preparation recovery after new projection material",
+  "outcomes": [
+    {
+      "command": "config set maintenance.enabled true --subject sub:bizor-fusin-vakav --expected-revision1",
+      "result": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "config.set",
+        "data": {
+          "revision": "2",
+          "applyMode": "live",
+          "activeDigest": "344e4cbfbcca1188e66503159d57148ed7d394c284002f9bb1c57099fcfc6939",
+          "desiredDigest": "344e4cbfbcca1188e66503159d57148ed7d394c284002f9bb1c57099fcfc6939",
+          "effects": [
+            "live_applied"
+          ]
+        }
+      }
+    },
+    {
+      "command": "embeddings prepare --subject sub:bizor-fusin-vakav",
+      "result": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "embeddings.prepare",
+        "data": {
+          "committed": 2,
+          "requests": 2,
+          "degradation": []
+        }
+      }
+    },
+    {
+      "command": "query 配置快照与重启归属 $return(memory) $limit(5) $diagnostics(full) --subject sub:bizor-fusin-vakav --work-context ctx:supud-pasun-kopud",
+      "result": {
+        "schemaVersion": "nous.cli.v1",
+        "kind": "query",
+        "data": {
+          "queryId": "01a12126-3228-7f03-9922-2f4acbed44f4",
+          "queryRef": "query:last",
+          "status": "complete",
+          "results": [
+            {
+              "lexicalRef": "memrev:lobod-rimil-nojit",
+              "result": "result:1",
+              "ref": {
+                "kind": "memory_revision",
+                "value": "01a12119-ee54-7d10-900d-328530420c83"
+              },
+              "text": "2026-10-09 Linux restart review for Nous Wave at commit de9ca74: Pre-change configuration state: three concept activation parameters (inferred Tag retention8, similarity0.72, model catalog32) were owned by a static parser outside ConfigurationService. Current runtime registers independent Advanced, SubjectOverrideAllowed, Live, QueryPolicy configuration leaves; Retrieval and model readout use the same frozen operation snapshot. Verified test outcomes: A real PostgreSQL check froze 1/1 state, changed active values to 3/3, proved a bound request retained 1/1 while a new request used 3/3, and confirmed similarity filtering rejected an orthogonal Tag. Prior Core behavior closed HTTP and Kernel on SIGTERM but kept stdin resumed, leaving an inert process alive; updated Core now releases its owned stdin/listeners, with direct SIGTERM exiting while launcher stdin remains open. Prior Kernel behavior refreshed all Serving assets before and after embedding initialization; updated startup now binds owners only, frozen request plans prepare needed families, and explicit management refresh remains available. A cache-loss regression proved no assets were built at open, and the first query rebuilt at the same Authority watermark and recalled the existing exact revisions. Scope qualification: These checks preserve existing history, provenance and purge semantics; they do not claim final merge or a completed new Windows run.",
+              "authority": "subject_cognition",
+              "cognitiveRole": "declarative",
+              "formationMode": "grounded",
+              "evidenceFamilies": [
+                "runtime",
+                "dense",
+                "language_rerank"
+              ],
+              "next": "show result:1 | trace result:1 | use result:1 | context pin --cognition result:1"
+            },
+            {
+              "lexicalRef": "memrev:gizoz-zonas-hivin",
+              "result": "result:2",
+              "ref": {
+                "kind": "memory_revision",
+                "value": "01a120ec-b007-7fb1-a07a-32a64f2fc6ca"
+              },
+              "text": "Context: 2026-10-09 Linux architecture review of Nous Wave, associated with source commit 663782c. Prior serving behavior: Serving previously used duplicated implementation identity across both typed records and metadata, with manually incremented counters. An actual PostgreSQL regression case showed the old serving path incorrectly reused an asset even when current metadata was retained and the typed implementation identity was marked outdated. Current serving behavior: Serving now reads the typed record and uses a build content digest derived from the projection implementation, input projections, and locked dependencies. The same Authority watermark rebuilds when implementation identity changes. Current and historical snapshots share the same asset installation. Configuration and identity rules: Native Wave configuration registration is separate from graph construction. Source mutations change implementation identity; exposure-only policy edits and CRLF/LF line normalization preserve implementation identity. Cognition, exact revisions, provenance, and purge semantics retain their existing owners. Instance status notes: Windows Portable previously completed real Doubao formation, embedding, query, use, and restart continuation. The Linux environment is creating a fresh independent instance; this source does not claim a new Windows Portable run.",
+              "authority": "subject_cognition",
+              "cognitiveRole": "declarative",
+              "formationMode": "grounded",
+              "evidenceFamilies": [
+                "runtime",
+                "dense",
+                "language_rerank"
+              ],
+              "next": "show result:2 | trace result:2 | use result:2 | context pin --cognition result:2"
+            }
+          ],
+          "resourceRecords": [],
+          "resourceActions": [],
+          "diagnostics": {
+            "candidateCounts": {
+              "tagdirect_candidates": "0",
+              "dense_candidates": "2",
+              "lexical_candidates": "0",
+              "drop_domain_ineligible": "1",
+              "planned_candidate_bound": "20",
+              "runtime_candidates": "3"
+            },
+            "laneStatus": {
+              "dense": "ready",
+              "tagdirect": "ready",
+              "lexical": "ready",
+              "resource_plan": "limit=4,synopsis_preferred=false",
+              "runtime": "ready",
+              "topology_plan": "skipped",
+              "cue_sensing_plan": "skipped",
+              "effort": "normal"
+            }
+          },
+          "degradation": []
+        }
+      }
+    }
+  ]
+}

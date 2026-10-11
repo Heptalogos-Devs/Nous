@@ -78,7 +78,8 @@ impl MaterialService {
                 .bind(request_id).fetch_optional(&mut *tx).await.map_err(db)? {
                 if row.try_get::<Uuid,_>("subject_id").map_err(db)? != input.subject.0
                     || row.try_get::<String,_>("request_digest").map_err(db)? != request_digest {
-                    return Err(Error::Conflict("Observation request_id already binds different input".into()));
+                    return Err(nous_core::DomainError::new(nous_core::DomainErrorCode::OperationIdConflict, "Observation request_id already binds different input")
+                        .with_context("request_id", request_id).into());
                 }
                 let accepted: AcceptedObservation = serde_json::from_value(row.try_get("accepted").map_err(db)?)
                     .map_err(|error| Error::Infrastructure(error.to_string()))?;
@@ -247,6 +248,26 @@ impl MaterialService {
             resident: input.session.is_some() && input.runtime.admit,
             memory_revisions: Vec::new(),
         };
+        let mut addresses = vec![CognitiveRef::Occurrence(accepted.occurrence.occurrence_id)];
+        if let Some(artifact) = &accepted.artifact {
+            addresses.push(CognitiveRef::Artifact(artifact.artifact_id));
+        }
+        if let Some(region) = &accepted.source_region {
+            addresses.push(CognitiveRef::SourceRegion(region.source_region_id));
+        }
+        if let Some(entity) = &accepted.occurrence.actor_entity_ref {
+            addresses.push(CognitiveRef::Entity(entity.clone()));
+        }
+        addresses.extend(
+            input
+                .entities
+                .iter()
+                .filter_map(|mention| mention.entity_ref.clone())
+                .map(CognitiveRef::Entity),
+        );
+        self.store
+            .ensure_identity_addresses_in(&mut tx, input.subject, &addresses, "")
+            .await?;
         if let Some(request_id) = request_id {
             sqlx::query("INSERT INTO observation_request_bindings(request_id,subject_id,request_digest,occurrence_id,accepted) VALUES($1,$2,$3,$4,$5)")
                 .bind(request_id).bind(input.subject.0).bind(request_digest).bind(occurrence_id.0)
@@ -384,17 +405,27 @@ impl MaterialService {
             return Err(Error::NotFound("subject not found".into()));
         }
         let proposed_artifact_id = ArtifactId::new();
+        let mut tx = self.store.begin().await?;
         sqlx::query("INSERT INTO artifacts(artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(subject_id,content_hash) DO NOTHING")
             .bind(proposed_artifact_id.0).bind(subject.0).bind(&hash).bind(size as i64).bind(&metadata.media_type).bind(&hash).bind(now).bind(&metadata.metadata)
-            .execute(self.store.pool()).await.map_err(db)?;
+            .execute(&mut *tx).await.map_err(db)?;
         let artifact_id = sqlx::query_scalar::<_, Uuid>(
             "SELECT artifact_id FROM artifacts WHERE subject_id=$1 AND content_hash=$2",
         )
         .bind(subject.0)
         .bind(&hash)
-        .fetch_one(self.store.pool())
+        .fetch_one(&mut *tx)
         .await
         .map_err(db)?;
+        self.store
+            .ensure_identity_addresses_in(
+                &mut tx,
+                subject,
+                &[CognitiveRef::Artifact(ArtifactId(artifact_id))],
+                "",
+            )
+            .await?;
+        tx.commit().await.map_err(db)?;
         let artifact = self.artifact(subject, ArtifactId(artifact_id)).await?;
         drop(guard);
         Ok(artifact)

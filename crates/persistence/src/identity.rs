@@ -17,6 +17,19 @@ pub struct IdentityBinding {
     pub status: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct IdentityAddressTarget {
+    pub subject: SubjectId,
+    pub reference: CognitiveRef,
+}
+
+#[derive(Debug, Clone)]
+pub struct IdentityAddress {
+    pub target: IdentityAddressTarget,
+    pub lexical_ref: Option<String>,
+    pub status: String,
+}
+
 pub fn lexical_prefix(kind: &str) -> Result<&'static str> {
     Ok(match kind {
         "entity" => "ent",
@@ -77,14 +90,105 @@ pub fn validate_lexical(value: &str) -> Result<&str> {
     Ok(kind)
 }
 impl AuthorityStore {
+    /// Creation owners publish addresses within their own Authority transaction.
+    pub async fn ensure_identity_addresses_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        label: &str,
+    ) -> Result<()> {
+        let mut display_name = String::new();
+        for character in label.chars() {
+            if display_name.len() + character.len_utf8() > 256 {
+                break;
+            }
+            display_name.push(character);
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for reference in references {
+            if !seen.insert(reference_parts(reference)) {
+                continue;
+            }
+            self.bind_identity_in_mode(
+                tx,
+                subject,
+                reference.clone(),
+                display_name.clone(),
+                vec![],
+                true,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// One directory read. Missing addresses remain missing; presentation never grants visibility.
+    pub async fn identity_addresses(
+        &self,
+        targets: &[IdentityAddressTarget],
+    ) -> Result<Vec<IdentityAddress>> {
+        if targets.len() > 2048 {
+            return Err(Error::Invalid(
+                "identity address batch exceeds 2048 targets".into(),
+            ));
+        }
+        let requested = targets
+            .iter()
+            .map(|target| {
+                let (kind, value) = reference_parts(&target.reference);
+                serde_json::json!({"subject":target.subject.0,"kind":kind,"value":value})
+            })
+            .collect::<Vec<_>>();
+        let rows = sqlx::query(r#"
+WITH requested AS (
+ SELECT r.subject,r.kind,r.value,requested.ordinal,
+   CASE WHEN r.kind='tag' THEN canonical_tag(r.subject,r.value::uuid)::text ELSE r.value END AS resolved
+ FROM jsonb_array_elements($1) WITH ORDINALITY AS requested(target,ordinal)
+ CROSS JOIN LATERAL jsonb_to_record(requested.target) AS r(subject uuid,kind text,value text)
+)
+SELECT r.subject,r.kind,r.value,
+ CASE WHEN v.subject_id IS NOT NULL AND b.tombstoned_at IS NULL AND r.resolved IS NOT NULL THEN b.lexical_ref END AS lexical_ref,
+ CASE WHEN v.subject_id IS NULL THEN 'UNKNOWN_REFERENCE'
+      WHEN b.tombstoned_at IS NOT NULL OR r.resolved IS NULL THEN 'REFERENCE_TOMBSTONED'
+      ELSE 'BOUND' END AS status
+FROM requested r
+LEFT JOIN lexical_bindings b ON b.object_kind=r.kind AND b.canonical_ref=COALESCE(r.resolved,r.value)
+LEFT JOIN lexical_visibility v ON v.lexical_ref=b.lexical_ref AND v.subject_id=r.subject
+ORDER BY r.ordinal
+"#).bind(serde_json::json!(requested)).fetch_all(self.pool()).await.map_err(database_error)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(IdentityAddress {
+                    target: IdentityAddressTarget {
+                        subject: SubjectId(row.try_get("subject").map_err(database_error)?),
+                        reference: parse_reference(
+                            &row.try_get::<String, _>("kind").map_err(database_error)?,
+                            &row.try_get::<String, _>("value").map_err(database_error)?,
+                        )?,
+                    },
+                    lexical_ref: row.try_get("lexical_ref").map_err(database_error)?,
+                    status: row.try_get("status").map_err(database_error)?,
+                })
+            })
+            .collect()
+    }
+
     /// Locate the Subject address before a consumer has selected a Subject.
     pub async fn subject_for_lexical(&self, lexical: &str) -> Result<SubjectId> {
         if validate_lexical(lexical)? != "sub" {
-            return Err(Error::Invalid("REFERENCE_TYPE_MISMATCH".into()));
+            return Err(nous_core::DomainError::new(
+                nous_core::DomainErrorCode::ReferenceTypeMismatch,
+                "Expected a Subject lexical reference",
+            )
+            .with_context("reference", lexical)
+            .with_context("expected_kind", "subject")
+            .into());
         }
         let canonical: String = sqlx::query_scalar("SELECT b.canonical_ref FROM lexical_bindings b JOIN lexical_visibility v USING(lexical_ref) WHERE b.object_kind='subject' AND b.lexical_ref=$1 AND b.tombstoned_at IS NULL AND v.subject_id::text=b.canonical_ref")
             .bind(lexical).fetch_optional(self.pool()).await.map_err(database_error)?
-            .ok_or_else(|| Error::NotFound("UNKNOWN_REFERENCE".into()))?;
+            .ok_or_else(|| nous_core::DomainError::new(nous_core::DomainErrorCode::UnknownReference, "Subject reference is unknown or unavailable")
+                .with_context("reference", lexical))?;
         canonical
             .parse()
             .map(SubjectId)
@@ -198,7 +302,12 @@ impl AuthorityStore {
                 .try_get::<bool, _>("tombstoned")
                 .map_err(database_error)?
             {
-                return Err(Error::Conflict("REFERENCE_TOMBSTONED".into()));
+                return Err(nous_core::DomainError::new(
+                    nous_core::DomainErrorCode::ReferenceTombstoned,
+                    "The identity has been tombstoned",
+                )
+                .with_context("reference", format!("{kind}:{canonical}"))
+                .into());
             }
             row.try_get::<String, _>("lexical_ref")
                 .map_err(database_error)?

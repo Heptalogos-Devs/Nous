@@ -1,5 +1,7 @@
 # Episode Authority
 
+[返回文档目录](../../INDEX.md)
+
 ## Owner
 
 Memory (crates/memory) owns Episode identity, revision, hierarchy and lifecycle.
@@ -26,5 +28,3 @@ Automatic segmentation and atomic N-to-M refinement follow [Longitudinal Cogniti
 ## Lifecycle
 
 Exact get/history/list, suppress/restore, withdraw/reaccept, and purge follow the existing Memory lifecycle dimensions and durable receipt semantics. Suppression, restore, and purge never create a content revision.
-
-[返回文档目录](../../INDEX.md)

@@ -28,7 +28,7 @@ pub struct AccessibilityPolicy {
 impl Default for AccessibilityPolicy {
     fn default() -> Self {
         let reference = nous_configuration::ReferenceProfile::parse(include_str!(
-            "../../../../config/reference/memory-accessibility-v1.json"
+            "../../../../config/reference/memory-accessibility.json"
         ))
         .expect("accessibility reference profile");
         Self {
@@ -185,7 +185,7 @@ pub const DEEP_THRESHOLD: ConfigKey<f64> = ConfigKey::new("memory.accessibility.
 
 pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()> {
     let reference = nous_configuration::ReferenceProfile::parse(include_str!(
-        "../../../../config/reference/memory-accessibility-v1.json"
+        "../../../../config/reference/memory-accessibility.json"
     ))?;
     let positive = |value: &f64| {
         if value.is_finite() && *value > 0.0 {
@@ -360,13 +360,10 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let epoch:i64=sqlx::query_scalar("SELECT object_epoch FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE").bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("memory not found".into()))?;
-        if epoch != expected_object_epoch {
-            return Err(Error::Conflict("expected object epoch is stale".into()));
-        }
+        crate::service::state::fence_epoch(epoch, expected_object_epoch)?;
         sqlx::query("UPDATE memory_objects SET accessibility_mode=$3,object_epoch=object_epoch+1 WHERE subject_id=$1 AND memory_id=$2").bind(subject.0).bind(memory.0).bind(format!("{mode:?}").to_lowercase()).execute(&mut **mutation.tx()).await.map_err(db)?;
         mutation
             .invalidate(ProjectionInvalidation {
-                exact: true,
                 ..Default::default()
             })
             .await?;

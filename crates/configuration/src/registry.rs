@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
 
 pub const CONFIG_SCHEMA_DIALECT: &str = "https://json-schema.org/draft/2020-12/schema";
-pub type ConfigValidator = Arc<dyn Fn(&Value) -> Result<()> + Send + Sync>;
+pub type ConfigNormalizer = Arc<dyn Fn(&Value) -> Result<Value> + Send + Sync>;
 
 /// Language-independent contract published by a semantic configuration owner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,12 +36,16 @@ pub struct ConfigDescriptor {
 struct RegisteredDescriptor {
     descriptor: ConfigDescriptor,
     schema: Arc<jsonschema::Validator>,
-    owner_validator: Option<ConfigValidator>,
+    owner_normalizer: Option<ConfigNormalizer>,
 }
 
 impl RegisteredDescriptor {
-    fn validate(&self, value: &Value) -> Result<()> {
-        self.schema.validate(value).map_err(|error| {
+    fn normalize(&self, value: &Value) -> Result<Value> {
+        let value = match &self.owner_normalizer {
+            Some(normalize) => normalize(value)?,
+            None => value.clone(),
+        };
+        self.schema.validate(&value).map_err(|error| {
             // Diagnostics expose schema location, never a possibly sensitive value.
             Error::Invalid(format!(
                 "invalid configuration {} at {}",
@@ -49,17 +53,15 @@ impl RegisteredDescriptor {
                 error.instance_path()
             ))
         })?;
-        if let Some(validator) = &self.owner_validator {
-            validator(value)?;
-        }
-        Ok(())
+        Ok(value)
     }
 }
 
 #[derive(Clone)]
 pub struct ConfigRegistry {
     descriptors: Arc<BTreeMap<String, RegisteredDescriptor>>,
-    digest: String,
+    semantic_digest: String,
+    catalog_digest: String,
 }
 
 impl ConfigRegistry {
@@ -68,10 +70,14 @@ impl ConfigRegistry {
     }
 
     pub fn validate(&self, path: &str, value: &Value) -> Result<()> {
+        self.normalize(path, value).map(|_| ())
+    }
+
+    pub fn normalize(&self, path: &str, value: &Value) -> Result<Value> {
         self.descriptors
             .get(path)
             .ok_or_else(|| Error::Invalid(format!("unknown configuration path: {path}")))?
-            .validate(value)
+            .normalize(value)
     }
 
     pub fn descriptors(&self) -> impl Iterator<Item = &ConfigDescriptor> {
@@ -94,8 +100,11 @@ impl ConfigRegistry {
         crate::ConfigSnapshot::new(None, 0, self.clone(), values)
     }
 
-    pub fn digest(&self) -> &str {
-        &self.digest
+    pub fn semantic_digest(&self) -> &str {
+        &self.semantic_digest
+    }
+    pub fn catalog_digest(&self) -> &str {
+        &self.catalog_digest
     }
     pub fn paths(&self) -> impl Iterator<Item = &str> {
         self.descriptors.keys().map(String::as_str)
@@ -110,8 +119,7 @@ impl ConfigRegistry {
 
     fn visit(&self, path: &str, value: &Value, output: &mut BTreeMap<String, Value>) -> Result<()> {
         if self.descriptor(path).is_some() {
-            self.validate(path, value)?;
-            output.insert(path.to_owned(), value.clone());
+            output.insert(path.to_owned(), self.normalize(path, value)?);
         } else if let Value::Object(children) = value {
             // Even an empty unknown table is an unknown configuration path.
             if !path.is_empty() && !self.paths().any(|key| key.starts_with(&format!("{path}."))) {
@@ -143,7 +151,7 @@ impl ConfigRegistry {
 
 struct PendingDescriptor {
     descriptor: ConfigDescriptor,
-    owner_validator: Option<ConfigValidator>,
+    owner_normalizer: Option<ConfigNormalizer>,
 }
 
 #[derive(Default)]
@@ -202,12 +210,13 @@ impl ConfigRegistryBuilder {
             sensitivity: ConfigSensitivity::Normal,
             reference_profile: None,
         };
-        let owner_validator: ConfigValidator = Arc::new(move |value| {
+        let owner_normalizer: ConfigNormalizer = Arc::new(move |value| {
             let parsed: T = serde_json::from_value(value.clone())
                 .map_err(|_| Error::Invalid(format!("invalid configuration {path}")))?;
-            validator(&parsed)
+            validator(&parsed)?;
+            serde_json::to_value(parsed).map_err(|error| Error::Internal(error.to_string()))
         });
-        self.insert(descriptor, Some(owner_validator))
+        self.insert(descriptor, Some(owner_normalizer))
     }
 
     /// Startup-only import; there is no live registration/plugin protocol.
@@ -245,13 +254,13 @@ impl ConfigRegistryBuilder {
         if descriptor.path != path {
             return Err(Error::Invalid("descriptor identity cannot change".into()));
         }
-        self.insert(descriptor, entry.owner_validator)
+        self.insert(descriptor, entry.owner_normalizer)
     }
 
     fn insert(
         &mut self,
         descriptor: ConfigDescriptor,
-        owner_validator: Option<ConfigValidator>,
+        owner_normalizer: Option<ConfigNormalizer>,
     ) -> Result<()> {
         let path = &descriptor.path;
         if !valid_key_path(path) || descriptor.owner.is_empty() || descriptor.category.is_empty() {
@@ -290,7 +299,7 @@ impl ConfigRegistryBuilder {
             .map_err(|_| Error::Invalid(format!("invalid configuration schema: {path}")))?;
         let entry = PendingDescriptor {
             descriptor,
-            owner_validator,
+            owner_normalizer,
         };
         self.descriptors
             .insert(entry.descriptor.path.clone(), entry);
@@ -301,17 +310,22 @@ impl ConfigRegistryBuilder {
         let identity = self
             .descriptors
             .values()
-            .map(|entry| {
-                let mut value = serde_json::to_value(&entry.descriptor).expect("descriptor JSON");
-                let object = value.as_object_mut().expect("descriptor object");
-                object.remove("title");
-                object.remove("description");
-                object.remove("category");
-                value
-            })
+            .map(|entry| crate::identity::descriptor_identity(&entry.descriptor))
             .collect::<Vec<_>>();
-        let digest = blake3::hash(
+        let semantic_digest = blake3::hash(
             &serde_json::to_vec(&identity).map_err(|error| Error::Internal(error.to_string()))?,
+        )
+        .to_hex()
+        .to_string();
+        let catalog_digest = blake3::hash(
+            &serde_json::to_vec(
+                &self
+                    .descriptors
+                    .values()
+                    .map(|entry| &entry.descriptor)
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(|error| Error::Internal(error.to_string()))?,
         )
         .to_hex()
         .to_string();
@@ -331,14 +345,15 @@ impl ConfigRegistryBuilder {
                         let entry = RegisteredDescriptor {
                             descriptor: pending.descriptor,
                             schema: Arc::new(schema),
-                            owner_validator: pending.owner_validator,
+                            owner_normalizer: pending.owner_normalizer,
                         };
-                        entry.validate(&entry.descriptor.reference_default)?;
+                        entry.normalize(&entry.descriptor.reference_default)?;
                         Ok((path, entry))
                     })
                     .collect::<Result<BTreeMap<_, _>>>()?,
             ),
-            digest,
+            semantic_digest,
+            catalog_digest,
         })
     }
 }
@@ -347,18 +362,6 @@ impl ConfigRegistryBuilder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigurationBootstrapBundle {
-    pub bundle_revision: u32,
     pub core_descriptors: Vec<ConfigDescriptor>,
     pub deployment_document: Value,
-}
-
-impl ConfigurationBootstrapBundle {
-    pub fn validate_revision(&self) -> Result<()> {
-        if self.bundle_revision != 1 {
-            return Err(Error::Invalid(
-                "unsupported configuration bundle revision".into(),
-            ));
-        }
-        Ok(())
-    }
 }

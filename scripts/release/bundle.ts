@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { readModelImplementation } from "../../apps/nous-core/src/model/implementation.js";
 export type BundledPackage = {
   name: string;
   version: string;
@@ -71,6 +72,7 @@ export async function bundleApplication(repo: string) {
     string,
     { name: string; version: string; license: string; root: string }
   >();
+  const implementations = await readModelImplementation(repo);
   for (const [entry, target] of entries) {
     const result = await build({
       absWorkingDir: repo,
@@ -82,6 +84,9 @@ export async function bundleApplication(repo: string) {
       format: "esm",
       metafile: true,
       minify: true,
+      define: {
+        nousModelImplementations: JSON.stringify(implementations),
+      },
       banner: {
         js: 'import { createRequire as __createRequire } from "node:module"; import { fileURLToPath as __fileURLToPath } from "node:url"; import { dirname as __dirnameOf } from "node:path"; const require=__createRequire(import.meta.url); const __filename=__fileURLToPath(import.meta.url); const __dirname=__dirnameOf(__filename);',
       },

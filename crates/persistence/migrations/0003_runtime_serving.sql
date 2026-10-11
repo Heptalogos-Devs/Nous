@@ -36,6 +36,7 @@ CREATE TABLE work_contexts (
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
     state text NOT NULL CHECK (state IN ('open','paused','ended')),
     purpose text NOT NULL CHECK (octet_length(purpose) BETWEEN 1 AND 8192),
+    context_text text NOT NULL DEFAULT '' CHECK (octet_length(context_text) <= 65536),
     unresolved_questions text[] NOT NULL DEFAULT '{}',
     constraints jsonb NOT NULL DEFAULT '{}',
     resume_conditions text[] NOT NULL DEFAULT '{}',
@@ -55,6 +56,15 @@ CREATE TABLE work_context_refs (
     work_context_id uuid NOT NULL REFERENCES work_contexts(work_context_id) ON DELETE CASCADE,
     ordinal integer NOT NULL CHECK (ordinal >= 0),
     ref_kind text NOT NULL CHECK (ref_kind ~ '^[a-z][a-z0-9_]{0,63}$'),
+    ref_value text NOT NULL,
+    PRIMARY KEY(work_context_id, ordinal),
+    UNIQUE(work_context_id, ref_kind, ref_value)
+);
+
+CREATE TABLE work_context_anchors (
+    work_context_id uuid NOT NULL REFERENCES work_contexts(work_context_id) ON DELETE CASCADE,
+    ordinal integer NOT NULL CHECK (ordinal >= 0),
+    ref_kind text NOT NULL CHECK (ref_kind IN ('entity','tag')),
     ref_value text NOT NULL,
     PRIMARY KEY(work_context_id, ordinal),
     UNIQUE(work_context_id, ref_kind, ref_value)
@@ -118,8 +128,24 @@ CREATE UNIQUE INDEX maintenance_active_scope ON maintenance_needs(subject_id,kin
 CREATE INDEX maintenance_due ON maintenance_needs(subject_id,due_at,priority DESC)
     WHERE state IN ('pending','leased');
 
-ALTER TABLE model_workflow_operations ADD COLUMN maintenance_trigger_revision bigint NULL CHECK (maintenance_trigger_revision >= 0);
-ALTER TABLE model_workflow_operations ADD COLUMN maintenance_need_id uuid NULL REFERENCES maintenance_needs(need_id) ON DELETE CASCADE;
+CREATE TABLE model_workflow_operations (
+    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
+    owner text NOT NULL CHECK (owner ~ '^[a-z][a-z0-9_]{0,63}$'),
+    operation_key text NOT NULL CHECK (length(operation_key) BETWEEN 1 AND 256),
+    semantic_digest text NOT NULL CHECK (length(semantic_digest) BETWEEN 1 AND 128),
+    snapshot jsonb NOT NULL,
+    proposal jsonb NULL,
+    outcome jsonb NULL,
+    execution_telemetry jsonb NULL,
+    maintenance_trigger_revision bigint NULL CHECK (maintenance_trigger_revision >= 0),
+    maintenance_need_id uuid NULL REFERENCES maintenance_needs(need_id) ON DELETE CASCADE,
+    lease_token uuid NULL,
+    lease_until timestamptz NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(subject_id,owner,operation_key)
+);
+
 CREATE INDEX maintenance_workflows ON model_workflow_operations(maintenance_need_id) WHERE maintenance_need_id IS NOT NULL;
 
 CREATE TABLE experience_items (

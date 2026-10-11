@@ -113,11 +113,7 @@ impl MemoryService {
             .bind(subject.0).bind(episode.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
             .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
-        if epoch != expected {
-            return Err(Error::Conflict(
-                "expected Episode object epoch is stale".into(),
-            ));
-        }
+        crate::service::state::fence_epoch(epoch, expected)?;
         if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
             return Err(Error::FailedPrecondition("Episode is purging".into()));
         }
@@ -195,11 +191,7 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let epoch: i64 = sqlx::query_scalar("SELECT object_epoch FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE").bind(subject.0).bind(episode.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(|| Error::NotFound("Episode not found".into()))?;
-        if epoch != expected {
-            return Err(Error::Conflict(
-                "expected Episode object epoch is stale".into(),
-            ));
-        }
+        crate::service::state::fence_epoch(epoch, expected)?;
         let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
         self.invalidate_object_dependents_in(
             mutation.tx(),
@@ -244,8 +236,7 @@ impl MemoryService {
             .bind(&refs).execute(&mut **tx).await.map_err(db)?;
         sqlx::query("DELETE FROM work_context_refs WHERE ref_kind='episode_revision' AND ref_value=ANY($1::text[])")
             .bind(&refs).execute(&mut **tx).await.map_err(db)?;
-        sqlx::query("UPDATE model_workflow_operations SET snapshot='{}'::jsonb,proposal=NULL,outcome='{\"purged\":true}'::jsonb,lease_token=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE subject_id=$1 AND owner='memory' AND lower(operation_key) IN (SELECT operation_id::text FROM mutation_receipts WHERE subject_id=$1 AND result_kind='episode' AND result_ref=$2)")
-            .bind(subject.0).bind(episode.0.to_string()).execute(&mut **tx).await.map_err(db)?;
+
         Ok(())
     }
 }

@@ -1,6 +1,14 @@
 # Nous CLI
 
+[仓库地图](../../INDEX.md) · [Applications](../README.md) · [Agent 使用](../../docs/agent/README.md)
+
+命令实现按操作类别放在 [commands](src/commands/index.ts)；Terminal 与 MCP 调用同一个命令核心。`runtime.ts` 固定本次选择和输入，`state.ts` 管理 consumer 事务，`friendly.ts` 只处理呈现。测试和测试用 Client 在 `tests/`，不随 CLI/MCP 打包。
+
 第一方 reference consumer，通过 `@nous-wave/client` 调用 Core；命令使用 citty 0.2.2，复杂输入使用 smol-toml 与 Zod。CLI 的选择、查询结果索引和操作 receipt 保存在 InstanceRoot，属于 consumer 本地状态。
+
+共享状态按 Core discovery 中的稳定 instanceId 与 `--consumer` 共同隔离，目录为 `InstanceRoot/consumers/<身份摘要>/`。Core 重启保留实例身份；同一 state root 中不同实例或 consumer 使用不同选择和回执。每条命令固定开始时的 Subject、Session、WorkContext 与输入，后续 RPC 不重读另一条命令的选择。原子写与跨进程锁仅用于本地短事务，不覆盖 RPC 或模型等待。独立字段更新合并；同字段、Subject 或 query context 冲突保留业务结果并返回 `STATE_UNSAVED` notice，后续操作使用返回的 exact references。
+
+`consumer_state` 配置提供回执容量、文件字节预算和锁时限，完整 active policy 在命令开始时固定。当前 selection/operation 各使用一个 format 标识，回执保留 BigInt 与任意 JSON 正文键的区别；旧 consumer 格式不由当前生产入口读取。未知回执的原请求与身份须在清理旧运行材料前保全。
 
 按[根 README](../../README.md)准备开发环境并运行 `corepack pnpm dev`，另一个终端可执行：
 
@@ -22,6 +30,8 @@ corepack pnpm nous use result:1 --kind referenced
 默认输出语义文本，正常操作使用 `result:N`、稳定 LexicalRef 或能唯一解析的名称。Subject、Session、WorkContext、认知 revision 和 Material 来源都返回可再次输入的词汇引用，例如 `sub:titil-lamat-napor`、`ctx:guhur-muguz-pojij`。这些引用由 Authority 持久保存，跨进程与 consumer state root 有效；不是 UUID 的截断，也不随标题修改改变。相同名称有歧义时，使用明确的词汇引用。精确 revision 的词汇引用仍指向原 revision。
 
 `--subject`、`--session`、`--work-context` 与各命令引用参数接受返回的词汇引用。`identity bind --kind <kind> --canonical <词汇引用> --name <名称> --alias <别名>` 可显式设置可读名称；普通显示不会覆盖既有名称或别名。原始来源、Memory 内容与自由文本保持原文，因此历史资料中已有的 UUID 不被改写。
+
+地址由对象创建事务或显式 Identity 服务分配；正常呈现依据协议声明的引用字段去重并只读批量查询。用户 JSON 中的 `$typeName`、`$unknown`、`subjectId` 等键保持原值，不因字段名或字符串形状转换。Query 的 `ref` 是当前 canonical `{kind,value}`，`result:N` 保存 exact reference，正常文本的 `lexicalRef` 优先指向该 exact revision。`query prepare` 将 context 的 WorkContext 与 Session 分组展示；详细 query trace 由 `--developer` 保留。
 
 `--json` 返回 `schemaVersion="nous.cli.v1"` 的机器 envelope，保留 canonical IDs，int64 使用十进制字符串。`--developer` 保留诊断身份和 query trace，`--raw --developer` 显式选择原始 Client DTO。正常文本省略这些内部追踪身份。成功仅写 stdout，错误仅写 stderr 并返回非零码；错误保留 code、message、details、candidates 和未知结果的 receipt。
 
@@ -84,7 +94,7 @@ node --import tsx apps/nous-cli/src/main.ts --run-root <Core RunRoot> --instance
 
 复用长期 Subject 时运行 `subject use <返回的 sub:词汇引用>`，每个并行 Agent 单独 `session open`。不要复制 Core Authority 数据库来隔离本地选择。
 
-`nous --locator <bootstrap.toml> mcp --state-root <Agent 私有目录> --consumer consumer:codex:research` 启动官方 MCP SDK v2 stdio consumer。MCP 必须显式指定私有 state root 和稳定 consumer；它只通过参数数组调用同一 CLI，同一连接的调用串行执行。stdout 仅用于 MCP 协议。三个工具为 `nous_help`、`nous_command`（`args` 是 argv 字符串数组，不是 shell 命令）和 `nous_query`。错误保留 CLI 文本与未知结果 receipt；用 `nous_command` 调用 `retry <receipt>` 恢复。
+`nous --locator <bootstrap.toml> mcp --state-root <Agent 私有目录> --consumer consumer:codex:research` 启动官方 MCP SDK v2 stdio consumer。MCP 必须显式指定私有 state root 和稳定 consumer；它通过参数数组在进程内调用 Terminal 共用的命令核心，并使用同一跨进程状态事务。并发命令各自冻结输入，长操作不阻塞其他调用。stdout/stdin 仅用于 MCP 协议；MCP 输入使用文件或 `--text`，不接受文件 `-`。三个工具为 `nous_help`、`nous_command`（`args` 是 argv 字符串数组，不是 shell 命令）和 `nous_query`。错误保留 CLI 文本与未知结果 receipt；用 `nous_command` 调用 `retry <receipt>` 恢复。
 
 Codex 项目 `.codex/config.toml` 的源码配置示例，替换全部绝对路径：
 

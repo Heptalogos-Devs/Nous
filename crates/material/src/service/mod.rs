@@ -4,8 +4,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod derivation;
+mod documents;
 mod historical;
 mod identity;
+mod lineage;
+pub use documents::text_content_identity;
 mod materialization;
 mod observation;
 mod query;
@@ -13,7 +16,7 @@ mod segmentation;
 mod structured;
 pub use segmentation::DescriptionSegment;
 mod types;
-pub use materialization::{ByteRange, MaterializeRequest, MaterializedEvidence};
+pub use materialization::{ByteRange, MaterialTextView, MaterializeRequest, MaterializedEvidence};
 pub use types::*;
 
 use crate::*;

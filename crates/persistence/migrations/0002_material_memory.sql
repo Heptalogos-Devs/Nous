@@ -53,7 +53,8 @@ CREATE TABLE memory_revision_evidence (
     source_region_id uuid NULL REFERENCES source_regions(source_region_id) ON DELETE RESTRICT,
     derived_representation_id uuid NULL REFERENCES derived_representations(derived_representation_id) ON DELETE RESTRICT,
     derived_region_id uuid NULL REFERENCES derived_regions(derived_region_id) ON DELETE RESTRICT,
-    support_role text NOT NULL CHECK (support_role IN ('direct','corroborating','interpretation','contradiction','contextual')),
+    basis_role text NOT NULL CHECK (basis_role IN ('direct','interpretation','contextual')),
+    epistemic_relation text NOT NULL DEFAULT '' CHECK (epistemic_relation IN ('','supports','contradicts','corroborates','weakens','corrects','counterexample','inferred_from')),
     PRIMARY KEY(memory_revision_id, evidence_no),
     CHECK (num_nonnulls(source_region_id, derived_representation_id, derived_region_id) <= 1)
 );
@@ -62,8 +63,9 @@ CREATE TABLE memory_revision_dependencies (
     memory_revision_id uuid NOT NULL REFERENCES memory_revisions(memory_revision_id) ON DELETE CASCADE,
     target_ref_kind text NOT NULL CHECK (target_ref_kind IN ('memory_revision','cognitive_schema_revision','episode_revision','journal_revision')),
     target_ref text NOT NULL,
-    support_role text NOT NULL CHECK (support_role IN ('direct','corroborating','interpretation','contradiction','contextual')),
-    PRIMARY KEY(memory_revision_id, target_ref_kind, target_ref, support_role)
+    basis_role text NOT NULL CHECK (basis_role IN ('direct','interpretation','contextual')),
+    epistemic_relation text NOT NULL DEFAULT '' CHECK (epistemic_relation IN ('','supports','contradicts','corroborates','weakens','corrects','counterexample','inferred_from')),
+    PRIMARY KEY(memory_revision_id, target_ref_kind, target_ref, basis_role, epistemic_relation)
 );
 
 CREATE TABLE memory_revision_aboutness (
@@ -125,7 +127,7 @@ CREATE TABLE tag_lineage (
     child_revision_id uuid NOT NULL REFERENCES tag_revisions(tag_revision_id),
     child_index integer NOT NULL,
     relation text NOT NULL CHECK(relation IN ('merged_into','split_into')),
-    supports jsonb NOT NULL CHECK(jsonb_typeof(supports)='array' AND jsonb_array_length(supports) BETWEEN 1 AND 16),
+    basis jsonb NOT NULL CHECK(jsonb_typeof(basis)='array' AND jsonb_array_length(basis) BETWEEN 1 AND 16),
     created_at timestamptz NOT NULL,
     FOREIGN KEY(parent_tag_id,subject_id) REFERENCES tags(tag_id,subject_id),
     FOREIGN KEY(child_tag_id,subject_id) REFERENCES tags(tag_id,subject_id),
@@ -184,9 +186,10 @@ CREATE TABLE cognitive_schema_evidence_links (
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
     schema_revision_id uuid NOT NULL REFERENCES cognitive_schema_revisions(schema_revision_id) ON DELETE CASCADE,
     role text NOT NULL CHECK (role IN ('support','counterexample','boundary_case')),
-    support_kind text NOT NULL CHECK (support_kind IN ('evidence','memory_revision','cognitive_schema_revision','episode_revision','journal_revision')),
-    support_ref text NOT NULL,
-    support_role text NOT NULL CHECK (support_role IN ('direct','corroborating','interpretation','contradiction','contextual')),
+    basis_kind text NOT NULL CHECK (basis_kind IN ('evidence','memory_revision','cognitive_schema_revision','episode_revision','journal_revision')),
+    basis_ref text NOT NULL,
+    basis_role text NOT NULL CHECK (basis_role IN ('direct','interpretation','contextual')),
+    epistemic_relation text NOT NULL DEFAULT '' CHECK (epistemic_relation IN ('','supports','contradicts','corroborates','weakens','corrects','counterexample','inferred_from')),
     occurrence_id uuid NULL REFERENCES observation_occurrences(occurrence_id) ON DELETE RESTRICT,
     source_region_id uuid NULL REFERENCES source_regions(source_region_id) ON DELETE RESTRICT,
     derived_representation_id uuid NULL REFERENCES derived_representations(derived_representation_id) ON DELETE RESTRICT,
@@ -211,7 +214,7 @@ CREATE TABLE association_evidence (
     to_ref text NOT NULL,
     relation_kind text NOT NULL CHECK (length(relation_kind) BETWEEN 1 AND 128 AND relation_kind ~ '^[a-z0-9_.:-]+$'),
     polarity text NOT NULL CHECK (polarity IN ('positive','negative')),
-    support_class text NOT NULL CHECK (support_class IN ('host_explicit','source_evidence','cognitive_derivation','meaningful_use','derived_structure')),
+    basis_class text NOT NULL CHECK (basis_class IN ('host_explicit','source_evidence','cognitive_derivation','meaningful_use','derived_structure')),
     valid_time_kind text NOT NULL DEFAULT 'unknown' CHECK (valid_time_kind IN ('unknown','instant','interval')),
     valid_time_start timestamptz NULL,
     valid_time_end timestamptz NULL,
@@ -219,16 +222,17 @@ CREATE TABLE association_evidence (
     created_at timestamptz NOT NULL,
     revoked_at timestamptz NULL
 );
-CREATE TABLE association_evidence_supports (
+CREATE TABLE association_evidence_basis (
     association_evidence_id uuid NOT NULL REFERENCES association_evidence(association_evidence_id) ON DELETE CASCADE,
-    support_kind text NOT NULL CHECK (support_kind IN ('evidence','memory_revision','cognitive_schema_revision','episode_revision','journal_revision','use_event')),
-    support_ref text NOT NULL,
-    support_role text NOT NULL CHECK (support_role IN ('direct','corroborating','interpretation','contradiction','contextual')),
+    basis_kind text NOT NULL CHECK (basis_kind IN ('evidence','memory_revision','cognitive_schema_revision','episode_revision','journal_revision','use_event')),
+    basis_ref text NOT NULL,
+    basis_role text NOT NULL CHECK (basis_role IN ('direct','interpretation','contextual')),
+    epistemic_relation text NOT NULL DEFAULT '' CHECK (epistemic_relation IN ('','supports','contradicts','corroborates','weakens','corrects','counterexample','inferred_from')),
     occurrence_id uuid NULL REFERENCES observation_occurrences(occurrence_id) ON DELETE RESTRICT,
     source_region_id uuid NULL REFERENCES source_regions(source_region_id) ON DELETE RESTRICT,
     derived_representation_id uuid NULL REFERENCES derived_representations(derived_representation_id) ON DELETE RESTRICT,
     derived_region_id uuid NULL REFERENCES derived_regions(derived_region_id) ON DELETE RESTRICT,
-    PRIMARY KEY(association_evidence_id, support_kind, support_ref, support_role),
+    PRIMARY KEY(association_evidence_id, basis_kind, basis_ref, basis_role, epistemic_relation),
     CHECK (num_nonnulls(source_region_id, derived_representation_id, derived_region_id) <= 1)
 );
 
@@ -280,18 +284,19 @@ CREATE TABLE episode_revision_members (
     PRIMARY KEY(episode_revision_id, ordinal),
     UNIQUE(episode_revision_id, ref_kind, ref_value)
 );
-CREATE TABLE episode_revision_supports (
+CREATE TABLE episode_revision_basis (
     episode_revision_id uuid NOT NULL REFERENCES episode_revisions(episode_revision_id) ON DELETE CASCADE,
-    support_no integer NOT NULL CHECK (support_no >= 0),
-    support_kind text NOT NULL CHECK (support_kind IN ('evidence','memory_revision','cognitive_schema_revision','episode_revision')),
-    support_ref text NOT NULL,
-    support_role text NOT NULL CHECK (support_role IN ('direct','corroborating','interpretation','contradiction','contextual')),
+    basis_no integer NOT NULL CHECK (basis_no >= 0),
+    basis_kind text NOT NULL CHECK (basis_kind IN ('evidence','memory_revision','cognitive_schema_revision','episode_revision')),
+    basis_ref text NOT NULL,
+    basis_role text NOT NULL CHECK (basis_role IN ('direct','interpretation','contextual')),
+    epistemic_relation text NOT NULL DEFAULT '' CHECK (epistemic_relation IN ('','supports','contradicts','corroborates','weakens','corrects','counterexample','inferred_from')),
     occurrence_id uuid NULL REFERENCES observation_occurrences(occurrence_id) ON DELETE RESTRICT,
     source_region_id uuid NULL REFERENCES source_regions(source_region_id) ON DELETE RESTRICT,
     derived_representation_id uuid NULL REFERENCES derived_representations(derived_representation_id) ON DELETE RESTRICT,
     derived_region_id uuid NULL REFERENCES derived_regions(derived_region_id) ON DELETE RESTRICT,
     producer_signature_id uuid NULL REFERENCES producer_signatures(producer_signature_id),
-    PRIMARY KEY(episode_revision_id, support_no),
+    PRIMARY KEY(episode_revision_id, basis_no),
     CHECK (num_nonnulls(source_region_id, derived_representation_id, derived_region_id) <= 1)
 );
 CREATE TABLE episode_revision_relations (
@@ -341,12 +346,12 @@ CREATE TABLE journal_revision_points (
     text text NOT NULL CHECK (octet_length(text) BETWEEN 1 AND 8192),
     PRIMARY KEY(journal_revision_id,ordinal)
 );
-CREATE TABLE journal_point_supports (
+CREATE TABLE journal_point_basis (
     journal_revision_id uuid NOT NULL,
     ordinal integer NOT NULL,
-    support_no integer NOT NULL CHECK (support_no BETWEEN 0 AND 15),
-    support jsonb NOT NULL CHECK (jsonb_typeof(support)='object'),
-    PRIMARY KEY(journal_revision_id,ordinal,support_no),
+    basis_no integer NOT NULL CHECK (basis_no BETWEEN 0 AND 15),
+    basis jsonb NOT NULL CHECK (jsonb_typeof(basis)='object'),
+    PRIMARY KEY(journal_revision_id,ordinal,basis_no),
     FOREIGN KEY(journal_revision_id,ordinal) REFERENCES journal_revision_points(journal_revision_id,ordinal) ON DELETE CASCADE
 );
 CREATE TABLE journal_revision_sources (

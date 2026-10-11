@@ -7,14 +7,19 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+mod time;
+pub use time::{TemporalExtent, TimeInterval, TimePredicate};
+mod workflow;
+pub use workflow::{
+    AttemptStatus, ExecutionAttempt, ExecutionTelemetry, ExecutionUsage, MaintenanceClaim,
+    WorkflowPayload, WorkflowSnapshot,
+};
 mod topology;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 pub use topology::TopologyRelation;
 use uuid::Uuid;
-
-pub const API_VERSION: u32 = 1;
 
 macro_rules! uuid_id {
     ($name:ident) => {
@@ -169,6 +174,19 @@ pub enum EpistemicClass {
     Inferred,
     Narrative,
     Simulated,
+}
+
+impl EpistemicClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Observed => "observed",
+            Self::Reported => "reported",
+            Self::Derived => "derived",
+            Self::Inferred => "inferred",
+            Self::Narrative => "narrative",
+            Self::Simulated => "simulated",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -395,81 +413,6 @@ impl EmbeddingSpaceSignature {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum TemporalExtent {
-    #[default]
-    Unknown,
-    Instant {
-        at: DateTime<Utc>,
-    },
-    Interval {
-        start: Option<DateTime<Utc>>,
-        end: Option<DateTime<Utc>>,
-    },
-}
-
-impl TemporalExtent {
-    pub fn validate(&self) -> Result<()> {
-        if let Self::Interval {
-            start: Some(start),
-            end: Some(end),
-        } = self
-            && start >= end
-        {
-            return Err(Error::Invalid(
-                "temporal interval must be half-open with start < end".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn overlaps_interval(&self, query: &TimeInterval) -> bool {
-        match self {
-            Self::Unknown => false,
-            Self::Instant { at } => query.contains(*at),
-            Self::Interval { start, end } => query.overlaps(*start, *end),
-        }
-    }
-}
-
-/// Query-time interval filter. Persistent valid/occurred values use
-/// `TemporalExtent`; this type is retained for bounded query predicates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct TimeInterval {
-    pub start: Option<DateTime<Utc>>,
-    pub end: Option<DateTime<Utc>>,
-}
-
-impl TimeInterval {
-    pub fn validate(&self) -> Result<()> {
-        if let (Some(start), Some(end)) = (self.start, self.end)
-            && start >= end
-        {
-            return Err(Error::Invalid(
-                "time interval must be half-open with start < end".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn contains(&self, value: DateTime<Utc>) -> bool {
-        self.start.is_none_or(|start| value >= start) && self.end.is_none_or(|end| value < end)
-    }
-
-    pub fn overlaps(&self, start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>) -> bool {
-        let starts_before_end = match (self.start, end) {
-            (Some(query_start), Some(value_end)) => query_start < value_end,
-            _ => true,
-        };
-        let ends_after_start = match (self.end, start) {
-            (Some(query_end), Some(value_start)) => value_start < query_end,
-            _ => true,
-        };
-        starts_before_end && ends_after_start
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FreshnessDescriptor {
     #[serde(default)]
@@ -527,25 +470,8 @@ pub struct SituationDescriptor {
     pub current_objects: Vec<ObjectRef>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("{0}")]
-    Invalid(String),
-    #[error("{0}")]
-    NotFound(String),
-    #[error("{0}")]
-    Conflict(String),
-    #[error("{0}")]
-    FailedPrecondition(String),
-    #[error("{0}")]
-    Unavailable(String),
-    #[error("{0}")]
-    Infrastructure(String),
-    #[error("{0}")]
-    Internal(String),
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
+mod error;
+pub use error::{DomainError, DomainErrorCode, Error, Result};
 
 impl fmt::Display for CognitiveRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

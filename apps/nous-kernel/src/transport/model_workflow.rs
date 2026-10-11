@@ -1,11 +1,10 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::model::{private_workflow_owner, workflow_json};
+use super::model::private_workflow_owner;
+use super::workflow_convert as envelope;
 use super::*;
 use nous_core::Result;
-use nous_persistence::database_error as db;
-use sqlx::Row;
 #[tonic::async_trait]
 impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for KernelService {
     async fn find_workflow(
@@ -13,13 +12,30 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
         request: Request<k::FindWorkflowRequest>,
     ) -> std::result::Result<Response<k::FoundWorkflow>, Status> {
         let input = request.into_inner();
-        let result:Result<_>=async {
+        let result: Result<_> = async {
             private_workflow_owner(&input.owner)?;
-            let row=sqlx::query("SELECT semantic_digest,snapshot,proposal,outcome,execution_telemetry FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3").bind(id(&input.subject_id)?).bind(&input.owner).bind(&input.operation_key).fetch_optional(self.0.store.pool()).await.map_err(db)?;
-            let Some(row)=row else{return Ok(k::FoundWorkflow{found:false,execution_telemetry_json:None,snapshot_json:None,proposal_json:None,outcome_json:None});};
-            if row.try_get::<String,_>("semantic_digest").map_err(db)?!=input.semantic_digest{return Err(Error::Conflict("model operation identity has different semantic input".into()));}
-            Ok(k::FoundWorkflow{found:true,execution_telemetry_json:row.try_get::<Option<serde_json::Value>,_>("execution_telemetry").map_err(db)?.map(|value|value.to_string()),snapshot_json:Some(row.try_get::<serde_json::Value,_>("snapshot").map_err(db)?.to_string()),proposal_json:row.try_get::<Option<serde_json::Value>,_>("proposal").map_err(db)?.map(|value|value.to_string()),outcome_json:row.try_get::<Option<serde_json::Value>,_>("outcome").map_err(db)?.map(|value|value.to_string())})
-        }.await;
+            let row = self
+                .0
+                .store
+                .find_model_workflow(
+                    SubjectId(id(&input.subject_id)?),
+                    &input.owner,
+                    &input.operation_key,
+                    &input.semantic_digest,
+                )
+                .await?;
+            let Some(row) = row else {
+                return Ok(k::FoundWorkflow::default());
+            };
+            Ok(k::FoundWorkflow {
+                found: true,
+                snapshot: Some(envelope::snapshot_proto(row.snapshot)),
+                proposal: row.proposal.map(envelope::payload_proto),
+                outcome: row.outcome.map(envelope::payload_proto),
+                execution_telemetry: row.execution_telemetry.map(envelope::telemetry_proto),
+            })
+        }
+        .await;
         result.map(Response::new).map_err(status)
     }
     async fn reserve_workflow(
@@ -36,39 +52,29 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                 }
             }
             private_workflow_owner(&input.owner)?;
-            let mut snapshot = workflow_json(&input.snapshot_json)?;
-            if let Some(need_id) = &input.maintenance_need_id {
+            let mut snapshot = envelope::snapshot(required(input.snapshot, "workflow snapshot")?)?;
+            if let Some(claim) = &snapshot.maintenance_claim {
                 if input.owner != "memory" {
                     return Err(Error::Invalid(
                         "maintenance workflow route requires Memory".into(),
                     ));
                 }
-                let expected = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, format!("{need_id}:{}:{}", input.maintenance_trigger_authority_seq, input.maintenance_trigger_revision).as_bytes());
-                if input.operation_key != expected.to_string() { return Err(Error::Invalid("maintenance workflow identity does not match obligation".into())); }
-                let token = required(
-                    input.maintenance_lease_token.clone(),
-                    "maintenance_lease_token",
-                )?;
-                snapshot
-                    .as_object_mut()
-                    .ok_or_else(|| Error::Invalid("workflow snapshot must be an object".into()))?
-                    .insert(
-                        "maintenance_claim".into(),
-                        serde_json::json!({"need_id":need_id,"lease_token":token,"trigger":input.maintenance_trigger_authority_seq,"trigger_revision":input.maintenance_trigger_revision}),
-                    );
-            } else if snapshot.get("maintenance_claim").is_some() {
-                return Err(Error::Invalid(
-                    "maintenance binding requires typed claim".into(),
-                ));
+                let expected = uuid::Uuid::new_v5(
+                    &uuid::Uuid::NAMESPACE_OID,
+                    format!(
+                        "{}:{}:{}",
+                        claim.need_id, claim.trigger_authority_seq, claim.trigger_revision
+                    )
+                    .as_bytes(),
+                );
+                if input.operation_key != expected.to_string() {
+                    return Err(Error::Invalid(
+                        "maintenance workflow identity does not match obligation".into(),
+                    ));
+                }
             }
             if input.owner == "memory" {
-                let object = snapshot
-                    .as_object_mut()
-                    .ok_or_else(|| Error::Invalid("workflow snapshot must be an object".into()))?;
-                object.insert(
-                    "cognitive_formed_at".into(),
-                    serde_json::json!(self.0.cognition.now(subject)),
-                );
+                snapshot.cognitive_formed_at = Some(self.0.cognition.now(subject));
             }
             let reserved = self
                 .0
@@ -78,15 +84,17 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                     &input.owner,
                     &input.operation_key,
                     &input.semantic_digest,
-                    &snapshot, self.0.configuration.snapshot_for_subject(subject)?.get(nous_runtime::MODEL_WORKFLOW_LEASE)?)
+                    &snapshot,
+                    u64::from(input.lease_seconds),
+                )
                 .await?;
             Ok(k::WorkflowReservation {
-                snapshot_json: reserved.snapshot.to_string(),
-                proposal_json: reserved.proposal.map(|value| value.to_string()),
-                outcome_json: reserved.outcome.map(|value| value.to_string()),
-                lease_token: reserved.lease_token.map(|value| value.to_string()),
+                snapshot: Some(envelope::snapshot_proto(reserved.snapshot)),
+                proposal: reserved.proposal.map(envelope::payload_proto),
+                outcome: reserved.outcome.map(envelope::payload_proto),
+                lease: reserved.lease.map(envelope::lease_proto),
                 busy: reserved.busy,
-                execution_telemetry_json: reserved.execution_telemetry.map(|v| v.to_string()),
+                execution_telemetry: reserved.execution_telemetry.map(envelope::telemetry_proto),
             })
         }
         .await;
@@ -98,32 +106,27 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
     ) -> std::result::Result<Response<()>, Status> {
         let input = request.into_inner();
         let result: Result<_> = async {
-            private_workflow_owner(&input.owner)?;
-            let proposal = input
-                .proposal_json
-                .as_deref()
-                .map(workflow_json)
-                .transpose()?;
-            let outcome = input
-                .outcome_json
-                .as_deref()
-                .map(workflow_json)
-                .transpose()?;
+            let lease = envelope::lease(required(input.lease, "workflow lease")?)?;
+            private_workflow_owner(lease.owner.as_str())?;
+            let proposal = input.proposal.map(envelope::payload).transpose()?;
+            let outcome = input.outcome.map(envelope::payload).transpose()?;
             let execution_telemetry = input
-                .execution_telemetry_json
-                .as_deref()
-                .map(workflow_json)
+                .execution_telemetry
+                .map(envelope::telemetry)
                 .transpose()?;
+            let operations = input
+                .mutation_operations
+                .iter()
+                .map(|value| id(value).map(nous_core::OperationId))
+                .collect::<Result<Vec<_>>>()?;
             self.0
                 .store
                 .save_model_workflow(
-                    SubjectId(id(&input.subject_id)?),
-                    &input.owner,
-                    &input.operation_key,
-                    id(&input.lease_token)?,
+                    &lease,
                     proposal.as_ref(),
                     outcome.as_ref(),
                     execution_telemetry.as_ref(),
+                    &operations,
                 )
                 .await
         }
@@ -135,15 +138,12 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
         request: Request<k::ReleaseWorkflowRequest>,
     ) -> std::result::Result<Response<()>, Status> {
         let input = request.into_inner();
-        private_workflow_owner(&input.owner).map_err(status)?;
+        let lease = envelope::lease(required(input.lease, "workflow lease").map_err(status)?)
+            .map_err(status)?;
+        private_workflow_owner(lease.owner.as_str()).map_err(status)?;
         self.0
             .store
-            .release_model_workflow(
-                SubjectId(id(&input.subject_id).map_err(status)?),
-                &input.owner,
-                &input.operation_key,
-                id(&input.lease_token).map_err(status)?,
-            )
+            .release_model_workflow(&lease)
             .await
             .map(Response::new)
             .map_err(status)

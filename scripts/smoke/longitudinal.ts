@@ -2,15 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawn, execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { mkdir, writeFile, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { workspaceTemp } from "../workspace.js";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
-import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import { fromJson, type JsonValue } from "@bufbuild/protobuf";
+import { timestampFromDate, TimestampSchema } from "@bufbuild/protobuf/wkt";
+import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { connectNous } from "@nous-wave/client/node";
 import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { KernelClient } from "../../apps/nous-core/src/kernel-client.js";
@@ -23,30 +19,22 @@ import {
 } from "../../apps/nous-core/src/model/schemas/longitudinal.js";
 import { consolidationSchema } from "../../apps/nous-core/src/model/schemas/consolidation.js";
 
-import {
-  runCognitiveFunctional,
-  runSelectedTextCompatibility,
-} from "../research/cognitive-functional.js";
-import { conceptMaintenanceSchema } from "../../apps/nous-core/src/model/schemas/concept-maintenance.js";
-
 function proposalModels() {
   const models = new ModelRuntime();
-  let functional = false;
   Object.defineProperty(models.invocations, "capabilities", {
     get: () =>
-      [
-        "episode_segmentation",
-        "journal_synthesis",
-        "memory_consolidation",
-        ...(functional ? ["memory_formation", "concept_maintenance"] : []),
-      ].map((role) => ({
-        name: `model.${role}`,
-        state: "READY",
-        detail: "Executable smoke proposal adapter",
-      })),
+      ["episode_segmentation", "journal_synthesis", "memory_consolidation"].map(
+        (role) => ({
+          name: `model.${role}`,
+          state: "READY",
+          detail: "Executable smoke proposal adapter",
+        }),
+      ),
   });
   const calls = { episode: 0, journal: 0, consolidation: 0 };
   models.invocations.snapshot = (role) => ({
+    format: "nous.model.execution",
+    implementationDigest: "0".repeat(64),
     role,
     configuration: modelConfigurationSchema.parse({}),
     profileDigest: "a".repeat(64),
@@ -195,292 +183,7 @@ function proposalModels() {
       },
     };
   };
-  const enableFunctional = () => {
-    functional = true;
-    Object.defineProperty(models, "embeddingModel", {
-      get: () => "deterministic-test",
-    });
-    models.invocations.embeddingBatch = async (texts) => ({
-      value: texts.map(() => [1, 0]),
-      producer: {
-        signature_hash: "smoke-unused",
-        provider_class: "openai-embeddings",
-        operation: "text_embedding",
-        implementation: "smoke",
-        model_identity: "deterministic-test",
-        model_revision: null,
-        output_schema_digest: null,
-        preprocessing_identity: "smoke",
-        preprocessing_revision: "1",
-        config_digest: "smoke",
-        model_role: "query_embedding",
-        model_profile: "stub",
-        execution_profile: "stub",
-        inference_controls_digest: "e".repeat(64),
-        role_policy_digest: "f".repeat(64),
-        prompt_id: null,
-        prompt_digest: null,
-      },
-      producerMetadata,
-      execution: {
-        attempts: [
-          {
-            executionProfile: "stub",
-            modelProfile: "stub",
-            status: "succeeded" as const,
-            latencyMs: 0,
-          },
-        ],
-        successfulExecutionProfile: "stub",
-      },
-    });
-    models.form = async (input) => {
-      const source = JSON.parse(input) as { evidenceText: string };
-      return {
-        text: source.evidenceText,
-        semanticRole: "reported_fact",
-        title: null,
-        selectedEntityKeys: [],
-        producerMetadata,
-        execution: {
-          attempts: [
-            {
-              executionProfile: "stub",
-              modelProfile: "stub",
-              status: "succeeded" as const,
-              latencyMs: 0,
-            },
-          ],
-          successfulExecutionProfile: "stub",
-        },
-      };
-    };
-    models.consolidate = async () => ({
-      value: consolidationSchema.parse({
-        actions: [
-          {
-            action: "skip",
-            reason: "Explicit memories already retain the bounded facts",
-          },
-        ],
-      }),
-      producerMetadata,
-      execution: {
-        attempts: [
-          {
-            executionProfile: "stub",
-            modelProfile: "stub",
-            status: "succeeded" as const,
-            latencyMs: 0,
-          },
-        ],
-        successfulExecutionProfile: "stub",
-      },
-    });
-    models.segmentEpisode = async (
-      input,
-      _signal,
-      _snapshot,
-      beforeAttempt,
-    ) => {
-      beforeAttempt?.();
-      const source = plan(input);
-      return {
-        value: episodePartitionSchema.parse({
-          action: "partition",
-          segments: [
-            {
-              memberKeys: source.members.map((member) => member.key),
-              title: "Observed work session",
-              boundaryExplanation:
-                "The closed session delimits these observations",
-            },
-          ],
-        }),
-        producerMetadata,
-        execution: {
-          attempts: [
-            {
-              executionProfile: "stub",
-              modelProfile: "stub",
-              status: "succeeded" as const,
-              latencyMs: 0,
-            },
-          ],
-          successfulExecutionProfile: "stub",
-        },
-      };
-    };
-    models.synthesizeJournal = async () => ({
-      value: journalSynthesisSchema.parse({ action: "no_change" }),
-      producerMetadata,
-      execution: {
-        attempts: [
-          {
-            executionProfile: "stub",
-            modelProfile: "stub",
-            status: "succeeded" as const,
-            latencyMs: 0,
-          },
-        ],
-        successfulExecutionProfile: "stub",
-      },
-    });
-    models.maintainConcepts = async (
-      input,
-      _signal,
-      _snapshot,
-      beforeAttempt,
-    ) => {
-      beforeAttempt?.();
-      const source = JSON.parse(input) as {
-        cognition: { key: string; text: string; exactBasisKey: string }[];
-        tags: { key: string; content: { label: string } }[];
-      };
-      const focus = source.cognition[0]!;
-      const text = focus.text.toLowerCase();
-      let label: string | undefined;
-      if (text.includes("warm-start readiness")) label = "warm-start readiness";
-      else if (text.includes("paired-light check"))
-        label = "paired-light check";
-      else if (
-        text.includes("double-lamp gate") ||
-        text.includes("audit recorded both signatures")
-      )
-        label = "double-lamp gate";
-      else if (
-        /breakfast|morning/.test(text) &&
-        /journal|morning routine/.test(text) &&
-        !text.includes("did not adopt")
-      )
-        label = "breakfast journal routine";
-      else if (
-        /consumer lease|reader lease|reader-lease|retire the old snapshot|leases for|retire first|retirement.*reclaim|lease-before-reclaim|preserved active consumers/i.test(
-          text,
-        )
-      )
-        label = "consumer lease reclamation";
-      const relationRules: [RegExp, RegExp][] = [
-        [
-          /missed setting to the single-person checklist/,
-          /private term double-lamp gate/,
-        ],
-        [/private term double-lamp gate/, /next tide release/],
-        [/second block|old backing/, /retired snapshots remain/],
-        [/retired snapshots remain/, /retire the old snapshot/],
-        [/retire the old snapshot/, /used the analogy to separate/],
-        [/used the analogy to separate/, /implemented consumer leases/],
-      ];
-      const extra = relationRules.flatMap(([from, to]) =>
-        from.test(text)
-          ? source.cognition
-              .filter(
-                (candidate) =>
-                  candidate.key !== focus.key &&
-                  to.test(candidate.text.toLowerCase()),
-              )
-              .slice(0, 1)
-              .map((candidate) => ({
-                action: "create_association",
-                fromKey: focus.key,
-                toKey: candidate.key,
-                relation: "assoc.related",
-                basisKeys: [focus.exactBasisKey, candidate.exactBasisKey],
-                reason:
-                  "The supplied cognition describes the mechanism or remedy for this focus",
-              }))
-          : [],
-      );
-      if (!label)
-        return {
-          value: conceptMaintenanceSchema.parse({
-            actions: extra.length ? extra : [{ action: "no_change" }],
-          }),
-          producerMetadata,
-          execution: {
-            attempts: [
-              {
-                executionProfile: "stub",
-                modelProfile: "stub",
-                status: "succeeded" as const,
-                latencyMs: 0,
-              },
-            ],
-            successfulExecutionProfile: "stub",
-          },
-        };
-      const tag = source.tags.find(
-        (candidate) => candidate.content.label === label,
-      );
-      const basisKeys = [focus.exactBasisKey];
-      const attach = {
-        action: "attach_tag",
-        cognitionKey: focus.key,
-        tagKey: tag?.key ?? "new_concept",
-        basisKeys,
-        reason: "The accepted focus expresses this durable concept",
-      };
-      const description =
-        label === "double-lamp gate" || label === "paired-light check"
-          ? "Tide deployment approval requires two independent reviewer signatures recorded on a checklist"
-          : label === "consumer lease reclamation"
-            ? "Snapshot readers and build cache consumers retain leases until retired assets can be safely reclaimed after release"
-            : label === "breakfast journal routine"
-              ? "Aya writes the field journal after breakfast in the morning instead of late at night"
-              : "Service warm-start readiness requires a successful health probe";
-      const actions = tag
-        ? [attach]
-        : [
-            {
-              action: "create_tag",
-              key: "new_concept",
-              cognitionKeys: [focus.key],
-              content: { label, description, kind_hint: "practice" },
-              basisKeys,
-              reason: "The focus expresses a useful continuing practice",
-            },
-            attach,
-          ];
-      const gate = source.tags.find(
-        (candidate) => candidate.content.label === "double-lamp gate",
-      );
-      const alias = source.tags.find(
-        (candidate) => candidate.content.label === "paired-light check",
-      );
-      const orderedActions =
-        text.includes("alias") && gate
-          ? [
-              ...(!alias ? [actions[0]!] : []),
-              {
-                action: "merge_tags",
-                survivorKey: gate.key,
-                retiredKeys: [alias?.key ?? "new_concept"],
-                basisKeys,
-                reason: "The focus explicitly identifies equivalent names",
-              },
-              { ...attach, tagKey: gate.key },
-            ]
-          : actions;
-      return {
-        value: conceptMaintenanceSchema.parse({
-          actions: [...orderedActions, ...extra].slice(0, 4),
-        }),
-        producerMetadata,
-        execution: {
-          attempts: [
-            {
-              executionProfile: "stub",
-              modelProfile: "stub",
-              status: "succeeded" as const,
-              latencyMs: 0,
-            },
-          ],
-          successfulExecutionProfile: "stub",
-        },
-      };
-    };
-  };
-  return { models, calls, enableFunctional };
+  return { models, calls };
 }
 
 async function scenario(endpoint: string, token: string) {
@@ -492,7 +195,7 @@ async function scenario(endpoint: string, token: string) {
     assert(!response.done, "harness control closed");
     return JSON.parse(response.value) as { endpoint?: string };
   };
-  const { models, calls, enableFunctional } = proposalModels();
+  const { models, calls } = proposalModels();
   let app = await createCore({
     kernel: KernelClient.connect(endpoint, token),
     token,
@@ -531,12 +234,13 @@ async function scenario(endpoint: string, token: string) {
       },
     });
     const session = await client.cognition.openSession({ subjectId });
+    const observationIds: string[] = [];
     for (const text of [
       "Calibration plan confirmed.",
       "Calibration measurements collected.",
       "Calibration review completed.",
     ]) {
-      await client.cognition.observe({
+      const observed = await client.cognition.observe({
         subjectId,
         sessionId: session.sessionId,
         sourceClass: "message",
@@ -546,6 +250,7 @@ async function scenario(endpoint: string, token: string) {
         },
         context: {},
       });
+      observationIds.push(observed.occurrenceId);
       await advance(2);
     }
     assert.deepEqual(calls, { episode: 0, journal: 0, consolidation: 0 });
@@ -703,158 +408,136 @@ async function scenario(endpoint: string, token: string) {
     const before = { ...calls };
     await maintain();
     assert.deepEqual(calls, before);
-    console.error("Longitudinal smoke passed");
-    if (process.env.NOUS_FUNCTIONAL_SMOKE === "1") {
-      enableFunctional();
-      const results = await runCognitiveFunctional(
-        client,
-        [
-          "baseline-rrf",
-          "nous-node-potential-v1",
-          "vcp-dtsc-v9.2.1-adapter-v1",
-          "vcp-rivermemo-v3.1-adapter-v1",
+    const schema = await client.concepts.createSchema({
+      operationId: randomUUID(),
+      subjectId,
+      schema: {
+        title: "Calibration source pattern",
+        structuralClaim: "Calibration decisions retain their actual source",
+        applicabilityScope: {
+          description: "This calibration sequence",
+          validTime: {
+            value: {
+              case: "interval",
+              value: {
+                start: fromJson(TimestampSchema, "2026-10-03T00:00:00Z"),
+                end: fromJson(TimestampSchema, "2026-10-04T00:00:00Z"),
+              },
+            },
+          },
+        },
+        boundaryDefinition: "No claim outside the source sequence",
+        formationKind: "explicit_import",
+        evidenceLinks: [
+          {
+            role: "support",
+            basis: {
+              basis: {
+                case: "evidence",
+                value: {
+                  occurrenceId: observationIds[0],
+                  locator: { case: "wholeOccurrence", value: true },
+                  basisRole: "direct",
+                  epistemicRelation: "supports",
+                },
+              },
+            },
+          },
         ],
-        "data/research/cognitive-functional/deterministic-smoke.json",
+      },
+    });
+    assert.equal(schema.evidenceLinks.length, 1);
+    assert.equal(schema.evidenceLinks[0]?.basis?.basis.case, "evidence");
+    if (schema.evidenceLinks[0]?.basis?.basis.case === "evidence")
+      assert.equal(
+        schema.evidenceLinks[0].basis.basis.value.occurrenceId,
+        observationIds[0],
       );
-      const failed = results.filter(
-        (result) =>
-          result.stage === "formation" &&
-          Array.isArray(result.failures) &&
-          result.failures.length > 0,
-      );
-      console.error(
-        JSON.stringify({
-          functionalFormationFailures: failed.map((result) => ({
-            scenario: result.scenario,
-            failures: result.failures,
-          })),
-        }),
-      );
-      assert.equal(failed.length, 0, "Functional formation contracts");
-      const runRoot = await workspaceTemp("smoke", "cli-functional-");
-      try {
-        await mkdir(runRoot, { recursive: true });
-        await writeFile(
-          join(runRoot, "core.json"),
-          JSON.stringify({ endpoint: publicEndpoint, token }),
-          { mode: 0o600 },
-        );
-        const cli = async (...args: string[]) => {
-          try {
-            const result = await promisify(execFile)(
-              process.execPath,
-              [
-                "node_modules/tsx/dist/cli.mjs",
-                "apps/nous-cli/src/main.ts",
-                "--instance-root",
-                runRoot,
-                "--run-root",
-                runRoot,
-                "--json",
-                ...args,
-              ],
-              { cwd: process.cwd(), maxBuffer: 2 * 1024 * 1024 },
-            );
-            return {
-              code: 0,
-              value: (
-                JSON.parse(result.stdout) as { data: Record<string, unknown> }
-              ).data,
-            };
-          } catch (error) {
-            const failure = error as { code: number; stderr: string };
-            return {
-              code: failure.code,
-              value: JSON.parse(failure.stderr) as Record<string, unknown>,
-            };
-          }
-        };
-        const help = await cli("help");
-        assert.equal(help.code, 0);
-        const incident = results.find(
-          (result) =>
-            result.stage === "formation" && result.scenario === "incident",
-        )!;
-        const subject = String(incident.subjectId);
-        const ambiguous = await cli(
-          "identity",
-          "resolve",
-          "--subject",
-          subject,
-          "--kind",
-          "entity",
-          "--name",
-          "Sam Lee",
-        );
-        assert.notEqual(ambiguous.code, 0);
-        assert.equal(ambiguous.value.code, "AMBIGUOUS_REFERENCE");
-        const candidates = ambiguous.value.candidates as {
-          lexicalRef: string;
-          aliases: string[];
-        }[];
-        assert.equal(candidates.length, 2);
-        const chosen = candidates.find((candidate) =>
-          candidate.aliases.includes("Tools Sam"),
-        )!;
-        const resolved = await cli(
-          "identity",
-          "resolve",
-          "--subject",
-          subject,
-          "--kind",
-          "entity",
-          "--lexical-ref",
-          chosen.lexicalRef,
-        );
-        assert.equal(resolved.code, 0);
-        assert.equal(resolved.value.status, "BOUND");
-        const expression = `Prior consumer lease reclamation relevant to the build cache @e(${chosen.lexicalRef}) $return(memory) $limit(8)`;
-        const prepared = await cli(
-          "query",
-          "prepare",
-          expression,
-          "--subject",
-          subject,
-        );
-        assert.equal(prepared.code, 0, JSON.stringify(prepared.value));
-        assert(typeof prepared.value.embeddingText === "string");
-        const queried = await cli("query", expression, "--subject", subject);
-        assert.equal(queried.code, 0, JSON.stringify(queried.value));
-        assert(Array.isArray(queried.value.results));
-        assert(queried.value.results.length > 0);
-        console.error(
-          "CLI Agent flow passed: help JSON, ambiguity, candidate LexicalRef, prepare, query",
-        );
-      } finally {
-        await rm(runRoot, { recursive: true, force: true });
-      }
-      const compatibility = await runSelectedTextCompatibility(
-        client,
-        "data/research/recovery/text-compatibility-input.json",
-        "data/research/cognitive-functional/selected-text-smoke.json",
-      );
-      assert.equal(compatibility.length, 24);
-      for (const item of compatibility) {
-        assert(
-          item.ranks.every((source) => source.rank > 0),
-          `Selected required source omitted: ${item.key}`,
-        );
-        assert(
-          item.ranks.some((source) => source.rank === 1),
-          `Selected first relevant source regressed: ${item.key}`,
-        );
-      }
-
-      console.error(
-        JSON.stringify({
-          selectedCompatibility: compatibility.map((item) => ({
-            key: item.key,
-            profile: item.profile,
-            ranks: item.ranks,
-          })),
-        }),
+    assert(schema.formedAt);
+    const exactSchema = {
+      subjectId,
+      expression: {
+        operation: "atom",
+        cues: [
+          {
+            cue: { case: "text" as const, value: "Calibration source pattern" },
+          },
+          {
+            cue: {
+              case: "reference" as const,
+              value: {
+                kind: "cognitive_schema_revision",
+                value: schema.currentRevisionId,
+              },
+            },
+          },
+        ],
+        modifiers: { projection: { domains: ["schema"] } },
+      },
+    };
+    for (const constraints of [
+      {
+        formed: {
+          predicate: { case: "point" as const, value: schema.formedAt },
+        },
+      },
+      {
+        valid: {
+          predicate: {
+            case: "point" as const,
+            value: fromJson(TimestampSchema, "2026-10-03T00:00:00Z"),
+          },
+        },
+      },
+      { sourceClassesInclude: ["message"], authority: "subject_cognition" },
+    ]) {
+      const result = await client.cognition.query({
+        ...exactSchema,
+        expression: {
+          ...exactSchema.expression,
+          modifiers: { ...exactSchema.expression.modifiers, constraints },
+        },
+      });
+      assert.equal(
+        result.hits.length,
+        1,
+        JSON.stringify(constraints, (_key: string, value: unknown) =>
+          typeof value === "bigint" ? String(value) : value,
+        ),
       );
     }
+    for (const constraints of [
+      { authority: "evidence" },
+      { sourceClassesInclude: ["web"] },
+      { sourceClassesExclude: ["message"] },
+      { cognitiveRoles: ["declarative"] },
+      { formationModes: ["grounded"] },
+      { modalities: ["image"] },
+      { evidenceClasses: ["observed"] },
+      {
+        valid: {
+          predicate: {
+            case: "point" as const,
+            value: fromJson(TimestampSchema, "2026-10-04T00:00:00Z"),
+          },
+        },
+      },
+    ]) {
+      const result = await client.cognition.query({
+        ...exactSchema,
+        expression: {
+          ...exactSchema.expression,
+          modifiers: { ...exactSchema.expression.modifiers, constraints },
+        },
+      });
+      assert.equal(result.hits.length, 0);
+    }
+    const nousqlPoint = await client.cognition.query({
+      subjectId,
+      nousql: `Calibration $return(schema) $time(formed,at="${toJson(TimestampSchema, create(TimestampSchema, schema.formedAt))}")`,
+    });
+    assert.equal(nousqlPoint.hits.length, 1);
+    console.error("Longitudinal smoke passed");
   } finally {
     await app.close();
     channel.close();

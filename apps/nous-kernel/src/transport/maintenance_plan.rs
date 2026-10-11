@@ -123,9 +123,11 @@ impl KernelService {
             self.consolidation_context(&mut plan).await?;
         }
         if self.0.store.authority_seq(subject).await? != sequence {
-            return Err(Error::Conflict(
-                "maintenance source snapshot changed during planning".into(),
-            ));
+            return Err(nous_core::DomainError::new(
+                nous_core::DomainErrorCode::StaleRevision,
+                "maintenance source snapshot changed during planning",
+            )
+            .into());
         }
         Ok(plan)
     }
@@ -134,9 +136,11 @@ impl KernelService {
         let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM maintenance_needs WHERE subject_id=$1 AND need_id=$2 AND state='leased' AND lease_token=$3 AND lease_until>clock_timestamp() AND kind=$4 AND scope_kind=$5 AND scope_ref=$6)")
             .bind(claimed.subject_id.0).bind(claimed.need_id).bind(claimed.lease_token).bind(&claimed.kind).bind(&claimed.scope_kind).bind(&claimed.scope_ref).fetch_one(self.0.store.pool()).await.map_err(nous_persistence::database_error)?;
         if !valid {
-            return Err(Error::Conflict(
-                "maintenance planning lease expired or replaced".into(),
-            ));
+            return Err(nous_core::DomainError::new(
+                nous_core::DomainErrorCode::LeaseLost,
+                "maintenance planning lease expired or replaced",
+            )
+            .into());
         }
         Ok(())
     }

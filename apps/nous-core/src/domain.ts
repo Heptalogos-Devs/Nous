@@ -1,14 +1,10 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-export interface Ref {
-  kind: string;
-  value: string;
-}
-interface Evidence {
-  reference?: Ref;
-  basisRole: string;
-}
+import type { Message } from "@bufbuild/protobuf";
+import type { CognitiveRef } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+
+export type Ref = Omit<CognitiveRef, keyof Message>;
 type Requirement = "REQUIRED" | "PREFERRED" | "OPTIONAL" | "FORBIDDEN";
 export interface ConsumerPolicy {
   consumerId: string;
@@ -19,37 +15,6 @@ export interface ConsumerPolicy {
   maxItems: number;
   maxTextBytes: number;
   materialize: boolean;
-}
-export interface Segment {
-  segmentId: string;
-  text: string;
-  semanticRole: string;
-  sourceRefs: Ref[];
-  evidence: Evidence[];
-  authority: string;
-  stability: string;
-  sourceRevision?: string;
-}
-export interface Degradation {
-  code: string;
-  detail: string;
-}
-export interface Projection {
-  projectionId: string;
-  consumerId: string;
-  sourceRuntimeRevision: bigint;
-  segments: Segment[];
-  degradation: Degradation[];
-}
-export interface Cursor {
-  trackId: string;
-  epochId: string;
-  revision: number;
-}
-export interface ContextPatch {
-  kind: "RESET" | "APPEND";
-  cursor: Cursor;
-  projection: Projection;
 }
 export function refKey(ref: Ref): string {
   return ref.kind + "\0" + ref.value;

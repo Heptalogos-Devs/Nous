@@ -9,10 +9,10 @@ import {
   ConfigurationError,
   CONFIG_REVISION,
   readConfiguration,
-} from "./config.js";
-import { checkConfiguration } from "./configuration-check.js";
+} from "./configuration/schema.js";
+import { checkConfiguration } from "./configuration/check.js";
 import { resolveLocations } from "./locations.js";
-import { initializeConfiguration } from "./configuration-file.js";
+import { initializeConfiguration } from "./configuration/file.js";
 import { launcherCommandOffset } from "./launcher-arguments.js";
 import {
   installRuntime,

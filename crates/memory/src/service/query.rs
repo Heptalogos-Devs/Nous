@@ -254,34 +254,61 @@ async fn temporal_lane(
     let mut matches = HashMap::<Uuid, (Uuid, usize)>::new();
     let mut next_rank = 1usize;
     let constraints = &query.expression.constraints;
-    for (interval, sql) in [
+    use nous_persistence::{TimeColumns, push_time_predicate};
+    for (predicate, columns, joins, order) in [
         (
             constraints.valid,
-            "SELECT r.memory_revision_id,r.memory_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND ((r.valid_time_kind='instant' AND ($2::timestamptz IS NULL OR r.valid_time_start >= $2) AND ($3::timestamptz IS NULL OR r.valid_time_start < $3)) OR (r.valid_time_kind='interval' AND (r.valid_time_end IS NULL OR $2::timestamptz IS NULL OR r.valid_time_end>$2) AND (r.valid_time_start IS NULL OR $3::timestamptz IS NULL OR r.valid_time_start<$3))) ORDER BY r.recorded_at DESC,r.memory_revision_id LIMIT $4",
+            TimeColumns::Extent {
+                kind: "r.valid_time_kind",
+                start: "r.valid_time_start",
+                end: "r.valid_time_end",
+            },
+            "",
+            "r.recorded_at DESC,r.memory_revision_id",
         ),
         (
             constraints.occurred,
-            "SELECT DISTINCT r.memory_revision_id,r.memory_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id) WHERE o.subject_id=$1 AND ((oc.occurred_time_kind='instant' AND ($2::timestamptz IS NULL OR oc.occurred_time_start >= $2) AND ($3::timestamptz IS NULL OR oc.occurred_time_start < $3)) OR (oc.occurred_time_kind='interval' AND (oc.occurred_time_end IS NULL OR $2::timestamptz IS NULL OR oc.occurred_time_end>$2) AND (oc.occurred_time_start IS NULL OR $3::timestamptz IS NULL OR oc.occurred_time_start<$3))) ORDER BY r.memory_revision_id LIMIT $4",
+            TimeColumns::Extent {
+                kind: "oc.occurred_time_kind",
+                start: "oc.occurred_time_start",
+                end: "oc.occurred_time_end",
+            },
+            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id)",
+            "r.memory_revision_id",
         ),
         (
             constraints.observed,
-            "SELECT DISTINCT r.memory_revision_id,r.memory_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id) WHERE o.subject_id=$1 AND oc.observed_at IS NOT NULL AND ($2::timestamptz IS NULL OR oc.observed_at>=$2) AND ($3::timestamptz IS NULL OR oc.observed_at<$3) ORDER BY r.memory_revision_id LIMIT $4",
+            TimeColumns::Instant("oc.observed_at"),
+            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id)",
+            "r.memory_revision_id",
         ),
         (
             constraints.formed,
-            "SELECT r.memory_revision_id,r.memory_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND ($2::timestamptz IS NULL OR r.formed_at >= $2) AND ($3::timestamptz IS NULL OR r.formed_at < $3) ORDER BY r.formed_at DESC,r.memory_revision_id LIMIT $4",
+            TimeColumns::Instant("r.formed_at"),
+            "",
+            "r.formed_at DESC,r.memory_revision_id",
         ),
         (
             constraints.recorded,
-            "SELECT r.memory_revision_id,r.memory_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND ($2::timestamptz IS NULL OR r.recorded_at >= $2) AND ($3::timestamptz IS NULL OR r.recorded_at < $3) ORDER BY r.recorded_at DESC,r.memory_revision_id LIMIT $4",
+            TimeColumns::Instant("r.recorded_at"),
+            "",
+            "r.recorded_at DESC,r.memory_revision_id",
         ),
     ] {
-        let Some(interval) = interval else { continue };
-        let rows = sqlx::query(sql)
-            .bind(query.subject.0)
-            .bind(interval.start)
-            .bind(interval.end)
-            .bind(plan.lane_budget(EvidenceFamily::Temporal) as i64)
+        let Some(predicate) = predicate else { continue };
+        let mut sql = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT DISTINCT r.memory_revision_id,r.memory_id,r.formed_at,r.recorded_at FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id",
+        );
+        sql.push(joins)
+            .push(" WHERE o.subject_id=")
+            .push_bind(query.subject.0);
+        push_time_predicate(&mut sql, columns, predicate)?;
+        sql.push(" ORDER BY ")
+            .push(order)
+            .push(" LIMIT ")
+            .push_bind(plan.lane_budget(EvidenceFamily::Temporal) as i64);
+        let rows = sql
+            .build()
             .fetch_all(service.store.pool())
             .await
             .map_err(nous_persistence::database_error)?;

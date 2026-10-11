@@ -7,6 +7,7 @@ import "nous/wave/v1alpha1/types.proto";
 import "nous/wave/v1alpha1/management.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
+import "nous/wave/kernel/v1alpha1/workflow_envelope.proto";
 message EmbeddingConfig {
   string space_hash = 1;
   string producer_hash = 2;
@@ -15,16 +16,17 @@ message EmbeddingConfig {
   repeated string producer_hashes = 5;
 }
 message QueryEmbedding { string text = 1; string space_hash = 2; string producer_hash = 3; repeated float vector = 4; }
-message PrepareQueryRequest { nous.wave.v1alpha1.QueryRequest query = 1; bool reserve_execution = 2; }
+message PrepareQueryRequest { nous.wave.v1alpha1.QueryRequest query = 1; bool reserve_execution = 2; uint32 lease_seconds = 3; }
 message KernelQueryRequest { reserved 1; repeated QueryEmbedding embeddings = 2; optional uint32 validated_candidate_limit = 3; string preparation_token = 4; string subject_id = 5; optional string concept_output = 6; optional string concept_failure = 7; uint32 concept_model_calls = 8; }
 message KernelQueryResponse { nous.wave.v1alpha1.QueryResponse response = 1; optional string validation_ticket = 2; }
 message RerankCandidate { nous.wave.v1alpha1.CognitiveRef reference = 1; double score = 2; }
 message ExternalResourceResult { string action_id = 1; string resource_ref = 2; string status = 3; repeated nous.wave.v1alpha1.ExternalResourceRecord records = 4; }
 message FinalizeQueryRequest { string subject_id = 1; string validation_ticket = 2; repeated RerankCandidate order = 3; repeated ExternalResourceResult external_results = 4; }
 message ReleaseQueryRequest { string subject_id = 1; string validation_ticket = 2; }
-message EmbeddingNeedsRequest { string subject_id = 1; uint32 limit = 2; optional string preparation_token = 3; }
+message EmbeddingCursor { string subject_id = 1; int64 content_revision = 2; string view_digest = 3; nous.wave.v1alpha1.CognitiveRef after = 4; }
+message EmbeddingNeedsRequest { string subject_id = 1; uint32 limit = 2; optional string preparation_token = 3; EmbeddingCursor cursor = 4; }
 message EmbeddingNeed { nous.wave.v1alpha1.CognitiveRef reference = 1; string text = 2; string digest = 3; }
-message EmbeddingNeedsResponse { EmbeddingConfig config = 1; repeated EmbeddingNeed needs = 2; }
+message EmbeddingNeedsResponse { EmbeddingConfig config = 1; repeated EmbeddingNeed needs = 2; EmbeddingCursor next_cursor = 3; }
 message CommitEmbeddingRequest { string subject_id = 1; nous.wave.v1alpha1.CognitiveRef reference = 2; QueryEmbedding material = 3; optional string preparation_token = 4; }
 message CommitInterpretationRequest {
   string subject_id = 1;
@@ -53,14 +55,14 @@ service KernelMaterialWorkflowService {
 }
 message DescriptionSegment { string key = 1; string text = 2; nous.wave.v1alpha1.CognitiveRef reference = 3; }
 message DescriptionSegments { repeated DescriptionSegment segments = 1; }
-message ReserveWorkflowRequest { string subject_id = 1; string owner = 2; string operation_key = 3; string semantic_digest = 4; string snapshot_json = 5; optional string maintenance_need_id = 6; optional string maintenance_lease_token = 7; int64 maintenance_trigger_authority_seq = 8; uint64 maintenance_trigger_revision = 9; }
-message WorkflowReservation { string snapshot_json = 1; optional string proposal_json = 2; optional string outcome_json = 3; optional string lease_token = 4; bool busy = 5; optional string execution_telemetry_json = 6; }
-message SaveWorkflowRequest { string subject_id = 1; string owner = 2; string operation_key = 3; string lease_token = 4; optional string proposal_json = 5; optional string outcome_json = 6; optional string execution_telemetry_json = 7; }
-message ReleaseWorkflowRequest { string subject_id = 1; string owner = 2; string operation_key = 3; string lease_token = 4; }
+message ReserveWorkflowRequest { string subject_id = 1; string owner = 2; string operation_key = 3; string semantic_digest = 4; reserved 5 to 9; uint32 lease_seconds = 10; WorkflowSnapshot snapshot = 11; }
+message WorkflowReservation { reserved 1 to 4, 6; bool busy = 5; WorkflowSnapshot snapshot = 7; WorkflowPayload proposal = 8; WorkflowPayload outcome = 9; ExecutionTelemetry execution_telemetry = 10; WorkflowLease lease = 11; }
+message SaveWorkflowRequest { reserved 1 to 7; WorkflowPayload proposal = 8; WorkflowPayload outcome = 9; ExecutionTelemetry execution_telemetry = 10; repeated string mutation_operations = 11; WorkflowLease lease = 12; }
+message ReleaseWorkflowRequest { reserved 1 to 4; WorkflowLease lease = 5; }
 message ResolvedMentionsRequest { string subject_id = 1; string occurrence_id = 2; }
 message ResolvedMention { string key = 1; string surface = 2; string entity_ref = 3; }
 message ResolvedMentionsResponse { repeated ResolvedMention candidates = 1; }
 message FindWorkflowRequest { string subject_id = 1; string owner = 2; string operation_key = 3; string semantic_digest = 4; }
-message FoundWorkflow { bool found = 1; optional string snapshot_json = 2; optional string proposal_json = 3; optional string outcome_json = 4; optional string execution_telemetry_json = 5; }
+message FoundWorkflow { bool found = 1; reserved 2 to 5; WorkflowSnapshot snapshot = 6; WorkflowPayload proposal = 7; WorkflowPayload outcome = 8; ExecutionTelemetry execution_telemetry = 9; }
 
 message QueryActivationResponse { string preparation_token = 1; string model_input = 2; }

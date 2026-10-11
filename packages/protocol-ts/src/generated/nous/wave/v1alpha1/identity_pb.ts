@@ -7,6 +7,7 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import { file_nous_wave_v1alpha1_presentation } from "./presentation_pb.js";
 import type { CognitiveRef } from "./types_pb.js";
 import { file_nous_wave_v1alpha1_types } from "./types_pb.js";
 import type { EmptySchema, Timestamp } from "@bufbuild/protobuf/wkt";
@@ -17,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file nous/wave/v1alpha1/identity.proto.
  */
 export const file_nous_wave_v1alpha1_identity: GenFile = /*@__PURE__*/
-  fileDesc("CiFub3VzL3dhdmUvdjFhbHBoYTEvaWRlbnRpdHkucHJvdG8SEm5vdXMud2F2ZS52MWFscGhhMSKSAQoPSWRlbnRpdHlCaW5kaW5nEhMKC2xleGljYWxfcmVmGAEgASgJEjMKCWNhbm9uaWNhbBgCIAEoCzIgLm5vdXMud2F2ZS52MWFscGhhMS5Db2duaXRpdmVSZWYSFAoMZGlzcGxheV9uYW1lGAMgASgJEg8KB2FsaWFzZXMYBCADKAkSDgoGc3RhdHVzGAUgASgJIpsBChNCaW5kSWRlbnRpdHlSZXF1ZXN0EhIKCnN1YmplY3RfaWQYASABKAkSMwoJY2Fub25pY2FsGAIgASgLMiAubm91cy53YXZlLnYxYWxwaGExLkNvZ25pdGl2ZVJlZhIUCgxkaXNwbGF5X25hbWUYAyABKAkSDwoHYWxpYXNlcxgEIAMoCRIUCgxhZGRyZXNzX29ubHkYBSABKAgipgEKFlJlc29sdmVJZGVudGl0eVJlcXVlc3QSEgoKc3ViamVjdF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEi4KBWFzX29mGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgBiAEBEg4KBG5hbWUYAyABKAlIABIVCgtsZXhpY2FsX3JlZhgEIAEoCUgAQgkKB2xvY2F0b3JCCAoGX2FzX29mImIKF1Jlc29sdmVJZGVudGl0eVJlc3BvbnNlEjcKCmNhbmRpZGF0ZXMYASADKAsyIy5ub3VzLndhdmUudjFhbHBoYTEuSWRlbnRpdHlCaW5kaW5nEg4KBnN0YXR1cxgCIAEoCSLWAQoTUmViaW5kRW50aXR5UmVxdWVzdBISCgpzdWJqZWN0X2lkGAEgASgJEhIKCm1lbnRpb25faWQYAiABKAkSFwoKZW50aXR5X3JlZhgDIAEoCUgAiAEBEhUKDWJpbmRpbmdfc3RhdGUYBCABKAkSIAoTaG9zdF9yZXNvbHV0aW9uX3JlZhgFIAEoCUgBiAEBEhMKBnJlYXNvbhgGIAEoCUgCiAEBQg0KC19lbnRpdHlfcmVmQhYKFF9ob3N0X3Jlc29sdXRpb25fcmVmQgkKB19yZWFzb24yrAIKD0lkZW50aXR5U2VydmljZRJPCgxSZWJpbmRFbnRpdHkSJy5ub3VzLndhdmUudjFhbHBoYTEuUmViaW5kRW50aXR5UmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJcCgxCaW5kSWRlbnRpdHkSJy5ub3VzLndhdmUudjFhbHBoYTEuQmluZElkZW50aXR5UmVxdWVzdBojLm5vdXMud2F2ZS52MWFscGhhMS5JZGVudGl0eUJpbmRpbmcSagoPUmVzb2x2ZUlkZW50aXR5Eioubm91cy53YXZlLnYxYWxwaGExLlJlc29sdmVJZGVudGl0eVJlcXVlc3QaKy5ub3VzLndhdmUudjFhbHBoYTEuUmVzb2x2ZUlkZW50aXR5UmVzcG9uc2ViBnByb3RvMw", [file_nous_wave_v1alpha1_types, file_google_protobuf_empty, file_google_protobuf_timestamp]);
+  fileDesc("CiFub3VzL3dhdmUvdjFhbHBoYTEvaWRlbnRpdHkucHJvdG8SEm5vdXMud2F2ZS52MWFscGhhMSKSAQoPSWRlbnRpdHlCaW5kaW5nEhMKC2xleGljYWxfcmVmGAEgASgJEjMKCWNhbm9uaWNhbBgCIAEoCzIgLm5vdXMud2F2ZS52MWFscGhhMS5Db2duaXRpdmVSZWYSFAoMZGlzcGxheV9uYW1lGAMgASgJEg8KB2FsaWFzZXMYBCADKAkSDgoGc3RhdHVzGAUgASgJIqgBChNCaW5kSWRlbnRpdHlSZXF1ZXN0Eh8KCnN1YmplY3RfaWQYASABKAlCC8rzGAdzdWJqZWN0EjMKCWNhbm9uaWNhbBgCIAEoCzIgLm5vdXMud2F2ZS52MWFscGhhMS5Db2duaXRpdmVSZWYSFAoMZGlzcGxheV9uYW1lGAMgASgJEg8KB2FsaWFzZXMYBCADKAkSFAoMYWRkcmVzc19vbmx5GAUgASgIIrMBChZSZXNvbHZlSWRlbnRpdHlSZXF1ZXN0Eh8KCnN1YmplY3RfaWQYASABKAlCC8rzGAdzdWJqZWN0EgwKBGtpbmQYAiABKAkSLgoFYXNfb2YYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSAGIAQESDgoEbmFtZRgDIAEoCUgAEhUKC2xleGljYWxfcmVmGAQgASgJSABCCQoHbG9jYXRvckIICgZfYXNfb2YiYgoXUmVzb2x2ZUlkZW50aXR5UmVzcG9uc2USNwoKY2FuZGlkYXRlcxgBIAMoCzIjLm5vdXMud2F2ZS52MWFscGhhMS5JZGVudGl0eUJpbmRpbmcSDgoGc3RhdHVzGAIgASgJIm0KFUlkZW50aXR5QWRkcmVzc1RhcmdldBIfCgpzdWJqZWN0X2lkGAEgASgJQgvK8xgHc3ViamVjdBIzCgljYW5vbmljYWwYAiABKAsyIC5ub3VzLndhdmUudjFhbHBoYTEuQ29nbml0aXZlUmVmIoYBCg9JZGVudGl0eUFkZHJlc3MSOQoGdGFyZ2V0GAEgASgLMikubm91cy53YXZlLnYxYWxwaGExLklkZW50aXR5QWRkcmVzc1RhcmdldBIYCgtsZXhpY2FsX3JlZhgCIAEoCUgAiAEBEg4KBnN0YXR1cxgDIAEoCUIOCgxfbGV4aWNhbF9yZWYiWQobR2V0SWRlbnRpdHlBZGRyZXNzZXNSZXF1ZXN0EjoKB3RhcmdldHMYASADKAsyKS5ub3VzLndhdmUudjFhbHBoYTEuSWRlbnRpdHlBZGRyZXNzVGFyZ2V0IlYKHEdldElkZW50aXR5QWRkcmVzc2VzUmVzcG9uc2USNgoJYWRkcmVzc2VzGAEgAygLMiMubm91cy53YXZlLnYxYWxwaGExLklkZW50aXR5QWRkcmVzcyLvAQoTUmViaW5kRW50aXR5UmVxdWVzdBIfCgpzdWJqZWN0X2lkGAEgASgJQgvK8xgHc3ViamVjdBISCgptZW50aW9uX2lkGAIgASgJEiMKCmVudGl0eV9yZWYYAyABKAlCCsrzGAZlbnRpdHlIAIgBARIVCg1iaW5kaW5nX3N0YXRlGAQgASgJEiAKE2hvc3RfcmVzb2x1dGlvbl9yZWYYBSABKAlIAYgBARITCgZyZWFzb24YBiABKAlIAogBAUINCgtfZW50aXR5X3JlZkIWChRfaG9zdF9yZXNvbHV0aW9uX3JlZkIJCgdfcmVhc29uMqcDCg9JZGVudGl0eVNlcnZpY2USTwoMUmViaW5kRW50aXR5Eicubm91cy53YXZlLnYxYWxwaGExLlJlYmluZEVudGl0eVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSXAoMQmluZElkZW50aXR5Eicubm91cy53YXZlLnYxYWxwaGExLkJpbmRJZGVudGl0eVJlcXVlc3QaIy5ub3VzLndhdmUudjFhbHBoYTEuSWRlbnRpdHlCaW5kaW5nEmoKD1Jlc29sdmVJZGVudGl0eRIqLm5vdXMud2F2ZS52MWFscGhhMS5SZXNvbHZlSWRlbnRpdHlSZXF1ZXN0Gisubm91cy53YXZlLnYxYWxwaGExLlJlc29sdmVJZGVudGl0eVJlc3BvbnNlEnkKFEdldElkZW50aXR5QWRkcmVzc2VzEi8ubm91cy53YXZlLnYxYWxwaGExLkdldElkZW50aXR5QWRkcmVzc2VzUmVxdWVzdBowLm5vdXMud2F2ZS52MWFscGhhMS5HZXRJZGVudGl0eUFkZHJlc3Nlc1Jlc3BvbnNlYgZwcm90bzM", [file_nous_wave_v1alpha1_presentation, file_nous_wave_v1alpha1_types, file_google_protobuf_empty, file_google_protobuf_timestamp]);
 
 /**
  * @generated from message nous.wave.v1alpha1.IdentityBinding
@@ -160,6 +161,91 @@ export const ResolveIdentityResponseSchema: GenMessage<ResolveIdentityResponse> 
   messageDesc(file_nous_wave_v1alpha1_identity, 3);
 
 /**
+ * Read existing directory addresses without allocating bindings or changing labels/visibility.
+ *
+ * @generated from message nous.wave.v1alpha1.IdentityAddressTarget
+ */
+export type IdentityAddressTarget = Message<"nous.wave.v1alpha1.IdentityAddressTarget"> & {
+  /**
+   * @generated from field: string subject_id = 1;
+   */
+  subjectId: string;
+
+  /**
+   * @generated from field: nous.wave.v1alpha1.CognitiveRef canonical = 2;
+   */
+  canonical?: CognitiveRef | undefined;
+};
+
+/**
+ * Describes the message nous.wave.v1alpha1.IdentityAddressTarget.
+ * Use `create(IdentityAddressTargetSchema)` to create a new message.
+ */
+export const IdentityAddressTargetSchema: GenMessage<IdentityAddressTarget> = /*@__PURE__*/
+  messageDesc(file_nous_wave_v1alpha1_identity, 4);
+
+/**
+ * @generated from message nous.wave.v1alpha1.IdentityAddress
+ */
+export type IdentityAddress = Message<"nous.wave.v1alpha1.IdentityAddress"> & {
+  /**
+   * @generated from field: nous.wave.v1alpha1.IdentityAddressTarget target = 1;
+   */
+  target?: IdentityAddressTarget | undefined;
+
+  /**
+   * @generated from field: optional string lexical_ref = 2;
+   */
+  lexicalRef?: string | undefined;
+
+  /**
+   * @generated from field: string status = 3;
+   */
+  status: string;
+};
+
+/**
+ * Describes the message nous.wave.v1alpha1.IdentityAddress.
+ * Use `create(IdentityAddressSchema)` to create a new message.
+ */
+export const IdentityAddressSchema: GenMessage<IdentityAddress> = /*@__PURE__*/
+  messageDesc(file_nous_wave_v1alpha1_identity, 5);
+
+/**
+ * @generated from message nous.wave.v1alpha1.GetIdentityAddressesRequest
+ */
+export type GetIdentityAddressesRequest = Message<"nous.wave.v1alpha1.GetIdentityAddressesRequest"> & {
+  /**
+   * @generated from field: repeated nous.wave.v1alpha1.IdentityAddressTarget targets = 1;
+   */
+  targets: IdentityAddressTarget[];
+};
+
+/**
+ * Describes the message nous.wave.v1alpha1.GetIdentityAddressesRequest.
+ * Use `create(GetIdentityAddressesRequestSchema)` to create a new message.
+ */
+export const GetIdentityAddressesRequestSchema: GenMessage<GetIdentityAddressesRequest> = /*@__PURE__*/
+  messageDesc(file_nous_wave_v1alpha1_identity, 6);
+
+/**
+ * @generated from message nous.wave.v1alpha1.GetIdentityAddressesResponse
+ */
+export type GetIdentityAddressesResponse = Message<"nous.wave.v1alpha1.GetIdentityAddressesResponse"> & {
+  /**
+   * @generated from field: repeated nous.wave.v1alpha1.IdentityAddress addresses = 1;
+   */
+  addresses: IdentityAddress[];
+};
+
+/**
+ * Describes the message nous.wave.v1alpha1.GetIdentityAddressesResponse.
+ * Use `create(GetIdentityAddressesResponseSchema)` to create a new message.
+ */
+export const GetIdentityAddressesResponseSchema: GenMessage<GetIdentityAddressesResponse> = /*@__PURE__*/
+  messageDesc(file_nous_wave_v1alpha1_identity, 7);
+
+/**
  * @generated from message nous.wave.v1alpha1.RebindEntityRequest
  */
 export type RebindEntityRequest = Message<"nous.wave.v1alpha1.RebindEntityRequest"> & {
@@ -199,7 +285,7 @@ export type RebindEntityRequest = Message<"nous.wave.v1alpha1.RebindEntityReques
  * Use `create(RebindEntityRequestSchema)` to create a new message.
  */
 export const RebindEntityRequestSchema: GenMessage<RebindEntityRequest> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_identity, 4);
+  messageDesc(file_nous_wave_v1alpha1_identity, 8);
 
 /**
  * @generated from service nous.wave.v1alpha1.IdentityService
@@ -228,6 +314,14 @@ export const IdentityService: GenService<{
     methodKind: "unary";
     input: typeof ResolveIdentityRequestSchema;
     output: typeof ResolveIdentityResponseSchema;
+  },
+  /**
+   * @generated from rpc nous.wave.v1alpha1.IdentityService.GetIdentityAddresses
+   */
+  getIdentityAddresses: {
+    methodKind: "unary";
+    input: typeof GetIdentityAddressesRequestSchema;
+    output: typeof GetIdentityAddressesResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_nous_wave_v1alpha1_identity, 0);

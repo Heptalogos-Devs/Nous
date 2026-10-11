@@ -80,6 +80,7 @@ impl MemoryService {
             .bind(episode_id.0).bind(input.subject.0).bind(&input.track_key).bind(revision_id.0).bind(now)
             .execute(&mut **mutation.tx()).await.map_err(db)?;
         insert_episode_revision(
+            &self.store,
             mutation.tx(),
             &input,
             episode_id,
@@ -251,11 +252,7 @@ impl MemoryService {
             .bind(input.subject.0).bind(input.episode_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
             .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
-        if epoch != input.expected_object_epoch {
-            return Err(Error::Conflict(
-                "expected Episode object epoch is stale".into(),
-            ));
-        }
+        crate::service::state::fence_epoch(epoch, input.expected_object_epoch)?;
         if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
             return Err(Error::FailedPrecondition("Episode is purging".into()));
         }
@@ -304,6 +301,7 @@ impl MemoryService {
             basis: input.basis,
         };
         insert_episode_revision_with_intent(
+            &self.store,
             mutation.tx(),
             &create,
             input.episode_id,

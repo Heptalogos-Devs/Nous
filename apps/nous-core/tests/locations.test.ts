@@ -6,14 +6,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
 import { resolveLocations } from "../src/locations.js";
-import { initializeConfiguration } from "../src/configuration-file.js";
+import { initializeConfiguration } from "../src/configuration/file.js";
 import {
   CONFIG_REVISION,
   parseConfiguration,
   parseEffectiveConfiguration,
   loadConfig,
-} from "../src/config.js";
-import { checkConfiguration } from "../src/configuration-check.js";
+} from "../src/configuration/schema.js";
+import { checkConfiguration } from "../src/configuration/check.js";
 
 it("resolves split roots relative to the locator while installation and instance remain independent", async () => {
   const root = await mkdtemp(join(tmpdir(), "nous-locations-"));
@@ -59,9 +59,9 @@ it("initializes a portable instance once and preserves operator edits byte for b
     expect(results.filter((result) => result.created)).toHaveLength(1);
     const config = await loadConfig(locations);
     expect(config.deployment).toBe("portable");
-    expect(config.bundle.core_descriptors.some((d) => d.path === "roles")).toBe(
-      true,
-    );
+    expect(
+      config.bundle.core_descriptors.some((d) => d.path === "models"),
+    ).toBe(true);
 
     const development = await loadConfig(locations, true);
     expect(development.deployment).toBe("development");
@@ -106,13 +106,13 @@ it("rejects stale configuration semantics and checks examples and explicit refer
       programRoot: process.cwd(),
     });
     const initialized = await initializeConfiguration(locations);
-    const text = `config_revision = ${CONFIG_REVISION}\n[[consumers]]\nconsumer_id = "default"\n[gateway_profiles.local]\nbase_url = "http://127.0.0.1:3000/v1"\ncredential_env = "NOUS_OFFLINE_CHECK_TOKEN"\n[model_profiles.local]\ngateway = "local"\nprotocol = "openai-chat"\nmodel = "local"\ncapabilities = ["text"]\n[execution_profiles.local]\nmodel = "local"\n[roles.memory_formation]\nroutes = ["local"]\nprompt = "config-prompts/missing.md"\n`;
+    const text = `config_revision = ${CONFIG_REVISION}\n[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.local]\nbase_url = "http://127.0.0.1:3000/v1"\ncredential_env = "NOUS_OFFLINE_CHECK_TOKEN"\n[models.model_profiles.local]\ngateway = "local"\nprotocol = "openai-chat"\nmodel = "local"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.local]\nmodel = "local"\n[models.roles.memory_formation]\nroutes = ["local"]\nprompt = "config-prompts/missing.md"\n`;
     const missingKernel = `\n[host]\nkernel_executable = ${JSON.stringify(join(root, "missing-kernel"))}\n`;
     await writeFile(initialized.path, text + missingKernel);
     const result = await checkConfiguration(locations, true);
     expect(result.issues).toContainEqual(
       expect.objectContaining({
-        path: "roles.memory_formation.prompt",
+        path: "models.roles.memory_formation.prompt",
         code: "invalid_reference",
       }),
     );
@@ -131,11 +131,28 @@ it("rejects stale configuration semantics and checks examples and explicit refer
 
 it("retains Kernel-resolved execution profiles in the effective model configuration", () => {
   const effective = parseEffectiveConfiguration({
-    execution_profiles: {
-      precise: { model: "local", reasoning: "high", max_output_tokens: 256 },
-    },
-    roles: {
-      memory_formation: { routes: ["precise"], requirement: "required" },
+    models: {
+      gateway_profiles: {
+        local: {
+          base_url: "http://127.0.0.1:3000/v1",
+          credential_env: "TOKEN",
+        },
+      },
+      model_profiles: {
+        local: {
+          gateway: "local",
+          protocol: "openai-chat",
+          model: "local",
+          capabilities: ["text", "structured_output"],
+          reasoning_levels: ["high"],
+        },
+      },
+      execution_profiles: {
+        precise: { model: "local", reasoning: "high", max_output_tokens: 256 },
+      },
+      roles: {
+        memory_formation: { routes: ["precise"], requirement: "required" },
+      },
     },
   });
   expect(effective.models.execution_profiles.precise).toMatchObject({

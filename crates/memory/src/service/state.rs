@@ -2,11 +2,17 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use nous_core::{Error, Result};
+use nous_core::{DomainError, DomainErrorCode, Error, Result};
 
 pub(super) fn fence_epoch(actual: i64, expected: i64) -> Result<()> {
     if actual != expected {
-        return Err(Error::Conflict("expected object epoch is stale".into()));
+        return Err(DomainError::new(
+            DomainErrorCode::StaleRevision,
+            "Expected object epoch is stale",
+        )
+        .with_context("expected_epoch", expected)
+        .with_context("actual_epoch", actual)
+        .into());
     }
     Ok(())
 }

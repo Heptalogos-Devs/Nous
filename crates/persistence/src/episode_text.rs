@@ -78,16 +78,16 @@ pub(crate) async fn episode_member_text_input_in_view(
         })
         .collect();
     let rows = sqlx::query(r"
-SELECT m.episode_revision_id,o.occurrence_id,a.content_hash,a.byte_length,
+SELECT m.episode_revision_id,o.occurrence_id,
     (a.media_type LIKE 'text/%' OR a.media_type IN ('application/json','application/xml')) AS raw_text,
-    d.derived_representation_id,d.text
+    d.derived_representation_id
 FROM episode_revision_members m JOIN episode_revisions e USING(episode_revision_id)
 JOIN observation_occurrences o ON o.occurrence_id=CASE WHEN m.ref_kind='occurrence' THEN m.ref_value::uuid END
 LEFT JOIN artifacts a USING(artifact_id)
 LEFT JOIN LATERAL (
-    SELECT r.derived_representation_id,left(r.payload_text,$3) AS text
+    SELECT r.derived_representation_id
     FROM derived_representations r
-    WHERE (($5 AND r.derived_representation_id=ANY($6::uuid[])) OR (NOT $5 AND EXISTS (SELECT 1 FROM coverage_needs c WHERE c.subject_id=$1 AND c.current_representation_id=r.derived_representation_id AND c.state='ready')))
+    WHERE (($4 AND r.derived_representation_id=ANY($5::uuid[])) OR (NOT $4 AND EXISTS (SELECT 1 FROM coverage_needs c WHERE c.subject_id=$1 AND c.current_representation_id=r.derived_representation_id AND c.state='ready')))
         AND EXISTS (SELECT 1 FROM representation_source_regions($1,r.derived_representation_id) roots JOIN source_regions s USING(source_region_id) WHERE s.artifact_id=o.artifact_id)
         AND r.subject_id=$1 AND r.payload_text IS NOT NULL
         AND r.representation_kind IN ('extracted_text','ocr','transcript','audio_description','image_description','scene_description','summary')
@@ -98,31 +98,19 @@ LEFT JOIN LATERAL (
         )
     ORDER BY r.created_at DESC,r.derived_representation_id LIMIT 1
 ) d ON true
-WHERE e.subject_id=$1 AND o.subject_id=$1 AND m.episode_revision_id=ANY($2::uuid[]) AND m.ordinal<$4 AND (NOT $5 OR o.occurrence_id=ANY($7::uuid[]))
+WHERE e.subject_id=$1 AND o.subject_id=$1 AND m.episode_revision_id=ANY($2::uuid[]) AND m.ordinal<$3 AND (NOT $4 OR o.occurrence_id=ANY($6::uuid[]))
 ORDER BY m.episode_revision_id,m.ordinal")
-        .bind(subject.0).bind(revisions).bind(budget.fragment_max_bytes as i32).bind(budget.max_members as i32).bind(historical).bind(representations).bind(occurrences).fetch_all(&mut **tx).await.map_err(db)?;
+        .bind(subject.0).bind(revisions).bind(budget.max_members as i32).bind(historical).bind(representations).bind(occurrences).fetch_all(&mut **tx).await.map_err(db)?;
     let mut result = BTreeMap::<Uuid, Vec<TextProjectionFragment>>::new();
     for row in rows {
-        let fragment = if row.get::<Option<bool>, _>("raw_text") == Some(true) {
-            TextProjectionFragment::Artifact {
-                reference: CognitiveRef::Occurrence(OccurrenceId(row.get("occurrence_id"))),
-                content_hash: row.get("content_hash"),
-                byte_length: row.get::<i64, _>("byte_length") as u64,
-            }
+        let reference = if row.get::<Option<bool>, _>("raw_text") == Some(true) {
+            CognitiveRef::Occurrence(OccurrenceId(row.get("occurrence_id")))
         } else if let Some(id) = row.get::<Option<Uuid>, _>("derived_representation_id") {
-            let mut text = row.get::<String, _>("text");
-            let mut end = text.len().min(budget.fragment_max_bytes);
-            while !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            text.truncate(end);
-            TextProjectionFragment::Text {
-                reference: CognitiveRef::DerivedRepresentation(DerivedRepresentationId(id)),
-                text,
-            }
+            CognitiveRef::DerivedRepresentation(DerivedRepresentationId(id))
         } else {
             continue;
         };
+        let fragment = TextProjectionFragment { reference };
         result
             .entry(row.get("episode_revision_id"))
             .or_default()

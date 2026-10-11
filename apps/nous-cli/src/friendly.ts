@@ -1,164 +1,97 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { protocolSchema, protocolReferenceKind } from "@nous-wave/client/data";
 import type { CliEnvironment } from "./runtime.js";
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i;
-const idKinds: Record<string, string> = {
-  subjectId: "subject",
-  sessionId: "session",
-  workContextId: "work_context",
-  activeWorkContextId: "work_context",
-  memoryId: "memory",
-  memoryRevisionId: "memory_revision",
-  schemaId: "cognitive_schema",
-  schemaRevisionId: "cognitive_schema_revision",
-  episodeId: "episode",
-  episodeRevisionId: "episode_revision",
-  journalId: "journal",
-  journalRevisionId: "journal_revision",
-  seedVersionId: "cognitive_seed_version",
-  tagId: "tag",
-  canonicalTagId: "tag",
-  artifactId: "artifact",
-  occurrenceId: "occurrence",
-  groundingOccurrenceId: "occurrence",
-  sourceRegionId: "source_region",
-  parentSourceRegionId: "source_region",
-  representationId: "derived_representation",
-  derivedRepresentationId: "derived_representation",
-  selectedRepresentationId: "derived_representation",
-  derivedRegionId: "derived_region",
-  associationId: "association",
-};
-const kinds = new Set([
-  ...Object.values(idKinds),
-  "memory_revision",
-  "cognitive_schema_revision",
-  "episode_revision",
-  "journal_revision",
-  "cognitive_seed_version",
-  "entity",
-  "resource",
-]);
-function directoryLabel(text: string) {
-  let value = "";
-  for (const character of text) {
-    if (Buffer.byteLength(value + character) > 256) break;
-    value += character;
-  }
-  return value;
-}
-
-/** Display addresses come from the existing Authority directory, never truncated IDs. */
+/** Only protocol-declared references are addressed; user JSON and scalar text remain opaque. */
 export async function friendlyOutput(
   input: unknown,
   env: CliEnvironment,
 ): Promise<unknown> {
-  const cache = new Map<string, Promise<string>>();
-  const top =
-    input && typeof input === "object"
-      ? (input as Record<string, unknown>)
-      : {};
-  const subjectId =
-    typeof top.subjectId === "string" ? top.subjectId : env.subjectId;
-  const address = (kind: string, value: string, label = "") => {
-    const key = `${subjectId}:${kind}:${value}`;
-    if (!cache.has(key))
-      cache.set(
-        key,
-        env.client.identity
-          .bind({
-            subjectId: kind === "subject" ? value : subjectId,
-            canonical: { kind, value },
-            displayName: directoryLabel(label),
-            aliases: [],
-            addressOnly: true,
-          })
-          .then((binding) => binding.lexicalRef),
-      );
-    return cache.get(key)!;
+  type Target = {
+    subjectId: string;
+    canonical: { kind: string; value: string };
   };
-  async function visit(
-    value: unknown,
-    key = "",
-    parent: Record<string, unknown> = {},
-  ): Promise<unknown> {
-    // Keep useful execution facts; detailed wire traces remain diagnostic output.
-    if (key === "diagnostics") {
-      if (!value || typeof value !== "object") return undefined;
-      const diagnostics = value as Record<string, unknown>;
-      const publicFields = Object.fromEntries(
-        [
-          "candidateCounts",
-          "laneStatus",
-          "topologyComplete",
-          "topologyDiscardedMass",
-        ]
-          .filter((name) => diagnostics[name] !== undefined)
-          .map((name) => [name, diagnostics[name]]),
-      );
-      return Object.keys(publicFields).length ? visit(publicFields) : undefined;
-    }
-    if (Array.isArray(value))
-      return Promise.all(value.map((item) => visit(item, key, parent)));
-    if (typeof value === "string") {
-      if (
-        (key === "aboutness" ||
-          key === "actorEntityRef" ||
-          key === "entityAnchors") &&
-        value.startsWith("entity:")
-      )
-        return address("entity", value);
-      const ref = /^([a-z_]+):([0-9a-f-]{36})$/i.exec(value);
-      if (ref && kinds.has(ref[1]!)) return address(ref[1]!, ref[2]!);
-      if (uuid.test(value)) {
-        let kind =
-          key === "tags" || key === "tagAnchors" ? "tag" : idKinds[key];
-        if (["revisionId", "currentRevisionId"].includes(key))
-          kind = parent.memoryId
-            ? "memory_revision"
-            : parent.schemaId
-              ? "cognitive_schema_revision"
-              : parent.episodeId
-                ? "episode_revision"
-                : parent.journalId
-                  ? "journal_revision"
-                  : undefined;
-        if (
-          ["value", "id"].includes(key) &&
-          typeof parent.kind === "string" &&
-          kinds.has(parent.kind)
-        )
-          kind = parent.kind;
-        if (key === "value" && typeof parent.case === "string")
-          kind = idKinds[parent.case] ?? kind;
-        if (kind)
-          return address(
-            kind,
-            value,
-            typeof parent.title === "string"
-              ? parent.title
-              : typeof parent.purpose === "string"
-                ? parent.purpose
-                : "",
-          );
-        return undefined;
-      }
-      if (/digest|hash|signature/i.test(key) && /^[0-9a-f]{64}$/i.test(value))
-        return undefined;
-      return value;
-    }
+  const targets = new Map<string, Target>();
+  const slots: {
+    parent: Record<string, unknown> | unknown[];
+    key: string | number;
+    target: string;
+  }[] = [];
+  function visit(value: unknown, scope: string): unknown {
     if (!value || typeof value !== "object" || value instanceof Uint8Array)
       return value;
-    const object = value as Record<string, unknown>;
-    const entries = await Promise.all(
-      Object.entries(object).map(
-        async ([name, item]) =>
-          [name, await visit(item, name, object)] as const,
-      ),
+    if (Array.isArray(value))
+      return value.map((member) => visit(member, scope));
+    const source = value as Record<string, unknown>;
+    const schema = protocolSchema(value);
+    const subjectField = schema?.fields.find(
+      (field) => protocolReferenceKind(field) === "subject",
     );
-    return Object.fromEntries(entries.filter(([, item]) => item !== undefined));
+    if (
+      subjectField &&
+      typeof source[subjectField.localName] === "string" &&
+      source[subjectField.localName]
+    )
+      scope = source[subjectField.localName] as string;
+    const output = Object.fromEntries(
+      Object.entries(source).map(([key, member]) => [
+        key,
+        visit(member, scope),
+      ]),
+    );
+    for (const field of schema?.fields ?? []) {
+      const declaredKind = protocolReferenceKind(field);
+      if (!declaredKind) continue;
+      const kind = declaredKind === "$kind" ? source.kind : declaredKind;
+      if (typeof kind !== "string" || !kind) continue;
+      let parent: Record<string, unknown> | unknown[] = output;
+      let key: string | number = field.localName;
+      if (field.oneof) {
+        const oneof = output[field.oneof.localName] as
+          { case?: string; value?: unknown } | undefined;
+        if (oneof?.case !== field.localName) continue;
+        parent = oneof;
+        key = "value";
+      }
+      const member = parent[key as keyof typeof parent];
+      const address = (
+        container: Record<string, unknown> | unknown[],
+        addressKey: string | number,
+        canonical: unknown,
+      ) => {
+        if (typeof canonical !== "string" || !canonical) return;
+        const target = {
+          subjectId: kind === "subject" ? canonical : scope,
+          canonical: { kind, value: canonical },
+        };
+        if (!target.subjectId) return;
+        const id = JSON.stringify(target);
+        targets.set(id, target);
+        slots.push({ parent: container, key: addressKey, target: id });
+      };
+      if (Array.isArray(member))
+        member.forEach((canonical, index) => address(member, index, canonical));
+      else address(parent, key, member);
+    }
+    return output;
   }
-  return visit(input);
+  const result = visit(input, env.subjectId);
+  const requests = [...targets.values()];
+  const addresses = new Map<string, string>();
+  for (let start = 0; start < requests.length; start += 2048) {
+    const response = await env.client.identity.addresses({
+      targets: requests.slice(start, start + 2048),
+    });
+    for (const address of response.addresses)
+      if (address.status === "BOUND" && address.target && address.lexicalRef)
+        addresses.set(JSON.stringify(address.target), address.lexicalRef);
+  }
+  for (const slot of slots) {
+    const address = addresses.get(slot.target);
+    if (address !== undefined)
+      (slot.parent as Record<string | number, unknown>)[slot.key] = address;
+  }
+  return result;
 }

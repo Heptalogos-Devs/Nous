@@ -9,7 +9,6 @@ use test_support::*;
 
 fn query(subject: SubjectId) -> CognitiveQuery {
     CognitiveQuery {
-        api_version: API_VERSION,
         subject,
         projection: Default::default(),
         temporal_frame: Default::default(),
@@ -229,12 +228,12 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
     assert!(
         first
             .config_snapshot
-            .query_override(nous_runtime::QUERY_LEASE, 1)
+            .query_override(nous_runtime::QUERY_SLOTS, 1)
             .is_err()
     );
     let token = runtime
         .cognition
-        .retain_prepared_query(first.clone())
+        .retain_prepared_query(test_support::query_reservation(first.clone()))
         .unwrap();
     runtime
         .configuration
@@ -242,6 +241,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             OperationId::new(),
             nous_runtime::COGNITIVE_PROFILE.path(),
             serde_json::json!("baseline-rrf"),
+            None,
         )
         .await
         .unwrap();
@@ -249,12 +249,37 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         .cognition
         .take_prepared_query(subject, token)
         .unwrap();
+    let timed = runtime.cognition.bind_query(query(subject)).await.unwrap();
+    let timed_token = runtime
+        .cognition
+        .retain_prepared_query(
+            nous_runtime::QueryReservation::new(
+                timed,
+                nous_runtime::QueryLease::new(std::time::Duration::from_secs(2)).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1400)).await;
+    let resumed = runtime
+        .cognition
+        .take_prepared_query(subject, timed_token)
+        .unwrap();
+    let next_token = runtime.cognition.retain_prepared_query(resumed).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    assert!(
+        runtime
+            .cognition
+            .prepared_query(subject, next_token)
+            .is_err(),
+        "activation must not renew the original execution opportunity"
+    );
     assert_eq!(
-        frozen.config_snapshot.effective_digest,
+        frozen.bound.config_snapshot.effective_digest,
         first.config_snapshot.effective_digest
     );
     assert_eq!(
-        frozen.retrieval_policy.cognitive_profile,
+        frozen.bound.retrieval_policy.cognitive_profile,
         first.retrieval_policy.cognitive_profile
     );
     assert!(
@@ -298,7 +323,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             .contains(&"TASK CONTEXT ".repeat(100))
     );
     assert_eq!(
-        frozen.context_snapshot.digest,
+        frozen.bound.context_snapshot.digest,
         first.context_snapshot.digest
     );
     let changed = runtime.cognition.bind_query(request).await.unwrap();

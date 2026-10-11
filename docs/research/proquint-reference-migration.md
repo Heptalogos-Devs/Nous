@@ -1,5 +1,7 @@
 # Proquint reference migration — Issue 23
 
+[返回文档目录](../INDEX.md)
+
 [Issue 23](https://github.com/Heptalogos-Devs/Nous-Wave/issues/23) selects standard
 [Proquint](https://arxiv.org/html/0901.4016): three MSB-first 16-bit CVCVC groups,
 the standard consonant/vowel alphabets, and no optional prefix. The body is

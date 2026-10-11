@@ -1,14 +1,23 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { MaterialInterpretation } from "./interpretation.js";
 import { createHash } from "node:crypto";
-import type { UserContent } from "ai";
+import { create } from "@bufbuild/protobuf";
 import {
-  structuredMaterialResult,
-  type StructuredMaterialContext,
-} from "./schemas/material-interpretation.js";
-import type { Degradation, Segment } from "../domain.js";
-import { ModelInvocations, type ModelRoleSnapshot } from "./invocations.js";
+  ContextSegmentSchema,
+  DegradationSchema,
+  type Degradation,
+  type ContextSegment as Segment,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { ModelInvocations } from "./invocations.js";
+import {
+  type ModelRoleSnapshot,
+  type ModelProducerMetadata,
+} from "./execution/snapshot.js";
+import { type ExecutionTelemetry } from "./execution/routes.js";
+import type { ModelGenerationOutput } from "./schemas/contracts.js";
+import { type ModelRole } from "./roles.js";
 import {
   modelConfigurationSchema,
   type ModelConfiguration,
@@ -16,9 +25,14 @@ import {
 
 import { formationSchema } from "./schemas/formation.js";
 import { projectionStewardSchema as proposalSchema } from "./schemas/projection.js";
-import { descriptionSchema as interpretationSchema } from "./schemas/description.js";
+type SemanticGeneration<R extends ModelRole> = {
+  value: ModelGenerationOutput<R>;
+  producerMetadata: ModelProducerMetadata;
+  execution: ExecutionTelemetry;
+};
 
 export class ModelRuntime {
+  readonly material: MaterialInterpretation;
   constructor(
     readonly invocations = new ModelInvocations(),
     readonly materialStrategy: ModelConfiguration["material_strategy"] = "description_only",
@@ -28,7 +42,9 @@ export class ModelRuntime {
     readonly tempRoot?: string,
     readonly materialInputs = modelConfigurationSchema.parse({})
       .material_inputs,
-  ) {}
+  ) {
+    this.material = new MaterialInterpretation(invocations, video.prompt);
+  }
   static async fromConfig(
     config: ModelConfiguration,
     promptRoot?: string,
@@ -60,15 +76,11 @@ export class ModelRuntime {
     signal?: AbortSignal,
     snapshot?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
-  ) {
+  ): Promise<SemanticGeneration<"episode_segmentation">> {
     return this.invocations.generate(
       "episode_segmentation",
-      input,
-      signal,
-      undefined,
-      snapshot,
-      undefined,
-      beforeAttempt,
+      { content: input },
+      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
     );
   }
   async synthesizeJournal(
@@ -76,15 +88,11 @@ export class ModelRuntime {
     signal?: AbortSignal,
     snapshot?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
-  ) {
+  ): Promise<SemanticGeneration<"journal_synthesis">> {
     return this.invocations.generate(
       "journal_synthesis",
-      input,
-      signal,
-      undefined,
-      snapshot,
-      undefined,
-      beforeAttempt,
+      { content: input },
+      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
     );
   }
   async maintainConcepts(
@@ -92,15 +100,11 @@ export class ModelRuntime {
     signal?: AbortSignal,
     snapshot?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
-  ) {
+  ): Promise<SemanticGeneration<"concept_maintenance">> {
     return this.invocations.generate(
       "concept_maintenance",
-      input,
-      signal,
-      undefined,
-      snapshot,
-      undefined,
-      beforeAttempt,
+      { content: input },
+      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
     );
   }
   async consolidate(
@@ -108,224 +112,21 @@ export class ModelRuntime {
     signal?: AbortSignal,
     snapshot?: ModelRoleSnapshot,
     beforeAttempt?: () => void,
-  ) {
+  ): Promise<SemanticGeneration<"memory_consolidation">> {
     return this.invocations.generate(
       "memory_consolidation",
-      input,
-      signal,
-      undefined,
-      snapshot,
-      undefined,
-      beforeAttempt,
+      { content: input },
+      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
     );
   }
   async form(text: string, signal?: AbortSignal, snapshot?: ModelRoleSnapshot) {
     const result = await this.invocations.generate(
       "memory_formation",
-      text,
-      signal,
-      undefined,
-      snapshot,
+      { content: text },
+      { signal: signal, snapshot: snapshot },
     );
     return {
       ...formationSchema.parse(result.value),
-      producerMetadata: result.producerMetadata,
-      execution: result.execution,
-    };
-  }
-  async interpret(
-    bytes: Uint8Array,
-    mediaType: string,
-    signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
-  ) {
-    if (!mediaType.startsWith("image/"))
-      throw new Error("Image description requires image material");
-    if (
-      !this.invocations
-        .profile("material_description")
-        ?.capabilities.includes("image_input")
-    )
-      throw new Error("Image model capability is unavailable");
-    const content = [{ type: "file" as const, data: bytes, mediaType }];
-    const result = await this.invocations.generate(
-      "material_description",
-      content,
-      signal,
-      undefined,
-      fixed,
-    );
-    return {
-      text: interpretationSchema.parse({ text: result.value }).text,
-      producerMetadata: result.producerMetadata,
-      execution: result.execution,
-    };
-  }
-  async structure(
-    input: string | { bytes: Uint8Array; mediaType: string },
-    signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
-    context?: StructuredMaterialContext,
-  ) {
-    if (!context)
-      throw new Error(
-        "Structured material requires a stable formation basis catalog",
-      );
-    const role =
-      typeof input === "string"
-        ? "material_structuring"
-        : "material_direct_structuring";
-    if (
-      typeof input !== "string" &&
-      !this.invocations.profile(role)?.capabilities.includes("image_input")
-    )
-      throw new Error("Direct structured image capability is unavailable");
-    const content: UserContent =
-      typeof input === "string"
-        ? JSON.stringify({
-            evidence_text: input,
-            evidence_kind: context.sourceText
-              ? "original_text"
-              : "committed_representation",
-            evidence_access: context.evidenceAccess,
-            basis_catalog: Object.keys(context.catalog),
-            modalities: {
-              visual: context.visual,
-              audio: context.audio,
-              source_text: context.sourceText,
-            },
-          })
-        : [
-            {
-              type: "file" as const,
-              data: input.bytes,
-              mediaType: input.mediaType,
-            },
-          ];
-    if (Array.isArray(content))
-      content.unshift({
-        type: "text",
-        text: JSON.stringify({ basis_catalog: Object.keys(context.catalog) }),
-      });
-    const result = await this.invocations.generate(
-      role,
-      content,
-      signal,
-      undefined,
-      fixed,
-      undefined,
-      undefined,
-      (value) => {
-        structuredMaterialResult(value, context);
-      },
-    );
-    return {
-      ...structuredMaterialResult(result.value, context),
-      producerMetadata: result.producerMetadata,
-      execution: result.execution,
-    };
-  }
-  async describeMedia(
-    bytes: Uint8Array,
-    mediaType: string,
-    structured: boolean,
-    signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
-    context?: StructuredMaterialContext,
-  ) {
-    if (structured && !context)
-      throw new Error(
-        "Structured material requires a stable formation basis catalog",
-      );
-    const result = await this.invocations.generate(
-      structured ? "material_direct_structuring" : "material_description",
-      `Input media type: ${mediaType}. The attached material is the input evidence. Formation basis catalog: ${JSON.stringify(Object.keys(context?.catalog ?? {}))}.`,
-      signal,
-      undefined,
-      fixed,
-      { bytes, mediaType },
-      undefined,
-      structured
-        ? (value) => {
-            structuredMaterialResult(value, context!);
-          }
-        : undefined,
-    );
-    return {
-      ...(structured
-        ? structuredMaterialResult(result.value, context!)
-        : { text: interpretationSchema.parse({ text: result.value }).text }),
-      producerMetadata: result.producerMetadata,
-      execution: result.execution,
-    };
-  }
-  async describeScene(
-    frames: { bytes: Uint8Array; timestamp: number }[],
-    transcript: string | undefined,
-    structured: boolean,
-    signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
-    context?: StructuredMaterialContext,
-  ) {
-    if (
-      !this.invocations
-        .profile(
-          structured ? "material_direct_structuring" : "material_description",
-        )
-        ?.capabilities.includes("image_input")
-    )
-      throw new Error("Video frame model capability is unavailable");
-    if (structured && !context)
-      throw new Error(
-        "Structured material requires a stable formation basis catalog",
-      );
-    const content = [
-      {
-        type: "text" as const,
-        text: JSON.stringify({
-          sampled_timestamps: frames.map((f) => f.timestamp),
-          transcript,
-          basis_catalog: Object.keys(context?.catalog ?? {}),
-        }),
-      },
-      ...frames.flatMap((frame, index) => [
-        {
-          type: "text" as const,
-          text: JSON.stringify({
-            frame_index: index,
-            timestamp_seconds: frame.timestamp,
-            applies_to: "the immediately following image",
-          }),
-        },
-        {
-          type: "file" as const,
-          data: frame.bytes,
-          mediaType: "image/jpeg",
-        },
-      ]),
-    ];
-    const result = await this.invocations.generate(
-      structured ? "material_direct_structuring" : "material_description",
-      content,
-      signal,
-      fixed
-        ? undefined
-        : structured
-          ? undefined
-          : { role: "material_description", path: this.video.prompt },
-      fixed,
-      undefined,
-      undefined,
-      structured
-        ? (value) => {
-            structuredMaterialResult(value, context!);
-          }
-        : undefined,
-    );
-    return {
-      ...(structured
-        ? structuredMaterialResult(result.value, context!)
-        : { text: interpretationSchema.parse({ text: result.value }).text }),
       producerMetadata: result.producerMetadata,
       execution: result.execution,
     };
@@ -339,10 +140,10 @@ export class ModelRuntime {
       return {
         segments,
         degradation: [
-          {
+          create(DegradationSchema, {
             code: "steward_not_configured",
             detail: "Deterministic projection",
-          },
+          }),
         ],
       };
     try {
@@ -350,14 +151,16 @@ export class ModelRuntime {
         (
           await this.invocations.generate(
             "projection_steward",
-            JSON.stringify(
-              segments.map((s) => ({
-                id: s.segmentId,
-                role: s.semanticRole,
-                text: s.text,
-              })),
-            ),
-            signal,
+            {
+              content: JSON.stringify(
+                segments.map((s) => ({
+                  id: s.segmentId,
+                  role: s.semanticRole,
+                  text: s.text,
+                })),
+              ),
+            },
+            { signal: signal },
           )
         ).value,
       );
@@ -383,7 +186,7 @@ export class ModelRuntime {
           .digest("hex");
         return {
           segments: [
-            {
+            create(ContextSegmentSchema, {
               segmentId: `steward:${revision}`,
               text: output.summary,
               semanticRole: "steward_synthesis",
@@ -392,7 +195,7 @@ export class ModelRuntime {
               authority: "interpretation",
               stability: "EPOCH_STABLE",
               sourceRevision: revision,
-            },
+            }),
           ],
           degradation: [],
         };
@@ -403,10 +206,10 @@ export class ModelRuntime {
       return {
         segments,
         degradation: [
-          {
+          create(DegradationSchema, {
             code: "steward_rejected",
             detail: error instanceof Error ? error.message : "Invalid proposal",
-          },
+          }),
         ],
       };
     }

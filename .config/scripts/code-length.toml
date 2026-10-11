@@ -1,0 +1,18 @@
+# Repository development policy. This is not a Nous runtime configuration.
+# Applies to all Git-tracked and non-ignored new source files.
+
+[typescript]
+extensions = [".ts", ".tsx", ".mts", ".cts"]
+warn_at = 600
+reject_at = 800
+
+[rust]
+extensions = [".rs"]
+warn_at = 500
+reject_at = 700
+
+[generated]
+exclude = [
+  "crates/protocol/src/generated/**",
+  "packages/protocol-ts/src/generated/**",
+]

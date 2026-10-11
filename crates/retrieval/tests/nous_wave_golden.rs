@@ -126,15 +126,8 @@ fn frozen_experimental_node_potential_contract() {
         "full":observation(&graph,4096,true),"state_truncated":observation(&graph,1,true),
         "empty_seed":observation(&graph,4096,false),
     });
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/nous-wave-v1.json");
-    if std::env::var_os("NOUS_WRITE_WAVE_GOLDEN").is_some() {
-        std::fs::create_dir_all(path.parent().expect("fixture directory")).expect("mkdir");
-        std::fs::write(&path,serde_json::to_string_pretty(&json!({
-            "mechanism":"experimental-node-potential-v1","baseline_commit":"d7ae4836d6bd5a5ad3fc78cc7ac9990305ddfc06",
-            "tolerance":{"absolute":1e-12,"relative":1e-12},"expected":actual,
-        })).expect("fixture JSON")).expect("write baseline fixture");
-    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/research/corpus/vcp/nous-wave-v1.json");
     let expected: Value =
         serde_json::from_slice(&std::fs::read(path).expect("frozen baseline fixture"))
             .expect("fixture JSON");

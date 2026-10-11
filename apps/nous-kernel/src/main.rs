@@ -42,7 +42,7 @@ async fn run() -> Result<()> {
         catalog.deployment_values(&bundle.deployment_document)?;
         println!(
             "{}",
-            serde_json::json!({"valid":true,"catalog_digest":catalog.digest()})
+            serde_json::json!({"valid":true,"catalog_digest":catalog.catalog_digest()})
         );
         return Ok(());
     }

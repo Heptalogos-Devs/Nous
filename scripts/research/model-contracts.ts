@@ -4,15 +4,15 @@
 import { parseArgs } from "node:util";
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
+import { coreConfigurationValues } from "../../apps/nous-core/src/configuration/catalog.js";
 import {
   parseConfiguration,
   parseEffectiveConfiguration,
-} from "../../apps/nous-core/src/config.js";
+} from "../../apps/nous-core/src/configuration/schema.js";
 import {
   roleNames,
-  resolveExecutionProfile,
   type ModelRole,
-} from "../../apps/nous-core/src/model/configuration.js";
+} from "../../apps/nous-core/src/model/roles.js";
 import { PromptRegistry } from "../../apps/nous-core/src/model/prompts.js";
 import { providerContractForRole } from "../../apps/nous-core/src/model/schemas/contracts.js";
 import {
@@ -44,12 +44,9 @@ if (values.config) {
     await readFile(resolve(values.config), "utf8"),
     true,
   );
-  configuration = parseEffectiveConfiguration({
-    ...document,
-    "material.strategy": (
-      document.material as Record<string, unknown> | undefined
-    )?.strategy,
-  }).models;
+  configuration = parseEffectiveConfiguration(
+    coreConfigurationValues(document),
+  ).models;
 }
 const prompts = new PromptRegistry(
   resolve(values["prompt-root"]!),
@@ -78,9 +75,7 @@ for (const role of values.role ? [values.role as ModelRole] : roleNames) {
   const gateway = profile
     ? configuration?.gateway_profiles[profile.gateway]
     : undefined;
-  const binding = execution
-    ? resolveExecutionProfile(execution, profile?.protocol ?? "")
-    : undefined;
+  const binding = execution ? execution : undefined;
   const basePrompt = await prompts.load(role, configured?.prompt);
   const prompt = values["prompt-path"]
     ? await prompts.load(role, values["prompt-path"])

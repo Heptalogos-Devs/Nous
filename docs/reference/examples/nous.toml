@@ -35,7 +35,7 @@ max_upload_bytes = 8589934592
 # 两阶段结构化失败会保留已提交的 rich description。
 # Gateway：只配置应用调用地址与 token 变量名。上游渠道/供应商 key/配额由 New API 管理。
 # ── 网关与可复用模型配置 ──
-[gateway_profiles.local]
+[models.gateway_profiles.local]
 # 必填；远程必须 HTTPS，literal loopback 可用 HTTP。
 base_url = "http://127.0.0.1:3000/v1"
 # 必填；值写到 SecretRoot/gateway.env，不能在本文件放 key。
@@ -50,7 +50,7 @@ request_timeout_ms = 30000
 # openai-audio-transcription / rerank-v1。聊天选 chat，明确支持 Responses 时可改 responses。
 # capabilities 声明支持 text / image_input / structured_output / embedding /
 # audio_input / video_input / speech_transcription / rerank；可执行配置完整时报告 READY。
-[model_profiles.formation]
+[models.model_profiles.formation]
 gateway = "local"
 protocol = "openai-chat"
 # 启用该角色时填写实际 identifier；空值=NOT_CONFIGURED。
@@ -59,21 +59,21 @@ capabilities = ["text", "structured_output"]
 # 可选；填写经服务方文档或响应确认的模型修订。
 # model_revision = "实际已知的模型修订"
 
-[model_profiles.vision]
+[models.model_profiles.vision]
 gateway = "local"
 protocol = "openai-chat"
 # 需支持图片输入；可与文本模型相同，但要确认能力。
 model = ""
 capabilities = ["text", "image_input", "audio_input", "video_input", "structured_output"]
 
-[model_profiles.embedding]
+[models.model_profiles.embedding]
 gateway = "local"
 protocol = "openai-embeddings"
 # 选择实际 embedding endpoint 的模型，不能用聊天模型。
 model = ""
 capabilities = ["embedding"]
 
-[model_profiles.embedding.embedding]
+[models.model_profiles.embedding.embedding]
 # 每个真实 HTTP 请求 1–64 条；网关不接受数组批量时设为 1。失败不自动改单条重试。
 max_batch_size = 64
 # 占位值；改为模型实际返回的维度。
@@ -93,14 +93,14 @@ normalization = "none"
 # 必填；实际输出语义。
 output_semantics = "dense_vector"
 
-[model_profiles.rerank]
+[models.model_profiles.rerank]
 gateway = "local"
 protocol = "rerank-v1"
 # 可选角色；需提供 /v1/rerank 标准 index/score response。
 model = ""
 capabilities = ["rerank"]
 
-[model_profiles.speech]
+[models.model_profiles.speech]
 gateway = "local"
 protocol = "openai-audio-transcription"
 # 可选角色；需支持标准 multipart audio transcription。
@@ -115,77 +115,77 @@ capabilities = ["speech_transcription"]
 # 用户覆盖用 config-prompts/...，相对 ConfigurationRoot/prompts；缺失时角色为 UNAVAILABLE。
 # 每份最多 128 KiB，修改会改变 producer。
 # ── 各认知角色使用的模型、Prompt 与生成参数 ──
-[execution_profiles.memory_formation]
+[models.execution_profiles.memory_formation]
 model = "formation"
 temperature = 0.1
 max_output_tokens = 4096
 
-[roles.memory_formation]
+[models.roles.memory_formation]
 routes = ["memory_formation"]
 prompt = "prompts/memory/formation.md"
 requirement = "optional"
 
-[execution_profiles.projection_steward]
+[models.execution_profiles.projection_steward]
 model = "formation"
 temperature = 0.1
 max_output_tokens = 2048
 
-[roles.projection_steward]
+[models.roles.projection_steward]
 routes = ["projection_steward"]
 prompt = "prompts/projection/steward.md"
 requirement = "optional"
 
-[execution_profiles.material_description]
+[models.execution_profiles.material_description]
 model = "vision"
 temperature = 0.1
 max_output_tokens = 8192
 
-[roles.material_description]
+[models.roles.material_description]
 routes = ["material_description"]
 prompt = "prompts/material/description.md"
 requirement = "optional"
 
-[execution_profiles.material_structuring]
+[models.execution_profiles.material_structuring]
 model = "formation"
 temperature = 0.1
 max_output_tokens = 4096
 
 # 原始图片/视频直接结构化：与描述、文本再结构化独立配置。
-[roles.material_structuring]
+[models.roles.material_structuring]
 routes = ["material_structuring"]
 prompt = "prompts/material/structure.md"
 requirement = "optional"
 
-[execution_profiles.material_direct_structuring]
+[models.execution_profiles.material_direct_structuring]
 model = "vision"
 temperature = 0.1
 max_output_tokens = 4096
 
-[roles.material_direct_structuring]
+[models.roles.material_direct_structuring]
 routes = ["material_direct_structuring"]
 prompt = "prompts/material/direct-structure.md"
 requirement = "optional"
 
-[execution_profiles.query_embedding]
+[models.execution_profiles.query_embedding]
 model = "embedding"
 
-[roles.query_embedding]
+[models.roles.query_embedding]
 routes = ["query_embedding"]
 requirement = "optional"
 
-[execution_profiles.query_rerank]
+[models.execution_profiles.query_rerank]
 model = "rerank"
 
-[roles.query_rerank]
+[models.roles.query_rerank]
 routes = ["query_rerank"]
 requirement = "optional"
 
-[execution_profiles.speech_transcription]
+[models.execution_profiles.speech_transcription]
 model = "speech"
 
 # direct mode 使用多模态音频理解；transcription mode 使用 speech_transcription role。
 # ── 音频与视频输入方式和大小限制 ──
-[roles.speech_transcription]
+[models.roles.speech_transcription]
 routes = ["speech_transcription"]
 requirement = "optional"
 
@@ -237,18 +237,3 @@ max_items = 32
 max_text_bytes = 32768
 # 可选；展开可提供的文本。
 materialize = true
-# 可选 Resource profile 连接操作者配置的 RAGFlow API 与 dataset locator。
-# 普通本地材料通过 Material 与 Serving 处理；profile 默认 disabled。
-# key 放 SecretRoot/gateway.env 或环境变量，勿写入本文件。
-# Resource 的 provider_locator 是 dataset selector，例如 {"dataset_ids":["dataset-id"]}。
-# ── 可选外部知识库 ──
-[resource_profiles.ragflow]
-adapter_kind = "ragflow"
-# API 根；按你已有实例或反向代理修改。
-base_url = "http://127.0.0.1:9380/api/v1"
-credential_env = "RAGFLOW_API_KEY"
-enabled = false
-# 可选；1–300000 ms；支持调用方取消，示例值为 30 秒。
-timeout_ms = 30000
-# 可选；1–1048576 bytes/chunk。示例值为 256 KiB。
-max_material_bytes = 262144

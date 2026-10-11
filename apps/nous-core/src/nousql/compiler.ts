@@ -1,7 +1,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { create } from "@bufbuild/protobuf";
+import { create, fromJson, toJson } from "@bufbuild/protobuf";
+import { TimestampSchema, type Timestamp } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   QueryExprSchema,
@@ -24,7 +25,7 @@ import type { Atom, Directive, Locator } from "./syntax.js";
 export type IdentityResolver = (
   kind: string,
   locator: Locator,
-  asOf?: Date,
+  asOf?: Timestamp,
 ) => Promise<{ canonical: Ref; lexicalRef: string }>;
 const selectorKinds = {
   e: "entity",
@@ -41,14 +42,14 @@ function invalid(message: string): never {
 export async function compileNousQL(
   source: string,
   resolve: IdentityResolver,
-  now: Date,
+  now: Timestamp,
 ) {
   const syntax = parse(source);
   const sourceCanonical = canonical(syntax);
   const temporalExpressions = syntax.directives
     .filter((d) => ["time", "asof", "history"].includes(d.name))
     .map(directiveText);
-  let authorityTime: Date | undefined;
+  let authorityTime: Timestamp | undefined;
   async function bindAtom(atom: Atom): Promise<Cue[]> {
     if (atom.kind === "text" || atom.kind === "concept")
       return [
@@ -101,14 +102,7 @@ export async function compileNousQL(
     const modifiers = create(QueryModifiersSchema, { constraints: {} });
     for (const directive of syntax.directives)
       applyDirective(modifiers, directive, now);
-    authorityTime = modifiers.asOf
-      ? new Date(
-          Number(modifiers.asOf.seconds) * 1000 +
-            modifiers.asOf.nanos / 1000000,
-        )
-      : modifiers.history
-        ? now
-        : undefined;
+    authorityTime = modifiers.asOf ?? (modifiers.history ? now : undefined);
     for (const preference of syntax.preferences) {
       if (preference.operand.kind === "key") {
         if (
@@ -145,11 +139,11 @@ export async function compileNousQL(
   }
   const expression = await lower();
   expression.modifiers ??= create(QueryModifiersSchema);
-  expression.modifiers.clockNow = timestamp(now);
+  expression.modifiers.clockNow = now;
   expression.modifiers.temporalExpressions = temporalExpressions;
   return { expression, sourceCanonical, boundCanonical: canonical(syntax) };
 }
-function applyDirective(m: QueryModifiers, d: Directive, now: Date) {
+function applyDirective(m: QueryModifiers, d: Directive, now: Timestamp) {
   const c = (m.constraints ??= create(QueryConstraintsSchema));
   const strings = () => {
     if (
@@ -197,18 +191,18 @@ function applyDirective(m: QueryModifiers, d: Directive, now: Date) {
       break;
     }
     case "asof": {
-      let point: Date;
+      let point: Timestamp;
       if (d.positional.length === 1 && !Object.keys(d.named).length)
-        point = date(d.positional[0]!);
+        point = timestamp(d.positional[0]!);
       else if (
         !d.positional.length &&
         Object.keys(d.named).length === 1 &&
         d.named.ago !== undefined
       )
-        point = new Date(now.getTime() - durationMillis(d.named.ago));
+        point = subtractDuration(now, d.named.ago);
       else invalid("Use $asof(timestamp) or $asof(ago=duration)");
-      m.asOf = timestamp(point);
-      d.positional = [point.toISOString()];
+      m.asOf = point;
+      d.positional = [timestampText(point)];
       d.named = {};
       break;
     }
@@ -311,32 +305,48 @@ function applyDirective(m: QueryModifiers, d: Directive, now: Date) {
         keys.some((k) => !["within", "from", "to", "at"].includes(k))
       )
         invalid("Invalid time arguments");
-      let start: Date | undefined;
-      let end: Date | undefined;
+      const key = axis as
+        "occurred" | "observed" | "valid" | "formed" | "recorded";
+      if (d.named.at !== undefined) {
+        if (keys.length !== 1)
+          invalid("at cannot be combined with other time arguments");
+        const point = timestamp(d.named.at);
+        c[key] = {
+          $typeName: "nous.wave.v1alpha1.TimePredicate",
+          predicate: { case: "point", value: point },
+        };
+        d.named = { at: timestampText(point) };
+        break;
+      }
+      let start: Timestamp | undefined;
+      let end: Timestamp | undefined;
       if (d.named.within !== undefined) {
         if (keys.length !== 1)
           invalid("within cannot be combined with other time arguments");
-        const duration = durationMillis(d.named.within);
         end = now;
-        start = new Date(now.getTime() - duration);
-      } else if (d.named.at !== undefined) {
-        if (keys.length !== 1)
-          invalid("at cannot be combined with other time arguments");
-        start = date(d.named.at);
-        end = start;
+        start = subtractDuration(now, d.named.within);
       } else {
-        start = d.named.from === undefined ? undefined : date(d.named.from);
-        end = d.named.to === undefined ? undefined : date(d.named.to);
+        start =
+          d.named.from === undefined ? undefined : timestamp(d.named.from);
+        end = d.named.to === undefined ? undefined : timestamp(d.named.to);
       }
-      if (start && end && start > end) invalid("Time interval is reversed");
-      c[axis as "occurred" | "observed" | "valid" | "formed" | "recorded"] = {
-        $typeName: "nous.wave.v1alpha1.TimeInterval",
-        start: start ? timestamp(start) : undefined,
-        end: end ? timestamp(end) : undefined,
+      if (
+        start &&
+        end &&
+        (start.seconds > end.seconds ||
+          (start.seconds === end.seconds && start.nanos >= end.nanos))
+      )
+        invalid("Time range requires start < end");
+      c[key] = {
+        $typeName: "nous.wave.v1alpha1.TimePredicate",
+        predicate: {
+          case: "range",
+          value: { $typeName: "nous.wave.v1alpha1.TimeInterval", start, end },
+        },
       };
       d.named = {
-        ...(start ? { from: start.toISOString() } : {}),
-        ...(end ? { to: end.toISOString() } : {}),
+        ...(start ? { from: timestampText(start) } : {}),
+        ...(end ? { to: timestampText(end) } : {}),
       };
       break;
     }
@@ -344,23 +354,34 @@ function applyDirective(m: QueryModifiers, d: Directive, now: Date) {
       invalid(`Unknown directive $${d.name}`);
   }
 }
-function date(value: string | number) {
+function timestamp(value: string | number): Timestamp {
   if (
     typeof value !== "string" ||
     !/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(value)
   )
     invalid("Time requires an explicit ISO-8601 offset");
-  const d = new Date(value);
-  if (!Number.isFinite(d.getTime())) invalid("Invalid date");
-  return d;
+  try {
+    return fromJson(TimestampSchema, value);
+  } catch {
+    return invalid("Invalid timestamp");
+  }
 }
-function timestamp(value: Date) {
-  if (!Number.isFinite(value.getTime())) invalid("Invalid timestamp");
-  return {
-    $typeName: "google.protobuf.Timestamp" as const,
-    seconds: BigInt(Math.floor(value.getTime() / 1000)),
-    nanos: (((value.getTime() % 1000) + 1000) % 1000) * 1_000_000,
-  };
+function timestampText(value: Timestamp) {
+  return toJson(TimestampSchema, value) as string;
+}
+function subtractDuration(value: Timestamp, duration: string | number) {
+  const nanos =
+    value.seconds * 1_000_000_000n +
+    BigInt(value.nanos) -
+    BigInt(durationMillis(duration)) * 1_000_000n;
+  const remainder =
+    ((nanos % 1_000_000_000n) + 1_000_000_000n) % 1_000_000_000n;
+  const result = create(TimestampSchema, {
+    seconds: (nanos - remainder) / 1_000_000_000n,
+    nanos: Number(remainder),
+  });
+  timestampText(result); // Apply canonical Timestamp bounds to relative results too.
+  return result;
 }
 
 function durationMillis(value: string | number) {

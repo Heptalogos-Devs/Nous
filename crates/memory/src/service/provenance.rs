@@ -149,12 +149,28 @@ impl MemoryService {
         subject: SubjectId,
         basis: &[RevisionBasis],
     ) -> Result<ProvenanceSummary> {
+        self.provenance_summary_in_view(subject, basis, None).await
+    }
+
+    pub async fn provenance_summary_in_view(
+        &self,
+        subject: SubjectId,
+        basis: &[RevisionBasis],
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<ProvenanceSummary> {
+        if view.is_some_and(|view| view.subject != subject) {
+            return Err(Error::Invalid("provenance view subject mismatch".into()));
+        }
         let mut summary = ProvenanceSummary::default();
         let mut stack = Vec::new();
         for basis in basis {
             match basis {
                 RevisionBasis::Evidence(evidence) => {
-                    for root in self.evidence_roots(subject, evidence).await? {
+                    for root in self
+                        .material
+                        .evidence_roots(subject, evidence, view)
+                        .await?
+                    {
                         summary
                             .normalized_inputs
                             .insert(format!("source:{}", root.root_key));
@@ -194,13 +210,17 @@ impl MemoryService {
             self.validate_dependency_target(subject, &reference).await?;
             active.insert(key.clone());
             stack.push((reference.clone(), true));
-            let nested = self.revision_basis(subject, reference).await?;
+            let nested = self
+                .revision_basis_in_view(subject, reference, view)
+                .await?;
             for basis in nested.into_iter().rev() {
                 match basis {
                     RevisionBasis::Evidence(evidence) => {
-                        summary
-                            .roots
-                            .extend(self.evidence_roots(subject, &evidence).await?);
+                        summary.roots.extend(
+                            self.material
+                                .evidence_roots(subject, &evidence, view)
+                                .await?,
+                        );
                     }
                     RevisionBasis::CognitionDependency(dependency) => {
                         stack.push((dependency.target_revision, false));
@@ -214,6 +234,53 @@ impl MemoryService {
             }
         }
         Ok(summary)
+    }
+
+    pub async fn provenance_for_reference(
+        &self,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<BTreeSet<EvidenceRoot>> {
+        self.store.validate_reference(subject, reference).await?;
+        let basis = match reference {
+            CognitiveRef::MemoryRevision(_)
+            | CognitiveRef::EpisodeRevision(_)
+            | CognitiveRef::JournalRevision(_)
+            | CognitiveRef::CognitiveSchemaRevision(_) => {
+                self.revision_basis_in_view(subject, reference.clone(), view)
+                    .await?
+            }
+            CognitiveRef::Association(id) => {
+                if view
+                    .is_some_and(|view| view.subject != subject || !view.association_contains(*id))
+                {
+                    return Err(Error::NotFound(
+                        "association is outside captured view".into(),
+                    ));
+                }
+                self.association(subject, *id)
+                    .await?
+                    .basis
+                    .into_iter()
+                    .filter_map(|basis| match basis {
+                        AssociationBasis::Revision(basis) => Some(basis),
+                        // Meaningful Use supports an association, not an independent factual source.
+                        AssociationBasis::UseEvent(_) => None,
+                    })
+                    .collect()
+            }
+            CognitiveRef::Tag(_) => return Ok(BTreeSet::new()),
+            _ => {
+                return Err(Error::Invalid(
+                    "provenance requires an owned exact cognition/association".into(),
+                ));
+            }
+        };
+        Ok(self
+            .provenance_summary_in_view(subject, &basis, view)
+            .await?
+            .roots)
     }
 
     pub(crate) async fn validate_formation_semantics(
@@ -242,77 +309,6 @@ impl MemoryService {
             ));
         }
         Ok(())
-    }
-
-    async fn occurrence_root(
-        &self,
-        subject: SubjectId,
-        occurrence: OccurrenceId,
-    ) -> Result<EvidenceRoot> {
-        let row = sqlx::query(
-            "SELECT source_class,external_object_ref,artifact_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2",
-        )
-        .bind(subject.0)
-        .bind(occurrence.0)
-        .fetch_optional(self.store.pool())
-        .await
-        .map_err(db)?
-        .ok_or_else(|| Error::Invalid("evidence occurrence is outside Subject".into()))?;
-        let source_class: String = row.try_get("source_class").map_err(db)?;
-        let external: Option<String> = row.try_get("external_object_ref").map_err(db)?;
-        let artifact: Option<Uuid> = row.try_get("artifact_id").map_err(db)?;
-        if let Some(artifact) = artifact {
-            return self.artifact_root(subject, artifact).await;
-        }
-        if let Some(external) = external {
-            return Ok(EvidenceRoot {
-                root_key: format!("external:{source_class}:{external}"),
-                certainty: EvidenceRootCertainty::Known,
-            });
-        }
-        Ok(EvidenceRoot {
-            root_key: format!("occurrence:{}", occurrence.0),
-            certainty: EvidenceRootCertainty::OccurrenceOnly,
-        })
-    }
-
-    async fn evidence_roots(
-        &self,
-        subject: SubjectId,
-        evidence: &EvidenceRef,
-    ) -> Result<BTreeSet<EvidenceRoot>> {
-        let representation = match evidence.locator {
-            EvidenceLocator::DerivedRepresentation(id) => Some(id.0),
-            EvidenceLocator::DerivedRegion(id) => Some(sqlx::query_scalar::<_,Uuid>("SELECT derived_representation_id FROM derived_regions WHERE subject_id=$1 AND derived_region_id=$2").bind(subject.0).bind(id.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(|| Error::Invalid("derived evidence region is outside Subject".into()))?),
-            _ => None,
-        };
-        let Some(representation) = representation else {
-            return Ok(BTreeSet::from([self
-                .occurrence_root(subject, evidence.occurrence_id)
-                .await?]));
-        };
-        let artifacts = sqlx::query_scalar::<_,Uuid>("SELECT DISTINCT sr.artifact_id FROM representation_source_regions($1,$2) roots JOIN source_regions sr USING(source_region_id) WHERE sr.subject_id=$1").bind(subject.0).bind(representation).fetch_all(self.store.pool()).await.map_err(db)?;
-        if artifacts.is_empty() {
-            return Err(Error::Invalid(
-                "derived evidence has no valid source roots".into(),
-            ));
-        }
-        let mut roots = BTreeSet::new();
-        for artifact in artifacts {
-            roots.insert(self.artifact_root(subject, artifact).await?);
-        }
-        Ok(roots)
-    }
-
-    async fn artifact_root(&self, subject: SubjectId, artifact: Uuid) -> Result<EvidenceRoot> {
-        // Same Artifact and explicit external-source identity are dependency aliases.
-        // Their connected lineage prevents copied content or versions of one source
-        // from becoming independent corroboration through a different locator.
-        let external = sqlx::query_scalar::<_,Option<String>>("WITH RECURSIVE lineage AS (SELECT occurrence_id,artifact_id,source_class,external_object_ref FROM observation_occurrences WHERE subject_id=$1 AND artifact_id=$2 UNION SELECT o.occurrence_id,o.artifact_id,o.source_class,o.external_object_ref FROM observation_occurrences o JOIN lineage p ON (o.artifact_id IS NOT NULL AND o.artifact_id=p.artifact_id) OR (o.external_object_ref IS NOT NULL AND o.external_object_ref=p.external_object_ref AND o.source_class=p.source_class) WHERE o.subject_id=$1) SELECT MIN('external:' || source_class || ':' || external_object_ref) FROM lineage WHERE external_object_ref IS NOT NULL").bind(subject.0).bind(artifact).fetch_one(self.store.pool()).await.map_err(db)?;
-        Ok(EvidenceRoot {
-            root_key: external.unwrap_or_else(|| format!("artifact:{artifact}")),
-            certainty: EvidenceRootCertainty::Known,
-        })
     }
 
     async fn validate_dependency_target(
@@ -352,10 +348,24 @@ impl MemoryService {
         subject: SubjectId,
         reference: CognitiveRef,
     ) -> Result<Vec<RevisionBasis>> {
+        self.revision_basis_in_view(subject, reference, None).await
+    }
+
+    async fn revision_basis_in_view(
+        &self,
+        subject: SubjectId,
+        reference: CognitiveRef,
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<Vec<RevisionBasis>> {
+        if view.is_some_and(|view| view.cognition_for(&reference).is_none()) {
+            return Err(Error::NotFound(
+                "cognition support is outside the captured view".into(),
+            ));
+        }
         match reference {
             CognitiveRef::MemoryRevision(revision) => self.load_basis(revision).await,
             CognitiveRef::CognitiveSchemaRevision(revision) => Ok(self
-                .schema_links(subject, revision)
+                .schema_links_in_view(subject, revision, view)
                 .await?
                 .into_iter()
                 .map(|link| link.basis)

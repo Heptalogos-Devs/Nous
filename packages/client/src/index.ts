@@ -3,13 +3,22 @@
 
 import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
+import { protocolData as plain, type Data } from "./data.js";
+import { NousError } from "./errors.js";
+export { NousError, DomainErrorCode, ErrorRecovery } from "./errors.js";
+import {
+  executionOpportunitySchema,
+  executionEnvelope,
+  executionOpportunityPaths,
+} from "./policy/execution.js";
 export {
   ConfigExposure,
   ConfigurationView,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import {
   ConfigurationService,
-  type ConfigDescriptor,
+  ConfigurationView,
+  ConfigExposure,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import {
   createClient,
@@ -24,10 +33,7 @@ import {
   MemoryService,
   MaterialService,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/services_pb.js";
-import {
-  IdentityService,
-  ResolveIdentityResponseSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
+import { IdentityService } from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
 
 /** A consumer-owned web identity, with the original public locator preserved. */
 export function webSource(value: string) {
@@ -53,60 +59,21 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { ModelService } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 
-// Transport metadata is removed at the official Client boundary.
-type Data<T> = T extends Uint8Array
-  ? Uint8Array
-  : T extends readonly (infer I)[]
-    ? Data<I>[]
-    : T extends object
-      ? { [K in keyof T as K extends `$${string}` ? never : K]: Data<T[K]> }
-      : T;
 export interface RequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
 }
-export class NousError extends Error {
-  readonly code: number;
-  readonly details: readonly unknown[];
-  readonly candidates: readonly unknown[];
-  constructor(error: ConnectError) {
-    super(error.rawMessage, { cause: error });
-    this.name = "NousError";
-    this.code = error.code;
-    const identity = error.findDetails(ResolveIdentityResponseSchema);
-    this.details = identity.length ? identity.map(plain) : error.details;
-    this.candidates = identity.flatMap((detail) =>
-      detail.candidates.map(plain),
-    );
-  }
-}
-function plain<T>(value: T): Data<T> {
-  if (value instanceof Uint8Array) return value as Data<T>;
-  if (Array.isArray(value)) return value.map(plain) as Data<T>;
-  if (value !== null && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(
-          ([key]) =>
-            !(
-              "$typeName" in value &&
-              (key === "$typeName" || key === "$unknown")
-            ),
-        )
-        .map(([key, val]) => [key, plain(val)]),
-    ) as Data<T>;
-  return value as Data<T>;
-}
 function call<I, O>(
   method: (input: I, options?: CallOptions) => Promise<O>,
-  defaultTimeout?: number | ((input: I) => number),
+  defaultTimeout?:
+    number | ((input: I, options?: RequestOptions) => number | Promise<number>),
 ) {
   return async (input: I, options?: RequestOptions): Promise<Data<O>> => {
     try {
       const timeoutMs =
         options?.timeoutMs ??
         (typeof defaultTimeout === "function"
-          ? defaultTimeout(input)
+          ? await defaultTimeout(input, options)
           : defaultTimeout);
       return plain(
         await method(
@@ -120,18 +87,12 @@ function call<I, O>(
     }
   };
 }
-function configurationDescriptor(d: ConfigDescriptor) {
-  return {
-    ...d,
-    jsonSchema: d.jsonSchema ? toJson(ValueSchema, d.jsonSchema) : null,
-    referenceDefault: d.referenceDefault
-      ? toJson(ValueSchema, d.referenceDefault)
-      : null,
-  };
-}
-export interface ConfigurationOverride {
+export interface ConfigurationMutation {
   operationId: string;
   path: string;
+  expectedRevision: bigint;
+}
+export interface ConfigurationOverride extends ConfigurationMutation {
   value: JsonValue;
 }
 
@@ -148,50 +109,48 @@ export function createNousClient(transport: Transport) {
   const system = createClient(SystemService, transport);
   const model = createClient(ModelService, transport);
   const configuration = createClient(ConfigurationService, transport);
+  const executionTimeout = async (
+    workMs?: number,
+    options?: RequestOptions,
+  ) => {
+    const snapshot = await configuration.getConfiguration(
+      {
+        paths: executionOpportunityPaths,
+        view: ConfigurationView.ACTIVE,
+        exposureCeiling: ConfigExposure.DEVELOPER,
+      },
+      options,
+    );
+    const values = executionOpportunityPaths.map((path) => {
+      const entry = snapshot.entries.find((value) => value.path === path);
+      if (!entry?.value)
+        throw new Error(`Active Core execution policy unavailable: ${path}`);
+      return [
+        path.slice("core_execution.opportunity.".length),
+        toJson(ValueSchema, entry.value),
+      ];
+    });
+    return executionEnvelope(
+      executionOpportunitySchema.parse(Object.fromEntries(values)),
+      workMs,
+    ).responseTimeoutMs;
+  };
   return {
     configuration: {
-      list: call(
-        async (
-          input: Parameters<typeof configuration.listConfigDescriptors>[0],
-          options?: CallOptions,
-        ) => {
-          const result = await configuration.listConfigDescriptors(
-            input,
-            options,
-          );
-          return {
-            ...result,
-            descriptors: result.descriptors.map(configurationDescriptor),
-          };
-        },
-      ),
+      list: call(configuration.listConfigDescriptors),
       describe: call(async (path: string, options?: CallOptions) =>
-        configurationDescriptor(
-          await configuration.getConfigDescriptor({ path }, options),
-        ),
+        configuration.getConfigDescriptor({ path }, options),
       ),
-      get: call(
-        async (
-          input: Parameters<typeof configuration.getConfiguration>[0],
-          options?: CallOptions,
-        ) => {
-          const result = await configuration.getConfiguration(input, options);
-          return {
-            ...result,
-            entries: result.entries.map((entry) => ({
-              ...entry,
-              value: entry.value ? toJson(ValueSchema, entry.value) : null,
-            })),
-          };
-        },
-      ),
+      get: call(configuration.getConfiguration),
       setSystem: call((input: ConfigurationOverride, options?: CallOptions) =>
         configuration.setSystemOverride(
           { ...input, value: fromJson(ValueSchema, input.value) },
           options,
         ),
       ),
-      clearSystem: call(configuration.clearSystemOverride),
+      clearSystem: call((input: ConfigurationMutation, options?: CallOptions) =>
+        configuration.clearSystemOverride(input, options),
+      ),
       setSubject: call(
         (
           input: ConfigurationOverride & { subjectId: string },
@@ -202,20 +161,34 @@ export function createNousClient(transport: Transport) {
             options,
           ),
       ),
-      clearSubject: call(configuration.clearSubjectOverride),
+      clearSubject: call(
+        (
+          input: ConfigurationMutation & { subjectId: string },
+          options?: CallOptions,
+        ) => configuration.clearSubjectOverride(input, options),
+      ),
     },
     identity: {
+      addresses: call(identity.getIdentityAddresses),
       bind: call(identity.bindIdentity),
       resolve: call(identity.resolveIdentity),
       rebindEntity: call(identity.rebindEntity),
     },
     model: {
-      formFromObservation: call(model.formFromObservation, 300000),
-      deriveMaterial: call(model.deriveMaterial, 300000),
-      prepareEmbeddings: call(model.prepareEmbeddings, 300000),
+      formFromObservation: call(model.formFromObservation, (_input, options) =>
+        executionTimeout(undefined, options),
+      ),
+      deriveMaterial: call(model.deriveMaterial, (_input, options) =>
+        executionTimeout(undefined, options),
+      ),
+      prepareEmbeddings: call(model.prepareEmbeddings, (_input, options) =>
+        executionTimeout(undefined, options),
+      ),
     },
     resources: {
-      materialize: call(resources.materializeResource),
+      materialize: call(resources.materializeResource, (_input, options) =>
+        executionTimeout(undefined, options),
+      ),
       put: call(registry.putResource),
       get: call(registry.getResource),
       list: call(registry.listResources),
@@ -263,19 +236,24 @@ export function createNousClient(transport: Transport) {
       listSessions: call(runtime.listSessions),
       closeSession: call(runtime.closeSession),
       observe: call(runtime.recordObservation),
-      query: call(cognition.query, 300000),
-      prepareQuery: call(cognition.prepareQuery),
+      query: call(cognition.query, (_input, options) =>
+        executionTimeout(undefined, options),
+      ),
+      prepareQuery: call(cognition.prepareQuery, (_input, options) =>
+        executionTimeout(undefined, options),
+      ),
       reportUse: call(runtime.reportUse),
-      grantMaintenance: call(
-        cognition.grantMaintenance,
-        (input) => (input.maxElapsedMs ?? 30000) + 5000,
+      grantMaintenance: call(cognition.grantMaintenance, (input, options) =>
+        executionTimeout(input.maxElapsedMs, options),
       ),
       recall: async (
         subjectId: string,
         nousql: string,
         options?: RequestOptions,
       ) => {
-        return call(cognition.query, 300000)({ subjectId, nousql }, options);
+        return call(cognition.query, (_input, callOptions) =>
+          executionTimeout(undefined, callOptions),
+        )({ subjectId, nousql }, options);
       },
       createWorkContext: call(runtime.createWorkContext),
       getWorkContext: call(runtime.getWorkContext),
@@ -285,8 +263,12 @@ export function createNousClient(transport: Transport) {
       resumeWorkContext: call(runtime.resumeWorkContext),
       endWorkContext: call(runtime.endWorkContext),
       setActiveWorkContext: call(runtime.setActiveWorkContext),
-      project: call(cognition.buildProjection),
-      managedContext: call(cognition.buildManagedContext),
+      project: call(cognition.buildProjection, (_input, options) =>
+        executionTimeout(undefined, options),
+      ),
+      managedContext: call(cognition.buildManagedContext, (_input, options) =>
+        executionTimeout(undefined, options),
+      ),
     },
     memory: {
       setAccessibility: call(memory.setAccessibility),

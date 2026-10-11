@@ -3,6 +3,7 @@
 
 syntax = "proto3";
 package nous.wave.v1alpha1;
+import "nous/wave/v1alpha1/presentation.proto";
 import "google/protobuf/struct.proto";
 
 enum ConfigExposure { CONFIG_EXPOSURE_UNSPECIFIED = 0; CONFIG_EXPOSURE_STANDARD = 1; CONFIG_EXPOSURE_ADVANCED = 2; CONFIG_EXPOSURE_DEVELOPER = 3; }
@@ -17,13 +18,15 @@ message ConfigDescriptor {
 message ListConfigDescriptorsRequest { ConfigExposure exposure_ceiling = 1; optional string owner = 2; optional string category = 3; }
 message ListConfigDescriptorsResponse { repeated ConfigDescriptor descriptors = 1; string catalog_digest = 2; }
 message GetConfigDescriptorRequest { string path = 1; }
-message GetConfigurationRequest { optional string subject_id = 1; ConfigurationView view = 2; repeated string paths = 3; ConfigExposure exposure_ceiling = 4; optional string owner = 5; optional string category = 6; }
+message GetConfigurationRequest { optional string subject_id = 1 [(reference_kind) = "subject"]; ConfigurationView view = 2; repeated string paths = 3; ConfigExposure exposure_ceiling = 4; optional string owner = 5; optional string category = 6; }
 message ConfigurationEntry { string path = 1; google.protobuf.Value value = 2; string source = 3; string owner = 4; string apply_mode = 5; optional string pending_effect = 6; }
-message ConfigurationSnapshot { string catalog_digest = 1; int64 configuration_revision = 2; optional string subject_id = 3; repeated ConfigurationEntry entries = 4; string effective_digest = 5; }
-message SetSystemOverrideRequest { string operation_id = 1; string path = 2; google.protobuf.Value value = 3; }
-message ClearSystemOverrideRequest { string operation_id = 1; string path = 2; }
-message SetSubjectOverrideRequest { string operation_id = 1; string subject_id = 2; string path = 3; google.protobuf.Value value = 4; }
-message ClearSubjectOverrideRequest { string operation_id = 1; string subject_id = 2; string path = 3; }
+message ConfigurationSnapshot { string catalog_digest = 1; int64 configuration_revision = 2; optional string subject_id = 3 [(reference_kind) = "subject"]; repeated ConfigurationEntry entries = 4; string effective_digest = 5; }
+// expected_revision is required by all mutation RPCs. Presence distinguishes missing input from revision zero.
+// It participates in receipt identity; completed requests replay before the current revision is compared.
+message SetSystemOverrideRequest { string operation_id = 1; string path = 2; google.protobuf.Value value = 3; optional int64 expected_revision = 4; }
+message ClearSystemOverrideRequest { string operation_id = 1; string path = 2; optional int64 expected_revision = 3; }
+message SetSubjectOverrideRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string path = 3; google.protobuf.Value value = 4; optional int64 expected_revision = 5; }
+message ClearSubjectOverrideRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string path = 3; optional int64 expected_revision = 4; }
 message ConfigurationChange { int64 revision = 1; string apply_mode = 2; string active_digest = 3; string desired_digest = 4; repeated string effects = 5; }
 service ConfigurationService {
   rpc ListConfigDescriptors(ListConfigDescriptorsRequest) returns (ListConfigDescriptorsResponse);

@@ -1,34 +1,40 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
+import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { executionOptions, type ExecutionOptions } from "../execution.js";
 import type { DeriveMaterialRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "./runtime.js";
+import { type ExecutionTelemetry } from "./execution/routes.js";
 import {
-  failedExecutionTelemetry,
-  type ExecutionTelemetry,
   type ModelProducerMetadata,
   type ModelRoleSnapshot,
-} from "./invocations.js";
-import type { ModelRole } from "./configuration.js";
+} from "./execution/snapshot.js";
+import type { ModelRole } from "./roles.js";
+import { modelProducer } from "./producer.js";
 import { z } from "zod";
 import type { DerivedRepresentation } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { sampleVideo } from "./video.js";
 import { canonicalDigest } from "../digest.js";
 import {
   materialInterpretationSchemaDigest,
-  materialProjectionIdentity,
-  materialValidationIdentity,
+  materialInterpretationIdentity,
   type StructuredMaterialContext,
 } from "./schemas/material-interpretation.js";
 import type { JsonObject } from "@bufbuild/protobuf";
+import {
+  channelAccessSchema,
+  representedAccess,
+  type ChannelAccess,
+} from "./input.js";
 
 export async function deriveMaterial(
   kernel: KernelClient,
   models: ModelRuntime,
   request: DeriveMaterialRequest,
-  options: CallOptions,
+  options: ExecutionOptions,
 ) {
   const strategy = request.strategy ?? models.materialStrategy;
   if (
@@ -55,6 +61,8 @@ export async function deriveMaterial(
       "Derivation target conflicts with strategy",
       Code.InvalidArgument,
     );
+  const calls = executionOptions(kernel.execution.opportunity, options);
+  options = calls;
   const region = await kernel.material.getSourceRegion(
     { subjectId: request.subjectId, id: request.sourceRegionId },
     options,
@@ -145,29 +153,22 @@ export async function deriveMaterial(
         supersedes:
           representations.length === 0 ? request.supersedes : undefined,
         producer: {
-          providerClass: producerMetadata?.protocol ?? "deterministic",
-          operation:
-            kind === "image_description" || kind === "scene_description"
-              ? "image_interpretation"
-              : kind === "transcript"
-                ? "speech_transcription"
-                : kind === "extracted_text"
-                  ? "document_extraction"
-                  : "text_interpretation",
-          implementation: producerMetadata
-            ? producerMetadata.implementation
-            : "verified-utf8-decoding-v1",
-          modelIdentity: producerMetadata?.model,
-          modelRevision: producerMetadata?.modelRevision,
-          modelRole: producerMetadata?.modelRole,
-          modelProfile: producerMetadata?.modelProfile,
-          executionProfile: producerMetadata?.executionProfile,
-          inferenceControlsDigest: producerMetadata?.inferenceControlsDigest,
-          rolePolicyDigest: producerMetadata?.rolePolicyDigest,
-          promptId: producerMetadata?.promptId,
-          promptDigest: producerMetadata?.promptDigest,
-
-          outputSchemaDigest: producerMetadata?.outputSchemaDigest,
+          ...(producerMetadata
+            ? modelProducer(
+                producerMetadata,
+                kind === "image_description" || kind === "scene_description"
+                  ? "image_interpretation"
+                  : kind === "transcript"
+                    ? "speech_transcription"
+                    : kind === "extracted_text"
+                      ? "document_extraction"
+                      : "text_interpretation",
+              )
+            : {
+                providerClass: "deterministic",
+                operation: "document_extraction",
+                implementation: "verified-utf8-decoding-v1",
+              }),
           preprocessingIdentity: `${producerMetadata ? (producerMetadata.promptId ?? "standard-audio-transcription") : "verified-utf8"}/${strategy}`,
           preprocessingRevision: producerMetadata?.promptDigest ?? "1",
           configDigest:
@@ -175,11 +176,8 @@ export async function deriveMaterial(
               ? canonicalDigest({
                   role: producerMetadata?.configDigest,
                   preprocessing: preprocessingDigest,
-                  projection: structuredPayload
-                    ? materialProjectionIdentity
-                    : undefined,
-                  validation: structuredPayload
-                    ? materialValidationIdentity
+                  interpretation: structuredPayload
+                    ? materialInterpretationIdentity
                     : undefined,
                 })
               : (producerMetadata?.configDigest ?? "utf8-fatal-v1"),
@@ -198,6 +196,7 @@ export async function deriveMaterial(
       text: string;
       producerMetadata: ModelProducerMetadata;
       execution: ExecutionTelemetry;
+      inputAccess: ChannelAccess;
       structuredPayload?: JsonObject;
     }>,
     quality: Record<string, unknown> = {},
@@ -222,14 +221,7 @@ export async function deriveMaterial(
         kind === "structured_interpretation"
           ? materialInterpretationSchemaDigest
           : undefined,
-      projection:
-        kind === "structured_interpretation"
-          ? materialProjectionIdentity
-          : undefined,
-      validation:
-        kind === "structured_interpretation"
-          ? materialValidationIdentity
-          : undefined,
+      interpretation: materialInterpretationIdentity,
     });
     const identity = {
       subjectId: request.subjectId,
@@ -237,14 +229,24 @@ export async function deriveMaterial(
       operationKey: key,
       semanticDigest: key,
     };
-    const reservation = await kernel.modelWorkflow.reserveWorkflow(
-      { ...identity, snapshotJson: JSON.stringify(model) },
+    const operation = await reserveOperation(
+      kernel,
+      identity,
+      {
+        content: workflowPayload(
+          model,
+          graph.map((input) => input.reference!),
+        ),
+      },
       options,
     );
-    if (reservation.outcomeJson) {
+    const reservation = operation.record;
+    if (reservation.outcome) {
+      if (reservation.outcome.purged)
+        throw new ConnectError("Derivation outcome was purged", Code.NotFound);
       const outcome = z
         .strictObject({ representationId: z.string().uuid() })
-        .parse(JSON.parse(reservation.outcomeJson));
+        .parse(JSON.parse(reservation.outcome.payloadJson));
       const representation = await kernel.material.getDerivedRepresentation(
         { subjectId: request.subjectId, id: outcome.representationId },
         options,
@@ -252,74 +254,48 @@ export async function deriveMaterial(
       representations.push(representation);
       return representation;
     }
-    if (reservation.busy || !reservation.leaseToken)
-      throw new Error("Derivation workflow is busy; retry the same inputs");
-    const lease = {
-      subjectId: request.subjectId,
-      owner: "material",
-      operationKey: key,
-      leaseToken: reservation.leaseToken,
-    };
-    try {
-      let proposal = reservation.proposalJson
-        ? (JSON.parse(reservation.proposalJson) as {
+    return operation.run(async () => {
+      let proposal = reservation.proposal?.payloadJson
+        ? (JSON.parse(reservation.proposal?.payloadJson) as {
             text: string;
             producerMetadata: ModelProducerMetadata;
             execution: ExecutionTelemetry;
+            inputAccess: ChannelAccess;
             structuredPayload?: JsonObject;
           })
         : undefined;
       if (!proposal) {
         proposal = await invoke(
-          JSON.parse(reservation.snapshotJson) as ModelRoleSnapshot,
+          JSON.parse(
+            reservation.snapshot!.content!.payloadJson,
+          ) as ModelRoleSnapshot,
         );
-        await kernel.modelWorkflow.saveWorkflow(
-          {
-            ...lease,
-            proposalJson: JSON.stringify(proposal),
-            executionTelemetryJson: JSON.stringify(proposal.execution),
-          },
-          options,
-        );
+        const { execution, ...saved } = proposal;
+        await operation.saveProposal(saved, [], execution);
       }
       const representation = await commit(
         proposal.text,
         kind,
         graph,
         proposal.producerMetadata,
-        quality,
+        {
+          ...quality,
+          input_access: channelAccessSchema.parse(proposal.inputAccess),
+        },
         preprocessingDigest,
         proposal.structuredPayload,
       );
-      await kernel.modelWorkflow.saveWorkflow(
-        {
-          ...lease,
-          outcomeJson: JSON.stringify({
-            representationId: representation.representationId,
-          }),
-        },
-        options,
+      await operation.complete(
+        { representationId: representation.representationId },
+        [
+          {
+            kind: "derived_representation",
+            value: representation.representationId,
+          },
+        ],
       );
       return representation;
-    } catch (error) {
-      if (failedExecutionTelemetry(error))
-        await kernel.modelWorkflow.saveWorkflow(
-          {
-            ...lease,
-            executionTelemetryJson: JSON.stringify(
-              failedExecutionTelemetry(error),
-            ),
-          },
-          { timeoutMs: kernel.execution.workflow_ack_timeout_ms },
-        );
-      throw error;
-    } finally {
-      await kernel.modelWorkflow
-        .releaseWorkflow(lease, {
-          timeoutMs: kernel.execution.workflow_ack_timeout_ms,
-        })
-        .catch(() => {});
-    }
+    });
   };
   const inputs = [
     {
@@ -331,28 +307,19 @@ export async function deriveMaterial(
   const mime = source.mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
   const textual = mime.startsWith("text/") || mime === "application/json";
   const directContext: StructuredMaterialContext = {
-    evidenceAccess: "original",
-    visual: mime.startsWith("image/") || mime.startsWith("video/"),
-    audio:
-      mime.startsWith("audio/") ||
-      (mime.startsWith("video/") &&
-        Boolean(
-          models.invocations
-            .profile(
-              strategy === "direct_structured"
-                ? "material_direct_structuring"
-                : "material_description",
-            )
-            ?.capabilities.includes("audio_input"),
-        )),
-    sourceText: textual,
+    access: {
+      visual:
+        mime.startsWith("image/") || mime.startsWith("video/")
+          ? "original"
+          : "unavailable",
+      audio: mime.startsWith("audio/") ? "original" : "unavailable",
+      source_text: textual ? "original" : "unavailable",
+    },
     catalog: { S000: { kind: "source_region", value: request.sourceRegionId } },
   };
   const signal = options.signal ?? undefined;
-  const structureDescription = async (
-    description: DerivedRepresentation,
-    available: StructuredMaterialContext = directContext,
-  ) => {
+  const structureDescription = async (description: DerivedRepresentation) => {
+    const access = channelAccessSchema.parse(description.quality?.input_access);
     const { segments } = await kernel.materialWorkflow.segmentDescription(
       { subjectId: request.subjectId, id: description.representationId },
       options,
@@ -380,20 +347,19 @@ export async function deriveMaterial(
       ],
       "material_structuring",
       (snapshot) =>
-        models.structure(
+        models.material.structure(
           segments.map((item) => `[${item.key}] ${item.text}`).join("\n"),
           signal,
           snapshot,
           {
-            ...available,
-            evidenceAccess: textual ? "original" : "representation",
+            access: textual ? access : representedAccess(access),
             catalog,
           },
         ),
       {},
       canonicalDigest({
         segmentation: "description-utf8-lines-v1",
-        projection: materialProjectionIdentity,
+        interpretation: materialInterpretationIdentity,
       }),
     );
   };
@@ -442,7 +408,7 @@ export async function deriveMaterial(
           ? "material_direct_structuring"
           : "material_description",
         (snapshot) =>
-          models.describeMedia(
+          models.material.describeMedia(
             source.content,
             mime,
             strategy === "direct_structured",
@@ -454,7 +420,6 @@ export async function deriveMaterial(
           input_mode: "direct",
           source_bytes: source.content.length,
           modality: mime.startsWith("video/") ? "video" : "audio",
-          audio_scope: "model_input",
         },
         canonicalDigest({ input_mode: "direct", media_type: mime }),
         mime.startsWith("video/") && strategy !== "direct_structured"
@@ -501,6 +466,11 @@ export async function deriveMaterial(
                 text: result.value,
                 producerMetadata: result.producerMetadata,
                 execution: result.execution,
+                inputAccess: {
+                  visual: "unavailable",
+                  audio: "original",
+                  source_text: "unavailable",
+                },
               };
             },
             samples.quality,
@@ -533,7 +503,10 @@ export async function deriveMaterial(
         });
       const sceneContext: StructuredMaterialContext = {
         ...directContext,
-        audio: Boolean(transcript),
+        access: {
+          ...directContext.access,
+          audio: transcript ? "representation" : "unavailable",
+        },
         catalog: {
           ...directContext.catalog,
           ...(transcriptReference ? { T001: transcriptReference } : {}),
@@ -548,7 +521,7 @@ export async function deriveMaterial(
           ? "material_direct_structuring"
           : "material_description",
         (snapshot) =>
-          models.describeScene(
+          models.material.describeScene(
             samples.frames,
             transcript,
             strategy === "direct_structured",
@@ -562,7 +535,7 @@ export async function deriveMaterial(
       );
       if (strategy === "describe_then_structure") {
         try {
-          await structureDescription(selected, sceneContext);
+          await structureDescription(selected);
         } catch {
           if (signal?.aborted) throw signal.reason;
           degradation.push({
@@ -583,7 +556,7 @@ export async function deriveMaterial(
         inputs,
         textual ? "material_structuring" : "material_direct_structuring",
         (snapshot) =>
-          models.structure(
+          models.material.structure(
             textual
               ? new TextDecoder("utf-8", { fatal: true }).decode(source.content)
               : { bytes: source.content, mediaType: mime },
@@ -603,6 +576,8 @@ export async function deriveMaterial(
           new TextDecoder("utf-8", { fatal: true }).decode(source.content),
           "extracted_text",
           inputs,
+          undefined,
+          { input_access: directContext.access },
         )
       : mime.startsWith("audio/")
         ? await paid(
@@ -619,6 +594,11 @@ export async function deriveMaterial(
                 text: result.value,
                 producerMetadata: result.producerMetadata,
                 execution: result.execution,
+                inputAccess: {
+                  visual: "unavailable",
+                  audio: "original",
+                  source_text: "unavailable",
+                },
               };
             },
           )
@@ -627,7 +607,7 @@ export async function deriveMaterial(
             inputs,
             "material_description",
             (snapshot) =>
-              models.interpret(source.content, mime, signal, snapshot),
+              models.material.interpret(source.content, mime, signal, snapshot),
           );
     if (strategy === "describe_then_structure") {
       await structureDescription(description);

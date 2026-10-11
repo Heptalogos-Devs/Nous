@@ -66,27 +66,46 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
             let subject = SubjectId(id(&input.subject_id)?);
             let bound =
                 self.embedding_prepared_view(subject, input.preparation_token.as_deref())?;
-            let needs = self
+            let cursor = input
+                .cursor
+                .map(|cursor| -> Result<nous_retrieval::EmbeddingCursor> {
+                    Ok(nous_retrieval::EmbeddingCursor {
+                        subject: SubjectId(id(&cursor.subject_id)?),
+                        content_revision: cursor.content_revision,
+                        view_digest: cursor.view_digest,
+                        after: from_ref(required(cursor.after, "cursor reference")?)?,
+                    })
+                })
+                .transpose()?;
+            let page = self
                 .0
                 .serving
-                .embedding_needs_in_view(
+                .embedding_needs_page(
                     subject,
                     input.limit as usize,
+                    cursor.as_ref(),
                     bound
                         .as_ref()
-                        .and_then(|b| b.historical_authority.as_deref()),
+                        .and_then(|bound| bound.historical_authority.as_deref()),
                 )
-                .await?
-                .into_iter()
-                .map(|n| k::EmbeddingNeed {
-                    reference: Some(to_ref(n.reference)),
-                    text: n.text,
-                    digest: n.digest,
-                })
-                .collect();
+                .await?;
             Ok(k::EmbeddingNeedsResponse {
                 config: Some(config),
-                needs,
+                needs: page
+                    .needs
+                    .into_iter()
+                    .map(|need| k::EmbeddingNeed {
+                        reference: Some(to_ref(need.reference)),
+                        text: need.text,
+                        digest: need.digest,
+                    })
+                    .collect(),
+                next_cursor: page.next_cursor.map(|cursor| k::EmbeddingCursor {
+                    subject_id: cursor.subject.0.to_string(),
+                    content_revision: cursor.content_revision,
+                    view_digest: cursor.view_digest,
+                    after: Some(to_ref(cursor.after)),
+                }),
             })
         }
         .await;

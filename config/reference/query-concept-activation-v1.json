@@ -1,7 +1,0 @@
-{
-  "identity": "query-concept-activation-v1",
-  "revision": 1,
-  "max_activated_tags": 8,
-  "minimum_similarity": 0.72,
-  "strength_mapping": "cosine_clamped_0_1"
-}

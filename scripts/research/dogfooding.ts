@@ -118,18 +118,6 @@ class LocalDocuments implements ExternalResourceAdapter {
   }
 }
 
-class ResearchResources extends ResourceRegistry {
-  constructor(private readonly local: LocalDocuments) {
-    super({});
-  }
-  override resolve(binding: ResourceBinding) {
-    return binding.adapterKind === "local-documents" &&
-      binding.providerProfile === "dogfooding"
-      ? this.local
-      : undefined;
-  }
-}
-
 const { values } = parseArgs({
   options: {
     locator: { type: "string" },
@@ -147,5 +135,11 @@ await runCore(
     development: true,
     "stop-on-stdin-close": values["stop-on-stdin-close"],
   },
-  new ResearchResources(new LocalDocuments(values.documents)),
+  new ResourceRegistry([
+    {
+      adapterKind: "local-documents",
+      providerProfile: "dogfooding",
+      adapter: new LocalDocuments(values.documents),
+    },
+  ]),
 );

@@ -81,7 +81,7 @@ impl ConfigurationService for KernelService {
                     .filter(|d| visible(d, limit, r.owner.as_deref(), r.category.as_deref()))
                     .map(descriptor)
                     .collect(),
-                catalog_digest: self.0.configuration.registry().digest().into(),
+                catalog_digest: self.0.configuration.registry().catalog_digest().into(),
             })
         })
         .await
@@ -151,7 +151,7 @@ impl ConfigurationService for KernelService {
                 })
                 .collect();
             Ok(p::ConfigurationSnapshot {
-                catalog_digest: snapshot.registry_digest.clone(),
+                catalog_digest: snapshot.catalog_digest.clone(),
                 configuration_revision: snapshot.revision,
                 subject_id: r.subject_id,
                 entries,
@@ -172,6 +172,7 @@ impl ConfigurationService for KernelService {
                     OperationId(id(&r.operation_id)?),
                     &r.path,
                     json(required(r.value, "value")?),
+                    Some(required(r.expected_revision, "expected_revision")?),
                 )
                 .await
                 .map(change)
@@ -186,7 +187,11 @@ impl ConfigurationService for KernelService {
             let r = request.into_inner();
             self.0
                 .configuration
-                .clear_system_override(OperationId(id(&r.operation_id)?), &r.path)
+                .clear_system_override(
+                    OperationId(id(&r.operation_id)?),
+                    &r.path,
+                    Some(required(r.expected_revision, "expected_revision")?),
+                )
                 .await
                 .map(change)
         })
@@ -207,6 +212,7 @@ impl ConfigurationService for KernelService {
                     subject,
                     &r.path,
                     json(required(r.value, "value")?),
+                    Some(required(r.expected_revision, "expected_revision")?),
                 )
                 .await
                 .map(change)
@@ -223,7 +229,12 @@ impl ConfigurationService for KernelService {
             self.0.store.require_subject(subject).await?;
             self.0
                 .configuration
-                .clear_subject_override(OperationId(id(&r.operation_id)?), subject, &r.path)
+                .clear_subject_override(
+                    OperationId(id(&r.operation_id)?),
+                    subject,
+                    &r.path,
+                    Some(required(r.expected_revision, "expected_revision")?),
+                )
                 .await
                 .map(change)
         })
@@ -246,16 +257,17 @@ impl k::kernel_configuration_service_server::KernelConfigurationService for Kern
                 .effective_digest
                 != r.configuration_digest
             {
-                return Err(Error::Conflict("startup configuration changed".into()));
+                return Err(nous_core::DomainError::new(
+                    nous_core::DomainErrorCode::StaleRevision,
+                    "startup configuration changed",
+                )
+                .into());
             }
             if let Some(config) = r.resolved_embedding {
                 let config: nous_retrieval::StoredEmbeddingConfig =
                     serde_json::from_value(object(Some(config)))
                         .map_err(|_| Error::Invalid("invalid host embedding binding".into()))?;
                 self.0.serving.initialize_embedding(config)?;
-                for subject in self.0.store.active_subjects().await? {
-                    self.0.serving.refresh(subject).await?;
-                }
             }
             Ok(())
         })

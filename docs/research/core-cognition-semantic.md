@@ -6,7 +6,7 @@
 
 Cognition / Agent Runtime Rebase 已完成 Squash Merge，v2 在一个独立研发分支和同一 PR 中修正预算/CLI/runner 后，使用 fresh Subjects 执行。长期语义依据 [Vault `5b96c63`](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/5b96c63da34b0a4c697b6961ae10ba6aa4de3ee1/docs/Nous-Wave/TARGET_DESIGN.md)。
 
-[2026-10-07 v1 报告](core-cognition-2026-10-07.md)和[稳定结果 metadata](corpus/core-cognition/results-2026-10-07.json)是不可变的已执行证据。v2 不复用 v1 Subject Authority，也不改写 manifests/oracles 来隐藏其观测。现有 [official Client runner](../../scripts/research/core-cognition-semantic.ts)消费当前 API/grammar；[v2 实际报告](core-cognition-2026-10-08.md)与[稳定结果](corpus/core-cognition/results-2026-10-08.json)记录本轮 calibration、轨迹与 sealed。
+[2026-10-07 v1 报告](core-cognition-2026-10-07.md)和[稳定结果 metadata](corpus/core-cognition/results-2026-10-07.json)是不可变的已执行证据。v2 不复用 v1 Subject Authority，也不改写 manifests/oracles 来隐藏其观测。[v2 实际报告](core-cognition-2026-10-08.md)与[稳定结果](corpus/core-cognition/results-2026-10-08.json)记录本轮 calibration、轨迹与 sealed。一次性 qualification runner 和专属脚手架测试已在 2026-10-09 退役；本页保留当时的方法与评价边界，持续认知工作使用当前 [Agent 入口](../agent/README.md)。
 
 ## Cognition trajectory
 

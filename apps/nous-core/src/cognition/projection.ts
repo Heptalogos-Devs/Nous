@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Code, ConnectError } from "@connectrpc/connect";
-import type { ConsumerPolicy, Projection, Segment } from "../domain.js";
+import { create } from "@bufbuild/protobuf";
+import {
+  DegradationSchema,
+  ProjectionSchema,
+  type Projection,
+  type ContextSegment as Segment,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import type { ConsumerPolicy } from "../domain.js";
 import { refKey } from "../domain.js";
 import { ModelRuntime } from "../model/runtime.js";
 import { canonicalDigest } from "../digest.js";
@@ -84,10 +91,20 @@ export class ProjectionPlanner {
     const degradation = [...batch.degradation, ...refined.degradation];
     for (const f of ["memory", "runtime", "resource"] as const) {
       if (policy[f] === "REQUIRED" && !segments.some((s) => family(s) === f))
-        degradation.push({ code: "required_contribution_missing", detail: f });
+        degradation.push(
+          create(DegradationSchema, {
+            code: "required_contribution_missing",
+            detail: f,
+          }),
+        );
     }
     const projectionId = canonicalDigest([policy.revision, segments]);
-    return { ...batch, projectionId, segments, degradation };
+    return create(ProjectionSchema, {
+      ...batch,
+      projectionId,
+      segments,
+      degradation,
+    });
   }
 }
 function budget(

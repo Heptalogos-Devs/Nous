@@ -3,7 +3,7 @@
 
 use chrono::{Duration, Utc};
 use nous_core::{
-    EmbeddingSpaceSignature, EntityRef, ObjectRef, TemporalExtent, TimeInterval,
+    EmbeddingSpaceSignature, EntityRef, ObjectRef, TemporalExtent, TimeInterval, TimePredicate,
     tag_semantic_representation,
 };
 
@@ -44,16 +44,37 @@ fn temporal_intervals_are_half_open_and_unknown_stays_unknown() {
     };
     assert!(interval.contains(start));
     assert!(!interval.contains(end));
-    assert!(!TemporalExtent::Unknown.overlaps_interval(&interval));
+    let range = TimePredicate::Range {
+        start: Some(start),
+        end: Some(end),
+    };
+    let extent = TemporalExtent::Interval {
+        start: Some(start),
+        end: Some(end),
+    };
+    let point = TimePredicate::Point { at: start };
+    assert!(!range.matches_extent(&TemporalExtent::Unknown));
+    assert!(!point.matches_extent(&TemporalExtent::Unknown));
+    assert!(point.matches_extent(&extent));
+    assert!(!TimePredicate::Point { at: end }.matches_extent(&extent));
+    assert!(point.contains(start));
+    assert!(!point.contains(start + Duration::nanoseconds(1)));
+    assert_eq!(range.intersection(point), Some(point));
+    assert_eq!(range.intersection(TimePredicate::Point { at: end }), None);
     assert!(
-        !TemporalExtent::Interval {
-            start: Some(start),
-            end: Some(end),
-        }
-        .overlaps_interval(&TimeInterval {
+        TimePredicate::Range {
             start: Some(end),
-            end: Some(end + Duration::hours(1)),
-        })
+            end: Some(end)
+        }
+        .validate()
+        .is_err()
+    );
+    assert!(
+        !TimePredicate::Range {
+            start: Some(end),
+            end: None
+        }
+        .matches_extent(&extent)
     );
 }
 

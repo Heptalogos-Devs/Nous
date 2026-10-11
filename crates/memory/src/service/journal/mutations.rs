@@ -5,6 +5,17 @@ use super::*;
 use sqlx::{Postgres, Transaction};
 use std::collections::BTreeSet;
 
+struct JournalRevisionWrite {
+    journal: JournalId,
+    revision: JournalRevisionId,
+    parent: Option<JournalRevisionId>,
+    revision_no: i32,
+    source_extent: TemporalExtent,
+    formed: DateTime<Utc>,
+    recorded: DateTime<Utc>,
+    producer: Option<Uuid>,
+}
+
 impl MemoryService {
     pub async fn commit_journal(&self, input: JournalInput) -> Result<JournalView> {
         validate_journal(&input)?;
@@ -29,15 +40,7 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let source_extent = validate_sources_in(mutation.tx(), &input).await?;
-        let watermark: i64 =
-            sqlx::query_scalar("SELECT authority_seq FROM subjects WHERE subject_id=$1 FOR UPDATE")
-                .bind(input.subject.0)
-                .fetch_one(&mut **mutation.tx())
-                .await
-                .map_err(db)?;
-        if watermark != input.expected_authority_seq {
-            return Err(Error::Conflict("Journal input snapshot is stale".into()));
-        }
+        fence_source_snapshot_in(mutation.tx(), &input).await?;
         let (journal, parent, revision_no) = journal_target_in(mutation.tx(), &input).await?;
         let basis: Vec<_> = input
             .points
@@ -58,31 +61,23 @@ impl MemoryService {
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
             .await?;
         let recorded = self.cognition.now(input.subject);
-        let producer = if let Some(signature) = &input.producer {
-            if signature.operation != CapabilityOperation::JournalSynthesisText {
-                return Err(Error::Invalid(
-                    "Journal requires a synthesis producer".into(),
-                ));
-            }
-            Some(AuthorityStore::register_producer_in(mutation.tx(), signature).await?)
-        } else {
-            None
-        };
+        let producer = journal_producer_in(mutation.tx(), input.producer.as_ref()).await?;
         let revision = JournalRevisionId::new();
-        if parent.is_none() {
-            sqlx::query("INSERT INTO journal_objects(journal_id,subject_id,current_revision_id,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,'accepted','valid','normal','normal',$4)")
-                .bind(journal.0).bind(input.subject.0).bind(revision.0).bind(recorded).execute(&mut **mutation.tx()).await.map_err(db)?;
-        }
-        let (kind, start, end) = temporal_columns(&source_extent);
-        sqlx::query("INSERT INTO journal_revisions(journal_revision_id,journal_id,subject_id,revision_no,parent_revision_id,revision_intent,title,temporal_scope_kind,temporal_scope_start,temporal_scope_end,narrative,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
-            .bind(revision.0).bind(journal.0).bind(input.subject.0).bind(revision_no).bind(parent.map(|id|id.0)).bind(input.target.as_ref().map(|target|&target.intent)).bind(&input.title).bind(kind).bind(start).bind(end).bind(&input.narrative).bind(formed).bind(recorded).bind(producer).execute(&mut **mutation.tx()).await.map_err(db)?;
-        insert_journal_points(mutation.tx(), revision, &input.points).await?;
-        for source in &input.sources {
-            sqlx::query("INSERT INTO journal_revision_sources(journal_revision_id,ref_kind,ref_value,source_epoch) VALUES($1,'episode_revision',$2,$3)")
-                .bind(revision.0).bind(source.revision.0.to_string()).bind(source.expected_epoch).execute(&mut **mutation.tx()).await.map_err(db)?;
-        }
-        sqlx::query("UPDATE journal_objects SET current_revision_id=$2,object_epoch=object_epoch+CASE WHEN $3 THEN 1 ELSE 0 END,integrity_state='valid' WHERE journal_id=$1")
-            .bind(journal.0).bind(revision.0).bind(parent.is_some()).execute(&mut **mutation.tx()).await.map_err(db)?;
+        self.write_journal_revision_in(
+            mutation.tx(),
+            &input,
+            JournalRevisionWrite {
+                journal,
+                revision,
+                parent,
+                revision_no,
+                source_extent,
+                formed,
+                recorded,
+                producer,
+            },
+        )
+        .await?;
         let sequence = mutation.invalidate(ProjectionInvalidation::text()).await?;
         self.enqueue_concept_in(
             mutation.tx(),
@@ -114,6 +109,15 @@ impl MemoryService {
         .await?;
 
         mutation
+            .publish_workflow_results(
+                "memory",
+                &[
+                    CognitiveRef::Journal(journal),
+                    CognitiveRef::JournalRevision(revision),
+                ],
+            )
+            .await?;
+        mutation
             .commit(
                 "journal",
                 Some(&journal.0.to_string()),
@@ -122,6 +126,49 @@ impl MemoryService {
             )
             .await?;
         self.journal(input.subject, journal, Some(revision)).await
+    }
+    async fn write_journal_revision_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        input: &JournalInput,
+        write: JournalRevisionWrite,
+    ) -> Result<()> {
+        let JournalRevisionWrite {
+            journal,
+            revision,
+            parent,
+            revision_no,
+            source_extent,
+            formed,
+            recorded,
+            producer,
+        } = write;
+        if parent.is_none() {
+            sqlx::query("INSERT INTO journal_objects(journal_id,subject_id,current_revision_id,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,'accepted','valid','normal','normal',$4)")
+                .bind(journal.0).bind(input.subject.0).bind(revision.0).bind(recorded).execute(&mut **tx).await.map_err(db)?;
+        }
+        let (kind, start, end) = temporal_columns(&source_extent);
+        sqlx::query("INSERT INTO journal_revisions(journal_revision_id,journal_id,subject_id,revision_no,parent_revision_id,revision_intent,title,temporal_scope_kind,temporal_scope_start,temporal_scope_end,narrative,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
+            .bind(revision.0).bind(journal.0).bind(input.subject.0).bind(revision_no).bind(parent.map(|id|id.0)).bind(input.target.as_ref().map(|target|&target.intent)).bind(&input.title).bind(kind).bind(start).bind(end).bind(&input.narrative).bind(formed).bind(recorded).bind(producer).execute(&mut **tx).await.map_err(db)?;
+        insert_journal_points(tx, revision, &input.points).await?;
+        self.store
+            .ensure_identity_addresses_in(
+                tx,
+                input.subject,
+                &[
+                    CognitiveRef::Journal(journal),
+                    CognitiveRef::JournalRevision(revision),
+                ],
+                input.title.as_deref().unwrap_or(""),
+            )
+            .await?;
+        for source in &input.sources {
+            sqlx::query("INSERT INTO journal_revision_sources(journal_revision_id,ref_kind,ref_value,source_epoch) VALUES($1,'episode_revision',$2,$3)")
+                .bind(revision.0).bind(source.revision.0.to_string()).bind(source.expected_epoch).execute(&mut **tx).await.map_err(db)?;
+        }
+        sqlx::query("UPDATE journal_objects SET current_revision_id=$2,object_epoch=object_epoch+CASE WHEN $3 THEN 1 ELSE 0 END,integrity_state='valid' WHERE journal_id=$1")
+            .bind(journal.0).bind(revision.0).bind(parent.is_some()).execute(&mut **tx).await.map_err(db)?;
+        Ok(())
     }
     async fn schedule_journal_consolidation_in(
         &self,
@@ -187,6 +234,28 @@ fn validate_journal(input: &JournalInput) -> Result<()> {
     Ok(())
 }
 
+async fn fence_source_snapshot_in(
+    tx: &mut Transaction<'_, Postgres>,
+    input: &JournalInput,
+) -> Result<()> {
+    let watermark: i64 =
+        sqlx::query_scalar("SELECT authority_seq FROM subjects WHERE subject_id=$1 FOR UPDATE")
+            .bind(input.subject.0)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(db)?;
+    if watermark != input.expected_authority_seq {
+        return Err(nous_core::DomainError::new(
+            nous_core::DomainErrorCode::StaleRevision,
+            "Journal input snapshot is stale",
+        )
+        .with_context("expected_authority_seq", input.expected_authority_seq)
+        .with_context("actual_authority_seq", watermark)
+        .into());
+    }
+    Ok(())
+}
+
 async fn journal_target_in(
     tx: &mut Transaction<'_, Postgres>,
     input: &JournalInput,
@@ -196,14 +265,16 @@ async fn journal_target_in(
     };
     let row = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.purge_state,r.revision_no FROM journal_objects o JOIN journal_revisions r ON r.journal_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.journal_id=$2 FOR UPDATE OF o")
         .bind(input.subject.0).bind(target.journal_id.0).fetch_optional(&mut **tx).await.map_err(db)?
-        .ok_or_else(|| Error::Conflict("Journal target disappeared".into()))?;
+        .ok_or_else(|| nous_core::DomainError::new(nous_core::DomainErrorCode::StaleRevision, "Journal target disappeared"))?;
     if row.get::<Uuid, _>("current_revision_id") != target.expected_revision.0
         || row.get::<i64, _>("object_epoch") != target.expected_epoch
         || row.get::<String, _>("purge_state") != "normal"
     {
-        return Err(Error::Conflict(
-            "Journal target revision or lifecycle is stale".into(),
-        ));
+        return Err(nous_core::DomainError::new(
+            nous_core::DomainErrorCode::StaleRevision,
+            "Journal target revision or lifecycle is stale",
+        )
+        .into());
     }
     validate_journal_scope_in(tx, input, target).await?;
     Ok((
@@ -245,7 +316,11 @@ async fn validate_sources_in(
     let rows = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,r.episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR SHARE OF o")
         .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
     if rows.len() != ids.len() {
-        return Err(Error::Conflict("Journal source disappeared".into()));
+        return Err(nous_core::DomainError::new(
+            nous_core::DomainErrorCode::StaleRevision,
+            "Journal source disappeared",
+        )
+        .into());
     }
     validate_source_catalog_in(tx, input, &ids).await?;
     let mut extents = Vec::with_capacity(rows.len());
@@ -263,7 +338,11 @@ async fn validate_sources_in(
             || row.get::<String, _>("suppression_state") != "normal"
             || row.get::<String, _>("purge_state") != "normal"
         {
-            return Err(Error::Conflict("Journal source state is stale".into()));
+            return Err(nous_core::DomainError::new(
+                nous_core::DomainErrorCode::StaleRevision,
+                "Journal source state is stale",
+            )
+            .into());
         }
         extents.push(temporal_from_columns(
             row.try_get("experience_time_kind").map_err(db)?,
@@ -412,4 +491,21 @@ async fn insert_journal_points(
         }
     }
     Ok(())
+}
+
+async fn journal_producer_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    producer: Option<&nous_core::ProducerSignature>,
+) -> Result<Option<Uuid>> {
+    let Some(signature) = producer else {
+        return Ok(None);
+    };
+    if signature.operation != CapabilityOperation::JournalSynthesisText {
+        return Err(Error::Invalid(
+            "Journal requires a synthesis producer".into(),
+        ));
+    }
+    AuthorityStore::register_producer_in(tx, signature)
+        .await
+        .map(Some)
 }

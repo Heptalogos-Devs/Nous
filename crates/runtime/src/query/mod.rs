@@ -32,3 +32,4 @@ pub use ranking::{
 };
 pub use types::{BoundQuery, QueryActivationView, QueryExecution, QueryReadLease};
 pub(super) mod prepared;
+pub use prepared::{QueryLease, QueryReservation};

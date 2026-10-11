@@ -279,7 +279,6 @@ fn consolidation_query(subject: SubjectId, cue: String, limit: usize) -> Cogniti
         temporal_frame: Default::default(),
 
         work_context: None,
-        api_version: 1,
         subject,
         session: None,
         situation: Default::default(),

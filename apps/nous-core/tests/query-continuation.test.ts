@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { coreExecutionSchema } from "../src/configuration-catalog.js";
+import { coreExecutionSchema } from "../src/configuration/catalog.js";
 import { expect, it, vi } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import {
@@ -138,7 +138,7 @@ it("prepares before embedding and sends one complete representation for an expre
       preparationToken: "prepared",
       embeddings: [expect.objectContaining({ text: representation })],
     }),
-    {},
+    expect.anything(),
   );
   expect(result.boundQuery).toBe('{"activation":true}');
   expect(release).toHaveBeenCalledOnce();
@@ -216,7 +216,7 @@ it.each([
             novel_concepts: [],
           }),
         }),
-        {},
+        expect.anything(),
       );
       expect(release).toHaveBeenCalledWith(
         { subjectId: "subject", validationTicket: "activated" },
@@ -345,7 +345,7 @@ it("discovers and commits historical document embeddings against the reserved qu
   );
   expect(listEmbeddingNeeds).toHaveBeenCalledWith(
     { subjectId: "subject", limit: 256, preparationToken: "frozen-history" },
-    {},
+    expect.anything(),
   );
   expect(commitEmbedding).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -358,7 +358,7 @@ it("discovers and commits historical document embeddings against the reserved qu
         vector: [1, 0],
       },
     }),
-    {},
+    expect.anything(),
   );
   expect(embeddingBatch.mock.calls.map(([texts]) => texts)).toEqual([
     ["Concept: old meaning"],

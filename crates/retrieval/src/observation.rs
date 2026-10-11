@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{QueryRiver, SourceSeed, WaveGraphGeneration, propagate_with_budget};
-use nous_core::{Result, ServingGenerationId, TimeInterval};
+use nous_core::{Result, ServingGenerationId, TimePredicate};
 use serde::Serialize;
 
 pub const NATIVE_MECHANISM_ID: &str = "experimental-node-potential-v1";
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct QueryTemporalContext {
-    pub occurred: Option<TimeInterval>,
-    pub observed: Option<TimeInterval>,
-    pub valid: Option<TimeInterval>,
-    pub formed: Option<TimeInterval>,
-    pub recorded: Option<TimeInterval>,
+    pub occurred: Option<TimePredicate>,
+    pub observed: Option<TimePredicate>,
+    pub valid: Option<TimePredicate>,
+    pub formed: Option<TimePredicate>,
+    pub recorded: Option<TimePredicate>,
 }
 
 /// One frozen propagation observation. Candidate ordering belongs to readout,
@@ -40,7 +40,7 @@ impl QueryObservation {
         source_seeds: Vec<SourceSeed>,
     ) -> Result<Self> {
         let constraints = &bound.source_query.expression.constraints;
-        let config_subset_digest = crate::artifacts::digest(&serde_json::json!({
+        let config_subset_digest = crate::assets::files::digest(&serde_json::json!({
             "wave": graph.config,
             "max_hops": plan.topology_rounds,
             "max_states": plan.topology_nodes,

@@ -4,7 +4,7 @@
 import { open, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
-import type { ModelRole } from "./configuration.js";
+import type { ModelRole } from "./roles.js";
 
 const MAX_PROMPT_BYTES = 128 * 1024;
 const defaults: Partial<Record<ModelRole, string>> = {

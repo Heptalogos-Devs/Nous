@@ -6,7 +6,7 @@ use crate::{
     ConfigStoragePolicy,
 };
 use chrono::Utc;
-use nous_core::{Error, OperationId, Result, SubjectId};
+use nous_core::{DomainError, DomainErrorCode, Error, OperationId, Result, SubjectId};
 use nous_persistence::{AuthorityStore, database_error as db};
 use serde_json::Value;
 use sqlx::Row;
@@ -199,16 +199,20 @@ impl ConfigurationService {
         operation_id: OperationId,
         key: &str,
         value: Value,
+        expected_revision: Option<i64>,
     ) -> Result<ConfigChangeOutcome> {
-        self.mutate(operation_id, None, key, Some(value)).await
+        self.mutate(operation_id, None, key, Some(value), expected_revision)
+            .await
     }
 
     pub async fn clear_system_override(
         &self,
         operation_id: OperationId,
         key: &str,
+        expected_revision: Option<i64>,
     ) -> Result<ConfigChangeOutcome> {
-        self.mutate(operation_id, None, key, None).await
+        self.mutate(operation_id, None, key, None, expected_revision)
+            .await
     }
 
     pub async fn set_subject_override(
@@ -217,9 +221,16 @@ impl ConfigurationService {
         subject: SubjectId,
         key: &str,
         value: Value,
+        expected_revision: Option<i64>,
     ) -> Result<ConfigChangeOutcome> {
-        self.mutate(operation_id, Some(subject), key, Some(value))
-            .await
+        self.mutate(
+            operation_id,
+            Some(subject),
+            key,
+            Some(value),
+            expected_revision,
+        )
+        .await
     }
 
     pub async fn clear_subject_override(
@@ -227,8 +238,10 @@ impl ConfigurationService {
         operation_id: OperationId,
         subject: SubjectId,
         key: &str,
+        expected_revision: Option<i64>,
     ) -> Result<ConfigChangeOutcome> {
-        self.mutate(operation_id, Some(subject), key, None).await
+        self.mutate(operation_id, Some(subject), key, None, expected_revision)
+            .await
     }
 
     #[expect(
@@ -241,8 +254,14 @@ impl ConfigurationService {
         subject: Option<SubjectId>,
         key: &str,
         value: Option<Value>,
+        expected_revision: Option<i64>,
     ) -> Result<ConfigChangeOutcome> {
         let _mutation = self.inner.mutation.lock().await;
+        if expected_revision.is_some_and(|revision| revision < 0) {
+            return Err(Error::Invalid(
+                "expected configuration revision must be nonnegative".into(),
+            ));
+        }
         if operation_id.0.is_nil() {
             return Err(Error::Invalid(
                 "configuration operation_id is required".into(),
@@ -258,9 +277,9 @@ impl ConfigurationService {
                 "configuration path is deployment-only: {key}"
             )));
         }
-        if let Some(value) = &value {
-            self.inner.registry.validate(key, value)?;
-        }
+        let value = value
+            .map(|value| self.inner.registry.normalize(key, &value))
+            .transpose()?;
         if subject.is_some() && descriptor.scope_policy != ConfigScopePolicy::SubjectOverrideAllowed
         {
             return Err(Error::Invalid(format!(
@@ -273,6 +292,7 @@ impl ConfigurationService {
             "key": key,
             "value": value,
             "action": action,
+            "expected_revision": expected_revision,
         });
         let digest = blake3::hash(
             serde_json::to_string(&request)
@@ -298,9 +318,13 @@ impl ConfigurationService {
         if let Some(row) = existing {
             let existing_digest: String = row.try_get("request_digest").map_err(db)?;
             if existing_digest != digest {
-                return Err(Error::Conflict(
-                    "configuration operation_id was used with a different request".into(),
-                ));
+                return Err(DomainError::new(
+                    DomainErrorCode::OperationIdConflict,
+                    "Configuration operation_id was used with a different request",
+                )
+                .with_context("operation_id", operation_id.0)
+                .with_context("path", key)
+                .into());
             }
             let outcome = ConfigChangeOutcome {
                 revision: row.try_get("revision").map_err(db)?,
@@ -313,11 +337,14 @@ impl ConfigurationService {
             return Ok(outcome);
         }
         let revision: i64 = sqlx::query_scalar(
-            "UPDATE configuration_state SET revision=revision+1 WHERE singleton=TRUE RETURNING revision",
+            "UPDATE configuration_state SET revision=revision+1 WHERE singleton=TRUE AND ($1::bigint IS NULL OR revision=$1) RETURNING revision",
         )
-        .fetch_one(&mut *tx)
+        .bind(expected_revision)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(db)?
+        .ok_or_else(|| DomainError::new(DomainErrorCode::StaleRevision, "Configuration revision changed; read the current desired policy before replacing it")
+            .with_context("path", key))?;
         match (subject, value.as_ref()) {
             (Some(subject), Some(value)) => {
                 sqlx::query("INSERT INTO subject_configuration_overrides(subject_id,key,value,revision,updated_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(subject_id,key) DO UPDATE SET value=excluded.value,revision=excluded.revision,updated_at=excluded.updated_at")

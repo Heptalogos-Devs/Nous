@@ -102,9 +102,18 @@ export async function claimInstance(locations: {
   return {
     path,
     publish: (endpoint: string, token: string) =>
-      writeFile(path, JSON.stringify({ endpoint, token, pid: process.pid }), {
-        mode: 0o600,
-      }),
+      writeFile(
+        path,
+        JSON.stringify({
+          instanceId: identity.instanceId,
+          endpoint,
+          token,
+          pid: process.pid,
+        }),
+        {
+          mode: 0o600,
+        },
+      ),
     release: async () => {
       await unlink(path).catch((error: unknown) => {
         if (errorCode(error) !== "ENOENT") throw error;

@@ -4,7 +4,7 @@
 
 use crate::{AuthorityStore, ProjectionInvalidation, database_error as db, lock_operation};
 use chrono::Utc;
-use nous_core::{Error, OperationId, Result, SubjectId};
+use nous_core::{DomainError, DomainErrorCode, OperationId, Result, SubjectId};
 use sqlx::Row;
 use uuid::Uuid;
 
@@ -31,9 +31,13 @@ pub async fn check_receipt(
     if let Some(row) = row {
         let existing: String = row.try_get("request_digest").map_err(db)?;
         if existing != digest || row.try_get::<String, _>("operation_kind").map_err(db)? != kind {
-            return Err(Error::Conflict(format!(
-                "{kind} operation_id was used with a different request"
-            )));
+            return Err(DomainError::new(
+                DomainErrorCode::OperationIdConflict,
+                format!("{kind} operation_id was used with a different request"),
+            )
+            .with_context("operation_id", operation.0)
+            .with_context("operation_kind", kind)
+            .into());
         }
         return Ok(Some(MutationReceipt {
             state: row.try_get("state").map_err(db)?,
@@ -164,6 +168,22 @@ impl<'a> MutationEnvelope<'a> {
     }
     pub fn tx(&mut self) -> &mut sqlx::Transaction<'a, sqlx::Postgres> {
         &mut self.tx
+    }
+
+    /// Publish actual owner results before commit, including the host's acknowledgement gap.
+    pub async fn publish_workflow_results(
+        &mut self,
+        owner: &str,
+        references: &[nous_core::CognitiveRef],
+    ) -> Result<()> {
+        AuthorityStore::add_workflow_dependencies_in(
+            &mut self.tx,
+            self.subject,
+            owner,
+            self.operation,
+            references,
+        )
+        .await
     }
 
     /// Accumulate owner-selected families; allocate one Authority sequence for this transaction.

@@ -7,6 +7,10 @@ import { extname, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { CliError, uniqueReference } from "./agent.js";
 import { cliState, type Selection } from "./state.js";
+import {
+  consumerStatePolicySchema,
+  consumerStatePaths,
+} from "@nous-wave/client/consumer-policy";
 export const stringFlags = [
   "run-root",
   "instance-root",
@@ -20,6 +24,7 @@ export const stringFlags = [
   "supersedes",
   "representation",
   "operation-id",
+  "expected-revision",
   "aboutness-mode",
   "query-file",
   "subject",
@@ -70,18 +75,39 @@ function required(value: string | undefined, name: string): string {
 export async function createEnvironment(
   values: CliValues,
   connect = connectNousInstance,
+  input?: AsyncIterable<string | Uint8Array>,
 ) {
   if (values.raw && !values.developer)
     throw new CliError("INVALID_ARGUMENT", "--raw requires --developer");
-  const local = cliState(
-    values["instance-root"] && resolve(values["instance-root"]),
-  );
-  const selected = await local.selection();
   const original = await connect({
     runRoot: resolve(
       required(values["run-root"], "--run-root or nous launcher"),
     ),
   });
+  const policy = await original.configuration.get({
+    paths: consumerStatePaths,
+  });
+  const policyValue = Object.fromEntries(
+    consumerStatePaths.map((path) => {
+      const entry = policy.entries.find((candidate) => candidate.path === path);
+      if (entry?.value === undefined)
+        throw new CliError(
+          "CONFIGURATION_UNAVAILABLE",
+          `Core did not return the active consumer state policy: ${path}`,
+        );
+      return [path.slice("consumer_state.".length), entry.value];
+    }),
+  );
+  const local = cliState(
+    values["instance-root"] && resolve(values["instance-root"]),
+    {
+      instanceId: original.instanceId,
+      consumer: values.consumer ?? "consumer:nous-cli:default",
+    },
+    consumerStatePolicySchema.parse(policyValue),
+  );
+  const selected = await local.selection();
+  let savedBaseline = selected;
   async function addressId(kind: string, text: string, subject: string) {
     if (!/^[a-z]+:/.test(text)) return text;
     return uniqueReference(
@@ -119,7 +145,7 @@ export async function createEnvironment(
   };
   const sameSubject = !values.subject || values.subject === selected.subjectId;
   const state: Selection = {
-    schemaVersion: 1,
+    format: "nous.consumer.selection",
     ...(sameSubject ? selected : { lastQuery: selected.lastQuery }),
     subjectId: values.subject ?? selected.subjectId,
     sessionId: values.session ?? (sameSubject ? selected.sessionId : undefined),
@@ -128,7 +154,70 @@ export async function createEnvironment(
       (sameSubject ? selected.workContextId : undefined),
   };
   const subjectId = state.subjectId ?? "";
+  const notices: { code: string; message: string; receipt?: string }[] = [];
   const replay: Record<string, (request: unknown) => Promise<unknown>> = {};
+  async function executeReceipt(
+    id: string,
+    receipt: Awaited<ReturnType<typeof local.receipt>>,
+    invoke: (request: unknown) => Promise<unknown>,
+  ) {
+    let result: unknown;
+    try {
+      result = await invoke(receipt.request);
+    } catch (error) {
+      if (
+        (error instanceof NousError &&
+          [3, 5, 6, 7, 8, 9, 10, 11, 12, 16].includes(error.code)) ||
+        error instanceof CliError
+      ) {
+        try {
+          await local.writeReceipt(id, {
+            ...receipt,
+            status: "rejected",
+            rejection: {
+              code: error.code,
+              message: error.message,
+              domainCode:
+                error instanceof NousError ? error.domainCode : error.code,
+              recovery: error.recovery,
+              context: error.context,
+              details: [...error.details],
+              candidates: [...error.candidates],
+            },
+          });
+        } catch {
+          Object.assign(error, {
+            receipt: id,
+            notices: [
+              {
+                code: "RECEIPT_UNSAVED",
+                message:
+                  "Authority definitively refused this operation; the local terminal receipt could not be saved",
+              },
+            ],
+          });
+        }
+        throw error;
+      }
+      const failure = new CliError(
+        "OUTCOME_UNKNOWN",
+        `Response unavailable; retry ${id} to reuse the saved operation`,
+      );
+      Object.assign(failure, { receipt: id });
+      throw failure;
+    }
+    try {
+      await local.writeReceipt(id, { ...receipt, status: "complete", result });
+    } catch {
+      notices.push({
+        code: "RECEIPT_UNSAVED",
+        receipt: id,
+        message:
+          "Operation returned successfully; its result is shown, but the local completion receipt could not be saved",
+      });
+    }
+    return result;
+  }
   function mutation<I extends object, O>(
     name: string,
     fn: ((request: I) => Promise<O>) | undefined,
@@ -140,41 +229,18 @@ export async function createEnvironment(
     };
     return async (request: I) => {
       const id = crypto.randomUUID();
-      await local.writeReceipt(id, {
-        schemaVersion: 1,
+      const receipt = {
+        format: "nous.consumer.operation" as const,
         name,
         subjectId:
           "subjectId" in request && typeof request.subjectId === "string"
             ? request.subjectId
             : undefined,
         request,
-        status: "pending",
-      });
-      try {
-        if (!fn)
-          throw new CliError("INVALID_ARGUMENT", "Client method unavailable");
-        const result = await fn(request);
-        await local.writeReceipt(id, {
-          schemaVersion: 1,
-          name,
-          subjectId,
-          request,
-          status: "complete",
-        });
-        return result;
-      } catch (error) {
-        if (
-          error instanceof NousError &&
-          [3, 5, 6, 7, 8, 9, 10, 11, 12, 16].includes(error.code)
-        )
-          throw error;
-        const failure = new CliError(
-          "OUTCOME_UNKNOWN",
-          `Response unavailable; retry ${id} to reuse the saved operation`,
-        );
-        Object.assign(failure, { receipt: id });
-        throw failure;
-      }
+        status: "pending" as const,
+      };
+      await local.writeReceipt(id, receipt);
+      return (await executeReceipt(id, receipt, replay[name]!)) as O;
     };
   }
   const client: NousClient & Pick<typeof original, "artifacts"> = {
@@ -310,7 +376,12 @@ export async function createEnvironment(
   async function readText(path: string, maximum = 65536) {
     let text = "";
     if (path === "-") {
-      for await (const chunk of process.stdin) {
+      if (!input)
+        throw new CliError(
+          "INVALID_ARGUMENT",
+          "This host reserves stdin for its protocol; provide a file or --text",
+        );
+      for await (const chunk of input) {
         text += String(chunk);
         if (Buffer.byteLength(text) > maximum)
           throw new CliError("INVALID_ARGUMENT", "Input exceeds bound");
@@ -331,17 +402,45 @@ export async function createEnvironment(
     values,
     state,
     subjectId,
+    notices,
     required,
     resolveReference,
     requestPayload,
     readText,
-    save: local.save,
+    async save(this: void, value: Selection) {
+      try {
+        await local.save(value, savedBaseline);
+        savedBaseline = value;
+      } catch (error) {
+        notices.push({
+          code: "STATE_UNSAVED",
+          message:
+            error instanceof CliError && error.code === "STATE_CONFLICT"
+              ? error.message
+              : "Operation result is preserved; local consumer state could not be saved",
+        });
+      }
+    },
     async retry(id: string) {
       const receipt = await local.receipt(id);
-      if (receipt.subjectId && receipt.subjectId !== subjectId)
+      if (
+        receipt.name !== "subjects.create" &&
+        receipt.subjectId &&
+        receipt.subjectId !== subjectId
+      )
         throw new CliError(
           "RESULT_SUBJECT_MISMATCH",
           "Receipt belongs to another Subject",
+        );
+      if (receipt.status === "complete") return receipt.result;
+      if (receipt.status === "rejected")
+        throw new CliError(
+          receipt.rejection?.domainCode ?? "OPERATION_REJECTED",
+          receipt.rejection?.message ?? "Operation was definitively rejected",
+          receipt.rejection?.details ?? [],
+          receipt.rejection?.candidates ?? [],
+          receipt.rejection?.recovery,
+          receipt.rejection?.context,
         );
       const invoke = replay[receipt.name];
       if (!invoke)
@@ -349,9 +448,7 @@ export async function createEnvironment(
           "INVALID_ARGUMENT",
           "Receipt command is unavailable",
         );
-      const result = await invoke(receipt.request);
-      await local.writeReceipt(id, { ...receipt, status: "complete" });
-      return result;
+      return executeReceipt(id, receipt, invoke);
     },
     mediaType(this: void, path: string) {
       const types: Record<string, string> = {

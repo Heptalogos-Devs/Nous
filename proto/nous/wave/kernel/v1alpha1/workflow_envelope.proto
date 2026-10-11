@@ -1,0 +1,53 @@
+// Copyright 2026 Aravine Zhu
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+package nous.wave.kernel.v1alpha1;
+import "nous/wave/v1alpha1/types.proto";
+import "nous/wave/v1alpha1/presentation.proto";
+import "google/protobuf/timestamp.proto";
+
+message WorkflowLease {
+  string subject_id = 1 [(nous.wave.v1alpha1.reference_kind) = "subject"];
+  string owner = 2;
+  string operation_key = 3;
+  string token = 4;
+}
+
+// Only the semantic owner interprets payload_json. Dependencies are explicit;
+// storage and purge never inspect the domain payload for references.
+message WorkflowPayload {
+  string payload_json = 1;
+  repeated nous.wave.v1alpha1.CognitiveRef dependencies = 2;
+  bool purged = 3;
+}
+message MaintenanceClaim {
+  string need_id = 1;
+  string lease_token = 2;
+  int64 trigger_authority_seq = 3;
+  uint64 trigger_revision = 4;
+}
+message WorkflowSnapshot {
+  WorkflowPayload content = 1;
+  google.protobuf.Timestamp cognitive_formed_at = 2;
+  MaintenanceClaim maintenance_claim = 3;
+}
+// Absent usage is unknown, including for attempts with an unknown outcome.
+message ExecutionUsage {
+  optional double input_tokens = 1;
+  optional double output_tokens = 2;
+  optional double total_tokens = 3;
+}
+message ExecutionAttempt {
+  string execution_profile = 1;
+  string model_profile = 2;
+  string status = 3;
+  optional string failure_class = 4;
+  uint32 latency_ms = 5;
+  ExecutionUsage usage = 6;
+}
+message ExecutionTelemetry {
+  repeated ExecutionAttempt attempts = 1;
+  optional string successful_execution_profile = 2;
+  uint32 omitted_attempts = 3;
+}

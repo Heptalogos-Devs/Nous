@@ -215,7 +215,7 @@ impl KernelService {
     ) -> Result<p::JournalResponse> {
         let target = input
             .target
-            .map(|target| {
+            .map(|target| -> Result<JournalTarget> {
                 Ok(JournalTarget {
                     journal_id: JournalId(id(&target.journal_id)?),
                     expected_revision: JournalRevisionId(id(&target.expected_revision_id)?),

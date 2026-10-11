@@ -18,7 +18,7 @@ Agent [强烈建议显式化能够可靠识别的指称](../agent/NOUSQL.md#pref
 
 ## 时间合同
 
-`$time` 支持 occurred、observed、valid、formed、recorded 五轴；各轴分别指来源事件、收到证据、主张有效期、认知/派生形成、canonical 记录时间。不同轴可以同 scope 共存且取 hard intersection；同轴重复拒绝。Absolute `at/from/to` 必须有 timezone；interval 左闭右开，unknown 不匹配已知约束。`within` 不与其他窗口参数混用。
+`$time` 支持 occurred、observed、valid、formed、recorded 五轴；各轴分别指来源事件、收到证据、主张有效期、认知/派生形成、canonical 记录时间。不同轴可以同 scope 共存且取 hard intersection；同轴重复拒绝。Absolute `at/from/to` 必须有 timezone；`at` 是 Point：匹配精确 instant 或包含该点的 interval；`from/to/within` 是非空半开 Range，匹配其中的 instant 或与之重叠的 interval。unknown 不匹配已知约束。`within` 不与其他窗口参数混用。
 
 相对时间使用 query preparation 捕获的 Subject CognitiveClock。`$asof(timestamp)`/`$asof(ago=30d)` 选择 Authority 知识截点；`$history` 允许 eligible prior cognition revisions 作为独立 documents。二者可组合，与五轴过滤独立。默认 current view 只投影 effective heads。
 

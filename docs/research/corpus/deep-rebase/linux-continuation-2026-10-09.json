@@ -1,0 +1,688 @@
+{
+  "date": "2026-10-09",
+  "source_commit": "663782c8c8fde422208c4d469da3840e529b1629",
+  "host": "Linux",
+  "consumer": "consumer:codex:deep-rebase-linux",
+  "task": "Clean-instance ownership review through a real fresh Codex CLI and Nous MCP",
+  "prompt_sha256": "30d530ebdbb86753cf6f29a39fd32aee06838dddfb12ca30a21326ee6e7db8f1",
+  "outcomes": [
+    {
+      "tool": "nous_help",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "nousql: nous help nousql [--json]; standalone Agent guide without connecting to a daemon\ncontextFlags:\n  subject: Subject lexical reference overrides local selection\n  session: Session lexical reference overrides local selection\n  work-context: WorkContext lexical reference overrides local selection\noutput:\n  success: semantic text by default; --json returns nous.cli.v1 envelope; int64 as decimal strings\n  error: stderr semantic error; --json provides code/message/details/candidates/receipt; nonzero exit\ncommands:\n  1. command: read\n    parameters:\n      1. <obs:|art:|src:|repr:|region: lexical reference> | result:N\n      2. --max-bytes 1..1048576 (default 65536)\n      3. --output <new-file> saves complete exact bytes for native media inspection\n    description: Read admitted source/derived content through Material Authority; show returns object metadata. Partial output is explicit. --output exports exact complete bytes without overwriting an existing file.\n  2. command: status\n    description: Instance status and capabilities\n  3. command: identity resolve\n    parameters:\n      1. --kind <kind> --name <name> | --lexical-ref <ref>\n    example: nous identity resolve --kind entity --name Alice\n  4. command: identity bind\n    parameters:\n      1. --kind <kind>\n      2. --canonical <reference>\n      3. --name <name>\n      4. --alias <alias> (comma-separated)\n    example: nous identity bind --kind entity --canonical entity:alice --name Alice --alias A\n  5. command: tag list|get|search|resolve|create|revise|merge|split|attach\n    parameters:\n      1. get <tag-ref>\n      2. search <text>\n      3. resolve <name>\n      4. create --name <label> [--description <text>]\n      5. revise|merge|split --request-file <semantic TOML>\n      6. attach <exact-revision> --tag <ref> --association-file <basis TOML>\n    example: nous tag resolve deploy\n  6. command: association neighborhood\n    parameters:\n      1. <canonical-or-lexical-ref>\n      2. --kind <kind> (for lexical)\n      3. --max-nodes 1..256\n      4. --max-depth 1..4\n    example: nous association neighborhood <Memory lexical reference>\n  7. command: association create\n    parameters:\n      1. --operation-id <stable operation identity> (optional; generated)\n      2. --association-file <semantic TOML>\n    description: CLI-owned semantic Association TOML; requires nonempty revision/use-event basis\n  8. command: association revoke\n    parameters:\n      1. <association reference>\n      2. --operation-id <stable operation identity> (optional; generated)\n    description: Revoke one exact AssociationEvidence, including a Tag attachment\n  9. command: maintenance grant\n    parameters:\n      1. --max-operations 1..32\n      2. --max-model-calls 0..32\n      3. --max-elapsed-ms 1..900000\n    description: Host authorizes a bounded maintenance opportunity\n  10. command: use\n    parameters:\n      1. <exact cognition revision>\n      2. --kind presented|referenced|acted_on|result_supported|result_refuted|corrected|pinned\n      3. --event-id <stable event identity> (optional; generated)\n      4. --consumer <ref>\n      5. --occurred-at <ISO timestamp>\n      6. --query-id query:last (optional; result:N links automatically)\n    description: Typed meaningful use; stable retry reuses event ID and occurrence timestamp\n  11. command: query\n    parameters:\n      1. <NousQL> | --query-file <path>\n    example: nous query 'deployment decision $return(memory) $limit(5)'\n  12. command: query prepare|inspect\n    parameters:\n      1. <NousQL> | --query-file <path>\n    description: Frozen binding and representation inspection; no retrieval or provider call\n    example: nous query prepare 'deployment decision $return(memory)'\n  13. command: config list|describe|get|set|clear\n    parameters:\n      1. [path] [JSON value]\n      2. --subject <Subject lexical reference>\n      3. --desired\n      4. --expected-revision <revision from desired view> (required for set/clear)\n      5. --advanced|--developer\n  14. command: subject create|list|use\n    parameters:\n      1. [id]\n  15. command: session open|close\n    purpose: Open a new Session or close the selected Session\n  16. command: session show [reference]\n    purpose: Read a returned Session reference/name, including a closed Session, without selecting or reopening it; omit the reference to read local selection\n  17. command: observe text|file\n    parameters:\n      1. --text <text> --source <url> | <path>\n      2. --media-type <mime>\n  18. command: form\n    parameters:\n      1. <Occurrence reference>\n      2. --operation-id <stable operation identity> (optional; generated)\n      3. --aboutness <ref> (comma-separated)\n      4. --aboutness-mode explicit|select_from_resolved_mentions|none (defaults to explicit with --aboutness)\n      5. --tag <Tag ID/ref/LexicalRef> (comma-separated)\n  19. command: derive\n    parameters:\n      1. <SourceRegion reference>\n      2. --strategy description_only|direct_structured|describe_then_structure\n    description: Select the derived output pipeline. Inspect video.input_mode (direct|frames) with config describe video.input_mode / config get video.input_mode. Frame sampling records source/timestamp coverage in the interpretation, without providing a separate frame Artifact export.\n  20. command: embeddings prepare\n    parameters:\n      1. --max-batches <n>\n  21. command: trace\n    parameters:\n      1. <canonical-or-lexical-ref>\n  22. command: show\n    parameters:\n      1. <exact-reference|LexicalRef|result:N>\n    description: Read exact cognition content or Material object metadata; read retrieves source text.\n  23. command: retry\n    parameters:\n      1. <saved-receipt-id>\n    description: Replay original frozen operation inputs; preserve the consumer state root.\n  24. command: context create|set|pin|unpin|clear|select|foreground|show|pause|resume|list|end\n    parameters:\n      1. [WorkContext lexical reference]\n      2. --purpose <purpose>\n      3. --text <task context> | --file <path|->\n      4. --cognition <exact-ref|result:N> --entity <real-ref> --tag <real-ref>\n      5. clear --scope text|anchors|all\n      6. foreground --clear\n    example: nous context create --purpose \"Investigate CPython free-threading\" --text \"Compare PEP 703 and Python 3.13/3.14 extension compatibility.\""
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "nousql"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "title: NousQL Agent guide\nmanual: docs/agent/NOUSQL.md\nconcepts:\n  subject: The identity whose long-term cognition and current work Nous maintains.\n  cognition: Memory, CognitiveSchema, Episode and Journal; the default return set.\n  tag: A durable semantic concept with stable identity and revisable label/description; not just a category.\n  lexicalRef: A stable Agent-readable reference; resolve names once and continue with the returned LexicalRef.\n  workContext: A reusable current task with purpose, context text and real cognition/Entity/Tag anchors. Select it once and foreground it in a Session; subsequent queries consume the frozen task context.\n  cognitiveClock: Subject logical time captured at query preparation; relative windows use this clock, not network timeout time.\nselectors:\n  text: Strong recommendation: make confidently known referents explicit using concrete names and useful keywords for lexical, embedding and Entity/Tag activation. Preserve uncertainty; if unresolved, the original pronoun or short question remains a valid lexical+dense query.\n  concept: #concept supplies semantic text without resolving a durable Tag.\n  entity: @e(\"Alice\") is an exact-resolved entity cue, not an exact cognition read.\n  tag: Recall relevant cognition @tag(\"reader reclamation\") activates a durable Tag and directly recalls its attachments.\n  schema: @schema(\"rule\") supplies a schema cue.\n  resource: @r(\"resource\") supplies a resource cue.\n  exact: @ref(mem:zimug-tikub-lulid) reads only the bound identity, without similarity retrieval or model rerank. Objects select current/as-of heads; immutable revision refs inspect specific history. Use returned LexicalRefs, never invent them.\n  object: @object(\"host-ref\") supplies an opaque Host object cue.\n  composition: Mandatory unquoted Unicode intent plus optional $/@/# syntax islands; $prefer and $avoid express preferences; escape literal markers with backslash.\ntime:\n  axes:\n    occurred: When the source event happened.\n    observed: When the Subject received the source evidence.\n    valid: When the claim applies.\n    formed: When cognition or a derived representation was formed.\n    recorded: When the canonical revision was recorded.\n  filter: $time(occurred,within=30d); different axes intersect; at/from/to require timezone-bearing timestamps.\n  asOf: $asof(\"2025-01-01T00:00:00Z\") or $asof(ago=30d) selects what Authority knew at that cut.\n  history: $history admits eligible prior cognition revisions; combine with $asof to exclude later knowledge.\n  distinction: $time filters event/claim chronology; $asof changes the Authority view. They are independent.\nexploration:\n  direct: Direct text and Tag recall need no graph diffusion.\n  associative: $explore explicitly enables bounded diffusion from QueryActivation; the Agent does not select a physical algorithm.\n  enrichment: Host configuration may optionally infer existing Tags or ephemeral concepts; it does not create Authority Tags.\nprojection:\n  default: memory,schema,episode,journal\n  root: $return(cognition), $return(memory,schema), $return(evidence), $return(resource)\n  scope: Root-only projection also limits exact targets; Evidence/Resource are not default top-level returns.\nshaping: $limit(10), $effort(deep), $materialize, $diagnostics(full); all are root-only.\nerrors:\n  UNKNOWN_REFERENCE: Resolve a known name or use a returned LexicalRef.\n  AMBIGUOUS_REFERENCE: Choose a candidate LexicalRef and retry.\n  REFERENCE_TOMBSTONED: Rediscover an active identity; do not guess a replacement.\n  UNRESOLVED_MACHINE_PLACEHOLDER: Resolve a machine placeholder; ordinary pronouns remain valid.\n  STALE_CONTEXT: Refresh current work/session references before retrying.\n  UNAVAILABLE: Inspect capability/lane diagnostics; optional degradation is explicit.\nexamples:\n  1. How does Python free-threading work?\n  2. Why did Simon Willison change his blogging practice later?\n  3. Why did he change it later?\n  4. 她为什么修改这个决定？\n  5. 彼は後で何を変更しましたか？\n  6. deployment approval @e(\"Alice\")\n  7. Recall relevant cognition @tag(\"active-reader reclamation\")\n  8. Recall migration decisions #migration\n  9. deployment incidents $time(occurred,within=30d)\n  10. policy state $time(valid,at=\"2026-05-01T00:00:00Z\")\n  11. evidence received $time(occurred,from=\"2026-01-01T00:00:00Z\") $time(observed,to=\"2026-02-01T00:00:00Z\")\n  12. support status $asof(\"2025-01-01T00:00:00Z\")\n  13. support status $history\n  14. Recall relevant cognition @tag(\"active-reader reclamation\") $explore\n  15. stale consumer problem $explore\n  16. migration $return(memory,schema) $limit(10) $diagnostics(full)\nworkflow:\n  1. nous subject use <returned-subject-reference>\n  2. nous session open\n  3. nous context create --purpose \"Investigate CPython free-threading\" --text \"Compare PEP 703, Python 3.13 and Python 3.14 extension compatibility.\"\n  4. nous context foreground\n  5. nous identity resolve --kind entity --name CPython\n  6. nous context pin --entity <returned-entity-ref>\n  7. nous query 'When did the support status change?'\n  8. nous query 'Which extension limitations remained?'"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "subject"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: subject create|list|use\n  parameters:\n    1. [id]"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "session"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: session open|close\n  purpose: Open a new Session or close the selected Session\n2. command: session show [reference]\n  purpose: Read a returned Session reference/name, including a closed Session, without selecting or reopening it; omit the reference to read local selection"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "context"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: context create|set|pin|unpin|clear|select|foreground|show|pause|resume|list|end\n  parameters:\n    1. [WorkContext lexical reference]\n    2. --purpose <purpose>\n    3. --text <task context> | --file <path|->\n    4. --cognition <exact-ref|result:N> --entity <real-ref> --tag <real-ref>\n    5. clear --scope text|anchors|all\n    6. foreground --clear\n  example: nous context create --purpose \"Investigate CPython free-threading\" --text \"Compare PEP 703 and Python 3.13/3.14 extension compatibility.\""
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "observe"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: observe text|file\n  parameters:\n    1. --text <text> --source <url> | <path>\n    2. --media-type <mime>"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "form"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: form\n  parameters:\n    1. <Occurrence reference>\n    2. --operation-id <stable operation identity> (optional; generated)\n    3. --aboutness <ref> (comma-separated)\n    4. --aboutness-mode explicit|select_from_resolved_mentions|none (defaults to explicit with --aboutness)\n    5. --tag <Tag ID/ref/LexicalRef> (comma-separated)"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "embeddings"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: embeddings prepare\n  parameters:\n    1. --max-batches <n>"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "trace"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: trace\n  parameters:\n    1. <canonical-or-lexical-ref>"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "show"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: show\n  parameters:\n    1. <exact-reference|LexicalRef|result:N>\n  description: Read exact cognition content or Material object metadata; read retrieves source text."
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "read"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: read\n  parameters:\n    1. <obs:|art:|src:|repr:|region: lexical reference> | result:N\n    2. --max-bytes 1..1048576 (default 65536)\n    3. --output <new-file> saves complete exact bytes for native media inspection\n  description: Read admitted source/derived content through Material Authority; show returns object metadata. Partial output is explicit. --output exports exact complete bytes without overwriting an existing file."
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_help",
+      "arguments": {
+        "topic": "use"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "1. command: use\n  parameters:\n    1. <exact cognition revision>\n    2. --kind presented|referenced|acted_on|result_supported|result_refuted|corrected|pinned\n    3. --event-id <stable event identity> (optional; generated)\n    4. --consumer <ref>\n    5. --occurred-at <ISO timestamp>\n    6. --query-id query:last (optional; result:N links automatically)\n  description: Typed meaningful use; stable retry reuses event ID and occurrence timestamp"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "status"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status:\n  components:\n    1. name: subject_core\n      state: READY\n    2. name: cognitive_runtime\n      state: READY\n    3. name: memory\n      state: READY\ncapabilities:\n  components:\n    1. name: subject_core\n      state: READY\n    2. name: cognitive_runtime\n      state: READY\n    3. name: memory\n      state: READY\n    4. name: model.projection_steward\n      state: NOT_CONFIGURED\n      detail: Role has no policy\n    5. name: model.memory_formation\n      state: READY\n      detail: Executable ordered routes available\n    6. name: model.episode_segmentation\n      state: READY\n      detail: Executable ordered routes available\n    7. name: model.journal_synthesis\n      state: READY\n      detail: Executable ordered routes available\n    8. name: model.memory_consolidation\n      state: READY\n      detail: Executable ordered routes available\n    9. name: model.concept_maintenance\n      state: READY\n      detail: Executable ordered routes available\n    10. name: model.material_description\n      state: READY\n      detail: Executable ordered routes available\n    11. name: model.material_structuring\n      state: READY\n      detail: Executable ordered routes available\n    12. name: model.material_direct_structuring\n      state: READY\n      detail: Executable ordered routes available\n    13. name: model.query_embedding\n      state: READY\n      detail: Executable ordered routes available\n    14. name: model.query_concept_enrichment\n      state: READY\n      detail: Executable ordered routes available\n    15. name: model.query_rerank\n      state: READY\n      detail: Executable ordered routes available\n    16. name: model.speech_transcription\n      state: NOT_CONFIGURED\n      detail: Role has no policy"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "subject",
+          "create"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "subjectId: sub:bizor-fusin-vakav\nstatus: active"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "subject",
+          "use",
+          "sub:bizor-fusin-vakav"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "subjectId: sub:bizor-fusin-vakav\nstatus: active"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "session",
+          "open"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "sessionId: session:sukam-novug-bifik\nruntimeRevision: 0\nclosed: false"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "context",
+          "create",
+          "--purpose",
+          "Review Nous Wave deep rebase ownership and recoverability",
+          "--text",
+          "Objective: Continue reviewing ownership and recoverability decisions of the ongoing Nous Wave deep rebase in an independent clean Linux Nous instance. Decisions: Preserve the exact 2026-10-09 source at commit 663782c; use configured memory formation and record actual failures; keep existing cognition, exact revision, provenance and purge owners. Current Work: Admit source, form one grounded Memory, trace original evidence, prepare embeddings, recall and reference exact Memory, pin revision and save continuation."
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "workContextId: ctx:supud-pasun-kopud\nrevision: 1\nstate: open\npurpose: Review Nous Wave deep rebase ownership and recoverability\ncontextText: Objective: Continue reviewing ownership and recoverability decisions of the ongoing Nous Wave deep rebase in an independent clean Linux Nous instance. Decisions: Preserve the exact 2026-10-09 source at commit 663782c; use configured memory formation and record actual failures; keep existing cognition, exact revision, provenance and purge owners. Current Work: Admit source, form one grounded Memory, trace original evidence, prepare embeddings, recall and reference exact Memory, pin revision and save continuation."
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "context",
+          "select",
+          "ctx:supud-pasun-kopud"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "workContextId: ctx:supud-pasun-kopud\nrevision: 1\nstate: open\npurpose: Review Nous Wave deep rebase ownership and recoverability\ncontextText: Objective: Continue reviewing ownership and recoverability decisions of the ongoing Nous Wave deep rebase in an independent clean Linux Nous instance. Decisions: Preserve the exact 2026-10-09 source at commit 663782c; use configured memory formation and record actual failures; keep existing cognition, exact revision, provenance and purge owners. Current Work: Admit source, form one grounded Memory, trace original evidence, prepare embeddings, recall and reference exact Memory, pin revision and save continuation."
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "context",
+          "foreground",
+          "ctx:supud-pasun-kopud"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "sessionId: session:sukam-novug-bifik\nsubjectId: sub:bizor-fusin-vakav\nruntimeRevision: 1\nclosed: false\nactiveWorkContextId: ctx:supud-pasun-kopud"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "observe",
+          "text",
+          "--text",
+          "2026-10-09 Linux architecture review of Nous Wave, source commit 663782c. Serving previously duplicated implementation identity in its typed record and metadata, with manually incremented counters. An actual PostgreSQL regression retained current metadata while marking the typed implementation identity outdated; the old path incorrectly reused the asset. Serving now reads the typed record and uses a build content digest of projection implementation, input projections and locked dependencies. The same Authority watermark rebuilds when implementation identity changes. Current and historical snapshots share asset installation. Native Wave configuration registration is separate from graph construction. Source mutation changes implementation identity; an exposure-only policy edit and CRLF/LF normalization preserve it. Cognition, exact revisions, provenance and purge semantics retain their existing owners. Windows Portable previously completed real Doubao formation, embedding, query, use and restart continuation. Linux is creating a fresh independent instance; this source does not claim a new Windows Portable run."
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "occurrenceId: obs:govig-fumoh-rokad\nsourceRegionId: src:bazuz-habih-hubuv\nnext: form <occurrenceId>"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "read",
+          "obs:govig-fumoh-rokad"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "reference: obs:govig-fumoh-rokad\nmediaType: text/plain\ntotalBytes: 1125\nrangeStart: 0\nrangeEnd: 1125\npartial: false\ntext: 2026-10-09 Linux architecture review of Nous Wave, source commit 663782c. Serving previously duplicated implementation identity in its typed record and metadata, with manually incremented counters. An actual PostgreSQL regression retained current metadata while marking the typed implementation identity outdated; the old path incorrectly reused the asset. Serving now reads the typed record and uses a build content digest of projection implementation, input projections and locked dependencies. The same Authority watermark rebuilds when implementation identity changes. Current and historical snapshots share asset installation. Native Wave configuration registration is separate from graph construction. Source mutation changes implementation identity; an exposure-only policy edit and CRLF/LF normalization preserve it. Cognition, exact revisions, provenance and purge semantics retain their existing owners. Windows Portable previously completed real Doubao formation, embedding, query, use and restart continuation. Linux is creating a fresh independent instance; this source does not claim a new Windows Portable run.\nevidence:\n  1. basisRole: direct\n    reference: obs:govig-fumoh-rokad\n  2. basisRole: direct\n    reference: art:buluf-gizig-gahoz"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "form",
+          "obs:govig-fumoh-rokad",
+          "--operation-id",
+          "b764b78e-204f-4a6d-93f1-8e2dc67f4509"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "memory:\n  memoryId: mem:totor-firuv-fivij\n  revisionId: memrev:gizoz-zonas-hivin\n  subjectId: sub:bizor-fusin-vakav\n  cognitiveRole: declarative\n  objectEpoch: 1\n  acceptanceState: accepted\n  integrityState: valid\n  suppressionState: normal\n  purgeState: normal\n  accessibilityMode: auto\n  accessibilityLevel: normal\n  semanticRole: reported_fact\n  text: Context: 2026-10-09 Linux architecture review of Nous Wave, associated with source commit 663782c. Prior serving behavior: Serving previously used duplicated implementation identity across both typed records and metadata, with manually incremented counters. An actual PostgreSQL regression case showed the old serving path incorrectly reused an asset even when current metadata was retained and the typed implementation identity was marked outdated. Current serving behavior: Serving now reads the typed record and uses a build content digest derived from the projection implementation, input projections, and locked dependencies. The same Authority watermark rebuilds when implementation identity changes. Current and historical snapshots share the same asset installation. Configuration and identity rules: Native Wave configuration registration is separate from graph construction. Source mutations change implementation identity; exposure-only policy edits and CRLF/LF line normalization preserve implementation identity. Cognition, exact revisions, provenance, and purge semantics retain their existing owners. Instance status notes: Windows Portable previously completed real Doubao formation, embedding, query, use, and restart continuation. The Linux environment is creating a fresh independent instance; this source does not claim a new Windows Portable run.\n  basis:\n    1. basis:\n        evidence:\n          occurrenceId: obs:govig-fumoh-rokad\n          locator: wholeOccurrence: true\n          basisRole: interpretation\n  formationMode: grounded\n  revisionNo: 1\n  relationsTruncated: false\n  epistemicClass: derived\n  title: Findings from 2026-10-09 Linux Nous Wave architecture review (commit 663782c)\n  createdAt: 2026-10-09T13:49:04.903Z\n  temporalEvidence: observedAt: 2026-10-09T13:48:07.000Z\n  formedAt: 2026-10-09T13:48:12.350Z\n  recordedAt: 2026-10-09T13:49:04.903Z\n  producerSignatureId: 01a120ec-b009-7dd1-9da4-28c2370b2313\n  groundingOccurrenceId: obs:govig-fumoh-rokad\noperationId: b764b78e-204f-4a6d-93f1-8e2dc67f4509"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "trace",
+          "memrev:gizoz-zonas-hivin"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "reference: memrev:gizoz-zonas-hivin\ncognition:\n  revisionId: memrev:gizoz-zonas-hivin\n  revisionNo: 1\n  objectEpoch: 1\n  memoryId: mem:totor-firuv-fivij\n  title: Findings from 2026-10-09 Linux Nous Wave architecture review (commit 663782c)\n  text: Context: 2026-10-09 Linux architecture review of Nous Wave, associated with source commit 663782c. Prior serving behavior: Serving previously used duplicated implementation identity across both typed records and metadata, with manually incremented counters. An actual PostgreSQL regression case showed the old serving path incorrectly reused an asset even when current metadata was retained and the typed implementation identity was marked outdated. Current serving behavior: Serving now reads the typed record and uses a build content digest derived from the projection implementation, input projections, and locked dependencies. The same Authority watermark rebuilds when implementation identity changes. Current and historical snapshots share the same asset installation. Configuration and identity rules: Native Wave configuration registration is separate from graph construction. Source mutations change implementation identity; exposure-only policy edits and CRLF/LF line normalization preserve implementation identity. Cognition, exact revisions, provenance, and purge semantics retain their existing owners. Instance status notes: Windows Portable previously completed real Doubao formation, embedding, query, use, and restart continuation. The Linux environment is creating a fresh independent instance; this source does not claim a new Windows Portable run.\n  producerSignatureId: 01a120ec-b009-7dd1-9da4-28c2370b2313\n  cognitiveRole: declarative\n  semanticRole: reported_fact\n  epistemicClass: derived\n  groundingOccurrenceId: obs:govig-fumoh-rokad\n  formationMode: grounded\n  acceptanceState: accepted\n  integrityState: valid\n  suppressionState: normal\n  purgeState: normal\n  basis:\n    1. basis:\n        evidence:\n          occurrenceId: obs:govig-fumoh-rokad\n          locator: wholeOccurrence: true\n          basisRole: interpretation\n  formedAt: 2026-10-09T13:48:12.350Z\n  recordedAt: 2026-10-09T13:49:04.903Z\n  temporalEvidence: observedAt: 2026-10-09T13:48:07.000Z\nproducer:\n  signatureHash: 5120b674cb68ca2e700179c43d2eacc686471647724f2b98ce8623ba23e7291a\n  providerClass: openai-chat\n  operation: memory_formation_text\n  implementation: ai-sdk:c8c24d336e382928af494b44f44e12b00ee9e85e67adbbf7195a3b7d1df12d94\n  preprocessingIdentity: program/memory/formation.md\n  preprocessingRevision: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\n  configDigest: e08144351d81aec9b00188ed6e099227a029916ac4817731ffc3412647d0e640\n  modelIdentity: doubao-seed-2.1-lite\n  outputSchemaDigest: 9a7c9e5c98c5f2c9e89a0ea8d08afa755156889e36df37dd85b5ba1bb4be6014\n  modelRole: memory_formation\n  modelProfile: lite\n  executionProfile: lite_default\n  inferenceControlsDigest: 7ae42a8f0a38048eca425abe4b85f50ce6846b08a99e2e0fd68168b2cde51ec5\n  rolePolicyDigest: adf8f6dff917474c3330c8fb5d753a36687213d0d0c9f0e436f7ce9ec4c226ef\n  promptId: program/memory/formation.md\n  promptDigest: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\nsources:\n  1. evidence:\n      occurrenceId: obs:govig-fumoh-rokad\n      locator: wholeOccurrence: true\n      basisRole: interpretation\n    occurrence:\n      occurrenceId: obs:govig-fumoh-rokad\n      subjectId: sub:bizor-fusin-vakav\n      sourceClass: file\n      artifactId: art:buluf-gizig-gahoz\n      observedAt: 2026-10-09T13:48:07.000Z\n    artifact:\n      artifactId: art:buluf-gizig-gahoz\n      subjectId: sub:bizor-fusin-vakav\n      contentHash: 7f62241e8147b217e072143bd7caa5b3d28119188a9fc4b08891c433563e4b02\n      byteLength: 1125\n      mediaType: text/plain\n      createdAt: 2026-10-09T13:48:07.278Z"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "show",
+          "memrev:gizoz-zonas-hivin"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "revisionId: memrev:gizoz-zonas-hivin\nrevisionNo: 1\nobjectEpoch: 1\nmemoryId: mem:totor-firuv-fivij\ntitle: Findings from 2026-10-09 Linux Nous Wave architecture review (commit 663782c)\ntext: Context: 2026-10-09 Linux architecture review of Nous Wave, associated with source commit 663782c. Prior serving behavior: Serving previously used duplicated implementation identity across both typed records and metadata, with manually incremented counters. An actual PostgreSQL regression case showed the old serving path incorrectly reused an asset even when current metadata was retained and the typed implementation identity was marked outdated. Current serving behavior: Serving now reads the typed record and uses a build content digest derived from the projection implementation, input projections, and locked dependencies. The same Authority watermark rebuilds when implementation identity changes. Current and historical snapshots share the same asset installation. Configuration and identity rules: Native Wave configuration registration is separate from graph construction. Source mutations change implementation identity; exposure-only policy edits and CRLF/LF line normalization preserve implementation identity. Cognition, exact revisions, provenance, and purge semantics retain their existing owners. Instance status notes: Windows Portable previously completed real Doubao formation, embedding, query, use, and restart continuation. The Linux environment is creating a fresh independent instance; this source does not claim a new Windows Portable run.\nproducerSignatureId: 01a120ec-b009-7dd1-9da4-28c2370b2313\ncognitiveRole: declarative\nsemanticRole: reported_fact\nepistemicClass: derived\ngroundingOccurrenceId: obs:govig-fumoh-rokad\nformationMode: grounded\nacceptanceState: accepted\nintegrityState: valid\nsuppressionState: normal\npurgeState: normal\nbasis:\n  1. basis:\n      evidence:\n        occurrenceId: obs:govig-fumoh-rokad\n        locator: wholeOccurrence: true\n        basisRole: interpretation\nformedAt: 2026-10-09T13:48:12.350Z\nrecordedAt: 2026-10-09T13:49:04.903Z\ntemporalEvidence: observedAt: 2026-10-09T13:48:07.000Z"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "read",
+          "src:bazuz-habih-hubuv"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "reference: src:bazuz-habih-hubuv\nmediaType: text/plain\ntotalBytes: 1125\nrangeStart: 0\nrangeEnd: 1125\npartial: false\ntext: 2026-10-09 Linux architecture review of Nous Wave, source commit 663782c. Serving previously duplicated implementation identity in its typed record and metadata, with manually incremented counters. An actual PostgreSQL regression retained current metadata while marking the typed implementation identity outdated; the old path incorrectly reused the asset. Serving now reads the typed record and uses a build content digest of projection implementation, input projections and locked dependencies. The same Authority watermark rebuilds when implementation identity changes. Current and historical snapshots share asset installation. Native Wave configuration registration is separate from graph construction. Source mutation changes implementation identity; an exposure-only policy edit and CRLF/LF normalization preserve it. Cognition, exact revisions, provenance and purge semantics retain their existing owners. Windows Portable previously completed real Doubao formation, embedding, query, use and restart continuation. Linux is creating a fresh independent instance; this source does not claim a new Windows Portable run.\nevidence:\n  1. basisRole: direct\n    reference: src:bazuz-habih-hubuv\n  2. basisRole: direct\n    reference: art:buluf-gizig-gahoz"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "embeddings",
+          "prepare",
+          "--max-batches",
+          "10"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "committed: 3\nrequests: 2"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_query",
+      "arguments": {
+        "query": "What PostgreSQL asset reuse defect did Nous Wave commit 663782c expose, how did Serving correct implementation identity ownership and rebuild recoverability, and which cognition, revision, provenance and purge owners remain unchanged? $return(memory) $limit(5) $diagnostics(full)"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "queryId: 01a120ec-d973-7b72-82b1-7ed92ea84d51\nqueryRef: query:last\nstatus: complete\nresults:\n  1. lexicalRef: memrev:gizoz-zonas-hivin\n    result: result:1\n    ref: memrev:gizoz-zonas-hivin\n    text: Context: 2026-10-09 Linux architecture review of Nous Wave, associated with source commit 663782c. Prior serving behavior: Serving previously used duplicated implementation identity across both typed records and metadata, with manually incremented counters. An actual PostgreSQL regression case showed the old serving path incorrectly reused an asset even when current metadata was retained and the typed implementation identity was marked outdated. Current serving behavior: Serving now reads the typed record and uses a build content digest derived from the projection implementation, input projections, and locked dependencies. The same Authority watermark rebuilds when implementation identity changes. Current and historical snapshots share the same asset installation. Configuration and identity rules: Native Wave configuration registration is separate from graph construction. Source mutations change implementation identity; exposure-only policy edits and CRLF/LF line normalization preserve implementation identity. Cognition, exact revisions, provenance, and purge semantics retain their existing owners. Instance status notes: Windows Portable previously completed real Doubao formation, embedding, query, use, and restart continuation. The Linux environment is creating a fresh independent instance; this source does not claim a new Windows Portable run.\n    authority: subject_cognition\n    cognitiveRole: declarative\n    formationMode: grounded\n    evidenceFamilies:\n      1. lexical\n      2. dense\n    next: show result:1 | trace result:1 | use result:1 | context pin --cognition result:1\ndiagnostics:\n  candidateCounts:\n    dense_candidates: 1\n    drop_domain_ineligible: 1\n    lexical_candidates: 1\n    planned_candidate_bound: 20\n    runtime_candidates: 1\n  laneStatus:\n    resource_plan: limit=4,synopsis_preferred=false\n    runtime: ready\n    topology_plan: skipped\n    dense: ready\n    effort: normal\n    cue_sensing_plan: skipped\n    lexical: ready"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "use",
+          "result:1",
+          "--kind",
+          "referenced",
+          "--event-id",
+          "90d1ae36-4b71-4ae8-a245-60eefb268753",
+          "--consumer",
+          "sub:bizor-fusin-vakav",
+          "--occurred-at",
+          "2026-10-09T13:49:30Z"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "MCP connection owns run-root, state-root and consumer; use --subject/--session for cognition selection."
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "failed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "context",
+          "pin",
+          "ctx:supud-pasun-kopud",
+          "--cognition",
+          "memrev:gizoz-zonas-hivin",
+          "--expected-revision",
+          "1"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "workContextId: ctx:supud-pasun-kopud\nrevision: 2\nstate: open\npurpose: Review Nous Wave deep rebase ownership and recoverability\ncontextText: Objective: Continue reviewing ownership and recoverability decisions of the ongoing Nous Wave deep rebase in an independent clean Linux Nous instance. Decisions: Preserve the exact 2026-10-09 source at commit 663782c; use configured memory formation and record actual failures; keep existing cognition, exact revision, provenance and purge owners. Current Work: Admit source, form one grounded Memory, trace original evidence, prepare embeddings, recall and reference exact Memory, pin revision and save continuation.\ncognitionAnchors:\n  1. memrev:gizoz-zonas-hivin"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "use",
+          "result:1",
+          "--kind",
+          "referenced",
+          "--event-id",
+          "90d1ae36-4b71-4ae8-a245-60eefb268753",
+          "--occurred-at",
+          "2026-10-09T13:49:30Z"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "acceptedCount: 1\nduplicateCount: 0\nsessionRuntimeRevision: 3"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "context",
+          "set",
+          "ctx:supud-pasun-kopud",
+          "--expected-revision",
+          "2",
+          "--text",
+          "Objective: Continue reviewing ownership and recoverability of the ongoing Nous Wave deep rebase from source commit 663782c. Decisions: Serving owns typed implementation identity and build content digest of projection implementation, input projections and locked dependencies; identity change rebuilds at the same Authority watermark. Current/historical snapshots share installation. Native configuration registration is separate from graph construction. Source mutation changes identity; exposure-only policy and CRLF/LF normalization preserve it. Cognition, exact revisions, provenance and purge retain existing owners. Windows Portable evidence is historical; no new Windows run is claimed. Current Work: Linux source admitted unchanged (1125 bytes) and read through Observation and SourceRegion; one grounded accepted/valid Memory formed, traced and read. Addresses: Subject sub:bizor-fusin-vakav; Session session:sukam-novug-bifik; WorkContext ctx:supud-pasun-kopud; Observation obs:govig-fumoh-rokad; SourceRegion src:bazuz-habih-hubuv; Artifact art:buluf-gizig-gahoz; Memory mem:totor-firuv-fivij; pinned exact revision memrev:gizoz-zonas-hivin. Formation operation b764b78e-204f-4a6d-93f1-8e2dc67f4509 succeeded; producer 01a120ec-b009-7dd1-9da4-28c2370b2313, openai-chat, doubao-seed-2.1-lite, memory_formation_text. Embeddings prepare committed 3 in 2 requests. Natural-language defect/ownership query 01a120ec-d973-7b72-82b1-7ed92ea84d51 returned this exact revision at rank 1, complete (not degraded), lexical+dense ready. Referenced UseEvent 90d1ae36-4b71-4ae8-a245-60eefb268753 at 2026-10-09T13:49:30Z acceptedCount=1 duplicateCount=0. Failure: first use invocation supplied --consumer and was rejected: MCP connection owns run-root, state-root and consumer; use --subject/--session for cognition selection. Corrected invocation omitted --consumer and retained the same event identity/timestamp; accepted. No formation failure. Session will be closed; WorkContext remains open. Fresh consumer: select Subject, open its own Session, select and foreground this WorkContext, read this context and exact pinned Memory/trace/source, then continue the ownership and recoverability review without re-forming this evidence."
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "workContextId: ctx:supud-pasun-kopud\nrevision: 3\nstate: open\npurpose: Review Nous Wave deep rebase ownership and recoverability\ncontextText: Objective: Continue reviewing ownership and recoverability of the ongoing Nous Wave deep rebase from source commit 663782c. Decisions: Serving owns typed implementation identity and build content digest of projection implementation, input projections and locked dependencies; identity change rebuilds at the same Authority watermark. Current/historical snapshots share installation. Native configuration registration is separate from graph construction. Source mutation changes identity; exposure-only policy and CRLF/LF normalization preserve it. Cognition, exact revisions, provenance and purge retain existing owners. Windows Portable evidence is historical; no new Windows run is claimed. Current Work: Linux source admitted unchanged (1125 bytes) and read through Observation and SourceRegion; one grounded accepted/valid Memory formed, traced and read. Addresses: Subject sub:bizor-fusin-vakav; Session session:sukam-novug-bifik; WorkContext ctx:supud-pasun-kopud; Observation obs:govig-fumoh-rokad; SourceRegion src:bazuz-habih-hubuv; Artifact art:buluf-gizig-gahoz; Memory mem:totor-firuv-fivij; pinned exact revision memrev:gizoz-zonas-hivin. Formation operation b764b78e-204f-4a6d-93f1-8e2dc67f4509 succeeded; producer 01a120ec-b009-7dd1-9da4-28c2370b2313, openai-chat, doubao-seed-2.1-lite, memory_formation_text. Embeddings prepare committed 3 in 2 requests. Natural-language defect/ownership query 01a120ec-d973-7b72-82b1-7ed92ea84d51 returned this exact revision at rank 1, complete (not degraded), lexical+dense ready. Referenced UseEvent 90d1ae36-4b71-4ae8-a245-60eefb268753 at 2026-10-09T13:49:30Z acceptedCount=1 duplicateCount=0. Failure: first use invocation supplied --consumer and was rejected: MCP connection owns run-root, state-root and consumer; use --subject/--session for cognition selection. Corrected invocation omitted --consumer and retained the same event identity/timestamp; accepted. No formation failure. Session will be closed; WorkContext remains open. Fresh consumer: select Subject, open its own Session, select and foreground this WorkContext, read this context and exact pinned Memory/trace/source, then continue the ownership and recoverability review without re-forming this evidence.\ncognitionAnchors:\n  1. memrev:gizoz-zonas-hivin"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "session",
+          "close"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "sessionId: session:sukam-novug-bifik\nruntimeRevision: 4\nclosed: true\nactiveWorkContextId: ctx:supud-pasun-kopud\nresidentRefs:\n  1. obs:govig-fumoh-rokad\n  2. memrev:gizoz-zonas-hivin"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "context",
+          "show",
+          "ctx:supud-pasun-kopud"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "workContextId: ctx:supud-pasun-kopud\nrevision: 3\nstate: open\npurpose: Review Nous Wave deep rebase ownership and recoverability\ncontextText: Objective: Continue reviewing ownership and recoverability of the ongoing Nous Wave deep rebase from source commit 663782c. Decisions: Serving owns typed implementation identity and build content digest of projection implementation, input projections and locked dependencies; identity change rebuilds at the same Authority watermark. Current/historical snapshots share installation. Native configuration registration is separate from graph construction. Source mutation changes identity; exposure-only policy and CRLF/LF normalization preserve it. Cognition, exact revisions, provenance and purge retain existing owners. Windows Portable evidence is historical; no new Windows run is claimed. Current Work: Linux source admitted unchanged (1125 bytes) and read through Observation and SourceRegion; one grounded accepted/valid Memory formed, traced and read. Addresses: Subject sub:bizor-fusin-vakav; Session session:sukam-novug-bifik; WorkContext ctx:supud-pasun-kopud; Observation obs:govig-fumoh-rokad; SourceRegion src:bazuz-habih-hubuv; Artifact art:buluf-gizig-gahoz; Memory mem:totor-firuv-fivij; pinned exact revision memrev:gizoz-zonas-hivin. Formation operation b764b78e-204f-4a6d-93f1-8e2dc67f4509 succeeded; producer 01a120ec-b009-7dd1-9da4-28c2370b2313, openai-chat, doubao-seed-2.1-lite, memory_formation_text. Embeddings prepare committed 3 in 2 requests. Natural-language defect/ownership query 01a120ec-d973-7b72-82b1-7ed92ea84d51 returned this exact revision at rank 1, complete (not degraded), lexical+dense ready. Referenced UseEvent 90d1ae36-4b71-4ae8-a245-60eefb268753 at 2026-10-09T13:49:30Z acceptedCount=1 duplicateCount=0. Failure: first use invocation supplied --consumer and was rejected: MCP connection owns run-root, state-root and consumer; use --subject/--session for cognition selection. Corrected invocation omitted --consumer and retained the same event identity/timestamp; accepted. No formation failure. Session will be closed; WorkContext remains open. Fresh consumer: select Subject, open its own Session, select and foreground this WorkContext, read this context and exact pinned Memory/trace/source, then continue the ownership and recoverability review without re-forming this evidence.\ncognitionAnchors:\n  1. memrev:gizoz-zonas-hivin"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "session",
+          "show",
+          "session:sukam-novug-bifik"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "sessionId: session:sukam-novug-bifik\nruntimeRevision: 4\nclosed: true\nactiveWorkContextId: ctx:supud-pasun-kopud\nresidentRefs:\n  1. obs:govig-fumoh-rokad\n  2. memrev:gizoz-zonas-hivin"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    }
+  ],
+  "consumer_final": "Established and saved continuation using only Nous tools.\n\n- Subject: `sub:bizor-fusin-vakav`\n- Session: `session:sukam-novug-bifik` — closed\n- WorkContext: `ctx:supud-pasun-kopud` — open, revision **3**\n- Observation: `obs:govig-fumoh-rokad` — exact source read back unchanged\n- Source: `src:bazuz-habih-hubuv`\n- Memory: `mem:totor-firuv-fivij`\n- Exact pinned revision: `memrev:gizoz-zonas-hivin`\n\nFormation succeeded, grounded and accepted. Trace identifies model `doubao-seed-2.1-lite`, provider `openai-chat`, producer `01a120ec-b009-7dd1-9da4-28c2370b2313`.\n\nEmbeddings committed. Query `01a120ec-d973-7b72-82b1-7ed92ea84d51` recalled the exact revision at **rank 1**, status **complete**, with lexical and dense evidence.\n\nReferenced UseEvent `90d1ae36-4b71-4ae8-a245-60eefb268753` was accepted once. The initial `--consumer` invocation was rejected; the corrected invocation retained its event identity and timestamp. Both outcomes are preserved in the continuation."
+}

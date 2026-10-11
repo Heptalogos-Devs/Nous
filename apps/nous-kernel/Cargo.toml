@@ -39,6 +39,7 @@ postgresql_embedded.workspace = true
 chrono.workspace = true
 
 nous-protocol.workspace = true
+prost.workspace = true
 blake3.workspace = true
 prost-types.workspace = true
 tonic.workspace = true

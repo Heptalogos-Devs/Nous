@@ -1,21 +1,21 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { executionOptions, type ExecutionOptions } from "../execution.js";
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { FormMemoryRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { type FormationRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "./runtime.js";
-import {
-  failedExecutionTelemetry,
-  type ModelRoleSnapshot,
-} from "./invocations.js";
+import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import type { WorkflowPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
+import { type ModelRoleSnapshot } from "./execution/snapshot.js";
 import { canonicalDigest } from "../digest.js";
 import { z } from "zod";
+import { modelProducer } from "./producer.js";
 
 const snapshotSchema = z.strictObject({
-  cognitive_formed_at: z.string(),
   model: z.unknown(),
   sourceMaxBytes: z.number().int().positive(),
   representationId: z.string().optional(),
@@ -32,19 +32,16 @@ const snapshotSchema = z.strictObject({
 const proposalSchema = z.strictObject({
   request: z.unknown(),
 });
-const outcomeSchema = z.union([
-  z.strictObject({ purged: z.literal(true) }),
-  z.strictObject({
-    revisionId: z.string(),
-  }),
-]);
+const outcomeSchema = z.strictObject({ revisionId: z.string() });
 
 export async function formObservation(
   kernel: KernelClient,
   models: ModelRuntime,
   r: FormationRequest,
-  options: CallOptions,
+  options: ExecutionOptions,
 ) {
+  const calls = executionOptions(kernel.execution.opportunity, options);
+  options = calls;
   if (
     !z.string().uuid().safeParse(r.operationId).success ||
     r.operationId === "00000000-0000-0000-0000-000000000000"
@@ -95,10 +92,10 @@ export async function formObservation(
       explicitTags: r.explicitTags,
     }),
   };
-  const replay = async (text: string) => {
-    const outcome = outcomeSchema.parse(JSON.parse(text));
-    if ("purged" in outcome)
+  const replay = async (saved: WorkflowPayload) => {
+    if (saved.purged)
       throw new ConnectError("Formation outcome was purged", Code.NotFound);
+    const outcome = outcomeSchema.parse(JSON.parse(saved.payloadJson));
     const memory = await kernel.memory.getMemoryRevision(
       { subjectId: r.subjectId, id: outcome.revisionId },
       options,
@@ -109,8 +106,8 @@ export async function formObservation(
     };
   };
   const previous = await kernel.modelWorkflow.findWorkflow(identity, options);
-  if (previous.outcomeJson) return replay(previous.outcomeJson);
-  let snapshotText = previous.snapshotJson;
+  if (previous.outcome) return replay(previous.outcome);
+  let snapshotText = previous.snapshot?.content?.payloadJson;
   if (!snapshotText) {
     const model = models.invocations.snapshot("memory_formation");
     const occurrence = await kernel.material.getOccurrence(
@@ -164,29 +161,30 @@ export async function formObservation(
       sourceMaxBytes: models.materialInputs.formation_source_max_bytes,
     });
   }
-  const reservation = await kernel.modelWorkflow.reserveWorkflow(
-    { ...identity, snapshotJson: snapshotText },
+  const frozen = snapshotSchema.parse(JSON.parse(snapshotText));
+  const operation = await reserveOperation(
+    kernel,
+    identity,
+    previous.snapshot ?? {
+      content: workflowPayload(frozen, [
+        { kind: "occurrence", value: r.occurrenceId },
+        ...(frozen.representationId
+          ? [{ kind: "derived_representation", value: frozen.representationId }]
+          : []),
+        ...r.explicitTags.map((value) => ({ kind: "tag", value })),
+      ]),
+    },
     options,
   );
-  if (reservation.outcomeJson) return replay(reservation.outcomeJson);
-  if (reservation.busy || !reservation.leaseToken)
-    throw new ConnectError(
-      "Formation workflow is busy; retry the same operation ID",
-      Code.Aborted,
-    );
-  const lease = {
-    subjectId: r.subjectId,
-    owner: "memory",
-    operationKey: r.operationId,
-    leaseToken: reservation.leaseToken,
-  };
-  try {
-    let proposed = reservation.proposalJson
-      ? proposalSchema.parse(JSON.parse(reservation.proposalJson))
+  const reservation = operation.record;
+  if (reservation.outcome) return replay(reservation.outcome);
+  return operation.run(async () => {
+    let proposed = reservation.proposal?.payloadJson
+      ? proposalSchema.parse(JSON.parse(reservation.proposal?.payloadJson))
       : undefined;
     if (!proposed) {
       const snapshot = snapshotSchema.parse(
-        JSON.parse(reservation.snapshotJson),
+        JSON.parse(reservation.snapshot!.content!.payloadJson),
       );
       const source = await kernel.material.materializeEvidence(
         {
@@ -224,10 +222,7 @@ export async function formObservation(
         options.signal ?? undefined,
         snapshot.model as ModelRoleSnapshot,
       );
-      await kernel.modelWorkflow.saveWorkflow(
-        { ...lease, executionTelemetryJson: JSON.stringify(result.execution) },
-        { timeoutMs: kernel.execution.workflow_ack_timeout_ms },
-      );
+      await operation.recordExecution(result.execution);
       if (
         new Set(result.selectedEntityKeys).size !==
           result.selectedEntityKeys.length ||
@@ -267,26 +262,10 @@ export async function formObservation(
           epistemicClass: "derived",
           aboutness,
           tags: r.explicitTags,
-          producer: {
-            providerClass: result.producerMetadata.protocol,
-            operation: "memory_formation_text",
-            implementation: "ai-sdk@7.0.102/openai@4.0.67",
-            modelIdentity: result.producerMetadata.model,
-            modelRevision: result.producerMetadata.modelRevision,
-            modelRole: result.producerMetadata.modelRole,
-            modelProfile: result.producerMetadata.modelProfile,
-            executionProfile: result.producerMetadata.executionProfile,
-            inferenceControlsDigest:
-              result.producerMetadata.inferenceControlsDigest,
-            rolePolicyDigest: result.producerMetadata.rolePolicyDigest,
-            promptId: result.producerMetadata.promptId,
-            promptDigest: result.producerMetadata.promptDigest,
-
-            outputSchemaDigest: result.producerMetadata.outputSchemaDigest,
-            preprocessingIdentity: result.producerMetadata.promptId!,
-            preprocessingRevision: result.producerMetadata.promptDigest!,
-            configDigest: result.producerMetadata.configDigest,
-          },
+          producer: modelProducer(
+            result.producerMetadata,
+            "memory_formation_text",
+          ),
           basis: [
             {
               basis: {
@@ -309,46 +288,22 @@ export async function formObservation(
       proposed = {
         request: toJson(FormMemoryRequestSchema, request),
       };
-      await kernel.modelWorkflow.saveWorkflow(
-        { ...lease, proposalJson: JSON.stringify(proposed) },
-        options,
-      );
+      await operation.saveProposal(proposed);
     }
     const request = fromJson(
       FormMemoryRequestSchema,
       proposed.request as JsonValue,
     );
-    const memory = await kernel.memory.formMemory(request, options);
-    await kernel.modelWorkflow.saveWorkflow(
-      {
-        ...lease,
-        outcomeJson: JSON.stringify({
-          revisionId: memory.revisionId,
-        }),
-      },
-      options,
+    const memory = await operation.mutate(request.operationId, () =>
+      kernel.memory.formMemory(request, options),
     );
+    await operation.complete({ revisionId: memory.revisionId }, [
+      { kind: "memory", value: memory.memoryId },
+      { kind: "memory_revision", value: memory.revisionId },
+    ]);
     return {
       memory,
       degradation: [],
     };
-  } catch (error) {
-    if (failedExecutionTelemetry(error))
-      await kernel.modelWorkflow.saveWorkflow(
-        {
-          ...lease,
-          executionTelemetryJson: JSON.stringify(
-            failedExecutionTelemetry(error),
-          ),
-        },
-        { timeoutMs: kernel.execution.workflow_ack_timeout_ms },
-      );
-    throw error;
-  } finally {
-    await kernel.modelWorkflow
-      .releaseWorkflow(lease, {
-        timeoutMs: kernel.execution.workflow_ack_timeout_ms,
-      })
-      .catch(() => {});
-  }
+  });
 }

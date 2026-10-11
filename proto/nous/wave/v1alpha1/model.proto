@@ -3,13 +3,14 @@
 
 syntax = "proto3";
 package nous.wave.v1alpha1;
+import "nous/wave/v1alpha1/presentation.proto";
 import "nous/wave/v1alpha1/types.proto";
 import "nous/wave/v1alpha1/management.proto";
-message FormationRequest { string subject_id = 1; string occurrence_id = 2; optional string representation_id = 3; string operation_id = 4; string aboutness_mode = 5; repeated string explicit_aboutness = 6; repeated string explicit_tags = 7; }
-message DeriveMaterialRequest { string subject_id = 1; string source_region_id = 2; optional string strategy = 3; optional string target = 4; optional string supersedes = 5; }
+message FormationRequest { string subject_id = 1 [(reference_kind) = "subject"]; string occurrence_id = 2 [(reference_kind) = "occurrence"]; optional string representation_id = 3 [(reference_kind) = "derived_representation"]; string operation_id = 4; string aboutness_mode = 5; repeated string explicit_aboutness = 6; repeated string explicit_tags = 7; }
+message DeriveMaterialRequest { string subject_id = 1 [(reference_kind) = "subject"]; string source_region_id = 2 [(reference_kind) = "source_region"]; optional string strategy = 3; optional string target = 4; optional string supersedes = 5; }
 message FormationResponse { Memory memory = 1; repeated Degradation degradation = 2; }
-message DerivationResponse { repeated DerivedRepresentation representations = 1; optional string selected_representation_id = 2; repeated Degradation degradation = 3; }
-message PrepareEmbeddingsRequest { string subject_id = 1; uint32 limit = 2; }
+message DerivationResponse { repeated DerivedRepresentation representations = 1; optional string selected_representation_id = 2 [(reference_kind) = "derived_representation"]; repeated Degradation degradation = 3; }
+message PrepareEmbeddingsRequest { string subject_id = 1 [(reference_kind) = "subject"]; uint32 limit = 2; }
 message PrepareEmbeddingsResponse { uint32 committed = 1; repeated Degradation degradation = 2; }
 service ModelService {
   rpc FormFromObservation(FormationRequest) returns (FormationResponse);

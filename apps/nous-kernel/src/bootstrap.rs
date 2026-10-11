@@ -297,6 +297,5 @@ pub async fn read_bundle(path: &Path) -> Result<nous_configuration::Configuratio
     let bundle: nous_configuration::ConfigurationBootstrapBundle =
         serde_json::from_slice(&bytes)
             .map_err(|_| Error::Invalid("invalid private configuration bundle".into()))?;
-    bundle.validate_revision()?;
     Ok(bundle)
 }

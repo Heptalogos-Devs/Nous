@@ -7,6 +7,7 @@ import "nous/wave/v1alpha1/types.proto";
 import "nous/wave/v1alpha1/journal.proto";
 import "nous/wave/v1alpha1/management.proto";
 import "google/protobuf/timestamp.proto";
+import "nous/wave/v1alpha1/presentation.proto";
 
 message MaintenanceNeed {
   string need_id = 1;
@@ -32,22 +33,22 @@ message ClaimMaintenanceResponse { repeated MaintenanceNeed needs = 1; }
 message FinishMaintenanceRequest { MaintenanceNeed claimed = 1; string disposition = 2; google.protobuf.Timestamp next_due = 3; optional string problem_code = 4; uint32 retry_delay_seconds = 5; }
 message OrganizeExperienceRequest { string subject_id = 1; uint32 limit = 2; bool close = 3; }
 message OrganizeExperienceResponse { uint32 processed_count = 1; repeated nous.wave.v1alpha1.Episode episodes = 2; google.protobuf.Timestamp next_due = 3; }
-message EpisodePartitionSource { string revision_id = 1; int64 expected_epoch = 2; }
+message EpisodePartitionSource { string revision_id = 1 [(nous.wave.v1alpha1.reference_kind) = "episode_revision"]; int64 expected_epoch = 2; }
 message EpisodePartitionSegment { repeated uint32 member_indices = 1; optional string title = 2; string boundary_explanation = 3; }
 message ApplyEpisodePartitionRequest {
   string operation_id = 1;
-  string subject_id = 2;
+  string subject_id = 2 [(nous.wave.v1alpha1.reference_kind) = "subject"];
   int64 expected_authority_seq = 3;
   repeated EpisodePartitionSource sources = 4;
-  repeated string ordered_occurrences = 5;
+  repeated string ordered_occurrences = 5 [(nous.wave.v1alpha1.reference_kind) = "occurrence"];
   repeated EpisodePartitionSegment segments = 6;
   nous.wave.v1alpha1.ProducerSignature producer = 7;
 }
 message ApplyEpisodePartitionResponse { repeated nous.wave.v1alpha1.Episode episodes = 1; }
-message JournalTarget { string journal_id = 1; string expected_revision_id = 2; int64 expected_epoch = 3; string intent = 4; }
+message JournalTarget { string journal_id = 1 [(nous.wave.v1alpha1.reference_kind) = "journal"]; string expected_revision_id = 2 [(nous.wave.v1alpha1.reference_kind) = "journal_revision"]; int64 expected_epoch = 3; string intent = 4; }
 message CommitJournalRequest {
   string operation_id = 1;
-  string subject_id = 2;
+  string subject_id = 2 [(nous.wave.v1alpha1.reference_kind) = "subject"];
   int64 expected_authority_seq = 3;
   JournalTarget target = 4;
   repeated EpisodePartitionSource sources = 5;
@@ -72,11 +73,11 @@ message MaintenancePolicy {
 message PlanMaintenanceRequest { MaintenanceNeed claimed = 1; }
 message ExperienceMember {
   string key = 1;
-  string occurrence_id = 2;
+  string occurrence_id = 2 [(nous.wave.v1alpha1.reference_kind) = "occurrence"];
   optional int64 recorded_seq = 3;
   google.protobuf.Timestamp observed_at = 4;
-  optional string session_id = 5;
-  optional string work_context_id = 6;
+  optional string session_id = 5 [(nous.wave.v1alpha1.reference_kind) = "session"];
+  optional string work_context_id = 6 [(nous.wave.v1alpha1.reference_kind) = "work_context"];
   optional int64 work_context_revision = 7;
   optional string conversation_ref = 8;
   optional string actor_entity_ref = 9;
@@ -87,7 +88,7 @@ message ExperienceMember {
 }
 message BasisCatalogEntry { string key = 1; nous.wave.v1alpha1.RevisionBasis basis = 2; }
 message MaintenancePlan {
-  string subject_id = 1;
+  string subject_id = 1 [(nous.wave.v1alpha1.reference_kind) = "subject"];
   int64 authority_seq = 2;
   google.protobuf.Timestamp cognitive_now = 3;
   string status = 4;
@@ -126,7 +127,7 @@ message ConceptMaintenanceCatalog {
 }
 message ConceptReference { string key = 1; nous.wave.v1alpha1.CognitiveRef reference = 2; }
 message ConceptTag { string key = 1; nous.wave.v1alpha1.TagRevisionTarget target = 2; }
-message ConceptAssociation { string key = 1; string association_id = 2; string from_key = 3; string to_key = 4; string relation = 5; }
+message ConceptAssociation { string key = 1; string association_id = 2 [(nous.wave.v1alpha1.reference_kind) = "association"]; string from_key = 3; string to_key = 4; string relation = 5; }
 message ConceptBasis { string key = 1; nous.wave.v1alpha1.AssociationBasis basis = 2; }
 
 message ExpectedCognition { nous.wave.v1alpha1.CognitiveRef reference = 1; int64 expected_epoch = 2; string object_id = 3; }

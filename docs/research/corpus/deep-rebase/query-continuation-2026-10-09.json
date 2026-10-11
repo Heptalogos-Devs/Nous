@@ -1,0 +1,34 @@
+{
+  "purpose": "Verbatim real CLI/model Query continuation after one-deadline lifecycle rebase.",
+  "notes": [
+    "The first Query returned degraded/no compatible dense material after the producer identity rebase. This failed readout remains preserved.",
+    "Explicit embedding preparation committed9 in2requests, then the same actual natural-language query completed with the expected grounded Memory rank1 and dense/language-rerank evidence.",
+    "A fresh Session was opened against the same Subject/WorkContext and closed after the readout."
+  ],
+  "outcomes": [
+    {
+      "name": "query-session-open",
+      "output": "{\"schemaVersion\":\"nous.cli.v1\",\"kind\":\"session.open\",\"data\":{\"sessionId\":\"01a11fc2-81ef-70a0-813c-abf676a3ef31\",\"runtimeRevision\":\"0\",\"closed\":false,\"residentRefs\":[]}}\n"
+    },
+    {
+      "name": "query-context-foreground",
+      "output": "{\"schemaVersion\":\"nous.cli.v1\",\"kind\":\"context.foreground\",\"data\":{\"sessionId\":\"01a11fc2-81ef-70a0-813c-abf676a3ef31\",\"subjectId\":\"01a11f1c-2e6f-72d0-886a-c1d6f2e1e1d9\",\"runtimeRevision\":\"1\",\"closed\":false,\"residentRefs\":[],\"activeWorkContextId\":\"01a11f1c-750b-7c40-a00b-532cd8435c66\"}}\n"
+    },
+    {
+      "name": "query-after-rebase",
+      "output": "{\"schemaVersion\":\"nous.cli.v1\",\"kind\":\"query\",\"data\":{\"queryId\":\"01a11fc2-8941-7f90-bc6c-05725a94f257\",\"queryRef\":\"query:last\",\"status\":\"degraded\",\"results\":[],\"resourceRecords\":[],\"resourceActions\":[],\"diagnostics\":{\"candidateCounts\":{\"planned_candidate_bound\":\"48\",\"dense_candidates\":\"0\",\"lexical_candidates\":\"0\"},\"laneStatus\":{\"dense\":\"unavailable\",\"topology_plan\":\"skipped\",\"lexical\":\"ready\",\"cue_sensing_plan\":\"skipped\",\"effort\":\"normal\",\"resource_plan\":\"limit=4,synopsis_preferred=false\"},\"trace\":\"\"},\"degradation\":[{\"code\":\"dense_lane_unavailable\",\"detail\":\"dense serving generation is unavailable\"},{\"code\":\"dense_projection_unavailable\",\"detail\":\"Host did not supply compatible embedding material\"}]}}\n"
+    },
+    {
+      "name": "embeddings-after-query-rebase",
+      "output": "{\"schemaVersion\":\"nous.cli.v1\",\"kind\":\"embeddings.prepare\",\"data\":{\"committed\":9,\"requests\":2,\"degradation\":[]}}\n"
+    },
+    {
+      "name": "query-after-rebase-prepared",
+      "output": "{\"schemaVersion\":\"nous.cli.v1\",\"kind\":\"query\",\"data\":{\"queryId\":\"01a11fc4-16cb-7e73-a84e-870c46c49afb\",\"queryRef\":\"query:last\",\"status\":\"complete\",\"results\":[{\"lexicalRef\":\"memrev:bufor-rurov-pupik\",\"result\":\"result:1\",\"ref\":\"memory_revision:01a11f8b-a8ff-7261-8558-5e1797aa1b56\",\"text\":\"材料证据访问记录规则：必须按实际成功路由和实际物理输入记录。对 visual、audio、source_text，访问状态分别只能记为 original、representation 或 unavailable。原始视频或帧不会使其附带的 Transcript 自动成为直接听到的音频；转录文本对应的音频访问只能记为 representation。经历多路 fallback 后，不能继续用首选模型的能力判断成功结果。工作预算到期后，清理保存与维护确认分别使用各自的有界预算；已经传输但结果不明的 attempt 保留为 unknown，未知 usage 不得写成零。\",\"authority\":\"subject_cognition\",\"cognitiveRole\":\"declarative\",\"formationMode\":\"grounded\",\"evidenceFamilies\":[\"dense\",\"language_rerank\"],\"next\":\"show result:1 | trace result:1 | use result:1 | context pin --cognition result:1\"},{\"lexicalRef\":\"memrev:raman-zajos-ruvuj\",\"result\":\"result:2\",\"ref\":\"memory_revision:01a11f22-2bbe-7111-8ddf-023da7f18de4\",\"text\":\"On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls remain outside those locks. Each command freezes its chosen Subject, Session, WorkContext, and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. On a clean Core/Kernel/PostgreSQL instance, concurrent real CLI Session opening and MCP WorkContext creation were verified to write into one shared state root, with both selections surviving and remaining readable across both entry points and after a Core restart. Real Codex/model continuity and Windows Portable continuation remained pending.\",\"authority\":\"subject_cognition\",\"cognitiveRole\":\"declarative\",\"formationMode\":\"grounded\",\"evidenceFamilies\":[\"dense\",\"language_rerank\"],\"next\":\"show result:2 | trace result:2 | use result:2 | context pin --cognition result:2\"},{\"lexicalRef\":\"memrev:sajot-zujup-muhug\",\"result\":\"result:3\",\"ref\":\"memory_revision:01a11f22-0e18-7c83-9be4-7f9df0d98260\",\"text\":\"On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity; subset keys are sorted and deduplicated. In a clean configuration instance, omitted video defaults and explicit complete defaults using the same operation ID returned the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, then read back as complete normalized values. Leaf configuration organization and reference graph validation remained pending.\",\"authority\":\"subject_cognition\",\"cognitiveRole\":\"declarative\",\"formationMode\":\"grounded\",\"evidenceFamilies\":[\"dense\",\"language_rerank\"],\"next\":\"show result:3 | trace result:3 | use result:3 | context pin --cognition result:3\"}],\"resourceRecords\":[],\"resourceActions\":[],\"diagnostics\":{\"candidateCounts\":{\"planned_candidate_bound\":\"48\",\"lexical_candidates\":\"0\",\"dense_candidates\":\"3\"},\"laneStatus\":{\"dense\":\"ready\",\"topology_plan\":\"skipped\",\"cue_sensing_plan\":\"skipped\",\"resource_plan\":\"limit=4,synopsis_preferred=false\",\"effort\":\"normal\",\"lexical\":\"ready\"},\"trace\":\"\"},\"degradation\":[]}}\n"
+    },
+    {
+      "name": "query-session-close",
+      "output": "{\"schemaVersion\":\"nous.cli.v1\",\"kind\":\"session.close\",\"data\":{\"sessionId\":\"01a11fc2-81ef-70a0-813c-abf676a3ef31\",\"runtimeRevision\":\"2\",\"closed\":true,\"activeWorkContextId\":\"01a11f1c-750b-7c40-a00b-532cd8435c66\",\"residentRefs\":[]}}\n"
+    }
+  ]
+}

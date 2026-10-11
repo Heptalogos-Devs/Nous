@@ -9,6 +9,7 @@ rpc_service! {
             rebind_entity(p::RebindEntityRequest) -> ();
             bind_identity(p::BindIdentityRequest) -> p::IdentityBinding;
             resolve_identity(p::ResolveIdentityRequest) -> p::ResolveIdentityResponse;
+            get_identity_addresses(p::GetIdentityAddressesRequest) -> p::GetIdentityAddressesResponse;
         }
         custom {}
     }

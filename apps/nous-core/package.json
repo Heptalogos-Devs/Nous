@@ -12,10 +12,12 @@
     "@connectrpc/connect-node": "2.2.0",
     "@fastify/multipart": "10.1.1",
     "@noble/hashes": "2.0.1",
+    "@nous-wave/client": "workspace:*",
     "@nous-wave/protocol": "workspace:*",
     "ai": "7.0.102",
     "chevrotain": "13.2.0",
     "fastify": "5.12.5",
+    "get-stream": "9.0.1",
     "smol-toml": "1.9.0",
     "yauzl": "3.2.1",
     "zod": "4.6.5"

@@ -5,24 +5,41 @@ import { describe, expect, it, vi } from "vitest";
 import { ContextCompiler } from "../src/cognition/context.js";
 import { ModelRuntime } from "../src/model/runtime.js";
 import { ProjectionPlanner } from "../src/cognition/projection.js";
-import type { ConsumerPolicy, Projection, Segment } from "../src/domain.js";
+import { CoreCognition } from "../src/cognition/service.js";
+import { coreExecutionSchema } from "../src/configuration/catalog.js";
+import { executionOptions } from "../src/execution.js";
+import type { KernelClient } from "../src/kernel-client.js";
+import { ResourceRegistry } from "../src/resources/registry.js";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import {
+  CognitiveRefSchema,
+  ContextSegmentSchema,
+  EvidenceSchema,
+  ProjectionRequestSchema,
+  ProjectionSchema,
+  type ContextSegment as Segment,
+  type Projection,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import type { ConsumerPolicy } from "../src/domain.js";
 
-const segment = (id: string, text = id): Segment => ({
-  segmentId: id,
-  text,
-  semanticRole: "evidence",
-  sourceRefs: [{ kind: "memory", value: id }],
-  evidence: [],
-  authority: "subject_cognition",
-  stability: "EPOCH_STABLE",
-});
-const projection = (...segments: Segment[]): Projection => ({
-  projectionId: "p",
-  consumerId: "test",
-  sourceRuntimeRevision: 1n,
-  segments,
-  degradation: [],
-});
+const segment = (id: string, text = id): Segment =>
+  create(ContextSegmentSchema, {
+    segmentId: id,
+    text,
+    semanticRole: "evidence",
+    sourceRefs: [{ kind: "memory", value: id }],
+    evidence: [],
+    authority: "subject_cognition",
+    stability: "EPOCH_STABLE",
+  });
+const projection = (...segments: Segment[]): Projection =>
+  create(ProjectionSchema, {
+    projectionId: "p",
+    consumerId: "test",
+    sourceRuntimeRevision: 1n,
+    segments,
+    degradation: [],
+  });
 const policy: ConsumerPolicy = {
   consumerId: "test",
   revision: "1",
@@ -79,12 +96,15 @@ describe("projection authority boundaries", () => {
     const planner = new ProjectionPlanner(
       new Map([["test", { ...policy, memory: "FORBIDDEN" } as ConsumerPolicy]]),
     );
-    const input = {
+    const input = create(ContextSegmentSchema, {
       ...segment("schema", "supported pattern"),
       sourceRefs: [
-        { kind: "cognitive_schema_revision", value: "schema revision" },
+        create(CognitiveRefSchema, {
+          kind: "cognitive_schema_revision",
+          value: "schema revision",
+        }),
       ],
-    };
+    });
     const result = await planner.build(projection(input), {
       maxItems: 5,
       maxTextBytes: 20,
@@ -92,18 +112,54 @@ describe("projection authority boundaries", () => {
     expect(result.segments).toEqual([]);
   });
   it("keeps projected segment identity stable across fresh contribution IDs and resets on evidence drift", async () => {
-    const planner = new ProjectionPlanner(new Map([["test", policy]]));
+    let batch = projection();
+    const execution = coreExecutionSchema.parse(undefined);
+    const kernel = {
+      execution,
+      runtime: { getSession: async () => ({ runtimeRevision: 1n }) },
+      projection: { buildContributionBatch: async () => batch },
+    } as unknown as KernelClient;
+    const service = new CoreCognition(
+      kernel,
+      new ModelRuntime(),
+      new ResourceRegistry(),
+      [policy],
+    );
+    const build = async (input: Segment) => {
+      batch = projection(input);
+      const result = await service.buildProjection(
+        create(ProjectionRequestSchema, {
+          subjectId: "s",
+          sessionId: "session",
+          consumerId: "test",
+          maxItems: 5,
+          maxTextBytes: 20,
+        }),
+        executionOptions(execution.opportunity),
+      );
+      return fromBinary(ProjectionSchema, toBinary(ProjectionSchema, result));
+    };
     const compiler = new ContextCompiler(256);
     const key = { subjectId: "s", sessionId: "session", consumerId: "test" };
-    const original = segment("source", "same content");
-    const first = await planner.build(projection(original), {
-      maxItems: 5,
-      maxTextBytes: 20,
+    const original = create(ContextSegmentSchema, {
+      ...segment("source", "same content"),
+      evidence: [
+        create(EvidenceSchema, {
+          basisRole: "direct",
+          reference: create(CognitiveRefSchema, {
+            kind: "occurrence",
+            value: "source",
+          }),
+          epistemicRelation: "supports",
+        }),
+      ],
     });
-    const second = await planner.build(
-      projection({ ...original, segmentId: "fresh contribution ID" }),
-      { maxItems: 5, maxTextBytes: 20 },
-    );
+    const first = await build(original);
+    expect(first.segments[0]?.evidence[0]?.epistemicRelation).toBe("supports");
+    const second = await build({
+      ...original,
+      segmentId: "fresh contribution ID",
+    });
     expect(second.segments[0]?.segmentId).toBe(first.segments[0]?.segmentId);
     expect(second.projectionId).toBe(first.projectionId);
     const initial = compiler.compile(key, "1", first);
@@ -111,17 +167,23 @@ describe("projection authority boundaries", () => {
     expect(unchanged.kind).toBe("APPEND");
     expect(unchanged.projection.segments).toEqual([]);
     expect(unchanged.cursor).toEqual(initial.cursor);
-    const changed = await planner.build(
-      projection({
+    const changed = await build(
+      create(ContextSegmentSchema, {
         ...original,
         evidence: [
-          {
+          create(EvidenceSchema, {
             basisRole: "direct",
-            reference: { kind: "occurrence", value: "different source" },
-          },
+            reference: create(CognitiveRefSchema, {
+              kind: "occurrence",
+              value: "source",
+            }),
+            epistemicRelation: "contradicts",
+          }),
         ],
       }),
-      { maxItems: 5, maxTextBytes: 20 },
+    );
+    expect(changed.segments[0]?.evidence[0]?.epistemicRelation).toBe(
+      "contradicts",
     );
     expect(compiler.compile(key, "1", changed, unchanged.cursor).kind).toBe(
       "RESET",
@@ -138,7 +200,7 @@ describe("projection authority boundaries", () => {
       model,
     ).build(projection(segment("a")), { maxItems: 5, maxTextBytes: 20 });
     expect(result.segments.map((s) => s.sourceRefs)).toEqual([
-      [{ kind: "memory", value: "a" }],
+      [create(CognitiveRefSchema, { kind: "memory", value: "a" })],
     ]);
     expect(result.degradation[0]?.code).toBe("steward_rejected");
   });

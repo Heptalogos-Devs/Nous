@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parseArgs } from "node:util";
-import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { cliExecutor, createMcpServer } from "./mcp.js";
@@ -21,12 +20,6 @@ try {
       "Use nous mcp --state-root <unique Agent directory> --consumer <stable consumer ref> with a launcher location or --run-root.",
     );
   const execute = cliExecutor({
-    entry: fileURLToPath(
-      new URL(
-        import.meta.url.endsWith(".ts") ? "./main.ts" : "./main.js",
-        import.meta.url,
-      ),
-    ),
     runRoot: resolve(values["run-root"]),
     stateRoot: resolve(values["state-root"]),
     consumer: values.consumer,

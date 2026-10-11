@@ -77,10 +77,11 @@ impl KernelService {
         input: k::KernelQueryRequest,
     ) -> Result<k::QueryActivationResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
-        let mut bound = self
+        let mut reservation = self
             .0
             .cognition
             .take_prepared_query(subject, id(&input.preparation_token)?)?;
+        let bound = &mut reservation.bound;
         if bound.concept_enrichment != nous_runtime::ConceptEnrichment::Model
             || bound.source_query.capabilities.query_concept_enrichment
                 == nous_core::RequirementStrength::Forbidden
@@ -93,13 +94,13 @@ impl KernelService {
                 "query concept model activity is not permitted".into(),
             ));
         }
-        let materials = self.query_materials(&bound, input.embeddings)?;
-        let plan = nous_runtime::QueryPlan::for_bound_query(&bound);
+        let materials = self.query_materials(bound, input.embeddings)?;
+        let plan = nous_runtime::QueryPlan::for_bound_query(bound);
         use nous_runtime::SharedLaneProvider;
         let (projection, view, activation) =
             nous_retrieval::with_query_material(materials, async {
-                let (projection, view) = self.0.serving.prepare_query(&bound, &plan).await?;
-                let activation = view.activate(&bound).await?;
+                let (projection, view) = self.0.serving.prepare_query(bound, &plan).await?;
+                let activation = view.activate(bound).await?;
                 Ok::<_, Error>((projection, view, activation))
             })
             .await?;
@@ -109,7 +110,7 @@ impl KernelService {
         bound.activation_view = Some(view);
         let catalog = bound.activation.concept_catalog.iter().map(|candidate| serde_json::json!({"key":candidate.key,"semantic_text":candidate.semantic_text,"strength":candidate.strength})).collect::<Vec<_>>();
         let model_input = serde_json::json!({"query_representation":bound.representation,"existing_tags":catalog,"temporal_frame":bound.source_query.temporal_frame}).to_string();
-        let token = self.0.cognition.retain_prepared_query(bound)?;
+        let token = self.0.cognition.retain_prepared_query(reservation)?;
         Ok(k::QueryActivationResponse {
             preparation_token: token.to_string(),
             model_input,
@@ -149,7 +150,9 @@ impl KernelService {
             }
             let output = serde_json::from_str(&output)
                 .map_err(|_| Error::Invalid("invalid query concept output".into()))?;
-            bound.activation.apply_concept_model(output)?;
+            let policy =
+                nous_runtime::ConceptActivationPolicy::from_snapshot(&bound.config_snapshot)?;
+            bound.activation.apply_concept_model(output, &policy)?;
             bound.activation.model_calls = calls as usize;
         } else {
             bound.activation.model_calls = calls as usize;
@@ -164,12 +167,12 @@ impl KernelService {
         &self,
         input: k::KernelQueryRequest,
     ) -> Result<k::KernelQueryResponse> {
-        let bound = self.0.cognition.take_prepared_query(
+        let reservation = self.0.cognition.take_prepared_query(
             SubjectId(id(&input.subject_id)?),
             id(&input.preparation_token)?,
         )?;
+        let (mut bound, lease) = reservation.into_parts();
         let materials = self.query_materials(&bound, input.embeddings)?;
-        let mut bound = bound;
         self.apply_query_concept_output(
             &mut bound,
             input.concept_output,
@@ -180,6 +183,7 @@ impl KernelService {
             materials,
             self.query(
                 bound,
+                lease,
                 input.validated_candidate_limit.map(|limit| limit as usize),
             ),
         )

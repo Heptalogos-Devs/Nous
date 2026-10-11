@@ -1,0 +1,10 @@
+// Copyright 2026 Aravine Zhu
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+package nous.wave.v1alpha1;
+import "google/protobuf/descriptor.proto";
+
+// Canonical field semantics, independent of display name or string content.
+// "$kind" uses the canonical CognitiveRef kind field.
+extend google.protobuf.FieldOptions { string reference_kind = 51001; }

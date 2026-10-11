@@ -3,6 +3,7 @@
 
 syntax = "proto3";
 package nous.wave.v1alpha1;
+import "nous/wave/v1alpha1/presentation.proto";
 import "nous/wave/v1alpha1/types.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
@@ -14,22 +15,28 @@ message IdentityBinding {
   string status = 5;
 }
 message BindIdentityRequest {
-  string subject_id = 1;
+  string subject_id = 1 [(reference_kind) = "subject"];
   CognitiveRef canonical = 2;
   string display_name = 3;
   repeated string aliases = 4;
   bool address_only = 5;
 }
 message ResolveIdentityRequest {
-  string subject_id = 1;
+  string subject_id = 1 [(reference_kind) = "subject"];
   string kind = 2;
   optional google.protobuf.Timestamp as_of = 5;
   oneof locator { string name = 3; string lexical_ref = 4; }
 }
 message ResolveIdentityResponse { repeated IdentityBinding candidates = 1; string status = 2; }
-message RebindEntityRequest { string subject_id = 1; string mention_id = 2; optional string entity_ref = 3; string binding_state = 4; optional string host_resolution_ref = 5; optional string reason = 6; }
+// Read existing directory addresses without allocating bindings or changing labels/visibility.
+message IdentityAddressTarget { string subject_id = 1 [(reference_kind) = "subject"]; CognitiveRef canonical = 2; }
+message IdentityAddress { IdentityAddressTarget target = 1; optional string lexical_ref = 2; string status = 3; }
+message GetIdentityAddressesRequest { repeated IdentityAddressTarget targets = 1; }
+message GetIdentityAddressesResponse { repeated IdentityAddress addresses = 1; }
+message RebindEntityRequest { string subject_id = 1 [(reference_kind) = "subject"]; string mention_id = 2; optional string entity_ref = 3 [(reference_kind) = "entity"]; string binding_state = 4; optional string host_resolution_ref = 5; optional string reason = 6; }
 service IdentityService {
   rpc RebindEntity(RebindEntityRequest) returns (google.protobuf.Empty);
   rpc BindIdentity(BindIdentityRequest) returns (IdentityBinding);
   rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
+  rpc GetIdentityAddresses(GetIdentityAddressesRequest) returns (GetIdentityAddressesResponse);
 }

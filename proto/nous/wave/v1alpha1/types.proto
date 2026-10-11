@@ -3,27 +3,28 @@
 
 syntax = "proto3";
 package nous.wave.v1alpha1;
+import "nous/wave/v1alpha1/presentation.proto";
 
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
-message CognitiveRef { string kind = 1; string value = 2; }
+message CognitiveRef { string kind = 1; string value = 2 [(reference_kind) = "$kind"]; }
 message Degradation { string code = 1; string detail = 2; }
 message Page { uint32 page_size = 1; string page_token = 2; }
-message SubjectRequest { string subject_id = 1; }
-message ObjectRequest { string subject_id = 1; string id = 2; }
-message ListRequest { string subject_id = 1; Page page = 2; string status = 3; }
+message SubjectRequest { string subject_id = 1 [(reference_kind) = "subject"]; }
+message ObjectRequest { string subject_id = 1 [(reference_kind) = "subject"]; string id = 2; }
+message ListRequest { string subject_id = 1 [(reference_kind) = "subject"]; Page page = 2; string status = 3; }
 message CognitiveSeed { string text = 1; string format = 2; google.protobuf.Struct provenance = 3; }
 message SubjectCapabilities { bool memory = 1; }
-message Subject { string subject_id = 1; google.protobuf.Timestamp created_at = 2; int64 authority_seq = 3; string status = 4; google.protobuf.Struct metadata = 5; SubjectCapabilities capabilities = 6; }
-message CreateSubjectRequest { optional string subject_id = 1; CognitiveSeed cognitive_seed = 2; google.protobuf.Struct metadata = 3; string operation_id = 4; SubjectCapabilities capabilities = 5; }
+message Subject { string subject_id = 1 [(reference_kind) = "subject"]; google.protobuf.Timestamp created_at = 2; int64 authority_seq = 3; string status = 4; google.protobuf.Struct metadata = 5; SubjectCapabilities capabilities = 6; }
+message CreateSubjectRequest { optional string subject_id = 1 [(reference_kind) = "subject"]; CognitiveSeed cognitive_seed = 2; google.protobuf.Struct metadata = 3; string operation_id = 4; SubjectCapabilities capabilities = 5; }
 message ListSubjectsResponse { repeated Subject items = 1; string next_page_token = 2; }
-message CognitiveSeedVersion { CognitiveSeed seed = 1; string seed_version_id = 2; string subject_id = 3; string artifact_id = 4; string format = 5; string content_hash = 6; google.protobuf.Timestamp created_at = 7; string adoption_id = 8; string adoption_kind = 9; string operation_id = 10; }
-message AdoptCognitiveSeedRequest { string subject_id = 1; string operation_id = 2; CognitiveSeed seed = 3; string kind = 4; }
-message Session { string session_id = 1; string subject_id = 2; int64 runtime_revision = 3; bool closed = 4; repeated CognitiveRef resident_refs = 5; optional string active_work_context_id = 6; }
+message CognitiveSeedVersion { CognitiveSeed seed = 1; string seed_version_id = 2 [(reference_kind) = "cognitive_seed_version"]; string subject_id = 3 [(reference_kind) = "subject"]; string artifact_id = 4 [(reference_kind) = "artifact"]; string format = 5; string content_hash = 6; google.protobuf.Timestamp created_at = 7; string adoption_id = 8; string adoption_kind = 9; string operation_id = 10; }
+message AdoptCognitiveSeedRequest { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; CognitiveSeed seed = 3; string kind = 4; }
+message Session { string session_id = 1 [(reference_kind) = "session"]; string subject_id = 2 [(reference_kind) = "subject"]; int64 runtime_revision = 3; bool closed = 4; repeated CognitiveRef resident_refs = 5; optional string active_work_context_id = 6 [(reference_kind) = "work_context"]; }
 message ListSessionsResponse { repeated Session items = 1; string next_page_token = 2; }
 
-message EntityMention { string surface = 1; optional string entity_ref = 2; optional string semantic_role = 3; }
+message EntityMention { string surface = 1; optional string entity_ref = 2 [(reference_kind) = "entity"]; optional string semantic_role = 3; }
 message InlineText { string text = 1; string media_type = 2; }
 message TemporalExtent {
   oneof value {
@@ -32,23 +33,29 @@ message TemporalExtent {
   }
 }
 message TimeInterval { optional google.protobuf.Timestamp start = 1; optional google.protobuf.Timestamp end = 2; }
+message TimePredicate {
+  oneof predicate {
+    google.protobuf.Timestamp point = 1;
+    TimeInterval range = 2;
+  }
+}
 message ObservationInput {
-  string subject_id = 1;
-  optional string session_id = 2;
+  string subject_id = 1 [(reference_kind) = "subject"];
+  optional string session_id = 2 [(reference_kind) = "session"];
   optional string request_id = 3;
   string source_class = 4;
   optional string external_object_ref = 5;
   TemporalExtent occurred_time = 6;
   google.protobuf.Timestamp observed_at = 7;
   optional string conversation_ref = 8;
-  optional string actor_entity_ref = 9;
+  optional string actor_entity_ref = 9 [(reference_kind) = "entity"];
   google.protobuf.Struct context = 10;
   repeated EntityMention entities = 11;
   bool admit = 12;
   google.protobuf.Timestamp hold_until = 13;
-  oneof material { InlineText inline_text = 20; string artifact_id = 21; string object_ref = 22; google.protobuf.Value structured = 23; string resource_ref = 24; }
+  oneof material { InlineText inline_text = 20; string artifact_id = 21 [(reference_kind) = "artifact"]; string object_ref = 22; google.protobuf.Value structured = 23; string resource_ref = 24 [(reference_kind) = "resource"]; }
 }
-message AcceptedObservation { string occurrence_id = 1; optional string artifact_id = 2; optional string source_region_id = 3; bool resident = 4; repeated string mention_ids = 5; }
+message AcceptedObservation { string occurrence_id = 1 [(reference_kind) = "occurrence"]; optional string artifact_id = 2 [(reference_kind) = "artifact"]; optional string source_region_id = 3 [(reference_kind) = "source_region"]; bool resident = 4; repeated string mention_ids = 5; }
 
 message QueryConstraints {
   repeated string source_classes_include = 1;
@@ -56,11 +63,11 @@ message QueryConstraints {
   repeated string cognitive_roles = 3;
   repeated string formation_modes = 4;
   repeated string entity_requirements = 5;
-  TimeInterval occurred = 6;
-  TimeInterval observed = 7;
-  TimeInterval valid = 8;
-  TimeInterval formed = 9;
-  TimeInterval recorded = 10;
+  TimePredicate occurred = 6;
+  TimePredicate observed = 7;
+  TimePredicate valid = 8;
+  TimePredicate formed = 9;
+  TimePredicate recorded = 10;
   bool include_suppressed = 11;
   optional string authority = 12;
   repeated string modalities = 13;
@@ -71,10 +78,10 @@ message Cue {
     string text = 1;
     CognitiveRef reference = 2;
     string concept = 3;
-    string schema_id = 4;
-    string entity_ref = 5;
-    string tag_id = 6;
-    string resource_ref = 7;
+    string schema_id = 4 [(reference_kind) = "cognitive_schema"];
+    string entity_ref = 5 [(reference_kind) = "entity"];
+    string tag_id = 6 [(reference_kind) = "tag"];
+    string resource_ref = 7 [(reference_kind) = "resource"];
     string external_object_ref = 8;
   }
 }
@@ -85,7 +92,7 @@ message Preference { bool negative = 1; Cue cue = 2; string key = 3; }
 message QueryExpr { string operation = 1; repeated Cue cues = 2; repeated QueryExpr children = 3; QueryModifiers modifiers = 4; }
 message QueryCapabilities { string text_embedding = 1; string multimodal_interpretation = 2; string residual_sensing = 3; string rerank = 4; string query_concept_enrichment = 5; }
 message QuerySituation { optional string consumer = 1; repeated CognitiveRef current_refs = 2; repeated string current_objects = 3; map<string,string> object_descriptions = 4; }
-message QueryRequest { string subject_id = 1; optional string session_id = 2; QueryExpr expression = 3; optional string nousql = 4; optional string work_context_id = 5; QuerySituation situation = 6; reserved 7; QueryCapabilities capabilities = 8; }
+message QueryRequest { string subject_id = 1 [(reference_kind) = "subject"]; optional string session_id = 2 [(reference_kind) = "session"]; QueryExpr expression = 3; optional string nousql = 4; optional string work_context_id = 5 [(reference_kind) = "work_context"]; QuerySituation situation = 6; reserved 7; QueryCapabilities capabilities = 8; }
 message PreparedQueryResponse { string bound_query = 1; optional string preparation_token = 2; string embedding_text = 3; bool embedding_required = 4; string text_embedding_requirement = 5; string rerank_requirement = 6; string concept_enrichment_mode = 7; string concept_enrichment_requirement = 8; bool historical_view = 9; }
 message Evidence { CognitiveRef reference = 1; string basis_role = 2; optional string epistemic_relation = 3; }
 message Hit {
@@ -104,20 +111,20 @@ message Hit {
   optional string recorded_at = 13;
   HitScore score = 14;
 }
-message ResourceAction { string resource_ref = 1; string action = 2; string reason = 3; bool current_authority = 4; string action_id = 5; string query_text = 6; uint32 limit = 7; bool materialize = 8; string adapter_kind = 9; string provider_profile = 10; string provider_locator = 11; string descriptor_digest = 12; }
-message StableExternalRef { string provider_kind = 1; string provider_profile = 2; string profile_digest = 3; string resource_ref = 4; string provider_resource_id = 5; string entry_id = 6; optional string entry_version = 7; string content_digest = 8; string source_locator = 9; string retrieved_at = 10; string access_scope = 11; }
-message ExternalResourceRecord { string resource_ref = 1; StableExternalRef reference = 2; optional string title = 3; string content = 4; uint32 provider_rank = 5; optional double provider_score = 6; string version_status = 7; string access_status = 8; }
+message ResourceAction { string resource_ref = 1 [(reference_kind) = "resource"]; string action = 2; string reason = 3; bool current_authority = 4; string action_id = 5; string query_text = 6; uint32 limit = 7; bool materialize = 8; string adapter_kind = 9; string provider_profile = 10; string provider_locator = 11; string descriptor_digest = 12; }
+message StableExternalRef { string provider_kind = 1; string provider_profile = 2; string profile_digest = 3; string resource_ref = 4 [(reference_kind) = "resource"]; string provider_resource_id = 5; string entry_id = 6; optional string entry_version = 7; string content_digest = 8; string source_locator = 9; string retrieved_at = 10; string access_scope = 11; }
+message ExternalResourceRecord { string resource_ref = 1 [(reference_kind) = "resource"]; StableExternalRef reference = 2; optional string title = 3; string content = 4; uint32 provider_rank = 5; optional double provider_score = 6; string version_status = 7; string access_status = 8; }
 message QueryDiagnostics { map<string, uint64> candidate_counts = 1; map<string, string> lane_status = 2; optional bool topology_complete = 3; optional double topology_discarded_mass = 4; string trace = 5; }
 message HitScore { double baseline = 1; double preference = 2; optional double rerank = 3; double final = 4; uint32 baseline_rank = 5; uint32 final_rank = 6; uint32 best_lane_rank = 7; repeated string variants = 8; }
 message QueryResponse { string query_id = 1; string status = 2; repeated Hit hits = 3; repeated ResourceAction resource_actions = 4; repeated Degradation degradation = 5; optional string bound_query = 6; QueryDiagnostics diagnostics = 7; repeated ExternalResourceRecord resource_records = 10; }
 
-message ReportUseRequest { string subject_id = 1; optional string session_id = 2; string consumer_ref = 3; repeated UseEvent events = 4; }
+message ReportUseRequest { string subject_id = 1 [(reference_kind) = "subject"]; optional string session_id = 2 [(reference_kind) = "session"]; string consumer_ref = 3; repeated UseEvent events = 4; }
 message UseEvent { string event_id = 1; CognitiveRef reference = 2; string kind = 3; google.protobuf.Timestamp occurred_at = 4; google.protobuf.Struct context = 5; optional string query_id = 6; }
 message ReportUseResponse { uint32 accepted_count = 1; uint32 duplicate_count = 2; optional int64 session_runtime_revision = 3; }
 
 message EvidenceRef {
-  string occurrence_id = 1;
-  oneof locator { bool whole_occurrence = 2; string source_region_id = 3; string derived_representation_id = 4; string derived_region_id = 5; }
+  string occurrence_id = 1 [(reference_kind) = "occurrence"];
+  oneof locator { bool whole_occurrence = 2; string source_region_id = 3 [(reference_kind) = "source_region"]; string derived_representation_id = 4 [(reference_kind) = "derived_representation"]; string derived_region_id = 5 [(reference_kind) = "derived_region"]; }
   string basis_role = 6;
   optional string epistemic_relation = 7;
 }
@@ -128,21 +135,21 @@ message MemoryContent {
   ProducerSignature producer = 13;
   string cognitive_role = 1;
   string formation_mode = 2;
-  optional string grounding_occurrence_id = 3;
+  optional string grounding_occurrence_id = 3 [(reference_kind) = "occurrence"];
   string semantic_role = 4;
   string text = 5;
   optional string title = 6;
   repeated RevisionBasis basis = 7;
-  repeated string aboutness = 8;
-  repeated string tags = 9;
+  repeated string aboutness = 8 [(reference_kind) = "entity"];
+  repeated string tags = 9 [(reference_kind) = "tag"];
   TemporalExtent valid_time = 10;
   string epistemic_class = 12;
 }
 message Memory {
   optional string producer_signature_id = 28;
-  string memory_id = 1;
-  string revision_id = 2;
-  string subject_id = 3;
+  string memory_id = 1 [(reference_kind) = "memory"];
+  string revision_id = 2 [(reference_kind) = "memory_revision"];
+  string subject_id = 3 [(reference_kind) = "subject"];
   string cognitive_role = 4;
   int64 object_epoch = 5;
   string acceptance_state = 6;
@@ -155,8 +162,8 @@ message Memory {
   string text = 13;
   optional string title = 14;
   repeated RevisionBasis basis = 15;
-  repeated string aboutness = 16;
-  repeated string tags = 17;
+  repeated string aboutness = 16 [(reference_kind) = "entity"];
+  repeated string tags = 17 [(reference_kind) = "tag"];
   google.protobuf.Timestamp created_at = 18;
   TemporalEvidence temporal_evidence = 19;
   TemporalExtent valid_time = 20;
@@ -168,30 +175,30 @@ message Memory {
   bool relations_truncated = 26;
   optional string revision_intent = 27;
   string epistemic_class = 29;
-  optional string grounding_occurrence_id = 30;
+  optional string grounding_occurrence_id = 30 [(reference_kind) = "occurrence"];
 }
 message TemporalEvidence { repeated TemporalExtent occurred = 1; optional google.protobuf.Timestamp observed_at = 2; }
-message RevisionRelation { string from_revision_id = 1; string to_revision_id = 2; string relation = 3; }
+message RevisionRelation { string from_revision_id = 1 [(reference_kind) = "memory_revision"]; string to_revision_id = 2 [(reference_kind) = "memory_revision"]; string relation = 3; }
 message ListMemoriesResponse { repeated Memory items = 1; string next_page_token = 2; }
-message FormMemoryRequest { string operation_id = 1; string subject_id = 2; MemoryContent input = 3; }
-message ReviseMemoryRequest { string operation_id = 1; string subject_id = 2; string memory_id = 3; int64 expected_object_epoch = 4; MemoryContent input = 5; string intent = 6; }
-message SetAccessibilityRequest { string operation_id = 1; string subject_id = 2; string memory_id = 3; int64 expected_object_epoch = 4; string mode = 5; }
-message LinkRevisionsRequest { string operation_id = 1; string subject_id = 2; string from_revision_id = 3; string to_revision_id = 4; string relation = 5; }
-message MemoryMutationRequest { string operation_id = 1; string subject_id = 2; string memory_id = 3; int64 expected_object_epoch = 4; }
-message MemoryHistoryRequest { string subject_id = 1; string memory_id = 2; Page page = 3; }
+message FormMemoryRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; MemoryContent input = 3; }
+message ReviseMemoryRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string memory_id = 3 [(reference_kind) = "memory"]; int64 expected_object_epoch = 4; MemoryContent input = 5; string intent = 6; }
+message SetAccessibilityRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string memory_id = 3 [(reference_kind) = "memory"]; int64 expected_object_epoch = 4; string mode = 5; }
+message LinkRevisionsRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string from_revision_id = 3 [(reference_kind) = "memory_revision"]; string to_revision_id = 4 [(reference_kind) = "memory_revision"]; string relation = 5; }
+message MemoryMutationRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string memory_id = 3 [(reference_kind) = "memory"]; int64 expected_object_epoch = 4; }
+message MemoryHistoryRequest { string subject_id = 1 [(reference_kind) = "subject"]; string memory_id = 2 [(reference_kind) = "memory"]; Page page = 3; }
 
-message Artifact { string artifact_id = 1; string subject_id = 2; string content_hash = 3; uint64 byte_length = 4; string media_type = 5; google.protobuf.Timestamp created_at = 6; google.protobuf.Struct metadata = 7; }
+message Artifact { string artifact_id = 1 [(reference_kind) = "artifact"]; string subject_id = 2 [(reference_kind) = "subject"]; string content_hash = 3; uint64 byte_length = 4; string media_type = 5; google.protobuf.Timestamp created_at = 6; google.protobuf.Struct metadata = 7; }
 message MaterialLimits { uint64 max_upload_bytes = 1; }
 message ProducerSignature { string signature_hash = 1; string provider_class = 2; string operation = 3; string implementation = 4; optional string model_identity = 5; optional string model_revision = 6; string preprocessing_identity = 7; string preprocessing_revision = 8; string config_digest = 9; optional string output_schema_digest = 10; optional string model_role = 11; optional string model_profile = 12; optional string execution_profile = 13; optional string inference_controls_digest = 14; optional string role_policy_digest = 15; optional string prompt_id = 16; optional string prompt_digest = 17; }
 message DerivationInput { uint32 ordinal = 1; CognitiveRef reference = 2; string role = 3; }
-message RepresentationListRequest { string subject_id = 1; optional string source_region_id = 2; optional string artifact_id = 3; optional string kind = 4; uint32 limit = 5; }
+message RepresentationListRequest { string subject_id = 1 [(reference_kind) = "subject"]; optional string source_region_id = 2 [(reference_kind) = "source_region"]; optional string artifact_id = 3 [(reference_kind) = "artifact"]; optional string kind = 4; uint32 limit = 5; }
 message ListArtifactsResponse { repeated Artifact items = 1; string next_page_token = 2; }
-message MaterializeRequest { string subject_id = 1; CognitiveRef reference = 2; uint64 max_bytes = 3; optional uint64 start = 4; optional uint64 end = 5; }
+message MaterializeRequest { string subject_id = 1 [(reference_kind) = "subject"]; CognitiveRef reference = 2; uint64 max_bytes = 3; optional uint64 start = 4; optional uint64 end = 5; }
 message MaterializedEvidence { CognitiveRef reference = 1; string media_type = 2; bytes content = 3; repeated Evidence evidence = 4; repeated Degradation degradation = 5; uint64 total_bytes = 6; uint64 range_start = 7; uint64 range_end = 8; bool partial = 9; }
 
 message WorkContext {
-  string work_context_id = 1;
-  string subject_id = 2;
+  string work_context_id = 1 [(reference_kind) = "work_context"];
+  string subject_id = 2 [(reference_kind) = "subject"];
   string state = 3;
   string purpose = 4;
   repeated string unresolved_questions = 5;
@@ -204,12 +211,12 @@ message WorkContext {
   google.protobuf.Timestamp ended_at = 12;
   repeated CognitiveRef cognition_anchors = 13;
   string context_text = 14;
-  repeated string entity_anchors = 15;
-  repeated string tag_anchors = 16;
+  repeated string entity_anchors = 15 [(reference_kind) = "entity"];
+  repeated string tag_anchors = 16 [(reference_kind) = "tag"];
 }
 message CreateWorkContextRequest {
   string operation_id = 1;
-  string subject_id = 2;
+  string subject_id = 2 [(reference_kind) = "subject"];
   string purpose = 3;
   repeated string unresolved_questions = 4;
   google.protobuf.Struct constraints = 5;
@@ -217,17 +224,17 @@ message CreateWorkContextRequest {
   google.protobuf.Struct budget_summary = 7;
   repeated CognitiveRef cognition_anchors = 8;
   string context_text = 9;
-  repeated string entity_anchors = 10;
-  repeated string tag_anchors = 11;
+  repeated string entity_anchors = 10 [(reference_kind) = "entity"];
+  repeated string tag_anchors = 11 [(reference_kind) = "tag"];
 }
-message GetWorkContextRequest { string subject_id = 1; string work_context_id = 2; }
-message ListWorkContextsRequest { string subject_id = 1; Page page = 2; }
+message GetWorkContextRequest { string subject_id = 1 [(reference_kind) = "subject"]; string work_context_id = 2 [(reference_kind) = "work_context"]; }
+message ListWorkContextsRequest { string subject_id = 1 [(reference_kind) = "subject"]; Page page = 2; }
 message ListWorkContextsResponse { repeated WorkContext items = 1; string next_page_token = 2; }
 message WorkContextResponse { WorkContext work_context = 1; repeated Degradation degradation = 2; }
 message UpdateWorkContextRequest {
   string operation_id = 1;
-  string subject_id = 2;
-  string work_context_id = 3;
+  string subject_id = 2 [(reference_kind) = "subject"];
+  string work_context_id = 3 [(reference_kind) = "work_context"];
   int64 expected_revision = 4;
   string purpose = 5;
   repeated string unresolved_questions = 6;
@@ -236,23 +243,23 @@ message UpdateWorkContextRequest {
   google.protobuf.Struct budget_summary = 9;
   repeated CognitiveRef cognition_anchors = 10;
   string context_text = 11;
-  repeated string entity_anchors = 12;
-  repeated string tag_anchors = 13;
+  repeated string entity_anchors = 12 [(reference_kind) = "entity"];
+  repeated string tag_anchors = 13 [(reference_kind) = "tag"];
 }
 message WorkContextMutationRequest {
   string operation_id = 1;
-  string subject_id = 2;
-  string work_context_id = 3;
+  string subject_id = 2 [(reference_kind) = "subject"];
+  string work_context_id = 3 [(reference_kind) = "work_context"];
   int64 expected_revision = 4;
 }
 message SetActiveWorkContextRequest {
   string operation_id = 1;
-  string subject_id = 2;
-  string session_id = 3;
+  string subject_id = 2 [(reference_kind) = "subject"];
+  string session_id = 3 [(reference_kind) = "session"];
   int64 expected_runtime_revision = 4;
-  optional string work_context_id = 5;
+  optional string work_context_id = 5 [(reference_kind) = "work_context"];
 }
-message ProjectionRequest { string subject_id = 1; string session_id = 2; optional string active_work_context_id = 3; string consumer_id = 4; QueryExpr query = 5; repeated CognitiveRef situation_refs = 6; uint32 max_items = 7; uint32 max_text_bytes = 8; }
+message ProjectionRequest { string subject_id = 1 [(reference_kind) = "subject"]; string session_id = 2 [(reference_kind) = "session"]; optional string active_work_context_id = 3 [(reference_kind) = "work_context"]; string consumer_id = 4; QueryExpr query = 5; repeated CognitiveRef situation_refs = 6; uint32 max_items = 7; uint32 max_text_bytes = 8; }
 message ContextSegment { string segment_id = 1; string text = 2; string semantic_role = 3; repeated CognitiveRef source_refs = 4; repeated Evidence evidence = 5; string authority = 6; string stability = 7; optional string source_revision = 8; }
 message Projection { string projection_id = 1; string consumer_id = 2; int64 source_runtime_revision = 3; repeated ContextSegment segments = 4; repeated Degradation degradation = 5; }
 message ContextCursor { string track_id = 1; string epoch_id = 2; uint32 revision = 3; }
@@ -260,14 +267,14 @@ message ManagedContextRequest { ProjectionRequest projection = 1; ContextCursor 
 message ManagedContextResponse { string kind = 1; ContextCursor cursor = 2; Projection projection = 3; }
 message EpisodeMember { int32 ordinal = 1; CognitiveRef reference = 2; string role = 3; }
 message EpisodeRevision {
-  string episode_revision_id = 1;
-  string episode_id = 2;
-  string subject_id = 3;
+  string episode_revision_id = 1 [(reference_kind) = "episode_revision"];
+  string episode_id = 2 [(reference_kind) = "episode"];
+  string subject_id = 3 [(reference_kind) = "subject"];
   int32 revision_no = 4;
-  optional string parent_revision_id = 5;
+  optional string parent_revision_id = 5 [(reference_kind) = "episode_revision"];
   optional string revision_intent = 6;
   optional string title = 7;
-  optional string parent_episode_revision_id = 8;
+  optional string parent_episode_revision_id = 8 [(reference_kind) = "episode_revision"];
   TemporalExtent experience_time = 9;
   string boundary_explanation = 10;
   google.protobuf.Timestamp formed_at = 11;
@@ -277,10 +284,10 @@ message EpisodeRevision {
   repeated RevisionBasis basis = 15;
 }
 message Episode {
-  string episode_id = 1;
-  string subject_id = 2;
+  string episode_id = 1 [(reference_kind) = "episode"];
+  string subject_id = 2 [(reference_kind) = "subject"];
   string track_key = 3;
-  string current_revision_id = 4;
+  string current_revision_id = 4 [(reference_kind) = "episode_revision"];
   int64 object_epoch = 5;
   string acceptance_state = 6;
   string integrity_state = 7;
@@ -291,10 +298,10 @@ message Episode {
 }
 message CreateEpisodeRequest {
   string operation_id = 1;
-  string subject_id = 2;
+  string subject_id = 2 [(reference_kind) = "subject"];
   string track_key = 3;
   optional string title = 4;
-  optional string parent_episode_revision_id = 5;
+  optional string parent_episode_revision_id = 5 [(reference_kind) = "episode_revision"];
   TemporalExtent experience_time = 6;
   string boundary_explanation = 7;
   optional string producer_signature_id = 9;
@@ -303,21 +310,21 @@ message CreateEpisodeRequest {
 }
 message ReviseEpisodeRequest {
   string operation_id = 1;
-  string subject_id = 2;
-  string episode_id = 3;
+  string subject_id = 2 [(reference_kind) = "subject"];
+  string episode_id = 3 [(reference_kind) = "episode"];
   int64 expected_object_epoch = 4;
   string intent = 5;
   optional string title = 6;
-  optional string parent_episode_revision_id = 7;
+  optional string parent_episode_revision_id = 7 [(reference_kind) = "episode_revision"];
   TemporalExtent experience_time = 8;
   string boundary_explanation = 9;
   optional string producer_signature_id = 11;
   repeated EpisodeMember members = 12;
   repeated RevisionBasis basis = 13;
 }
-message LinkEpisodeRevisionsRequest { string operation_id = 1; string subject_id = 2; string from_revision_id = 3; string to_revision_id = 4; string relation = 5; }
-message EpisodeMutationRequest { string operation_id = 1; string subject_id = 2; string episode_id = 3; int64 expected_object_epoch = 4; }
-message ListEpisodeRevisionsRequest { string subject_id = 1; string episode_id = 2; Page page = 3; }
+message LinkEpisodeRevisionsRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string from_revision_id = 3 [(reference_kind) = "episode_revision"]; string to_revision_id = 4 [(reference_kind) = "episode_revision"]; string relation = 5; }
+message EpisodeMutationRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string episode_id = 3 [(reference_kind) = "episode"]; int64 expected_object_epoch = 4; }
+message ListEpisodeRevisionsRequest { string subject_id = 1 [(reference_kind) = "subject"]; string episode_id = 2 [(reference_kind) = "episode"]; Page page = 3; }
 message EpisodeResponse { Episode episode = 1; repeated Degradation degradation = 2; }
 message ListEpisodesResponse { repeated Episode items = 1; string next_page_token = 2; }
 message ListEpisodeRevisionsResponse { repeated EpisodeRevision items = 1; string next_page_token = 2; }

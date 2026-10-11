@@ -114,7 +114,7 @@ async fn configuration_precedence_permissions_and_restart_state_are_explicit() {
         0.02
     );
     service
-        .set_system_override(OperationId::new(), EPSILON.path(), json!(0.04))
+        .set_system_override(OperationId::new(), EPSILON.path(), json!(0.04), None)
         .await
         .expect("system override");
     assert_eq!(
@@ -126,7 +126,13 @@ async fn configuration_precedence_permissions_and_restart_state_are_explicit() {
         0.04
     );
     service
-        .set_subject_override(OperationId::new(), subject, EPSILON.path(), json!(0.08))
+        .set_subject_override(
+            OperationId::new(),
+            subject,
+            EPSILON.path(),
+            json!(0.08),
+            None,
+        )
         .await
         .expect("subject override");
     assert_eq!(
@@ -139,7 +145,12 @@ async fn configuration_precedence_permissions_and_restart_state_are_explicit() {
     );
     let active = service.active_system_snapshot().unwrap();
     let outcome = service
-        .set_system_override(OperationId::new(), "runtime.resident_limit", json!(512))
+        .set_system_override(
+            OperationId::new(),
+            "runtime.resident_limit",
+            json!(512),
+            None,
+        )
         .await
         .expect("restart override");
     assert!(outcome.pending_restart);
@@ -187,7 +198,7 @@ async fn configuration_receipts_freeze_subject_scope_and_replay_outcomes() {
     let service = &runtime.configuration;
     let first_id = OperationId::new();
     let first = service
-        .set_subject_override(first_id, subject, EPSILON.path(), json!(0.08))
+        .set_subject_override(first_id, subject, EPSILON.path(), json!(0.08), None)
         .await
         .expect("first subject override");
     assert_eq!(
@@ -204,11 +215,17 @@ async fn configuration_receipts_freeze_subject_scope_and_replay_outcomes() {
     );
 
     let later = service
-        .set_subject_override(OperationId::new(), subject, EPSILON.path(), json!(0.09))
+        .set_subject_override(
+            OperationId::new(),
+            subject,
+            EPSILON.path(),
+            json!(0.09),
+            None,
+        )
         .await
         .expect("later subject override");
     let replay = service
-        .set_subject_override(first_id, subject, EPSILON.path(), json!(0.08))
+        .set_subject_override(first_id, subject, EPSILON.path(), json!(0.08), None)
         .await
         .expect("replay original subject override");
     assert_eq!(replay.revision, first.revision);
@@ -217,9 +234,9 @@ async fn configuration_receipts_freeze_subject_scope_and_replay_outcomes() {
     assert_ne!(later.active_digest, replay.active_digest);
     assert!(matches!(
         service
-            .set_subject_override(first_id, subject, EPSILON.path(), json!(0.1),)
+            .set_subject_override(first_id, subject, EPSILON.path(), json!(0.1), None)
             .await,
-        Err(nous_core::Error::Conflict(_))
+        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::OperationIdConflict
     ));
 }
 
@@ -231,8 +248,8 @@ async fn concurrent_configuration_mutations_publish_one_complete_snapshot() {
     let first_id = OperationId::new();
     let second_id = OperationId::new();
     let (first, second) = tokio::join!(
-        service.set_system_override(first_id, EPSILON.path(), json!(0.11),),
-        service.set_system_override(second_id, TAU_DAYS.path(), json!(42.0),)
+        service.set_system_override(first_id, EPSILON.path(), json!(0.11), None),
+        service.set_system_override(second_id, TAU_DAYS.path(), json!(42.0), None)
     );
     first.expect("epsilon mutation");
     second.expect("tau mutation");
@@ -241,10 +258,71 @@ async fn concurrent_configuration_mutations_publish_one_complete_snapshot() {
     assert_eq!(snapshot.get(TAU_DAYS).expect("tau"), 42.0);
     assert!(
         service
-            .set_system_override(first_id, EPSILON.path(), json!(0.12),)
+            .set_system_override(first_id, EPSILON.path(), json!(0.12), None)
             .await
             .is_err()
     );
+
+    let revision = service.desired_system_snapshot().unwrap().revision;
+    let first_id = OperationId::new();
+    let second_id = OperationId::new();
+    let (first, second) = tokio::join!(
+        service.set_system_override(first_id, EPSILON.path(), json!(0.12), Some(revision)),
+        service.set_system_override(second_id, EPSILON.path(), json!(0.13), Some(revision))
+    );
+    let (winner_id, winner_value, winner) = match (first, second) {
+        (Ok(outcome), Err(nous_core::Error::Domain(error)))
+            if error.code == nous_core::DomainErrorCode::StaleRevision =>
+        {
+            (first_id, 0.12, outcome)
+        }
+        (Err(nous_core::Error::Domain(error)), Ok(outcome))
+            if error.code == nous_core::DomainErrorCode::StaleRevision =>
+        {
+            (second_id, 0.13, outcome)
+        }
+        outcomes => panic!("one revision must admit exactly one writer: {outcomes:?}"),
+    };
+    assert_eq!(winner.revision, revision + 1);
+    assert_eq!(
+        service
+            .active_system_snapshot()
+            .unwrap()
+            .get(EPSILON)
+            .unwrap(),
+        winner_value
+    );
+    assert!(matches!(
+        service
+            .clear_system_override(OperationId::new(), EPSILON.path(), Some(revision))
+            .await,
+        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::StaleRevision
+    ));
+    let later = service
+        .set_system_override(
+            OperationId::new(),
+            TAU_DAYS.path(),
+            json!(43.0),
+            Some(winner.revision),
+        )
+        .await
+        .unwrap();
+    let replay = service
+        .set_system_override(
+            winner_id,
+            EPSILON.path(),
+            json!(winner_value),
+            Some(revision),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.revision, winner.revision);
+    assert_eq!(replay.active_digest, winner.active_digest);
+    assert_eq!(
+        service.desired_system_snapshot().unwrap().revision,
+        later.revision
+    );
+    assert_eq!(later.revision, revision + 2);
 }
 
 #[tokio::test]
@@ -285,6 +363,7 @@ async fn rebuild_policy_and_provisioning_defaults_preserve_adopted_subject_state
             OperationId::new(),
             "topology.wave.outbound_budget",
             json!(0.8),
+            None,
         )
         .await
         .unwrap();
@@ -304,7 +383,7 @@ async fn rebuild_policy_and_provisioning_defaults_preserve_adopted_subject_state
     assert_eq!(stale.state, "STALE");
     assert_eq!(
         stale.config_digest.as_ref().unwrap(),
-        before.metadata["config_digest"].as_str().unwrap()
+        before.config_digest.as_str()
     );
     assert_ne!(
         stale.config_digest.as_deref(),
@@ -321,10 +400,7 @@ async fn rebuild_policy_and_provisioning_defaults_preserve_adopted_subject_state
         .find(|r| r.family == "topology")
         .unwrap();
     assert_ne!(before.generation_id, after.generation_id);
-    assert_ne!(
-        before.metadata["config_digest"],
-        after.metadata["config_digest"]
-    );
+    assert_ne!(before.config_digest, after.config_digest);
     let ready = nous_protocol::public::system_service_server::SystemService::get_projection_status(
         &service,
         status_request(),
@@ -348,6 +424,7 @@ async fn rebuild_policy_and_provisioning_defaults_preserve_adopted_subject_state
             OperationId::new(),
             SUBJECT_DEFAULT_MEMORY.path(),
             json!(false),
+            None,
         )
         .await
         .unwrap();

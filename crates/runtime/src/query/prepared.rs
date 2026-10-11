@@ -8,20 +8,68 @@ use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-pub(crate) struct PendingQuery {
-    created: Instant,
-    lease: Duration,
-    snapshot: QuerySnapshot,
+/// Infrastructure permission for one query opportunity, separate from its immutable semantics.
+#[derive(Debug, Clone, Copy)]
+pub struct QueryLease {
+    deadline: Instant,
 }
-enum QuerySnapshot {
-    Prepared(Box<BoundQuery>),
-    Executed(Box<QueryExecution>),
+impl QueryLease {
+    pub fn new(duration: Duration) -> Result<Self> {
+        if duration < Duration::from_millis(1) || duration > Duration::from_secs(3600) {
+            return Err(Error::Invalid(
+                "query opportunity must be 1ms..3600 seconds".into(),
+            ));
+        }
+        Ok(Self {
+            deadline: Instant::now() + duration,
+        })
+    }
+    pub fn require_live(self) -> Result<()> {
+        if self.live() {
+            Ok(())
+        } else {
+            Err(Error::Unavailable(
+                "query execution opportunity expired".into(),
+            ))
+        }
+    }
+    fn live(self) -> bool {
+        Instant::now() < self.deadline
+    }
 }
-impl QuerySnapshot {
+#[derive(Debug, Clone)]
+pub struct QueryReservation {
+    pub bound: BoundQuery,
+    lease: QueryLease,
+}
+impl QueryReservation {
+    pub fn new(bound: BoundQuery, lease: QueryLease) -> Result<Self> {
+        lease.require_live()?;
+        Ok(Self { bound, lease })
+    }
+    pub fn into_parts(self) -> (BoundQuery, QueryLease) {
+        (self.bound, self.lease)
+    }
+}
+
+pub(crate) enum PendingQuery {
+    Prepared(Box<QueryReservation>),
+    Executed {
+        execution: Box<QueryExecution>,
+        lease: QueryLease,
+    },
+}
+impl PendingQuery {
     fn bound(&self) -> &BoundQuery {
         match self {
-            Self::Prepared(bound) => bound,
-            Self::Executed(execution) => &execution.bound,
+            Self::Prepared(reservation) => &reservation.bound,
+            Self::Executed { execution, .. } => &execution.bound,
+        }
+    }
+    fn lease(&self) -> QueryLease {
+        match self {
+            Self::Prepared(reservation) => reservation.lease,
+            Self::Executed { lease, .. } => *lease,
         }
     }
 }
@@ -32,28 +80,23 @@ impl CognitiveRuntimeService {
             .pending_queries
             .lock()
             .map_err(|_| Error::Infrastructure("query lease lock unavailable".into()))?;
-        pending.retain(|_, value| value.created.elapsed() < value.lease);
+        pending.retain(|_, value| value.lease().live());
         Ok(())
     }
 
-    pub fn retain_prepared_query(&self, bound: BoundQuery) -> Result<Uuid> {
+    pub fn retain_prepared_query(&self, reservation: QueryReservation) -> Result<Uuid> {
+        reservation.lease.require_live()?;
+        let bound = &reservation.bound;
         let mut pending = self
             .pending_queries
             .lock()
             .map_err(|_| Error::Infrastructure("query lease lock unavailable".into()))?;
-        pending.retain(|_, value| value.created.elapsed() < value.lease);
+        pending.retain(|_, value| value.lease().live());
         if pending.len() >= bound.config_snapshot.get(crate::QUERY_SLOTS)? {
             return Err(Error::Unavailable("prepared query slots are busy".into()));
         }
         let token = Uuid::new_v4();
-        pending.insert(
-            token,
-            PendingQuery {
-                created: Instant::now(),
-                lease: Duration::from_secs(bound.config_snapshot.get(crate::QUERY_LEASE)?),
-                snapshot: QuerySnapshot::Prepared(Box::new(bound)),
-            },
-        );
+        pending.insert(token, PendingQuery::Prepared(Box::new(reservation)));
         Ok(token)
     }
     pub fn prepared_query(&self, subject: SubjectId, token: Uuid) -> Result<BoundQuery> {
@@ -64,22 +107,20 @@ impl CognitiveRuntimeService {
         let entry = pending
             .get(&token)
             .ok_or_else(|| Error::NotFound("prepared query expired or consumed".into()))?;
-        if entry.snapshot.bound().source_query.subject != subject {
+        if entry.bound().source_query.subject != subject {
             return Err(Error::Invalid(
                 "prepared query belongs to another Subject".into(),
             ));
         }
-        if entry.created.elapsed() >= entry.lease {
-            return Err(Error::Unavailable("prepared query expired".into()));
-        }
-        match &entry.snapshot {
-            QuerySnapshot::Prepared(bound) => Ok(bound.as_ref().clone()),
-            QuerySnapshot::Executed(_) => Err(Error::Invalid(
+        entry.lease().require_live()?;
+        match entry {
+            PendingQuery::Prepared(reservation) => Ok(reservation.bound.clone()),
+            PendingQuery::Executed { .. } => Err(Error::Invalid(
                 "execution ticket is not a preparation token".into(),
             )),
         }
     }
-    pub fn take_prepared_query(&self, subject: SubjectId, token: Uuid) -> Result<BoundQuery> {
+    pub fn take_prepared_query(&self, subject: SubjectId, token: Uuid) -> Result<QueryReservation> {
         let mut pending = self
             .pending_queries
             .lock()
@@ -87,12 +128,12 @@ impl CognitiveRuntimeService {
         let entry = pending
             .get(&token)
             .ok_or_else(|| Error::NotFound("prepared query expired or consumed".into()))?;
-        if entry.snapshot.bound().source_query.subject != subject {
+        if entry.bound().source_query.subject != subject {
             return Err(Error::Invalid(
                 "prepared query belongs to another Subject".into(),
             ));
         }
-        if !matches!(entry.snapshot, QuerySnapshot::Prepared(_)) {
+        if !matches!(entry, PendingQuery::Prepared(_)) {
             return Err(Error::Invalid(
                 "execution ticket is not a preparation token".into(),
             ));
@@ -100,19 +141,19 @@ impl CognitiveRuntimeService {
         let value = pending
             .remove(&token)
             .ok_or_else(|| Error::NotFound("prepared query disappeared".into()))?;
-        if value.created.elapsed() >= value.lease {
-            return Err(Error::Unavailable("prepared query expired".into()));
-        }
-        match value.snapshot {
-            QuerySnapshot::Prepared(bound) => Ok(*bound),
-            QuerySnapshot::Executed(_) => Err(Error::Invalid("not a preparation token".into())),
+        value.lease().require_live()?;
+        match value {
+            PendingQuery::Prepared(reservation) => Ok(*reservation),
+            PendingQuery::Executed { .. } => Err(Error::Invalid("not a preparation token".into())),
         }
     }
 
     pub fn retain_query(
         &self,
         execution: QueryExecution,
+        lease: QueryLease,
     ) -> Result<(CognitiveQueryResult, Option<Uuid>)> {
+        lease.require_live()?;
         if execution.result.results.len() > 64 {
             return Err(Error::Invalid("rerank pool exceeds 64 candidates".into()));
         }
@@ -133,7 +174,7 @@ impl CognitiveRuntimeService {
             .pending_queries
             .lock()
             .map_err(|_| Error::Infrastructure("query lease lock unavailable".into()))?;
-        pending.retain(|_, value| value.created.elapsed() < value.lease);
+        pending.retain(|_, value| value.lease().live());
         if pending.len() >= execution.bound.config_snapshot.get(crate::QUERY_SLOTS)? {
             return Ok(retention_fallback(
                 execution,
@@ -144,17 +185,14 @@ impl CognitiveRuntimeService {
         let result = execution.result.clone();
         pending.insert(
             ticket,
-            PendingQuery {
-                created: Instant::now(),
-                lease: Duration::from_secs(
-                    execution.bound.config_snapshot.get(crate::QUERY_LEASE)?,
-                ),
-                snapshot: QuerySnapshot::Executed(Box::new(execution)),
+            PendingQuery::Executed {
+                execution: Box::new(execution),
+                lease,
             },
         );
         Ok((result, Some(ticket)))
     }
-    fn take_query(&self, subject: SubjectId, ticket: Uuid) -> Result<QueryExecution> {
+    fn take_query(&self, subject: SubjectId, ticket: Uuid) -> Result<(QueryExecution, QueryLease)> {
         let mut pending = self
             .pending_queries
             .lock()
@@ -162,21 +200,19 @@ impl CognitiveRuntimeService {
         let Entry::Occupied(entry) = pending.entry(ticket) else {
             return Err(Error::NotFound("query lease expired or consumed".into()));
         };
-        if entry.get().snapshot.bound().source_query.subject != subject {
+        if entry.get().bound().source_query.subject != subject {
             return Err(Error::Invalid(
                 "query lease belongs to a different Subject".into(),
             ));
         }
-        if !matches!(entry.get().snapshot, QuerySnapshot::Executed(_)) {
+        if !matches!(entry.get(), PendingQuery::Executed { .. }) {
             return Err(Error::Invalid("query ticket has not executed".into()));
         }
         let value = entry.remove();
-        if value.created.elapsed() >= value.lease {
-            return Err(Error::Unavailable("query lease expired".into()));
-        }
-        match value.snapshot {
-            QuerySnapshot::Executed(execution) => Ok(*execution),
-            QuerySnapshot::Prepared(_) => {
+        value.lease().require_live()?;
+        match value {
+            PendingQuery::Executed { execution, lease } => Ok((*execution, lease)),
+            PendingQuery::Prepared(_) => {
                 Err(Error::Invalid("query ticket has not executed".into()))
             }
         }
@@ -188,7 +224,7 @@ impl CognitiveRuntimeService {
             .map_err(|_| Error::Infrastructure("query lease lock unavailable".into()))?;
         if pending
             .get(&ticket)
-            .is_some_and(|value| value.snapshot.bound().source_query.subject != subject)
+            .is_some_and(|value| value.bound().source_query.subject != subject)
         {
             return Err(Error::Invalid(
                 "query lease belongs to a different Subject".into(),
@@ -205,7 +241,7 @@ impl CognitiveRuntimeService {
         external_results: Vec<ExternalResourceResult>,
         contributors: CognitiveContributors<'_>,
     ) -> Result<CognitiveQueryResult> {
-        let execution = self.take_query(subject, ticket)?;
+        let (execution, lease) = self.take_query(subject, ticket)?;
         if order.len() > 64 || order.iter().any(|(_, score)| !score.is_finite()) {
             return Err(Error::Invalid(
                 "rerank mapping exceeds bounds or has a nonfinite score".into(),
@@ -316,8 +352,10 @@ impl CognitiveRuntimeService {
         for (rank, hit) in result.results.iter_mut().enumerate() {
             hit.match_evidence.final_rank = (rank + 1) as u32;
         }
+        lease.require_live()?;
         self.finalize_resources(subject, &mut result, external_results)
             .await?;
+        lease.require_live()?;
         self.record_query_feedback(&execution.bound, &result)
             .await?;
         Ok(result)

@@ -88,7 +88,7 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
             owner
         )
         .await,
-        Err(nous_core::Error::Conflict(_))
+        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::OperationIdConflict
     ));
     let MutationStart::Active(mutation) = MutationEnvelope::resume(
         &rt.store,

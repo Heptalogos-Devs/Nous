@@ -226,44 +226,28 @@ fn longitudinal_filter(
     metadata: &LongitudinalMetadata,
 ) -> bool {
     let constraints = &query.expression.constraints;
-    constraints
-        .authority
-        .is_none_or(|authority| authority == AuthorityClass::SubjectCognition)
-        && constraints.cognitive_roles_include.is_empty()
-        && constraints.formation_modes_include.is_empty()
-        && constraints
-            .entity_requirements
-            .iter()
-            .all(|entity| metadata.entities.contains(entity))
-        && constraints.valid.is_none()
+    constraints.matches_common(QueryFacts {
+        authority: AuthorityClass::SubjectCognition,
+        entities: &metadata.entities,
+        source_classes: &metadata.source_classes,
+        modality: Modality::Text,
+        cognitive_role: None,
+        formation_mode: None,
+        epistemic_class: Some(if kind == "journal" {
+            EpistemicClass::Narrative
+        } else {
+            EpistemicClass::Derived
+        }),
+    }) && constraints.valid.is_none()
         && constraints.occurred.is_none_or(|interval| {
             metadata
                 .occurred
                 .iter()
-                .any(|extent| extent.overlaps_interval(&interval))
+                .any(|extent| interval.matches_extent(extent))
         })
-        && (constraints.source_classes_include.is_empty()
-            || constraints
-                .source_classes_include
-                .iter()
-                .any(|class| metadata.source_classes.contains(class)))
-        && !constraints
-            .source_classes_exclude
-            .iter()
-            .any(|class| metadata.source_classes.contains(class))
-        && (constraints.modalities.is_empty() || constraints.modalities.contains(&Modality::Text))
-        && (constraints.evidence_classes.is_empty()
-            || constraints.evidence_classes.iter().any(|class| {
-                class
-                    == if kind == "journal" {
-                        "narrative"
-                    } else {
-                        "derived"
-                    }
-            }))
         && constraints
             .observed
-            .is_none_or(|interval| time.overlaps_interval(&interval))
+            .is_none_or(|interval| interval.matches_extent(time))
         && constraints
             .formed
             .is_none_or(|interval| interval.contains(row.get("formed_at")))
@@ -378,26 +362,26 @@ async fn longitudinal_renderings(
             .await?;
         for (revision, members) in fragments {
             for member in members {
-                let text = match member {
-                    nous_persistence::TextProjectionFragment::Text { text, reference } => {
-                        result.entry(revision).or_default().sources.push(reference);
-                        Some(text)
-                    }
-                    nous_persistence::TextProjectionFragment::Artifact {
-                        content_hash,
-                        byte_length,
-                        ..
-                    } => {
-                        service
-                            .objects
-                            .read_text_prefix(
-                                &content_hash,
-                                byte_length,
-                                budget.fragment_max_bytes as u64,
-                            )
-                            .await?
-                    }
-                };
+                if matches!(
+                    member.reference,
+                    CognitiveRef::DerivedRepresentation(_) | CognitiveRef::DerivedRegion(_)
+                ) {
+                    result
+                        .entry(revision)
+                        .or_default()
+                        .sources
+                        .push(member.reference.clone());
+                }
+                let text = service
+                    .material
+                    .text_excerpt(
+                        subject,
+                        &member.reference,
+                        budget.fragment_max_bytes as u64,
+                        view,
+                    )
+                    .await?
+                    .map(|view| view.text);
                 if let Some(text) = text {
                     append_rendering(
                         &mut result.entry(revision).or_default().text,
@@ -427,7 +411,7 @@ fn append_rendering(output: &mut String, text: &str, maximum: usize) {
 #[derive(Default)]
 pub(super) struct LongitudinalMetadata {
     entities: Vec<EntityRef>,
-    source_classes: Vec<SourceClass>,
+    pub(super) source_classes: Vec<SourceClass>,
     pub(super) occurred: Vec<TemporalExtent>,
     pub(super) observed_at: Option<chrono::DateTime<Utc>>,
 }
@@ -439,41 +423,18 @@ pub(super) async fn longitudinal_metadata(
     ids: &[Uuid],
     view: Option<&HistoricalAuthoritySnapshot>,
 ) -> Result<BTreeMap<Uuid, LongitudinalMetadata>> {
-    let rows = sqlx::query(r"
-WITH RECURSIVE lineage(root,kind,value) AS (
-    SELECT id,$3::text,id::text FROM unnest($2::uuid[]) id
-    UNION
-    SELECT l.root,e.kind,e.value FROM lineage l CROSS JOIN LATERAL (
-        SELECT m.ref_kind AS kind,m.ref_value AS value FROM episode_revision_members m
-        WHERE m.episode_revision_id=CASE WHEN l.kind='episode_revision' THEN l.value::uuid END
-        UNION SELECT CASE WHEN s.basis_kind='evidence' THEN 'occurrence' ELSE s.basis_kind END,
-            CASE WHEN s.basis_kind='evidence' THEN s.occurrence_id::text ELSE s.basis_ref END
-        FROM episode_revision_basis s WHERE s.episode_revision_id=CASE WHEN l.kind='episode_revision' THEN l.value::uuid END
-        UNION SELECT 'occurrence',e.occurrence_id::text FROM memory_revision_evidence e
-        WHERE e.memory_revision_id=CASE WHEN l.kind='memory_revision' THEN l.value::uuid END
-        UNION SELECT d.target_ref_kind,d.target_ref FROM memory_revision_dependencies d
-        WHERE d.memory_revision_id=CASE WHEN l.kind='memory_revision' THEN l.value::uuid END
-        UNION SELECT s.ref_kind,s.ref_value FROM journal_revision_sources s
-        WHERE s.journal_revision_id=CASE WHEN l.kind='journal_revision' THEN l.value::uuid END
-        UNION SELECT d.target_ref_kind,d.target_ref FROM memory_revision_dependencies d
-        WHERE d.memory_revision_id=CASE WHEN l.kind='memory_revision' THEN l.value::uuid END
-        UNION SELECT 'occurrence',e.occurrence_id::text FROM memory_revision_evidence e
-        WHERE e.memory_revision_id=CASE WHEN l.kind='memory_revision' THEN l.value::uuid END
-        UNION SELECT CASE WHEN e.basis_kind='evidence' THEN 'occurrence' ELSE e.basis_kind END,
-            CASE WHEN e.basis_kind='evidence' THEN e.occurrence_id::text ELSE e.basis_ref END
-        FROM cognitive_schema_evidence_links e WHERE e.schema_revision_id=CASE WHEN l.kind='cognitive_schema_revision' THEN l.value::uuid END AND (($4 AND e.link_id=ANY($5::uuid[])) OR (NOT $4 AND e.revoked_at IS NULL))
-    ) e WHERE e.value IS NOT NULL
-)
-SELECT DISTINCT l.root,o.occurrence_id,o.source_class,o.actor_entity_ref,
-    o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at,
-    ARRAY(SELECT DISTINCT b.entity_ref FROM entity_mentions m CROSS JOIN LATERAL (
-        SELECT entity_ref,binding_state FROM entity_binding_revisions WHERE mention_id=m.mention_id AND (NOT $4 OR binding_revision_id=ANY($6::uuid[])) ORDER BY revision_no DESC LIMIT 1
-    ) b WHERE m.subject_id=$1 AND m.occurrence_id=o.occurrence_id AND b.binding_state='bound' AND b.entity_ref IS NOT NULL) AS entities
-FROM lineage l JOIN observation_occurrences o ON o.occurrence_id=CASE WHEN l.kind='occurrence' THEN l.value::uuid END
-WHERE o.subject_id=$1 AND (NOT $4 OR o.created_at<=$7) ORDER BY l.root,o.occurrence_id")
-        .bind(subject.0).bind(ids).bind(format!("{kind}_revision"))
-        .bind(view.is_some()).bind(view.map(|v|v.schema_evidence_links.clone()).unwrap_or_default()).bind(view.map(|v|v.entity_bindings.clone()).unwrap_or_default()).bind(view.map(|v|v.as_of))
-        .fetch_all(service.store.pool()).await.map_err(db)?;
+    let roots = ids
+        .iter()
+        .map(|id| parse_reference(&format!("{kind}_revision"), &id.to_string()))
+        .collect::<Result<Vec<_>>>()?;
+    let mut sql = sqlx::QueryBuilder::new("");
+    super::source_facts::push_source_facts(&mut sql, subject, &roots, view)?;
+    sql.push("SELECT * FROM source_occurrences ORDER BY root,occurrence_id");
+    let rows = sql
+        .build()
+        .fetch_all(service.store.pool())
+        .await
+        .map_err(db)?;
     let mut result = BTreeMap::<Uuid, LongitudinalMetadata>::new();
     for row in rows {
         let value = result.entry(row.get("root")).or_default();

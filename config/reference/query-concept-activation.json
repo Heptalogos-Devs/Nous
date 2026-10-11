@@ -1,0 +1,8 @@
+{
+  "identity": "query-concept-activation",
+  "values": {
+    "retrieval.query.concept_activation.max_activated_tags": 8,
+    "retrieval.query.concept_activation.minimum_similarity": 0.72,
+    "retrieval.query.concept_activation.model_catalog_limit": 32
+  }
+}

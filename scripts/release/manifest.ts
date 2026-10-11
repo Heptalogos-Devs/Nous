@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -41,6 +41,7 @@ export async function writeManifest(
       license: runtimeManifest.license,
       source: runtimeManifest.source,
       purpose: "APPLICATION",
+      notice: `runtime/${pack.component}`,
     });
   }
   const nodeVersions = JSON.parse(
@@ -52,8 +53,13 @@ export async function writeManifest(
       )
     ).stdout,
   ) as Record<string, string>;
-  const nodeLicensePath = "runtime/node/licenses/node/LICENSE";
-  const nodeLicense = await readFile(join(output, nodeLicensePath), "utf8");
+  const nodeLicensePath = "licenses/node-embedded/LICENSE";
+  const nodeLicense = await preparedPublicFile(
+    repo,
+    `https://raw.githubusercontent.com/nodejs/node/v${nodeVersions.node}/LICENSE`,
+  );
+  await mkdir(join(output, "licenses/node-embedded"), { recursive: true });
+  await writeFile(join(output, nodeLicensePath), nodeLicense);
   const nodeDependencies = [
     ["acorn", "Acorn", "deps/acorn", "MIT"],
     ["ada", "ada", "deps/ada", "MIT"],
@@ -108,7 +114,6 @@ export async function writeManifest(
     if (!nodeVersions[key] || !content)
       throw new Error(`Node notice unavailable: ${key}`);
     const notice = `licenses/node-embedded/${key}.txt`;
-    await mkdir(join(output, "licenses/node-embedded"), { recursive: true });
     await writeFile(
       join(output, notice),
       key === "sqlite" ? content.split("*/", 1)[0] + "*/\n" : content,
@@ -129,11 +134,6 @@ export async function writeManifest(
       relatedSpdxElement: id,
     });
   }
-  await cp(
-    join(runtime, "postgresql/licenses/mingw-runtime"),
-    join(output, "licenses/native/mingw-runtime"),
-    { recursive: true },
-  );
   const rustVersion = await readFile(
     join(output, "licenses/native/rust-source.txt"),
     "utf8",
@@ -179,13 +179,6 @@ export async function writeManifest(
       relatedSpdxElement: component.id,
     });
   }
-  for (const name of ["postgresql", "ffmpeg"])
-    for (const dependency of ["llvm", "mingw"])
-      nativeRelationships.push({
-        spdxElementId: `SPDXRef-runtime-${name}`,
-        relationshipType: "DEPENDS_ON",
-        relatedSpdxElement: `SPDXRef-native-${dependency}-runtime`,
-      });
   await mkdir(join(output, "manifest"), { recursive: true });
   await writeFile(
     join(output, "manifest/components.json"),
@@ -202,7 +195,7 @@ export async function writeManifest(
   );
   await writeFile(
     join(output, "licenses/THIRD_PARTY_NOTICES.md"),
-    "# Third-party components\n\nApplication dependencies and runtime inventories are in manifest/components.json. Runtime-specific licenses, exact source and build references are retained inside runtime/<component>/licenses. Nous Wave-owned code is licensed under Apache-2.0.\n",
+    "# Third-party components\n\nApplication dependencies and runtime inventories are in manifest/components.json. Each runtime/<component>/manifest.json records the supplied pack's source, composite license and file hashes; its notices and build references are retained with that pack. Kernel toolchain notices are in licenses/native; Node embedded notices are bound to the shipped executable's version. Nous Wave-owned code is licensed under Apache-2.0.\n",
   );
   await writeFile(
     join(output, "manifest/sbom.spdx.json"),

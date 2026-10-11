@@ -297,6 +297,6 @@ async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
     stale.operation_id = OperationId::new();
     assert!(matches!(
         memory.create_association(stale, subject).await,
-        Err(Error::Conflict(_))
+        Err(Error::Domain(error)) if error.code == nous_core::DomainErrorCode::StaleRevision
     ));
 }

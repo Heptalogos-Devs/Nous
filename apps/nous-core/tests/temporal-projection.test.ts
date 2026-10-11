@@ -1,9 +1,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { expect, it } from "vitest";
+import { fromJson } from "@bufbuild/protobuf";
+import { TimestampSchema } from "@bufbuild/protobuf/wkt";
 import { compileNousQL } from "../src/nousql/compiler.js";
 import { canonical, parse } from "../src/nousql/parser.js";
-const now = new Date("2026-10-07T00:00:00Z");
+const now = fromJson(TimestampSchema, "2026-10-07T00:00:00Z");
 const resolve = async () => ({
   canonical: { kind: "tag", value: "tag-id" },
   lexicalRef: "tag:kavaj-logiv-bufog",
@@ -47,12 +49,18 @@ it("captures relative as-of and multiple independent time axes", async () => {
     now,
   );
   const m = result.expression.modifiers!;
-  expect(m.asOf?.seconds).toBe(BigInt(now.getTime() / 1000 - 30 * 86400));
+  expect(m.asOf?.seconds).toBe(now.seconds - 30n * 86400n);
   expect(m.history).toBe(true);
-  expect(m.clockNow?.seconds).toBe(BigInt(now.getTime() / 1000));
-  expect(m.constraints?.observed?.end?.seconds).toBe(m.clockNow?.seconds);
-  expect(m.constraints?.occurred?.start?.seconds).toBe(1767225600n);
-  expect(result.boundCanonical).toContain('$asof("2026-09-07T00:00:00.000Z")');
+  expect(m.clockNow?.seconds).toBe(now.seconds);
+  const observed = m.constraints?.observed?.predicate;
+  expect(observed?.case === "range" && observed.value.end?.seconds).toBe(
+    m.clockNow?.seconds,
+  );
+  const occurred = m.constraints?.occurred?.predicate;
+  expect(occurred?.case === "range" && occurred.value.start?.seconds).toBe(
+    1767225600n,
+  );
+  expect(result.boundCanonical).toContain('$asof("2026-09-07T00:00:00Z")');
   expect(result.boundCanonical).not.toContain("within=");
   await expect(
     compileNousQL(
@@ -67,9 +75,27 @@ it("captures relative as-of and multiple independent time axes", async () => {
     'a $asof("2026-01-01T00:00:00Z",ago=30d)',
     '("a" $history) || "b"',
     '("a" $asof(ago=30d)) || "b"',
+    'a $time(valid,from="2026-01-01T00:00:00Z",to="2026-01-01T00:00:00Z")',
   ]) {
     await expect(compileNousQL(text, resolve, now)).rejects.toThrow();
   }
+  const clock = fromJson(TimestampSchema, "2026-10-07T00:00:00.123456789Z");
+  const precise = await compileNousQL(
+    'policy $asof(ago=1ms) $time(formed,at="2026-10-07T09:00:00.123456789+09:00") $time(observed,within=1ms)',
+    resolve,
+    clock,
+  );
+  const modifiers = precise.expression.modifiers!;
+  const point = modifiers.constraints?.formed?.predicate;
+  expect(point?.case).toBe("point");
+  expect(point?.case === "point" && point.value.nanos).toBe(123456789);
+  expect(modifiers.clockNow).toEqual(clock);
+  expect(modifiers.asOf?.nanos).toBe(122456789);
+  const range = modifiers.constraints?.observed?.predicate;
+  expect(range?.case === "range" && range.value.start?.nanos).toBe(122456789);
+  expect(precise.boundCanonical).toContain(
+    'at="2026-10-07T00:00:00.123456789Z"',
+  );
 });
 it("keeps semantic concept phrases distinct from durable Tag selectors", () => {
   const text = "Recall reclamation #active-reader-reclamation";

@@ -111,8 +111,6 @@ impl QueryPlan {
             .flat_map(|node| &node.cues)
             .any(|cue| matches!(cue, Cue::Concept(_)));
         ServingNeed {
-            exact: self.enabled_lanes.contains(&EvidenceFamily::Exact)
-                || self.enabled_lanes.contains(&EvidenceFamily::SchemaDirect),
             lexical: has_text && self.enabled_lanes.contains(&EvidenceFamily::Lexical),
             dense: (has_text || has_semantic_cue)
                 && (self.enabled_lanes.contains(&EvidenceFamily::Dense)
@@ -156,7 +154,6 @@ mod tests {
             temporal_frame: Default::default(),
 
             work_context: None,
-            api_version: API_VERSION,
             subject: SubjectId::new(),
             session: None,
             situation: Default::default(),

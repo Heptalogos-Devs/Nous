@@ -23,17 +23,35 @@ struct Server {
     task: tokio::task::JoinHandle<std::result::Result<(), tonic::transport::Error>>,
 }
 impl Server {
-    async fn open(url: &str, root: &Path, clock: Arc<ManualCognitiveClock>, token: &str) -> Self {
-        let functional = std::env::var("NOUS_FUNCTIONAL_SMOKE").is_ok();
-        let runtime = NousRuntime::open_with_clock(RuntimeOptions {
-            postgres_url:url.into(),max_connections:8,
-            acquire_timeout_ms: 15000,
-            object_root:root.join("objects").to_string_lossy().into_owned(),
-            serving_options:ServingOptions { root:root.join("serving"),lexical:true,dense:functional,topology:functional,memory_enabled:true },
-            embedding:functional.then(||Arc::new(test_support::LongitudinalEmbedding) as Arc<dyn nous_retrieval::TextEmbeddingProvider>),stored_embedding:None,
-            core_descriptors: vec![],
-        deployment_document:serde_json::json!({"serving":{"lexical":{"enabled":true},"dense":{"enabled":functional},"topology":{"enabled":functional}}}),
-        },clock).await.unwrap();
+    async fn open(
+        url: &str,
+        root: &Path,
+        clock: Arc<ManualCognitiveClock>,
+        token: &str,
+        configuration: &nous_configuration::ConfigurationBootstrapBundle,
+    ) -> Self {
+        let runtime = NousRuntime::open_with_clock(
+            RuntimeOptions {
+                postgres_url: url.into(),
+                max_connections: 8,
+                acquire_timeout_ms: 15000,
+                object_root: root.join("objects").to_string_lossy().into_owned(),
+                serving_options: ServingOptions {
+                    root: root.join("serving"),
+                    lexical: true,
+                    dense: false,
+                    topology: false,
+                    memory_enabled: true,
+                },
+                embedding: None,
+                stored_embedding: None,
+                core_descriptors: configuration.core_descriptors.clone(),
+                deployment_document: configuration.deployment_document.clone(),
+            },
+            clock,
+        )
+        .await
+        .unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let (stop, stopped) = oneshot::channel();
@@ -86,8 +104,25 @@ async fn run_smoke() {
         uuid::Uuid::new_v4().simple(),
         uuid::Uuid::new_v4().simple()
     );
-    let mut server = Server::open(&url, root.path(), clock.clone(), &token).await;
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // This public Core host uses the same owning startup bundle as ordinary serve.
+    let bundle = tokio::process::Command::new(
+        std::env::var_os("NOUS_LONGITUDINAL_NODE").unwrap_or_else(|| "node".into()),
+    )
+    .args(["--import", "tsx", "--input-type=module", "--eval",
+        "import {configurationBundle} from './apps/nous-core/src/configuration/catalog.ts'; console.log(JSON.stringify(configurationBundle({serving:{lexical:{enabled:true},dense:{enabled:false},topology:{enabled:false}}})));",
+    ])
+    .current_dir(&repo)
+    .kill_on_drop(true)
+    .output().await.expect("Core configuration owner handoff");
+    assert!(
+        bundle.status.success(),
+        "Core configuration export failed: {}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    let configuration: nous_configuration::ConfigurationBootstrapBundle =
+        serde_json::from_slice(&bundle.stdout).unwrap();
+    let mut server = Server::open(&url, root.path(), clock.clone(), &token, &configuration).await;
     let mut child = tokio::process::Command::new(
         std::env::var_os("NOUS_LONGITUDINAL_NODE").unwrap_or_else(|| "node".into()),
     )
@@ -115,7 +150,8 @@ async fn run_smoke() {
             }
             Control::Restart => {
                 server.close().await;
-                server = Server::open(&url, root.path(), clock.clone(), &token).await;
+                server =
+                    Server::open(&url, root.path(), clock.clone(), &token, &configuration).await;
                 serde_json::json!({"endpoint":server.endpoint})
             }
             Control::Done => break,

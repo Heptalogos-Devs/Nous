@@ -1,0 +1,557 @@
+{
+  "observedAt": "2026-10-10T06:43:12.472Z",
+  "sourceHead": "6476d8249a9568e8acda020dd998f8d1e2537b5e",
+  "instanceId": "ffe03b02-8997-476e-b8d1-370e88aac1a2",
+  "codexThreadId": "01a12487-b9ae-70f2-93b2-7f1c979a861c",
+  "scope": "Actual current Portable native MCP continuation; subsequent bounded Portable CLI embedding preparation and natural-query recovery are separate observations.",
+  "invocation": {
+    "shellSandbox": "read-only",
+    "processLocalToolApproval": {
+      "nous_help": "approve",
+      "nous_command": "approve"
+    },
+    "globalConfigurationEdited": false
+  },
+  "outcomes": [
+    {
+      "id": "item_4",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["subject", "use", "sub:tujap-vibuz-gozod"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "subjectId: sub:tujap-vibuz-gozod\nstatus: active"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_5",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["context", "select", "ctx:raraf-romup-hasal"]
+      },
+      "status": "completed",
+      "note": "Complete Context text retained unchanged in private raw events; full text is not duplicated in this routed corpus."
+    },
+    {
+      "id": "item_6",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["context", "show", "ctx:raraf-romup-hasal"]
+      },
+      "status": "completed",
+      "note": "Complete Context text retained unchanged in private raw events; full text is not duplicated in this routed corpus."
+    },
+    {
+      "id": "item_7",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["context", "show", "ctx:raraf-romup-hasal"]
+      },
+      "status": "completed",
+      "note": "Complete Context text retained unchanged in private raw events; full text is not duplicated in this routed corpus."
+    },
+    {
+      "id": "item_8",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["session", "open"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "sessionId: session:bivaj-kofar-jipiv\nruntimeRevision: 0\nclosed: false"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_9",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["context", "foreground", "ctx:raraf-romup-hasal"]
+      },
+      "status": "completed",
+      "note": "Complete Context text retained unchanged in private raw events; full text is not duplicated in this routed corpus."
+    },
+    {
+      "id": "item_10",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["read", "obs:lalof-sarus-muzis"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "reference: obs:lalof-sarus-muzis\nmediaType: text/plain\ntotalBytes: 545\nrangeStart: 0\nrangeEnd: 545\npartial: false\ntext: 开发期数据库重整使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份先保全，旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后的公开读取应继续找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位，普通启动只使用已安装的运行包。\nevidence:\n  1. basisRole: direct\n    reference: obs:lalof-sarus-muzis\n  2. basisRole: direct\n    reference: art:dafur-nutaj-harot"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_11",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["show", "memrev:jazop-nakis-tipum"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "revisionId: memrev:jazop-nakis-tipum\nrevisionNo: 1\nobjectEpoch: 1\nmemoryId: mem:mujos-hukuh-mazil\ntitle: 开发期数据库重整与 Portable 定位要求\ntext: 开发期数据库重整方案：使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份须先保全；旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后，公开读取仍应找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位；普通启动只使用已安装的运行包。\nproducerSignatureId: 01a1205c-a4be-74b0-85d2-dfee7b9f00a1\ncognitiveRole: declarative\nsemanticRole: working_practice\nepistemicClass: derived\ngroundingOccurrenceId: obs:lalof-sarus-muzis\nformationMode: grounded\nacceptanceState: accepted\nintegrityState: valid\nsuppressionState: normal\npurgeState: normal\nbasis:\n  1. basis:\n      evidence:\n        occurrenceId: obs:lalof-sarus-muzis\n        locator: wholeOccurrence: true\n        basisRole: interpretation\nformedAt: 2026-10-09T11:11:41.772Z\nrecordedAt: 2026-10-09T11:11:44.827Z\ntemporalEvidence: observedAt: 2026-10-09T11:11:36.000Z"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_12",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["trace", "memrev:jazop-nakis-tipum"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "reference: memrev:jazop-nakis-tipum\ncognition:\n  revisionId: memrev:jazop-nakis-tipum\n  revisionNo: 1\n  objectEpoch: 1\n  memoryId: mem:mujos-hukuh-mazil\n  title: 开发期数据库重整与 Portable 定位要求\n  text: 开发期数据库重整方案：使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份须先保全；旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后，公开读取仍应找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位；普通启动只使用已安装的运行包。\n  producerSignatureId: 01a1205c-a4be-74b0-85d2-dfee7b9f00a1\n  cognitiveRole: declarative\n  semanticRole: working_practice\n  epistemicClass: derived\n  groundingOccurrenceId: obs:lalof-sarus-muzis\n  formationMode: grounded\n  acceptanceState: accepted\n  integrityState: valid\n  suppressionState: normal\n  purgeState: normal\n  basis:\n    1. basis:\n        evidence:\n          occurrenceId: obs:lalof-sarus-muzis\n          locator: wholeOccurrence: true\n          basisRole: interpretation\n  formedAt: 2026-10-09T11:11:41.772Z\n  recordedAt: 2026-10-09T11:11:44.827Z\n  temporalEvidence: observedAt: 2026-10-09T11:11:36.000Z\nproducer:\n  signatureHash: 89b6453cf7c18a1afc1229ebc49a225771da371558c149bdca2b7a6a167b1eee\n  providerClass: openai-chat\n  operation: memory_formation_text\n  implementation: ai-sdk:c8c24d336e382928af494b44f44e12b00ee9e85e67adbbf7195a3b7d1df12d94\n  preprocessingIdentity: program/memory/formation.md\n  preprocessingRevision: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\n  configDigest: d6f7216bd1414af6309e01c3b91689a120b7cbb1766250d851e682e68259aa8d\n  modelIdentity: doubao-seed-2.1-pro\n  outputSchemaDigest: 9a7c9e5c98c5f2c9e89a0ea8d08afa755156889e36df37dd85b5ba1bb4be6014\n  modelRole: memory_formation\n  modelProfile: pro\n  executionProfile: pro_minimal\n  inferenceControlsDigest: 94750d6f77f42326946aad2a9d92a8956c418bdaa89f8f131c3a2600b0965eb5\n  rolePolicyDigest: adf8f6dff917474c3330c8fb5d753a36687213d0d0c9f0e436f7ce9ec4c226ef\n  promptId: program/memory/formation.md\n  promptDigest: 06adca0d9e2ed706bb5242685179237728a6efa1db43611131f23258b9d11e3a\nsources:\n  1. evidence:\n      occurrenceId: obs:lalof-sarus-muzis\n      locator: wholeOccurrence: true\n      basisRole: interpretation\n    occurrence:\n      occurrenceId: obs:lalof-sarus-muzis\n      subjectId: sub:tujap-vibuz-gozod\n      sourceClass: file\n      artifactId: art:dafur-nutaj-harot\n      observedAt: 2026-10-09T11:11:36.000Z\n    artifact:\n      artifactId: art:dafur-nutaj-harot\n      subjectId: sub:tujap-vibuz-gozod\n      contentHash: 409226e616d1ff3d8bd9184bbac9b82d9b8fe385152e6a8e849d6dd68bff0c56\n      byteLength: 545\n      mediaType: text/plain\n      createdAt: 2026-10-09T11:11:36.082Z"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_13",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["show", "eprev:pubos-hobik-hajuj"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "episodeRevisionId: eprev:pubos-hobik-hajuj\nrevisionNo: 1\nepisodeId: ep:murum-nukiv-nasik\nmembers:\n  1. ordinal: 0\n    role: experience\n    reference: obs:lalof-sarus-muzis\nboundaryExplanation: hard_idle\nbasis:\n  1. basis:\n      evidence:\n        occurrenceId: obs:lalof-sarus-muzis\n        locator: wholeOccurrence: true\n        basisRole: direct\nformedAt: 2026-10-09T12:00:45.635Z\nrecordedAt: 2026-10-09T12:00:45.637Z"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_15",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["show", "src:misav-sokiv-badil"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "sourceRegionId: 01a1205c-829e-7a90-91ea-373c855ec988\nartifactId: 01a1205c-829a-7002-8d5b-31a69da54cd7\ncoordinateKind: whole_artifact\ncoordinateHash: 6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279\nobservations:\n  items:\n    1. occurrenceId: obs:lalof-sarus-muzis\n      subjectId: sub:tujap-vibuz-gozod\n      sourceClass: file\n      artifactId: art:dafur-nutaj-harot\n      observedAt: 2026-10-09T11:11:36.000Z\n  truncated: false"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_16",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "query",
+          "维护性重构与无源码 Portable 程序替换时，为什么必须保全原认知修订、来源和历史？ @ref(memrev:jazop-nakis-tipum) $return(memory)"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "queryId: 01a12488-4732-7952-adcc-4400378da4b3\nqueryRef: query:last\nstatus: complete\nresults:\n  1. lexicalRef: memrev:jazop-nakis-tipum\n    result: result:1\n    ref: memrev:jazop-nakis-tipum\n    text: 开发期数据库重整方案：使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份须先保全；旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后，公开读取仍应找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位；普通启动只使用已安装的运行包。\n    authority: subject_cognition\n    cognitiveRole: declarative\n    formationMode: grounded\n    evidenceFamilies:\n      1. exact\n    next: show result:1 | trace result:1 | use result:1 | context pin --cognition result:1\ndiagnostics:\n  candidateCounts:\n    exact_candidates: 1\n    planned_candidate_bound: 48\n  laneStatus:\n    effort: normal\n    exact: ready\n    resource_plan: limit=4,synopsis_preferred=false\n    cue_sensing_plan: skipped\n    topology_plan: skipped"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_17",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "query",
+          "截至原始记录之后，数据库重整与 Portable 定位要求的历史依据是什么？ @ref(memrev:jazop-nakis-tipum) $history $asof(\"2026-10-09T11:12:00Z\") $return(memory)"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "queryId: 01a12488-47c4-7663-86ef-a180ecca722b\nqueryRef: query:last\nstatus: complete\nresults:\n  1. lexicalRef: memrev:jazop-nakis-tipum\n    result: result:1\n    ref: memrev:jazop-nakis-tipum\n    text: 开发期数据库重整方案：使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份须先保全；旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后，公开读取仍应找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位；普通启动只使用已安装的运行包。\n    authority: subject_cognition\n    cognitiveRole: declarative\n    formationMode: grounded\n    evidenceFamilies:\n      1. exact\n    next: show result:1 | trace result:1 | use result:1 | context pin --cognition result:1\ndiagnostics:\n  candidateCounts:\n    exact_candidates: 1\n    planned_candidate_bound: 48\n  laneStatus:\n    effort: normal\n    exact: ready\n    cue_sensing_plan: skipped\n    resource_plan: limit=4,synopsis_preferred=false\n    topology_plan: skipped"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_18",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "query",
+          "配置归一化后的执行身份与冻结的模型执行怎样保持一致？无源码 Portable 程序替换时，如何保全认知修订、历史、来源证据和 wholeOccurrence 溯源，同时允许按职责拆分目录、共享可复用机制、分离 TypeScript 测试并裁剪低价值测试与脚手架的维护性重构？"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "queryId: 01a12488-58a5-7622-b9b6-3d56037df18f\nqueryRef: query:last\nstatus: degraded\nresults:\n  1. lexicalRef: eprev:pubos-hobik-hajuj\n    result: result:1\n    ref: eprev:pubos-hobik-hajuj\n    text:\n\nhard_idle\n\n开发期数据库重整使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份先保全，旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后的公开读取应继续找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位，普通启动只使用已安装的运行包。\n    authority: subject_cognition\n    evidenceFamilies:\n      1. lexical\n      2. language_rerank\n    next: show result:1 | trace result:1 | use result:1 | context pin --cognition result:1\n  2. lexicalRef: eprev:bidis-jaram-finog\n    result: result:2\n    ref: eprev:bidis-jaram-finog\n    text:\n\nhard_idle\n\nOn 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity, and subset keys are sorted and deduplicated. A clean configuration instance verified that omitted video defaults and explicit complete defaults using the same operation ID return the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, and read back as the complete normalized values after restart. Leaf configuration organization and reference graph validation are still pending.\nOn 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls are outside those locks. Each command freezes its chosen Subject, Session, WorkContext and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. A clean Core/Kernel/PostgreSQL instance verified concurrent real CLI Session opening and MCP WorkContext creation into one shared state root, both selections surviving and remaining readable across both entry points and a Core restart. Real Codex/model continuity and Windows Portable continuation remain pending.\n    authority: subject_cognition\n    evidenceFamilies:\n      1. lexical\n      2. language_rerank\n    next: show result:2 | trace result:2 | use result:2 | context pin --cognition result:2\n  3. lexicalRef: memrev:jazop-nakis-tipum\n    result: result:3\n    ref: memrev:jazop-nakis-tipum\n    text: 开发期数据库重整方案：使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份须先保全；旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后，公开读取仍应找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位；普通启动只使用已安装的运行包。\n    authority: subject_cognition\n    cognitiveRole: declarative\n    formationMode: grounded\n    evidenceFamilies:\n      1. lexical\n      2. language_rerank\n    next: show result:3 | trace result:3 | use result:3 | context pin --cognition result:3\n  4. lexicalRef: memrev:raman-zajos-ruvuj\n    result: result:4\n    ref: memrev:raman-zajos-ruvuj\n    text: On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls remain outside those locks. Each command freezes its chosen Subject, Session, WorkContext, and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. On a clean Core/Kernel/PostgreSQL instance, concurrent real CLI Session opening and MCP WorkContext creation were verified to write into one shared state root, with both selections surviving and remaining readable across both entry points and after a Core restart. Real Codex/model continuity and Windows Portable continuation remained pending.\n    authority: subject_cognition\n    cognitiveRole: declarative\n    formationMode: grounded\n    evidenceFamilies:\n      1. lexical\n      2. language_rerank\n    next: show result:4 | trace result:4 | use result:4 | context pin --cognition result:4\ndiagnostics:\n  candidateCounts:\n    lexical_candidates: 4\n    planned_candidate_bound: 48\n    dense_candidates: 0\n  laneStatus:\n    lexical: ready\n    dense: unavailable\n    topology_plan: skipped\n    effort: normal\n    resource_plan: limit=4,synopsis_preferred=false\n    cue_sensing_plan: skipped\ndegradation:\n  1. code: dense_lane_unavailable\n    detail: dense serving generation is unavailable\n  2. code: dense_projection_unavailable\n    detail: Host did not supply compatible embedding material"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_20",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["show", "result:3"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "revisionId: memrev:jazop-nakis-tipum\nrevisionNo: 1\nobjectEpoch: 1\nmemoryId: mem:mujos-hukuh-mazil\ntitle: 开发期数据库重整与 Portable 定位要求\ntext: 开发期数据库重整方案：使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份须先保全；旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后，公开读取仍应找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位；普通启动只使用已安装的运行包。\nproducerSignatureId: 01a1205c-a4be-74b0-85d2-dfee7b9f00a1\ncognitiveRole: declarative\nsemanticRole: working_practice\nepistemicClass: derived\ngroundingOccurrenceId: obs:lalof-sarus-muzis\nformationMode: grounded\nacceptanceState: accepted\nintegrityState: valid\nsuppressionState: normal\npurgeState: normal\nbasis:\n  1. basis:\n      evidence:\n        occurrenceId: obs:lalof-sarus-muzis\n        locator: wholeOccurrence: true\n        basisRole: interpretation\nformedAt: 2026-10-09T11:11:41.772Z\nrecordedAt: 2026-10-09T11:11:44.827Z\ntemporalEvidence: observedAt: 2026-10-09T11:11:36.000Z"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_21",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": [
+          "use",
+          "memrev:jazop-nakis-tipum",
+          "--kind",
+          "result_supported",
+          "--event-id",
+          "ecf476b0-a628-4f9b-9bc7-85d2fd0f621a",
+          "--occurred-at",
+          "2026-10-10T06:38:09.339Z",
+          "--query-id",
+          "01a12488-58a5-7622-b9b6-3d56037df18f"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "acceptedCount: 1\nduplicateCount: 0\nsessionRuntimeRevision: 2"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_22",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["session", "close"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "sessionId: session:bivaj-kofar-jipiv\nruntimeRevision: 3\nclosed: true\nactiveWorkContextId: ctx:raraf-romup-hasal\nresidentRefs:\n  1. memrev:jazop-nakis-tipum"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_23",
+      "type": "mcp_tool_call",
+      "server": "nous",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["session", "show", "session:bivaj-kofar-jipiv"]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "sessionId: session:bivaj-kofar-jipiv\nruntimeRevision: 3\nclosed: true\nactiveWorkContextId: ctx:raraf-romup-hasal\nresidentRefs:\n  1. memrev:jazop-nakis-tipum"
+          }
+        ],
+        "structured_content": null
+      },
+      "error": null,
+      "status": "completed"
+    },
+    {
+      "id": "item_24",
+      "tool": "nous_command",
+      "arguments": {
+        "args": ["context", "show", "ctx:raraf-romup-hasal"]
+      },
+      "status": "completed",
+      "note": "Complete Context text retained unchanged in private raw events; full text is not duplicated in this routed corpus."
+    }
+  ],
+  "recovery": {
+    "preparation": {
+      "committed": 17,
+      "requests": 2,
+      "degradation": []
+    },
+    "query": {
+      "queryId": "01a1248a-a992-7961-a99f-4bbabcc29932",
+      "queryRef": "query:last",
+      "status": "complete",
+      "results": [
+        {
+          "lexicalRef": "memrev:jazop-nakis-tipum",
+          "result": "result:1",
+          "ref": {
+            "kind": "memory_revision",
+            "value": "01a1205c-a4bb-7661-95cd-797e06b0289c"
+          },
+          "text": "开发期数据库重整方案：使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份须先保全；旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后，公开读取仍应找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位；普通启动只使用已安装的运行包。",
+          "authority": "subject_cognition",
+          "cognitiveRole": "declarative",
+          "formationMode": "grounded",
+          "evidenceFamilies": ["lexical", "dense", "language_rerank"],
+          "next": "show result:1 | trace result:1 | use result:1 | context pin --cognition result:1"
+        },
+        {
+          "lexicalRef": "eprev:pubos-hobik-hajuj",
+          "result": "result:2",
+          "ref": {
+            "kind": "episode_revision",
+            "value": "01a12089-8444-7970-9cae-34ecfe88618c"
+          },
+          "text": "\nhard_idle\n\n开发期数据库重整使用现行四份初始 schema 创建新库，再恢复已核验的数据。旧数据库和完整备份先保全，旧迁移记录不覆盖新库的四条记录；认知修订、来源证据、对象地址与历史内容保持原值。恢复完成后的公开读取应继续找到原 Subject 和 WorkContext，以及三个 Memory 的精确修订和 wholeOccurrence 来源。Portable 将程序和 Runtime 与实例、配置、数据库、Blob、Secret 等目录分别定位，普通启动只使用已安装的运行包。",
+          "authority": "subject_cognition",
+          "evidenceFamilies": ["lexical", "dense", "language_rerank"],
+          "next": "show result:2 | trace result:2 | use result:2 | context pin --cognition result:2"
+        },
+        {
+          "lexicalRef": "eprev:bidis-jaram-finog",
+          "result": "result:3",
+          "ref": {
+            "kind": "episode_revision",
+            "value": "01a12089-8427-7971-84a0-9e5f623ad413"
+          },
+          "text": "\nhard_idle\n\nOn 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity, and subset keys are sorted and deduplicated. A clean configuration instance verified that omitted video defaults and explicit complete defaults using the same operation ID return the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, and read back as the complete normalized values after restart. Leaf configuration organization and reference graph validation are still pending.\nOn 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls are outside those locks. Each command freezes its chosen Subject, Session, WorkContext and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. A clean Core/Kernel/PostgreSQL instance verified concurrent real CLI Session opening and MCP WorkContext creation into one shared state root, both selections surviving and remaining readable across both entry points and a Core restart. Real Codex/model continuity and Windows Portable continuation remain pending.",
+          "authority": "subject_cognition",
+          "evidenceFamilies": ["lexical", "dense", "language_rerank"],
+          "next": "show result:3 | trace result:3 | use result:3 | context pin --cognition result:3"
+        },
+        {
+          "lexicalRef": "memrev:sajot-zujup-muhug",
+          "result": "result:4",
+          "ref": {
+            "kind": "memory_revision",
+            "value": "01a11f22-0e18-7c83-9be4-7f9df0d98260"
+          },
+          "text": "On 2026-10-09, the Nous Wave rebase moved configuration normalization before snapshot freeze. Rust typed owners and Core Zod owners supply complete validated values. Catalog metadata identity is separate from execution identity; subset keys are sorted and deduplicated. In a clean configuration instance, omitted video defaults and explicit complete defaults using the same operation ID returned the same desired digest and revision. Active restart-scoped values remain unchanged until Core restarts, then read back as complete normalized values. Leaf configuration organization and reference graph validation remained pending.",
+          "authority": "subject_cognition",
+          "cognitiveRole": "declarative",
+          "formationMode": "grounded",
+          "evidenceFamilies": ["dense", "language_rerank"],
+          "next": "show result:4 | trace result:4 | use result:4 | context pin --cognition result:4"
+        },
+        {
+          "lexicalRef": "memrev:raman-zajos-ruvuj",
+          "result": "result:5",
+          "ref": {
+            "kind": "memory_revision",
+            "value": "01a11f22-2bbe-7111-8ddf-023da7f18de4"
+          },
+          "text": "On 2026-10-09, the Nous Wave reference consumer began isolating local state by stable Core instance ID plus consumer identity. CLI and MCP share an in-process command core. Maintained lock and atomic-write libraries protect only short local transactions; RPC and model calls remain outside those locks. Each command freezes its chosen Subject, Session, WorkContext, and input. Independent selection fields merge; conflicting scope updates preserve the returned business result and report STATE_UNSAVED. On a clean Core/Kernel/PostgreSQL instance, concurrent real CLI Session opening and MCP WorkContext creation were verified to write into one shared state root, with both selections surviving and remaining readable across both entry points and after a Core restart. Real Codex/model continuity and Windows Portable continuation remained pending.",
+          "authority": "subject_cognition",
+          "cognitiveRole": "declarative",
+          "formationMode": "grounded",
+          "evidenceFamilies": ["lexical", "dense", "language_rerank"],
+          "next": "show result:5 | trace result:5 | use result:5 | context pin --cognition result:5"
+        },
+        {
+          "lexicalRef": "eprev:tutup-nojoz-nupuh",
+          "result": "result:6",
+          "ref": {
+            "kind": "episode_revision",
+            "value": "01a12089-8438-77e1-981e-e86f348ca9a1"
+          },
+          "text": "\nhard_idle\n\n材料证据访问必须按实际成功路由和实际物理输入记录。visual、audio、source_text 分别使用 original、representation 或 unavailable。原始视频或帧不使附带的 Transcript 自动成为直接听到的音频；转录文本的音频访问只能为 representation。多路 fallback 后不能继续使用首选模型能力判断成功结果。工作预算到期后，清理保存和维护确认使用各自有界预算；已传输而结果不明的 attempt 保留 unknown，未知 usage 不写成零。",
+          "authority": "subject_cognition",
+          "evidenceFamilies": ["dense", "language_rerank"],
+          "next": "show result:6 | trace result:6 | use result:6 | context pin --cognition result:6"
+        },
+        {
+          "lexicalRef": "memrev:bufor-rurov-pupik",
+          "result": "result:7",
+          "ref": {
+            "kind": "memory_revision",
+            "value": "01a11f8b-a8ff-7261-8558-5e1797aa1b56"
+          },
+          "text": "材料证据访问记录规则：必须按实际成功路由和实际物理输入记录。对 visual、audio、source_text，访问状态分别只能记为 original、representation 或 unavailable。原始视频或帧不会使其附带的 Transcript 自动成为直接听到的音频；转录文本对应的音频访问只能记为 representation。经历多路 fallback 后，不能继续用首选模型的能力判断成功结果。工作预算到期后，清理保存与维护确认分别使用各自的有界预算；已经传输但结果不明的 attempt 保留为 unknown，未知 usage 不得写成零。",
+          "authority": "subject_cognition",
+          "cognitiveRole": "declarative",
+          "formationMode": "grounded",
+          "evidenceFamilies": ["dense", "language_rerank"],
+          "next": "show result:7 | trace result:7 | use result:7 | context pin --cognition result:7"
+        }
+      ],
+      "resourceRecords": [],
+      "resourceActions": [],
+      "diagnostics": {
+        "candidateCounts": {
+          "planned_candidate_bound": "48",
+          "dense_candidates": "7",
+          "lexical_candidates": "4"
+        },
+        "laneStatus": {
+          "topology_plan": "skipped",
+          "cue_sensing_plan": "skipped",
+          "lexical": "ready",
+          "resource_plan": "limit=4,synopsis_preferred=false",
+          "effort": "normal",
+          "dense": "ready"
+        },
+        "trace": ""
+      },
+      "degradation": []
+    }
+  },
+  "portable": {
+    "observedAt": "2026-10-10T06:40:14.3450961Z",
+    "sourceHead": "6476d8249a9568e8acda020dd998f8d1e2537b5e",
+    "sourceDirty": false,
+    "payloadFiles": 2335,
+    "hashMismatches": 0,
+    "zipSha256": "441e9f7e3d987a423d692bced178a1e8cfb3a4218a6f10886ac4c04b5b43b653"
+  },
+  "layouts": [
+    {
+      "result": "PASS",
+      "platform": "win32",
+      "bundle": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\temp\\portable\\verification-2Krd66\\installation",
+      "archive": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\releases\\windows-x64\\current.zip",
+      "layout": "home",
+      "relocated": false,
+      "verificationRootRepository": true,
+      "developerPath": false,
+      "sourceLess": true,
+      "restart": true,
+      "stableDatabasePort": true,
+      "missingPackRejected": true,
+      "subjectId": "01a12487-82c3-7891-a84d-bf1523ed6e9e",
+      "memoryId": "01a12487-8901-79d3-8d21-c734dafc60d1",
+      "liveModel": "NOT_RUN",
+      "corpus": "synthetic_portable_wiring"
+    },
+    {
+      "result": "PASS",
+      "platform": "win32",
+      "bundle": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\temp\\portable\\verification-MxgLMX\\installation",
+      "archive": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\releases\\windows-x64\\current.zip",
+      "layout": "colocated",
+      "relocated": false,
+      "verificationRootRepository": true,
+      "developerPath": false,
+      "sourceLess": true,
+      "restart": true,
+      "stableDatabasePort": true,
+      "missingPackRejected": true,
+      "subjectId": "01a12488-d6e9-74b2-9ef4-b013fea861e2",
+      "memoryId": "01a12488-dd6f-7130-8faf-32c41a2f4f74",
+      "liveModel": "NOT_RUN",
+      "corpus": "synthetic_portable_wiring"
+    },
+    {
+      "result": "PASS",
+      "platform": "win32",
+      "bundle": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\temp\\portable\\verification-OefNcO\\moved-installation",
+      "archive": "C:\\dev\\Heptalogos-Devs\\Nous-Wave\\data\\releases\\windows-x64\\current.zip",
+      "layout": "locator",
+      "relocated": true,
+      "verificationRootRepository": true,
+      "developerPath": false,
+      "sourceLess": true,
+      "restart": true,
+      "stableDatabasePort": true,
+      "missingPackRejected": true,
+      "subjectId": "01a12489-dd1e-7a71-aa95-0049bb44cf67",
+      "memoryId": "01a12489-e385-7df0-8f7e-8885dee184d6",
+      "liveModel": "NOT_RUN",
+      "corpus": "synthetic_portable_wiring"
+    }
+  ],
+  "retainedArtifacts": "data/research/results/deep-rebase-preservation/windows-structure-2026-10-10/",
+  "constraints": {
+    "pullRequest": "24 OPEN/Draft; do not merge, mark ready or delete branch",
+    "retiredDirectoryCleanup": "human-managed; excluded from completion",
+    "testLength": "TS600/900, Rust500/800; tests/helpers included without exemptions"
+  }
+}

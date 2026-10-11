@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { repositoryRoot as root, developmentLocator } from "../workspace.js";
 import { spawn } from "node:child_process";
-import { initializeConfiguration } from "../../apps/nous-core/src/configuration-file.js";
+import { initializeConfiguration } from "../../apps/nous-core/src/configuration/file.js";
 import { resolveLocations } from "../../apps/nous-core/src/locations.js";
 
 const binary = join(

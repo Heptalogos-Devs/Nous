@@ -3,6 +3,7 @@
 
 syntax = "proto3";
 package nous.wave.v1alpha1;
+import "nous/wave/v1alpha1/presentation.proto";
 import "nous/wave/v1alpha1/types.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -13,11 +14,11 @@ message JournalPoint {
   repeated RevisionBasis basis = 4;
 }
 message JournalRevision {
-  string journal_revision_id = 1;
-  string journal_id = 2;
-  string subject_id = 3;
+  string journal_revision_id = 1 [(reference_kind) = "journal_revision"];
+  string journal_id = 2 [(reference_kind) = "journal"];
+  string subject_id = 3 [(reference_kind) = "subject"];
   int32 revision_no = 4;
-  optional string parent_revision_id = 5;
+  optional string parent_revision_id = 5 [(reference_kind) = "journal_revision"];
   optional string revision_intent = 6;
   optional string title = 7;
   TemporalExtent temporal_scope = 8;
@@ -29,9 +30,9 @@ message JournalRevision {
   repeated CognitiveRef sources = 14;
 }
 message Journal {
-  string journal_id = 1;
-  string subject_id = 2;
-  string current_revision_id = 3;
+  string journal_id = 1 [(reference_kind) = "journal"];
+  string subject_id = 2 [(reference_kind) = "subject"];
+  string current_revision_id = 3 [(reference_kind) = "journal_revision"];
   int64 object_epoch = 4;
   string acceptance_state = 5;
   string integrity_state = 6;
@@ -41,10 +42,10 @@ message Journal {
   JournalRevision current_revision = 10;
 }
 message JournalResponse { Journal journal = 1; repeated Degradation degradation = 2; }
-message JournalMutationRequest { string operation_id = 1; string subject_id = 2; string journal_id = 3; int64 expected_object_epoch = 4; }
+message JournalMutationRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string journal_id = 3 [(reference_kind) = "journal"]; int64 expected_object_epoch = 4; }
 message ListJournalsResponse { repeated Journal items = 1; string next_page_token = 2; }
-message ListJournalRevisionsRequest { string subject_id = 1; string journal_id = 2; Page page = 3; }
+message ListJournalRevisionsRequest { string subject_id = 1 [(reference_kind) = "subject"]; string journal_id = 2 [(reference_kind) = "journal"]; Page page = 3; }
 message ListJournalRevisionsResponse { repeated JournalRevision items = 1; string next_page_token = 2; }
-message MaintenanceGrantRequest { string subject_id = 1; uint32 max_operations = 2; uint32 max_model_calls = 3; uint32 max_elapsed_ms = 4; }
+message MaintenanceGrantRequest { string subject_id = 1 [(reference_kind) = "subject"]; uint32 max_operations = 2; uint32 max_model_calls = 3; uint32 max_elapsed_ms = 4; }
 message MaintenanceOperationResult { string need_id = 1; string kind = 2; string status = 3; optional string problem_code = 4; }
 message MaintenanceGrantResponse { repeated MaintenanceOperationResult results = 1; uint32 model_calls = 2; uint32 elapsed_ms = 3; string disposition = 4; }

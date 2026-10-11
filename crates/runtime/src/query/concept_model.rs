@@ -26,7 +26,11 @@ pub struct QueryConceptOutput {
     pub novel_concepts: Vec<NovelConceptHypothesis>,
 }
 impl QueryActivation {
-    pub fn apply_concept_model(&mut self, output: QueryConceptOutput) -> Result<()> {
+    pub fn apply_concept_model(
+        &mut self,
+        output: QueryConceptOutput,
+        policy: &super::ConceptActivationPolicy,
+    ) -> Result<()> {
         if output.existing_tags.len() > 8 || output.novel_concepts.len() > 4 {
             return Err(Error::Invalid("query concept output exceeds bounds".into()));
         }
@@ -80,7 +84,7 @@ impl QueryActivation {
                 .total_cmp(&a.strength)
                 .then(a.tag.0.cmp(&b.tag.0))
         });
-        self.inferred_tags.truncate(8);
+        self.inferred_tags.truncate(policy.max_activated_tags);
         self.seeds.retain(|seed| {
             !matches!(
                 seed.origin.as_str(),

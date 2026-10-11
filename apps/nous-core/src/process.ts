@@ -4,7 +4,7 @@
 import {
   hostSchema,
   type CoreExecutionPolicy,
-} from "./configuration-catalog.js";
+} from "./configuration/catalog.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";

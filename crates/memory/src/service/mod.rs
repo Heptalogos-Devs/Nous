@@ -22,10 +22,10 @@ mod provenance;
 mod query;
 mod query_materialization;
 mod query_support;
-mod runtime;
 pub mod schema;
 mod schema_lane;
 mod source_classes;
+mod source_facts;
 mod state;
 mod tag;
 mod topology;
@@ -67,6 +67,7 @@ pub struct MemoryService {
     pub configuration: nous_configuration::ConfigurationService,
     pub store: AuthorityStore,
     pub objects: ObjectStore,
+    pub material: nous_material::MaterialService,
     pub cognition: nous_runtime::CognitiveRuntimeService,
     capabilities: Arc<Vec<CapabilityDescriptor>>,
 }
@@ -99,7 +100,6 @@ impl MemoryService {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeStatus {
-    pub api_version: u32,
     pub ready: bool,
     pub authority: String,
     pub capabilities: Vec<CapabilityStatus>,
@@ -221,31 +221,26 @@ impl MemoryService {
         operation: OperationId,
         started_at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>> {
-        let timestamp: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT snapshot->>'cognitive_formed_at' FROM model_workflow_operations WHERE subject_id=$1 AND owner='memory' AND operation_key=$2",
-        ).bind(subject.0).bind(operation.0.to_string()).fetch_optional(&mut **tx).await.map_err(db)?;
-        timestamp
-            .flatten()
-            .map(|value| {
-                value.parse().map_err(|_| {
-                    Error::Infrastructure("invalid workflow cognitive formation time".into())
-                })
-            })
-            .transpose()
-            .map(|value| value.unwrap_or(started_at))
+        Ok(AuthorityStore::workflow_cognitive_time_in(
+            tx,
+            subject,
+            "memory",
+            &operation.0.to_string(),
+        )
+        .await?
+        .unwrap_or(started_at))
     }
 
     pub fn new(
-        store: AuthorityStore,
-        objects: ObjectStore,
-        cognition: nous_runtime::CognitiveRuntimeService,
+        material: nous_material::MaterialService,
         configuration: nous_configuration::ConfigurationService,
     ) -> Self {
         Self {
             configuration,
-            store,
-            objects,
-            cognition,
+            store: material.store.clone(),
+            objects: material.objects.clone(),
+            cognition: material.cognition.clone(),
+            material,
             capabilities: Arc::new(Vec::new()),
         }
     }
@@ -257,7 +252,6 @@ impl MemoryService {
 
     pub async fn status(&self) -> RuntimeStatus {
         RuntimeStatus {
-            api_version: API_VERSION,
             ready: true,
             authority: "postgresql".into(),
             capabilities: self

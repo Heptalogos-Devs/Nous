@@ -8,7 +8,8 @@ import { ModelRuntime } from "./runtime.js";
 import { ModelMaterialPipeline } from "./material.js";
 import { deriveMaterial } from "./derivation.js";
 import { formObservation } from "./formation.js";
-import { GenerationFailure } from "./invocations.js";
+import { GenerationFailure } from "./execution/routes.js";
+import { executionOptions } from "../execution.js";
 
 function failure(code: string, error: unknown) {
   return [
@@ -32,10 +33,14 @@ export function modelOperations(
           Code.InvalidArgument,
         );
       try {
-        return await material.prepare(r.subjectId, r.limit, {
-          signal: c.signal,
-          timeoutMs: c.timeoutMs(),
-        });
+        return await material.prepare(
+          r.subjectId,
+          r.limit,
+          executionOptions(kernel.execution.opportunity, {
+            signal: c.signal,
+            timeoutMs: c.timeoutMs(),
+          }),
+        );
       } catch (error) {
         if (c.signal.aborted) throw error;
         return {

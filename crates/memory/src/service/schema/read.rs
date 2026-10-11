@@ -110,7 +110,16 @@ impl MemoryService {
         subject: SubjectId,
         revision: CognitiveSchemaRevisionId,
     ) -> Result<Vec<SchemaEvidenceLink>> {
-        let rows=sqlx::query("SELECT link_id,subject_id,schema_revision_id,role,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,producer_signature_id,created_at,revoked_at,epistemic_relation FROM cognitive_schema_evidence_links WHERE subject_id=$1 AND schema_revision_id=$2 AND revoked_at IS NULL ORDER BY link_id").bind(subject.0).bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)?;
+        self.schema_links_in_view(subject, revision, None).await
+    }
+
+    pub(in crate::service) async fn schema_links_in_view(
+        &self,
+        subject: SubjectId,
+        revision: CognitiveSchemaRevisionId,
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<Vec<SchemaEvidenceLink>> {
+        let rows=sqlx::query("SELECT link_id,subject_id,schema_revision_id,role,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,producer_signature_id,created_at,revoked_at,epistemic_relation FROM cognitive_schema_evidence_links WHERE subject_id=$1 AND schema_revision_id=$2 AND (($3 AND link_id=ANY($4::uuid[])) OR (NOT $3 AND revoked_at IS NULL)) ORDER BY link_id").bind(subject.0).bind(revision.0).bind(view.is_some()).bind(view.map(|view|view.schema_evidence_links.clone()).unwrap_or_default()).fetch_all(self.store.pool()).await.map_err(db)?;
         rows.into_iter()
             .map(|row| {
                 let basis = if row.try_get::<String, _>("basis_kind").map_err(db)? == "evidence" {

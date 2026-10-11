@@ -1,6 +1,10 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+#[path = "concept_maintenance/catalog.rs"]
+mod catalog;
+#[path = "concept_maintenance/query.rs"]
+mod query;
 mod test_support;
 use nous_core::*;
 use nous_kernel::NousRuntime;
@@ -140,64 +144,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         ));
     }
     let first = claim(&rt, subject).await;
-    use k::kernel_maintenance_service_server::KernelMaintenanceService;
-    use nous_protocol::nous::wave::kernel::v1alpha1 as k;
-    let ts = |date: chrono::DateTime<chrono::Utc>| prost_types::Timestamp {
-        seconds: date.timestamp(),
-        nanos: i32::try_from(date.timestamp_subsec_nanos()).unwrap(),
-    };
-    let wire = k::MaintenanceNeed {
-        need_id: first.need_id.to_string(),
-        subject_id: subject.0.to_string(),
-        kind: first.kind.clone(),
-        scope_kind: first.scope_kind.clone(),
-        scope_ref: first.scope_ref.clone(),
-        trigger_authority_seq: first.trigger_authority_seq,
-        trigger_revision: first.trigger_revision,
-        due_at: Some(ts(first.due_at)),
-        created_at: Some(ts(first.created_at)),
-        updated_at: Some(ts(first.updated_at)),
-        state: first.state.clone(),
-        lease_token: first.lease_token.map(|t| t.to_string()),
-        lease_until: first.lease_until.map(ts),
-        ..Default::default()
-    };
-    let service = nous_kernel::transport::KernelService(rt.clone());
-    let reply = KernelMaintenanceService::plan_maintenance(
-        &service,
-        tonic::Request::new(k::PlanMaintenanceRequest {
-            claimed: Some(wire.clone()),
-        }),
-    )
-    .await
-    .unwrap()
-    .into_inner();
-    let wire_catalog = reply.concept_catalog.unwrap();
-    assert_eq!(wire_catalog.max_suggestions, 4);
-    assert_eq!(wire_catalog.references.len(), 1);
-    assert_eq!(
-        wire_catalog.references[0].reference.as_ref().unwrap().value,
-        reference_parts(&revisions[0]).1
-    );
-    assert_eq!(wire_catalog.basis[0].key, "s0");
-    assert!(
-        reply
-            .concept_model_input_json
-            .unwrap()
-            .contains("sourceContext")
-    );
-    let mut wrong_scope = wire;
-    wrong_scope.scope_ref = reference_parts(&revisions[1]).1;
-    assert!(
-        KernelMaintenanceService::plan_maintenance(
-            &service,
-            tonic::Request::new(k::PlanMaintenanceRequest {
-                claimed: Some(wrong_scope)
-            })
-        )
-        .await
-        .is_err()
-    );
+    catalog::assert_wire_catalog(&rt, subject, &revisions, &first).await;
     let initial = owner
         .plan_concepts(subject, revisions[0].clone())
         .await
@@ -354,6 +301,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             subject,
             ACCRETION.path(),
             serde_json::json!({"enabled":true,"generic_degree":32,"recurrence_review":1}),
+            None,
         )
         .await
         .unwrap();
@@ -372,6 +320,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             subject,
             ACCRETION.path(),
             serde_json::json!({"enabled":true,"generic_degree":32,"recurrence_review":3}),
+            None,
         )
         .await
         .unwrap();
@@ -459,145 +408,8 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         queued, 0,
         "exposure/refutation cannot cross a positive use interval"
     );
-    let graph = rt
-        .store
-        .topology_projection_input(subject, true)
-        .await
-        .unwrap();
-    assert!(
-        graph
-            .edges
-            .iter()
-            .any(|edge| edge.association_kind == "tag_attachment" && edge.to == tag)
-    );
-    assert!(
-        graph
-            .edges
-            .iter()
-            .any(|edge| edge.association_kind == "assoc.related")
-    );
-    let tag_id = match tag {
-        CognitiveRef::Tag(id) => id,
-        _ => unreachable!(),
-    };
-    let query = CognitiveQuery {
-        api_version: API_VERSION,
-        subject,
-        projection: Default::default(),
-        temporal_frame: Default::default(),
-
-        work_context: None,
-        session: None,
-        situation: Default::default(),
-        expression: CognitiveQueryExpr {
-            cues: vec![
-                Cue::Text(nous_core::TextCue {
-                    text: "Recall this maintained concept".into(),
-                }),
-                Cue::Tag(TagCue { tag: tag_id }),
-            ],
-            ..Default::default()
-        },
-        exploration: ExplorationIntent::AroundTag,
-        resources: Default::default(),
-        result_need: Default::default(),
-        effort: Default::default(),
-        capabilities: CapabilityPolicy {
-            text_embedding: RequirementStrength::Forbidden,
-            ..Default::default()
-        },
-        diagnostics: DiagnosticsRequest::Full,
-    };
-    let bound = rt
-        .cognition
-        .bind_query(query)
-        .await
-        .unwrap()
-        .for_profile(CognitiveProfile::NousNodePotential)
-        .unwrap();
-    let execution = rt.execute_bound_query(bound, Some(32)).await.unwrap();
-    assert!(
-        execution
-            .result
-            .diagnostics
-            .as_ref()
-            .unwrap()
-            .trace
-            .is_some()
-    );
-    for hit in &execution.result.results {
-        if hit
-            .match_evidence
-            .families
-            .contains(&EvidenceFamily::TopologyWave)
-        {
-            let readout: serde_json::Value =
-                serde_json::from_str(hit.match_evidence.explanation.as_deref().unwrap()).unwrap();
-            assert!(readout["topologywave"]["activated_route"].is_array());
-            for edge in readout["topologywave"]["route_evidence"]
-                .as_array()
-                .unwrap()
-            {
-                let basis = edge["support"].as_array().unwrap();
-                assert!(!basis.is_empty());
-                assert!(basis.iter().all(|item| item["provenance_root"].is_string()));
-            }
-        }
-    }
-    for revision in &revisions {
-        assert!(
-            execution
-                .result
-                .results
-                .iter()
-                .any(|hit| hit.revision.as_ref() == Some(revision) || &hit.reference == revision),
-            "{:#?}",
-            execution.result
-        );
-    }
-    assert!(execution.result.results.iter().any(|hit| {
-        hit.match_evidence
-            .families
-            .contains(&EvidenceFamily::TopologyWave)
-    }));
-    drop(execution);
-    let schema = owner
-        .create_schema(CreateSchemaInput {
-            producer: None,
-            operation_id: OperationId::new(),
-            subject,
-            title: Some("Independent reviewer approval pattern".into()),
-            structural_claim: "Release approval requires a recorded reviewer signoff".into(),
-            applicability_scope: SchemaScope {
-                description: "The two independent release observations".into(),
-                aboutness: vec![],
-                tags: vec![],
-                valid_time: TemporalExtent::Unknown,
-            },
-            boundary_definition: "Does not establish approval policies for other projects".into(),
-            formation_kind: SchemaFormationKind::Synthesized,
-            evidence_links: revisions
-                .iter()
-                .map(|reference| SchemaEvidenceLinkInput {
-                    role: SchemaEvidenceRole::Support,
-                    basis: RevisionBasis::CognitionDependency(CognitionDependency {
-                        epistemic_relation: None,
-                        target_revision: reference.clone(),
-                        basis_role: BasisRole::Direct,
-                    }),
-                })
-                .collect(),
-        })
-        .await
-        .unwrap();
-    let schema_ref = CognitiveRef::CognitiveSchemaRevision(schema.schema.current_revision_id);
-    let signal = owner
-        .accretion_signal(subject, &schema_ref)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(signal.attached_cognition, 2);
-    assert_eq!(signal.independent_roots, 2);
+    query::assert_maintained_concept_query(&rt, subject, &tag, &revisions).await;
+    catalog::assert_schema_accretion(&rt, subject, &revisions).await;
 
     rt.configuration
         .set_subject_override(
@@ -605,6 +417,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             subject,
             ACCRETION.path(),
             serde_json::json!({"enabled":false,"generic_degree":32,"recurrence_review":1}),
+            None,
         )
         .await
         .unwrap();
@@ -628,6 +441,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             subject,
             CONCEPT_MAINTENANCE.path(),
             serde_json::json!({"max_candidates":1,"max_suggestions":2}),
+            None,
         )
         .await
         .unwrap();

@@ -90,9 +90,11 @@ impl CognitiveRuntimeService {
         let stored=sqlx::query("INSERT INTO query_feedback_records(subject_id,query_id,session_id,work_context_id,prepared_query_digest,query_activation_digest,signals,returned_revision_refs,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(subject_id,query_id) DO UPDATE SET returned_revision_refs=EXCLUDED.returned_revision_refs WHERE query_feedback_records.prepared_query_digest=EXCLUDED.prepared_query_digest AND query_feedback_records.query_activation_digest=EXCLUDED.query_activation_digest")
             .bind(subject.0).bind(bound.query_id).bind(bound.source_query.session.map(|session|session.0)).bind(bound.source_query.work_context).bind(prepared_digest).bind(activation_digest).bind(signals).bind(serde_json::json!(revisions)).bind(created).bind(expires).execute(&mut *tx).await.map_err(db)?;
         if stored.rows_affected() != 1 {
-            return Err(Error::Conflict(
-                "query feedback identity has different prepared activation".into(),
-            ));
+            return Err(DomainError::new(
+                DomainErrorCode::OperationIdConflict,
+                "Query feedback identity has different prepared activation",
+            )
+            .into());
         }
         tx.commit().await.map_err(db)
     }

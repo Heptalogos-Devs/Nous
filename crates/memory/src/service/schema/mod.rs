@@ -3,6 +3,7 @@
 
 use super::*;
 mod lifecycle;
+mod lineage;
 mod mutation;
 mod read;
 
@@ -17,37 +18,26 @@ pub struct SchemaView {
     pub evidence_links: Vec<SchemaEvidenceLink>,
 }
 
-fn validate_schema_content(input: &CreateSchemaInput) -> Result<()> {
-    if input.structural_claim.trim().is_empty()
-        || input.structural_claim.len() > 16 * 1024
-        || input.applicability_scope.description.trim().is_empty()
-        || input.applicability_scope.description.len() > 16 * 1024
-        || input.boundary_definition.trim().is_empty()
-        || input.boundary_definition.len() > 16 * 1024
+fn validate_schema_content(content: &SchemaContent) -> Result<()> {
+    if content.structural_claim.trim().is_empty()
+        || content.structural_claim.len() > 16 * 1024
+        || content.applicability_scope.description.trim().is_empty()
+        || content.applicability_scope.description.len() > 16 * 1024
+        || content.boundary_definition.trim().is_empty()
+        || content.boundary_definition.len() > 16 * 1024
     {
         return Err(Error::Invalid(
             "schema content is required and bounded".into(),
         ));
     }
-    Ok(())
+    content.applicability_scope.valid_time.validate()
 }
 
 fn validate_schema_revision_content(input: &ReviseSchemaInput) -> Result<()> {
     if input.operation_id.0.is_nil() {
         return Err(Error::Invalid("operation_id is required".into()));
     }
-    if input.structural_claim.trim().is_empty()
-        || input.structural_claim.len() > 16 * 1024
-        || input.applicability_scope.description.trim().is_empty()
-        || input.applicability_scope.description.len() > 16 * 1024
-        || input.boundary_definition.trim().is_empty()
-        || input.boundary_definition.len() > 16 * 1024
-    {
-        return Err(Error::Invalid(
-            "schema content is required and bounded".into(),
-        ));
-    }
-    input.applicability_scope.valid_time.validate()
+    validate_schema_content(&input.content)
 }
 
 async fn active_schema_link_inputs(
@@ -127,10 +117,13 @@ pub(super) struct SchemaRevisionWrite {
     pub producer: Option<Uuid>,
 }
 impl MemoryService {
-    pub(super) async fn validate_schema_formation(&self, input: &CreateSchemaInput) -> Result<()> {
-        validate_schema_content(input)?;
-        input.applicability_scope.valid_time.validate()?;
-        let basis: Vec<_> = input
+    pub(super) async fn validate_schema_formation(
+        &self,
+        subject: SubjectId,
+        content: &SchemaContent,
+    ) -> Result<()> {
+        validate_schema_content(content)?;
+        let basis: Vec<_> = content
             .evidence_links
             .iter()
             .map(|link| link.basis.clone())
@@ -143,10 +136,9 @@ impl MemoryService {
         for basis in &basis {
             validate_exact_basis(std::slice::from_ref(basis))?;
         }
-        self.validate_basis_for_subject(input.subject, &basis)
-            .await?;
-        if input.formation_kind == SchemaFormationKind::Synthesized {
-            self.validate_formation_semantics(input.subject, FormationMode::Synthesized, &basis)
+        self.validate_basis_for_subject(subject, &basis).await?;
+        if content.formation_kind == SchemaFormationKind::Synthesized {
+            self.validate_formation_semantics(subject, FormationMode::Synthesized, &basis)
                 .await?;
         }
         Ok(())
@@ -162,6 +154,7 @@ impl MemoryService {
         let revision_id = CognitiveSchemaRevisionId::new();
         let now = self.cognition.now(input.subject);
         let basis: Vec<_> = input
+            .content
             .evidence_links
             .iter()
             .map(|link| link.basis.clone())
@@ -171,7 +164,8 @@ impl MemoryService {
             .bind(schema_id.0).bind(input.subject.0).bind(revision_id.0).bind(now).execute(&mut **tx).await.map_err(db)?;
         self.write_schema_revision_in(
             tx,
-            input,
+            input.subject,
+            &input.content,
             SchemaRevisionWrite {
                 schema_id,
                 revision_id,
@@ -189,28 +183,40 @@ impl MemoryService {
     pub(super) async fn write_schema_revision_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        input: &CreateSchemaInput,
+        subject: SubjectId,
+        content: &SchemaContent,
         write: SchemaRevisionWrite,
     ) -> Result<()> {
-        let (kind, start, end) = temporal_columns(&input.applicability_scope.valid_time);
-        let aboutness: Vec<String> = input
+        let (kind, start, end) = temporal_columns(&content.applicability_scope.valid_time);
+        let aboutness: Vec<String> = content
             .applicability_scope
             .aboutness
             .iter()
             .map(|value| value.as_str().to_owned())
             .collect();
-        let tags: Vec<Uuid> = input
+        let tags: Vec<Uuid> = content
             .applicability_scope
             .tags
             .iter()
             .map(|id| id.0)
             .collect();
         sqlx::query("INSERT INTO cognitive_schema_revisions(schema_revision_id,schema_id,revision_no,parent_revision_id,revision_intent,title,structural_claim,applicability_description,aboutness,tags,boundary_definition,formation_kind,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)")
-            .bind(write.revision_id.0).bind(write.schema_id.0).bind(write.number).bind(write.parent.map(|id|id.0)).bind(write.intent.map(|intent|intent.as_str())).bind(&input.title).bind(&input.structural_claim).bind(&input.applicability_scope.description).bind(aboutness).bind(tags).bind(&input.boundary_definition).bind(input.formation_kind.as_str()).bind(kind).bind(start).bind(end).bind(write.formed_at).bind(write.recorded_at).bind(write.producer).execute(&mut **tx).await.map_err(db)?;
-        for link in &input.evidence_links {
-            self.insert_schema_link(tx, input.subject, write.revision_id, link.clone())
+            .bind(write.revision_id.0).bind(write.schema_id.0).bind(write.number).bind(write.parent.map(|id|id.0)).bind(write.intent.map(|intent|intent.as_str())).bind(&content.title).bind(&content.structural_claim).bind(&content.applicability_scope.description).bind(aboutness).bind(tags).bind(&content.boundary_definition).bind(content.formation_kind.as_str()).bind(kind).bind(start).bind(end).bind(write.formed_at).bind(write.recorded_at).bind(write.producer).execute(&mut **tx).await.map_err(db)?;
+        for link in &content.evidence_links {
+            self.insert_schema_link(tx, subject, write.revision_id, link.clone())
                 .await?;
         }
+        self.store
+            .ensure_identity_addresses_in(
+                tx,
+                subject,
+                &[
+                    CognitiveRef::CognitiveSchema(write.schema_id),
+                    CognitiveRef::CognitiveSchemaRevision(write.revision_id),
+                ],
+                content.title.as_deref().unwrap_or(""),
+            )
+            .await?;
         Ok(())
     }
 }

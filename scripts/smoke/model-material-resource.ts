@@ -1,8 +1,9 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { CONFIG_REVISION } from "../../apps/nous-core/src/config.js";
+import { CONFIG_REVISION } from "../../apps/nous-core/src/configuration/schema.js";
 import { connectNousInstance } from "@nous-wave/client/node";
+import { NousError } from "@nous-wave/client";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { writeFile, appendFile, rm, mkdir } from "node:fs/promises";
@@ -27,9 +28,23 @@ const configPath = join(dataRoot, "bootstrap.toml");
 // Deterministic local provider contract wiring, never live-model or corpus evidence.
 let structuredEnabled = false;
 let providerCalls = 0;
-let resourceProviderCalls = 0;
-let resourceContent = "RAGFlow external chunk contract marker.";
+let resourceContent = "LocalDocuments external material contract marker.";
 let formationEnabled = false;
+const documentsPath = join(dataRoot, "local-documents.json");
+const publishDocuments = (version = "1", accessible = true) =>
+  writeFile(
+    documentsPath,
+    JSON.stringify([
+      {
+        id: "source1",
+        version,
+        title: "source.txt",
+        content: resourceContent,
+        accessible,
+      },
+    ]),
+  );
+await publishDocuments();
 const provider = createServer((request, response) => {
   void (async () => {
     const chunks: Buffer[] = [];
@@ -38,41 +53,6 @@ const provider = createServer((request, response) => {
       if (!(bytes instanceof Uint8Array))
         throw new Error("Invalid fixture request bytes");
       chunks.push(Buffer.from(bytes));
-    }
-    if (request.url?.startsWith("/api/v1/")) {
-      resourceProviderCalls++;
-      response.setHeader("Content-Type", "application/json");
-      const content = resourceContent;
-      const unrelated =
-        request.method === "POST" &&
-        (JSON.parse(Buffer.concat(chunks).toString()) as { question?: string })
-          .question === "unrelated";
-      const data =
-        request.method === "POST"
-          ? {
-              chunks: unrelated
-                ? []
-                : [
-                    {
-                      id: "chunk1",
-                      dataset_id: "dataset1",
-                      document_id: "document1",
-                      content,
-                      document_keyword: "source.txt",
-                      similarity: 0.8,
-                    },
-                  ],
-            }
-          : request.url.includes("/documents/")
-            ? {
-                id: "chunk1",
-                doc_id: "document1",
-                content_with_weight: content,
-                available_int: 1,
-              }
-            : [{ id: "dataset1" }];
-      response.end(JSON.stringify({ code: 0, data }));
-      return;
     }
     if (request.url === "/v1/embeddings") {
       response.setHeader("Content-Type", "application/json");
@@ -193,7 +173,7 @@ if (!providerAddress || typeof providerAddress === "string")
 await mkdir(join(dataRoot, "config"));
 await writeFile(
   join(dataRoot, "config", "nous.toml"),
-  `config_revision = ${CONFIG_REVISION}\n[host]\nkernel_executable = ${JSON.stringify(kernel)}\nport = 0\n[object_store]\nmax_upload_bytes = 1048576\n[[consumers]]\nconsumer_id = "default"\n[gateway_profiles.smoke]\nbase_url = "http://127.0.0.1:${providerAddress.port}/v1"\ncredential_env = "NOUS_SMOKE_GATEWAY"\n[model_profiles.local]\ngateway = "smoke"\nprotocol = "openai-chat"\nmodel = "local-contract"\ncapabilities = ["text", "structured_output"]\n[execution_profiles.material_structuring]\nmodel = "local"\n[roles.material_structuring]\nroutes = ["material_structuring"]\n[resource_profiles.ragflow]\nmax_material_bytes = 1048576\nadapter_kind = "ragflow"\nbase_url = "http://127.0.0.1:${providerAddress.port}/api/v1"\ncredential_env = "NOUS_SMOKE_GATEWAY"\n`,
+  `config_revision = ${CONFIG_REVISION}\n[host]\nkernel_executable = ${JSON.stringify(kernel)}\nport = 0\n[object_store]\nmax_upload_bytes = 1048576\n[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.smoke]\nbase_url = "http://127.0.0.1:${providerAddress.port}/v1"\ncredential_env = "NOUS_SMOKE_GATEWAY"\n[models.model_profiles.local]\ngateway = "smoke"\nprotocol = "openai-chat"\nmodel = "local-contract"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.material_structuring]\nmodel = "local"\n[models.roles.material_structuring]\nroutes = ["material_structuring"]\n`,
 );
 const runtimeRoot = process.env.NOUS_WAVE_POSTGRES_RUNTIME
   ? dirname(process.env.NOUS_WAVE_POSTGRES_RUNTIME)
@@ -208,8 +188,9 @@ async function boot() {
     process.execPath,
     [
       tsx,
-      "apps/nous-core/src/main.ts",
-      "--development",
+      "scripts/research/dogfooding.ts",
+      "--documents",
+      documentsPath,
       "--locator",
       configPath,
       "--stop-on-stdin-close",
@@ -316,7 +297,7 @@ try {
   await cli("status");
   const subject = await cli("subject", "create");
   const subjectId = String(subject.subjectId);
-  await cli("session", "open");
+  const session = await cli("session", "open");
   // Synthetic local wiring wiring; it is never real corpus or live-model evidence.
   const observation = await cli(
     "observe",
@@ -433,12 +414,12 @@ try {
       authorityClass: "external_material",
       accessCostClass: "local_fixture",
       readiness: "ready",
-      adapterKind: "ragflow",
-      providerProfile: "ragflow",
-      providerLocator: JSON.stringify({ dataset_ids: ["dataset1"] }),
+      adapterKind: "local-documents",
+      providerProfile: "dogfooding",
+      providerLocator: "local-resource:smoke",
     },
   });
-  assert.equal(resourceDescriptor.providerProfile, "ragflow");
+  assert.equal(resourceDescriptor.providerProfile, "dogfooding");
   const resourceResult = await client.cognition.recall(
     subjectId,
     "Retrieve external chunk $current(required) $return(memory,resource) $limit(2)",
@@ -447,15 +428,13 @@ try {
   assert.equal(resourceResult.resourceRecords.length, 1);
   assert.equal(
     resourceResult.resourceRecords[0]!.content,
-    "RAGFlow external chunk contract marker.",
+    "LocalDocuments external material contract marker.",
   );
   assert.equal(
     resourceResult.resourceRecords[0]!.reference!.resourceRef,
     resourceDescriptor.resourceRef,
   );
   assert.equal(resourceResult.hits.length, 0);
-  // One descriptor validation and one search for the single intent.
-  assert.equal(resourceProviderCalls, 2);
   const selectedRef = resourceResult.resourceRecords[0]!.reference!;
   const observedAt = {
     seconds: BigInt(Math.floor(Date.now() / 1000)),
@@ -490,15 +469,13 @@ try {
   });
   assert.equal(
     new TextDecoder().decode(selectedSource.content),
-    "RAGFlow external chunk contract marker.",
+    "LocalDocuments external material contract marker.",
   );
-  const afterSelected = resourceProviderCalls;
   const duplicateSelected = await client.resources.materialize(selectedRequest);
   assert.equal(
     duplicateSelected.observation?.occurrenceId,
     selected.observation.occurrenceId,
   );
-  assert.equal(resourceProviderCalls, afterSelected);
   const secondExposure = await client.resources.materialize({
     ...selectedRequest,
     operationId: crypto.randomUUID(),
@@ -511,12 +488,42 @@ try {
     secondExposure.observation?.artifactId,
     selected.observation.artifactId,
   );
+  await publishDocuments("2");
+  await assert.rejects(
+    client.resources.materialize({
+      ...selectedRequest,
+      operationId: crypto.randomUUID(),
+    }),
+    /stale/,
+  );
+  await publishDocuments("1", false);
+  await assert.rejects(
+    client.resources.materialize({
+      ...selectedRequest,
+      operationId: crypto.randomUUID(),
+    }),
+    /denied/,
+  );
+  const retained = await client.material.materialize({
+    subjectId,
+    reference: {
+      kind: "source_region",
+      value: selected.observation.sourceRegionId,
+    },
+    maxBytes: 4096n,
+  });
+  assert.equal(
+    new TextDecoder().decode(retained.content),
+    "LocalDocuments external material contract marker.",
+  );
+  await publishDocuments();
   assert.equal((await client.material.limits({})).maxUploadBytes, 1048576n);
   for (const boundedContent of [
     "x".repeat(1048576),
     "\u0001".repeat(1048576),
   ]) {
     resourceContent = boundedContent;
+    await publishDocuments();
     // The known provider locator is re-read and its current digest is verified by materialize.
     // Query results have their own 2 MiB aggregate bound; selection need not repeat search.
     const largeRequest = {
@@ -531,16 +538,15 @@ try {
     };
     const largeSelected = await client.resources.materialize(largeRequest);
     assert.equal(largeSelected.content, boundedContent);
-    const callsBeforeLargeReplay: number = resourceProviderCalls;
     const largeReplay = await client.resources.materialize(largeRequest);
     assert.equal(largeReplay.content, boundedContent);
     assert.equal(
       largeReplay.observation?.occurrenceId,
       largeSelected.observation?.occurrenceId,
     );
-    assert.equal(resourceProviderCalls, callsBeforeLargeReplay);
   }
-  resourceContent = "RAGFlow external chunk contract marker.";
+  resourceContent = "LocalDocuments external material contract marker.";
+  await publishDocuments();
   await client.resources.put({
     subjectId,
     descriptor: {
@@ -628,12 +634,12 @@ try {
   await appendFile(
     join(dataRoot, "config/nous.toml"),
     `
-[model_profiles.embedding]
+[models.model_profiles.embedding]
 gateway = "smoke"
 protocol = "openai-embeddings"
 model = "local-embedding"
 capabilities = ["embedding"]
-[model_profiles.embedding.embedding]
+[models.model_profiles.embedding.embedding]
 dimension = 2
 max_batch_size = 1
 weights_revision = "fixture-1"
@@ -643,15 +649,15 @@ preprocessing_identity = "identity"
 preprocessing_revision = "1"
 normalization = "l2"
 output_semantics = "dense"
-[execution_profiles.query_embedding]
+[models.execution_profiles.query_embedding]
 model = "embedding"
-[roles.query_embedding]
+[models.roles.query_embedding]
 routes = ["query_embedding"]
 
-[execution_profiles.memory_formation]
+[models.execution_profiles.memory_formation]
 model = "local"
 
-[roles.memory_formation]
+[models.roles.memory_formation]
 routes = ["memory_formation"]
 `,
   );
@@ -693,7 +699,49 @@ routes = ["memory_formation"]
   assert(
     recoveredFormation.memory && recoveredFormation.degradation.length === 0,
   );
+  const formationProducer = await restarted.material.producer({
+    subjectId,
+    id: recoveredFormation.memory.producerSignatureId!,
+  });
+  assert.match(formationProducer.implementation, /^ai-sdk:[a-f0-9]{64}$/);
   await cli("session", "show");
+  await assert.rejects(
+    restarted.model.formFromObservation({
+      ...formationRequest,
+      occurrenceId: selected.observation.occurrenceId,
+    }),
+    (error: unknown) =>
+      error instanceof NousError &&
+      error.code === 10 &&
+      error.domainCode === "OPERATION_ID_CONFLICT" &&
+      error.recovery === "NEW_OPERATION" &&
+      error.context.operation_key === formationRequest.operationId,
+  );
+  await assert.rejects(
+    restarted.cognition.recall(
+      subjectId,
+      'binding check @e("absent-smoke-identity")',
+    ),
+    (error: unknown) =>
+      error instanceof NousError &&
+      error.domainCode === "UNKNOWN_REFERENCE" &&
+      error.recovery === "RESOLVE_REFERENCE" &&
+      error.context.reference === "absent-smoke-identity",
+  );
+  const sessionId = String(session.sessionId);
+  await restarted.cognition.closeSession({ subjectId, id: sessionId });
+  await assert.rejects(
+    restarted.cognition.query({
+      subjectId,
+      sessionId,
+      nousql: "closed session context",
+    }),
+    (error: unknown) =>
+      error instanceof NousError &&
+      error.domainCode === "STALE_CONTEXT" &&
+      error.recovery === "REFRESH_STATE" &&
+      error.context.session_id === sessionId,
+  );
   console.log("Model/Material/Resource public smoke completed");
 } catch (error) {
   console.error(

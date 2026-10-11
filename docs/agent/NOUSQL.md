@@ -149,7 +149,10 @@ all constraints must match the same eligible evidence, not different observation
 evidence received $time(occurred,from="2026-01-01T00:00:00Z") $time(observed,to="2026-02-01T00:00:00Z")
 ```
 
-An interval is start-inclusive and end-exclusive. Unknown times do not satisfy
+`at` matches an exact instant or an interval containing that point. `from`, `to`
+and `within` define a nonempty range: it includes instants inside it and overlaps
+intervals. A range is start-inclusive and end-exclusive; equal endpoints are invalid.
+Unknown times do not satisfy
 known-time constraints. Each axis can appear once in one scope; repeating the
 same axis there is an error. `within` cannot mix with `from`, `to` or `at`.
 

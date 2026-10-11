@@ -1,6 +1,6 @@
 # Structure original media
 
-The original media is supplied with a basis_catalog. Interpret the available modalities and return the supplied structured contract.
+The media is supplied with a basis_catalog. input_context.evidence_access maps visual, audio and source_text separately to original, representation or unavailable for this actual execution route. Interpret only the available channels and return the supplied structured contract. Observed coverage and direct observations require original access for that channel. A supplied Transcript has representation access even when original frames are also supplied; its audio claims are reported or inferred, not directly heard. An unavailable channel provides no observation and does not establish silence or absence.
 
 ## Evidence and support
 

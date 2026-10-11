@@ -12,7 +12,7 @@ import {
   parseEffectiveConfiguration,
   loadCredentials,
   resolveMediaExecutables,
-} from "./config.js";
+} from "./configuration/schema.js";
 import { claimInstance } from "./discovery.js";
 import { startKernel } from "./process.js";
 import { createCore } from "./server.js";
@@ -80,7 +80,6 @@ export async function runCore(
       ...Object.values(effective.models.gateway_profiles).map(
         (g) => g.credential_env,
       ),
-      ...Object.values(effective.resourceProfiles).map((p) => p.credential_env),
     ]);
     const externalFfmpeg = await resolveMediaExecutables(
       locations,
@@ -106,7 +105,7 @@ export async function runCore(
       kernel: kernel.client,
       token,
       consumers: effective.consumers,
-      resources: resources ?? new ResourceRegistry(effective.resourceProfiles),
+      resources: resources ?? new ResourceRegistry(),
       models,
       execution: effective.execution,
     });
@@ -115,10 +114,19 @@ export async function runCore(
     stopMaintenance = await startMaintenanceLoop(kernel.client, models);
     console.log(JSON.stringify({ endpoint, discovery: instance.path }));
     await new Promise<void>((stopped) => {
-      process.once("SIGINT", stopped);
-      process.once("SIGTERM", stopped);
+      const stop = () => {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+        if (values["stop-on-stdin-close"]) {
+          process.stdin.off("end", stop);
+          process.stdin.pause();
+        }
+        stopped();
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
       if (values["stop-on-stdin-close"]) {
-        process.stdin.once("end", stopped);
+        process.stdin.once("end", stop);
         process.stdin.resume();
       }
     });

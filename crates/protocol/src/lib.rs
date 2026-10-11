@@ -44,3 +44,9 @@ pub mod grpc {
 }
 pub use nous::wave::kernel::v1alpha1 as kernel;
 pub use nous::wave::v1alpha1 as public;
+
+pub mod google {
+    pub mod rpc {
+        include!("generated/google/rpc/google.rpc.rs");
+    }
+}

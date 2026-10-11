@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { canonicalDigest } from "../digest.js";
-import type { ModelProfile, ExecutionProfile } from "./configuration.js";
+import type { ModelProfile, ExecutionProfile } from "./profiles.js";
 import type { PromptAsset } from "./prompts.js";
+import { modelImplementations } from "./implementation.js";
 
 export function modelRoleIdentity(
   profile: ModelProfile,
@@ -21,7 +22,7 @@ export function modelRoleIdentity(
       max_output_tokens: binding.max_output_tokens,
       timeout_ms: binding.timeout_ms ?? gateway.request_timeout_ms,
     },
-    adapter: "ai-sdk@7.0.102/openai@4.0.67",
+    adapter: modelImplementations.provider,
     profileDigest,
     prompt: prompt ? { id: prompt.id, digest: prompt.digest } : undefined,
   });

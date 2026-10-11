@@ -33,7 +33,7 @@ pub const CONSOLIDATION_CONTEXT: ConfigKey<ConsolidationContextPolicy> =
 
 pub fn register_longitudinal_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()> {
     let reference = ReferenceProfile::parse(include_str!(
-        "../../../../config/reference/longitudinal-v1.json"
+        "../../../../config/reference/longitudinal.json"
     ))?;
     registry.register(
         EPISODE_SYNOPSIS,

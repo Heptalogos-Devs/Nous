@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { canonicalDigest } from "../../apps/nous-core/src/digest.js";
-import { roleNames } from "../../apps/nous-core/src/model/configuration.js";
+import { roleNames } from "../../apps/nous-core/src/model/roles.js";
 import { PromptRegistry } from "../../apps/nous-core/src/model/prompts.js";
 import { providerContractForRole } from "../../apps/nous-core/src/model/schemas/contracts.js";
 

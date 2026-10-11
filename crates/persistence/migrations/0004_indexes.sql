@@ -23,13 +23,13 @@ CREATE INDEX observation_occurrences_subject_observed_asc_idx
 CREATE INDEX memory_dependency_source_idx
     ON memory_revision_dependencies(target_ref_kind,target_ref,memory_revision_id);
 CREATE INDEX schema_dependency_source_idx
-    ON cognitive_schema_evidence_links(support_kind,support_ref,schema_revision_id)
+    ON cognitive_schema_evidence_links(basis_kind,basis_ref,schema_revision_id)
     WHERE revoked_at IS NULL;
 CREATE INDEX journal_point_dependency_source_idx
-    ON journal_point_supports((support#>>'{value,target_revision,kind}'),(support#>>'{value,target_revision,id}'),journal_revision_id)
-    WHERE support->>'kind'='cognition_dependency';
+    ON journal_point_basis((basis#>>'{value,target_revision,kind}'),(basis#>>'{value,target_revision,id}'),journal_revision_id)
+    WHERE basis->>'kind'='cognition_dependency';
 
-CREATE INDEX episode_dependency_support_source_idx
-    ON episode_revision_supports(support_kind,support_ref,episode_revision_id);
+CREATE INDEX episode_dependency_basis_source_idx
+    ON episode_revision_basis(basis_kind,basis_ref,episode_revision_id);
 CREATE INDEX episode_dependency_member_source_idx
     ON episode_revision_members(ref_kind,ref_value,episode_revision_id);

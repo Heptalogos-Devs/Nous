@@ -1,0 +1,44 @@
+// Copyright 2026 Aravine Zhu
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+package nous.wave.v1alpha1;
+
+// Business semantics are independent of the generic Connect/gRPC status code.
+enum DomainErrorCode {
+  DOMAIN_ERROR_CODE_UNSPECIFIED = 0;
+  DOMAIN_ERROR_CODE_UNKNOWN_REFERENCE = 1;
+  DOMAIN_ERROR_CODE_AMBIGUOUS_REFERENCE = 2;
+  DOMAIN_ERROR_CODE_REFERENCE_TYPE_MISMATCH = 3;
+  DOMAIN_ERROR_CODE_REFERENCE_TOMBSTONED = 4;
+  DOMAIN_ERROR_CODE_UNRESOLVED_MACHINE_PLACEHOLDER = 5;
+  DOMAIN_ERROR_CODE_STALE_CONTEXT = 6;
+  DOMAIN_ERROR_CODE_STALE_REVISION = 7;
+  DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT = 8;
+  DOMAIN_ERROR_CODE_OPERATION_IN_PROGRESS = 9;
+  DOMAIN_ERROR_CODE_LEASE_LOST = 10;
+  DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE = 11;
+}
+
+// Guidance, never an instruction to perform an automatic retry or mutation.
+enum ErrorRecovery {
+  ERROR_RECOVERY_UNSPECIFIED = 0;
+  ERROR_RECOVERY_RESOLVE_REFERENCE = 1;
+  ERROR_RECOVERY_SELECT_CANDIDATE = 2;
+  ERROR_RECOVERY_CORRECT_REQUEST = 3;
+  ERROR_RECOVERY_REDISCOVER_REFERENCE = 4;
+  ERROR_RECOVERY_REFRESH_STATE = 5;
+  // Resume the original frozen operation identity after obtaining a new lease.
+  ERROR_RECOVERY_RETRY_OPERATION = 6;
+  // Different semantic inputs require a different operation identity.
+  ERROR_RECOVERY_NEW_OPERATION = 7;
+  ERROR_RECOVERY_CHECK_CONFIGURATION = 8;
+}
+
+// Carried as a typed Connect detail / google.rpc.Status Any.
+// context contains owner-selected IDs/revisions, never opaque user content.
+message ErrorDetail {
+  DomainErrorCode code = 1;
+  ErrorRecovery recovery = 2;
+  map<string, string> context = 3;
+}

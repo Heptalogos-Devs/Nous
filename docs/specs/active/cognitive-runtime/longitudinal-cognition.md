@@ -1,5 +1,7 @@
 # 纵向认知
 
+[返回当前产品合同](../../INDEX.md)
+
 ## Owner 与路径
 
 Session-bound Observation → Runtime ExperienceItem → automatic Episode → Memory-owned Journal → host-granted Maintenance → Memory/CognitiveSchema consolidation。
@@ -34,9 +36,9 @@ MaintenanceNeed 在 active scope 内合并 trigger，due time 使用 CognitiveCl
 
 Grant response 的 disposition 明确区分 `disabled_by_policy`、`no_eligible_work`、`processed` 与 `opportunity_exhausted`。Host 机会耗尽或取消时，尚未完成的 need 返回 pending/deferred，保存已提交 proposal 与进度，不把机会预算当成 owner invariant failure 或 provider retry exhaustion；下一次明确 grant 继续 durable work。Provider 自身超时仍按 infrastructure retry 处理。官方 Client 默认 deadline 覆盖请求机会及回应余量，显式 caller deadline 优先。
 
-显式机会elapsed上限为900000ms，允许深度模型任务和固定routes中的fallback完成；standalone tick可配置同一上限，默认仍60000ms。每条model route继续使用自己的timeout和调用计数。官方Client按实际机会加5秒回应余量，MCP subprocess按显式机会保留回应余量，外部Host tool timeout应覆盖该机会。机会预算不能被Client/MCP按单条模型timeout截断。
+显式机会 elapsed 上限为 900000ms，standalone tick 可配置同一上限，默认仍 60000ms。`core_execution.opportunity` 将普通 model/resource 工作期限、取消后的 cleanup、need acknowledgement 和 response margin 分开命名；Core 与官方 Client 使用同一 typed policy。Client 从 active Configuration 读取实际 policy，按显式 grant 的 work budget 加 cleanup/ack/margin 派生响应等待；普通 formation、derivation、embedding preparation 和 selected resource materialization 使用 policy 的 work budget。显式较短 caller deadline 或 signal 仍优先。MCP 在进程内复用 Client，没有独立等待秒数；外部 Host tool timeout 应覆盖该机会。每条 model route 继续使用自己的 timeout 和调用计数，输入不适配的 route 在调用计数前跳过。
 
-Maintenance claim 的 infrastructure lease 覆盖该机会和清理/ack余量；绑定它的 ModelWorkflow reservation 至少保持到该有效父 lease 的期限。普通 model_workflow.lease_seconds 默认360秒不能在多 route执行中先取消已授权机会。Reservation由真实claim/token验证后继承期限，不延长父授权；owner mutations继续执行维护claim及内容/epoch fences。
+Maintenance claim 的 infrastructure lease 从相同 work、cleanup 和 acknowledgement 预算派生，并至少覆盖 Runtime worker lease。Core 向 private ModelWorkflow reservation 显式传入该 lease；普通 workflow 也使用其实际执行机会，删除另一处 `model_workflow.lease_seconds` 默认值。Persistence 验证真实父 claim/token 后使 child reservation 覆盖实际父期限，不延长父授权；owner mutations 继续执行维护 claim 及内容/epoch fences。取消或 work budget 到期后，保存 attempt telemetry 和 release 共用有界 cleanup 截止时间，随后 finishMaintenance 使用独立 acknowledgement 预算；原 work signal 不会提前取消这两阶段。
 
 维护种类为 `episode_segment`、`episode_resegment`、`journal_review`、`journal_revalidate`、`memory_consolidate`。Core 根据当前可执行角色构造 claim 的 allowed kinds：resegment 需要 `episode_segmentation`，Journal review/revalidate 需要 `journal_synthesis`，consolidation 需要 `memory_consolidation`；初始 segmentation 无需模型。未就绪角色的 needs 保持 durable、无 worker lease、attempt count 不增长。角色配置按当前 Core model runtime 的 restart 生效合同处理。
 
@@ -68,7 +70,6 @@ proposal action 为 skip、create/revise Memory、create/revise CognitiveSchema�
 
 Query/Serving、WorkContext、UseEvent 和下游失效合同分别见 [Query](../memory-reference-profile/03-query-serving.md)、[WorkContext](work-context.md)、[Use](../memory-reference-profile/02-runtime-use.md) 和 [Authority](../memory-reference-profile/01-memory-authority-provenance.md)。
 
-[返回当前产品合同](../../INDEX.md)
 
 ## 独立 concept maintenance
 
@@ -81,8 +82,6 @@ Memory planner 只围绕一个 current eligible exact cognition。局部输入�
 Tag merge/split 保留 exact supports 和 lineage，一个明确来源可以支持 alias/equivalence 或语义分化；不要求两个独立根。merge/split 自身仍为天然原子操作。后置 `tag_attachment` 是正向 exact cognition→Tag AssociationEvidence，不修改旧 cognition revision。owner 校验 Subject、当前 endpoint 生命周期、relation registry、方向/极性、显式支持和 producer，不递归证明整个 cognition graph。Serving 直接使用既有 Memory dependencies、Episode members、Journal sources、Schema evidence 作为结构 adjacency；不要求复制 AssociationEvidence。contradiction/negative evidence 保留独立语义。
 
 Accretion 是按 center 按需计算的派生信号：distinct roots、current members、Episode recurrence、observed span、association degree/diversity、meaningful use、counterevidence、可选 cached coherence 和 genericity。没有持久化 Subject-wide cache、global confidence 或 usefulness truth。`maintenance.accretion` 只暴露 enabled、generic_degree、recurrence_review；关闭后基础 concept maintenance 仍工作。review priority 与 merge/split hints 在 planner 即时计算；member overlap/coherence 阈值为实现常量。普通 presented 不增加支持，meaningful use 不改变 epistemic class 或独立根。
-
-定向测试覆盖局部 catalog、typed owner提交、partial outcome、dependency skip、transport resume、stable IDs、Tag lineage、owner exact receipt、Accretion ablation/recurrence 配置和 Tag-only Prepared Serving。三场景形成检查和 15 intents × 4 profiles 已通过 deterministic public Core/Kernel 执行；六项 selected raw-text 的相关首项均为 rank 1。Fake vectors 只验证线路，不声明 ranking quality 或 profile winner。CLI 的 help JSON → ambiguity/candidate → LexicalRef → prepare → query 已通过真实 public Core；repo-native 完整验收继续在本 PR 完成。
 
 Consolidation 的候选查找使用独立 text-only lookup：输入是引用的 source 原文，不作为待闭合的用户意图。实体目录提供 source 文本中出现的 display name/alias 的有界候选，加上已有候选的 aboutness；目录匹配本身不写入 aboutness，仍由模型选择、owner 校验。形成阶段需要 lexical Serving 为 continuing claim 提供当前候选，dense/topology 与付费 embedding 在检索验证前保持关闭。
 

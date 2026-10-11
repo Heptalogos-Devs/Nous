@@ -1,5 +1,7 @@
 # Retrieval 与媒体实验方法
 
+[返回研究入口](README.md)
+
 研究结果以真实来源、Ground Truth 与可追溯 provenance 为基础。当前语料与 oracle 见 [研究语料](corpus/README.md)；当前观测见 [observations.md](observations.md)。
 
 ## 文本检索
@@ -22,5 +24,3 @@ Tracked 的媒体 manifest 包含 9 个样本。人工核对样本事实，再�
 当前真实音频观测和质量缺口见 [observations.md](observations.md)。视频 frames 模式是已实现的显式 FFmpeg 输入路径；当前 Research 尚无 frames-mode 观测。
 
 原始来源内容、媒体、响应、逐条 query 输出和运行日志位于 ignored 的 `data/research/`。
-
-[返回 Research](README.md)

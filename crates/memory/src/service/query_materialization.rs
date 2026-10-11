@@ -108,71 +108,15 @@ pub(super) fn hard_filter(
             && matches!(view.object.suppression_state, SuppressionState::Normal)))
         && matches!(view.object.purge_state, PurgeState::Normal)
         && accessibility_eligible(view.accessibility_level, query.effort, exact || historical)
-        && (query
-            .expression
-            .constraints
-            .cognitive_roles_include
-            .is_empty()
-            || query
-                .expression
-                .constraints
-                .cognitive_roles_include
-                .iter()
-                .any(|role| role == view.object.cognitive_role.as_str()))
-        && (query
-            .expression
-            .constraints
-            .formation_modes_include
-            .is_empty()
-            || query
-                .expression
-                .constraints
-                .formation_modes_include
-                .iter()
-                .any(|mode| mode == view.revision.formation_mode.as_str()))
-        && query
-            .expression
-            .constraints
-            .entity_requirements
-            .iter()
-            .all(|entity| view.aboutness.contains(entity))
-        && query
-            .expression
-            .constraints
-            .authority
-            .is_none_or(|value| value == AuthorityClass::SubjectCognition)
-        && (query
-            .expression
-            .constraints
-            .source_classes_include
-            .is_empty()
-            || query
-                .expression
-                .constraints
-                .source_classes_include
-                .iter()
-                .any(|value| view.source_classes.contains(value)))
-        && !query
-            .expression
-            .constraints
-            .source_classes_exclude
-            .iter()
-            .any(|value| view.source_classes.contains(value))
-        && (query.expression.constraints.modalities.is_empty()
-            || query
-                .expression
-                .constraints
-                .modalities
-                .contains(&Modality::Text))
-        && (query.expression.constraints.evidence_classes.is_empty()
-            || query
-                .expression
-                .constraints
-                .evidence_classes
-                .iter()
-                .any(|value| {
-                    format!("{:?}", view.revision.epistemic_class).to_lowercase() == *value
-                }))
+        && query.expression.constraints.matches_common(QueryFacts {
+            authority: AuthorityClass::SubjectCognition,
+            entities: &view.aboutness,
+            source_classes: &view.source_classes,
+            modality: Modality::Text,
+            cognitive_role: Some(view.object.cognitive_role.as_str()),
+            formation_mode: Some(view.revision.formation_mode.as_str()),
+            epistemic_class: Some(view.revision.epistemic_class),
+        })
         && temporal_match(query, view)
 }
 
@@ -181,7 +125,7 @@ pub(super) fn temporal_match(query: &CognitiveQuery, view: &MemoryView) -> bool 
         .expression
         .constraints
         .valid
-        .is_none_or(|interval| view.revision.valid_time.overlaps_interval(&interval))
+        .is_none_or(|interval| interval.matches_extent(&view.revision.valid_time))
         && query
             .expression
             .constraints
@@ -190,7 +134,7 @@ pub(super) fn temporal_match(query: &CognitiveQuery, view: &MemoryView) -> bool 
                 view.temporal_evidence
                     .occurred
                     .iter()
-                    .any(|value| value.overlaps_interval(&interval))
+                    .any(|value| interval.matches_extent(value))
             })
         && query
             .expression

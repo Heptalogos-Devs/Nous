@@ -6,25 +6,22 @@
         "scripts/dev/*.ts!",
         "scripts/runtime/pack.ts!",
         "scripts/release/{assemble,archive,prepare-notices,verify-portable}.ts!",
-        "scripts/smoke/{memory,runtime-episode,model-material-resource,longitudinal,configuration}.ts!",
-        "scripts/research/{cognitive-functional,core-cognition-semantic,media,serve-gateway,longitudinal,model-contracts,model-trace,dogfooding}.ts!",
-        "scripts/research/*.test.ts"
+        "scripts/smoke/{memory,runtime-episode,model-material-resource,media-routes,longitudinal,configuration}.ts!",
+        "scripts/research/{media,serve-gateway,longitudinal,model-contracts,model-trace,dogfooding}.ts!",
+        "scripts/tests/**/*.test.ts"
       ]
     },
     "apps/nous-core": {
-      "entry": [
-        "src/main.ts!",
-        "src/launcher.ts!",
-        "src/**/*.test.ts",
-        "tests/*.test.ts"
-      ],
+      "entry": ["src/main.ts!", "src/launcher.ts!", "tests/**/*.test.ts"],
+      "project": ["src/**/*.ts!", "tests/**/*.ts"],
       "ignoreExportsUsedInFile": {
         "class": true,
         "function": true
       }
     },
     "apps/nous-cli": {
-      "entry": ["src/main.ts!", "src/mcp-main.ts!"]
+      "entry": ["src/main.ts!", "src/mcp-main.ts!", "tests/**/*.test.ts"],
+      "project": ["src/**/*.ts!", "tests/**/*.ts"]
     }
   },
   "rules": {

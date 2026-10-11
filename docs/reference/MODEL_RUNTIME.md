@@ -1,5 +1,7 @@
 # Model Runtime 当前参考
 
+[返回文档目录](../INDEX.md)
+
 Core 启动配置用 `ModelRole → RolePolicy → ordered ExecutionProfile → ModelProfile → GatewayProfile` materialize 标准协议 clients。凭据只从 gateway 的 `credential_env` 读取。Kernel 保存经过规范化的 ProducerSignature 与不可变输入，不调用外部模型。
 
 协议名称为 `openai-chat`、`openai-responses`、`openai-embeddings`、`openai-audio-transcription`、`rerank-v1`。SDK generation、embedding 和 transcription 使用显式 endpoint/model；rerank 使用有界 HTTP adapter。SDK retries 为 0，远程 destination 需要无 credential/query 的 HTTPS；literal loopback 可用 HTTP。
@@ -55,7 +57,6 @@ Formation envelope 的 `evidenceText` 是原始来源或已提交表示正文，
 
 Projection Steward 接收经 consumer policy 筛选的 id/role/text，执行无任务上下文的忠实压缩。Kernel contribution owner 经现有 ContextResolver materialize Memory 内容，遵守请求文本预算、可访问性与 lifecycle，保存实际 revision 和 evidence；Core 在模型前执行 consumer policy。Steward 不承担未提供 query/Focus 的任务相关性判断。
 
-[返回文档目录](../INDEX.md)
 
 `concept_maintenance` 是独立 structured role，默认 Prompt 为 `prompts/memory/concept-maintenance.md`。Role READY 时才进入 maintenance allowed kinds；generation 沿同一固定 role/config/Prompt snapshot、provider-call reservation、durable proposal/receipt 与 lease/retry 路径。模型输入使用局部 cognition/tag/entity/association/basis keys，禁止自由 UUID 或 catalog 外 refs；single noisy occurrence、单纯词法重叠和 exposure 不证明长期 concept。`no_change` 单独输出，新增 Tag 与后置 attachment 在同一 proposal 中表达。
 

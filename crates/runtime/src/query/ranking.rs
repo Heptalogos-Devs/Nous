@@ -146,7 +146,7 @@ pub fn register_retrieval_configuration(registry: &mut ConfigRegistryBuilder) ->
     super::representation::register(registry)?;
     super::activation::register(registry)?;
     let reference = nous_configuration::ReferenceProfile::parse(include_str!(
-        "../../../../config/reference/retrieval-ranking-v1.json"
+        "../../../../config/reference/retrieval-ranking.json"
     ))?;
     for (key, description) in [
         (RRF_K_KEY, "RRF denominator constant."),

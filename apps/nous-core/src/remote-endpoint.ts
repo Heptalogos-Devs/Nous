@@ -11,6 +11,6 @@ const endpointInput = z
     /^(?:https:\/\/[^\s/@?#]+|http:\/\/(?:127\.0\.0\.1|\[::1\])(?::\d+)?)(?:\/[^\s?#]*)?$/,
     "Endpoint requires credential-free HTTPS or literal loopback HTTP",
   );
-export const remoteEndpointSchema = endpointInput.transform((value) =>
-  new URL(value).toString().replace(/\/$/, ""),
-);
+export const remoteEndpointSchema = endpointInput
+  .transform((value) => new URL(value).toString().replace(/\/$/, ""))
+  .pipe(endpointInput);

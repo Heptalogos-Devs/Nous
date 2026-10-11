@@ -3,54 +3,55 @@
 
 syntax = "proto3";
 package nous.wave.v1alpha1;
+import "nous/wave/v1alpha1/presentation.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "nous/wave/v1alpha1/types.proto";
 
-message ResourceDescriptor { string resource_ref = 1; string display_label = 2; string authority_class = 3; google.protobuf.Struct coverage = 4; repeated string query_dimensions = 5; repeated string modalities = 6; google.protobuf.Struct freshness_policy = 7; string access_cost_class = 8; string readiness = 9; string adapter_kind = 10; string provider_profile = 11; string provider_locator = 12; }
-message PutResourceRequest { string subject_id = 1; ResourceDescriptor descriptor = 2; }
+message ResourceDescriptor { string resource_ref = 1 [(reference_kind) = "resource"]; string display_label = 2; string authority_class = 3; google.protobuf.Struct coverage = 4; repeated string query_dimensions = 5; repeated string modalities = 6; google.protobuf.Struct freshness_policy = 7; string access_cost_class = 8; string readiness = 9; string adapter_kind = 10; string provider_profile = 11; string provider_locator = 12; }
+message PutResourceRequest { string subject_id = 1 [(reference_kind) = "subject"]; ResourceDescriptor descriptor = 2; }
 message ListResourcesResponse { repeated ResourceDescriptor items = 1; string next_page_token = 2; }
-message Tag { string tag_id = 1; string label = 2; optional string description = 3; optional string kind_hint = 4; string origin = 5; string current_revision_id = 6; string status = 7; optional string canonical_tag_id = 8; }
-message CreateTagRequest { string operation_id = 1; string subject_id = 2; Tag tag = 3; ProducerSignature producer = 4; }
-message SearchTagsRequest { string subject_id = 1; string text = 2; Page page = 3; }
+message Tag { string tag_id = 1 [(reference_kind) = "tag"]; string label = 2; optional string description = 3; optional string kind_hint = 4; string origin = 5; string current_revision_id = 6; string status = 7; optional string canonical_tag_id = 8 [(reference_kind) = "tag"]; }
+message CreateTagRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; Tag tag = 3; ProducerSignature producer = 4; }
+message SearchTagsRequest { string subject_id = 1 [(reference_kind) = "subject"]; string text = 2; Page page = 3; }
 message TagContent { string label = 1; optional string description = 2; optional string kind_hint = 3; }
-message TagRevisionTarget { string tag_id = 1; string expected_revision_id = 2; }
-message ReviseTagRequest { string operation_id = 1; string subject_id = 2; TagRevisionTarget target = 3; TagContent content = 4; ProducerSignature producer = 5; }
-message MergeTagsRequest { string operation_id = 1; string subject_id = 2; TagRevisionTarget survivor = 3; repeated TagRevisionTarget retired = 4; repeated RevisionBasis basis = 5; }
-message SplitTagRequest { string operation_id = 1; string subject_id = 2; TagRevisionTarget parent = 3; repeated TagContent children = 4; repeated RevisionBasis basis = 5; ProducerSignature producer = 6; }
+message TagRevisionTarget { string tag_id = 1 [(reference_kind) = "tag"]; string expected_revision_id = 2; }
+message ReviseTagRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; TagRevisionTarget target = 3; TagContent content = 4; ProducerSignature producer = 5; }
+message MergeTagsRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; TagRevisionTarget survivor = 3; repeated TagRevisionTarget retired = 4; repeated RevisionBasis basis = 5; }
+message SplitTagRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; TagRevisionTarget parent = 3; repeated TagContent children = 4; repeated RevisionBasis basis = 5; ProducerSignature producer = 6; }
 message SplitTagResponse { repeated Tag children = 1; }
 message ListTagsResponse { repeated Tag items = 1; string next_page_token = 2; }
 
-message UseEventRef { string subject_id = 1; string consumer_ref = 2; string event_id = 3; }
+message UseEventRef { string subject_id = 1 [(reference_kind) = "subject"]; string consumer_ref = 2; string event_id = 3; }
 message AssociationBasis { oneof basis { RevisionBasis revision = 1; UseEventRef use_event = 2; } }
-message Association { string association_id = 1; CognitiveRef from = 2; CognitiveRef to = 3; string relation_kind = 4; string polarity = 5; string basis_class = 6; repeated AssociationBasis basis = 7; optional string producer_signature_id = 8; }
-message CreateAssociationRequest { string operation_id = 1; string subject_id = 2; Association association = 3; ProducerSignature producer = 4; }
-message RevokeAssociationRequest { string operation_id = 1; string subject_id = 2; string association_id = 3; }
-message NeighborhoodRequest { string subject_id = 1; CognitiveRef root = 2; uint32 max_nodes = 3; uint32 max_depth = 4; }
+message Association { string association_id = 1 [(reference_kind) = "association"]; CognitiveRef from = 2; CognitiveRef to = 3; string relation_kind = 4; string polarity = 5; string basis_class = 6; repeated AssociationBasis basis = 7; optional string producer_signature_id = 8; }
+message CreateAssociationRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; Association association = 3; ProducerSignature producer = 4; }
+message RevokeAssociationRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string association_id = 3 [(reference_kind) = "association"]; }
+message NeighborhoodRequest { string subject_id = 1 [(reference_kind) = "subject"]; CognitiveRef root = 2; uint32 max_nodes = 3; uint32 max_depth = 4; }
 message NeighborhoodResponse { repeated CognitiveRef nodes = 1; repeated Association associations = 2; bool truncated = 3; }
 
-message SchemaScope { string description = 1; repeated string aboutness = 2; repeated string tags = 3; TemporalExtent valid_time = 4; }
+message SchemaScope { string description = 1; repeated string aboutness = 2 [(reference_kind) = "entity"]; repeated string tags = 3 [(reference_kind) = "tag"]; TemporalExtent valid_time = 4; }
 message SchemaEvidenceLink { string link_id = 1; string role = 2; RevisionBasis basis = 3; }
-message CognitiveSchema { string schema_id = 1; string subject_id = 2; string current_revision_id = 3; int64 object_epoch = 4; string acceptance_state = 5; string integrity_state = 6; string suppression_state = 7; string purge_state = 8; string title = 9; string structural_claim = 10; SchemaScope applicability_scope = 11; string boundary_definition = 12; repeated SchemaEvidenceLink evidence_links = 13; google.protobuf.Timestamp formed_at = 14; google.protobuf.Timestamp recorded_at = 15; string formation_kind = 16; optional string producer_signature_id = 17; }
+message CognitiveSchema { string schema_id = 1 [(reference_kind) = "cognitive_schema"]; string subject_id = 2 [(reference_kind) = "subject"]; string current_revision_id = 3 [(reference_kind) = "cognitive_schema_revision"]; int64 object_epoch = 4; string acceptance_state = 5; string integrity_state = 6; string suppression_state = 7; string purge_state = 8; string title = 9; string structural_claim = 10; SchemaScope applicability_scope = 11; string boundary_definition = 12; repeated SchemaEvidenceLink evidence_links = 13; google.protobuf.Timestamp formed_at = 14; google.protobuf.Timestamp recorded_at = 15; string formation_kind = 16; optional string producer_signature_id = 17; }
 message CognitiveSchemaContent { nous.wave.v1alpha1.ProducerSignature producer = 7; string title = 1; string structural_claim = 2; SchemaScope applicability_scope = 3; string boundary_definition = 4; string formation_kind = 5; repeated SchemaEvidenceLink evidence_links = 6; }
-message CreateCognitiveSchemaRequest { string operation_id = 1; string subject_id = 2; CognitiveSchemaContent schema = 3; repeated SchemaEvidenceLink evidence_links = 4; }
-message GetCognitiveSchemaRequest { string subject_id = 1; string schema_id = 2; }
-message CognitiveSchemaMutationRequest { string operation_id = 1; string subject_id = 2; string schema_id = 3; int64 expected_object_epoch = 4; }
-message AddSchemaEvidenceRequest { string operation_id = 1; string subject_id = 2; string schema_id = 3; int64 expected_object_epoch = 4; SchemaEvidenceLink link = 5; }
-message ReviseCognitiveSchemaRequest { string operation_id = 1; string subject_id = 2; string schema_id = 3; int64 expected_object_epoch = 4; string intent = 5; CognitiveSchemaContent schema = 6; repeated string copy_link_ids = 7; }
-message SplitCognitiveSchemaRequest { string operation_id = 1; string subject_id = 2; string schema_id = 3; int64 expected_object_epoch = 4; repeated CognitiveSchemaContent children = 5; }
-message MergeCognitiveSchemasRequest { string operation_id = 1; string subject_id = 2; repeated string schema_ids = 3; repeated int64 expected_object_epochs = 4; CognitiveSchemaContent merged = 5; }
+message CreateCognitiveSchemaRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; CognitiveSchemaContent schema = 3; }
+message GetCognitiveSchemaRequest { string subject_id = 1 [(reference_kind) = "subject"]; string schema_id = 2 [(reference_kind) = "cognitive_schema"]; }
+message CognitiveSchemaMutationRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string schema_id = 3 [(reference_kind) = "cognitive_schema"]; int64 expected_object_epoch = 4; }
+message AddSchemaEvidenceRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string schema_id = 3 [(reference_kind) = "cognitive_schema"]; int64 expected_object_epoch = 4; SchemaEvidenceLink link = 5; }
+message ReviseCognitiveSchemaRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string schema_id = 3 [(reference_kind) = "cognitive_schema"]; int64 expected_object_epoch = 4; string intent = 5; CognitiveSchemaContent schema = 6; repeated string copy_link_ids = 7; }
+message SplitCognitiveSchemaRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string schema_id = 3 [(reference_kind) = "cognitive_schema"]; int64 expected_object_epoch = 4; repeated CognitiveSchemaContent children = 5; }
+message MergeCognitiveSchemasRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; repeated string schema_ids = 3 [(reference_kind) = "cognitive_schema"]; repeated int64 expected_object_epochs = 4; CognitiveSchemaContent merged = 5; }
 message SplitCognitiveSchemaResponse { repeated CognitiveSchema children = 1; }
 
 
-message Occurrence { string occurrence_id = 1; string subject_id = 2; optional string artifact_id = 3; string source_class = 4; optional string external_object_ref = 5; TemporalExtent occurred_time = 6; google.protobuf.Timestamp observed_at = 7; optional string conversation_ref = 8; optional string actor_entity_ref = 9; google.protobuf.Struct context = 10; }
-message OccurrenceListRequest { string subject_id = 1; string artifact_id = 2; uint32 limit = 3; }
+message Occurrence { string occurrence_id = 1 [(reference_kind) = "occurrence"]; string subject_id = 2 [(reference_kind) = "subject"]; optional string artifact_id = 3 [(reference_kind) = "artifact"]; string source_class = 4; optional string external_object_ref = 5; TemporalExtent occurred_time = 6; google.protobuf.Timestamp observed_at = 7; optional string conversation_ref = 8; optional string actor_entity_ref = 9 [(reference_kind) = "entity"]; google.protobuf.Struct context = 10; }
+message OccurrenceListRequest { string subject_id = 1 [(reference_kind) = "subject"]; string artifact_id = 2 [(reference_kind) = "artifact"]; uint32 limit = 3; }
 message OccurrenceListResponse { repeated Occurrence items = 1; bool truncated = 2; }
-message SourceRegion { string source_region_id = 1; string artifact_id = 2; string coordinate_kind = 3; google.protobuf.Struct coordinate = 4; string coordinate_hash = 5; optional string parent_source_region_id = 6; }
-message DerivedRepresentation { string representation_id = 1; string subject_id = 2; repeated DerivationInput inputs = 3; string kind = 4; string producer_signature = 5; int32 revision = 6; optional string text = 7; optional string artifact_id = 8; ProducerSignature producer = 9; google.protobuf.Struct quality = 10; optional string supersedes = 11; string strategy = 12; google.protobuf.Struct structured_payload = 13; }
+message SourceRegion { string source_region_id = 1 [(reference_kind) = "source_region"]; string artifact_id = 2 [(reference_kind) = "artifact"]; string coordinate_kind = 3; google.protobuf.Struct coordinate = 4; string coordinate_hash = 5; optional string parent_source_region_id = 6 [(reference_kind) = "source_region"]; }
+message DerivedRepresentation { string representation_id = 1 [(reference_kind) = "derived_representation"]; string subject_id = 2 [(reference_kind) = "subject"]; repeated DerivationInput inputs = 3; string kind = 4; string producer_signature = 5; int32 revision = 6; optional string text = 7; optional string artifact_id = 8 [(reference_kind) = "artifact"]; ProducerSignature producer = 9; google.protobuf.Struct quality = 10; optional string supersedes = 11; string strategy = 12; google.protobuf.Struct structured_payload = 13; }
 message RepresentationListResponse { repeated DerivedRepresentation items = 1; bool truncated = 2; }
-message DerivedRegion { string derived_region_id = 1; string subject_id = 2; string representation_id = 3; string coordinate_kind = 4; google.protobuf.Struct coordinate = 5; string coordinate_hash = 6; optional string parent_derived_region_id = 7; }
+message DerivedRegion { string derived_region_id = 1 [(reference_kind) = "derived_region"]; string subject_id = 2 [(reference_kind) = "subject"]; string representation_id = 3 [(reference_kind) = "derived_representation"]; string coordinate_kind = 4; google.protobuf.Struct coordinate = 5; string coordinate_hash = 6; optional string parent_derived_region_id = 7 [(reference_kind) = "derived_region"]; }
 message ComponentStatus { string name = 1; string state = 2; optional string detail = 3; }
 message SystemStatus { repeated ComponentStatus components = 1; }
 message ProjectionFamilyStatus {
@@ -65,7 +66,7 @@ message ProjectionFamilyStatus {
 }
 message ProjectionStatus { repeated ProjectionFamilyStatus families = 1; }
 
-message MaterializeResourceRequest { string subject_id = 1; string operation_id = 2; StableExternalRef reference = 3; google.protobuf.Timestamp observed_at = 4; }
+message MaterializeResourceRequest { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; StableExternalRef reference = 3; google.protobuf.Timestamp observed_at = 4; }
 message ResourceMaterialization { StableExternalRef reference = 1; AcceptedObservation observation = 2; string content = 3; string media_type = 4; }
 service ResourceRegistryService { rpc PutResource(PutResourceRequest) returns (ResourceDescriptor); rpc GetResource(ObjectRequest) returns (ResourceDescriptor); rpc ListResources(ListRequest) returns (ListResourcesResponse); rpc RemoveResource(ObjectRequest) returns (google.protobuf.Empty); }
 service ResourceService { rpc MaterializeResource(MaterializeResourceRequest) returns (ResourceMaterialization); }

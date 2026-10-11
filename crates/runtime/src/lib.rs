@@ -3,13 +3,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-mod execution_policy;
-pub use execution_policy::{MODEL_WORKFLOW_LEASE, QUERY_LEASE, QUERY_SLOTS};
+mod policy;
+pub use policy::execution::QUERY_SLOTS;
 mod clock;
-mod episode_policy;
 mod experience;
 mod maintenance;
-mod maintenance_policy;
 mod query;
 mod query_feedback;
 mod resources;
@@ -23,20 +21,21 @@ pub use query_feedback::{
 mod work_contexts;
 mod working_set;
 pub use clock::{CognitiveClock, ManualCognitiveClock, SystemCognitiveClock};
-pub use episode_policy::SETTLE_DELAY_KEY;
-pub use episode_policy::{EpisodePolicy, ExperienceContext};
 pub use experience::ExperienceInput;
 pub use maintenance::*;
-pub use maintenance_policy::*;
+pub use policy::episode::SETTLE_DELAY_KEY;
+pub use policy::episode::{EpisodePolicy, ExperienceContext};
+pub use policy::maintenance::*;
 pub use query::{
     ActivationSeed, ActivationSource, BoundQuery, COGNITIVE_PROFILE, CONCEPT_ENRICHMENT,
     CognitiveContributor, CognitiveContributors, CognitiveProfile, CognitiveProfileRequirements,
-    ConceptEnrichment, DEFAULT_RESULT_LIMIT, LaneCandidate, LaneOutput, LaneStatus,
-    NovelConceptHypothesis, QUERY_REPRESENTATION, QueryActivation, QueryActivationView,
+    ConceptActivationPolicy, ConceptEnrichment, DEFAULT_RESULT_LIMIT, LaneCandidate, LaneOutput,
+    LaneStatus, NovelConceptHypothesis, QUERY_REPRESENTATION, QueryActivation, QueryActivationView,
     QueryConceptCandidate, QueryConceptOutput, QueryConceptSelection, QueryContextSnapshot,
-    QueryExecution, QueryPlan, QueryReadLease, QueryRepresentation, QueryRepresentationLimits,
-    QuerySemanticEmbedding, SharedLaneProvider, TagActivation, TopologyWorkSummary, WorkCycle,
-    build_query_representation, register_retrieval_configuration,
+    QueryExecution, QueryLease, QueryPlan, QueryReadLease, QueryRepresentation,
+    QueryRepresentationLimits, QueryReservation, QuerySemanticEmbedding, SharedLaneProvider,
+    TagActivation, TopologyWorkSummary, WorkCycle, build_query_representation,
+    register_retrieval_configuration,
 };
 pub use segmentation::{EpisodeDraft, SegmentationProgress};
 pub use work_contexts::*;
@@ -57,7 +56,7 @@ pub const RESIDENT_LIMIT_KEY: nous_configuration::ConfigKey<usize> =
 pub fn register_configuration(
     registry: &mut nous_configuration::ConfigRegistryBuilder,
 ) -> Result<()> {
-    execution_policy::register_configuration(registry)?;
+    policy::execution::register_configuration(registry)?;
     query_feedback::register(registry)?;
     registry.register(
         RESIDENT_LIMIT_KEY,
@@ -76,8 +75,8 @@ pub fn register_configuration(
             }
         },
     )?;
-    episode_policy::register_episode_configuration(registry)?;
-    maintenance_policy::register_maintenance_configuration(registry)?;
+    policy::episode::register_episode_configuration(registry)?;
+    policy::maintenance::register_maintenance_configuration(registry)?;
     register_retrieval_configuration(registry)
 }
 

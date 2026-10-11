@@ -1,5 +1,7 @@
 # Runtime Bundle 与运行目录
 
+[返回当前产品合同](../../INDEX.md)
+
 ## Owner
 
 TypeScript Core owns path resolution, instance discovery, process lifecycle and explicit runtime installation. Rust Kernel owns Authority/Serving and the private PostgreSQL cluster lifecycle.
@@ -20,6 +22,8 @@ Configuration must declare the current `config_revision`. `nous init` and first 
 
 Managed-private database mode uses the installed PostgreSQL pack, a protected instance credential and the instance's fixed loopback port. External mode connects only to the configured endpoint. Cluster/version mismatch and port conflicts fail explicitly; startup does not upgrade, recreate or discard database state.
 
+The PRE_PRODUCTION database foundation is the current `0001_foundation.sql` through `0004_indexes.sql`. They declare the current owner shapes directly, including WorkContext text/anchors, Formation basis and model execution metadata. Superseded incremental schemas and payload decoders are removed. Existing cognition is preserved before a deliberate fresh-database restore; ordinary startup does not rewrite an older database's migration ledger.
+
 READY is published after database, Kernel, Core and discovery are available. Public startup output is redacted; bearer tokens are stored only in protected RunRoot. Graceful shutdown is available through stdin close, SIGINT and SIGTERM.
 
 Ordinary serve uses installed runtime packs and does not acquire them from the network. Runtime commands are:
@@ -39,5 +43,3 @@ FFmpeg resolves from an explicitly configured executable or the installed FFmpeg
 The current release pipeline builds the shipping Kernel for `x86_64-pc-windows-gnullvm` with LLVM-MinGW UCRT and includes its private `libc++.dll` and `libunwind.dll` dependencies. The source-less portable ZIP contains compiled Core/CLI/Client, Kernel, Node, PostgreSQL, FFmpeg, Prompts, migrations, manifests, SPDX SBOM and license/source notices.
 
 Assembly writes `data/releases/windows-x64/current/` and `current.zip` through sibling staging paths. A normal assembly replaces current; `release:archive` explicitly saves an immutable release artifact. Build and operation commands are documented in [scripts/README.md](../../../../scripts/README.md).
-
-[返回当前产品合同](../../INDEX.md)

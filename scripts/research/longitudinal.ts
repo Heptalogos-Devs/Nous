@@ -6,10 +6,11 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
+import { coreConfigurationValues } from "../../apps/nous-core/src/configuration/catalog.js";
 import {
   parseConfiguration,
   parseEffectiveConfiguration,
-} from "../../apps/nous-core/src/config.js";
+} from "../../apps/nous-core/src/configuration/schema.js";
 import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
 import { structuredContractForRole } from "../../apps/nous-core/src/model/schemas/contracts.js";
 import type { ModelRole } from "../../apps/nous-core/src/model/roles.js";
@@ -111,12 +112,9 @@ async function run() {
     await readFile(resolve(values.config), "utf8"),
     true,
   );
-  const { models: configuration } = parseEffectiveConfiguration({
-    ...document,
-    "material.strategy": (
-      document.material as Record<string, unknown> | undefined
-    )?.strategy,
-  });
+  const { models: configuration } = parseEffectiveConfiguration(
+    coreConfigurationValues(document),
+  );
   const models = await ModelRuntime.fromConfig(
     configuration,
     resolve(values["prompt-root"]!),
@@ -134,10 +132,8 @@ async function run() {
   if (captured) {
     result = await models.invocations.generate(
       role!,
-      input,
-      signal.signal,
-      undefined,
-      snapshot,
+      { content: input },
+      { signal: signal.signal, snapshot: snapshot },
     );
   } else if (role === "episode_segmentation") {
     result = await models.segmentEpisode(input, signal.signal, snapshot);

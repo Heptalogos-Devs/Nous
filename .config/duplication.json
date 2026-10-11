@@ -1,5 +1,5 @@
 {
-  "path": ["apps", "packages"],
+  "path": ["../apps", "../packages", "../crates", "../scripts"],
   "minLines": 6,
   "minTokens": 50,
   "threshold": 5,
@@ -15,7 +15,6 @@
     "**/.nx/**",
     "**/generated/**",
     "**/*.generated.*",
-    "data/**",
-    "crates/retrieval/tests/fixtures/vcp-*.json"
+    "data/**"
   ]
 }

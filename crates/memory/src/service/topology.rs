@@ -79,6 +79,9 @@ impl MemoryService {
             .invalidate(ProjectionInvalidation::topology())
             .await?;
         mutation
+            .publish_workflow_results("memory", &[CognitiveRef::Association(id)])
+            .await?;
+        mutation
             .commit("association", Some(&id.0.to_string()), None, None)
             .await?;
         self.association(subject, id).await
@@ -122,9 +125,13 @@ impl MemoryService {
             CognitiveRef::Tag(id) => {
                 let active: Option<Uuid> = sqlx::query_scalar("SELECT tag_id FROM tags WHERE subject_id=$1 AND tag_id=$2 AND status='active' FOR SHARE")
                     .bind(subject.0).bind(id.0).fetch_optional(&mut **tx).await.map_err(db)?;
-                return active
-                    .map(|_| ())
-                    .ok_or_else(|| Error::Conflict("concept Tag endpoint is stale".into()));
+                return active.map(|_| ()).ok_or_else(|| {
+                    nous_core::DomainError::new(
+                        nous_core::DomainErrorCode::StaleRevision,
+                        "concept Tag endpoint is stale",
+                    )
+                    .into()
+                });
             }
             _ => return Ok(()),
         };
@@ -140,9 +147,11 @@ impl MemoryService {
             .await
             .map_err(db)?;
         if current != Some(id) {
-            return Err(Error::Conflict(
-                "concept cognition endpoint is stale".into(),
-            ));
+            return Err(nous_core::DomainError::new(
+                nous_core::DomainErrorCode::StaleRevision,
+                "concept cognition endpoint is stale",
+            )
+            .into());
         }
         Ok(())
     }
@@ -183,6 +192,9 @@ impl MemoryService {
                 .await
                 .map_err(db)?;
         }
+        self.store
+            .ensure_identity_addresses_in(tx, subject, &[CognitiveRef::Association(id)], "")
+            .await?;
         Ok(id)
     }
     /// Bounded undirected read of active, supported AssociationEvidence.

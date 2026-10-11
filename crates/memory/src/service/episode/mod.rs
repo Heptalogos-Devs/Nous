@@ -330,6 +330,7 @@ async fn ensure_no_parent_cycle(
     reason = "Episode creation binds one immutable revision and its object identity"
 )]
 async fn insert_episode_revision(
+    store: &AuthorityStore,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     input: &EpisodeInput,
     episode: EpisodeId,
@@ -343,6 +344,7 @@ async fn insert_episode_revision(
     recorded_at: DateTime<Utc>,
 ) -> Result<()> {
     insert_episode_revision_with_intent(
+        store,
         tx,
         input,
         episode,
@@ -364,6 +366,7 @@ async fn insert_episode_revision(
     reason = "Episode revision insertion receives the complete canonical payload"
 )]
 async fn insert_episode_revision_with_intent(
+    store: &AuthorityStore,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     input: &EpisodeInput,
     episode: EpisodeId,
@@ -386,6 +389,17 @@ async fn insert_episode_revision_with_intent(
     for (basis_no, basis) in input.basis.iter().enumerate() {
         insert_episode_support(tx, revision, basis_no as i32, basis).await?;
     }
+    store
+        .ensure_identity_addresses_in(
+            tx,
+            input.subject,
+            &[
+                CognitiveRef::Episode(episode),
+                CognitiveRef::EpisodeRevision(revision),
+            ],
+            input.title.as_deref().unwrap_or(""),
+        )
+        .await?;
     Ok(())
 }
 

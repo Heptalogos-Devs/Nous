@@ -8,7 +8,7 @@
 
 TypeScript Core 提供 Connect/HTTP API，启动和管理 private Rust Kernel，执行模型与外部 Resource 调用，并承载 WorkContext、Projection、Managed Context 和官方 Client 集成。Core 通过 authenticated loopback RPC 调用 Kernel；PostgreSQL 访问由 Kernel/Persistence 负责。
 
-Kernel 组合 Subject、Configuration、Material、Memory、Runtime、Persistence 和 Retrieval owners。Authority 写入由对应领域 owner 验证并持久化；Serving generation 可从 Authority 重建。
+Kernel 组合 Subject、Configuration、Material、Memory、Runtime、Persistence 和 Retrieval owners。Authority 写入由对应领域 owner 验证并持久化；Serving generation 可从 Authority 重建。启动只建立 Authority 和宿主能力绑定；Serving 由请求的冻结计划按需准备，显式管理刷新才准备全部配置族。
 
 ## Rust owners
 
@@ -26,15 +26,19 @@ Kernel 组合 Subject、Configuration、Material、Memory、Runtime、Persistenc
 
 ## Transport 与 mutation
 
-Kernel 在同一 authenticated loopback server 上承载 canonical generated `SubjectService`、`MaterialService`、`MemoryService`、`ConceptService`、`IdentityService`、`RuntimeService`、`ResourceRegistryService`、`ConfigurationService` 和 `SystemService`。Core 通过 generated ConnectRPC descriptor adapter 转发这些 owner 操作，保留调用方的 cancellation 与 deadline。官方 Client 的 `cognition` 和 `resources` namespace 组合相应 owner 与编排接口。
+Kernel 在同一 authenticated loopback server 上承载 canonical generated `SubjectService`、`MaterialService`、`MemoryService`、`ConceptService`、`IdentityService`、`RuntimeService`、`ResourceRegistryService`、`ConfigurationService` 和 `SystemService`。Core 通过 generated ConnectRPC descriptor adapter 转发这些 owner 操作，保留调用方的 cancellation 与 deadline。官方 Client 的 `cognition` 和 `resources` namespace 组合相应 owner 与编排接口。Rust Query 和内部 readiness status 使用当前 typed shape；协议身份由 canonical Proto 声明，不再逐对象附加固定 API 版本。
 
 Core 的 `CognitionService` 承载 Query、GrantMaintenance、Projection 和 Managed Context 编排；`ResourceService` 承载外部 Resource materialization；`ModelService` 执行 formation、derivation 和 embedding。Core System capabilities 汇总 Kernel 与当前 model runtime 的状态。
+
+Model resource schemas 位于 `model/profiles.ts`，role 与聚合配置各有独立 owner。`model/invocations.ts` 固定执行 routes/snapshot 并记录实际 attempts；`model/protocols.ts` 处理不依赖 Role 的 SDK/HTTP 调用。`model/input.ts` 按实际输入和候选 route 判断可执行性，`model/interpretation.ts` 构造 Material 请求并按通道解释输出；`model/derivation.ts` 持有 Source/representation workflow。每次实际媒体访问及其输出校验使用同一通道描述，quality/provenance 保存成功执行条件。Owning implementation 摘要由源码与 release bundler 共用，source-less payload 内嵌该身份。
 
 私有 workflow services 按实际执行步骤分组：`KernelQueryService` 负责认知时间读取及 query prepare/finalize/release；`KernelModelWorkflowService` 管理 model retry snapshot/proposal/outcome；`KernelMaterialWorkflowService` 提供 derivation/embedding 输入与提交；`KernelMaintenanceService` 提供 needs 的 claim/plan/finish，以及天然原子的 Episode partition 与 Journal 提交；consolidation/concept proposal 由 Core 逐项调用 canonical Memory/Schema/Tag/Association owner API，保存稳定 action identity 和实际结果；`KernelProjectionService` 提供 contribution batch。`KernelConfigurationService` 提供 bootstrap/snapshot，`ArtifactStreamService` 提供流式 Artifact 传输。
 
 Persistence 的 `MutationEnvelope` 持有 Subject/operation identity、可选 owner Subject lock、operation lock、canonical digest receipt、transaction 和 projection invalidation。owner 选择 invalidation families，envelope 为同一事务分配一个 Authority sequence，并在 commit 时发布合并的 watermarks 与 receipt。Replay 返回 receipt，由领域 owner 解码结果；未提交的事务回滚；Memory purge 使用 checkpoint 和 resume 保留分阶段执行。
 
 Memory、Episode、CognitiveSchema 和 Journal 保留独立模型、typed tables、provenance、head/epoch fence 与 lifecycle SQL。Memory crate 的内部 read、mutation、lifecycle、partition 和 provenance 按领域责任组织；共享纯 epoch/transition 检查不决定领域操作。
+
+Serving 的实现身份由构建时的投影实现、输入投影与锁定依赖内容摘要产生，随可执行程序交付；不使用手工递增计数。结构化 Serving record 唯一保存实现与配置身份，metadata 只保存制品校验和与实际 profile。当前与历史代次共用 `retrieval/assets/` 中的构建、安装、替换与互斥规则。Native Wave 的配置声明与解析由 `retrieval/policy/wave.rs` 拥有，图构建由 `retrieval/mechanisms/graph.rs` 拥有；调整配置展示等级不会改变投影实现摘要。
 
 ## 数据流
 
@@ -66,8 +70,7 @@ Query addressing/preparation、automatic concept maintenance、derived Accretion
 
 Concept planner 围绕 focus 的 aboutness、来源、一跳关系和 bounded Tag candidates；不生成 Subject 全量 cognition catalog。proposal 不是超级事务，Core 保留每项 committed/no_change/invalid/stale/dependency outcome。Natural Tag merge/split、Episode partition 与 Journal mutation 继续由真实 owner 维护自身原子性。Accretion 按需提供来源、成员、recurrence、时间跨度、关联、使用和反证等 derived signals，review hints 在调用点计算。
 
-Research 只使用 official public Client/CLI。小型 runner 不启动额外 Runtime、不管理 Serving installer/embedding store，输出在 ignored data。VCP reference/adapters 与兼容 asset reuse/reclamation 保留；完整数值矩阵移入 ignored source cache，CI 使用 compact discriminating goldens。
-
+Research 只使用 official public Client/CLI。小型 runner 不启动额外 Runtime、不管理 Serving installer/embedding store，输出在 ignored data。VCP reference/adapters 与兼容 asset reuse/reclamation 保留；完整数值矩阵保存在 ignored Research results，CI 使用 compact discriminating goldens。
 
 ## Temporal 与 Semantic Concept 查询
 

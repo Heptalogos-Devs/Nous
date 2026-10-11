@@ -15,7 +15,7 @@ import { MaterialService } from "@nous-wave/protocol/nous/wave/v1alpha1/services
 import {
   coreExecutionSchema,
   type CoreExecutionPolicy,
-} from "./configuration-catalog.js";
+} from "./configuration/catalog.js";
 import { createClient, type Transport } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import { ArtifactStreamService } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/kernel_pb.js";

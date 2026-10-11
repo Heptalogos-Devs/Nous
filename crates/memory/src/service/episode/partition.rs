@@ -69,9 +69,11 @@ impl MemoryService {
                 .await
                 .map_err(db)?;
         if watermark != input.expected_authority_seq {
-            return Err(Error::Conflict(
-                "Episode partition snapshot is stale".into(),
-            ));
+            return Err(nous_core::DomainError::new(
+                nous_core::DomainErrorCode::StaleRevision,
+                "Episode partition snapshot is stale",
+            )
+            .into());
         }
         let first = &sources[0];
         let track: String = first.try_get("track_key").map_err(db)?;
@@ -83,12 +85,7 @@ impl MemoryService {
         let one_to_one = input.sources.len() == 1 && input.segments.len() == 1;
         if one_to_one && unchanged_partition(mutation.tx(), &input, first).await? {
             let outputs = vec![input.sources[0].revision];
-            let result = serde_json::to_string(&outputs)
-                .map_err(|error| Error::Infrastructure(error.to_string()))?;
-
-            mutation
-                .commit("episode_partition", Some(&result), None, None)
-                .await?;
+            commit_partition_result(mutation, &outputs).await?;
             return self.partition_views(input.subject, outputs).await;
         }
         if !one_to_one {
@@ -137,12 +134,7 @@ impl MemoryService {
             )
             .await?;
         }
-        let result = serde_json::to_string(&outputs)
-            .map_err(|error| Error::Infrastructure(error.to_string()))?;
-
-        mutation
-            .commit("episode_partition", Some(&result), None, None)
-            .await?;
+        commit_partition_result(mutation, &outputs).await?;
         self.partition_views(input.subject, outputs).await
     }
 
@@ -191,6 +183,7 @@ impl MemoryService {
                     .bind(episode.0).bind(input.subject.0).bind(&track).bind(revision.0).bind(recorded_at).execute(&mut **tx).await.map_err(db)?;
             }
             insert_episode_revision_with_intent(
+                &self.store,
                 tx,
                 &payload,
                 episode,
@@ -306,9 +299,11 @@ async fn lock_sources(
     let rows = sqlx::query("SELECT o.*,r.episode_revision_id,r.revision_no,r.parent_episode_revision_id,r.title,r.boundary_explanation FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR UPDATE OF o")
         .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
     if rows.len() != ids.len() {
-        return Err(Error::Conflict(
-            "Episode partition source disappeared".into(),
-        ));
+        return Err(nous_core::DomainError::new(
+            nous_core::DomainErrorCode::StaleRevision,
+            "Episode partition source disappeared",
+        )
+        .into());
     }
     let track: String = rows[0].try_get("track_key").map_err(db)?;
     let parent: Option<Uuid> = rows[0].try_get("parent_episode_revision_id").map_err(db)?;
@@ -328,9 +323,11 @@ async fn lock_sources(
             || row.get::<String, _>("suppression_state") != "normal"
             || row.get::<String, _>("purge_state") != "normal"
         {
-            return Err(Error::Conflict(
-                "Episode partition source state is stale".into(),
-            ));
+            return Err(nous_core::DomainError::new(
+                nous_core::DomainErrorCode::StaleRevision,
+                "Episode partition source state is stale",
+            )
+            .into());
         }
     }
     let members = sqlx::query("SELECT episode_revision_id,ref_kind,ref_value FROM episode_revision_members WHERE episode_revision_id=ANY($1::uuid[]) ORDER BY episode_revision_id,ordinal")
@@ -495,4 +492,25 @@ fn partition_payload(
         &payload.basis,
     )?;
     Ok(payload)
+}
+
+async fn commit_partition_result(
+    mut mutation: nous_persistence::MutationEnvelope<'_>,
+    outputs: &[EpisodeRevisionId],
+) -> Result<()> {
+    let result =
+        serde_json::to_string(outputs).map_err(|error| Error::Infrastructure(error.to_string()))?;
+    mutation
+        .publish_workflow_results(
+            "memory",
+            &outputs
+                .iter()
+                .copied()
+                .map(CognitiveRef::EpisodeRevision)
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+    mutation
+        .commit("episode_partition", Some(&result), None, None)
+        .await
 }

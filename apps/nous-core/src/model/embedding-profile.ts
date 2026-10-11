@@ -1,12 +1,10 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { blake3 } from "@noble/hashes/blake3.js";
-import {
-  resolveExecutionProfile,
-  type ModelConfiguration,
-} from "./configuration.js";
+import { modelRoleGraph, type ModelConfiguration } from "./configuration.js";
 import { canonicalDigest } from "../digest.js";
 import { modelRoleIdentity } from "./identity.js";
+import { modelImplementations } from "./implementation.js";
 const digest = (value: unknown) =>
   Buffer.from(blake3(new TextEncoder().encode(JSON.stringify(value)))).toString(
     "hex",
@@ -27,10 +25,13 @@ export function resolvedEmbeddingRoute(
     !gateway
   )
     return undefined;
-  const binding = resolveExecutionProfile(configured!, profile.protocol);
+  const binding = configured!;
   const identity = modelRoleIdentity(profile, gateway, binding);
   const policyDigest = canonicalDigest(policy);
-  const snapshot = canonicalDigest({ policy, configuration: config });
+  const snapshot = canonicalDigest({
+    policy,
+    configuration: modelRoleGraph(config, "query_embedding"),
+  });
   const configDigest = canonicalDigest({
     snapshot,
     execution: identity.configDigest,
@@ -54,7 +55,7 @@ export function resolvedEmbeddingRoute(
     signature_hash: "",
     provider_class: profile.protocol,
     operation: "text_embedding",
-    implementation: "ai-sdk@7.0.102/openai@4.0.67",
+    implementation: `ai-sdk:${modelImplementations.provider}`,
     model_identity: profile.model,
     model_revision: profile.model_revision ?? null,
     output_schema_digest: null,

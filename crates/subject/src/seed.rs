@@ -123,14 +123,17 @@ impl SubjectCoreService {
         )?;
         let mut tx = self.store.begin().await?;
         let adoption = insert_seed(
+            &self.store,
             &mut tx,
-            subject,
-            operation_id,
             input,
             hash,
-            kind,
-            &digest,
-            self.clock.now(subject),
+            SeedAdoptionWrite {
+                subject,
+                operation_id,
+                kind,
+                digest: &digest,
+                now: self.clock.now(subject),
+            },
         )
         .await?;
         tx.commit().await.map_err(db)?;
@@ -194,16 +197,28 @@ impl SubjectCoreService {
     }
 }
 
+pub(super) struct SeedAdoptionWrite<'a> {
+    pub subject: SubjectId,
+    pub operation_id: OperationId,
+    pub kind: SeedAdoptionKind,
+    pub digest: &'a str,
+    pub now: DateTime<Utc>,
+}
+
 pub(super) async fn insert_seed(
+    store: &nous_persistence::AuthorityStore,
     tx: &mut Transaction<'_, Postgres>,
-    subject: SubjectId,
-    operation_id: OperationId,
     input: CognitiveSeedInput,
     hash: String,
-    kind: SeedAdoptionKind,
-    digest: &str,
-    now: DateTime<Utc>,
+    adoption: SeedAdoptionWrite<'_>,
 ) -> Result<Uuid> {
+    let SeedAdoptionWrite {
+        subject,
+        operation_id,
+        kind,
+        digest,
+        now,
+    } = adoption;
     sqlx::query("SELECT subject_id FROM subjects WHERE subject_id=$1 FOR UPDATE")
         .bind(subject.0)
         .fetch_one(&mut **tx)
@@ -218,7 +233,8 @@ pub(super) async fn insert_seed(
     {
         let existing: String = row.try_get("request_digest").map_err(db)?;
         if existing != digest {
-            return Err(Error::Conflict("Cognitive Seed operation_id was used with a different request".into()));
+            return Err(nous_core::DomainError::new(nous_core::DomainErrorCode::OperationIdConflict, "Cognitive Seed operation_id was used with a different request")
+                .with_context("operation_id", operation_id.0).into());
         }
         return row.try_get("adoption_id").map_err(db);
     }
@@ -261,6 +277,18 @@ pub(super) async fn insert_seed(
         .execute(&mut **tx)
         .await
         .map_err(db)?;
+    store
+        .ensure_identity_addresses_in(
+            tx,
+            subject,
+            &[
+                nous_core::CognitiveRef::Subject(subject),
+                nous_core::CognitiveRef::Artifact(ArtifactId(artifact)),
+                nous_core::CognitiveRef::CognitiveSeedVersion(CognitiveSeedVersionId(seed_version)),
+            ],
+            "",
+        )
+        .await?;
     Ok(adoption)
 }
 

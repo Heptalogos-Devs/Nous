@@ -151,15 +151,3 @@ pub struct UseFeedbackEvent {
     #[serde(default)]
     pub context: serde_json::Value,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn presented_is_not_meaningful_and_results_are_typed_use() {
-        assert!(!UseKind::Presented.meaningful());
-        assert!(UseKind::Referenced.meaningful());
-        assert!(UseKind::ResultRefuted.meaningful());
-    }
-}

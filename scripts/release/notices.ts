@@ -252,6 +252,11 @@ export async function prepareNotices(
     join(compilerRoot, "LICENSE.TXT"),
     join(output, "licenses/native/LLVM-LICENSE.txt"),
   );
+  await cp(
+    join(compilerRoot, "x86_64-w64-mingw32/share/mingw32"),
+    join(output, "licenses/native/mingw-runtime"),
+    { recursive: true },
+  );
   const rustSysroot = (
     await execute("rustc", ["--print", "sysroot"], { windowsHide: true })
   ).stdout.trim();

@@ -13,6 +13,35 @@ fn binding(b: nous_persistence::IdentityBinding) -> p::IdentityBinding {
     }
 }
 impl KernelService {
+    pub(super) async fn get_identity_addresses(
+        &self,
+        input: p::GetIdentityAddressesRequest,
+    ) -> Result<p::GetIdentityAddressesResponse> {
+        let targets = input
+            .targets
+            .into_iter()
+            .map(|target| {
+                Ok(nous_persistence::IdentityAddressTarget {
+                    subject: SubjectId(id(&target.subject_id)?),
+                    reference: from_ref(required(target.canonical, "canonical")?)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let addresses = self.0.store.identity_addresses(&targets).await?;
+        Ok(p::GetIdentityAddressesResponse {
+            addresses: addresses
+                .into_iter()
+                .map(|address| p::IdentityAddress {
+                    target: Some(p::IdentityAddressTarget {
+                        subject_id: address.target.subject.0.to_string(),
+                        canonical: Some(to_ref(address.target.reference)),
+                    }),
+                    lexical_ref: address.lexical_ref,
+                    status: address.status,
+                })
+                .collect(),
+        })
+    }
     pub(super) async fn rebind_entity(&self, input: p::RebindEntityRequest) -> Result<()> {
         self.0
             .material

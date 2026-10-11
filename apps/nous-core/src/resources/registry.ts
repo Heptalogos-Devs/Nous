@@ -1,25 +1,26 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ResourceProfiles } from "./configuration.js";
 import type { ExternalResourceAdapter, ResourceBinding } from "./adapter.js";
-import { RagflowAdapter } from "./providers/ragflow.js";
+
+interface HostedResourceProvider {
+  adapterKind: string;
+  providerProfile: string;
+  adapter: ExternalResourceAdapter;
+}
+const key = (kind: string, profile: string) => JSON.stringify([kind, profile]);
 
 export class ResourceRegistry {
   private readonly adapters = new Map<string, ExternalResourceAdapter>();
-  constructor(profiles: ResourceProfiles) {
-    for (const [name, profile] of Object.entries(profiles)) {
-      const credential = process.env[profile.credential_env];
-      if (profile.enabled && credential)
-        this.adapters.set(
-          `${profile.adapter_kind}:${name}`,
-          new RagflowAdapter(name, profile, credential),
-        );
+  constructor(providers: readonly HostedResourceProvider[] = []) {
+    for (const provider of providers) {
+      const identity = key(provider.adapterKind, provider.providerProfile);
+      if (this.adapters.has(identity))
+        throw new Error("Duplicate hosted Resource provider identity");
+      this.adapters.set(identity, provider.adapter);
     }
   }
   resolve(binding: ResourceBinding): ExternalResourceAdapter | undefined {
-    return this.adapters.get(
-      `${binding.adapterKind}:${binding.providerProfile}`,
-    );
+    return this.adapters.get(key(binding.adapterKind, binding.providerProfile));
   }
 }

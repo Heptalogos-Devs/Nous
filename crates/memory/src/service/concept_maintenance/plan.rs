@@ -273,7 +273,11 @@ impl MemoryService {
             "associations":associations.iter().map(|a|serde_json::json!({"key":a.key,"from":a.from,"to":a.to,"relation":a.relation})).collect::<Vec<_>>(),
             "basis":basis.iter().map(|(key,s)|serde_json::json!({"key":key,"kind":match s {AssociationBasis::Revision(RevisionBasis::CognitionDependency(_))=>"exact_cognition",AssociationBasis::Revision(_)=>"source_evidence",AssociationBasis::UseEvent(_)=>"meaningful_use"}})).collect::<Vec<_>>(),"queryFeedback":query_feedback,"queryFeedbackSemantics":"meaningful_use signal; not source evidence or mutation authorization","sourceContext":source_context,"mergeCandidates":merge_candidates,"splitCandidates":split_candidates});
         if self.store.authority_seq(subject).await? != sequence {
-            return Err(Error::Conflict("concept planning snapshot changed".into()));
+            return Err(nous_core::DomainError::new(
+                nous_core::DomainErrorCode::StaleRevision,
+                "concept planning snapshot changed",
+            )
+            .into());
         }
         Ok(ConceptPlan {
             subject,

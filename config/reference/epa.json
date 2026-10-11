@@ -1,0 +1,13 @@
+{
+  "identity": "epa",
+  "values": {
+    "retrieval.epa": {
+      "minimum_samples": 8,
+      "max_representatives": 256,
+      "max_axes": 64,
+      "minimum_axis_energy": 0.01,
+      "duplicate_cosine_epsilon": 1e-09,
+      "representative_distance_epsilon": 1e-06
+    }
+  }
+}

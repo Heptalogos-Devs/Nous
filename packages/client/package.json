@@ -6,12 +6,17 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./node": "./src/node.ts"
+    "./node": "./src/node.ts",
+    "./data": "./src/data.ts",
+    "./errors": "./src/errors.ts",
+    "./consumer-policy": "./src/policy/consumer.ts",
+    "./execution-policy": "./src/policy/execution.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0",
     "@connectrpc/connect": "2.2.0",
     "@connectrpc/connect-node": "2.2.0",
-    "@nous-wave/protocol": "workspace:*"
+    "@nous-wave/protocol": "workspace:*",
+    "zod": "4.6.5"
   }
 }
