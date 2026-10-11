@@ -254,7 +254,6 @@ it("fences query-vector caching across subject invalidation", async () => {
 });
 
 it("does not execute resources when required reranking is unavailable", async () => {
-  let rerankProfileAvailable = true;
   const search = vi.fn(async () => []);
   const runQuery = vi.fn((requests: AsyncIterable<QueryRunRequest>) =>
     workflow(requests, async function* (frames) {
@@ -263,29 +262,38 @@ it("does not execute resources when required reranking is unavailable", async ()
         frame: {
           case: "finalize",
           value: {
-            baseline: create(QueryResponseSchema, {
-              status: "complete",
-              hits: [{ text: "one" }, { text: "two" }],
-              resourceActions: [
-                {
-                  resourceRef: "resource:docs",
-                  action: "search",
-                  actionId: "action",
-                  queryText: "release",
-                  limit: 1,
-                  adapterKind: "test",
-                  providerProfile: "test",
-                },
-              ],
-            }),
+            candidates: [
+              {
+                reference: create(CognitiveRefSchema, {
+                  kind: "memory",
+                  value: "candidate-one",
+                }),
+                text: "one",
+              },
+              {
+                reference: create(CognitiveRefSchema, {
+                  kind: "memory",
+                  value: "candidate-two",
+                }),
+                text: "two",
+              },
+            ],
+            resourceActions: [
+              {
+                resourceRef: "resource:docs",
+                action: "search",
+                actionId: "action",
+                queryText: "release",
+                limit: 1,
+                adapterKind: "test",
+                providerProfile: "test",
+              },
+            ],
             rerankQuery: "release status",
-            rerankCandidateLimit: 2,
-            rerankExpected: true,
             rerankRequirement: QueryHostRequirement.REQUIRED,
           },
         },
       });
-      rerankProfileAvailable = false;
       const finalize = (await frames.next()).value;
       expect(finalize?.frame.case).toBe("finalize");
       if (finalize?.frame.case === "finalize") {
@@ -301,10 +309,7 @@ it("does not execute resources when required reranking is unavailable", async ()
   } as unknown as KernelClient;
   const models = {
     invocations: {
-      profile: (role: string) =>
-        role === "query_rerank" && rerankProfileAvailable
-          ? { model: "fake" }
-          : undefined,
+      profile: () => undefined,
       requirement: (role: string) =>
         role === "query_rerank" ? "required" : "optional",
     },
@@ -326,4 +331,79 @@ it("does not execute resources when required reranking is unavailable", async ()
   );
 
   expect(search).not.toHaveBeenCalled();
+});
+
+it("reranks only the bounded candidates with their original identities", async () => {
+  const first = create(CognitiveRefSchema, {
+    kind: "memory",
+    value: "first",
+  });
+  const second = create(CognitiveRefSchema, {
+    kind: "episode",
+    value: "second",
+  });
+  const rerank = vi.fn(async () => ({
+    value: [
+      { index: 1, relevance_score: 0.9 },
+      { index: 0, relevance_score: 0.2 },
+    ],
+  }));
+  let order: unknown;
+  const runQuery = vi.fn((requests: AsyncIterable<QueryRunRequest>) =>
+    workflow(requests, async function* (frames) {
+      expect((await frames.next()).value?.frame.case).toBe("start");
+      yield create(QueryRunUpdateSchema, {
+        frame: {
+          case: "finalize",
+          value: {
+            candidates: [
+              { reference: first, text: "first result" },
+              { reference: second, text: "second result" },
+            ],
+            resourceActions: [],
+            rerankQuery: "full frozen representation",
+            rerankRequirement: QueryHostRequirement.OPTIONAL,
+          },
+        },
+      });
+      const finalize = (await frames.next()).value;
+      expect(finalize?.frame.case).toBe("finalize");
+      if (finalize?.frame.case === "finalize") {
+        order = finalize.frame.value.rerank?.outcome;
+      }
+      yield completeUpdate();
+    }),
+  );
+  const kernel = {
+    execution: coreExecutionSchema.parse(undefined),
+    queryWorkflow: { runQuery },
+  } as unknown as KernelClient;
+  const models = {
+    invocations: {
+      profile: (role: string) =>
+        role === "query_rerank" ? { model: "fake" } : undefined,
+      requirement: () => "optional",
+      rerank,
+    },
+  } as unknown as ModelRuntime;
+
+  await new QueryOrchestrator(kernel, models, new ResourceRegistry()).execute(
+    queryRequest(),
+  );
+
+  expect(rerank).toHaveBeenCalledWith(
+    "full frozen representation",
+    ["first result", "second result"],
+    2,
+    expect.any(AbortSignal),
+  );
+  expect(order).toMatchObject({
+    case: "order",
+    value: {
+      candidates: [
+        { reference: second, score: 0.9 },
+        { reference: first, score: 0.2 },
+      ],
+    },
+  });
 });

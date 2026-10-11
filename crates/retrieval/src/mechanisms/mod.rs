@@ -7,7 +7,6 @@ pub type SparseField = BTreeMap<u32, f64>;
 
 mod cue_sensing;
 pub mod dense;
-mod fields;
 mod graph;
 pub mod lexical;
 pub mod residual;
@@ -17,7 +16,6 @@ mod wave;
 
 pub use cue_sensing::*;
 pub use dense::{DenseGeneration, DenseMatch, VectorRecord};
-pub use fields::*;
 pub use graph::*;
 pub use lexical::{LexicalDocument, LexicalGeneration, LexicalMatch};
 pub use residual::*;

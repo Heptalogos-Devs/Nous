@@ -5,7 +5,12 @@ import type { NousClient } from "@nous-wave/client";
 import type { CliEnvironment } from "./runtime.js";
 import { CliError } from "./agent.js";
 const referenceText = z.string().min(1).max(2048);
-const relation = z.enum([
+export const revisionBasisRole = z.enum([
+  "direct",
+  "interpretation",
+  "contextual",
+]);
+export const epistemicRelation = z.enum([
   "supports",
   "contradicts",
   "corroborates",
@@ -14,13 +19,11 @@ const relation = z.enum([
   "counterexample",
   "inferred_from",
 ]);
-const basis = z
-  .object({
-    ref: referenceText,
-    role: z.enum(["direct", "interpretation", "contextual"]).default("direct"),
-    epistemic_relation: relation.optional(),
-  })
-  .strict();
+export const revisionBasisInput = z.strictObject({
+  ref: referenceText,
+  role: revisionBasisRole.default("direct"),
+  epistemic_relation: epistemicRelation.optional(),
+});
 const useBasis = z
   .object({
     use_event: z.object({ consumer: referenceText, event: z.uuid() }).strict(),
@@ -38,14 +41,14 @@ export const mergeInput = z
   .object({
     survivor: referenceText,
     retired: z.array(referenceText).min(1).max(32),
-    basis: z.array(basis).min(1).max(256),
+    basis: z.array(revisionBasisInput).min(1).max(256),
   })
   .strict();
 export const splitInput = z
   .object({
     parent: referenceText,
     children: z.array(content).min(2).max(32),
-    basis: z.array(basis).min(1).max(256),
+    basis: z.array(revisionBasisInput).min(1).max(256),
   })
   .strict();
 export const associationInput = z
@@ -64,7 +67,7 @@ export const associationInput = z
       ])
       .default("host_explicit"),
     basis: z
-      .array(z.union([basis, useBasis]))
+      .array(z.union([revisionBasisInput, useBasis]))
       .min(1)
       .max(256),
   })
@@ -72,7 +75,7 @@ export const associationInput = z
 export const attachmentInput = z
   .object({
     basis: z
-      .array(z.union([basis, useBasis]))
+      .array(z.union([revisionBasisInput, useBasis]))
       .min(1)
       .max(256),
   })
@@ -90,7 +93,7 @@ type RevisionBasis = NonNullable<
 >[number];
 export async function revisionBasis(
   env: CliEnvironment,
-  entry: z.infer<typeof basis>,
+  entry: z.infer<typeof revisionBasisInput>,
 ): Promise<RevisionBasis> {
   const target = await env.resolveReference(entry.ref);
   if (target.kind === "occurrence")
@@ -130,7 +133,7 @@ export async function revisionBasis(
 }
 export async function associationBasis(
   env: CliEnvironment,
-  entry: z.infer<typeof basis> | z.infer<typeof useBasis>,
+  entry: z.infer<typeof revisionBasisInput> | z.infer<typeof useBasis>,
 ) {
   if ("use_event" in entry)
     return {

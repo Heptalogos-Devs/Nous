@@ -49,7 +49,7 @@ export async function startKernel(
   for (const [name, value] of Object.entries(process.env))
     if (inheritedNames.has(name.toLowerCase())) environment[name] = value;
   const token = randomBytes(32).toString("hex");
-  const child = spawn(executable, ["--config", configPath], {
+  const child = spawn(executable, ["serve", "--config", configPath], {
     stdio: "pipe",
     windowsHide: true,
     env: environment,

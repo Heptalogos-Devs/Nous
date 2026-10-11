@@ -57,30 +57,21 @@ pub(super) fn snapshot(value: k::WorkflowSnapshot) -> Result<nous_core::Workflow
     Ok(nous_core::WorkflowSnapshot {
         content: payload(required(value.content, "workflow content")?)?,
         cognitive_formed_at: time(value.cognitive_formed_at)?,
-        maintenance_claim: value
-            .maintenance_claim
-            .map(|claim| -> Result<nous_core::MaintenanceClaim> {
-                Ok(nous_core::MaintenanceClaim {
-                    need_id: id(&claim.need_id)?,
-                    lease_token: id(&claim.lease_token)?,
-                    trigger_authority_seq: claim.trigger_authority_seq,
-                    trigger_revision: claim.trigger_revision,
-                })
-            })
-            .transpose()?,
     })
 }
 pub(super) fn snapshot_proto(value: nous_core::WorkflowSnapshot) -> k::WorkflowSnapshot {
     k::WorkflowSnapshot {
         content: Some(payload_proto(value.content)),
         cognitive_formed_at: value.cognitive_formed_at.map(timestamp),
-        maintenance_claim: value.maintenance_claim.map(|claim| k::MaintenanceClaim {
-            need_id: claim.need_id.to_string(),
-            lease_token: claim.lease_token.to_string(),
-            trigger_authority_seq: claim.trigger_authority_seq,
-            trigger_revision: claim.trigger_revision,
-        }),
     }
+}
+pub(super) fn maintenance_claim(value: k::MaintenanceClaim) -> Result<nous_core::MaintenanceClaim> {
+    Ok(nous_core::MaintenanceClaim {
+        need_id: id(&value.need_id)?,
+        lease_token: id(&value.lease_token)?,
+        trigger_authority_seq: value.trigger_authority_seq,
+        trigger_revision: value.trigger_revision,
+    })
 }
 fn count(value: Option<f64>) -> Result<Option<u64>> {
     value

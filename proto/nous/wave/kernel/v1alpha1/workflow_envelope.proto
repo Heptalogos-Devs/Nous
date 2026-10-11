@@ -30,7 +30,8 @@ message MaintenanceClaim {
 message WorkflowSnapshot {
   WorkflowPayload content = 1;
   google.protobuf.Timestamp cognitive_formed_at = 2;
-  MaintenanceClaim maintenance_claim = 3;
+  reserved 3;
+  reserved "maintenance_claim";
 }
 // Absent usage is unknown, including for attempts with an unknown outcome.
 message ExecutionUsage {

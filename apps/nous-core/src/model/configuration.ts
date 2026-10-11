@@ -33,7 +33,7 @@ const modelExecutionShape = {
   roles: z.partialRecord(z.enum(roleNames), rolePolicySchema).default({}),
 };
 /** Resource references and protocol-dependent defaults form one atomic owning policy. */
-export const modelExecutionSchema = z
+const modelExecutionObject = z
   .strictObject(modelExecutionShape)
   .superRefine((graph, context) => {
     const issue = (path: (string | number)[], message: string) =>
@@ -144,8 +144,8 @@ export const modelExecutionSchema = z
         ];
       }),
     ),
-  }))
-  .prefault({});
+  }));
+export const modelExecutionSchema = modelExecutionObject.prefault({});
 export type ModelExecutionConfiguration = z.infer<typeof modelExecutionSchema>;
 
 export function modelRoleGraph(
@@ -221,32 +221,9 @@ export const modelConfigurationShape = {
     .default("description_only"),
   ...modelExecutionShape,
 };
-const graphFrom = (
-  config: z.infer<
-    ReturnType<typeof z.strictObject<typeof modelConfigurationShape>>
-  >,
-) => ({
-  gateway_profiles: config.gateway_profiles,
-  model_profiles: config.model_profiles,
-  execution_profiles: config.execution_profiles,
-  roles: config.roles,
-});
-export const modelConfigurationSchema = z
-  .strictObject(modelConfigurationShape)
-  .superRefine((config, context) => {
-    const graph = modelExecutionSchema.safeParse(graphFrom(config));
-    if (!graph.success)
-      for (const issue of graph.error.issues)
-        context.addIssue({
-          code: "custom",
-          path: issue.path,
-          message: issue.message,
-        });
-  })
-  .overwrite((config) => {
-    const graph = modelExecutionSchema.safeParse(graphFrom(config));
-    return graph.success ? { ...config, ...graph.data } : config;
-  });
+export const modelConfigurationSchema = modelExecutionObject.safeExtend(
+  modelConfigurationShape,
+);
 
 /** Cross-profile graph readiness is an owner diagnostic, not a second Catalog validator. */
 export function modelRoleProblem(

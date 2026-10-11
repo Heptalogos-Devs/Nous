@@ -594,35 +594,27 @@ pub struct QueryActivationSeed {
 pub struct QueryActivationInspection {
     #[prost(bool, tag="1")]
     pub frozen: bool,
-    #[prost(string, tag="2")]
-    pub semantic_text_digest: ::prost::alloc::string::String,
-    #[prost(message, repeated, tag="3")]
+    #[prost(message, repeated, tag="2")]
     pub concept_catalog: ::prost::alloc::vec::Vec<QueryConceptCandidate>,
-    #[prost(message, repeated, tag="4")]
+    #[prost(message, repeated, tag="3")]
     pub explicit_tags: ::prost::alloc::vec::Vec<QueryTagActivation>,
-    #[prost(message, repeated, tag="5")]
+    #[prost(message, repeated, tag="4")]
     pub inferred_tags: ::prost::alloc::vec::Vec<QueryTagActivation>,
-    #[prost(message, repeated, tag="6")]
+    #[prost(message, repeated, tag="5")]
     pub seeds: ::prost::alloc::vec::Vec<QueryActivationSeed>,
-    #[prost(message, repeated, tag="7")]
-    pub exact_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
-    #[prost(message, repeated, tag="8")]
-    pub entity_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
-    #[prost(message, repeated, tag="9")]
-    pub schema_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
-    #[prost(message, repeated, tag="10")]
+    #[prost(message, repeated, tag="6")]
     pub runtime_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
-    #[prost(string, tag="11")]
+    #[prost(string, tag="7")]
     pub exploration: ::prost::alloc::string::String,
-    #[prost(string, tag="12")]
+    #[prost(string, tag="8")]
     pub generation_id: ::prost::alloc::string::String,
-    #[prost(string, tag="13")]
+    #[prost(string, tag="9")]
     pub query_embedding_digest: ::prost::alloc::string::String,
-    #[prost(message, repeated, tag="14")]
+    #[prost(message, repeated, tag="10")]
     pub degradation: ::prost::alloc::vec::Vec<Degradation>,
-    #[prost(uint32, tag="15")]
+    #[prost(uint32, tag="11")]
     pub model_calls: u32,
-    #[prost(bool, tag="16")]
+    #[prost(bool, tag="12")]
     pub model_completed: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -656,19 +648,17 @@ pub struct QueryInspection {
     pub context: ::core::option::Option<QueryContextSnapshot>,
     #[prost(message, optional, tag="5")]
     pub read_context: ::core::option::Option<ReadContext>,
-    #[prost(message, optional, tag="6")]
-    pub projection: ::core::option::Option<ResultProjection>,
-    #[prost(message, repeated, tag="7")]
+    #[prost(message, repeated, tag="6")]
     pub exact_bindings: ::prost::alloc::vec::Vec<QueryExactBinding>,
-    #[prost(message, optional, tag="8")]
+    #[prost(message, optional, tag="7")]
     pub activation: ::core::option::Option<QueryActivationInspection>,
-    #[prost(message, optional, tag="9")]
+    #[prost(message, optional, tag="8")]
     pub plan: ::core::option::Option<QueryPlanInspection>,
-    #[prost(string, tag="10")]
+    #[prost(string, tag="9")]
     pub config_snapshot_digest: ::prost::alloc::string::String,
-    #[prost(message, optional, tag="12")]
+    #[prost(message, optional, tag="10")]
     pub selected_embedding_space: ::core::option::Option<QueryEmbeddingSpaceView>,
-    #[prost(message, optional, tag="14")]
+    #[prost(message, optional, tag="11")]
     pub capabilities: ::core::option::Option<QueryCapabilities>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]

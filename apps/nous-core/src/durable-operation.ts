@@ -12,6 +12,7 @@ import {
 } from "@nous-wave/client/errors";
 import {
   ExecutionTelemetrySchema,
+  MaintenanceClaimSchema,
   WorkflowPayloadSchema,
   WorkflowSnapshotSchema,
   type ExecutionTelemetry,
@@ -21,7 +22,7 @@ import {
   type WorkflowLease,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import type {
-  FindWorkflowRequest,
+  OpenWorkflowRequest,
   CompletedWorkflow,
   PendingWorkflow,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
@@ -39,7 +40,7 @@ type ExecutionTelemetryInput = MessageInitShape<
   typeof ExecutionTelemetrySchema
 >;
 export type DurableIdentity = Pick<
-  FindWorkflowRequest,
+  OpenWorkflowRequest,
   "subjectId" | "owner" | "operationKey" | "semanticDigest"
 >;
 type OperationSnapshot = MessageInitShape<typeof WorkflowSnapshotSchema>;
@@ -96,47 +97,39 @@ export function workflowPayload(
   });
 }
 
-/** Opens a frozen operation through the only Core Find/Reserve path. */
+/** Opens a frozen operation through one atomic existing-or-acquire path. */
 export async function openDurableOperation<T = never>(
   kernel: KernelClient,
   identity: DurableIdentity,
   input: OpenDurableOperationInput<T>,
 ): Promise<OpenDurableOperation<T>> {
   const calls = executionOptions(kernel.execution.opportunity, input.execution);
-  const found = await kernel.modelWorkflow.findWorkflow(identity, calls);
-  if (found.state.case === "completed") return completed(found.state.value);
+  const claim = input.maintenanceClaim
+    ? create(MaintenanceClaimSchema, input.maintenanceClaim)
+    : undefined;
+  const open = (snapshot?: OperationSnapshot) =>
+    kernel.modelWorkflow.openWorkflow(
+      {
+        ...identity,
+        snapshot: snapshot
+          ? create(WorkflowSnapshotSchema, snapshot)
+          : undefined,
+        maintenanceClaim: claim,
+        leaseSeconds: calls.opportunity.leaseSeconds,
+      },
+      calls,
+    );
 
-  let snapshot: OperationSnapshot | WorkflowSnapshot;
-  if (found.state.case === "pending") {
-    snapshot = pendingSnapshot(found.state.value);
-  } else {
+  let reserved = await open();
+  if (reserved.state.case === "missing") {
     const decision = await input.snapshotFactory();
     if ("skip" in decision)
       return {
         state: "not_started",
         result: decision.skip,
       } as OpenDurableOperation<T>;
-    snapshot = decision.snapshot;
+    reserved = await open(decision.snapshot);
   }
-
-  if (input.maintenanceClaim) {
-    snapshot = {
-      ...snapshot,
-      maintenanceClaim: {
-        $typeName: "nous.wave.kernel.v1alpha1.MaintenanceClaim",
-        ...input.maintenanceClaim,
-      },
-    };
-  }
-
-  const reserved = await kernel.modelWorkflow.reserveWorkflow(
-    {
-      ...identity,
-      snapshot,
-      leaseSeconds: calls.opportunity.leaseSeconds,
-    },
-    calls,
-  );
   switch (reserved.state.case) {
     case "completed":
       return completed(reserved.state.value);
@@ -164,6 +157,11 @@ export async function openDurableOperation<T = never>(
         executionTelemetry: pending.executionTelemetry,
       };
     }
+    case "missing":
+      throw new ConnectError(
+        "Workflow snapshot was not reserved",
+        Code.DataLoss,
+      );
     default:
       throw new ConnectError(
         "Missing workflow reservation state",

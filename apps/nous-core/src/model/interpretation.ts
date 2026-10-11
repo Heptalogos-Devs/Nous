@@ -6,6 +6,7 @@ import { ModelInvocations } from "./invocations.js";
 import { type ModelRoleSnapshot } from "./execution/snapshot.js";
 import {
   structuredMaterialResult,
+  type MaterialInterpretation as MaterialInterpretationOutput,
   type StructuredMaterialContext,
 } from "./schemas/material-interpretation.js";
 import { descriptionSchema as interpretationSchema } from "./schemas/description.js";
@@ -106,13 +107,12 @@ export class MaterialInterpretation {
       {
         signal: signal,
         snapshot: fixed,
-        validateOutput: (value, actual) => {
-          structuredMaterialResult(value, available(actual));
-        },
+        mapOutput: (value, actual) =>
+          structuredMaterialResult(value, available(actual)),
       },
     );
     return {
-      ...structuredMaterialResult(result.value, available(result.input)),
+      ...result.value,
       producerMetadata: result.producerMetadata,
       execution: result.execution,
       inputAccess: available(result.input).access,
@@ -147,16 +147,18 @@ export class MaterialInterpretation {
       {
         signal: signal,
         snapshot: fixed,
-        validateOutput: structured
-          ? (value, actual) => {
-              structuredMaterialResult(value, available(actual));
-            }
+        mapOutput: structured
+          ? (value, actual) =>
+              structuredMaterialResult(
+                value as MaterialInterpretationOutput,
+                available(actual),
+              )
           : undefined,
       },
     );
     return {
       ...(structured
-        ? structuredMaterialResult(result.value, available(result.input))
+        ? result.value
         : { text: interpretationSchema.parse({ text: result.value }).text }),
       producerMetadata: result.producerMetadata,
       execution: result.execution,
@@ -225,16 +227,18 @@ export class MaterialInterpretation {
             ? undefined
             : { role: "material_description", path: this.videoPrompt },
         snapshot: fixed,
-        validateOutput: structured
-          ? (value, actual) => {
-              structuredMaterialResult(value, available(actual));
-            }
+        mapOutput: structured
+          ? (value, actual) =>
+              structuredMaterialResult(
+                value as MaterialInterpretationOutput,
+                available(actual),
+              )
           : undefined,
       },
     );
     return {
       ...(structured
-        ? structuredMaterialResult(result.value, available(result.input))
+        ? result.value
         : { text: interpretationSchema.parse({ text: result.value }).text }),
       producerMetadata: result.producerMetadata,
       execution: result.execution,

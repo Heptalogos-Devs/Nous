@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessageInitShape } from "@bufbuild/protobuf";
-import { ReserveWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import { OpenWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
 import { expect, it, vi } from "vitest";
 import { dirname, join } from "node:path";
@@ -170,18 +170,20 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       },
     },
     modelWorkflow: {
-      findWorkflow: async () => ({ state: { case: undefined } }),
-      reserveWorkflow: async (
-        input: MessageInitShape<typeof ReserveWorkflowRequestSchema>,
-      ) => ({
-        state: {
-          case: "acquired",
-          value: {
-            lease: { token: "lease" },
-            pending: { snapshot: input.snapshot },
-          },
-        },
-      }),
+      openWorkflow: async (
+        input: MessageInitShape<typeof OpenWorkflowRequestSchema>,
+      ) =>
+        input.snapshot
+          ? {
+              state: {
+                case: "acquired",
+                value: {
+                  lease: { token: "lease" },
+                  pending: { snapshot: input.snapshot },
+                },
+              },
+            }
+          : { state: { case: "missing", value: {} } },
       saveWorkflow: async () => ({}),
       releaseWorkflow: async () => ({}),
     },
@@ -213,39 +215,54 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       role,
       configDigest: "fixture-config",
     }),
-    generate: async (role: string, request: { content: unknown }) => {
+    generate: async (
+      role: string,
+      request: { content: unknown },
+      options?: {
+        mapOutput?: (
+          value: unknown,
+          input: { visual: boolean; audio: boolean; text: boolean },
+        ) => unknown;
+      },
+    ) => {
       const input = request.content;
       modelInputs.push(input);
-      return {
-        value:
-          role === "material_description"
-            ? "Only frames are visible."
-            : {
-                summary: {
-                  content: "Invented speech",
-                  basis_keys: [
-                    role === "material_structuring" ? "D001" : "S000",
-                  ],
-                },
-                coverage: {
-                  visual: "observed",
-                  audio: "observed",
-                  source_text: "not_available",
-                  embedded_text: "not_available",
-                },
-                observations: [],
-                mentions: [],
-                embedded_text: [],
-                source_text: [],
-                speech: [],
-                interpretations: [],
-                uncertainties: [],
+      const actualInput = {
+        visual: Array.isArray(input),
+        audio: false,
+        text: true,
+      };
+      const modelOutput =
+        role === "material_description"
+          ? "Only frames are visible."
+          : {
+              summary: {
+                content: "Invented speech",
+                basis_keys: [role === "material_structuring" ? "D001" : "S000"],
               },
+              coverage: {
+                visual: "observed",
+                audio: "observed",
+                source_text: "not_available",
+                embedded_text: "not_available",
+              },
+              observations: [],
+              mentions: [],
+              embedded_text: [],
+              source_text: [],
+              speech: [],
+              interpretations: [],
+              uncertainties: [],
+            };
+      return {
+        value: options?.mapOutput
+          ? options.mapOutput(modelOutput, actualInput)
+          : modelOutput,
         producerMetadata: {
           protocol: "openai-chat",
           implementation: "fixture",
         },
-        input: { visual: Array.isArray(input), audio: false, text: true },
+        input: actualInput,
       };
     },
   } as unknown as ModelInvocations;

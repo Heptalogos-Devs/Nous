@@ -7,41 +7,9 @@ use super::*;
 use nous_core::Result;
 #[tonic::async_trait]
 impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for KernelService {
-    async fn find_workflow(
+    async fn open_workflow(
         &self,
-        request: Request<k::FindWorkflowRequest>,
-    ) -> std::result::Result<Response<k::FoundWorkflow>, Status> {
-        let input = request.into_inner();
-        let result: Result<_> = async {
-            private_workflow_owner(&input.owner)?;
-            let row = self
-                .0
-                .store
-                .find_model_workflow(
-                    SubjectId(id(&input.subject_id)?),
-                    &input.owner,
-                    &input.operation_key,
-                    &input.semantic_digest,
-                )
-                .await?;
-            use nous_persistence::WorkflowRecord;
-            Ok(k::FoundWorkflow {
-                state: row.map(|row| match row {
-                    WorkflowRecord::Pending(value) => {
-                        k::found_workflow::State::Pending(envelope::pending_proto(value))
-                    }
-                    WorkflowRecord::Completed(value) => {
-                        k::found_workflow::State::Completed(envelope::completed_proto(value))
-                    }
-                }),
-            })
-        }
-        .await;
-        result.map(Response::new).map_err(status)
-    }
-    async fn reserve_workflow(
-        &self,
-        request: Request<k::ReserveWorkflowRequest>,
+        request: Request<k::OpenWorkflowRequest>,
     ) -> std::result::Result<Response<k::WorkflowReservation>, Status> {
         let input = request.into_inner();
         let result: Result<_> = async {
@@ -57,8 +25,12 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                 }
             }
             private_workflow_owner(&input.owner)?;
-            let mut snapshot = envelope::snapshot(required(input.snapshot, "workflow snapshot")?)?;
-            if let Some(claim) = &snapshot.maintenance_claim {
+            let mut snapshot = input.snapshot.map(envelope::snapshot).transpose()?;
+            let maintenance_claim = input
+                .maintenance_claim
+                .map(envelope::maintenance_claim)
+                .transpose()?;
+            if let Some(claim) = &maintenance_claim {
                 if input.owner != "memory" {
                     return Err(Error::new(
                         nous_core::ErrorOwner::ModelWorkflow,
@@ -82,18 +54,21 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                     ));
                 }
             }
-            if input.owner == "memory" {
+            if let Some(snapshot) = &mut snapshot
+                && input.owner == "memory"
+            {
                 snapshot.cognitive_formed_at = Some(self.0.cognition.now(subject));
             }
             let reserved = self
                 .0
                 .store
-                .reserve_model_workflow(
+                .open_model_workflow(
                     subject,
                     &input.owner,
                     &input.operation_key,
                     &input.semantic_digest,
-                    &snapshot,
+                    snapshot.as_ref(),
+                    maintenance_claim.as_ref(),
                     u64::from(input.lease_seconds),
                 )
                 .await?;
@@ -111,6 +86,9 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                     }
                     WorkflowReservation::Completed(value) => {
                         k::workflow_reservation::State::Completed(envelope::completed_proto(value))
+                    }
+                    WorkflowReservation::Missing => {
+                        k::workflow_reservation::State::Missing(k::MissingWorkflow {})
                     }
                 }),
             })

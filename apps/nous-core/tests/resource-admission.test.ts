@@ -7,7 +7,8 @@ import type { WorkflowPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alp
 import { coreExecutionSchema } from "../src/configuration/catalog.js";
 import { create } from "@bufbuild/protobuf";
 import { MaterializeResourceRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { ReserveWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import { OpenWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import { WorkflowSnapshotSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import { expect, test } from "vitest";
 import type { KernelClient } from "../src/kernel-client.js";
 import { ResourceRegistry } from "../src/resources/registry.js";
@@ -43,37 +44,33 @@ test("a saved external proposal is revalidated before admission while an accepte
       },
     },
   ]);
-  let snapshot:
-    | MessageInitShape<typeof ReserveWorkflowRequestSchema>["snapshot"]
-    | undefined;
+  let snapshot: MessageInitShape<typeof WorkflowSnapshotSchema> | undefined;
   let outcome: WorkflowPayload | undefined;
   const kernel = {
     modelWorkflow: {
-      findWorkflow: async () =>
-        outcome
-          ? { state: { case: "completed", value: { outcome } } }
-          : { state: { case: undefined } },
-      reserveWorkflow: async (
-        input: MessageInitShape<typeof ReserveWorkflowRequestSchema>,
+      openWorkflow: async (
+        input: MessageInitShape<typeof OpenWorkflowRequestSchema>,
       ) => {
+        if (outcome)
+          return { state: { case: "completed", value: { outcome } } };
+        if (!input.snapshot && !snapshot)
+          return { state: { case: "missing", value: {} } };
         snapshot ??= input.snapshot;
-        return outcome
-          ? { state: { case: "completed", value: { outcome } } }
-          : {
-              state: {
-                case: "acquired",
-                value: {
-                  lease: { token: "lease" },
-                  pending: {
-                    snapshot,
-                    proposal: workflowPayload({
-                      content: "saved material",
-                      mediaType: "text/plain",
-                    }),
-                  },
-                },
+        return {
+          state: {
+            case: "acquired",
+            value: {
+              lease: { token: "lease" },
+              pending: {
+                snapshot,
+                proposal: workflowPayload({
+                  content: "saved material",
+                  mediaType: "text/plain",
+                }),
               },
-            };
+            },
+          },
+        };
       },
       saveWorkflow: async (value: { outcome?: WorkflowPayload }) => {
         outcome = value.outcome;

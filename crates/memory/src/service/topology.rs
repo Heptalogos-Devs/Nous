@@ -288,8 +288,8 @@ impl MemoryService {
         )?;
         let basis=sqlx::query("SELECT basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM association_evidence_basis WHERE association_evidence_id=$1 ORDER BY basis_kind,basis_ref,basis_role").bind(id.0).fetch_all(self.store.pool()).await.map_err(db)?.into_iter().map(|row| {
             let kind: String = row.try_get("basis_kind").map_err(db)?;
-            let basis_role = parse_enum(ErrorOwner::Concept, row.try_get("basis_role").map_err(db)?, "association basis role")?;
             if kind == "use_event" {
+                parse_enum::<BasisRole>(ErrorOwner::Concept, row.try_get("basis_role").map_err(db)?, "association basis role")?;
                 let value = row.try_get::<String, _>("basis_ref").map_err(db)?;
                 let (consumer_ref, event_id) = parse_use_event_key(&value)?;
                 Ok(AssociationBasis::UseEvent(UseEventRef {
@@ -297,30 +297,8 @@ impl MemoryService {
                     consumer_ref,
                     event_id: UseEventId(event_id),
                 }))
-            } else if kind == "evidence" {
-                let locator = match (
-                    row.try_get::<Option<Uuid>, _>("source_region_id").map_err(db)?,
-                    row.try_get::<Option<Uuid>, _>("derived_representation_id").map_err(db)?,
-                    row.try_get::<Option<Uuid>, _>("derived_region_id").map_err(db)?,
-                ) {
-                    (Some(value), None, None) => EvidenceLocator::SourceRegion(nous_core::SourceRegionId(value)),
-                    (None, Some(value), None) => EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(value)),
-                    (None, None, Some(value)) => EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(value)),
-                    (None, None, None) => EvidenceLocator::WholeOccurrence,
-                    _ => return Err(Error::new(ErrorOwner::Concept, ErrorCode::InternalFailure, "association evidence locator is invalid")),
-                };
-                Ok(AssociationBasis::Revision(RevisionBasis::Evidence(EvidenceRef {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
-                    occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
-                    locator,
-                    basis_role,
-                })))
             } else {
-                Ok(AssociationBasis::Revision(RevisionBasis::CognitionDependency(CognitionDependency {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
-                    target_revision: parse_reference(&kind, &row.try_get::<String, _>("basis_ref").map_err(db)?)?,
-                    basis_role,
-                })))
+                Ok(AssociationBasis::Revision(decode_revision_basis(ErrorOwner::Concept, &row)?))
             }
         }).collect::<Result<Vec<_>>>()?;
         Ok(AssociationEvidence {

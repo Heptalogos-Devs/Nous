@@ -15,38 +15,6 @@ pub struct ProvenanceSummary {
 }
 
 impl MemoryService {
-    /// Context projection is an ordinary current read, including explicit refs.
-    /// A missing or hidden owned cognition must never become external authority.
-    pub async fn contextual_cognition_eligible(
-        &self,
-        subject: SubjectId,
-        reference: &CognitiveRef,
-    ) -> Result<bool> {
-        let exact = match self.store.bind_exact_reference(subject, reference).await {
-            Ok((exact, _, _)) => exact,
-            Err(Error {
-                code: nous_core::ErrorCode::NotFound,
-                ..
-            }) => return Ok(false),
-            Err(error) => return Err(error),
-        };
-        let (kind, id, is_revision) = CognitionKind::from_reference(&exact)?;
-        if !is_revision {
-            return Err(Error::new(
-                ErrorOwner::Memory,
-                ErrorCode::InvalidRequest,
-                "contextual cognition requires an owned cognition revision",
-            ));
-        }
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cognition_revision_headers h JOIN cognition_objects o ON o.subject_id=h.subject_id AND o.object_kind=h.object_kind AND o.object_id=h.object_id WHERE h.subject_id=$1 AND h.object_kind=$2 AND h.revision_id=$3 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')")
-            .bind(subject.0)
-            .bind(kind.as_str())
-            .bind(id)
-            .fetch_one(self.store.pool())
-            .await
-            .map_err(db)
-    }
-
     pub async fn references_producer(&self, subject: SubjectId, producer: Uuid) -> Result<bool> {
         sqlx::query_scalar(
             "SELECT EXISTS (

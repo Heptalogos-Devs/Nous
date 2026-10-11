@@ -136,11 +136,20 @@ CREATE TABLE model_workflow_operations (
     mutation_operation_id uuid NULL,
     maintenance_trigger_revision bigint NULL CHECK (maintenance_trigger_revision >= 0),
     maintenance_need_id uuid NULL REFERENCES maintenance_needs(need_id) ON DELETE CASCADE,
+    maintenance_lease_token uuid NULL,
+    maintenance_trigger_authority_seq bigint NULL CHECK (maintenance_trigger_authority_seq >= 0),
     lease_token uuid NULL,
     lease_until timestamptz NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY(subject_id,owner,operation_key)
+    PRIMARY KEY(subject_id,owner,operation_key),
+    CHECK (
+        (maintenance_need_id IS NULL AND maintenance_trigger_revision IS NULL
+            AND maintenance_lease_token IS NULL AND maintenance_trigger_authority_seq IS NULL)
+        OR
+        (maintenance_need_id IS NOT NULL AND maintenance_trigger_revision IS NOT NULL
+            AND maintenance_lease_token IS NOT NULL AND maintenance_trigger_authority_seq IS NOT NULL)
+    )
 );
 
 CREATE INDEX maintenance_workflows ON model_workflow_operations(maintenance_need_id) WHERE maintenance_need_id IS NOT NULL;

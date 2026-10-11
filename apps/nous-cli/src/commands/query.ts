@@ -86,7 +86,7 @@ async function query(
         ),
         modelCalls: activation?.modelCalls,
       },
-      projection: bound.projection,
+      projection: bound.canonicalQuery?.modifiers?.projection,
       temporalFrame: bound.readContext?.temporal,
       capabilities: {
         textEmbedding: response.textEmbeddingRequirement,

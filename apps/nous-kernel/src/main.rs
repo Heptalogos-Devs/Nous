@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use nous_core::{Error, Result};
 use sqlx::Connection;
 use std::path::PathBuf;
@@ -13,23 +13,47 @@ const BOOTSTRAP_CREDENTIAL_TIMEOUT: std::time::Duration = std::time::Duration::f
 const MAX_BOOTSTRAP_CREDENTIAL_LINE_BYTES: u64 = 130;
 
 #[derive(Parser)]
+#[command(arg_required_else_help = true)]
 struct Cli {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    #[arg(long)]
-    check_configuration: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Start the private authenticated Kernel server.
+    Serve {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    /// Validate a serialized configuration bundle without starting the server.
+    CheckConfiguration { bundle: PathBuf },
     /// Convert legacy vector ownership on an operator-provided offline copy.
-    #[arg(long)]
-    upgrade_embedding_ownership_copy: bool,
-    /// PostgreSQL URL for the copied/offline target database only.
-    #[arg(long)]
-    copied_offline_database_url: Option<String>,
-    /// Existing object-store directory from the same offline data copy.
-    #[arg(long)]
-    copied_object_root: Option<PathBuf>,
-    /// Original source database name. The target database must have a different name.
-    #[arg(long)]
-    source_database_name: Option<String>,
+    UpgradeEmbeddingOwnershipCopy {
+        #[arg(long)]
+        config: PathBuf,
+        /// PostgreSQL URL for the copied/offline target database only.
+        #[arg(
+            long,
+            env = "NOUS_WAVE_COPIED_OFFLINE_DATABASE_URL",
+            hide_env_values = true
+        )]
+        copied_offline_database_url: String,
+        /// Existing object-store directory from the same offline data copy.
+        #[arg(long)]
+        copied_object_root: PathBuf,
+        /// Original source database name. The target database must have a different name.
+        #[arg(long, value_parser = nonblank_name)]
+        source_database_name: String,
+    },
+}
+
+fn nonblank_name(value: &str) -> std::result::Result<String, String> {
+    if value.trim().is_empty() {
+        Err("source database name must not be blank".into())
+    } else {
+        Ok(value.to_owned())
+    }
 }
 #[tokio::main]
 async fn main() {
@@ -43,72 +67,48 @@ async fn main() {
         std::process::exit(1);
     }
 }
+async fn run() -> Result<()> {
+    let cli = Cli::parse();
+    match cli.command {
+        Command::CheckConfiguration { bundle } => check_configuration(bundle).await,
+        Command::UpgradeEmbeddingOwnershipCopy {
+            config,
+            copied_offline_database_url,
+            copied_object_root,
+            source_database_name,
+        } => {
+            upgrade_embedding_ownership_copy(
+                &config,
+                copied_offline_database_url,
+                &copied_object_root,
+                &source_database_name,
+            )
+            .await
+        }
+        Command::Serve { config } => serve(config).await,
+    }
+}
+
+#[expect(
+    clippy::print_stdout,
+    reason = "configuration check emits its machine-readable result"
+)]
+async fn check_configuration(bundle_path: PathBuf) -> Result<()> {
+    let bundle = bootstrap::read_bundle(&bundle_path).await?;
+    let catalog = nous_kernel::configuration_catalog(bundle.core_descriptors)?;
+    catalog.deployment_values(&bundle.deployment_document)?;
+    println!(
+        "{}",
+        serde_json::json!({"valid":true,"catalog_digest":catalog.catalog_digest()})
+    );
+    Ok(())
+}
+
 #[expect(
     clippy::print_stdout,
     reason = "kernel bootstrap emits the machine-readable endpoint to its parent process"
 )]
-async fn run() -> Result<()> {
-    let cli = Cli::parse();
-    if let Some(path) = &cli.check_configuration {
-        if cli.upgrade_embedding_ownership_copy
-            || cli.copied_offline_database_url.is_some()
-            || cli.copied_object_root.is_some()
-            || cli.source_database_name.is_some()
-            || std::env::var_os("NOUS_WAVE_COPIED_OFFLINE_DATABASE_URL").is_some()
-        {
-            return Err(cli_error(
-                "configuration check and legacy embedding upgrade are separate commands",
-            ));
-        }
-        let bundle = bootstrap::read_bundle(path).await?;
-        let catalog = nous_kernel::configuration_catalog(bundle.core_descriptors)?;
-        catalog.deployment_values(&bundle.deployment_document)?;
-        println!(
-            "{}",
-            serde_json::json!({"valid":true,"catalog_digest":catalog.catalog_digest()})
-        );
-        return Ok(());
-    }
-    if cli.upgrade_embedding_ownership_copy {
-        let config = cli
-            .config
-            .as_deref()
-            .ok_or_else(|| cli_error("--config is required for the copied data"))?;
-        let copied_database_url = cli
-            .copied_offline_database_url
-            .or_else(|| std::env::var("NOUS_WAVE_COPIED_OFFLINE_DATABASE_URL").ok())
-            .ok_or_else(|| {
-                cli_error("--copied-offline-database-url or NOUS_WAVE_COPIED_OFFLINE_DATABASE_URL is required")
-            })?;
-        let copied_object_root = cli
-            .copied_object_root
-            .as_deref()
-            .ok_or_else(|| cli_error("--copied-object-root is required"))?;
-        let source_database_name = cli
-            .source_database_name
-            .as_deref()
-            .filter(|name| !name.trim().is_empty())
-            .ok_or_else(|| cli_error("--source-database-name is required"))?;
-        return upgrade_embedding_ownership_copy(
-            config,
-            copied_database_url,
-            copied_object_root,
-            source_database_name,
-        )
-        .await;
-    }
-    if cli.copied_offline_database_url.is_some()
-        || cli.copied_object_root.is_some()
-        || cli.source_database_name.is_some()
-        || std::env::var_os("NOUS_WAVE_COPIED_OFFLINE_DATABASE_URL").is_some()
-    {
-        return Err(cli_error(
-            "copied-data flags require --upgrade-embedding-ownership-copy",
-        ));
-    }
-    let config = cli
-        .config
-        .ok_or_else(|| cli_error("--config is required"))?;
+async fn serve(config: PathBuf) -> Result<()> {
     let mut input = BufReader::new(tokio::io::stdin());
     let mut token = String::new();
     tokio::time::timeout(

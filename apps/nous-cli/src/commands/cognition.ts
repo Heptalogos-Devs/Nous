@@ -12,62 +12,62 @@ import {
   type CognitionResult,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/cognition_pb.js";
 import {
-  type Episode,
-  type Memory,
-  type Page,
   PageSchema,
+  type Page,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import type { CognitiveSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import type { Journal } from "@nous-wave/protocol/nous/wave/v1alpha1/journal_pb.js";
+import { stringArgs } from "./command-args.js";
+import type { CliLeaf } from "./command-types.js";
 
-type CognitionKind = "memory" | "cognitive_schema" | "episode" | "journal";
+const revisionKindByObject = {
+  memory: "memory_revision",
+  cognitive_schema: "cognitive_schema_revision",
+  episode: "episode_revision",
+  journal: "journal_revision",
+} as const;
+type CognitionKind = keyof typeof revisionKindByObject;
+type CognitionRevisionKind = (typeof revisionKindByObject)[CognitionKind];
 type CognitionReference = {
-  kind:
-    | CognitionKind
-    | "memory_revision"
-    | "cognitive_schema_revision"
-    | "episode_revision"
-    | "journal_revision";
-  value: string;
-};
-export type CognitionRevisionReference = {
-  kind:
-    | "memory_revision"
-    | "cognitive_schema_revision"
-    | "episode_revision"
-    | "journal_revision";
-  value: string;
-};
-type CognitionObject = Memory | CognitiveSchema | Episode | Journal;
+  [K in CognitionKind]:
+    | { kind: K; value: string }
+    | { kind: (typeof revisionKindByObject)[K]; value: string };
+}[CognitionKind];
+export type CognitionRevisionReference = Extract<
+  CognitionReference,
+  { kind: CognitionRevisionKind }
+>;
+type CognitionFamilyResult = Exclude<
+  CognitionResult["result"],
+  { case: undefined }
+>;
+type CognitionFamilyCase = CognitionFamilyResult["case"];
+type CognitionObject = CognitionFamilyResult["value"];
 type CognitionMutation =
   "suppress" | "restore" | "withdraw" | "reaccept" | "purge" | "accessibility";
 type CognitionLifecycleMutation = Exclude<CognitionMutation, "accessibility">;
-type CognitionFamilyCase = Exclude<
-  CognitionResult["result"]["case"],
-  undefined
->;
-const revisionKindByObject: Record<CognitionKind, CognitionReference["kind"]> =
-  {
-    memory: "memory_revision",
-    cognitive_schema: "cognitive_schema_revision",
-    episode: "episode_revision",
-    journal: "journal_revision",
-  };
+
+type CognitionResultCaseForKind<K extends CognitionKind> = K extends
+  "memory" | "episode" | "journal"
+  ? K
+  : "cognitiveSchema";
+type CognitionObjectForKind<K extends CognitionKind> = Extract<
+  CognitionFamilyResult,
+  { case: CognitionResultCaseForKind<K> }
+>["value"];
+type CognitionObjectForReference<K extends CognitionReference["kind"]> = {
+  [Family in CognitionKind]: K extends
+    Family | (typeof revisionKindByObject)[Family]
+    ? CognitionObjectForKind<Family>
+    : never;
+}[CognitionKind];
 
 function isCognitionReference(reference: {
   kind: string;
   value: string;
 }): reference is CognitionReference {
-  return [
-    "memory",
-    "memory_revision",
-    "cognitive_schema",
-    "cognitive_schema_revision",
-    "episode",
-    "episode_revision",
-    "journal",
-    "journal_revision",
-  ].includes(reference.kind);
+  return (
+    Object.keys(revisionKindByObject).some((kind) => kind === reference.kind) ||
+    Object.values(revisionKindByObject).some((kind) => kind === reference.kind)
+  );
 }
 
 export function isCognitionRevisionReference(reference: {
@@ -76,14 +76,6 @@ export function isCognitionRevisionReference(reference: {
 }): reference is CognitionRevisionReference {
   return (
     isCognitionReference(reference) && reference.kind.endsWith("_revision")
-  );
-}
-
-function isCognitionLifecycleMutation(
-  action: string | undefined,
-): action is CognitionLifecycleMutation {
-  return ["suppress", "restore", "withdraw", "reaccept", "purge"].includes(
-    action ?? "",
   );
 }
 
@@ -105,94 +97,34 @@ function familyKind(referenceKind: CognitionReference["kind"]): CognitionKind {
 }
 
 function resultCase(kind: CognitionKind): CognitionFamilyCase {
-  switch (kind) {
-    case "memory":
-      return "memory";
-    case "cognitive_schema":
-      return "cognitiveSchema";
-    case "episode":
-      return "episode";
-    case "journal":
-      return "journal";
-  }
+  return kind === "cognitive_schema" ? "cognitiveSchema" : kind;
 }
 
-function familyValue(result: CognitionResult, expected: "memory"): Memory;
-function familyValue(
-  result: CognitionResult,
-  expected: "cognitiveSchema",
-): CognitiveSchema;
-function familyValue(result: CognitionResult, expected: "episode"): Episode;
-function familyValue(result: CognitionResult, expected: "journal"): Journal;
-function familyValue(
-  result: CognitionResult,
-  expected: CognitionFamilyCase,
-): CognitionObject;
 function familyValue(
   result: CognitionResult,
   expected: CognitionFamilyCase,
 ): CognitionObject {
-  switch (result.result.case) {
-    case "memory":
-      if (expected === "memory") return result.result.value;
-      break;
-    case "cognitiveSchema":
-      if (expected === "cognitiveSchema") return result.result.value;
-      break;
-    case "episode":
-      if (expected === "episode") return result.result.value;
-      break;
-    case "journal":
-      if (expected === "journal") return result.result.value;
-      break;
-    case undefined:
-      break;
+  if (result.result.case === undefined || result.result.case !== expected) {
+    throw new CliError(
+      "INTERNAL_FAILURE",
+      "Cognition service returned a result with an unexpected type",
+    );
   }
-  throw new CliError(
-    "INTERNAL_FAILURE",
-    "Cognition service returned a result with an unexpected type",
-  );
+  return result.result.value;
 }
 
-function cognitionRef(reference: CognitionReference) {
-  return {
-    kind: reference.kind,
-    value: reference.value,
-  };
-}
-
-function read(
+async function read<Reference extends CognitionReference>(
   env: CliEnvironment,
-  reference: { kind: "memory" | "memory_revision"; value: string },
-): Promise<Memory>;
-function read(
-  env: CliEnvironment,
-  reference: {
-    kind: "cognitive_schema" | "cognitive_schema_revision";
-    value: string;
-  },
-): Promise<CognitiveSchema>;
-function read(
-  env: CliEnvironment,
-  reference: { kind: "episode" | "episode_revision"; value: string },
-): Promise<Episode>;
-function read(
-  env: CliEnvironment,
-  reference: { kind: "journal" | "journal_revision"; value: string },
-): Promise<Journal>;
-function read(
-  env: CliEnvironment,
-  reference: CognitionReference,
-): Promise<CognitionObject>;
-async function read(
-  env: CliEnvironment,
-  reference: CognitionReference,
-): Promise<CognitionObject> {
+  reference: Reference,
+): Promise<CognitionObjectForReference<Reference["kind"]>> {
   const result = await env.client.cognition.read({
     subjectId: env.subjectId,
-    reference: cognitionRef(reference),
+    reference,
   });
-  return familyValue(result, resultCase(familyKind(reference.kind)));
+  return familyValue(
+    result,
+    resultCase(familyKind(reference.kind)),
+  ) as CognitionObjectForReference<Reference["kind"]>; // Runtime case validation preserves the reference-family correlation.
 }
 
 async function list(
@@ -220,7 +152,7 @@ async function history(
 ) {
   const response = await env.client.cognition.history({
     subjectId: env.subjectId,
-    objectRef: cognitionRef(reference),
+    objectRef: reference,
     page,
   });
   return {
@@ -265,7 +197,7 @@ async function mutate(
   const response = await env.client.cognition.mutate({
     operationId,
     subjectId: env.subjectId,
-    objectRef: cognitionRef(reference),
+    objectRef: reference,
     expectedObjectEpoch,
     action: actionValue(action, mode),
   });
@@ -284,93 +216,139 @@ async function mutate(
   );
 }
 
-async function commonCommand(
-  env: CliEnvironment,
-  kind: CognitionKind,
-  action: string | undefined,
-  argument: string | undefined,
-  features: { list?: boolean; history?: boolean; accessibility?: boolean } = {},
-): Promise<{ handled: false } | { handled: true; value: unknown }> {
-  const name =
-    kind === "cognitive_schema"
-      ? "CognitiveSchema"
-      : kind[0]!.toUpperCase() + kind.slice(1);
-  const page = () =>
+type CognitionCommandOptions = {
+  kind: CognitionKind;
+  label: string;
+  list?: boolean;
+  history?: boolean;
+  accessibility?: boolean;
+};
+
+/** Build the real shared Citty leaves for Cognition families. */
+export function cognitionSubcommands(
+  leaf: CliLeaf,
+  {
+    kind,
+    label,
+    list: hasList,
+    history: hasHistory,
+    accessibility,
+  }: CognitionCommandOptions,
+) {
+  const page = (env: CliEnvironment) =>
     create(PageSchema, {
       pageSize: boundedInteger(env.values["page-size"], 1, 200, "--page-size"),
       pageToken: env.values["page-token"],
     });
+  const resolve = async (env: CliEnvironment, argument: string | undefined) =>
+    env.resolveReference(env.required(argument, `${label} reference`), kind);
+  const lifecycle = (action: CognitionLifecycleMutation) =>
+    leaf(
+      stringArgs("expected-epoch", "operation-id"),
+      async (env, argument) => {
+        const reference = await resolve(env, argument);
+        return mutate(
+          env,
+          { kind, value: reference.value },
+          action,
+          nonnegativeInt64(env.values["expected-epoch"], "--expected-epoch"),
+          env.values["operation-id"] ?? crypto.randomUUID(),
+        );
+      },
+      { parameters: [`<${label} reference>`] },
+    );
 
-  if (action === "list" && features.list) {
-    return {
-      handled: true,
-      value: await list(env, kind, page(), env.values.status ?? ""),
-    };
-  }
-  if (action === "get" || action === "revision") {
-    const referenceKind = action === "get" ? kind : revisionKindByObject[kind];
-    const ref = await env.resolveReference(
-      env.required(
-        argument,
-        action === "get" ? `${name} reference` : `${name} revision reference`,
-      ),
-      referenceKind,
-    );
-    return {
-      handled: true,
-      value: await read(env, { kind: referenceKind, value: ref.value }),
-    };
-  }
-  if (action === "history" && features.history) {
-    const ref = await env.resolveReference(
-      env.required(argument, `${name} reference`),
-      kind,
-    );
-    return {
-      handled: true,
-      value: await history(env, { kind, value: ref.value }, page()),
-    };
-  }
-  if (
-    isCognitionLifecycleMutation(action) ||
-    (action === "accessibility" && features.accessibility)
-  ) {
-    const ref = await env.resolveReference(
-      env.required(argument, `${name} reference`),
-      kind,
-    );
-    const expectedEpoch = nonnegativeInt64(
-      env.values["expected-epoch"],
-      "--expected-epoch",
-    );
-    const mode =
-      action === "accessibility"
-        ? z
-            .enum(["auto", "normal", "deep", "explicit"])
-            .parse(
-              env.required(env.values.mode, "--mode auto|normal|deep|explicit"),
-            )
-        : undefined;
-    return {
-      handled: true,
-      value: await mutate(
-        env,
-        { kind, value: ref.value },
-        action,
-        expectedEpoch,
-        env.values["operation-id"] ?? crypto.randomUUID(),
-        mode,
-      ),
-    };
-  }
-  return { handled: false };
+  const reads = {
+    ...(hasList
+      ? {
+          list: leaf(
+            stringArgs("page-size", "page-token", "status"),
+            (env) => list(env, kind, page(env), env.values.status ?? ""),
+            kind === "memory"
+              ? { description: "List paged Memories for the selected Subject." }
+              : undefined,
+          ),
+        }
+      : {}),
+    get: leaf(
+      {},
+      async (env, argument) => {
+        const reference = await resolve(env, argument);
+        return read(env, { kind, value: reference.value });
+      },
+      { parameters: [`<${label} reference>`] },
+    ),
+    revision: leaf(
+      {},
+      async (env, argument) => {
+        const reference = await env.resolveReference(
+          env.required(argument, `${label} revision reference`),
+          revisionKindByObject[kind],
+        );
+        return read(env, {
+          kind: revisionKindByObject[kind],
+          value: reference.value,
+        });
+      },
+      { parameters: [`<exact ${label} revision reference>`] },
+    ),
+    ...(hasHistory
+      ? {
+          history: leaf(
+            stringArgs("page-size", "page-token"),
+            async (env, argument) => {
+              const reference = await resolve(env, argument);
+              return history(env, { kind, value: reference.value }, page(env));
+            },
+            { parameters: [`<${label} reference>`] },
+          ),
+        }
+      : {}),
+  };
+  const lifecycleCommands = {
+    suppress: lifecycle("suppress"),
+    restore: lifecycle("restore"),
+    withdraw: lifecycle("withdraw"),
+    reaccept: lifecycle("reaccept"),
+    purge: lifecycle("purge"),
+    ...(accessibility
+      ? {
+          accessibility: leaf(
+            stringArgs("mode", "expected-epoch", "operation-id"),
+            async (env, argument) => {
+              const reference = await resolve(env, argument);
+              const mode = z
+                .enum(["auto", "normal", "deep", "explicit"])
+                .parse(
+                  env.required(
+                    env.values.mode,
+                    "--mode auto|normal|deep|explicit",
+                  ),
+                );
+              return mutate(
+                env,
+                { kind, value: reference.value },
+                "accessibility",
+                nonnegativeInt64(
+                  env.values["expected-epoch"],
+                  "--expected-epoch",
+                ),
+                env.values["operation-id"] ?? crypto.randomUUID(),
+                mode,
+              );
+            },
+            { parameters: [`<${label} reference>`] },
+          ),
+        }
+      : {}),
+  };
+  return { reads, lifecycle: lifecycleCommands };
 }
 
-/** Shared, typed adapters for CognitionService's common object operations. */
+/** Shared typed adapters for CognitionService's common object operations. */
 export const typedCognition = {
   read,
   list,
   history,
   mutate,
-  commonCommand,
 };

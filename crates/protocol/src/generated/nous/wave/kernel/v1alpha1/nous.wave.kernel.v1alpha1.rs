@@ -464,8 +464,6 @@ pub struct WorkflowSnapshot {
     pub content: ::core::option::Option<WorkflowPayload>,
     #[prost(message, optional, tag="2")]
     pub cognitive_formed_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag="3")]
-    pub maintenance_claim: ::core::option::Option<MaintenanceClaim>,
 }
 /// Absent usage is unknown, including for attempts with an unknown outcome.
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
@@ -647,8 +645,6 @@ pub struct QueryEmbeddingWork {
     pub config: ::core::option::Option<EmbeddingConfig>,
     #[prost(bool, tag="3")]
     pub historical_view: bool,
-    #[prost(enumeration="QueryHostRequirement", tag="4")]
-    pub effective_requirement: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryConceptWork {
@@ -658,20 +654,23 @@ pub struct QueryConceptWork {
     pub existing_tags: ::prost::alloc::vec::Vec<super::super::v1alpha1::QueryConceptCandidate>,
     #[prost(message, optional, tag="3")]
     pub temporal_frame: ::core::option::Option<super::super::v1alpha1::QueryTemporalFrame>,
-    #[prost(enumeration="QueryHostRequirement", tag="4")]
-    pub effective_requirement: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryFinalizeCandidate {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
+    #[prost(string, tag="2")]
+    pub text: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryFinalizeWork {
-    #[prost(message, optional, tag="1")]
-    pub baseline: ::core::option::Option<super::super::v1alpha1::QueryResponse>,
-    #[prost(string, tag="2")]
+    #[prost(message, repeated, tag="1")]
+    pub candidates: ::prost::alloc::vec::Vec<QueryFinalizeCandidate>,
+    #[prost(message, repeated, tag="2")]
+    pub resource_actions: ::prost::alloc::vec::Vec<super::super::v1alpha1::ResourceAction>,
+    #[prost(string, tag="3")]
     pub rerank_query: ::prost::alloc::string::String,
-    #[prost(uint32, tag="3")]
-    pub rerank_candidate_limit: u32,
-    #[prost(bool, tag="4")]
-    pub rerank_expected: bool,
-    #[prost(enumeration="QueryHostRequirement", tag="5")]
+    #[prost(enumeration="QueryHostRequirement", tag="4")]
     pub rerank_requirement: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -798,7 +797,7 @@ pub struct DescriptionSegments {
     pub segments: ::prost::alloc::vec::Vec<DescriptionSegment>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ReserveWorkflowRequest {
+pub struct OpenWorkflowRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
@@ -811,6 +810,8 @@ pub struct ReserveWorkflowRequest {
     pub lease_seconds: u32,
     #[prost(message, optional, tag="11")]
     pub snapshot: ::core::option::Option<WorkflowSnapshot>,
+    #[prost(message, optional, tag="12")]
+    pub maintenance_claim: ::core::option::Option<MaintenanceClaim>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PendingWorkflow {
@@ -835,9 +836,12 @@ pub struct AcquiredWorkflow {
     #[prost(message, optional, tag="2")]
     pub lease: ::core::option::Option<WorkflowLease>,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MissingWorkflow {
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WorkflowReservation {
-    #[prost(oneof="workflow_reservation::State", tags="1, 2, 3")]
+    #[prost(oneof="workflow_reservation::State", tags="1, 2, 3, 4")]
     pub state: ::core::option::Option<workflow_reservation::State>,
 }
 /// Nested message and enum types in `WorkflowReservation`.
@@ -850,6 +854,8 @@ pub mod workflow_reservation {
         Busy(super::PendingWorkflow),
         #[prost(message, tag="3")]
         Completed(super::CompletedWorkflow),
+        #[prost(message, tag="4")]
+        Missing(super::MissingWorkflow),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -890,32 +896,6 @@ pub struct ResolvedMention {
 pub struct ResolvedMentionsResponse {
     #[prost(message, repeated, tag="1")]
     pub candidates: ::prost::alloc::vec::Vec<ResolvedMention>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct FindWorkflowRequest {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub owner: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub operation_key: ::prost::alloc::string::String,
-    #[prost(string, tag="4")]
-    pub semantic_digest: ::prost::alloc::string::String,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct FoundWorkflow {
-    #[prost(oneof="found_workflow::State", tags="1, 2")]
-    pub state: ::core::option::Option<found_workflow::State>,
-}
-/// Nested message and enum types in `FoundWorkflow`.
-pub mod found_workflow {
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum State {
-        #[prost(message, tag="1")]
-        Pending(super::PendingWorkflow),
-        #[prost(message, tag="2")]
-        Completed(super::CompletedWorkflow),
-    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

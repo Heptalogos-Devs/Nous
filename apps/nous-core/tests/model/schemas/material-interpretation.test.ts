@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { structuredMaterialResult } from "../../../src/model/schemas/material-interpretation.js";
+import {
+  structuredMaterialResult,
+  type MaterialInterpretation,
+} from "../../../src/model/schemas/material-interpretation.js";
 
-const output = () => ({
+const output = (): MaterialInterpretation => ({
   summary: {
     content: "A rocket launch with uncertain commentary.",
     basis_keys: ["S000"],
@@ -151,7 +154,7 @@ describe("Material interpretation contract", () => {
     expect(text).toContain("Uncertainties:\n- No audio available");
   });
   it("expresses original source text without inventing embedded visual text", () => {
-    const value = {
+    const value: MaterialInterpretation = {
       ...output(),
       coverage: {
         visual: "not_available",

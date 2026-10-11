@@ -77,7 +77,10 @@ impl MemoryService {
         for row in sqlx::query("SELECT episode_revision_id,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM episode_revision_basis WHERE episode_revision_id=ANY($1) ORDER BY episode_revision_id,basis_no")
             .bind(&revision_ids).fetch_all(&mut **tx).await.map_err(db)? {
             let revision: Uuid = row.try_get("episode_revision_id").map_err(db)?;
-            basis.entry(revision).or_default().push(decode_episode_basis(&row)?);
+            basis
+                .entry(revision)
+                .or_default()
+                .push(decode_revision_basis(ErrorOwner::Memory, &row)?);
         }
         let mut relations = HashMap::<Uuid, Vec<EpisodeRelation>>::new();
         for row in sqlx::query("WITH requested AS (SELECT unnest($1::uuid[]) AS revision_id) SELECT requested.revision_id,relation.from_revision_id,relation.to_revision_id,relation.relation,relation.created_at FROM requested JOIN episode_revision_relations relation ON relation.from_revision_id=requested.revision_id OR relation.to_revision_id=requested.revision_id ORDER BY requested.revision_id,relation.created_at,relation.from_revision_id,relation.to_revision_id")
@@ -124,53 +127,5 @@ impl MemoryService {
             );
         }
         Ok(views)
-    }
-}
-
-fn decode_episode_basis(row: &sqlx::postgres::PgRow) -> Result<RevisionBasis> {
-    let role = parse_enum(
-        ErrorOwner::Memory,
-        row.try_get("basis_role").map_err(db)?,
-        "basis role",
-    )?;
-    let kind: String = row.try_get("basis_kind").map_err(db)?;
-    if kind == "evidence" {
-        let locator = if let Some(value) = row
-            .try_get::<Option<Uuid>, _>("source_region_id")
-            .map_err(db)?
-        {
-            EvidenceLocator::SourceRegion(SourceRegionId(value))
-        } else if let Some(value) = row
-            .try_get::<Option<Uuid>, _>("derived_representation_id")
-            .map_err(db)?
-        {
-            EvidenceLocator::DerivedRepresentation(DerivedRepresentationId(value))
-        } else if let Some(value) = row
-            .try_get::<Option<Uuid>, _>("derived_region_id")
-            .map_err(db)?
-        {
-            EvidenceLocator::DerivedRegion(DerivedRegionId(value))
-        } else {
-            EvidenceLocator::WholeOccurrence
-        };
-        Ok(RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            occurrence_id: OccurrenceId(row.try_get::<Uuid, _>("occurrence_id").map_err(db)?),
-            locator,
-            basis_role: role,
-        }))
-    } else {
-        Ok(RevisionBasis::CognitionDependency(CognitionDependency {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            target_revision: parse_reference(
-                &kind,
-                &row.try_get::<String, _>("basis_ref").map_err(db)?,
-            )?,
-            basis_role: role,
-        }))
     }
 }

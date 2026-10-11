@@ -119,7 +119,7 @@ export async function checkConfiguration(
       await writeFile(bundlePath, JSON.stringify(bundle), { mode: 0o600 });
       await promisify(execFile)(
         kernelExecutable(locations, development, config.host.kernel_executable),
-        ["--check-configuration", bundlePath],
+        ["check-configuration", bundlePath],
       );
     } catch (error) {
       const unavailable =

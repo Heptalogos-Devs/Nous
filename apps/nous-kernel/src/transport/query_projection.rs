@@ -20,20 +20,7 @@ pub(super) fn query_response(
         resource_actions: result
             .resource_actions
             .into_iter()
-            .map(|value| p::ResourceAction {
-                resource_ref: value.resource.as_str().into(),
-                action: value.action,
-                reason: value.reason,
-                current_authority: value.current_authority,
-                action_id: value.action_id.to_string(),
-                query_text: value.query_text,
-                limit: value.limit as u32,
-                materialize: value.materialize,
-                adapter_kind: value.adapter_kind,
-                provider_profile: value.provider_profile,
-                provider_locator: value.provider_locator,
-                descriptor_digest: value.descriptor_digest,
-            })
+            .map(resource_action)
             .collect(),
         degradation: result
             .degradation
@@ -63,6 +50,23 @@ pub(super) fn query_response(
             .into_iter()
             .map(to_resource_record)
             .collect(),
+    }
+}
+
+pub(super) fn resource_action(value: nous_core::ResourceActionSuggestion) -> p::ResourceAction {
+    p::ResourceAction {
+        resource_ref: value.resource.as_str().into(),
+        action: value.action,
+        reason: value.reason,
+        current_authority: value.current_authority,
+        action_id: value.action_id.to_string(),
+        query_text: value.query_text,
+        limit: value.limit as u32,
+        materialize: value.materialize,
+        adapter_kind: value.adapter_kind,
+        provider_profile: value.provider_profile,
+        provider_locator: value.provider_locator,
+        descriptor_digest: value.descriptor_digest,
     }
 }
 
@@ -468,14 +472,6 @@ pub(super) fn inspect_bound_query_with_plan(
             bound_authority_seq,
             purge_epoch: bound.read_context.purge_epoch,
         }),
-        projection: Some(p::ResultProjection {
-            domains: query
-                .projection
-                .domains
-                .iter()
-                .map(|domain| domain.name().to_owned())
-                .collect(),
-        }),
         exact_bindings: bound
             .exact_bindings
             .iter()
@@ -488,7 +484,6 @@ pub(super) fn inspect_bound_query_with_plan(
             .collect(),
         activation: Some(p::QueryActivationInspection {
             frozen: activation.frozen,
-            semantic_text_digest: representation.sha256.clone(),
             concept_catalog: activation
                 .concept_catalog
                 .iter()
@@ -527,32 +522,6 @@ pub(super) fn inspect_bound_query_with_plan(
                     origin: seed.origin.clone(),
                     strength: seed.strength,
                 })
-                .collect(),
-            exact_refs: bound
-                .exact_bindings
-                .iter()
-                .map(|binding| to_ref(binding.bound_ref.clone()))
-                .collect(),
-            entity_refs: activation
-                .seeds
-                .iter()
-                .filter_map(|seed| match &seed.reference {
-                    CognitiveRef::Entity(entity) => {
-                        Some(to_ref(CognitiveRef::Entity(entity.clone())))
-                    }
-                    _ => None,
-                })
-                .collect(),
-            schema_refs: activation
-                .seeds
-                .iter()
-                .filter(|seed| {
-                    matches!(
-                        &seed.reference,
-                        CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_)
-                    )
-                })
-                .map(|seed| to_ref(seed.reference.clone()))
                 .collect(),
             runtime_refs: bound.runtime_refs.iter().cloned().map(to_ref).collect(),
             exploration: enum_name(activation.exploration),

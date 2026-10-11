@@ -3,7 +3,6 @@
 
 import {
   resolveRole,
-  snapshotSchema,
   type ReadyRole,
   type ModelRoleSnapshot,
   type ModelProducerMetadata,
@@ -47,15 +46,18 @@ type GenerationInput = {
   media?: DirectMedia;
   context?: (input: InputModalities) => Record<string, unknown>;
 };
-type GenerationOptions<R extends ModelRole> = {
+type GenerationOptions<
+  R extends ModelRole,
+  MappedOutput = ModelGenerationOutput<R>,
+> = {
   signal?: AbortSignal;
   snapshot?: ModelRoleSnapshot;
   prompt?: ModelRole | { role: ModelRole; path: string };
   beforeAttempt?: () => void;
-  validateOutput?: (
+  mapOutput?: (
     value: ModelGenerationOutput<R>,
     input: InputModalities,
-  ) => void;
+  ) => MappedOutput;
 };
 
 export class ModelInvocations {
@@ -155,24 +157,26 @@ export class ModelInvocations {
   }
   snapshot(name: ModelRole): ModelRoleSnapshot {
     const role = this.require(name);
-    return snapshotSchema.parse({
+    const configuration = modelRoleGraph(this.configuration, name);
+    const outputSchemaDigest = providerContractForRole(name)?.digest;
+    return {
       format: "nous.model.execution",
       implementationDigest: modelImplementations.provider,
-      outputSchemaDigest: providerContractForRole(name)?.digest,
+      outputSchemaDigest,
       role: name,
-      configuration: modelRoleGraph(this.configuration, name),
+      configuration,
       prompt: role.prompt,
       profileDigest: role.profileDigest,
       configDigest: canonicalDigest({
         policy: role.policy,
-        configuration: modelRoleGraph(this.configuration, name),
+        configuration,
         prompt: role.prompt && {
           id: role.prompt.id,
           digest: role.prompt.digest,
         },
-        outputSchemaDigest: providerContractForRole(name)?.digest,
+        outputSchemaDigest,
       }),
-    });
+    };
   }
   async snapshotPrompt(
     name: ModelRole,
@@ -242,17 +246,12 @@ export class ModelInvocations {
       rolePolicyDigest: role.policyDigest,
     };
   }
-  async generate<R extends ModelRole>(
+  async generate<R extends ModelRole, MappedOutput = ModelGenerationOutput<R>>(
     name: R,
     request: GenerationInput,
-    options: GenerationOptions<R> = {},
+    options: GenerationOptions<R, MappedOutput> = {},
   ) {
-    const {
-      signal,
-      prompt: promptRole,
-      beforeAttempt,
-      validateOutput,
-    } = options;
+    const { signal, prompt: promptRole, beforeAttempt, mapOutput } = options;
     const { content, media } = request;
     let snapshot = options.snapshot ?? this.snapshot(name);
     if (promptRole) {
@@ -273,7 +272,7 @@ export class ModelInvocations {
     }
     return this.withRoutes<
       {
-        value: ModelGenerationOutput<R>;
+        value: MappedOutput;
         producerMetadata: ModelProducerMetadata;
         usage?: unknown;
         input: InputModalities;
@@ -290,26 +289,30 @@ export class ModelInvocations {
           signal,
           media,
         );
-        const result = {
-          ...output,
-          value: output.value as ModelGenerationOutput<R>,
-          producerMetadata: {
-            ...this.metadata(role, adapter),
-            outputSchemaDigest: outputContract?.digest,
-          },
-        };
+        const value = output.value as ModelGenerationOutput<R>;
+        let mappedValue: MappedOutput;
         try {
-          validateOutput?.(result.value, input);
+          mappedValue = mapOutput
+            ? mapOutput(value, input)
+            : (value as MappedOutput);
         } catch {
           // Owner validation errors may contain source content; keep the public classification bounded.
           throw new GenerationFailure(
             name,
             "output_semantics_invalid",
             undefined,
-            result.usage,
+            output.usage,
           );
         }
-        return { ...result, input };
+        return {
+          ...output,
+          value: mappedValue,
+          producerMetadata: {
+            ...this.metadata(role, adapter),
+            outputSchemaDigest: outputContract?.digest,
+          },
+          input,
+        };
       },
       signal,
       snapshot,

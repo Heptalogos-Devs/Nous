@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
-import { ReserveWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { WorkflowSnapshotSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
+import { OpenWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../src/configuration/catalog.js";
 import {
   workflowPayload,
@@ -21,25 +21,33 @@ const identity = {
 
 it("uses the reservation winner snapshot and checkpoints each owner ID before commit", async () => {
   const events: string[] = [];
+  const reservedSnapshots: Array<
+    MessageInitShape<typeof OpenWorkflowRequestSchema>["snapshot"]
+  > = [];
   const persistedSnapshot = create(WorkflowSnapshotSchema, {
     content: workflowPayload({ source: "reservation winner" }),
   });
-  const reserveWorkflow = vi.fn(
-    async (_input: MessageInitShape<typeof ReserveWorkflowRequestSchema>) => ({
-      state: {
-        case: "acquired",
-        value: {
-          pending: { snapshot: persistedSnapshot },
-          lease: { token: "child-token" },
-        },
+  const openWorkflow = vi
+    .fn()
+    .mockResolvedValueOnce({ state: { case: "missing", value: {} } })
+    .mockImplementationOnce(
+      async (input: MessageInitShape<typeof OpenWorkflowRequestSchema>) => {
+        reservedSnapshots.push(input.snapshot);
+        return {
+          state: {
+            case: "acquired",
+            value: {
+              pending: { snapshot: persistedSnapshot },
+              lease: { token: "child-token" },
+            },
+          },
+        };
       },
-    }),
-  );
+    );
   const kernel = {
     execution: coreExecutionSchema.parse(undefined),
     modelWorkflow: {
-      findWorkflow: vi.fn(async () => ({ state: { case: undefined } })),
-      reserveWorkflow,
+      openWorkflow,
       saveWorkflow: vi.fn(async (input: { mutationOperationId?: string }) => {
         events.push(`checkpoint:${input.mutationOperationId}`);
       }),
@@ -61,9 +69,10 @@ it("uses the reservation winner snapshot and checkpoints each owner ID before co
   expect(opened.snapshot.content?.payloadJson).toBe(
     persistedSnapshot.content?.payloadJson,
   );
-  expect(
-    reserveWorkflow.mock.calls[0]?.[0].snapshot?.content?.payloadJson,
-  ).toBe(JSON.stringify({ source: "local candidate" }));
+  expect(reservedSnapshots[0]?.content?.payloadJson).toBe(
+    JSON.stringify({ source: "local candidate" }),
+  );
+  expect(openWorkflow).toHaveBeenCalledTimes(2);
   await opened.operation.mutate("stable-owner-id", async () => {
     events.push("owner-commit");
   });
@@ -73,14 +82,13 @@ it("uses the reservation winner snapshot and checkpoints each owner ID before co
 it("replays a found terminal outcome without rebuilding a snapshot or reserving", async () => {
   const outcome = workflowPayload({ revisionId: "exact-revision" });
   const snapshotFactory = vi.fn();
-  const reserveWorkflow = vi.fn();
+  const openWorkflow = vi.fn(async () => ({
+    state: { case: "completed", value: { outcome } },
+  }));
   const kernel = {
     execution: coreExecutionSchema.parse(undefined),
     modelWorkflow: {
-      findWorkflow: vi.fn(async () => ({
-        state: { case: "completed", value: { outcome } },
-      })),
-      reserveWorkflow,
+      openWorkflow,
     },
   } as unknown as KernelClient;
 
@@ -95,5 +103,5 @@ it("replays a found terminal outcome without rebuilding a snapshot or reserving"
     executionTelemetry: undefined,
   });
   expect(snapshotFactory).not.toHaveBeenCalled();
-  expect(reserveWorkflow).not.toHaveBeenCalled();
+  expect(openWorkflow).toHaveBeenCalledTimes(1);
 });

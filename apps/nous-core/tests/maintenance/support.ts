@@ -9,7 +9,7 @@ import {
   type WorkflowPayload,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import {
-  ReserveWorkflowRequestSchema,
+  OpenWorkflowRequestSchema,
   SaveWorkflowRequestSchema,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
@@ -137,28 +137,21 @@ export function fixture() {
       refreshMaintenance: refresh,
     },
     modelWorkflow: {
-      findWorkflow: vi.fn(async () => ({
-        state: outcome
-          ? { case: "completed", value: { outcome } }
-          : snapshot
-            ? { case: "pending", value: { snapshot, proposal } }
-            : { case: undefined },
-      })),
-      reserveWorkflow: vi.fn(
-        async (
-          input: MessageInitShape<typeof ReserveWorkflowRequestSchema>,
-        ) => {
-          snapshot ??= create(WorkflowSnapshotSchema, input.snapshot);
+      openWorkflow: vi.fn(
+        async (input: MessageInitShape<typeof OpenWorkflowRequestSchema>) => {
+          if (outcome)
+            return { state: { case: "completed", value: { outcome } } };
+          if (!snapshot && !input.snapshot)
+            return { state: { case: "missing", value: {} } };
+          snapshot = create(WorkflowSnapshotSchema, snapshot ?? input.snapshot);
           return {
-            state: outcome
-              ? { case: "completed", value: { outcome } }
-              : {
-                  case: "acquired",
-                  value: {
-                    pending: { snapshot, proposal },
-                    lease: { token: "lease" },
-                  },
-                },
+            state: {
+              case: "acquired",
+              value: {
+                pending: { snapshot, proposal },
+                lease: { token: "lease" },
+              },
+            },
           };
         },
       ),

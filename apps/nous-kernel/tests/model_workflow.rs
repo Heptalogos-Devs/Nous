@@ -4,7 +4,7 @@
 #[path = "test_support/mod.rs"]
 mod test_support;
 use nous_core::{MaintenanceClaim, OperationId, WorkflowSnapshot};
-use nous_persistence::{WorkflowRecord, WorkflowReservation};
+use nous_persistence::WorkflowReservation;
 use test_support::{workflow_payload as payload, workflow_snapshot as snapshot};
 
 #[tokio::test]
@@ -13,46 +13,32 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
     let runtime = test_support::open_runtime(&url, &root).await;
     let subject = test_support::query::subject(&runtime).await;
     let key = OperationId::new().0.to_string();
-    let first = runtime
-        .store
-        .reserve_model_workflow(
-            subject,
-            "memory",
-            &key,
-            "same input",
-            &snapshot(serde_json::json!({"model":"original"})),
-            360,
-        )
-        .await
-        .unwrap();
+    let first = test_support::open_model_workflow(
+        &runtime.store,
+        subject,
+        "memory",
+        &key,
+        "same input",
+        &snapshot(serde_json::json!({"model":"original"})),
+        None,
+        360,
+    )
+    .await
+    .unwrap();
     let WorkflowReservation::Acquired { lease, .. } = first else {
         panic!("expected acquisition")
     };
     let token = lease.token;
     let concurrent = runtime
         .store
-        .reserve_model_workflow(
-            subject,
-            "memory",
-            &key,
-            "same input",
-            &snapshot(serde_json::json!({"model":"changed"})),
-            360,
-        )
+        .open_model_workflow(subject, "memory", &key, "same input", None, None, 360)
         .await
         .unwrap();
     assert!(matches!(concurrent, WorkflowReservation::Busy(_)));
     assert!(
         runtime
             .store
-            .reserve_model_workflow(
-                subject,
-                "memory",
-                &key,
-                "different input",
-                &snapshot(serde_json::json!({})),
-                360
-            )
+            .open_model_workflow(subject, "memory", &key, "different input", None, None, 360,)
             .await
             .is_err()
     );
@@ -76,14 +62,7 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
         .unwrap();
     let resumed = runtime
         .store
-        .reserve_model_workflow(
-            subject,
-            "memory",
-            &key,
-            "same input",
-            &snapshot(serde_json::json!({"model":"changed"})),
-            360,
-        )
+        .open_model_workflow(subject, "memory", &key, "same input", None, None, 360)
         .await
         .unwrap();
     let WorkflowReservation::Acquired {
@@ -112,14 +91,7 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
         .unwrap();
     let completed = runtime
         .store
-        .reserve_model_workflow(
-            subject,
-            "memory",
-            &key,
-            "same input",
-            &snapshot(serde_json::json!({})),
-            360,
-        )
+        .open_model_workflow(subject, "memory", &key, "same input", None, None, 360)
         .await
         .unwrap();
     let WorkflowReservation::Completed(completed) = completed else {
@@ -138,18 +110,18 @@ async fn assert_child_result_purge_before_host_ack(
     let parent = OperationId::new();
     let child = OperationId::new();
     let key = parent.0.to_string();
-    let reserved = runtime
-        .store
-        .reserve_model_workflow(
-            subject,
-            "memory",
-            &key,
-            "child commit",
-            &snapshot(serde_json::json!({"model":"frozen"})),
-            360,
-        )
-        .await
-        .unwrap();
+    let reserved = test_support::open_model_workflow(
+        &runtime.store,
+        subject,
+        "memory",
+        &key,
+        "child commit",
+        &snapshot(serde_json::json!({"model":"frozen"})),
+        None,
+        360,
+    )
+    .await
+    .unwrap();
     let WorkflowReservation::Acquired { lease, .. } = reserved else {
         panic!("expected acquisition")
     };
@@ -190,11 +162,10 @@ async fn assert_child_result_purge_before_host_ack(
         .unwrap();
     let found = runtime
         .store
-        .find_model_workflow(subject, "memory", &key, "child commit")
+        .open_model_workflow(subject, "memory", &key, "child commit", None, None, 360)
         .await
-        .unwrap()
         .unwrap();
-    let WorkflowRecord::Completed(found) = found else {
+    let WorkflowReservation::Completed(found) = found else {
         panic!("expected purged completion")
     };
     assert!(
@@ -240,20 +211,25 @@ async fn assert_maintenance_workflow_uses_bounded_parent_opportunity(
         .unwrap();
     let need = needs.iter().find(|need| need.need_id == need_id).unwrap();
     let key = OperationId::new().0.to_string();
-    let snapshot = WorkflowSnapshot {
-        maintenance_claim: Some(MaintenanceClaim {
-            need_id,
-            lease_token: need.lease_token.unwrap(),
-            trigger_authority_seq: need.trigger_authority_seq,
-            trigger_revision: need.trigger_revision,
-        }),
-        ..Default::default()
+    let claim = MaintenanceClaim {
+        need_id,
+        lease_token: need.lease_token.unwrap(),
+        trigger_authority_seq: need.trigger_authority_seq,
+        trigger_revision: need.trigger_revision,
     };
-    let reservation = runtime
-        .store
-        .reserve_model_workflow(subject, "memory", &key, "bounded maintenance", &snapshot, 1)
-        .await
-        .unwrap();
+    let snapshot = WorkflowSnapshot::default();
+    let reservation = test_support::open_model_workflow(
+        &runtime.store,
+        subject,
+        "memory",
+        &key,
+        "bounded maintenance",
+        &snapshot,
+        Some(&claim),
+        1,
+    )
+    .await
+    .unwrap();
     let WorkflowReservation::Acquired { lease, .. } = reservation else {
         panic!("expected acquisition")
     };
@@ -308,21 +284,20 @@ async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot(
     };
     let original_snapshot = WorkflowSnapshot {
         content: payload(serde_json::json!({"frozen":"first plan"})),
-        maintenance_claim: Some(old_claim.clone()),
         ..Default::default()
     };
-    let original = runtime
-        .store
-        .reserve_model_workflow(
-            subject,
-            "memory",
-            &key,
-            "same generation",
-            &original_snapshot,
-            360,
-        )
-        .await
-        .unwrap();
+    let original = test_support::open_model_workflow(
+        &runtime.store,
+        subject,
+        "memory",
+        &key,
+        "same generation",
+        &original_snapshot,
+        Some(&old_claim),
+        360,
+    )
+    .await
+    .unwrap();
     let WorkflowReservation::Acquired { lease, .. } = original else {
         panic!("expected acquisition")
     };
@@ -374,17 +349,15 @@ async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot(
         trigger_authority_seq: next.trigger_authority_seq,
         trigger_revision: next.trigger_revision,
     };
-    let mut retry_snapshot = original_snapshot;
-    retry_snapshot.maintenance_claim = Some(new_claim.clone());
-    retry_snapshot.content = payload(serde_json::json!({"frozen":"losing plan"}));
     let resumed = runtime
         .store
-        .reserve_model_workflow(
+        .open_model_workflow(
             subject,
             "memory",
             &key,
             "same generation",
-            &retry_snapshot,
+            None,
+            Some(&new_claim),
             360,
         )
         .await
@@ -402,16 +375,13 @@ async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot(
         serde_json::json!({"frozen":"first plan"}),
         "a parent retry reuses the accepted snapshot"
     );
-    assert_eq!(
-        resumed
-            .snapshot
-            .maintenance_claim
-            .as_ref()
-            .unwrap()
-            .lease_token,
-        new_claim.lease_token,
-        "the persisted envelope refreshes only the current parent claim token"
-    );
+    let stored_claim: uuid::Uuid = sqlx::query_scalar("SELECT maintenance_lease_token FROM model_workflow_operations WHERE subject_id=$1 AND owner='memory' AND operation_key=$2")
+        .bind(subject.0)
+        .bind(&key)
+        .fetch_one(runtime.store.pool())
+        .await
+        .unwrap();
+    assert_eq!(stored_claim, new_claim.lease_token);
     runtime
         .store
         .save_model_workflow(
@@ -433,17 +403,18 @@ async fn assert_owner_validation(
     use nous_persistence::WorkflowOwner;
     let domain = WorkflowOwner::new("test_domain_42").unwrap();
     assert_eq!(domain.as_str(), "test_domain_42");
-    let generalized = store
-        .reserve_model_workflow(
-            subject,
-            domain.as_str(),
-            key,
-            "domain input",
-            &snapshot(serde_json::json!({})),
-            360,
-        )
-        .await
-        .unwrap();
+    let generalized = test_support::open_model_workflow(
+        store,
+        subject,
+        domain.as_str(),
+        key,
+        "domain input",
+        &snapshot(serde_json::json!({})),
+        None,
+        360,
+    )
+    .await
+    .unwrap();
     assert!(matches!(generalized, WorkflowReservation::Acquired { .. }));
     for owner in [
         "",
@@ -455,17 +426,18 @@ async fn assert_owner_validation(
     ] {
         assert!(WorkflowOwner::new(owner).is_err());
         assert!(
-            store
-                .reserve_model_workflow(
-                    subject,
-                    owner,
-                    key,
-                    "input",
-                    &snapshot(serde_json::json!({})),
-                    360
-                )
-                .await
-                .is_err()
+            test_support::open_model_workflow(
+                store,
+                subject,
+                owner,
+                key,
+                "input",
+                &snapshot(serde_json::json!({})),
+                None,
+                360
+            )
+            .await
+            .is_err()
         );
         assert!(sqlx::query("INSERT INTO model_workflow_operations(subject_id,owner,operation_key,semantic_digest,snapshot) VALUES($1,$2,'invalid','input','{}')").bind(subject.0).bind(owner).execute(store.pool()).await.is_err());
     }

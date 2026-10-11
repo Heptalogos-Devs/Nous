@@ -8,15 +8,20 @@ Core owns model and Resource host calls; Material owns Artifact/Observation/Deri
 
 ## 持久操作
 
-共享合同位于 [workflow envelope Proto](../../../../proto/nous/wave/kernel/v1alpha1/workflow_envelope.proto)：租约包含 Subject、owner、operation key 和 token；snapshot 将领域 payload、认知形成时间与 maintenance claim 分开；proposal/outcome 显式声明依赖引用和 purged 状态。领域 payload 由对应 owner 校验，Persistence 不读取其内部键。Core 的 `openDurableOperation` 是唯一操作入口：它先用 `FindWorkflow` 校验并取回已冻结状态，仅在不存在时构造完整 snapshot，再用 `ReserveWorkflow` 原子竞争；冷启动因此是两个真实 RPC。并发 miss 以 Persistence 首个已提交的完整 snapshot 为准，retry 不重读冻结选择。`DurableOperation.checkpoint` 是 Core 唯一保存路径；模型 proposal 与该次实际 telemetry 同一 checkpoint，mutation ID 在 owner RPC 前 checkpoint，失败 telemetry 与有界 release 使用 cleanup 预算。Maintenance 仍将 Need claim 与 child workflow 分开；child deadline 是 parent deadline 与当前 execution opportunity deadline 的较早者，每次 checkpoint 都重验同一 live parent token，新的 claim 仅刷新 snapshot 中的 claim envelope。
+共享合同见 [workflow envelope Proto](../../../../proto/nous/wave/kernel/v1alpha1/workflow_envelope.proto)。
 
-引用依赖从 canonical Proto 的 `reference_kind` 与 `CognitiveRef` 提取，opaque 用户 JSON 和普通正文不产生依赖。Core 在调用 canonical mutation 前登记其稳定 operation ID；领域 owner 在同一 Authority 事务中发布实际结果依赖。Purge 因此覆盖 Authority 已提交、Host 尚未保存 outcome 的窗口。Telemetry 使用正式的 attempts、usage 和省略计数；缺失 usage 保持未知，累积只保留最早 64 次 attempt。
+- `WorkflowSnapshot` 冻结领域 payload 与认知形成时间，由领域 owner 校验。Maintenance claim 单独保存在 Persistence 的身份与租约列中。
+- Core 通过 `openDurableOperation` 调用 `OpenWorkflow`。已有操作返回 Completed、Busy 或 Acquired；Missing 时才构造 snapshot 并再次申请。并发创建采用首个提交成功的 snapshot，恢复直接使用已保存内容。
+- Acquired 带有 Subject、owner、operation key 和 child token。父 Maintenance Need 与 child workflow 各自持有租约；child deadline 取父租约与当前 execution opportunity 的较早值。Checkpoint 校验当前父 token，重新认领只更新租约字段。
+- `DurableOperation.checkpoint` 统一保存 proposal、outcome、依赖和实际 telemetry。模型输出与该次 telemetry 一起保存；调用领域 mutation 前登记稳定 operation ID。失败 telemetry 和 release 使用 cleanup 预算。
 
-持久状态通过 Pending / Completed 表达；Reserve 返回 Acquired（含 lease 与 pending）、Busy 或 Completed，避免 bool 与可选字段组合出非法状态。Schema split 回执保存有序 child revision 结果，重试直接复用。Fresh schema 直接声明当前字段。
+依赖从 canonical Proto 的 `reference_kind` 与 `CognitiveRef` 提取。领域 owner 在提交 Authority 的同一事务中发布实际结果依赖，Purge 可覆盖 Host 尚未保存 outcome 的窗口。普通正文和 opaque 用户 JSON 保持原义。
+
+持久结果区分 Pending 与 Completed。Schema split 保存有序 child revision 结果供重放。Telemetry 保留最早 64 次 attempt 及省略计数，缺失 usage 保持未知。
 
 ## Schema 与来源
 
-Core 的 `model/schemas/material-interpretation.ts` 是唯一 model-facing Zod owner，供 inferred type、local parse、AI SDK Output.object、raw strict JSON Schema 使用。根与嵌套对象 strict、字段 required、可缺省 scalar 为 null；资源数量/byte/time/support/modality 约束在 Material validator 校验。Schema 定义 JSON 结构，Prompt 描述忠实度与任务。
+Core 的 `model/schemas/material-interpretation.ts` 统一定义 model-facing Zod schema、类型与 provider JSON Schema。AI SDK Output.object 使用该 schema 完成解析；raw media 入口直接解析。每条 route 随后执行一次领域语义校验与映射，成功结果直接交给消费者。根与嵌套对象 strict、字段 required、可缺省 scalar 为 null；资源数量/byte/time/support/modality 约束在 Material validator 校验。Schema 定义 JSON 结构，Prompt 描述忠实度与任务。
 
 输出包含带 basis_refs 的 summary、coverage(visual/audio/embedded_text/source_text)、observations、mentions、embedded_text、source_text、speech、interpretations、uncertainties。Observation 的 basis 为 direct/inferred，certainty 为 clear/uncertain，两个轴分别表示推导依据和认识确定性；evidence_channel 为 visual/audio/source_text，独立于 observation kind。转写直接陈述的 state/action 使用 audio evidence，不声称观察到视觉事件。source_text 表示原始 text-like source；embedded_text 只表示视觉媒体中的可见文字，description/transcript 的文本传输不会制造原始 text source modality。direct 与 two-stage 使用同一 schema。direct 项必须有 support；audio-only 不产生 visual direct observation；image-only 不制造 speech；未知 support key 失败。未完成/refusal/非法输出不能 commit。
 
@@ -28,7 +33,7 @@ description_only 提交自由描述。direct_structured 给模型 invocation-loc
 
 ## Resource 与续接
 
-`$current` 是 scoped current-authority 约束，随 expression 进入冻结 leaf action；父级 required 不能被子级 none/prefer 放宽。Model rerank 在 bound query 含正文本意图且配置了 rerank role 时运行；Resource action 独立 finalize，因此 rerank 未运行时仍可完成 Resource 续接。
+`$current` 是 scoped current-authority 约束，随 expression 进入冻结 leaf action；父级 required 不能被子级 none/prefer 放宽。Model rerank 需要正文本意图、可用 role 和至少两个候选。Kernel 统一筛选并限制候选数量，向 Core 发送有序引用、文本与 Resource actions；完整查询结果留在 Kernel。Core 按模型返回的候选索引映射回原引用。Resource 续接独立于可选 rerank；required rerank 未完成时暂停 Resource 调用。
 
 Selected materialization 的内容上限为 1 MiB UTF-8；query records 的 aggregate bound 为 2 MiB。workflow JSON 上限为 8 MiB，private ModelMaterial transport 额外保留 64 KiB envelope。Artifact 上传上限由 `object_store.max_upload_bytes` 单独控制。
 

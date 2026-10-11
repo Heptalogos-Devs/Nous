@@ -6,25 +6,17 @@ import type { CliLeaf } from "./command-types.js";
 
 import { fromJson, type JsonValue } from "@bufbuild/protobuf";
 import { TemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import {} from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { z } from "zod";
-import { nonnegativeInt64, CliError } from "../agent.js";
-import { revisionBasis } from "../mutation-input.js";
+import { nonnegativeInt64 } from "../agent.js";
+import {
+  epistemicRelation,
+  revisionBasis,
+  revisionBasisRole,
+} from "../mutation-input.js";
 import type { CliEnvironment } from "../runtime.js";
-import { typedCognition } from "./cognition.js";
+import { cognitionSubcommands, typedCognition } from "./cognition.js";
 
 const reference = z.string().min(1).max(2048);
-const epistemicRelation = z
-  .enum([
-    "supports",
-    "contradicts",
-    "corroborates",
-    "weakens",
-    "corrects",
-    "counterexample",
-    "inferred_from",
-  ])
-  .optional();
 const schemaContentInput = z.strictObject({
   title: z.string().max(512).default(""),
   structural_claim: z.string().min(1).max(8192),
@@ -43,10 +35,8 @@ const schemaContentInput = z.strictObject({
       z.strictObject({
         role: z.enum(["support", "counterexample", "boundary_case"]),
         ref: reference,
-        basis_role: z
-          .enum(["direct", "interpretation", "contextual"])
-          .default("direct"),
-        epistemic_relation: epistemicRelation,
+        basis_role: revisionBasisRole.default("direct"),
+        epistemic_relation: epistemicRelation.optional(),
       }),
     )
     .max(256)
@@ -97,38 +87,6 @@ async function content(env: CliEnvironment, raw: unknown) {
   };
 }
 
-async function schemaCommon(
-  env: CliEnvironment,
-  action: string,
-  argument?: string,
-) {
-  const common = await typedCognition.commonCommand(
-    env,
-    "cognitive_schema",
-    action,
-    argument,
-  );
-  if (common.handled) return common.value;
-  throw new CliError(
-    "INTERNAL_FAILURE",
-    "CognitiveSchema command is not handled",
-  );
-}
-
-const schemaGet = (env: CliEnvironment, argument?: string) =>
-  schemaCommon(env, "get", argument);
-const schemaRevision = (env: CliEnvironment, argument?: string) =>
-  schemaCommon(env, "revision", argument);
-const schemaSuppress = (env: CliEnvironment, argument?: string) =>
-  schemaCommon(env, "suppress", argument);
-const schemaRestore = (env: CliEnvironment, argument?: string) =>
-  schemaCommon(env, "restore", argument);
-const schemaWithdraw = (env: CliEnvironment, argument?: string) =>
-  schemaCommon(env, "withdraw", argument);
-const schemaReaccept = (env: CliEnvironment, argument?: string) =>
-  schemaCommon(env, "reaccept", argument);
-const schemaPurge = (env: CliEnvironment, argument?: string) =>
-  schemaCommon(env, "purge", argument);
 const schemaCreate = async (env: CliEnvironment) =>
   env.client.concepts.createSchema({
     operationId: env.values["operation-id"] ?? crypto.randomUUID(),
@@ -147,10 +105,8 @@ const schemaEvidence = async (env: CliEnvironment, argument?: string) => {
     .strictObject({
       role: z.enum(["support", "counterexample", "boundary_case"]),
       ref: reference,
-      basis_role: z
-        .enum(["direct", "interpretation", "contextual"])
-        .default("direct"),
-      epistemic_relation: epistemicRelation,
+      basis_role: revisionBasisRole.default("direct"),
+      epistemic_relation: epistemicRelation.optional(),
     })
     .parse(await env.requestPayload(env.values["request-file"]));
   return env.client.concepts.addSchemaEvidence({
@@ -245,6 +201,10 @@ const schemaMerge = async (env: CliEnvironment) => {
 };
 
 export function createSchemaCommand(leaf: CliLeaf) {
+  const cognition = cognitionSubcommands(leaf, {
+    kind: "cognitive_schema",
+    label: "CognitiveSchema",
+  });
   return defineCommand({
     args: commonArgs,
     subCommands: {
@@ -252,10 +212,7 @@ export function createSchemaCommand(leaf: CliLeaf) {
         { ...stringArgs("request-file", "operation-id") },
         schemaCreate,
       ),
-      get: leaf({}, schemaGet, { parameters: ["<CognitiveSchema reference>"] }),
-      revision: leaf({}, schemaRevision, {
-        parameters: ["<exact CognitiveSchema revision reference>"],
-      }),
+      ...cognition.reads,
       evidence: leaf(
         { ...stringArgs("request-file", "expected-epoch", "operation-id") },
         schemaEvidence,
@@ -275,31 +232,7 @@ export function createSchemaCommand(leaf: CliLeaf) {
         { ...stringArgs("request-file", "operation-id") },
         schemaMerge,
       ),
-      suppress: leaf(
-        { ...stringArgs("expected-epoch", "operation-id") },
-        schemaSuppress,
-        { parameters: ["<CognitiveSchema reference>"] },
-      ),
-      restore: leaf(
-        { ...stringArgs("expected-epoch", "operation-id") },
-        schemaRestore,
-        { parameters: ["<CognitiveSchema reference>"] },
-      ),
-      withdraw: leaf(
-        { ...stringArgs("expected-epoch", "operation-id") },
-        schemaWithdraw,
-        { parameters: ["<CognitiveSchema reference>"] },
-      ),
-      reaccept: leaf(
-        { ...stringArgs("expected-epoch", "operation-id") },
-        schemaReaccept,
-        { parameters: ["<CognitiveSchema reference>"] },
-      ),
-      purge: leaf(
-        { ...stringArgs("expected-epoch", "operation-id") },
-        schemaPurge,
-        { parameters: ["<CognitiveSchema reference>"] },
-      ),
+      ...cognition.lifecycle,
     },
   });
 }

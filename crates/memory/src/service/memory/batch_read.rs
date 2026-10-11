@@ -67,25 +67,21 @@ impl MemoryService {
         let loaded_ids = decoded.keys().copied().collect::<Vec<_>>();
 
         let mut basis: HashMap<Uuid, Vec<RevisionBasis>> = HashMap::new();
-        for row in sqlx::query("SELECT memory_revision_id,occurrence_id,source_region_id,derived_representation_id,derived_region_id,basis_role,epistemic_relation FROM memory_revision_evidence WHERE memory_revision_id=ANY($1) ORDER BY memory_revision_id,evidence_no")
+        for row in sqlx::query("SELECT memory_revision_id,'evidence'::text AS basis_kind,occurrence_id,source_region_id,derived_representation_id,derived_region_id,basis_role,epistemic_relation FROM memory_revision_evidence WHERE memory_revision_id=ANY($1) ORDER BY memory_revision_id,evidence_no")
             .bind(&loaded_ids).fetch_all(&mut **tx).await.map_err(db)? {
             let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;
-            let locator = evidence_locator(&row)?;
-            basis.entry(revision).or_default().push(RevisionBasis::Evidence(EvidenceRef {
-                epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
-                occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
-                locator,
-                basis_role: parse_enum(ErrorOwner::Memory, row.try_get("basis_role").map_err(db)?, "basis role")?,
-            }));
+            basis
+                .entry(revision)
+                .or_default()
+                .push(decode_revision_basis(ErrorOwner::Memory, &row)?);
         }
-        for row in sqlx::query("SELECT memory_revision_id,target_ref_kind,target_ref,basis_role,epistemic_relation FROM memory_revision_dependencies WHERE memory_revision_id=ANY($1) ORDER BY memory_revision_id,target_ref_kind,target_ref")
+        for row in sqlx::query("SELECT memory_revision_id,target_ref_kind AS basis_kind,target_ref AS basis_ref,basis_role,epistemic_relation FROM memory_revision_dependencies WHERE memory_revision_id=ANY($1) ORDER BY memory_revision_id,target_ref_kind,target_ref")
             .bind(&loaded_ids).fetch_all(&mut **tx).await.map_err(db)? {
             let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;
-            basis.entry(revision).or_default().push(RevisionBasis::CognitionDependency(CognitionDependency {
-                epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
-                target_revision: parse_reference(&row.try_get::<String, _>("target_ref_kind").map_err(db)?, &row.try_get::<String, _>("target_ref").map_err(db)?)?,
-                basis_role: parse_enum(ErrorOwner::Memory, row.try_get("basis_role").map_err(db)?, "basis role")?,
-            }));
+            basis
+                .entry(revision)
+                .or_default()
+                .push(decode_revision_basis(ErrorOwner::Memory, &row)?);
         }
 
         let mut aboutness: HashMap<Uuid, Vec<EntityRef>> = HashMap::new();
@@ -267,27 +263,5 @@ impl MemoryService {
                 Ok((memory, level))
             })
             .collect()
-    }
-}
-fn evidence_locator(row: &sqlx::postgres::PgRow) -> Result<EvidenceLocator> {
-    match (
-        row.try_get::<Option<Uuid>, _>("source_region_id")
-            .map_err(db)?,
-        row.try_get::<Option<Uuid>, _>("derived_representation_id")
-            .map_err(db)?,
-        row.try_get::<Option<Uuid>, _>("derived_region_id")
-            .map_err(db)?,
-    ) {
-        (Some(id), None, None) => Ok(EvidenceLocator::SourceRegion(SourceRegionId(id))),
-        (None, Some(id), None) => Ok(EvidenceLocator::DerivedRepresentation(
-            DerivedRepresentationId(id),
-        )),
-        (None, None, Some(id)) => Ok(EvidenceLocator::DerivedRegion(DerivedRegionId(id))),
-        (None, None, None) => Ok(EvidenceLocator::WholeOccurrence),
-        _ => Err(Error::new(
-            ErrorOwner::Memory,
-            ErrorCode::InternalFailure,
-            "Evidence locator union is invalid",
-        )),
     }
 }

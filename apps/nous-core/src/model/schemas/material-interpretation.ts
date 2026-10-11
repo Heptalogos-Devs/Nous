@@ -176,11 +176,14 @@ export type StructuredMaterialContext = Omit<
   catalog: Readonly<Record<string, { kind: string; value: string }>>;
 };
 export function structuredMaterialResult(
-  value: unknown,
+  value: MaterialInterpretation,
   context: StructuredMaterialContext,
 ) {
-  const output = validateMaterialInterpretation(value, {
+  const access = channelAccessSchema.parse(context.access);
+  const output = value;
+  validateMaterialInterpretation(output, {
     ...context,
+    access,
     basisKeys: new Set(Object.keys(context.catalog)),
   });
   const mapBasis = ({
@@ -195,7 +198,7 @@ export function structuredMaterialResult(
   });
   const payload: Record<string, unknown> = {
     ...output,
-    evidence_access: channelAccessSchema.parse(context.access),
+    evidence_access: access,
     summary: mapBasis(output.summary),
   };
   for (const group of [
@@ -218,11 +221,10 @@ export function structuredMaterialResult(
 
 // Provider schema stays conservative; the Material owner enforces these local bounds.
 function validateMaterialInterpretation(
-  value: unknown,
+  output: MaterialInterpretation,
   input: InterpretationInput,
-): MaterialInterpretation {
-  const output = materialInterpretationSchema.parse(value);
-  const access = channelAccessSchema.parse(input.access);
+): void {
+  const access = input.access;
   if (
     Object.entries(output.coverage).some(
       ([channel, coverageStatus]) =>
@@ -342,7 +344,6 @@ function validateMaterialInterpretation(
     (output.coverage.audio !== "not_available" || output.speech.length)
   )
     throw new Error("Structured material invents unavailable audio input");
-  return output;
 }
 
 function projectMaterialInterpretation(output: MaterialInterpretation): string {

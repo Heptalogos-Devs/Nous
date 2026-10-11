@@ -20,7 +20,6 @@ pub struct WorkflowPayload {
 pub struct WorkflowSnapshot {
     pub content: WorkflowPayload,
     pub cognitive_formed_at: Option<DateTime<Utc>>,
-    pub maintenance_claim: Option<MaintenanceClaim>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MaintenanceClaim {

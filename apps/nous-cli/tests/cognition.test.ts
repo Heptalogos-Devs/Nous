@@ -116,12 +116,13 @@ describe("shared Cognition CLI operations", () => {
         value: { result: { case: "memory", value: {} } },
       },
     });
-    await typedCognition.commonCommand(
+    await typedCognition.mutate(
       env,
-      "memory",
+      { kind: "memory", value: "memory-id" },
       "accessibility",
-      "memory-id",
-      { accessibility: true },
+      12n,
+      "cli-operation",
+      "deep",
     );
     expect(mutate.mock.calls[1]?.[0]).toMatchObject({
       operationId: "cli-operation",

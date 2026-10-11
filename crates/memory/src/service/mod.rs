@@ -347,6 +347,75 @@ fn parse_enum<T: DeserializeOwned>(owner: ErrorOwner, value: String, name: &str)
     })
 }
 
+/// Decode the common persisted support row used by Memory, Episode,
+/// CognitiveSchema, and Association evidence.
+///
+/// Family-specific queries normalize their columns to `basis_kind` and
+/// `basis_ref`; this keeps the stored union and its validation in one place.
+fn decode_revision_basis(owner: ErrorOwner, row: &sqlx::postgres::PgRow) -> Result<RevisionBasis> {
+    let kind: String = row.try_get("basis_kind").map_err(db)?;
+    let basis_role = parse_enum(owner, row.try_get("basis_role").map_err(db)?, "basis role")?;
+    let epistemic_relation =
+        parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?;
+
+    if kind == "evidence" {
+        let occurrence_id = row
+            .try_get::<Option<Uuid>, _>("occurrence_id")
+            .map_err(db)?
+            .ok_or_else(|| {
+                Error::new(
+                    owner,
+                    ErrorCode::InternalFailure,
+                    "persisted evidence basis has no occurrence",
+                )
+            })?;
+        let locator = match (
+            row.try_get::<Option<Uuid>, _>("source_region_id")
+                .map_err(db)?,
+            row.try_get::<Option<Uuid>, _>("derived_representation_id")
+                .map_err(db)?,
+            row.try_get::<Option<Uuid>, _>("derived_region_id")
+                .map_err(db)?,
+        ) {
+            (Some(id), None, None) => EvidenceLocator::SourceRegion(SourceRegionId(id)),
+            (None, Some(id), None) => {
+                EvidenceLocator::DerivedRepresentation(DerivedRepresentationId(id))
+            }
+            (None, None, Some(id)) => EvidenceLocator::DerivedRegion(DerivedRegionId(id)),
+            (None, None, None) => EvidenceLocator::WholeOccurrence,
+            _ => {
+                return Err(Error::new(
+                    owner,
+                    ErrorCode::InternalFailure,
+                    "persisted evidence locator is invalid",
+                ));
+            }
+        };
+        Ok(RevisionBasis::Evidence(EvidenceRef {
+            epistemic_relation,
+            occurrence_id: OccurrenceId(occurrence_id),
+            locator,
+            basis_role,
+        }))
+    } else {
+        let basis_ref = row
+            .try_get::<Option<String>, _>("basis_ref")
+            .map_err(db)?
+            .ok_or_else(|| {
+                Error::new(
+                    owner,
+                    ErrorCode::InternalFailure,
+                    "persisted cognition dependency has no target reference",
+                )
+            })?;
+        Ok(RevisionBasis::CognitionDependency(CognitionDependency {
+            epistemic_relation,
+            target_revision: parse_reference(&kind, &basis_ref)?,
+            basis_role,
+        }))
+    }
+}
+
 fn temporal_from_columns(
     owner: ErrorOwner,
     kind: String,

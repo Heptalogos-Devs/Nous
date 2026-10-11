@@ -113,11 +113,10 @@ export function resolveRole(
 }
 
 export function hydrateRole(
-  input: ModelRoleSnapshot,
+  snapshot: ModelRoleSnapshot,
   executionName: string,
   credentialOrigins: ReadonlySet<string>,
 ): ReadyRole {
-  const snapshot = snapshotSchema.parse(input);
   if (snapshot.implementationDigest !== modelImplementations.provider)
     throw new Error("Reserved model implementation unavailable");
   if (

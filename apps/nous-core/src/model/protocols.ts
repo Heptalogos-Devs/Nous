@@ -268,7 +268,7 @@ export async function generateProvider(
         `output_incomplete_${result.finishReason}`,
         result.totalUsage,
       );
-    const value = schema ? schema.parse(result.output) : result.text;
+    const value = schema ? result.output : result.text;
     return {
       value,
       usage: result.totalUsage,

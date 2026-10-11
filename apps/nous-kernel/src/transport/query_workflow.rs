@@ -90,14 +90,10 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
 
         // Bind and preflight before returning the response stream. Everything
         // after this point lives in that stream's future and drops with it.
-        let (bound, plan, host_policy, slot, embedding_handoff) =
+        let (bound, plan, host_policy, slot, embedding_handoff, concept_handoff) =
             self.start_query_run(input).await.map_err(status)?;
         let first_update = if embedding_handoff {
-            Some(
-                self.embedding_update(&bound, host_policy)
-                    .await
-                    .map_err(status)?,
-            )
+            Some(self.embedding_update(&bound).await.map_err(status)?)
         } else {
             None
         };
@@ -159,17 +155,9 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                     .await
                     .map_err(status)?;
 
-                let concept_host = host_policy.concept_enrichment;
-                let concept_requested = !bound.source_query.is_exact_read()
-                    && bound.concept_enrichment == nous_runtime::ConceptEnrichment::Model
-                    && bound.source_query.capabilities.query_concept_enrichment
-                        != RequirementStrength::Forbidden;
-                let concept_handoff = concept_requested
-                    && concept_host.requirement != RequirementStrength::Forbidden
-                    && concept_host.configured;
                 if concept_handoff {
                     let update = service
-                        .concept_update(&bound, host_policy)
+                        .concept_update(&bound)
                         .await
                         .map_err(status)?;
                     yield update;
@@ -208,16 +196,40 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                         .cognition
                         .validate_query_execution_capacity(&execution)
                         .map_err(status)?;
-                    let baseline =
-                        super::query_projection::query_response(execution.result.clone(), None);
+                    let candidates = if rerank_expected {
+                        execution
+                            .result
+                            .results
+                            .iter()
+                            .filter_map(|hit| {
+                                let text = hit.representation.as_ref()?;
+                                (!text.trim().is_empty()).then(|| k::QueryFinalizeCandidate {
+                                    reference: Some(to_ref(hit.reference.clone())),
+                                    text: text.clone(),
+                                })
+                            })
+                            .take(host_policy.rerank_candidate_limit)
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
                     let update = k::QueryRunUpdate {
-                        frame: Some(k::query_run_update::Frame::Finalize(k::QueryFinalizeWork {
-                            baseline: Some(baseline),
-                            rerank_query: execution.bound.representation.text.clone(),
-                            rerank_candidate_limit: host_policy.rerank_candidate_limit as u32,
-                            rerank_expected,
-                            rerank_requirement: wire_requirement(host_policy.rerank.requirement),
-                        })),
+                        frame: Some(k::query_run_update::Frame::Finalize(
+                            k::QueryFinalizeWork {
+                                candidates,
+                                resource_actions: execution
+                                    .result
+                                    .resource_actions
+                                    .iter()
+                                    .cloned()
+                                    .map(super::query_projection::resource_action)
+                                    .collect(),
+                                rerank_query: execution.bound.representation.text.clone(),
+                                rerank_requirement: wire_requirement(
+                                    host_policy.rerank.requirement,
+                                ),
+                            },
+                        )),
                     };
                     yield update;
                     let Some(request) = inbound.message().await? else {
@@ -282,6 +294,7 @@ impl KernelService {
         QueryRunHostPolicy,
         tokio::sync::OwnedSemaphorePermit,
         bool,
+        bool,
     )> {
         let mut bound = self
             .bind_query_request(required(input.query, "query")?)
@@ -334,7 +347,14 @@ impl KernelService {
         }
         let limit = bound.config_snapshot.get(nous_runtime::QUERY_SLOTS)?;
         let slot = self.0.cognition.acquire_query_slot(limit)?;
-        Ok((bound, plan, effective_host, slot, embedding_handoff))
+        Ok((
+            bound,
+            plan,
+            effective_host,
+            slot,
+            embedding_handoff,
+            concept_handoff,
+        ))
     }
 
     async fn bind_query_request(&self, query: p::QueryRequest) -> Result<BoundQuery> {
@@ -551,11 +571,7 @@ impl KernelService {
         })
     }
 
-    async fn embedding_update(
-        &self,
-        bound: &BoundQuery,
-        host_policy: QueryRunHostPolicy,
-    ) -> Result<k::QueryRunUpdate> {
+    async fn embedding_update(&self, bound: &BoundQuery) -> Result<k::QueryRunUpdate> {
         self.0
             .cognition
             .ensure_read_context_current(&bound.read_context)
@@ -567,7 +583,6 @@ impl KernelService {
                     representation: bound.representation.text.clone(),
                     config: Some(config),
                     historical_view: bound.read_context.is_historical(),
-                    effective_requirement: wire_requirement(host_policy.embedding.requirement),
                 },
             )),
         })
@@ -598,11 +613,7 @@ impl KernelService {
         Ok(bound)
     }
 
-    async fn concept_update(
-        &self,
-        bound: &BoundQuery,
-        host_policy: QueryRunHostPolicy,
-    ) -> Result<k::QueryRunUpdate> {
+    async fn concept_update(&self, bound: &BoundQuery) -> Result<k::QueryRunUpdate> {
         self.0
             .cognition
             .ensure_read_context_current(&bound.read_context)
@@ -627,7 +638,6 @@ impl KernelService {
                 representation: Some(representation),
                 existing_tags,
                 temporal_frame,
-                effective_requirement: wire_requirement(host_policy.concept_enrichment.requirement),
             })),
         })
     }

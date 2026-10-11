@@ -393,9 +393,10 @@ describe("model protocol and provenance boundaries", () => {
         { content: "evidence" },
         {
           snapshot: semanticSnapshot,
-          validateOutput: () => {
+          mapOutput: (value) => {
             if (++semanticChecks === 1)
               throw new Error("source semantics invalid");
+            return { output: value, mapped: true };
           },
         },
       );
@@ -406,6 +407,7 @@ describe("model protocol and provenance boundaries", () => {
         ),
       ).toEqual(["output_semantics_invalid", undefined]);
       expect(semanticFallback.producerMetadata.executionProfile).toBe("backup");
+      expect(semanticFallback.value).toMatchObject({ mapped: true });
       const beforeBudget = requests.length;
       let admission = 0;
       let admissionFailure: unknown;

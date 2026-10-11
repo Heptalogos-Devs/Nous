@@ -271,6 +271,30 @@ pub(crate) fn workflow_snapshot(payload: serde_json::Value) -> nous_core::Workfl
 }
 
 #[allow(dead_code)]
+pub(crate) async fn open_model_workflow(
+    store: &nous_persistence::AuthorityStore,
+    subject: nous_core::SubjectId,
+    owner: &str,
+    key: &str,
+    digest: &str,
+    snapshot: &nous_core::WorkflowSnapshot,
+    maintenance_claim: Option<&nous_core::MaintenanceClaim>,
+    lease_seconds: u64,
+) -> nous_core::Result<nous_persistence::WorkflowReservation> {
+    store
+        .open_model_workflow(
+            subject,
+            owner,
+            key,
+            digest,
+            Some(snapshot),
+            maintenance_claim,
+            lease_seconds,
+        )
+        .await
+}
+
+#[allow(dead_code)]
 pub(crate) fn workflow_lease(
     subject: nous_core::SubjectId,
     owner: &str,

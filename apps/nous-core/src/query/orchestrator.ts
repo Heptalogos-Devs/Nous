@@ -31,10 +31,7 @@ import {
   type QueryRunUpdate,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { StatusSchema } from "@nous-wave/protocol/google/rpc/status_pb.js";
-import type {
-  QueryExpr,
-  QueryRequest,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import type { QueryRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { QueryConceptOutputSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { ErrorDetailSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/errors_pb.js";
 import type { KernelClient } from "../kernel-client.js";
@@ -49,7 +46,6 @@ import { canonicalDigest } from "../digest.js";
 
 interface CachedQueryVector {
   subjectId: string;
-  generation: number;
   vector: number[];
 }
 
@@ -75,7 +71,6 @@ export class QueryOrchestrator {
   async execute(input: QueryRequest, options: ExecutionOptions = {}) {
     const calls = executionOptions(this.kernel.execution.opportunity, options);
     const generation = this.queryVectorGenerations.get(input.subjectId) ?? 0;
-    const intent = input.expression ? positiveIntent(input.expression) : "";
     const host = create(QueryHostPlanSchema, {
       embedding: create(QueryHostRoleSchema, {
         configured: Boolean(this.models.embeddingModel),
@@ -274,7 +269,6 @@ export class QueryOrchestrator {
             ) {
               this.queryVectors.set(key, {
                 subjectId: input.subjectId,
-                generation,
                 vector: vectors.value[0]!,
               });
               while (
@@ -369,15 +363,15 @@ export class QueryOrchestrator {
         } else if (update.frame.case === "finalize") {
           const work = update.frame.value;
           const profile = this.models.invocations.profile("query_rerank");
-          const candidates = (work.baseline?.hits ?? [])
-            .filter((hit) => hit.text?.trim() && hit.reference)
-            .slice(0, work.rerankCandidateLimit || 64);
+          const candidates = work.candidates.filter(
+            (candidate) => candidate.reference,
+          );
           let rerank;
-          if (work.rerankExpected && profile && candidates.length >= 2) {
+          if (candidates.length >= 2 && profile) {
             try {
               const ranking = await this.models.invocations.rerank(
-                work.rerankQuery || intent,
-                candidates.map((hit) => hit.text!),
+                work.rerankQuery,
+                candidates.map((candidate) => candidate.text),
                 candidates.length,
                 calls.signal,
               );
@@ -407,7 +401,7 @@ export class QueryOrchestrator {
             });
           }
           const requiredRerankUnavailable =
-            work.rerankExpected &&
+            work.candidates.length >= 2 &&
             work.rerankRequirement === QueryHostRequirement.REQUIRED;
           const resources =
             requiredRerankUnavailable &&
@@ -416,7 +410,7 @@ export class QueryOrchestrator {
               ? []
               : await executeResourceActions(
                   this.resources,
-                  work.baseline?.resourceActions ?? [],
+                  work.resourceActions,
                   calls.signal,
                 );
           update = await exchange({
@@ -465,21 +459,4 @@ function rpcFailure(error: unknown, capability: string) {
         ]
       : [],
   });
-}
-
-function positiveIntent(node: QueryExpr): string {
-  const own = node.cues
-    .map((cue) =>
-      cue.cue.case === "text" ||
-      cue.cue.case === "concept" ||
-      cue.cue.case === "example"
-        ? cue.cue.value.trim()
-        : "",
-    )
-    .filter(Boolean)
-    .join(" ");
-  if (node.operation === "atom") return own;
-  const children = node.children.map(positiveIntent).filter(Boolean);
-  if (!children.length) return "";
-  return `${node.operation === "all" ? "ALL OF" : "ANY OF"}: ${children.map((text) => `(${text})`).join("; ")}`;
 }

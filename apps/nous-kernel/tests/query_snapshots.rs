@@ -40,27 +40,27 @@ async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
     assert_eq!(execution.result.results.len(), 1);
 
     let key = operation.0.to_string();
-    let reservation = runtime
-        .store
-        .reserve_model_workflow(
-            subject,
-            "memory",
-            &key,
-            "semantic input",
-            &nous_core::WorkflowSnapshot {
-                content: nous_core::WorkflowPayload {
-                    payload: serde_json::json!({"model":"frozen"}),
-                    dependencies: vec![nous_core::CognitiveRef::Memory(
-                        candidate.header.memory_id(),
-                    )],
-                    ..Default::default()
-                },
+    let reservation = test_support::open_model_workflow(
+        &runtime.store,
+        subject,
+        "memory",
+        &key,
+        "semantic input",
+        &nous_core::WorkflowSnapshot {
+            content: nous_core::WorkflowPayload {
+                payload: serde_json::json!({"model":"frozen"}),
+                dependencies: vec![nous_core::CognitiveRef::Memory(
+                    candidate.header.memory_id(),
+                )],
                 ..Default::default()
             },
-            360,
-        )
-        .await
-        .unwrap();
+            ..Default::default()
+        },
+        None,
+        360,
+    )
+    .await
+    .unwrap();
     let WorkflowReservation::Acquired { lease, .. } = reservation else {
         panic!("new model workflow reservation should be acquired");
     };

@@ -27,8 +27,8 @@ cp -a /path/to/source/data/objects /path/to/copy/data/objects
 ```sh
 export NOUS_WAVE_COPIED_OFFLINE_DATABASE_URL="$COPY_DATABASE_URL"
 ./nous-kernel \
+  upgrade-embedding-ownership-copy \
   --config /path/to/source/data/config/apps/nous.toml \
-  --upgrade-embedding-ownership-copy \
   --copied-object-root /path/to/copy/data/objects \
   --source-database-name source_database_name
 ```

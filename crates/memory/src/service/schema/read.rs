@@ -181,60 +181,7 @@ fn decode_schema_link(
     row: sqlx::postgres::PgRow,
     revision: CognitiveSchemaRevisionId,
 ) -> Result<SchemaEvidenceLink> {
-    let basis = if row.try_get::<String, _>("basis_kind").map_err(db)? == "evidence" {
-        RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
-            locator: match (
-                row.try_get::<Option<Uuid>, _>("source_region_id")
-                    .map_err(db)?,
-                row.try_get::<Option<Uuid>, _>("derived_representation_id")
-                    .map_err(db)?,
-                row.try_get::<Option<Uuid>, _>("derived_region_id")
-                    .map_err(db)?,
-            ) {
-                (Some(id), None, None) => {
-                    EvidenceLocator::SourceRegion(nous_core::SourceRegionId(id))
-                }
-                (None, Some(id), None) => {
-                    EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(id))
-                }
-                (None, None, Some(id)) => {
-                    EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(id))
-                }
-                (None, None, None) => EvidenceLocator::WholeOccurrence,
-                _ => {
-                    return Err(Error::new(
-                        nous_core::ErrorOwner::Concept,
-                        nous_core::ErrorCode::InternalFailure,
-                        "schema evidence locator is invalid",
-                    ));
-                }
-            },
-            basis_role: parse_enum(
-                ErrorOwner::Concept,
-                row.try_get("basis_role").map_err(db)?,
-                "schema evidence basis role",
-            )?,
-        })
-    } else {
-        RevisionBasis::CognitionDependency(CognitionDependency {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            target_revision: parse_reference(
-                &row.try_get::<String, _>("basis_kind").map_err(db)?,
-                &row.try_get::<String, _>("basis_ref").map_err(db)?,
-            )?,
-            basis_role: parse_enum(
-                ErrorOwner::Concept,
-                row.try_get("basis_role").map_err(db)?,
-                "schema dependency basis role",
-            )?,
-        })
-    };
+    let basis = decode_revision_basis(ErrorOwner::Concept, &row)?;
     Ok(SchemaEvidenceLink {
         link_id: SchemaEvidenceLinkId(row.try_get("link_id").map_err(db)?),
         subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),

@@ -52,6 +52,12 @@ struct ObjectStoreConfig {
     root: String,
 }
 
+struct ResolvedConfiguration {
+    config: Config,
+    root: PathBuf,
+    bundle: nous_configuration::ConfigurationBootstrapBundle,
+}
+
 fn default_backend() -> String {
     "fs".into()
 }
@@ -63,6 +69,39 @@ fn default_serving_root() -> String {
 }
 
 pub async fn open(path: &Path) -> Result<(NousRuntime, Option<PostgreSQL>)> {
+    let loaded = read_configuration(path).await?;
+    let (postgres_url, managed) =
+        open_database(&loaded.root, &loaded.config.bootstrap.database).await?;
+    let result = NousRuntime::open(RuntimeOptions {
+        postgres_url,
+        max_connections: loaded.config.bootstrap.database.max_connections,
+        acquire_timeout_ms: loaded.config.bootstrap.database.acquire_timeout_ms,
+        object_root: resolve_path(&loaded.root, &loaded.config.bootstrap.object_store.root)
+            .to_string_lossy()
+            .into_owned(),
+        serving_options: nous_retrieval::ServingOptions {
+            root: resolve_path(&loaded.root, &loaded.config.bootstrap.serving.root),
+            lexical: true,
+            dense: true,
+            topology: false,
+            memory_enabled: true,
+        },
+        embedding: None,
+        stored_embedding: None,
+        core_descriptors: loaded.bundle.core_descriptors,
+        deployment_document: loaded.bundle.deployment_document,
+    })
+    .await;
+    match result {
+        Ok(runtime) => Ok((runtime, managed)),
+        Err(e) => {
+            stop_managed(managed).await?;
+            Err(e)
+        }
+    }
+}
+
+async fn read_configuration(path: &Path) -> Result<ResolvedConfiguration> {
     let text = tokio::fs::read_to_string(path).await.map_err(|e| {
         Error::new(
             nous_core::ErrorOwner::Instance,
@@ -94,45 +133,25 @@ pub async fn open(path: &Path) -> Result<(NousRuntime, Option<PostgreSQL>)> {
         )
         .with_source(e)
     })?;
-    let root = absolute.parent().ok_or_else(|| {
-        Error::new(
-            nous_core::ErrorOwner::Instance,
-            nous_core::ErrorCode::InvalidRequest,
-            "config parent required",
-        )
-    })?;
-    let bundle = read_bundle(&resolve_path(root, &config.configuration_bundle)).await?;
+    let root = absolute
+        .parent()
+        .ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InvalidRequest,
+                "config parent required",
+            )
+        })?
+        .to_path_buf();
+    let bundle = read_bundle(&resolve_path(&root, &config.configuration_bundle)).await?;
     // Validate the complete catalog/document before acquiring database resources.
     nous_kernel::configuration_catalog(bundle.core_descriptors.clone())?
         .deployment_values(&bundle.deployment_document)?;
-    let (postgres_url, managed) = open_database(root, &config.bootstrap.database).await?;
-    let result = NousRuntime::open(RuntimeOptions {
-        postgres_url,
-        max_connections: config.bootstrap.database.max_connections,
-        acquire_timeout_ms: config.bootstrap.database.acquire_timeout_ms,
-        object_root: resolve_path(root, &config.bootstrap.object_store.root)
-            .to_string_lossy()
-            .into_owned(),
-        serving_options: nous_retrieval::ServingOptions {
-            root: resolve_path(root, &config.bootstrap.serving.root),
-            lexical: true,
-            dense: true,
-            topology: false,
-            memory_enabled: true,
-        },
-        embedding: None,
-        stored_embedding: None,
-        core_descriptors: bundle.core_descriptors,
-        deployment_document: bundle.deployment_document,
+    Ok(ResolvedConfiguration {
+        config,
+        root,
+        bundle,
     })
-    .await;
-    match result {
-        Ok(runtime) => Ok((runtime, managed)),
-        Err(e) => {
-            stop_managed(managed).await?;
-            Err(e)
-        }
-    }
 }
 
 /// Open a caller-supplied offline database copy for the one-time vector
@@ -151,51 +170,11 @@ pub async fn open_embedding_upgrade_copy(
             "copied object root must already exist; refusing to create or use the source root",
         ));
     }
-    let text = tokio::fs::read_to_string(path).await.map_err(|error| {
-        Error::new(
-            nous_core::ErrorOwner::Instance,
-            nous_core::ErrorCode::InternalFailure,
-            "Kernel configuration could not be read",
-        )
-        .with_source(error)
-    })?;
-    let config: Config = toml::from_str(&text).map_err(|error| {
-        Error::new(
-            nous_core::ErrorOwner::Instance,
-            nous_core::ErrorCode::InvalidRequest,
-            "Kernel configuration is invalid",
-        )
-        .with_source(error)
-    })?;
-    if config.bootstrap.object_store.backend != "fs" {
-        return Err(Error::new(
-            nous_core::ErrorOwner::Instance,
-            nous_core::ErrorCode::InvalidRequest,
-            "object store backend must be fs",
-        ));
-    }
-    let absolute = std::path::absolute(path).map_err(|error| {
-        Error::new(
-            nous_core::ErrorOwner::Instance,
-            nous_core::ErrorCode::InternalFailure,
-            "Kernel configuration path could not be resolved",
-        )
-        .with_source(error)
-    })?;
-    let root = absolute.parent().ok_or_else(|| {
-        Error::new(
-            nous_core::ErrorOwner::Instance,
-            nous_core::ErrorCode::InvalidRequest,
-            "config parent required",
-        )
-    })?;
-    let bundle = read_bundle(&resolve_path(root, &config.configuration_bundle)).await?;
-    nous_kernel::configuration_catalog(bundle.core_descriptors.clone())?
-        .deployment_values(&bundle.deployment_document)?;
+    let loaded = read_configuration(path).await?;
     NousRuntime::open(RuntimeOptions {
         postgres_url: copied_database_url,
-        max_connections: config.bootstrap.database.max_connections,
-        acquire_timeout_ms: config.bootstrap.database.acquire_timeout_ms,
+        max_connections: loaded.config.bootstrap.database.max_connections,
+        acquire_timeout_ms: loaded.config.bootstrap.database.acquire_timeout_ms,
         object_root: std::fs::canonicalize(copied_object_root)
             .map_err(|error| {
                 Error::new(
@@ -218,8 +197,8 @@ pub async fn open_embedding_upgrade_copy(
         // invoke or initialize a host embedding provider.
         embedding: None,
         stored_embedding: None,
-        core_descriptors: bundle.core_descriptors,
-        deployment_document: bundle.deployment_document,
+        core_descriptors: loaded.bundle.core_descriptors,
+        deployment_document: loaded.bundle.deployment_document,
     })
     .await
 }
