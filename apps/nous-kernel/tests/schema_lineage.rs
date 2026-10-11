@@ -10,9 +10,10 @@ use nous_runtime::ManualCognitiveClock;
 use std::sync::Arc;
 use test_support::database;
 use test_support::longitudinal::{
-    consolidation_schema, journal_source_episode, runtime_with_clock,
+    consolidation_schema, journal_source_episode, runtime_with_clock_serving,
 };
 use test_support::query::subject as create_subject;
+use test_support::read_mutation_cognition;
 
 async fn read_schema(
     owner: &MemoryService,
@@ -33,14 +34,18 @@ async fn read_schema(
 async fn split_and_merge_share_content_writer_without_partial_authority() {
     let (root, url, _postgres) = database().await;
     let clock = Arc::new(ManualCognitiveClock::new(Utc::now().trunc_subsecs(6)));
-    let rt = runtime_with_clock(&url, &root, clock.clone()).await;
+    let rt = runtime_with_clock_serving(&url, &root, clock.clone(), false).await;
     let subject = create_subject(&rt).await;
     let episode = journal_source_episode(&rt, &clock, subject).await;
     let owner = rt.require_memory().unwrap();
-    let source = owner
+    let source_result = owner
         .create_schema(consolidation_schema(&episode))
         .await
         .unwrap();
+    let source = match read_mutation_cognition(owner, subject, &source_result).await {
+        CognitionView::CognitiveSchema(value) => value,
+        _ => panic!("schema mutation result should materialize as CognitiveSchema"),
+    };
     let split = assert_split(&rt, subject, &source, &episode).await;
     assert_merge(&rt, subject, &source, &split, &episode).await;
 }
@@ -80,7 +85,7 @@ async fn assert_split(
     assert_eq!(unchanged.header.object_epoch, source.header.object_epoch);
 
     let operation = OperationId::new();
-    let split = owner
+    let split_results = owner
         .split_schemas(
             subject,
             source.header.schema_id(),
@@ -100,16 +105,19 @@ async fn assert_split(
         )
         .await
         .unwrap();
-    assert_eq!(
-        replay
-            .iter()
-            .map(|child| child.revision.header.revision_id())
-            .collect::<Vec<_>>(),
-        split
-            .iter()
-            .map(|child| child.revision.header.revision_id())
-            .collect::<Vec<_>>()
-    );
+    assert_eq!(replay, split_results);
+    let child_results = split_results
+        .iter()
+        .filter(|result| matches!(&result.reference, CognitiveRef::CognitiveSchemaRevision(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(child_results.len(), 2);
+    let mut split = Vec::with_capacity(child_results.len());
+    for result in child_results {
+        match read_mutation_cognition(owner, subject, result).await {
+            CognitionView::CognitiveSchema(value) => split.push(value),
+            _ => panic!("split result should materialize as CognitiveSchema"),
+        }
+    }
     assert_eq!(split.len(), 2);
     for child in &split {
         assert!(child.revision.header.producer_signature_id.is_some());
@@ -168,7 +176,7 @@ async fn assert_merge(
         );
     }
     let operation = OperationId::new();
-    let merged = owner
+    let merged_result = owner
         .merge_schemas(
             subject,
             operation,
@@ -182,10 +190,11 @@ async fn assert_merge(
         .merge_schemas(subject, operation, ids, epochs, merged_input)
         .await
         .unwrap();
-    assert_eq!(
-        replay.revision.header.revision_id(),
-        merged.revision.header.revision_id()
-    );
+    assert_eq!(replay, merged_result);
+    let merged = match read_mutation_cognition(owner, subject, &merged_result).await {
+        CognitionView::CognitiveSchema(value) => value,
+        _ => panic!("schema mutation result should materialize as CognitiveSchema"),
+    };
     assert!(merged.revision.header.producer_signature_id.is_some());
     assert_eq!(merged.evidence_links.len(), source.evidence_links.len());
     let origins = lineage(

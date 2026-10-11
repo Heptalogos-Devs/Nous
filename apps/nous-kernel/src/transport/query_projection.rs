@@ -386,10 +386,7 @@ pub(super) fn query_representation(
     }
 }
 
-pub(super) fn inspect_bound_query_with_plan(
-    bound: &nous_runtime::BoundQuery,
-    plan: &nous_runtime::QueryPlan,
-) -> Result<p::QueryInspection> {
+pub(super) fn inspect_bound_query(bound: &nous_runtime::BoundQuery) -> Result<p::QueryInspection> {
     use nous_runtime::AuthorityReadView;
     let temporal = query_temporal(&bound.source_query.temporal_frame);
     let (view_kind, historical_view_digest) = match &bound.read_context.view {
@@ -409,13 +406,18 @@ pub(super) fn inspect_bound_query_with_plan(
     let representation = &bound.representation;
     let activation = &bound.activation;
     let query = &bound.source_query;
-    let readout_policy_digest = match bound.retrieval_policy.cognitive_profile {
-        nous_runtime::CognitiveProfile::BaselineRrf => bound.config_snapshot.digest_for(&[])?,
+    let plan = &bound.plan;
+    let readout_policy_digest = match bound.plan.retrieval_policy.cognitive_profile {
+        nous_runtime::CognitiveProfile::BaselineRrf => {
+            bound.read_context.config_snapshot.digest_for(&[])?
+        }
         nous_runtime::CognitiveProfile::NousNodePotential => bound
+            .read_context
             .config_snapshot
             .digest_for(nous_retrieval::WAVE_READOUT_CONFIG_KEYS)?,
         nous_runtime::CognitiveProfile::VcpDtsc | nous_runtime::CognitiveProfile::VcpRiverMemo => {
             bound
+                .read_context
                 .config_snapshot
                 .digest_for(&[nous_retrieval::VCP_READOUT.path()])?
         }
@@ -545,8 +547,9 @@ pub(super) fn inspect_bound_query_with_plan(
             model_completed: activation.model_completed,
         }),
         plan: Some(p::QueryPlanInspection {
-            profile_id: bound.retrieval_policy.cognitive_profile.id().into(),
+            profile_id: bound.plan.retrieval_policy.cognitive_profile.id().into(),
             profile_source: bound
+                .read_context
                 .config_snapshot
                 .source(nous_runtime::COGNITIVE_PROFILE.path())
                 .map(enum_name)
@@ -559,10 +562,10 @@ pub(super) fn inspect_bound_query_with_plan(
                 .collect(),
             candidate_limit: plan.candidate_limit as u32,
             final_validation_budget: plan.final_validation_budget as u32,
-            topology_required: bound.topology_required,
+            topology_required: bound.plan.expand_topology,
             readout_policy_digest,
         }),
-        config_snapshot_digest: bound.config_snapshot.effective_digest.clone(),
+        config_snapshot_digest: bound.read_context.config_snapshot.effective_digest.clone(),
         selected_embedding_space: bound.selected_embedding_space.as_ref().map(|space| {
             p::QueryEmbeddingSpaceView {
                 space_hash: space.space_hash.clone(),

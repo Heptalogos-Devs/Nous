@@ -5,7 +5,7 @@ mod test_support;
 
 use chrono::{Duration, SubsecRound, Utc};
 use nous_kernel::NousRuntime;
-use nous_memory::{EpisodePartitionSource, EpisodeView};
+use nous_memory::{CognitionView, EpisodePartitionSource, EpisodeView};
 use nous_runtime::ManualCognitiveClock;
 use std::sync::Arc;
 use test_support::database;
@@ -15,6 +15,7 @@ use test_support::longitudinal::{
     runtime_with_clock_serving,
 };
 use test_support::query::subject as create_subject;
+use test_support::read_mutation_cognition;
 
 #[tokio::test]
 async fn historical_schema_episode_journal_use_past_heads_and_history_documents() {
@@ -31,7 +32,11 @@ async fn historical_schema_episode_journal_use_past_heads_and_history_documents(
     let memory = owner.form_memory(memory_input).await.unwrap();
     let mut schema_input = consolidation_schema(&episode);
     schema_input.content.structural_claim = "archival past schema".into();
-    let schema = owner.create_schema(schema_input.clone()).await.unwrap();
+    let schema_result = owner.create_schema(schema_input.clone()).await.unwrap();
+    let schema = match read_mutation_cognition(owner, subject, &schema_result).await {
+        CognitionView::CognitiveSchema(value) => value,
+        _ => panic!("schema mutation result should materialize as CognitiveSchema"),
+    };
     let mut journal_input = nous_memory::JournalInput {
         operation_id: OperationId::new(),
         subject,
@@ -57,12 +62,17 @@ async fn historical_schema_episode_journal_use_past_heads_and_history_documents(
         producer: None,
     };
     let journal = owner.commit_journal(journal_input.clone()).await.unwrap();
+    let CognitiveRef::Journal(journal_id) = journal.reference else {
+        panic!("journal mutation result should reference Journal");
+    };
     let cut = rt.cognition.now(subject);
     let old = vec![
-        CognitiveRef::MemoryRevision(memory.revision.header.memory_revision_id()),
-        CognitiveRef::CognitiveSchemaRevision(schema.revision.header.schema_revision_id()),
+        CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(memory.revision_id.unwrap())),
+        CognitiveRef::CognitiveSchemaRevision(nous_core::CognitiveSchemaRevisionId(
+            schema_result.revision_id.unwrap(),
+        )),
         CognitiveRef::EpisodeRevision(episode.revision.header.episode_revision_id()),
-        CognitiveRef::JournalRevision(journal.revision.header.journal_revision_id()),
+        CognitiveRef::JournalRevision(nous_core::JournalRevisionId(journal.revision_id.unwrap())),
     ];
     clock.advance_by(subject, Duration::seconds(10)).unwrap();
     let new_schema = owner
@@ -88,10 +98,7 @@ async fn historical_schema_episode_journal_use_past_heads_and_history_documents(
     let new_episode =
         historical_episode_text(&rt, subject, &episode, "archival future episode").await;
     let nous_memory::CognitionView::Journal(current_journal) = owner
-        .read_cognition(
-            subject,
-            nous_core::CognitiveRef::Journal(journal.header.journal_id()),
-        )
+        .read_cognition(subject, nous_core::CognitiveRef::Journal(journal_id))
         .await
         .unwrap()
     else {
@@ -100,8 +107,8 @@ async fn historical_schema_episode_journal_use_past_heads_and_history_documents(
     journal_input.operation_id = OperationId::new();
     journal_input.expected_authority_seq = rt.store.authority_seq(subject).await.unwrap();
     journal_input.target = Some(nous_memory::JournalTarget {
-        journal_id: journal.header.journal_id(),
-        expected_revision: journal.revision.header.journal_revision_id(),
+        journal_id,
+        expected_revision: nous_core::JournalRevisionId(journal.revision_id.unwrap()),
         expected_epoch: current_journal.header.object_epoch,
         intent: "revalidate".into(),
     });
@@ -119,9 +126,13 @@ async fn historical_schema_episode_journal_use_past_heads_and_history_documents(
     })];
     let new_journal = owner.commit_journal(journal_input).await.unwrap();
     let new = vec![
-        CognitiveRef::CognitiveSchemaRevision(new_schema.revision.header.schema_revision_id()),
+        CognitiveRef::CognitiveSchemaRevision(nous_core::CognitiveSchemaRevisionId(
+            new_schema.revision_id.unwrap(),
+        )),
         CognitiveRef::EpisodeRevision(new_episode.revision.header.episode_revision_id()),
-        CognitiveRef::JournalRevision(new_journal.revision.header.journal_revision_id()),
+        CognitiveRef::JournalRevision(nous_core::JournalRevisionId(
+            new_journal.revision_id.unwrap(),
+        )),
     ];
     assert_historical_domains(&rt, subject, cut, &old, &new).await;
 }
@@ -258,7 +269,8 @@ async fn historical_episode_text(
     episode: &EpisodeView,
     text: &str,
 ) -> EpisodeView {
-    rt.require_memory()
+    let result = rt
+        .require_memory()
         .unwrap()
         .revise_episode(nous_memory::ReviseEpisodeInput {
             operation_id: nous_core::OperationId::new(),
@@ -282,5 +294,9 @@ async fn historical_episode_text(
             basis: episode.basis.clone(),
         })
         .await
-        .unwrap()
+        .unwrap();
+    match read_mutation_cognition(rt.require_memory().unwrap(), subject, &result).await {
+        CognitionView::Episode(value) => value,
+        _ => panic!("episode mutation result should materialize as Episode"),
+    }
 }

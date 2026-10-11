@@ -207,13 +207,6 @@ fn validate_text_array(name: &str, values: &[String]) -> Result<()> {
     Ok(())
 }
 pub(super) fn replay_context(receipt: MutationReceipt) -> Result<Uuid> {
-    if receipt.state != "committed" {
-        return Err(Error::new(
-            nous_core::ErrorOwner::Runtime,
-            nous_core::ErrorCode::Unavailable,
-            "WorkContext operation is already in progress",
-        ));
-    }
     match receipt.results.first().map(|result| &result.reference) {
         Some(CognitiveRef::WorkContext(id)) => Ok(id.0),
         _ => Err(Error::new(

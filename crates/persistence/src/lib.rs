@@ -7,8 +7,7 @@ mod proquint;
 pub use proquint::{decode_proquint, encode_proquint};
 mod mutations;
 pub use mutations::{
-    MutationEnvelope, MutationReceipt, MutationResult, MutationStart, OwnerLock, check_receipt,
-    commit_receipt,
+    MutationEnvelope, MutationReceipt, MutationResult, MutationStart, OwnerLock, commit_receipt,
 };
 mod read_stamp;
 pub use read_stamp::AuthorityReadStamp;

@@ -3,7 +3,7 @@
 
 use super::*;
 use nous_core::{EntityRef, MemoryId, MemoryRevisionId, OperationId, Result, SubjectId};
-use nous_memory::{ExplicitMemoryInput, MemoryView, ReviseMemoryInput};
+use nous_memory::{CognitionView, ExplicitMemoryInput, MemoryView, ReviseMemoryInput};
 
 pub(super) fn header(value: &MemoryView) -> p::CognitionHeader {
     super::cognition::cognition_header_proto(&value.header)
@@ -94,6 +94,25 @@ fn memory_input(
 }
 
 impl KernelService {
+    async fn memory_mutation_response(
+        &self,
+        subject: SubjectId,
+        result: &nous_memory::MutationResult,
+    ) -> Result<p::Memory> {
+        let mut views = self
+            .require_memory()?
+            .read_mutation_cognitions(subject, std::slice::from_ref(result))
+            .await?;
+        match views.pop() {
+            Some(CognitionView::Memory(value)) => Ok(view(value)),
+            _ => Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InternalFailure,
+                "memory mutation result did not materialize as Memory",
+            )),
+        }
+    }
+
     pub(super) async fn link_revisions(&self, input: p::LinkRevisionsRequest) -> Result<()> {
         self.require_memory()?
             .link_revisions(
@@ -110,18 +129,18 @@ impl KernelService {
         let subject = SubjectId(id(&input.subject_id)?);
         let operation = OperationId(id(&input.operation_id)?);
         let content = required(input.input, "input")?;
-        Ok(view(
-            self.require_memory()?
-                .form_memory(memory_input(subject, operation, content)?)
-                .await?,
-        ))
+        let result = self
+            .require_memory()?
+            .form_memory(memory_input(subject, operation, content)?)
+            .await?;
+        self.memory_mutation_response(subject, &result).await
     }
 
     pub(super) async fn revise_memory(&self, input: p::ReviseMemoryRequest) -> Result<p::Memory> {
         let subject = SubjectId(id(&input.subject_id)?);
         let operation_id = OperationId(id(&input.operation_id)?);
         let parsed = memory_input(subject, operation_id, required(input.input, "input")?)?;
-        let value = self
+        let result = self
             .require_memory()?
             .revise_memory(ReviseMemoryInput {
                 producer: parsed.producer,
@@ -148,6 +167,6 @@ impl KernelService {
                 epistemic_class: parsed.epistemic_class,
             })
             .await?;
-        Ok(view(value))
+        self.memory_mutation_response(subject, &result).await
     }
 }

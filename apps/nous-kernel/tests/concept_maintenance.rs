@@ -119,9 +119,9 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             ))
             .await
             .unwrap();
-        revisions.push(CognitiveRef::MemoryRevision(
-            view.revision.header.memory_revision_id(),
-        ));
+        revisions.push(CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(
+            view.revision_id.unwrap(),
+        )));
     }
     let first = claim(&rt, subject).await;
     catalog::assert_wire_catalog(&rt, subject, &revisions, &first).await;
@@ -153,6 +153,9 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         )
         .await
         .unwrap();
+    let CognitiveRef::Tag(lexical_id) = lexical.reference else {
+        panic!("tag mutation result should reference Tag");
+    };
     let candidates = owner
         .plan_concepts(subject, revisions[1].clone())
         .await
@@ -162,11 +165,11 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         1,
         "partial name words produce a reuse candidate"
     );
-    assert_eq!(candidates.tags[0].target.tag_id, lexical.tag_id);
+    assert_eq!(candidates.tags[0].target.tag_id, lexical_id);
     assert!(!candidates.tags[0].attached);
-    let concept = lexical;
+    let concept = lexical_id;
     assert_subject_producer(&rt, subject, "topology-fixture").await;
-    let tag = CognitiveRef::Tag(concept.tag_id);
+    let tag = CognitiveRef::Tag(concept);
     let mut association_producer = producer();
     association_producer.implementation = "association-only-fixture".into();
     for reference in &revisions {
@@ -473,7 +476,8 @@ async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[Co
         .topology_projection_input(subject, true)
         .await
         .unwrap();
-    let episode_ref = CognitiveRef::EpisodeRevision(episode.revision.header.episode_revision_id());
+    let episode_ref =
+        CognitiveRef::EpisodeRevision(nous_core::EpisodeRevisionId(episode.revision_id.unwrap()));
     assert!(projection.nodes.contains(&episode_ref));
     for reference in revisions {
         assert!(projection.edges.iter().any(|edge| edge.from == episode_ref

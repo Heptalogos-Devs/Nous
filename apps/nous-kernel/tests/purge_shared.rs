@@ -38,9 +38,9 @@ async fn purge_keeps_shared_observation_authority() {
     runtime
         .purge_cognition(
             subject,
-            nous_core::CognitiveRef::Memory(first.header.memory_id()),
+            first.reference.clone(),
             nous_core::OperationId::new(),
-            first.header.object_epoch,
+            first.object_epoch.unwrap(),
         )
         .await
         .expect("purge first cognition");
@@ -48,10 +48,7 @@ async fn purge_keeps_shared_observation_authority() {
         runtime
             .require_memory()
             .unwrap()
-            .read_cognition(
-                subject,
-                nous_core::CognitiveRef::Memory(second.header.memory_id()),
-            )
+            .read_cognition(subject, second.reference.clone(),)
             .await
             .is_ok()
     );

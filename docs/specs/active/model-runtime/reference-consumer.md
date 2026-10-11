@@ -36,4 +36,4 @@ The consumer uses citty 0.2.2 command families, Zod-validated semantic TOML inpu
 
 拒绝终态回执保留已有 typed code、恢复建议、上下文与附加 detail；`retry` 读取该拒绝，不重新发起 RPC。现存回执缺少这些可选信息时，保留原 transport code/message，不从旧文案补猜业务语义。
 
-`STALE_CONTEXT` 与 `STALE_REVISION` 要求刷新状态，`OPERATION_ID_CONFLICT` 要求为不同语义输入使用新操作 ID，`OPERATION_IN_PROGRESS` 与 `LEASE_LOST` 要求恢复同一冻结操作。Recovery 是供调用者判断的建议，不授权自动重试或 mutation。Maintenance 将 owner 的 refresh/rediscover 指示及 supplied catalog 中对象已不存在的拒绝判为 stale；失去租约保留可重试工作，操作身份冲突暴露失败。未知 detail/enum 保留原信息，调用者不得猜测其业务含义。
+`STALE_CONTEXT` 与 `STALE_REVISION` 要求刷新状态，`OPERATION_ID_CONFLICT` 要求为不同语义输入使用新操作 ID，`OPERATION_IN_PROGRESS` 与 `LEASE_LOST` 要求恢复同一冻结操作。Mutation 入口统一拒绝仍在处理的普通重试，返回 `OPERATION_IN_PROGRESS`；重放只返回已提交结果，显式恢复入口可继续 checkpoint。Recovery 是供调用者判断的建议，不授权自动重试或 mutation。Maintenance 将 owner 的 refresh/rediscover 指示及 supplied catalog 中对象已不存在的拒绝判为 stale；失去租约保留可重试工作，操作身份冲突暴露失败。未知 detail/enum 保留原信息，调用者不得猜测其业务含义。

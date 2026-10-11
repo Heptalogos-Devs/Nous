@@ -13,14 +13,6 @@ use nous_retrieval::ServingOptions;
 use nous_runtime::{CognitiveClock, ManualCognitiveClock};
 use std::sync::Arc;
 
-pub(crate) async fn runtime_with_clock(
-    url: &str,
-    root: &tempfile::TempDir,
-    clock: Arc<dyn CognitiveClock>,
-) -> NousRuntime {
-    runtime_with_clock_serving(url, root, clock, false).await
-}
-
 pub(crate) async fn runtime_with_clock_serving(
     url: &str,
     root: &tempfile::TempDir,

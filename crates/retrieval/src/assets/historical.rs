@@ -2,14 +2,14 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 use crate::{query::ServingQuery, *};
-use nous_runtime::{BoundQuery, QueryPlan};
+use nous_runtime::BoundQuery;
 impl ServingService {
     pub(crate) async fn prepare_historical_query(
         &self,
         bound: &BoundQuery,
-        plan: &QueryPlan,
         view: &HistoricalAuthoritySnapshot,
     ) -> Result<(ProjectionStatus, Arc<ServingQuery>)> {
+        let plan = &bound.plan;
         let _reader = self.read_gate.clone().read_owned().await;
         self.store.require_subject(view.subject).await?;
         let records = self
@@ -18,7 +18,11 @@ impl ServingService {
             .await?;
         let mut need = plan.serving_need(&bound.source_query);
         if bound.source_query.capabilities.text_embedding == RequirementStrength::Forbidden
-            && plan.cognitive_profile.requirements().query_embedding
+            && plan
+                .retrieval_policy
+                .cognitive_profile
+                .requirements()
+                .query_embedding
         {
             need.topology = false;
         }
@@ -39,7 +43,10 @@ impl ServingService {
                 .iter()
                 .filter(|record| record.family == family && record.space == space)
             {
-                if !self.compatible(record, &bound.config_snapshot).await {
+                if !self
+                    .compatible(record, &bound.read_context.config_snapshot)
+                    .await
+                {
                     continue;
                 }
                 match self.open_record(record) {
@@ -60,7 +67,7 @@ impl ServingService {
                         view.subject,
                         family,
                         &space,
-                        &bound.config_snapshot,
+                        &bound.read_context.config_snapshot,
                         Some(view),
                         &snapshot,
                     )

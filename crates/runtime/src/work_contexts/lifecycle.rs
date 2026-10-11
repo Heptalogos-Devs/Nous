@@ -227,13 +227,6 @@ impl CognitiveRuntimeService {
         .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::new(
-                        nous_core::ErrorOwner::Runtime,
-                        nous_core::ErrorCode::Unavailable,
-                        "foreground WorkContext operation is already in progress",
-                    ));
-                }
                 if !matches!(
                     receipt.results.first().map(|result| &result.reference),
                     Some(CognitiveRef::Session(result)) if *result == session

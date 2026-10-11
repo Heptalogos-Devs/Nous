@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::*;
-use nous_runtime::{BoundQuery, LaneOutput, LaneStatus, QueryPlan, TopologyWorkSummary};
+use nous_runtime::{BoundQuery, LaneOutput, LaneStatus, TopologyWorkSummary};
 
 impl ServingService {
     pub(crate) async fn vcp_lane(
         &self,
         snapshot: &ServingSnapshot,
         bound: &BoundQuery,
-        plan: &QueryPlan,
         signals: &PreparedQuerySignals,
     ) -> Result<LaneOutput> {
+        let plan = &bound.plan;
         let mut output = LaneOutput::empty(EvidenceFamily::TopologyWave, LaneStatus::Unavailable);
         let Some(generation) = snapshot.vcp.as_ref() else {
             output
@@ -34,7 +34,7 @@ impl ServingService {
             return Ok(output);
         };
         let observation =
-            match VcpQueryObservation::prepare(generation, bound, plan, embedding, Some(signals)) {
+            match VcpQueryObservation::prepare(generation, bound, embedding, Some(signals)) {
                 Ok(observation) => observation,
                 Err(error) if error.code == nous_core::ErrorCode::Unavailable => {
                     output.diagnostics.push(error.message);
@@ -42,11 +42,11 @@ impl ServingService {
                 }
                 Err(error) => return Err(error),
             };
-        let policy = bound.config_snapshot.get(VCP_READOUT)?;
+        let policy = bound.read_context.config_snapshot.get(VCP_READOUT)?;
         policy.validate()?;
-        let offered = offered_candidates(generation, &observation, bound, plan, signals, &policy)?;
+        let offered = offered_candidates(generation, &observation, bound, signals, &policy)?;
         let limit = plan.lane_budget(EvidenceFamily::TopologyWave);
-        let mut ranked = match plan.cognitive_profile {
+        let mut ranked = match plan.retrieval_policy.cognitive_profile {
             nous_runtime::CognitiveProfile::VcpDtsc => {
                 let readout =
                     vcp_dtsc_readout(generation, &observation, &offered, &policy.dtsc, limit)?;
@@ -123,7 +123,7 @@ impl ServingService {
         output.candidates = vcp_lane_candidates(
             &generation.identities,
             &ranked,
-            plan.cognitive_profile.id(),
+            plan.retrieval_policy.cognitive_profile.id(),
             limit,
         )?;
         let sense = &observation.numerical().sense;
@@ -145,7 +145,7 @@ impl ServingService {
         } else {
             LaneStatus::Truncated
         };
-        output.topology_work = Some(work_summary(&observation, plan, complete));
+        output.topology_work = Some(work_summary(&observation, bound, complete));
         Ok(output)
     }
     async fn vcp_generation_current(
@@ -183,10 +183,10 @@ fn offered_candidates(
     generation: &VcpServingGeneration,
     observation: &VcpQueryObservation,
     bound: &BoundQuery,
-    plan: &QueryPlan,
     signals: &PreparedQuerySignals,
     policy: &VcpReadoutPolicy,
 ) -> Result<Vec<VcpReadoutCandidate>> {
+    let plan = &bound.plan;
     let n = observation.numerical();
     let mut offered = BTreeMap::<i64, VcpReadoutCandidate>::new();
     let search_limit = policy
@@ -201,7 +201,9 @@ fn offered_candidates(
         .iter()
         .map(|v| *v as f32)
         .collect::<Vec<_>>();
-    let queries = if plan.cognitive_profile == nous_runtime::CognitiveProfile::VcpRiverMemo {
+    let queries = if plan.retrieval_policy.cognitive_profile
+        == nous_runtime::CognitiveProfile::VcpRiverMemo
+    {
         vec![
             observation.original_vector(),
             enhanced.as_slice(),
@@ -290,14 +292,15 @@ fn offered_candidates(
 
 fn work_summary(
     observation: &VcpQueryObservation,
-    plan: &QueryPlan,
+    bound: &BoundQuery,
     complete: bool,
 ) -> TopologyWorkSummary {
+    let plan = &bound.plan;
     let sense = &observation.numerical().sense;
     TopologyWorkSummary {
-        mechanism: plan.cognitive_profile.id().into(),
+        mechanism: plan.retrieval_policy.cognitive_profile.id().into(),
         profile_id: observation.profile_id().into(),
-        profile_digest: plan.cognitive_profile.digest(),
+        profile_digest: plan.retrieval_policy.cognitive_profile.digest(),
         activated_edges: sense.edges.len(),
         max_hop_observed: sense.nodes.iter().map(|node| node.hop).max().unwrap_or(0),
         seed_count: observation.seed_ids().len(),

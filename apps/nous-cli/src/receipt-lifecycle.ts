@@ -11,6 +11,7 @@ import {
   receiptDefinitionCommands,
   receiptDefinition,
   receiptIdentity,
+  safeOperationStatusIdentity,
   thawRequest,
   thawResult,
 } from "./receipt-codec.js";
@@ -391,46 +392,8 @@ export function createReceiptLifecycle(
     };
   }
   async function inspectOperationIdentity(request: GetOperationStatusRequest) {
-    const identity = request.identity;
-    const safeIdentity = (() => {
-      switch (identity.case) {
-        case "mutationReceipt":
-          return {
-            case: identity.case,
-            subjectId: identity.value.subjectId,
-            operationId: identity.value.operationId,
-            operationKind: identity.value.operationKind,
-          };
-        case "subjectCreate":
-          return {
-            case: identity.case,
-            subjectId: identity.value.subjectId,
-            operationId: identity.value.operationId,
-          };
-        case "configurationMutation":
-          return {
-            case: identity.case,
-            operationId: identity.value.operationId,
-          };
-        case "observationRequest":
-          return {
-            case: identity.case,
-            subjectId: identity.value.subjectId,
-            requestId: identity.value.requestId,
-          };
-        case "modelWorkflow":
-          return {
-            case: identity.case,
-            subjectId: identity.value.subjectId,
-            owner: identity.value.owner,
-            operationKey: identity.value.operationKey,
-          };
-        case undefined:
-          return { case: "unspecified" };
-      }
-    })();
     return {
-      identity: safeIdentity,
+      identity: safeOperationStatusIdentity(request.identity),
       ...(await readOperationStatus(
         request,
         "No server status row was found; a missing row does not establish whether the operation committed.",

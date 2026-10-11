@@ -1,9 +1,9 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::lane::{LaneCandidate, LaneOutput, LaneStatus};
 use super::*;
-use nous_runtime::{BoundQuery, QueryPlan};
+use nous_runtime::BoundQuery;
+use nous_runtime::{LaneCandidate, LaneOutput, LaneStatus};
 use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use uuid::Uuid;
@@ -11,7 +11,6 @@ use uuid::Uuid;
 pub(crate) async fn schema_direct_lane(
     service: &MemoryService,
     bound: &BoundQuery,
-    _plan: &QueryPlan,
 ) -> Result<LaneOutput> {
     let query = &bound.source_query;
     let mut schema_ids = BTreeSet::new();

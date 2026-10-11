@@ -8,6 +8,16 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+fn reference_plan(query: &CognitiveQuery) -> QueryPlan {
+    QueryPlan::from_policy(
+        query,
+        &[],
+        nous_runtime::ConceptEnrichment::Off,
+        nous_runtime::RetrievalPolicy::reference(),
+    )
+    .expect("reference query plan")
+}
+
 struct EmbeddingProbe {
     calls: AtomicUsize,
     fail: bool,
@@ -134,7 +144,7 @@ async fn one_preparation_shares_embedding_and_deduplicates_dense_generations() {
     };
     let (snapshot, reference) = snapshot(&provider);
     let query = query();
-    let plan = QueryPlan::for_query(&query);
+    let plan = reference_plan(&query);
     let signals = prepare_signals(
         &snapshot,
         &query,
@@ -169,7 +179,7 @@ async fn forbidden_and_missing_generation_do_not_call_embedding() {
     let (snapshot, _) = snapshot(&provider);
     let mut query = query();
     query.capabilities.text_embedding = RequirementStrength::Forbidden;
-    let plan = QueryPlan::for_query(&query);
+    let plan = reference_plan(&query);
     let signals = prepare_signals(
         &snapshot,
         &query,
@@ -210,7 +220,7 @@ async fn provider_failure_remains_unavailable_lane_for_runtime_requirement_polic
     };
     let (snapshot, _) = snapshot(&provider);
     let query = query();
-    let plan = QueryPlan::for_query(&query);
+    let plan = reference_plan(&query);
     let signals = prepare_signals(
         &snapshot,
         &query,
@@ -240,9 +250,16 @@ async fn cognitive_embedding_is_shared_even_when_dense_lane_is_disabled() {
     assert!(snapshot.dense.is_empty());
     let mut query = query();
     query.expression.cues.push(Cue::Tag(TagCue { tag }));
-    let mut plan = QueryPlan::for_query(&query);
-    plan.expand_topology = true;
-    plan.cognitive_profile = nous_runtime::CognitiveProfile::VcpRiverMemo;
+    query.exploration = ExplorationIntent::BoundedAssociative;
+    let mut retrieval_policy = nous_runtime::RetrievalPolicy::reference();
+    retrieval_policy.cognitive_profile = nous_runtime::CognitiveProfile::VcpRiverMemo;
+    let plan = QueryPlan::from_policy(
+        &query,
+        &[],
+        nous_runtime::ConceptEnrichment::Off,
+        retrieval_policy,
+    )
+    .expect("VCP query plan");
     let signals = prepare_signals(
         &snapshot,
         &query,

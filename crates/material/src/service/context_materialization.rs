@@ -18,14 +18,7 @@ impl MaterialService {
         let selected = references
             .iter()
             .filter(|reference| {
-                matches!(
-                    reference,
-                    CognitiveRef::Artifact(_)
-                        | CognitiveRef::Occurrence(_)
-                        | CognitiveRef::SourceRegion(_)
-                        | CognitiveRef::DerivedRepresentation(_)
-                        | CognitiveRef::DerivedRegion(_)
-                )
+                nous_runtime::query_owner(reference) == Some(nous_runtime::QueryOwner::Material)
             })
             .filter(|reference| seen.insert((*reference).clone()))
             .take(max_items.min(256))

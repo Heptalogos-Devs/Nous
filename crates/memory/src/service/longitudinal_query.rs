@@ -117,6 +117,7 @@ pub(super) async fn materialize_longitudinal(
             &family,
             &revision_ids,
             bound
+                .read_context
                 .config_snapshot
                 .get(super::longitudinal_policy::EPISODE_SYNOPSIS)?,
             bound.read_context.historical_view(),

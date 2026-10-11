@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod test_support;
-use nous_core::{OperationId, TemporalExtent};
-use nous_memory::{CreateTagRequest, ReviseMemoryInput};
+use nous_core::{CognitiveRef, OperationId, TemporalExtent};
+use nous_memory::{CognitionView, CreateTagRequest, ReviseMemoryInput};
 use nous_protocol::public as p;
 use p::memory_service_server::MemoryService as MemoryRpcService;
 use test_support::query::subject;
-use test_support::{database, form_input, observation, open_runtime};
+use test_support::{database, form_input, observation, open_runtime, read_mutation_cognition};
 
 #[tokio::test]
 async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
@@ -30,6 +30,9 @@ async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
         )
         .await
         .unwrap();
+    let CognitiveRef::Tag(tag_id) = tag.reference else {
+        panic!("tag mutation result should reference Tag");
+    };
     let original = owner
         .form_memory(form_input(
             subject,
@@ -39,38 +42,46 @@ async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
         ))
         .await
         .unwrap();
+    let original_view = match read_mutation_cognition(owner, subject, &original).await {
+        CognitionView::Memory(value) => value,
+        _ => panic!("memory mutation result should materialize as Memory"),
+    };
+    let CognitiveRef::Memory(memory_id) = original.reference else {
+        panic!("memory mutation result should reference Memory");
+    };
     let request = ReviseMemoryInput {
         producer: None,
         subject,
         operation_id: OperationId::new(),
-        memory_id: original.header.memory_id(),
-        expected_object_epoch: original.header.object_epoch,
+        memory_id,
+        expected_object_epoch: original.object_epoch.unwrap(),
         intent: nous_memory::RevisionIntent::Correct,
         formation_mode: nous_memory::FormationMode::Grounded,
         grounding_occurrence_id: Some(source.occurrence.occurrence_id),
         semantic_role: "fact".into(),
         representation_text: "Revised note".into(),
         title: None,
-        basis: original.basis.clone(),
+        basis: original_view.basis.clone(),
         aboutness: vec![],
-        tags: vec![tag.tag_id, tag.tag_id],
+        tags: vec![tag_id, tag_id],
         valid_time: TemporalExtent::Unknown,
         epistemic_class: nous_core::EpistemicClass::Observed,
     };
     let revised = owner.revise_memory(request.clone()).await.unwrap();
     let replay = owner.revise_memory(request).await.unwrap();
-    assert_eq!(revised.tags, vec![tag.tag_id]);
-    assert_eq!(
-        replay.revision.header.revision_id(),
-        revised.revision.header.revision_id()
-    );
+    let revised_view = match read_mutation_cognition(owner, subject, &revised).await {
+        CognitionView::Memory(value) => value,
+        _ => panic!("memory mutation result should materialize as Memory"),
+    };
+    assert_eq!(revised_view.tags, vec![tag_id]);
+    assert_eq!(replay.revision_id, revised.revision_id);
     let service = nous_kernel::transport::KernelService(runtime.clone());
     let request = |token| {
         tonic::Request::new(p::CognitionHistoryRequest {
             subject_id: subject.0.to_string(),
             object_ref: Some(p::CognitiveRef {
                 kind: "memory".into(),
-                value: original.header.memory_id().0.to_string(),
+                value: memory_id.0.to_string(),
             }),
             page: Some(p::Page {
                 page_size: 1,
@@ -100,7 +111,7 @@ async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
             .as_ref()
             .unwrap()
             .value,
-        original.revision.header.revision_id().to_string()
+        original.revision_id.unwrap().to_string()
     );
     assert!(
         !first_memory
@@ -146,7 +157,7 @@ async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
             .as_ref()
             .unwrap()
             .value,
-        revised.revision.header.revision_id().to_string()
+        revised.revision_id.unwrap().to_string()
     );
     assert_eq!(
         second_memory
@@ -157,7 +168,7 @@ async fn revision_tags_survive_replay_and_history_returns_complete_pages() {
             .as_ref()
             .unwrap()
             .tags,
-        vec![tag.tag_id.0.to_string()]
+        vec![tag_id.0.to_string()]
     );
     assert!(second.next_page_token.is_empty());
     owner

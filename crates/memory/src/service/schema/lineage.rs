@@ -11,7 +11,7 @@ impl MemoryService {
         operation_id: OperationId,
         expected_object_epoch: i64,
         mut children: Vec<CreateSchemaInput>,
-    ) -> Result<Vec<SchemaView>> {
+    ) -> Result<Vec<MutationResult>> {
         if children.len() < 2 || children.len() > 16 {
             return Err(Error::new(
                 nous_core::ErrorOwner::Concept,
@@ -38,24 +38,7 @@ impl MemoryService {
             )
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let revisions = receipt
-                        .results
-                        .iter()
-                        .filter_map(|result| match &result.reference {
-                            CognitiveRef::CognitiveSchemaRevision(revision) => Some(*revision),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-                    return self.schema_split_views(subject, &revisions).await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Concept,
-                    nous_core::ErrorCode::Unavailable,
-                    "schema split operation is already in progress",
-                ));
-            }
+            MutationStart::Replay(receipt) => return Ok(receipt.results),
             MutationStart::Active(mutation) => mutation,
         };
         let source=sqlx::query("SELECT current_revision_id,object_epoch,acceptance_state,purge_state FROM cognition_objects WHERE subject_id=$1 AND object_kind='cognitive_schema' AND object_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
@@ -145,26 +128,7 @@ impl MemoryService {
             MutationResult::reference(CognitiveRef::CognitiveSchemaRevision(revision))
         }));
         mutation.commit(&results).await?;
-        self.schema_split_views(subject, &revisions).await
-    }
-
-    async fn schema_split_views(
-        &self,
-        subject: SubjectId,
-        revisions: &[CognitiveSchemaRevisionId],
-    ) -> Result<Vec<SchemaView>> {
-        if revisions.is_empty() {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Concept,
-                nous_core::ErrorCode::NotFound,
-                "schema split results were purged",
-            ));
-        }
-        let mut views = Vec::with_capacity(revisions.len());
-        for revision in revisions {
-            views.push(self.schema_revision(subject, *revision).await?);
-        }
-        Ok(views)
+        Ok(results)
     }
 
     pub async fn merge_schemas(
@@ -174,7 +138,7 @@ impl MemoryService {
         source_ids: Vec<CognitiveSchemaId>,
         expected_epochs: Vec<i64>,
         mut merged: CreateSchemaInput,
-    ) -> Result<SchemaView> {
+    ) -> Result<MutationResult> {
         if source_ids.len() < 2
             || source_ids.len() > 16
             || source_ids.len() != expected_epochs.len()
@@ -212,30 +176,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let revision = receipt
-                        .results
-                        .iter()
-                        .find_map(|result| match &result.reference {
-                            CognitiveRef::CognitiveSchema(_) => result.revision_id,
-                            _ => None,
-                        })
-                        .ok_or_else(|| {
-                            Error::new(
-                                nous_core::ErrorOwner::Concept,
-                                nous_core::ErrorCode::InternalFailure,
-                                "schema merge receipt has no revision",
-                            )
-                        })?;
-                    return self
-                        .schema_revision(subject, CognitiveSchemaRevisionId(revision))
-                        .await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Concept,
-                    nous_core::ErrorCode::Unavailable,
-                    "schema merge operation is already in progress",
-                ));
+                return single_mutation_result(receipt, ErrorOwner::Concept);
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -338,13 +279,12 @@ impl MemoryService {
                 ],
             )
             .await?;
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::CognitiveSchema(new_id),
-                new_revision.0,
-                Some(1),
-            )])
-            .await?;
-        self.schema_revision(subject, new_revision).await
+        let result = MutationResult::revised(
+            CognitiveRef::CognitiveSchema(new_id),
+            new_revision.0,
+            Some(1),
+        );
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
 }

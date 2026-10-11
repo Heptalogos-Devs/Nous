@@ -13,7 +13,13 @@ import {
 import { ConfigurationService } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import {
   ConceptService,
+  ConfigurationMutationIdentitySchema,
+  ModelWorkflowIdentitySchema,
+  MutationReceiptIdentitySchema,
+  ObservationRequestIdentitySchema,
   ResourceService,
+  SubjectCreateIdentitySchema,
+  type GetOperationStatusRequest,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import {
   MemoryService,
@@ -256,6 +262,30 @@ const receiptRegistrations = {
 } as const satisfies Partial<
   Record<ReceiptClientMethodPath, ReceiptRegistration>
 >;
+
+const operationIdentitySchemas = {
+  mutationReceipt: MutationReceiptIdentitySchema,
+  subjectCreate: SubjectCreateIdentitySchema,
+  configurationMutation: ConfigurationMutationIdentitySchema,
+  observationRequest: ObservationRequestIdentitySchema,
+  modelWorkflow: ModelWorkflowIdentitySchema,
+} as const;
+
+export function safeOperationStatusIdentity(
+  identity: GetOperationStatusRequest["identity"],
+) {
+  if (!identity.case) return { case: "unspecified" };
+  const fields = operationIdentitySchemas[identity.case].fields;
+  return {
+    case: identity.case,
+    ...Object.fromEntries(
+      fields.map(({ localName }) => [
+        localName,
+        (identity.value as Record<string, unknown>)[localName],
+      ]),
+    ),
+  };
+}
 
 type ReceiptClientMethodPath = {
   [Namespace in keyof NousClient]: `${Namespace}.${Extract<

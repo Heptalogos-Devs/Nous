@@ -24,7 +24,8 @@ async fn owner_purge_redacts_dependent_work_context_but_keeps_its_shell() {
         ))
         .await
         .unwrap();
-    let reference = CognitiveRef::MemoryRevision(memory.revision.header.memory_revision_id());
+    let reference =
+        CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(memory.revision_id.unwrap()));
     let context = runtime
         .cognition
         .create_work_context(CreateWorkContextInput {
@@ -46,9 +47,9 @@ async fn owner_purge_redacts_dependent_work_context_but_keeps_its_shell() {
     runtime
         .purge_cognition(
             subject,
-            CognitiveRef::Memory(memory.header.memory_id()),
+            memory.reference.clone(),
             OperationId::new(),
-            memory.header.object_epoch,
+            memory.object_epoch.unwrap(),
         )
         .await
         .unwrap();

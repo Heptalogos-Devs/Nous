@@ -17,7 +17,7 @@ struct JournalRevisionWrite {
 }
 
 impl MemoryService {
-    pub async fn commit_journal(&self, input: JournalInput) -> Result<JournalView> {
+    pub async fn commit_journal(&self, input: JournalInput) -> Result<MutationResult> {
         validate_journal(&input)?;
         self.store.require_subject(input.subject).await?;
         let started = self.cognition.now(input.subject);
@@ -33,36 +33,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::new(
-                        nous_core::ErrorOwner::Memory,
-                        nous_core::ErrorCode::Unavailable,
-                        "Journal commit is in progress",
-                    ));
-                }
-                let expected_journal = input.target.as_ref().map(|target| target.journal_id);
-                let revision = JournalRevisionId(
-                    receipt
-                        .results
-                        .iter()
-                        .find_map(|result| match &result.reference {
-                            CognitiveRef::Journal(journal)
-                                if expected_journal.is_none()
-                                    || expected_journal == Some(*journal) =>
-                            {
-                                result.revision_id
-                            }
-                            _ => None,
-                        })
-                        .ok_or_else(|| {
-                            Error::new(
-                                nous_core::ErrorOwner::Memory,
-                                nous_core::ErrorCode::NotFound,
-                                "Journal result was purged",
-                            )
-                        })?,
-                );
-                return self.journal_revision(input.subject, revision).await;
+                return single_mutation_result(receipt, ErrorOwner::Memory);
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -145,14 +116,9 @@ impl MemoryService {
                 ],
             )
             .await?;
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::Journal(journal),
-                revision.0,
-                None,
-            )])
-            .await?;
-        self.journal(input.subject, journal, Some(revision)).await
+        let result = MutationResult::revised(CognitiveRef::Journal(journal), revision.0, None);
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
     async fn write_journal_revision_in(
         &self,

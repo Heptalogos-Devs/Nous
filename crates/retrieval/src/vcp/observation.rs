@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{reference::*, *};
-use nous_runtime::{BoundQuery, QueryPlan};
+use nous_runtime::BoundQuery;
 
 /// Request-local numerical observation. It owns one pipeline output and has
 /// no ranking, mutation, provider invocation, or process cache API.
@@ -24,10 +24,10 @@ impl VcpQueryObservation {
     pub fn prepare(
         generation: &VcpServingGeneration,
         bound: &BoundQuery,
-        plan: &QueryPlan,
         embedding: &TextEmbeddingOutput,
         signals: Option<&crate::PreparedQuerySignals>,
     ) -> Result<Self> {
+        let plan = &bound.plan;
         if bound.source_query.capabilities.text_embedding == RequirementStrength::Forbidden {
             return Err(Error::new(
                 nous_core::ErrorOwner::Observation,
@@ -36,11 +36,10 @@ impl VcpQueryObservation {
             ));
         }
         if !matches!(
-            plan.cognitive_profile,
+            plan.retrieval_policy.cognitive_profile,
             nous_runtime::CognitiveProfile::VcpDtsc | nous_runtime::CognitiveProfile::VcpRiverMemo
-        ) || bound.retrieval_policy.cognitive_profile != plan.cognitive_profile
-            || crate::assets::files::digest(&generation.policy)?
-                != crate::assets::files::digest(&bound.config_snapshot.get(VCP_ASSETS)?)?
+        ) || crate::assets::files::digest(&generation.policy)?
+            != crate::assets::files::digest(&bound.read_context.config_snapshot.get(VCP_ASSETS)?)?
         {
             return Err(Error::new(
                 nous_core::ErrorOwner::Observation,
@@ -70,7 +69,7 @@ impl VcpQueryObservation {
                 "Invalid request",
             ));
         }
-        let mut policy = bound.config_snapshot.get(VCP_QUERY)?;
+        let mut policy = bound.read_context.config_snapshot.get(VCP_QUERY)?;
         policy.validate()?;
         if !plan.expand_topology || plan.topology_nodes < 100 {
             return Err(Error::new(
@@ -103,13 +102,13 @@ impl VcpQueryObservation {
         })?;
         let constraints = &bound.source_query.expression.constraints;
         let config_subset_digest = crate::assets::files::digest(&serde_json::json!({
-            "profile": plan.cognitive_profile, "assets": generation.policy, "query": policy,
+            "profile": plan.retrieval_policy.cognitive_profile, "assets": generation.policy, "query": policy,
             "space": generation.space, "producer": generation.producer.signature_hash,
         }))?;
         Ok(Self {
             query_seeds,
             query_id: bound.query_id.to_string(),
-            profile: plan.cognitive_profile,
+            profile: plan.retrieval_policy.cognitive_profile,
             generation_id: generation.generation_id,
             config_subset_digest,
             bound_at: bound.bound_at,

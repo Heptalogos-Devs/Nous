@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { NousError } from "@nous-wave/client";
 import { create } from "@bufbuild/protobuf";
 import { ReportUseResponseSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
@@ -20,6 +20,7 @@ import { workspaceTemp } from "../../../scripts/workspace.js";
 
 it("invalidates result indices when the next query fails", async () => {
   const root = await workspaceTemp("tests", "cli-failed-query-");
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
   const query = vi
     .fn()
     .mockResolvedValueOnce({

@@ -1,14 +1,13 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::resolve_retrieval_policy;
 use super::types::{
     AccessibilityQueryPolicy, AuthorityReadView, BoundQuery, ExactBinding, ReadContext,
     RevisionPolicy,
 };
 use crate::CognitiveRuntimeService;
 use nous_core::*;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 pub fn planned_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
@@ -138,24 +137,6 @@ fn local_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
     lanes
 }
 
-fn include_concept_lane(
-    query: &CognitiveQuery,
-    enrichment: super::ConceptEnrichment,
-    runtime_refs: &[CognitiveRef],
-    lanes: &mut Vec<EvidenceFamily>,
-) {
-    if !query.is_exact_read()
-        && (enrichment != super::ConceptEnrichment::Off
-            || runtime_refs
-                .iter()
-                .any(|reference| matches!(reference, CognitiveRef::Tag(_))))
-    {
-        lanes.push(EvidenceFamily::TagDirect);
-        lanes.sort();
-        lanes.dedup();
-    }
-}
-
 pub fn explicit_topology(query: &CognitiveQuery) -> bool {
     matches!(
         query.exploration,
@@ -201,25 +182,6 @@ fn validate_hard_constraints(query: &CognitiveQuery) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn budget_values(
-    query: &CognitiveQuery,
-    lanes: &[EvidenceFamily],
-    policy: &super::RetrievalPolicy,
-) -> BTreeMap<EvidenceFamily, usize> {
-    let index = match query.effort {
-        CognitiveEffort::Light => 0,
-        CognitiveEffort::Normal => 1,
-        CognitiveEffort::Deep => 2,
-        CognitiveEffort::Maximum => 3,
-    };
-    let budget = query
-        .result_need
-        .limit
-        .saturating_mul(policy.effort_multipliers[index])
-        .clamp(policy.lane_min, policy.per_lane_max[index]);
-    lanes.iter().copied().map(|lane| (lane, budget)).collect()
 }
 
 impl CognitiveRuntimeService {
@@ -400,7 +362,6 @@ impl CognitiveRuntimeService {
         }
         self.require_subject(query.subject).await?;
         self.canonicalize_query_tags(&mut query, view).await?;
-        let retrieval_policy = resolve_retrieval_policy(&config_snapshot)?;
         if let Some(session) = query.session {
             self.require_session(query.subject, session).await?;
         }
@@ -435,26 +396,7 @@ impl CognitiveRuntimeService {
                 allowed_revision_refs,
             }
         };
-        let concept_enrichment = if query.is_exact_read() {
-            super::ConceptEnrichment::Off
-        } else {
-            config_snapshot.get(super::CONCEPT_ENRICHMENT)?
-        };
-        let mut enabled_lanes = planned_profile_lanes(&query, retrieval_policy.cognitive_profile);
-        include_concept_lane(
-            &query,
-            concept_enrichment,
-            &runtime_refs,
-            &mut enabled_lanes,
-        );
-        if enabled_lanes.is_empty() && !query.requests_resources() {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Runtime,
-                nous_core::ErrorCode::InvalidRequest,
-                "query has no enabled retrieval lane",
-            ));
-        }
-        let lane_budgets = budget_values(&query, &enabled_lanes, &retrieval_policy);
+        let plan = super::QueryPlan::bind(&query, &runtime_refs, &config_snapshot)?;
         let bound_at_authority_seq = read_stamp.authority_seq;
         let exact_target_bypasses_auto_level = !exact_bindings.is_empty();
         let accessibility = AccessibilityQueryPolicy {
@@ -471,7 +413,7 @@ impl CognitiveRuntimeService {
             ),
             temporal: query.temporal_frame.clone(),
             accessibility,
-            config_snapshot: std::sync::Arc::new(config_snapshot.clone()),
+            config_snapshot: std::sync::Arc::new(config_snapshot),
             purge_epoch: read_stamp.serving_purge_epoch,
         };
         representation_sources.extend(
@@ -490,7 +432,7 @@ impl CognitiveRuntimeService {
                 &query,
                 context_snapshot.work_context.as_ref(),
                 representation_sources,
-                &config_snapshot,
+                &read_context.config_snapshot,
                 view,
             )
             .await?;
@@ -501,15 +443,12 @@ impl CognitiveRuntimeService {
             &topology_seed_refs,
         );
         activation.degradation.extend(context_degradation);
-        let topology_required = !query.is_exact_read()
-            && explicit_topology(&query)
-            && retrieval_policy.cognitive_profile.requirements().topology;
         Ok(BoundQuery {
             read_context,
             context_snapshot: std::sync::Arc::new(context_snapshot),
             activation_view: None,
             activation,
-            concept_enrichment,
+            plan,
             representation,
             query_id: Uuid::now_v7(),
             bound_at: self.now(query.subject),
@@ -520,12 +459,7 @@ impl CognitiveRuntimeService {
             runtime_refs,
             runtime_sources,
             topology_seed_refs,
-            enabled_lanes: enabled_lanes.clone(),
-            lane_budgets,
             selected_embedding_space: None,
-            topology_required,
-            config_snapshot,
-            retrieval_policy,
         })
     }
 }
@@ -534,25 +468,14 @@ impl BoundQuery {
     /// Research readout selection from the same closed query/context snapshot.
     pub fn for_profile(&self, profile: super::CognitiveProfile) -> Result<Self> {
         let mut bound = self.clone();
-        bound.config_snapshot = self
-            .config_snapshot
-            .query_override(super::COGNITIVE_PROFILE, profile)?;
-        bound.retrieval_policy = resolve_retrieval_policy(&bound.config_snapshot)?;
-        bound.enabled_lanes = planned_profile_lanes(&bound.source_query, profile);
-        include_concept_lane(
-            &bound.source_query,
-            bound.concept_enrichment,
-            &bound.runtime_refs,
-            &mut bound.enabled_lanes,
+        let config_snapshot = std::sync::Arc::new(
+            self.read_context
+                .config_snapshot
+                .query_override(super::COGNITIVE_PROFILE, profile)?,
         );
-        bound.lane_budgets = budget_values(
-            &bound.source_query,
-            &bound.enabled_lanes,
-            &bound.retrieval_policy,
-        );
-        bound.topology_required = !bound.source_query.is_exact_read()
-            && explicit_topology(&bound.source_query)
-            && profile.requirements().topology;
+        bound.plan =
+            super::QueryPlan::bind(&bound.source_query, &bound.runtime_refs, &config_snapshot)?;
+        bound.read_context.config_snapshot = config_snapshot;
         Ok(bound)
     }
 }

@@ -35,28 +35,21 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let id = receipt
-                        .results
-                        .iter()
-                        .find_map(|result| match &result.reference {
-                            CognitiveRef::Association(id) => Some(*id),
-                            _ => None,
-                        })
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorOwner::Concept,
-                                ErrorCode::InternalFailure,
-                                "association receipt missing result",
-                            )
-                        })?;
-                    return self.association(subject, id).await;
-                }
-                return Err(Error::new(
-                    ErrorOwner::Concept,
-                    ErrorCode::Unavailable,
-                    "association operation is already in progress",
-                ));
+                let id = receipt
+                    .results
+                    .iter()
+                    .find_map(|result| match &result.reference {
+                        CognitiveRef::Association(id) => Some(*id),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InternalFailure,
+                            "association receipt missing result",
+                        )
+                    })?;
+                return self.association(subject, id).await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -504,16 +497,7 @@ impl MemoryService {
             )
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::new(
-                    ErrorOwner::Concept,
-                    ErrorCode::Unavailable,
-                    "association revoke operation is already in progress",
-                ));
-            }
+            MutationStart::Replay(_) => return Ok(()),
             MutationStart::Active(mutation) => mutation,
         };
         let changed = sqlx::query("UPDATE association_evidence SET revoked_at=COALESCE(revoked_at,$3) WHERE subject_id=$1 AND association_evidence_id=$2")

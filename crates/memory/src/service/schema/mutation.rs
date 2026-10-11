@@ -4,7 +4,7 @@
 use super::*;
 
 impl MemoryService {
-    pub async fn create_schema(&self, mut input: CreateSchemaInput) -> Result<SchemaView> {
+    pub async fn create_schema(&self, mut input: CreateSchemaInput) -> Result<MutationResult> {
         input.content.producer = canonical_schema_producer(input.content.producer.as_ref())?;
         self.store.require_subject(input.subject).await?;
         let digest = operation_digest(
@@ -23,35 +23,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let result = receipt.results.iter().find(|result| {
-                        matches!(&result.reference, CognitiveRef::CognitiveSchema(_))
-                    });
-                    let Some(result) = result else {
-                        return Err(Error::new(
-                            ErrorOwner::Concept,
-                            ErrorCode::InternalFailure,
-                            "schema receipt missing result",
-                        ));
-                    };
-                    let CognitiveRef::CognitiveSchema(id) = &result.reference else {
-                        unreachable!();
-                    };
-                    let revision =
-                        receipt_revision_id(&receipt, &CognitiveRef::CognitiveSchema(*id))?;
-                    return self
-                        .schema_at(
-                            input.subject,
-                            *id,
-                            Some(CognitiveSchemaRevisionId(revision)),
-                        )
-                        .await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Concept,
-                    nous_core::ErrorCode::Unavailable,
-                    "schema operation is already in progress",
-                ));
+                return single_mutation_result(receipt, ErrorOwner::Concept);
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -87,14 +59,13 @@ impl MemoryService {
                 ],
             )
             .await?;
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::CognitiveSchema(schema_id),
-                revision_id.0,
-                Some(1),
-            )])
-            .await?;
-        self.schema_revision(input.subject, revision_id).await
+        let result = MutationResult::revised(
+            CognitiveRef::CognitiveSchema(schema_id),
+            revision_id.0,
+            Some(1),
+        );
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
 
     pub(in crate::service) async fn insert_schema_link(
@@ -163,7 +134,7 @@ impl MemoryService {
         operation_id: OperationId,
         expected_object_epoch: i64,
         link: SchemaEvidenceLinkInput,
-    ) -> Result<SchemaView> {
+    ) -> Result<MutationResult> {
         self.store.require_subject(subject).await?;
         self.validate_basis_for_subject(
             ErrorOwner::Concept,
@@ -187,26 +158,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    if !receipt.results.iter().any(|result| {
-                        matches!(
-                            &result.reference,
-                            CognitiveRef::CognitiveSchema(id) if *id == schema_id
-                        )
-                    }) {
-                        return Err(Error::new(
-                            ErrorOwner::Concept,
-                            ErrorCode::InternalFailure,
-                            "schema evidence receipt has no matching result",
-                        ));
-                    }
-                    return self.schema(subject, schema_id).await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Concept,
-                    nous_core::ErrorCode::Unavailable,
-                    "schema evidence operation is already in progress",
-                ));
+                return single_mutation_result(receipt, ErrorOwner::Concept);
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -240,17 +192,16 @@ impl MemoryService {
             "source_basis_changed",
         )
         .await?;
-        mutation
-            .commit(&[MutationResult::new(
-                CognitiveRef::CognitiveSchema(schema_id),
-                None,
-                Some(epoch + 1),
-            )])
-            .await?;
-        self.schema(subject, schema_id).await
+        let result = MutationResult::new(
+            CognitiveRef::CognitiveSchema(schema_id),
+            None,
+            Some(epoch + 1),
+        );
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
 
-    pub async fn revise_schema(&self, mut input: ReviseSchemaInput) -> Result<SchemaView> {
+    pub async fn revise_schema(&self, mut input: ReviseSchemaInput) -> Result<MutationResult> {
         self.store.require_subject(input.subject).await?;
         input.content.producer = canonical_schema_producer(input.content.producer.as_ref())?;
         validate_schema_revision_content(&input)?;
@@ -282,24 +233,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let revision = receipt_revision_id(
-                        &receipt,
-                        &CognitiveRef::CognitiveSchema(input.schema_id),
-                    )?;
-                    return self
-                        .schema_at(
-                            input.subject,
-                            input.schema_id,
-                            Some(CognitiveSchemaRevisionId(revision)),
-                        )
-                        .await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Concept,
-                    nous_core::ErrorCode::Unavailable,
-                    "schema revision operation is already in progress",
-                ));
+                return single_mutation_result(receipt, ErrorOwner::Concept);
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -453,13 +387,12 @@ impl MemoryService {
                 ],
             )
             .await?;
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::CognitiveSchema(input.schema_id),
-                revision_id.0,
-                Some(epoch + 1),
-            )])
-            .await?;
-        self.schema_revision(input.subject, revision_id).await
+        let result = MutationResult::revised(
+            CognitiveRef::CognitiveSchema(input.schema_id),
+            revision_id.0,
+            Some(epoch + 1),
+        );
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
 }

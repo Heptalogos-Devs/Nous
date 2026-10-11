@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nous_core::*;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// The immutable query contract consumed by candidate providers.
@@ -18,7 +18,7 @@ pub struct BoundQuery {
     pub context_snapshot: std::sync::Arc<super::QueryContextSnapshot>,
     pub activation: super::QueryActivation,
     pub activation_view: Option<std::sync::Arc<dyn QueryActivationView>>,
-    pub concept_enrichment: super::ConceptEnrichment,
+    pub plan: super::QueryPlan,
     pub representation: super::QueryRepresentation,
     pub query_id: Uuid,
     pub bound_at: chrono::DateTime<chrono::Utc>,
@@ -29,12 +29,7 @@ pub struct BoundQuery {
     pub runtime_refs: Vec<CognitiveRef>,
     pub runtime_sources: Vec<(CognitiveRef, String)>,
     pub topology_seed_refs: Vec<(CognitiveRef, String)>,
-    pub enabled_lanes: Vec<EvidenceFamily>,
-    pub lane_budgets: BTreeMap<EvidenceFamily, usize>,
     pub selected_embedding_space: Option<EmbeddingSpaceSignature>,
-    pub topology_required: bool,
-    pub config_snapshot: nous_configuration::ConfigSnapshot,
-    pub retrieval_policy: super::RetrievalPolicy,
 }
 
 /// Minimum subject-scoped read facts shared by query, exact, history, and
@@ -115,13 +110,13 @@ pub trait QueryActivationView: QueryReadLease {
 pub struct QueryExecution {
     pub read_lease: Option<std::sync::Arc<dyn QueryReadLease>>,
     pub result: CognitiveQueryResult,
-    pub bound: BoundQuery,
+    pub bound: std::sync::Arc<BoundQuery>,
     pub(super) leaves: Vec<BoundLeaf>,
 }
 #[derive(Debug, Clone)]
 pub(super) struct BoundLeaf {
     pub ordinal: usize,
-    pub bound: BoundQuery,
+    pub bound: std::sync::Arc<BoundQuery>,
     pub hits: Vec<CandidateStamp>,
 }
 #[derive(Debug, Clone)]
@@ -141,14 +136,6 @@ impl From<&CognitiveHit> for CandidateStamp {
 }
 
 impl BoundQuery {
-    pub fn lane_enabled(&self, family: EvidenceFamily) -> bool {
-        self.enabled_lanes.contains(&family)
-    }
-
-    pub fn lane_budget(&self, family: EvidenceFamily) -> usize {
-        self.lane_budgets.get(&family).copied().unwrap_or(0)
-    }
-
     pub fn exact_binding_for(&self, reference: &CognitiveRef) -> Option<&ExactBinding> {
         self.exact_bindings
             .iter()

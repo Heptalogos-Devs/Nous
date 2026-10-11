@@ -197,20 +197,9 @@ fn material_hit(
 
 #[async_trait::async_trait]
 impl nous_runtime::CognitiveContributor for MaterialService {
-    fn owns(&self, reference: &CognitiveRef) -> bool {
-        matches!(
-            reference,
-            CognitiveRef::Artifact(_)
-                | CognitiveRef::Occurrence(_)
-                | CognitiveRef::SourceRegion(_)
-                | CognitiveRef::DerivedRepresentation(_)
-                | CognitiveRef::DerivedRegion(_)
-        )
-    }
     async fn direct_lanes(
         &self,
         bound: &nous_runtime::BoundQuery,
-        plan: &nous_runtime::QueryPlan,
     ) -> Result<Vec<nous_runtime::LaneOutput>> {
         use nous_runtime::{LaneCandidate, LaneOutput, LaneStatus};
         let c = &bound.source_query.expression.constraints;
@@ -220,7 +209,7 @@ impl nous_runtime::CognitiveContributor for MaterialService {
             .targets
             .iter()
             .any(|target| matches!(target, QueryTarget::Exact { .. }))
-            || !bound.lane_enabled(EvidenceFamily::Temporal)
+            || !bound.plan.lane_enabled(EvidenceFamily::Temporal)
             || (!bound.source_query.projection.domain_names().is_empty()
                 && !bound
                     .source_query
@@ -289,7 +278,7 @@ impl nous_runtime::CognitiveContributor for MaterialService {
                 )
                 .push(")");
         }
-        let limit = plan.lane_budget(EvidenceFamily::Temporal);
+        let limit = bound.plan.lane_budget(EvidenceFamily::Temporal);
         sql.push(" ORDER BY observed_at DESC,occurrence_id LIMIT ")
             .push_bind((limit + 1) as i64);
         let ids: Vec<Uuid> = sql

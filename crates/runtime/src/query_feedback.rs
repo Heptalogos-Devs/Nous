@@ -44,7 +44,10 @@ impl CognitiveRuntimeService {
         }
         let subject = bound.source_query.subject;
         let created = self.now(subject);
-        let retention = bound.config_snapshot.get(QUERY_FEEDBACK_RETENTION)?;
+        let retention = bound
+            .read_context
+            .config_snapshot
+            .get(QUERY_FEEDBACK_RETENTION)?;
         let expires = created
             .checked_add_signed(chrono::Duration::seconds(
                 i64::try_from(retention).map_err(|error| {
@@ -91,7 +94,7 @@ impl CognitiveRuntimeService {
             "inferred_tags":activation.inferred_tags.iter().take(8).collect::<Vec<_>>(),
             "novel_concepts":activation.novel_concepts.iter().take(4).collect::<Vec<_>>(),
             "associative_seeds":activation.seeds.iter().take(128).collect::<Vec<_>>(),
-            "profile_id":bound.retrieval_policy.cognitive_profile.id(),
+            "profile_id":bound.plan.retrieval_policy.cognitive_profile.id(),
             "concept_generation":activation.concept_generation,
         });
         let prepared_digest =

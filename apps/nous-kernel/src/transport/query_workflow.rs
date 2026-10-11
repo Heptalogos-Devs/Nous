@@ -9,9 +9,7 @@ use super::*;
 use futures::Stream;
 use nous_core::{Degradation, RequirementStrength, Result};
 use nous_retrieval::{QueryEmbedding, TextEmbeddingOutput};
-use nous_runtime::{
-    BoundQuery, CognitiveContributors, QueryExecution, QueryPlan, QueryRunHostPolicy,
-};
+use nous_runtime::{BoundQuery, CognitiveContributors, QueryExecution, QueryRunHostPolicy};
 use std::pin::Pin;
 
 type QueryUpdates =
@@ -43,10 +41,9 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
             let bound = self
                 .bind_query_request(required(input.query, "query")?)
                 .await?;
-            let plan = QueryPlan::for_bound_query(&bound);
             let embedding_text = bound.representation.text.clone();
-            let embedding_required = query_embedding_needed(&bound, &plan);
-            let inspection = super::query_projection::inspect_bound_query_with_plan(&bound, &plan)?;
+            let embedding_required = query_embedding_needed(&bound);
+            let inspection = super::query_projection::inspect_bound_query(&bound)?;
             let text_embedding_requirement =
                 enum_name(bound.source_query.capabilities.text_embedding);
             let rerank_requirement = enum_name(if bound.source_query.is_exact_read() {
@@ -54,7 +51,7 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
             } else {
                 bound.source_query.capabilities.rerank
             });
-            let concept_enrichment_mode = enum_name(bound.concept_enrichment);
+            let concept_enrichment_mode = enum_name(bound.plan.concept_enrichment);
             let concept_enrichment_requirement =
                 enum_name(bound.source_query.capabilities.query_concept_enrichment);
             let historical_view = bound.read_context.is_historical();
@@ -90,7 +87,7 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
 
         // Bind and preflight before returning the response stream. Everything
         // after this point lives in that stream's future and drops with it.
-        let (bound, plan, host_policy, slot, embedding_handoff, concept_handoff) =
+        let (bound, host_policy, slot, embedding_handoff, concept_handoff) =
             self.start_query_run(input).await.map_err(status)?;
         let first_update = if embedding_handoff {
             Some(self.embedding_update(&bound).await.map_err(status)?)
@@ -151,7 +148,7 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                 }
 
                 bound = service
-                    .activate_bound_query(bound, &plan)
+                    .activate_bound_query(bound)
                     .await
                     .map_err(status)?;
 
@@ -178,7 +175,7 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                 }
 
                 let execution = service
-                    .execute_query(bound, &plan, host_policy)
+                    .execute_query(bound, host_policy)
                     .await
                     .map_err(status)?;
                 let rerank_expected = rerank_expected(&execution, host_policy);
@@ -240,7 +237,7 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                         frame => Err(unexpected_query_frame(frame))?,
                     };
                     let complete = service
-                        .finalize_query_execution(execution, &plan, host_policy, input)
+                        .finalize_query_execution(execution, host_policy, input)
                         .await?;
                     drop(slot);
                     yield complete;
@@ -257,11 +254,8 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                         result,
                         ..
                     } = completed;
-                    let inspection = super::query_projection::inspect_bound_query_with_plan(
-                        &completed_bound,
-                        &plan,
-                    )
-                    .map_err(status)?;
+                    let inspection = super::query_projection::inspect_bound_query(&completed_bound)
+                        .map_err(status)?;
                     let response =
                         super::query_projection::query_response(result, Some(inspection));
                     service
@@ -290,7 +284,6 @@ impl KernelService {
         input: k::QueryRunStart,
     ) -> Result<(
         BoundQuery,
-        QueryPlan,
         QueryRunHostPolicy,
         tokio::sync::OwnedSemaphorePermit,
         bool,
@@ -300,8 +293,7 @@ impl KernelService {
             .bind_query_request(required(input.query, "query")?)
             .await?;
         let host = host_plan(input.host);
-        let plan = QueryPlan::for_bound_query(&bound);
-        let embedding_needed = query_embedding_needed(&bound, &plan);
+        let embedding_needed = query_embedding_needed(&bound);
         let has_embedding_provider = self.0.serving.embedding().is_some();
         let effective_host = QueryRunHostPolicy::for_query(&bound.source_query, host)?;
         let embedding_handoff = embedding_needed
@@ -328,28 +320,32 @@ impl KernelService {
             });
         }
         let concept_handoff = !bound.source_query.is_exact_read()
-            && bound.concept_enrichment == nous_runtime::ConceptEnrichment::Model
+            && bound.plan.concept_enrichment == nous_runtime::ConceptEnrichment::Model
             && bound.source_query.capabilities.query_concept_enrichment
                 != RequirementStrength::Forbidden
             && effective_host.concept_enrichment.requirement != RequirementStrength::Forbidden
             && effective_host.concept_enrichment.configured;
-        if bound.concept_enrichment == nous_runtime::ConceptEnrichment::Model
+        if bound.plan.concept_enrichment == nous_runtime::ConceptEnrichment::Model
             && effective_host.concept_enrichment.requirement == RequirementStrength::Required
             && !concept_handoff
         {
             return Err(capability_error("model.query_concept_enrichment"));
         }
-        if bound.concept_enrichment == nous_runtime::ConceptEnrichment::Model && !concept_handoff {
+        if bound.plan.concept_enrichment == nous_runtime::ConceptEnrichment::Model
+            && !concept_handoff
+        {
             bound.activation.degradation.push(Degradation {
                 code: "query_concept_model_unavailable".into(),
                 detail: None,
             });
         }
-        let limit = bound.config_snapshot.get(nous_runtime::QUERY_SLOTS)?;
+        let limit = bound
+            .read_context
+            .config_snapshot
+            .get(nous_runtime::QUERY_SLOTS)?;
         let slot = self.0.cognition.acquire_query_slot(limit)?;
         Ok((
             bound,
-            plan,
             effective_host,
             slot,
             embedding_handoff,
@@ -456,9 +452,10 @@ impl KernelService {
                         .map(|item| nous_runtime::NovelConceptHypothesis { text: item.text })
                         .collect(),
                 };
-                let policy =
-                    nous_runtime::ConceptActivationPolicy::from_snapshot(&bound.config_snapshot)
-                        .map_err(status)?;
+                let policy = nous_runtime::ConceptActivationPolicy::from_snapshot(
+                    &bound.read_context.config_snapshot,
+                )
+                .map_err(status)?;
                 bound
                     .activation
                     .apply_concept_model(output, &policy)
@@ -488,7 +485,6 @@ impl KernelService {
     async fn finalize_query_execution(
         &self,
         mut execution: QueryExecution,
-        plan: &QueryPlan,
         host_policy: QueryRunHostPolicy,
         value: k::QueryFinalizeResult,
     ) -> std::result::Result<k::QueryRunUpdate, Status> {
@@ -517,7 +513,10 @@ impl KernelService {
                     return Err(rpc_status(failure));
                 }
                 if rerank_expected {
-                    add_degradation(&mut execution.bound, "query_rerank_unavailable");
+                    add_degradation(
+                        std::sync::Arc::make_mut(&mut execution.bound),
+                        "query_rerank_unavailable",
+                    );
                 }
             }
             Some(k::query_rerank_result::Outcome::NotRequested(_)) | None => {
@@ -527,7 +526,10 @@ impl KernelService {
                     return Err(status(capability_error("model.query_rerank")));
                 }
                 if rerank_expected {
-                    add_degradation(&mut execution.bound, "query_rerank_unavailable");
+                    add_degradation(
+                        std::sync::Arc::make_mut(&mut execution.bound),
+                        "query_rerank_unavailable",
+                    );
                 }
             }
         }
@@ -549,8 +551,7 @@ impl KernelService {
             .collect::<Result<Vec<_>>>()
             .map_err(status)?;
         let inspected =
-            super::query_projection::inspect_bound_query_with_plan(&execution.bound, plan)
-                .map_err(status)?;
+            super::query_projection::inspect_bound_query(&execution.bound).map_err(status)?;
         let subject = execution.bound.read_context.subject;
         let read_context = execution.bound.read_context.clone();
         let contributors = self.contributors(subject).await.map_err(status)?;
@@ -588,16 +589,12 @@ impl KernelService {
         })
     }
 
-    async fn activate_bound_query(
-        &self,
-        mut bound: BoundQuery,
-        plan: &QueryPlan,
-    ) -> Result<BoundQuery> {
+    async fn activate_bound_query(&self, mut bound: BoundQuery) -> Result<BoundQuery> {
         if !bound.source_query.is_exact_read() && bound.activation_view.is_none() {
             use nous_runtime::SharedLaneProvider;
             let (projection, view, activation) =
                 nous_retrieval::with_query_material(Vec::new(), async {
-                    let (projection, view) = self.0.serving.prepare_query(&bound, plan).await?;
+                    let (projection, view) = self.0.serving.prepare_query(&bound).await?;
                     let activation = view.activate(&bound).await?;
                     Ok::<_, nous_core::Error>((projection, view, activation))
                 })
@@ -645,10 +642,8 @@ impl KernelService {
     async fn execute_query(
         &self,
         bound: BoundQuery,
-        plan: &QueryPlan,
         host_policy: QueryRunHostPolicy,
     ) -> Result<QueryExecution> {
-        let plan = plan.clone();
         let has_text = !bound.representation.text.trim().is_empty();
         let can_rerank = !bound.source_query.is_exact_read()
             && has_text
@@ -672,8 +667,7 @@ impl KernelService {
             .unwrap_or_default();
         let mut execution = Box::pin(nous_retrieval::with_query_material(
             materials,
-            self.0
-                .execute_bound_query_with_plan(bound, plan, pool_limit),
+            self.0.execute_bound_query(bound, pool_limit),
         ))
         .await?;
         let rerank_candidates = execution
@@ -697,10 +691,13 @@ impl KernelService {
             && host_policy.rerank.requirement != RequirementStrength::Forbidden
             && !host_policy.rerank.configured
         {
-            execution.bound.activation.degradation.push(Degradation {
-                code: "query_rerank_unavailable".into(),
-                detail: None,
-            });
+            std::sync::Arc::make_mut(&mut execution.bound)
+                .activation
+                .degradation
+                .push(Degradation {
+                    code: "query_rerank_unavailable".into(),
+                    detail: None,
+                });
         }
         if rerank_expected
             && host_policy.rerank.requirement == RequirementStrength::Required
@@ -767,8 +764,8 @@ fn rerank_expected(execution: &QueryExecution, host_policy: QueryRunHostPolicy) 
             >= 2
 }
 
-fn query_embedding_needed(bound: &BoundQuery, plan: &QueryPlan) -> bool {
-    let need = plan.serving_need(&bound.source_query);
+fn query_embedding_needed(bound: &BoundQuery) -> bool {
+    let need = bound.plan.serving_need(&bound.source_query);
     !bound.source_query.is_exact_read()
         && bound.source_query.capabilities.text_embedding != RequirementStrength::Forbidden
         && !bound.representation.text.is_empty()

@@ -271,6 +271,50 @@ impl MemoryService {
             })
     }
 
+    /// Materialize cognition results at the response boundary. An immutable
+    /// revision recorded beside an object reference always selects that exact
+    /// revision; object-only results select the current view.
+    pub async fn read_mutation_cognitions(
+        &self,
+        subject: SubjectId,
+        results: &[MutationResult],
+    ) -> Result<Vec<CognitionView>> {
+        let mut references = Vec::with_capacity(results.len());
+        for result in results {
+            let (kind, _, is_revision) = CognitionKind::from_reference(&result.reference)?;
+            let reference = match (is_revision, result.revision_id) {
+                (true, Some(_)) => {
+                    return Err(Error::new(
+                        cognition_owner(kind),
+                        ErrorCode::InternalFailure,
+                        "mutation result contains both an exact revision reference and a revision id",
+                    ));
+                }
+                (true, None) => result.reference.clone(),
+                (false, Some(revision)) => revision_ref(kind, revision),
+                (false, None) => result.reference.clone(),
+            };
+            references.push(reference);
+        }
+
+        let context = self.current_read_context(subject).await?;
+        let mut views = self.read_cognitions(&context, &references).await?;
+        results
+            .iter()
+            .zip(references)
+            .map(|(result, reference)| {
+                let (kind, _, _) = CognitionKind::from_reference(&result.reference)?;
+                views.remove(&reference).ok_or_else(|| {
+                    Error::new(
+                        cognition_owner(kind),
+                        ErrorCode::NotFound,
+                        "cognition mutation result is no longer readable",
+                    )
+                })
+            })
+            .collect()
+    }
+
     /// Return object refs in the common keyset order used by all four family
     /// list commands. The caller retains its kind-specific page-token scope.
     pub async fn list_cognition_refs(

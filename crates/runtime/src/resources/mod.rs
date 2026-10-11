@@ -123,9 +123,10 @@ impl CognitiveRuntimeService {
 
     pub async fn resource_actions_for_query(
         &self,
-        query: &CognitiveQuery,
-        plan: &QueryPlan,
+        bound: &BoundQuery,
     ) -> Result<(Vec<ResourceActionSuggestion>, Vec<Degradation>)> {
+        let query = &bound.source_query;
+        let plan = &bound.plan;
         if !query.requests_resources() {
             return Ok((Vec::new(), Vec::new()));
         }

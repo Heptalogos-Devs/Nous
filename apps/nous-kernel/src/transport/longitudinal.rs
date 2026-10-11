@@ -4,8 +4,8 @@
 use super::*;
 use nous_core::{EpisodeRevisionId, JournalId, JournalRevisionId, OperationId, Result};
 use nous_memory::{
-    EpisodePartitionInput, EpisodePartitionSegment, EpisodePartitionSource, JournalInput,
-    JournalPoint, JournalTarget,
+    CognitionView, EpisodePartitionInput, EpisodePartitionSegment, EpisodePartitionSource,
+    JournalInput, JournalPoint, JournalTarget,
 };
 use nous_runtime::{MaintenanceDisposition, MaintenanceNeed};
 
@@ -179,11 +179,12 @@ impl KernelService {
         &self,
         input: k::ApplyEpisodePartitionRequest,
     ) -> Result<k::ApplyEpisodePartitionResponse> {
-        let result = self
-            .require_memory()?
+        let subject = SubjectId(id(&input.subject_id)?);
+        let memory = self.require_memory()?;
+        let results = memory
             .apply_episode_partition(EpisodePartitionInput {
                 operation_id: OperationId(id(&input.operation_id)?),
-                subject: SubjectId(id(&input.subject_id)?),
+                subject,
                 expected_authority_seq: input.expected_authority_seq,
                 sources: input
                     .sources
@@ -211,9 +212,19 @@ impl KernelService {
                 producer: input.producer.map(from_producer).transpose()?,
             })
             .await?;
-        Ok(k::ApplyEpisodePartitionResponse {
-            episodes: result.into_iter().map(episode::view).collect(),
-        })
+        let views = memory.read_mutation_cognitions(subject, &results).await?;
+        let episodes = views
+            .into_iter()
+            .map(|view| match view {
+                CognitionView::Episode(value) => Ok(episode::view(value)),
+                _ => Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "episode partition result did not materialize as Episode",
+                )),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(k::ApplyEpisodePartitionResponse { episodes })
     }
     pub(super) async fn commit_journal(
         &self,
@@ -249,11 +260,12 @@ impl KernelService {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let result = self
-            .require_memory()?
+        let subject = SubjectId(id(&input.subject_id)?);
+        let memory = self.require_memory()?;
+        let result = memory
             .commit_journal(JournalInput {
                 operation_id: OperationId(id(&input.operation_id)?),
-                subject: SubjectId(id(&input.subject_id)?),
+                subject,
                 expected_authority_seq: input.expected_authority_seq,
                 target,
                 sources: input
@@ -267,6 +279,16 @@ impl KernelService {
                 producer: input.producer.map(from_producer).transpose()?,
             })
             .await?;
-        Ok(journal::journal_response(result))
+        let mut views = memory
+            .read_mutation_cognitions(subject, std::slice::from_ref(&result))
+            .await?;
+        match views.pop() {
+            Some(CognitionView::Journal(value)) => Ok(journal::journal_response(value)),
+            _ => Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InternalFailure,
+                "journal mutation result did not materialize as Journal",
+            )),
+        }
     }
 }

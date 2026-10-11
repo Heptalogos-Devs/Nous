@@ -30,37 +30,41 @@ pub struct IdentityAddress {
     pub status: String,
 }
 
+const LEXICAL_PREFIXES: &[(&str, &str)] = &[
+    ("entity", "ent"),
+    ("memory", "mem"),
+    ("memory_revision", "memrev"),
+    ("cognitive_schema", "schema"),
+    ("cognitive_schema_revision", "schemarev"),
+    ("tag", "tag"),
+    ("artifact", "art"),
+    ("occurrence", "obs"),
+    ("source_region", "src"),
+    ("derived_representation", "repr"),
+    ("derived_region", "region"),
+    ("session", "session"),
+    ("subject", "sub"),
+    ("work_context", "ctx"),
+    ("association", "assoc"),
+    ("episode", "ep"),
+    ("episode_revision", "eprev"),
+    ("journal", "journal"),
+    ("journal_revision", "journalrev"),
+    ("cognitive_seed_version", "seed"),
+    ("resource", "res"),
+];
+
 pub fn lexical_prefix(kind: &str) -> Result<&'static str> {
-    Ok(match kind {
-        "entity" => "ent",
-        "memory" => "mem",
-        "memory_revision" => "memrev",
-        "cognitive_schema" => "schema",
-        "cognitive_schema_revision" => "schemarev",
-        "tag" => "tag",
-        "artifact" => "art",
-        "occurrence" => "obs",
-        "source_region" => "src",
-        "derived_representation" => "repr",
-        "derived_region" => "region",
-        "session" => "session",
-        "subject" => "sub",
-        "work_context" => "ctx",
-        "association" => "assoc",
-        "episode" => "ep",
-        "episode_revision" => "eprev",
-        "journal" => "journal",
-        "journal_revision" => "journalrev",
-        "cognitive_seed_version" => "seed",
-        "resource" => "res",
-        _ => {
-            return Err(Error::new(
+    LEXICAL_PREFIXES
+        .iter()
+        .find_map(|(registered_kind, prefix)| (*registered_kind == kind).then_some(*prefix))
+        .ok_or_else(|| {
+            Error::new(
                 nous_core::ErrorOwner::Identity,
                 nous_core::ErrorCode::InvalidRequest,
                 "object kind has no lexical address",
-            ));
-        }
-    })
+            )
+        })
 }
 pub fn validate_lexical(value: &str) -> Result<&str> {
     let (kind, body) = value.split_once(':').ok_or_else(|| {
@@ -70,30 +74,10 @@ pub fn validate_lexical(value: &str) -> Result<&str> {
             "INVALID_LEXICAL_REF",
         )
     })?;
-    if !matches!(
-        kind,
-        "ent"
-            | "mem"
-            | "memrev"
-            | "schema"
-            | "schemarev"
-            | "tag"
-            | "art"
-            | "obs"
-            | "src"
-            | "repr"
-            | "region"
-            | "session"
-            | "sub"
-            | "ctx"
-            | "assoc"
-            | "ep"
-            | "eprev"
-            | "journal"
-            | "journalrev"
-            | "seed"
-            | "res"
-    ) {
+    if !LEXICAL_PREFIXES
+        .iter()
+        .any(|(_, registered_prefix)| *registered_prefix == kind)
+    {
         return Err(Error::new(
             nous_core::ErrorOwner::Identity,
             nous_core::ErrorCode::InvalidRequest,

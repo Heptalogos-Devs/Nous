@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{BoundQuery, CognitiveContributors, QueryPlan, planned_lanes};
+use super::{BoundQuery, CognitiveContributors, planned_lanes};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
 use std::collections::{BTreeMap, HashMap};
@@ -173,9 +173,10 @@ impl CognitiveRuntimeService {
         &self,
         bound: BoundQuery,
         contributors: CognitiveContributors<'_>,
-        plan: QueryPlan,
         output_limit: usize,
     ) -> Result<super::QueryExecution> {
+        let bound = std::sync::Arc::new(bound);
+        let plan = &bound.plan;
         let mut scopes = Vec::new();
         leaves(&bound.source_query.expression, None, &mut scopes);
         let count = scopes.len();
@@ -216,7 +217,7 @@ impl CognitiveRuntimeService {
                 outputs.push(Vec::new());
                 continue;
             };
-            let mut branch = bound.clone();
+            let mut branch = bound.as_ref().clone();
             branch.source_query.expression = scope;
             branch.source_query.expression.preferences.clear();
             branch.exact_bindings.retain(|binding| branch.source_query.expression.targets.iter().any(|target| matches!(target, QueryTarget::Exact { reference } if reference == &binding.requested_ref)));
@@ -231,13 +232,13 @@ impl CognitiveRuntimeService {
             );
             let mut local = planned_lanes(&branch.source_query);
             if !branch.source_query.is_exact_read()
-                && bound.concept_enrichment != super::ConceptEnrichment::Off
+                && plan.concept_enrichment != super::ConceptEnrichment::Off
             {
                 local.push(EvidenceFamily::TagDirect);
                 local.sort();
                 local.dedup();
             }
-            branch.lane_budgets = plan
+            branch.plan.lane_budgets = plan
                 .lane_budgets
                 .iter()
                 .map(|(&lane, &total)| {
@@ -251,34 +252,38 @@ impl CognitiveRuntimeService {
                     )
                 })
                 .collect();
-            branch.enabled_lanes = local
+            branch.plan.enabled_lanes = local
                 .into_iter()
-                .filter(|lane| branch.lane_budget(*lane) > 0)
+                .filter(|lane| branch.plan.lane_budget(*lane) > 0)
                 .collect();
-            if branch.enabled_lanes.is_empty() && !branch.source_query.requests_resources() {
+            if branch.plan.enabled_lanes.is_empty() && !branch.source_query.requests_resources() {
                 outputs.push(Vec::new());
                 continue;
             }
-            let mut branch_plan = plan.clone();
-            branch_plan.enabled_lanes = branch.enabled_lanes.clone();
-            branch_plan.lane_budgets = branch.lane_budgets.clone();
-            branch_plan.candidate_limit = branch.lane_budgets.values().copied().max().unwrap_or(0);
-            branch_plan.final_validation_budget = validation_budget;
-            branch_plan.topology_nodes = allocation(plan.topology_nodes, index, count);
-            branch_plan.resource_limit = allocation(plan.resource_limit, index, count);
-            branch_plan.expand_topology =
-                branch.enabled_lanes.contains(&EvidenceFamily::TopologyWave);
+            branch.plan.candidate_limit = branch
+                .plan
+                .lane_budgets
+                .values()
+                .copied()
+                .max()
+                .unwrap_or(0);
+            branch.plan.final_validation_budget = validation_budget;
+            branch.plan.topology_nodes = allocation(plan.topology_nodes, index, count);
+            branch.plan.resource_limit = allocation(plan.resource_limit, index, count);
+            branch.plan.expand_topology = branch
+                .plan
+                .enabled_lanes
+                .contains(&EvidenceFamily::TopologyWave);
             if branch.source_query.is_exact_read() {
-                branch.concept_enrichment = super::ConceptEnrichment::Off;
-                branch_plan.concept_enrichment = super::ConceptEnrichment::Off;
-                branch_plan.sense_cues = false;
+                branch.plan.concept_enrichment = super::ConceptEnrichment::Off;
+                branch.plan.sense_cues = false;
             }
             let mut value = self
-                .query_atom_with_plan(&branch, &contributors, branch_plan, validation_budget)
+                .query_atom(&branch, &contributors, validation_budget)
                 .await?;
             snapshots.push(super::types::BoundLeaf {
                 ordinal: index,
-                bound: branch,
+                bound: std::sync::Arc::new(branch),
                 hits: value
                     .results
                     .iter()
@@ -371,8 +376,12 @@ fn finalize(
             &mut preferences,
         );
         hit.match_evidence.baseline_rank = (rank + 1) as u32;
-        hit.match_evidence.preference_score =
-            super::preferences::score(&preferences, hit, bound.bound_at, &bound.retrieval_policy);
+        hit.match_evidence.preference_score = super::preferences::score(
+            &preferences,
+            hit,
+            bound.bound_at,
+            &bound.plan.retrieval_policy,
+        );
         hit.match_evidence.final_score =
             hit.match_evidence.base_rank_score + hit.match_evidence.preference_score;
     }

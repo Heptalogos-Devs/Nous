@@ -13,7 +13,7 @@ import { CreateSubjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alph
 import { KernelClient } from "../../apps/nous-core/src/kernel-client.js";
 import { createCore } from "../../apps/nous-core/src/server.js";
 import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
-import { modelConfigurationSchema } from "../../apps/nous-core/src/model/configuration.js";
+import { modelExecutionSchema } from "../../apps/nous-core/src/model/configuration.js";
 import {
   episodePartitionSchema,
   journalSynthesisSchema,
@@ -37,7 +37,7 @@ function proposalModels() {
     format: "nous.model.execution",
     implementationDigest: "0".repeat(64),
     role,
-    configuration: modelConfigurationSchema.parse({}),
+    configuration: modelExecutionSchema.parse({}),
     profileDigest: "a".repeat(64),
     configDigest: "b".repeat(64),
   });

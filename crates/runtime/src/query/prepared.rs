@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{BoundQuery, CognitiveContributors, QueryExecution};
+use super::{BoundQuery, CognitiveContributors, QueryExecution, orchestrate::contributor_index};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
 use std::collections::{HashMap, HashSet};
@@ -195,16 +195,15 @@ impl CognitiveRuntimeService {
             .filter(|scope| scope.operation == QueryOperation::Atom)
             .count();
         let mut outputs = vec![Vec::new(); leaf_count];
+        let owners = [contributors.memory, contributors.material];
         for leaf in &execution.leaves {
             let mut fresh = HashMap::new();
-            for owner in [contributors.memory, contributors.material]
-                .into_iter()
-                .flatten()
-            {
+            for (index, owner) in owners.iter().enumerate() {
+                let Some(owner) = owner else { continue };
                 let references = leaf
                     .hits
                     .iter()
-                    .filter(|hit| owner.owns(&hit.reference))
+                    .filter(|hit| contributor_index(&hit.reference) == Some(index))
                     .map(|hit| hit.reference.clone())
                     .collect::<Vec<_>>();
                 let (hits, _) = owner
@@ -216,10 +215,8 @@ impl CognitiveRuntimeService {
                 if !pool.contains(&hit.reference) {
                     continue;
                 }
-                let valid = if [contributors.memory, contributors.material]
-                    .into_iter()
-                    .flatten()
-                    .any(|owner| owner.owns(&hit.reference))
+                let valid = if contributor_index(&hit.reference)
+                    .is_some_and(|index| owners[index].is_some())
                 {
                     same_stamp(fresh.get(&hit.reference), hit)
                 } else {
@@ -268,7 +265,7 @@ impl CognitiveRuntimeService {
             apply_model_order(
                 &mut result.results,
                 order,
-                execution.bound.retrieval_policy.rrf_k,
+                execution.bound.plan.retrieval_policy.rrf_k,
             );
         }
         result = finalize_query_response(&execution.bound, result);

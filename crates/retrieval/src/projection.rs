@@ -81,18 +81,19 @@ impl ServingService {
             .collect();
         let mut roots = HashMap::<CognitiveRef, BTreeSet<EvidenceRoot>>::new();
         for reference in references {
-            let contribution =
-                if nous_runtime::CognitiveContributor::owns(&self.material, &reference) {
-                    self.material
-                        .lineage_roots(subject, &reference, view)
-                        .await?
-                } else if let Some(memory) = self.memory.as_ref().filter(|_| memory_enabled) {
-                    memory
-                        .provenance_for_reference(subject, &reference, view)
-                        .await?
-                } else {
-                    BTreeSet::new()
-                };
+            let contribution = if nous_runtime::query_owner(&reference)
+                == Some(nous_runtime::QueryOwner::Material)
+            {
+                self.material
+                    .lineage_roots(subject, &reference, view)
+                    .await?
+            } else if let Some(memory) = self.memory.as_ref().filter(|_| memory_enabled) {
+                memory
+                    .provenance_for_reference(subject, &reference, view)
+                    .await?
+            } else {
+                BTreeSet::new()
+            };
             roots.insert(reference, contribution);
         }
         if view.is_none() && self.store.authority_seq(subject).await? != authority_watermark {
@@ -172,7 +173,8 @@ impl ServingService {
         let material_refs: Vec<_> = sources
             .iter()
             .filter(|source| {
-                nous_runtime::CognitiveContributor::owns(&self.material, &source.reference)
+                nous_runtime::query_owner(&source.reference)
+                    == Some(nous_runtime::QueryOwner::Material)
             })
             .map(|source| source.reference.clone())
             .collect();
@@ -186,17 +188,18 @@ impl ServingService {
         }
         let mut documents = Vec::new();
         for source in sources {
-            let mut text =
-                if nous_runtime::CognitiveContributor::owns(&self.material, &source.reference) {
-                    let Some(input) = selected.remove(&source.reference) else {
-                        continue;
-                    };
-                    input.text
-                } else if let Some(text) = source.text {
-                    text
-                } else {
+            let mut text = if nous_runtime::query_owner(&source.reference)
+                == Some(nous_runtime::QueryOwner::Material)
+            {
+                let Some(input) = selected.remove(&source.reference) else {
                     continue;
                 };
+                input.text
+            } else if let Some(text) = source.text {
+                text
+            } else {
+                continue;
+            };
             let mut member_bytes = 0;
             for fragment in source.member_fragments {
                 let member = self

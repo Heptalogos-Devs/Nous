@@ -1,15 +1,15 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::BoundQuery;
 use super::bind::planned_profile_lanes;
+use nous_configuration::ConfigSnapshot;
 use nous_core::*;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct QueryPlan {
     pub concept_enrichment: super::ConceptEnrichment,
-    pub cognitive_profile: super::CognitiveProfile,
+    pub retrieval_policy: super::RetrievalPolicy,
     pub enabled_lanes: Vec<EvidenceFamily>,
     pub lane_budgets: BTreeMap<EvidenceFamily, usize>,
     /// Shared upper bound for bounded non-exact providers; execution is lane-specific.
@@ -25,63 +25,63 @@ pub struct QueryPlan {
 }
 
 impl QueryPlan {
-    pub fn for_bound_query(bound: &BoundQuery) -> Self {
-        let mut plan = Self::from_parts(
-            &bound.source_query,
-            bound.enabled_lanes.clone(),
-            bound.lane_budgets.clone(),
-            &bound.retrieval_policy,
-        );
-        plan.concept_enrichment = bound.concept_enrichment;
-        plan
-    }
-
-    /// Retained for local plan tests and non-authority callers. Production
-    /// query execution uses `BoundQuery::bind_query` and `for_bound_query`.
-    pub fn for_query(query: &CognitiveQuery) -> Self {
-        let policy = super::RetrievalPolicy::reference();
-        let lanes = planned_profile_lanes(query, policy.cognitive_profile);
-        let index = effort_index(query.effort);
-        let multiplier = policy.effort_multipliers[index];
-        let per_lane_max = policy.per_lane_max[index];
-        let budget = query
-            .result_need
-            .limit
-            .saturating_mul(multiplier)
-            .clamp(policy.lane_min, per_lane_max);
-        let budgets = lanes.iter().copied().map(|lane| (lane, budget)).collect();
-        Self::from_parts(query, lanes, budgets, &policy)
-    }
-
-    fn from_parts(
+    pub(super) fn bind(
         query: &CognitiveQuery,
-        enabled_lanes: Vec<EvidenceFamily>,
-        lane_budgets: BTreeMap<EvidenceFamily, usize>,
-        retrieval_policy: &super::RetrievalPolicy,
-    ) -> Self {
+        runtime_refs: &[CognitiveRef],
+        config_snapshot: &ConfigSnapshot,
+    ) -> Result<Self> {
+        let retrieval_policy = super::resolve_retrieval_policy(config_snapshot)?;
+        let concept_enrichment = if query.is_exact_read() {
+            super::ConceptEnrichment::Off
+        } else {
+            config_snapshot.get(super::CONCEPT_ENRICHMENT)?
+        };
+        Self::from_policy(query, runtime_refs, concept_enrichment, retrieval_policy)
+    }
+
+    pub fn from_policy(
+        query: &CognitiveQuery,
+        runtime_refs: &[CognitiveRef],
+        concept_enrichment: super::ConceptEnrichment,
+        retrieval_policy: super::RetrievalPolicy,
+    ) -> Result<Self> {
+        let mut enabled_lanes = planned_profile_lanes(query, retrieval_policy.cognitive_profile);
+        include_concept_lane(query, concept_enrichment, runtime_refs, &mut enabled_lanes);
+        if enabled_lanes.is_empty() && !query.requests_resources() {
+            return Err(Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::InvalidRequest,
+                "query has no enabled retrieval lane",
+            ));
+        }
+        let lane_budgets = budget_values(query, &enabled_lanes, &retrieval_policy);
         let index = effort_index(query.effort);
         let candidate_limit = lane_budgets.values().copied().max().unwrap_or(0);
-        Self {
-            concept_enrichment: super::ConceptEnrichment::Off,
-            cognitive_profile: retrieval_policy.cognitive_profile,
-            enabled_lanes: enabled_lanes.clone(),
+        let expand_topology = enabled_lanes.contains(&EvidenceFamily::TopologyWave)
+            && retrieval_policy.cognitive_profile.requirements().topology;
+        let final_validation_budget = query
+            .result_need
+            .limit
+            .saturating_mul(retrieval_policy.validation_multiplier)
+            .clamp(
+                retrieval_policy.validation_min,
+                retrieval_policy.validation_max,
+            );
+        let topology_rounds = retrieval_policy.topology_hops[index];
+        let topology_nodes = retrieval_policy.topology_states[index];
+        let resource_limit = retrieval_policy.resource_limits[index];
+        Ok(Self {
+            concept_enrichment,
+            enabled_lanes,
             lane_budgets,
             candidate_limit,
-            final_validation_budget: query
-                .result_need
-                .limit
-                .saturating_mul(retrieval_policy.validation_multiplier)
-                .clamp(
-                    retrieval_policy.validation_min,
-                    retrieval_policy.validation_max,
-                ),
+            final_validation_budget,
             sense_cues: !query.is_exact_read()
                 && query.capabilities.residual_sensing == RequirementStrength::Required,
-            expand_topology: enabled_lanes.contains(&EvidenceFamily::TopologyWave)
-                && retrieval_policy.cognitive_profile.requirements().topology,
-            topology_rounds: retrieval_policy.topology_hops[index],
-            topology_nodes: retrieval_policy.topology_states[index],
-            resource_limit: retrieval_policy.resource_limits[index],
+            expand_topology,
+            topology_rounds,
+            topology_nodes,
+            resource_limit,
             materialize_evidence: query.result_need.need_evidence
                 && matches!(
                     query.effort,
@@ -89,11 +89,16 @@ impl QueryPlan {
                 ),
             prefer_resource_synopsis: query.resources.synopsis_only
                 || matches!(query.exploration, ExplorationIntent::Global),
-        }
+            retrieval_policy,
+        })
     }
 
     pub fn lane_budget(&self, family: EvidenceFamily) -> usize {
         self.lane_budgets.get(&family).copied().unwrap_or(0)
+    }
+
+    pub fn lane_enabled(&self, family: EvidenceFamily) -> bool {
+        self.enabled_lanes.contains(&family)
     }
 
     pub fn serving_need(&self, query: &CognitiveQuery) -> ServingNeed {
@@ -115,7 +120,11 @@ impl QueryPlan {
             dense: (has_text || has_semantic_cue)
                 && (self.enabled_lanes.contains(&EvidenceFamily::Dense)
                     || (self.expand_topology
-                        && self.cognitive_profile.requirements().query_embedding)),
+                        && self
+                            .retrieval_policy
+                            .cognitive_profile
+                            .requirements()
+                            .query_embedding)),
             topology: self.expand_topology,
             concept: self.enabled_lanes.contains(&EvidenceFamily::TagDirect)
                 || self.expand_topology
@@ -123,7 +132,11 @@ impl QueryPlan {
             concept_vectors: query.capabilities.text_embedding != RequirementStrength::Forbidden
                 && (self.concept_enrichment != super::ConceptEnrichment::Off
                     || (self.expand_topology
-                        && self.cognitive_profile.requirements().query_embedding)
+                        && self
+                            .retrieval_policy
+                            .cognitive_profile
+                            .requirements()
+                            .query_embedding)
                     || self.sense_cues),
         }
     }
@@ -142,6 +155,38 @@ fn effort_index(effort: CognitiveEffort) -> usize {
         CognitiveEffort::Deep => 2,
         CognitiveEffort::Maximum => 3,
     }
+}
+
+fn include_concept_lane(
+    query: &CognitiveQuery,
+    enrichment: super::ConceptEnrichment,
+    runtime_refs: &[CognitiveRef],
+    lanes: &mut Vec<EvidenceFamily>,
+) {
+    if !query.is_exact_read()
+        && (enrichment != super::ConceptEnrichment::Off
+            || runtime_refs
+                .iter()
+                .any(|reference| matches!(reference, CognitiveRef::Tag(_))))
+    {
+        lanes.push(EvidenceFamily::TagDirect);
+        lanes.sort();
+        lanes.dedup();
+    }
+}
+
+fn budget_values(
+    query: &CognitiveQuery,
+    lanes: &[EvidenceFamily],
+    policy: &super::RetrievalPolicy,
+) -> BTreeMap<EvidenceFamily, usize> {
+    let index = effort_index(query.effort);
+    let budget = query
+        .result_need
+        .limit
+        .saturating_mul(policy.effort_multipliers[index])
+        .clamp(policy.lane_min, policy.per_lane_max[index]);
+    lanes.iter().copied().map(|lane| (lane, budget)).collect()
 }
 
 #[cfg(test)]

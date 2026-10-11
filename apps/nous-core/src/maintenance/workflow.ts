@@ -129,14 +129,14 @@ export async function runModelMaintenance(
     return { status: "retry" as const, problemCode: "workflow_busy" };
   const operation = opened.operation;
   return operation.run(async () => {
+    const snapshot = snapshotSchema.parse(
+      JSON.parse(opened.snapshot.content!.payloadJson),
+    );
+    const plan = fromJson(MaintenancePlanSchema, snapshot.plan as JsonValue);
+    let proposed = opened.proposal?.payloadJson
+      ? proposalSchema.parse(JSON.parse(opened.proposal.payloadJson))
+      : undefined;
     try {
-      const snapshot = snapshotSchema.parse(
-        JSON.parse(opened.snapshot.content!.payloadJson),
-      );
-      const plan = fromJson(MaintenancePlanSchema, snapshot.plan as JsonValue);
-      let proposed = opened.proposal?.payloadJson
-        ? proposalSchema.parse(JSON.parse(opened.proposal.payloadJson))
-        : undefined;
       if (!proposed) {
         const built = await buildMaintenanceProposal({
           models,
@@ -238,6 +238,7 @@ export async function runModelMaintenance(
         });
         return outcome;
       } else if (proposed.action === "withdraw") {
+        const { journalId, epoch } = proposed;
         await operation.mutate(operationId, () =>
           kernel.memory.mutateCognition(
             create(CognitionMutationRequestSchema, {
@@ -245,9 +246,9 @@ export async function runModelMaintenance(
               subjectId: need.subjectId,
               objectRef: create(CognitiveRefSchema, {
                 kind: "journal",
-                value: proposed.journalId,
+                value: journalId,
               }),
-              expectedObjectEpoch: BigInt(proposed.epoch),
+              expectedObjectEpoch: BigInt(epoch),
               action: { case: "withdraw", value: {} },
             }),
             options,

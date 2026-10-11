@@ -7,14 +7,14 @@ use chrono::Utc;
 use nous_core::{CognitiveRef, OperationId, QueryTarget, UseEventId};
 use nous_kernel::transport::KernelService;
 use nous_memory::{
-    BasisRole, CognitionAction, CreateSchemaInput, EvidenceLocator, EvidenceRef, RevisionBasis,
-    SchemaEvidenceLinkInput, SchemaEvidenceRole, SchemaFormationKind, SchemaScope,
+    BasisRole, CognitionAction, CognitionView, CreateSchemaInput, EvidenceLocator, EvidenceRef,
+    RevisionBasis, SchemaEvidenceLinkInput, SchemaEvidenceRole, SchemaFormationKind, SchemaScope,
 };
 use nous_protocol::nous::wave::v1alpha1 as p;
 use nous_runtime::{UseFeedback, UseFeedbackEvent, UseKind};
 use p::system_service_server::SystemService;
 use test_support::query::{query, subject};
-use test_support::{database, observation, open_runtime};
+use test_support::{database, observation, open_runtime, read_mutation_cognition};
 use tonic::Request;
 
 #[tokio::test]
@@ -29,7 +29,7 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
     )
     .await;
     let owner = runtime.require_memory().unwrap();
-    let schema = owner
+    let schema_result = owner
         .create_schema(CreateSchemaInput {
             operation_id: OperationId::new(),
             subject,
@@ -59,6 +59,10 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
         })
         .await
         .unwrap();
+    let schema = match read_mutation_cognition(owner, subject, &schema_result).await {
+        CognitionView::CognitiveSchema(value) => value,
+        _ => panic!("schema mutation result should materialize as CognitiveSchema"),
+    };
     let schema_id = schema.header.schema_id();
     let revision_id = schema.revision.header.schema_revision_id();
     let exact = || {
@@ -215,7 +219,7 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
         })
         .await
         .unwrap();
-    assert_eq!(revised_schema.header.object_epoch, 6);
+    assert_eq!(revised_schema.object_epoch, Some(6));
     let replay = owner
         .mutate_cognition(
             subject,
@@ -237,7 +241,9 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
     );
     assert_eq!(
         replay.header().current_revision_ref,
-        CognitiveRef::CognitiveSchemaRevision(revised_schema.revision.header.schema_revision_id())
+        CognitiveRef::CognitiveSchemaRevision(nous_core::CognitiveSchemaRevisionId(
+            revised_schema.revision_id.unwrap(),
+        ))
     );
     assert_eq!(runtime.query(exact()).await.unwrap().results.len(), 1);
     let purge_operation = OperationId::new();

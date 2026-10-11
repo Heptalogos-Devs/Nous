@@ -4,7 +4,7 @@
 use super::*;
 
 impl MemoryService {
-    pub async fn create_episode(&self, input: EpisodeInput) -> Result<EpisodeView> {
+    pub async fn create_episode(&self, input: EpisodeInput) -> Result<MutationResult> {
         let started_at = self.cognition.now(input.subject);
         validate_episode_input(
             &input.track_key,
@@ -40,31 +40,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let result = receipt.results.first().ok_or_else(|| {
-                        Error::new(
-                            nous_core::ErrorOwner::Memory,
-                            nous_core::ErrorCode::InternalFailure,
-                            "Episode receipt has no result",
-                        )
-                    })?;
-                    let CognitiveRef::Episode(id) = &result.reference else {
-                        return Err(Error::new(
-                            nous_core::ErrorOwner::Memory,
-                            nous_core::ErrorCode::InternalFailure,
-                            "Episode receipt has an invalid result reference",
-                        ));
-                    };
-                    let revision = receipt_revision_id(&receipt, &CognitiveRef::Episode(*id))?;
-                    return self
-                        .episode(input.subject, *id, Some(EpisodeRevisionId(revision)))
-                        .await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
-                    nous_core::ErrorCode::Unavailable,
-                    "create Episode operation is already in progress",
-                ));
+                return single_mutation_result(receipt, ErrorOwner::Memory);
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -125,14 +101,10 @@ impl MemoryService {
             true,
         )
         .await?;
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::Episode(episode_id),
-                revision_id.0,
-                Some(1),
-            )])
-            .await?;
-        self.episode(input.subject, episode_id, None).await
+        let result =
+            MutationResult::revised(CognitiveRef::Episode(episode_id), revision_id.0, Some(1));
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
 
     pub(in crate::service) async fn schedule_episode_in(
@@ -208,7 +180,7 @@ impl MemoryService {
         Ok(())
     }
 
-    pub async fn revise_episode(&self, input: ReviseEpisodeInput) -> Result<EpisodeView> {
+    pub async fn revise_episode(&self, input: ReviseEpisodeInput) -> Result<MutationResult> {
         let started_at = self.cognition.now(input.subject);
         validate_episode_input(
             "",
@@ -251,22 +223,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let revision =
-                        receipt_revision_id(&receipt, &CognitiveRef::Episode(input.episode_id))?;
-                    return self
-                        .episode(
-                            input.subject,
-                            input.episode_id,
-                            Some(EpisodeRevisionId(revision)),
-                        )
-                        .await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
-                    nous_core::ErrorCode::Unavailable,
-                    "revise Episode operation is already in progress",
-                ));
+                return single_mutation_result(receipt, ErrorOwner::Memory);
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -371,14 +328,13 @@ impl MemoryService {
         )
         .await?;
 
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::Episode(input.episode_id),
-                revision_id.0,
-                Some(epoch + 1),
-            )])
-            .await?;
-        self.episode(input.subject, input.episode_id, None).await
+        let result = MutationResult::revised(
+            CognitiveRef::Episode(input.episode_id),
+            revision_id.0,
+            Some(epoch + 1),
+        );
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
 
     pub async fn link_episode_revisions(
@@ -416,16 +372,7 @@ impl MemoryService {
             )
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
-                    nous_core::ErrorCode::Unavailable,
-                    "Episode relation operation is already in progress",
-                ));
-            }
+            MutationStart::Replay(_) => return Ok(()),
             MutationStart::Active(mutation) => mutation,
         };
         for revision in [from, to] {

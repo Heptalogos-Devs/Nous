@@ -180,8 +180,12 @@ async fn prepare_signals(
         .transpose()?;
 
     let dense_enabled = enabled_lanes.contains(&EvidenceFamily::Dense);
-    let cognitive_embedding =
-        plan.expand_topology && plan.cognitive_profile.requirements().query_embedding;
+    let cognitive_embedding = plan.expand_topology
+        && plan
+            .retrieval_policy
+            .cognitive_profile
+            .requirements()
+            .query_embedding;
 
     let mut embedding = None;
     let mut embedding_error = None;
@@ -194,7 +198,7 @@ async fn prepare_signals(
             || (cognitive_embedding
                 && snapshot.vcp.as_ref().is_some_and(|_| {
                     matches!(
-                        plan.cognitive_profile,
+                        plan.retrieval_policy.cognitive_profile,
                         nous_runtime::CognitiveProfile::VcpDtsc
                             | nous_runtime::CognitiveProfile::VcpRiverMemo
                     )
@@ -254,13 +258,12 @@ impl SharedLaneProvider for ServingService {
         )
         .await
     }
-    async fn lanes(&self, bound: &BoundQuery, plan: &QueryPlan) -> Result<Vec<LaneOutput>> {
+    async fn lanes(&self, bound: &BoundQuery) -> Result<Vec<LaneOutput>> {
         let _reader = self.read_gate.clone().read_owned().await;
         let snapshot = self.publisher.snapshot_for(bound.source_query.subject);
         self.lanes_from_snapshot(
             &snapshot,
             bound,
-            plan,
             self.embedding().map(|provider| provider.as_ref()),
         )
         .await
@@ -272,9 +275,9 @@ impl ServingService {
         &self,
         snapshot: &ServingSnapshot,
         bound: &BoundQuery,
-        plan: &QueryPlan,
         provider: Option<&dyn TextEmbeddingProvider>,
     ) -> Result<Vec<LaneOutput>> {
+        let plan = &bound.plan;
         if bound
             .read_context
             .historical_view()
@@ -289,25 +292,25 @@ impl ServingService {
         let signals = prepare_signals(
             snapshot,
             &bound.source_query,
-            &bound.enabled_lanes,
+            &bound.plan.enabled_lanes,
             plan,
             &bound.representation.text,
             provider,
             bound.activation.embedding.as_ref(),
         )
         .await?;
-        let topology = if bound.lane_enabled(EvidenceFamily::TopologyWave) {
+        let topology = if bound.plan.lane_enabled(EvidenceFamily::TopologyWave) {
             Some(
                 if plan.expand_topology
                     && matches!(
-                        plan.cognitive_profile,
+                        plan.retrieval_policy.cognitive_profile,
                         nous_runtime::CognitiveProfile::VcpDtsc
                             | nous_runtime::CognitiveProfile::VcpRiverMemo
                     )
                 {
-                    self.vcp_lane(snapshot, bound, plan, &signals).await?
+                    self.vcp_lane(snapshot, bound, &signals).await?
                 } else {
-                    topology_lane(snapshot, bound, plan, &signals)?
+                    topology_lane(snapshot, bound, &signals)?
                 },
             )
         } else {
@@ -315,8 +318,8 @@ impl ServingService {
         };
         let mut outputs = signals.into_lanes();
         outputs.extend(topology);
-        if bound.lane_enabled(EvidenceFamily::TagDirect) {
-            outputs.push(crate::concept::lane::direct_lane(snapshot, bound, plan));
+        if bound.plan.lane_enabled(EvidenceFamily::TagDirect) {
+            outputs.push(crate::concept::lane::direct_lane(snapshot, bound));
         }
         Ok(outputs)
     }
@@ -378,12 +381,11 @@ impl SharedLaneProvider for ServingQuery {
         )
         .await
     }
-    async fn lanes(&self, bound: &BoundQuery, plan: &QueryPlan) -> Result<Vec<LaneOutput>> {
+    async fn lanes(&self, bound: &BoundQuery) -> Result<Vec<LaneOutput>> {
         self.service
             .lanes_from_snapshot(
                 &self.snapshot,
                 bound,
-                plan,
                 self.embedding
                     .as_ref()
                     .map(|provider| provider as &dyn TextEmbeddingProvider),
@@ -395,20 +397,28 @@ impl ServingService {
     pub async fn prepare_query(
         &self,
         bound: &BoundQuery,
-        plan: &QueryPlan,
     ) -> Result<(ProjectionStatus, Arc<ServingQuery>)> {
+        let plan = &bound.plan;
         if let Some(view) = bound.read_context.historical_view() {
-            return self.prepare_historical_query(bound, plan, view).await;
+            return self.prepare_historical_query(bound, view).await;
         }
         let lease = self.read_gate.clone().read_owned().await;
         let mut need = plan.serving_need(&bound.source_query);
         if bound.source_query.capabilities.text_embedding == RequirementStrength::Forbidden
-            && plan.cognitive_profile.requirements().query_embedding
+            && plan
+                .retrieval_policy
+                .cognitive_profile
+                .requirements()
+                .query_embedding
         {
             need.topology = false;
         }
         let status = self
-            .prepare_with_snapshot(bound.source_query.subject, need, &bound.config_snapshot)
+            .prepare_with_snapshot(
+                bound.source_query.subject,
+                need,
+                &bound.read_context.config_snapshot,
+            )
             .await?;
         // Resolve the exact generations prepared for this request. A concurrent
         // profile switch must not replace this query's immutable view.

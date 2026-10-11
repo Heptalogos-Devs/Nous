@@ -4,15 +4,20 @@
 
 use crate::{AuthorityStore, ProjectionInvalidation, database_error as db, lock_operation};
 use chrono::Utc;
-use nous_core::{CognitiveRef, OperationId, Result, SubjectId};
+use nous_core::{CognitiveRef, Error, ErrorCode, ErrorOwner, OperationId, Result, SubjectId};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, types::Json};
 use uuid::Uuid;
 
+/// Completed results returned for an idempotent replay.
 #[derive(Debug, Clone)]
 pub struct MutationReceipt {
-    pub state: String,
     pub results: Vec<MutationResult>,
+}
+
+enum MutationReceiptRecord {
+    InProgress,
+    Committed(MutationReceipt),
 }
 
 /// The exact owner result retained for idempotent replay and operation status.
@@ -47,14 +52,14 @@ impl MutationResult {
     }
 }
 
-pub async fn check_receipt(
+async fn check_receipt(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subject: SubjectId,
     operation: OperationId,
     kind: &str,
     digest: &str,
     error_owner: nous_core::ErrorOwner,
-) -> Result<Option<MutationReceipt>> {
+) -> Result<Option<MutationReceiptRecord>> {
     let row = sqlx::query("SELECT state,results,request_digest,operation_kind FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2")
         .bind(subject.0)
         .bind(operation.0)
@@ -72,13 +77,20 @@ pub async fn check_receipt(
             .with_context("operation_id", operation.0)
             .with_context("operation_kind", kind));
         }
-        return Ok(Some(MutationReceipt {
-            state: row.try_get("state").map_err(db)?,
-            results: row
-                .try_get::<Json<Vec<MutationResult>>, _>("results")
-                .map_err(db)?
-                .0,
-        }));
+        return match row.try_get::<String, _>("state").map_err(db)?.as_str() {
+            "in_progress" => Ok(Some(MutationReceiptRecord::InProgress)),
+            "committed" => Ok(Some(MutationReceiptRecord::Committed(MutationReceipt {
+                results: row
+                    .try_get::<Json<Vec<MutationResult>>, _>("results")
+                    .map_err(db)?
+                    .0,
+            }))),
+            _ => Err(Error::new(
+                ErrorOwner::Persistence,
+                ErrorCode::InternalFailure,
+                "Mutation receipt has an invalid state",
+            )),
+        };
     }
     sqlx::query("INSERT INTO mutation_receipts(subject_id,operation_id,operation_kind,request_digest,state,created_at) VALUES($1,$2,$3,$4,'in_progress',$5)")
         .bind(subject.0)
@@ -114,6 +126,7 @@ pub async fn commit_receipt(
 pub struct OwnerLock(pub &'static str);
 
 pub enum MutationStart<'a> {
+    /// A completed receipt; ordinary in-progress retries fail in `begin`.
     Replay(MutationReceipt),
     Active(MutationEnvelope<'a>),
 }
@@ -194,10 +207,24 @@ impl<'a> MutationEnvelope<'a> {
         lock_operation(&mut tx, subject, operation).await?;
         if let Some(receipt) =
             check_receipt(&mut tx, subject, operation, kind, digest, error_owner).await?
-            && (!resume || receipt.state == "committed")
         {
-            tx.commit().await.map_err(db)?;
-            return Ok(MutationStart::Replay(receipt));
+            match receipt {
+                MutationReceiptRecord::Committed(receipt) => {
+                    tx.commit().await.map_err(db)?;
+                    return Ok(MutationStart::Replay(receipt));
+                }
+                MutationReceiptRecord::InProgress if resume => {}
+                MutationReceiptRecord::InProgress => {
+                    tx.commit().await.map_err(db)?;
+                    return Err(Error::new(
+                        error_owner,
+                        ErrorCode::OperationInProgress,
+                        format!("{kind} operation is already in progress"),
+                    )
+                    .with_context("operation_id", operation.0)
+                    .with_context("operation_kind", kind));
+                }
+            }
         }
         Ok(MutationStart::Active(Self {
             tx,

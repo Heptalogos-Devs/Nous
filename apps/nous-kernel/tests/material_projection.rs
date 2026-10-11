@@ -104,7 +104,8 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
     input.epistemic_class = EpistemicClass::Derived;
     input.basis = vec![RevisionBasis::Evidence(evidence.clone())];
     let memory = owner.form_memory(input).await.unwrap();
-    let memory_ref = CognitiveRef::MemoryRevision(memory.revision.header.memory_revision_id());
+    let memory_ref =
+        CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(memory.revision_id.unwrap()));
     let target = owner
         .form_memory(form_input(
             subject,
@@ -120,7 +121,9 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
                 producer: None,
                 operation_id: OperationId::new(),
                 from: memory_ref.clone(),
-                to: CognitiveRef::MemoryRevision(target.revision.header.memory_revision_id()),
+                to: CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(
+                    target.revision_id.unwrap(),
+                )),
                 relation_kind: "assoc.related".into(),
                 polarity: AssociationPolarity::Positive,
                 basis_class: AssociationBasisClass::SourceEvidence,

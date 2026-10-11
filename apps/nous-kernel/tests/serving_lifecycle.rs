@@ -47,7 +47,8 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
         ))
         .await
         .unwrap();
-    let first = CognitiveRef::MemoryRevision(memory.revision.header.memory_revision_id());
+    let first =
+        CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(memory.revision_id.unwrap()));
     let request = query(subject);
     assert!(
         runtime
@@ -114,7 +115,7 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
     let rebuilt = reopened.query(request).await.unwrap();
     assert!(rebuilt.results.iter().any(|hit| hit.reference == first));
     assert!(rebuilt.results.iter().any(|hit| hit.reference
-        == CognitiveRef::MemoryRevision(next.revision.header.memory_revision_id())));
+        == CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(next.revision_id.unwrap(),))));
     assert_eq!(
         reopened.store.authority_seq(subject).await.unwrap(),
         watermark
@@ -172,9 +173,9 @@ async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
         .unwrap()
         .begin_purge_cognition(
             subject,
-            CognitiveRef::Memory(memory.header.memory_id()),
+            memory.reference.clone(),
             operation,
-            memory.header.object_epoch,
+            memory.object_epoch.unwrap(),
         )
         .await
         .unwrap();
@@ -195,9 +196,9 @@ async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
         .unwrap()
         .complete_purge_cognition(
             subject,
-            CognitiveRef::Memory(memory.header.memory_id()),
+            memory.reference.clone(),
             operation,
-            memory.header.object_epoch,
+            memory.object_epoch.unwrap(),
         )
         .await;
     assert!(matches!(
@@ -213,9 +214,9 @@ async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
         .unwrap()
         .complete_purge_cognition(
             subject,
-            CognitiveRef::Memory(memory.header.memory_id()),
+            memory.reference.clone(),
             OperationId::new(),
-            memory.header.object_epoch,
+            memory.object_epoch.unwrap(),
         )
         .await;
     assert!(matches!(
@@ -242,9 +243,9 @@ async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
     runtime
         .purge_cognition(
             subject,
-            CognitiveRef::Memory(memory.header.memory_id()),
+            memory.reference.clone(),
             operation,
-            memory.header.object_epoch,
+            memory.object_epoch.unwrap(),
         )
         .await
         .unwrap();

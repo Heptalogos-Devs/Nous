@@ -16,6 +16,7 @@ import { type ExecutionTelemetry } from "./execution/routes.js";
 import {
   type ModelProducerMetadata,
   type ModelRoleSnapshot,
+  snapshotSchema as modelSnapshotSchema,
 } from "./execution/snapshot.js";
 import type { ModelRole } from "./roles.js";
 import { modelProducer } from "./producer.js";
@@ -271,10 +272,12 @@ export async function deriveMaterial(
           })
         : undefined;
       if (!proposal) {
-        const frozen = JSON.parse(opened.snapshot.content!.payloadJson) as {
-          model: ModelRoleSnapshot;
-          preprocessingDigest?: string;
-        };
+        const frozen = z
+          .strictObject({
+            model: modelSnapshotSchema,
+            preprocessingDigest: z.string().optional(),
+          })
+          .parse(JSON.parse(opened.snapshot.content!.payloadJson));
         const result = await invoke(frozen.model);
         if ("skipReason" in result) {
           paidStageSkipReason = result.skipReason;

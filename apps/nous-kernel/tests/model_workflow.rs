@@ -154,9 +154,9 @@ async fn assert_child_result_purge_before_host_ack(
     runtime
         .purge_cognition(
             subject,
-            nous_core::CognitiveRef::Memory(memory.header.memory_id()),
+            memory.reference.clone(),
             OperationId::new(),
-            memory.header.object_epoch,
+            memory.object_epoch.unwrap(),
         )
         .await
         .unwrap();

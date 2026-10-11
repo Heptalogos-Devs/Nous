@@ -17,13 +17,13 @@ import {
   workflowPayload,
 } from "../durable-operation.js";
 import type { WorkflowPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
-import { type ModelRoleSnapshot } from "./execution/snapshot.js";
+import { snapshotSchema as modelSnapshotSchema } from "./execution/snapshot.js";
 import { canonicalDigest } from "../digest.js";
 import { z } from "zod";
 import { modelProducer } from "./producer.js";
 
 const snapshotSchema = z.strictObject({
-  model: z.unknown(),
+  model: modelSnapshotSchema,
   sourceMaxBytes: z.number().int().positive(),
   representationId: z.string().optional(),
   candidates: z
@@ -240,7 +240,7 @@ export async function formObservation(
           aboutnessMode: mode,
         }),
         options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
+        snapshot.model,
       );
       if (
         new Set(result.selectedEntityKeys).size !==

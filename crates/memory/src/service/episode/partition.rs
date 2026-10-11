@@ -33,7 +33,7 @@ impl MemoryService {
     pub async fn apply_episode_partition(
         &self,
         input: EpisodePartitionInput,
-    ) -> Result<Vec<EpisodeView>> {
+    ) -> Result<Vec<MutationResult>> {
         validate_partition(&input)?;
         let started = self.cognition.now(input.subject);
         let digest = operation_digest("episode_partition", input.subject, &input)?;
@@ -47,24 +47,7 @@ impl MemoryService {
             )
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::new(
-                        nous_core::ErrorOwner::Memory,
-                        nous_core::ErrorCode::Unavailable,
-                        "Episode partition is in progress",
-                    ));
-                }
-                let revisions = receipt
-                    .results
-                    .iter()
-                    .filter_map(|result| match &result.reference {
-                        CognitiveRef::EpisodeRevision(revision) => Some(*revision),
-                        _ => None,
-                    })
-                    .collect();
-                return self.partition_views(input.subject, revisions).await;
-            }
+            MutationStart::Replay(receipt) => return Ok(receipt.results),
             MutationStart::Active(mutation) => mutation,
         };
         let sources = lock_sources(mutation.tx(), &input).await?;
@@ -91,8 +74,7 @@ impl MemoryService {
         let one_to_one = input.sources.len() == 1 && input.segments.len() == 1;
         if one_to_one && unchanged_partition(mutation.tx(), &input, first).await? {
             let outputs = vec![input.sources[0].revision];
-            commit_partition_result(mutation, &outputs).await?;
-            return self.partition_views(input.subject, outputs).await;
+            return commit_partition_result(mutation, &outputs).await;
         }
         if !one_to_one {
             let ids: Vec<Uuid> = sources.iter().map(|row| row.get("episode_id")).collect();
@@ -140,8 +122,7 @@ impl MemoryService {
             )
             .await?;
         }
-        commit_partition_result(mutation, &outputs).await?;
-        self.partition_views(input.subject, outputs).await
+        commit_partition_result(mutation, &outputs).await
     }
 
     async fn write_partition_segments_in(
@@ -223,18 +204,6 @@ impl MemoryService {
             outputs.push(revision);
         }
         Ok(outputs)
-    }
-
-    async fn partition_views(
-        &self,
-        subject: SubjectId,
-        revisions: Vec<EpisodeRevisionId>,
-    ) -> Result<Vec<EpisodeView>> {
-        let mut views = Vec::with_capacity(revisions.len());
-        for revision in revisions {
-            views.push(self.episode_revision(subject, revision).await?);
-        }
-        Ok(views)
     }
 }
 
@@ -532,7 +501,7 @@ fn partition_payload(
 async fn commit_partition_result(
     mut mutation: nous_persistence::MutationEnvelope<'_>,
     outputs: &[EpisodeRevisionId],
-) -> Result<()> {
+) -> Result<Vec<MutationResult>> {
     mutation
         .publish_workflow_results(
             "memory",
@@ -543,13 +512,11 @@ async fn commit_partition_result(
                 .collect::<Vec<_>>(),
         )
         .await?;
-    mutation
-        .commit(
-            &outputs
-                .iter()
-                .copied()
-                .map(|revision| MutationResult::reference(CognitiveRef::EpisodeRevision(revision)))
-                .collect::<Vec<_>>(),
-        )
-        .await
+    let results = outputs
+        .iter()
+        .copied()
+        .map(|revision| MutationResult::reference(CognitiveRef::EpisodeRevision(revision)))
+        .collect::<Vec<_>>();
+    mutation.commit(&results).await?;
+    Ok(results)
 }

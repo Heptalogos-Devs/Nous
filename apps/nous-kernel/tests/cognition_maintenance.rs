@@ -5,9 +5,10 @@ mod test_support;
 
 use chrono::{Duration, SubsecRound, Utc};
 use nous_kernel::NousRuntime;
+use nous_memory::CognitionView;
 use nous_runtime::ManualCognitiveClock;
 use std::sync::Arc;
-use test_support::database;
+use test_support::{database, read_mutation_cognition};
 
 use test_support::longitudinal::{
     consolidation_memory, consolidation_producer, consolidation_schema, journal_source_episode,
@@ -31,7 +32,11 @@ async fn typed_cognition_actions_preserve_prior_commits_and_exact_schema_replay(
         .await
         .unwrap();
     let schema_input = consolidation_schema(&episode);
-    let schema = owner.create_schema(schema_input.clone()).await.unwrap();
+    let schema_result = owner.create_schema(schema_input.clone()).await.unwrap();
+    let schema = match read_mutation_cognition(owner, subject, &schema_result).await {
+        CognitionView::CognitiveSchema(value) => value,
+        _ => panic!("schema mutation result should materialize as CognitiveSchema"),
+    };
     let mut invalid = consolidation_schema(&episode);
     invalid.content.boundary_definition.clear();
     assert!(owner.create_schema(invalid).await.is_err());
@@ -40,30 +45,28 @@ async fn typed_cognition_actions_preserve_prior_commits_and_exact_schema_replay(
             .form_memory(first_input.clone())
             .await
             .unwrap()
-            .revision
-            .header
-            .memory_revision_id(),
-        first.revision.header.memory_revision_id()
+            .revision_id,
+        first.revision_id
     );
     owner
         .link_revisions(
             subject,
             OperationId::new(),
-            first.revision.header.memory_revision_id(),
-            second.revision.header.memory_revision_id(),
+            nous_core::MemoryRevisionId(first.revision_id.unwrap()),
+            nous_core::MemoryRevisionId(second.revision_id.unwrap()),
             nous_memory::MemoryRelation::Elaborates,
         )
         .await
         .unwrap();
     let results = [
         Some(nous_core::CognitiveRef::MemoryRevision(
-            first.revision.header.memory_revision_id(),
+            nous_core::MemoryRevisionId(first.revision_id.unwrap()),
         )),
         Some(nous_core::CognitiveRef::MemoryRevision(
-            second.revision.header.memory_revision_id(),
+            nous_core::MemoryRevisionId(second.revision_id.unwrap()),
         )),
         Some(nous_core::CognitiveRef::CognitiveSchemaRevision(
-            schema.revision.header.schema_revision_id(),
+            nous_core::CognitiveSchemaRevisionId(schema_result.revision_id.unwrap()),
         )),
     ];
     clock.advance_by(subject, Duration::days(1)).unwrap();
@@ -85,35 +88,27 @@ async fn typed_cognition_actions_preserve_prior_commits_and_exact_schema_replay(
             boundary_definition: schema.revision.boundary_definition.clone(),
         },
     };
-    let revised = owner.revise_schema(revised_input.clone()).await.unwrap();
+    let revised_result = owner.revise_schema(revised_input.clone()).await.unwrap();
+    let revised = match read_mutation_cognition(owner, subject, &revised_result).await {
+        CognitionView::CognitiveSchema(value) => value,
+        _ => panic!("schema mutation result should materialize as CognitiveSchema"),
+    };
     assert!(revised.revision.header.producer_signature_id.is_some());
     assert_ne!(
         revised.revision.header.revision_id(),
         schema.revision.header.revision_id()
     );
     assert_eq!(
-        owner
-            .create_schema(schema_input)
-            .await
-            .unwrap()
-            .revision
-            .header
-            .schema_revision_id(),
-        schema.revision.header.schema_revision_id()
+        owner.create_schema(schema_input).await.unwrap().revision_id,
+        schema_result.revision_id
     );
     let mut next = revised_input.clone();
     next.operation_id = OperationId::new();
     next.expected_object_epoch = revised.header.object_epoch;
     owner.revise_schema(next).await.unwrap();
     assert_eq!(
-        owner
-            .revise_schema(revised_input)
-            .await
-            .unwrap()
-            .revision
-            .header
-            .schema_revision_id(),
-        revised.revision.header.schema_revision_id()
+        owner.revise_schema(revised_input).await.unwrap(),
+        revised_result
     );
 }
 

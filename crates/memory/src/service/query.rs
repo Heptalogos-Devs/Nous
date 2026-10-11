@@ -1,47 +1,35 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::lane::{LaneCandidate, LaneOutput, LaneStatus};
 use super::query_materialization::*;
 use super::schema_lane::{materialize_schema_revisions, schema_direct_lane};
 use super::*;
 use async_trait::async_trait;
-use nous_runtime::{BoundQuery, CognitiveContributor, QueryPlan};
+use nous_runtime::{
+    BoundQuery, CognitiveContributor, LaneCandidate, LaneOutput, LaneStatus, QueryOwner,
+    query_owner,
+};
 use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use uuid::Uuid;
 #[async_trait]
 impl CognitiveContributor for MemoryService {
-    fn owns(&self, reference: &CognitiveRef) -> bool {
-        matches!(
-            reference,
-            CognitiveRef::Memory(_)
-                | CognitiveRef::MemoryRevision(_)
-                | CognitiveRef::Episode(_)
-                | CognitiveRef::EpisodeRevision(_)
-                | CognitiveRef::Journal(_)
-                | CognitiveRef::JournalRevision(_)
-                | CognitiveRef::CognitiveSchema(_)
-                | CognitiveRef::CognitiveSchemaRevision(_)
-        )
-    }
-
-    async fn direct_lanes(&self, bound: &BoundQuery, plan: &QueryPlan) -> Result<Vec<LaneOutput>> {
+    async fn direct_lanes(&self, bound: &BoundQuery) -> Result<Vec<LaneOutput>> {
         if !self.query_permitted(bound.source_query.subject).await? {
             return Ok(Vec::new());
         }
         if bound.read_context.is_historical() {
-            return super::historical_query::direct_lanes(self, bound, plan).await;
+            return super::historical_query::direct_lanes(self, bound).await;
         }
         let mut outputs = Vec::new();
-        if bound.lane_enabled(EvidenceFamily::Entity) {
-            outputs.push(entity_lane(self, bound, plan).await?);
+        if bound.plan.lane_enabled(EvidenceFamily::Entity) {
+            outputs.push(entity_lane(self, bound).await?);
         }
-        if bound.lane_enabled(EvidenceFamily::Temporal) {
-            outputs.push(temporal_lane(self, bound, plan).await?);
+        if bound.plan.lane_enabled(EvidenceFamily::Temporal) {
+            outputs.push(temporal_lane(self, bound).await?);
         }
-        if bound.lane_enabled(EvidenceFamily::SchemaDirect) {
-            outputs.push(schema_direct_lane(self, bound, plan).await?);
+        if bound.plan.lane_enabled(EvidenceFamily::SchemaDirect) {
+            outputs.push(schema_direct_lane(self, bound).await?);
         }
         Ok(outputs)
     }
@@ -61,7 +49,7 @@ impl CognitiveContributor for MemoryService {
         }
         let cognition_references = references
             .iter()
-            .filter(|reference| self.owns(reference))
+            .filter(|reference| query_owner(reference) == Some(QueryOwner::Memory))
             .cloned()
             .collect::<Vec<_>>();
         let cognition_views = self
@@ -159,11 +147,7 @@ impl CognitiveContributor for MemoryService {
     }
 }
 
-async fn entity_lane(
-    service: &MemoryService,
-    bound: &BoundQuery,
-    plan: &QueryPlan,
-) -> Result<LaneOutput> {
+async fn entity_lane(service: &MemoryService, bound: &BoundQuery) -> Result<LaneOutput> {
     let query = &bound.source_query;
     let values = query
         .expression
@@ -199,7 +183,7 @@ async fn entity_lane(
     )
     .bind(query.subject.0)
     .bind(&values)
-    .bind(plan.lane_budget(EvidenceFamily::Entity) as i64)
+    .bind(bound.plan.lane_budget(EvidenceFamily::Entity) as i64)
     .fetch_all(service.store.pool())
     .await
     .map_err(nous_persistence::database_error)?;
@@ -220,11 +204,7 @@ async fn entity_lane(
     Ok(output)
 }
 
-async fn temporal_lane(
-    service: &MemoryService,
-    bound: &BoundQuery,
-    plan: &QueryPlan,
-) -> Result<LaneOutput> {
+async fn temporal_lane(service: &MemoryService, bound: &BoundQuery) -> Result<LaneOutput> {
     let query = &bound.source_query;
     let mut matches = HashMap::<Uuid, (Uuid, usize)>::new();
     let mut next_rank = 1usize;
@@ -281,7 +261,7 @@ async fn temporal_lane(
         sql.push(" ORDER BY ")
             .push(order)
             .push(" LIMIT ")
-            .push_bind(plan.lane_budget(EvidenceFamily::Temporal) as i64);
+            .push_bind(bound.plan.lane_budget(EvidenceFamily::Temporal) as i64);
         let rows = sql
             .build()
             .fetch_all(service.store.pool())
@@ -303,7 +283,7 @@ async fn temporal_lane(
     values.sort_by(|left, right| left.1.1.cmp(&right.1.1).then_with(|| left.0.cmp(&right.0)));
     for (revision, (_memory, rank)) in values
         .into_iter()
-        .take(plan.lane_budget(EvidenceFamily::Temporal))
+        .take(bound.plan.lane_budget(EvidenceFamily::Temporal))
     {
         output.candidates.push(LaneCandidate {
             reference: CognitiveRef::MemoryRevision(MemoryRevisionId(revision)),

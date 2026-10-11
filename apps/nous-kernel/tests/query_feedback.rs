@@ -64,7 +64,7 @@ async fn memory(rt: &nous_kernel::NousRuntime, subject: SubjectId, text: &str) -
         ))
         .await
         .unwrap();
-    CognitiveRef::MemoryRevision(formed.revision.header.memory_revision_id())
+    CognitiveRef::MemoryRevision(MemoryRevisionId(formed.revision_id.unwrap()))
 }
 fn feedback(
     subject: SubjectId,
@@ -116,6 +116,9 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
         )
         .await
         .unwrap();
+    let CognitiveRef::Tag(tag_id) = tag.reference else {
+        panic!("tag mutation result should reference Tag");
+    };
     let now = chrono::Utc::now();
     let clock = Arc::new(ManualCognitiveClock::new(now));
     rt.cognition = CognitiveRuntimeService::with_clock(
@@ -130,7 +133,7 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     intent
         .expression
         .cues
-        .push(Cue::Tag(TagCue { tag: tag.tag_id }));
+        .push(Cue::Tag(TagCue { tag: tag_id }));
     let result = rt.execute_query(intent, None).await.unwrap();
     assert_eq!(result.result.results.len(), 1);
     let row=sqlx::query("SELECT signals,returned_revision_refs,created_at,expires_at FROM query_feedback_records WHERE subject_id=$1 AND query_id=$2").bind(subject_a.0).bind(result.bound.query_id).fetch_one(rt.store.pool()).await.unwrap();
@@ -173,12 +176,12 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     );
     assert_eq!(
         plan.model_input["queryFeedback"][0]["signals"]["explicit_tags"][0]["tag"],
-        serde_json::json!(tag.tag_id)
+        serde_json::json!(tag_id)
     );
     assert!(
         plan.tags
             .iter()
-            .any(|candidate| candidate.target.tag_id == tag.tag_id)
+            .any(|candidate| candidate.target.tag_id == tag_id)
     );
     let presented = rt
         .execute_query(query(subject_a, a.clone()), None)

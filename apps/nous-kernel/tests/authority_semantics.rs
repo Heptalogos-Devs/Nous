@@ -68,20 +68,22 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
         sequence
     );
     mutation.checkpoint().await.unwrap();
-    let MutationStart::Replay(receipt) = MutationEnvelope::begin(
-        &rt.store,
-        subject,
-        operation,
-        "test_mutation",
-        &digest,
-        owner,
-        nous_core::ErrorOwner::Memory,
-    )
-    .await
-    .unwrap() else {
-        panic!("checkpoint must replay");
-    };
-    assert_eq!(receipt.state, "in_progress");
+    assert!(matches!(
+        MutationEnvelope::begin(
+            &rt.store,
+            subject,
+            operation,
+            "test_mutation",
+            &digest,
+            owner,
+            nous_core::ErrorOwner::Memory,
+        )
+        .await,
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::OperationInProgress,
+            ..
+        })
+    ));
     assert!(matches!(
         MutationEnvelope::resume(
             &rt.store,
@@ -132,7 +134,6 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
     .unwrap() else {
         panic!("terminal result must replay");
     };
-    assert_eq!(receipt.state, "committed");
     assert_eq!(
         receipt.results,
         vec![MutationResult::new(

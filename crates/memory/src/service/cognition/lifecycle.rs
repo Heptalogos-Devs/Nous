@@ -370,13 +370,6 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::new(
-                        error_owner,
-                        ErrorCode::Unavailable,
-                        "Cognition lifecycle operation is in progress",
-                    ));
-                }
                 let target = object_ref(kind, object_id);
                 let revision = receipt
                     .results

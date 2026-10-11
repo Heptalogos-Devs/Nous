@@ -20,10 +20,10 @@ fn content(label: &str) -> TagContent {
         kind_hint: Some("procedure".into()),
     }
 }
-fn expectation(tag: &nous_memory::Tag) -> TagExpectation {
+fn expectation(tag_id: TagId, expected_revision_id: uuid::Uuid) -> TagExpectation {
     TagExpectation {
-        tag_id: tag.tag_id,
-        expected_revision_id: tag.current_revision_id,
+        tag_id,
+        expected_revision_id,
     }
 }
 
@@ -33,28 +33,30 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     let rt = open_runtime(&url, &root).await;
     let subject = test_support::query::subject(&rt).await;
     let owner = rt.require_memory().unwrap();
-    let mut tags = Vec::new();
+    let mut tags: Vec<(TagId, uuid::Uuid)> = Vec::new();
     for label in [
         "Deployment approval",
         "Release authorization",
         "Release process",
     ] {
-        tags.push(
-            owner
-                .create_tag(
-                    subject,
-                    CreateTagRequest {
-                        producer: None,
-                        operation_id: OperationId::new(),
-                        label: label.into(),
-                        description: None,
-                        kind_hint: None,
-                        origin: "host_explicit".into(),
-                    },
-                )
-                .await
-                .unwrap(),
-        );
+        let result = owner
+            .create_tag(
+                subject,
+                CreateTagRequest {
+                    producer: None,
+                    operation_id: OperationId::new(),
+                    label: label.into(),
+                    description: None,
+                    kind_hint: None,
+                    origin: "host_explicit".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let CognitiveRef::Tag(tag_id) = result.reference else {
+            panic!("tag mutation result should reference Tag");
+        };
+        tags.push((tag_id, result.revision_id.unwrap()));
     }
     let (_, old_binding) = rt
         .store
@@ -68,8 +70,8 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         operation_id: OperationId::new().0.to_string(),
         subject_id: subject.0.to_string(),
         target: Some(p::TagRevisionTarget {
-            tag_id: tags[0].tag_id.0.to_string(),
-            expected_revision_id: tags[0].current_revision_id.to_string(),
+            tag_id: tags[0].0.0.to_string(),
+            expected_revision_id: tags[0].1.to_string(),
         }),
         content: Some(p::TagContent {
             label: "Release approval".into(),
@@ -81,10 +83,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .await
         .unwrap()
         .into_inner();
-    assert_ne!(
-        revised.current_revision_id,
-        tags[0].current_revision_id.to_string()
-    );
+    assert_ne!(revised.current_revision_id, tags[0].1.to_string());
     let replay = ConceptService::revise_tag(&service, Request::new(revise.clone()))
         .await
         .unwrap()
@@ -125,7 +124,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             .code(),
         tonic::Code::Aborted
     );
-    tags[0].current_revision_id = later_revision.current_revision_id.parse().unwrap();
+    tags[0].1 = later_revision.current_revision_id.parse().unwrap();
     for alias in ["Deployment approval", "Release approval"] {
         let (status, result) = rt
             .store
@@ -133,7 +132,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             .await
             .unwrap();
         assert_eq!(status, "BOUND");
-        assert_eq!(result[0].canonical, CognitiveRef::Tag(tags[0].tag_id));
+        assert_eq!(result[0].canonical, CognitiveRef::Tag(tags[0].0));
     }
     let mut revisions = Vec::new();
     for text in [
@@ -147,16 +146,10 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             OperationId::new(),
             text,
         );
-        input.tags = vec![tags[1].tag_id];
-        revisions.push(
-            owner
-                .form_memory(input)
-                .await
-                .unwrap()
-                .revision
-                .header
-                .memory_revision_id(),
-        );
+        input.tags = vec![tags[1].0];
+        revisions.push(MemoryRevisionId(
+            owner.form_memory(input).await.unwrap().revision_id.unwrap(),
+        ));
     }
     let basis = revisions
         .iter()
@@ -174,7 +167,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
                 producer: None,
                 operation_id: OperationId::new(),
                 from: CognitiveRef::MemoryRevision(revisions[0]),
-                to: CognitiveRef::Tag(tags[1].tag_id),
+                to: CognitiveRef::Tag(tags[1].0),
                 relation_kind: "tag_attachment".into(),
                 polarity: AssociationPolarity::Positive,
                 basis_class: AssociationBasisClass::HostExplicit,
@@ -188,8 +181,8 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .unwrap();
     let merge = MergeTagsInput {
         operation_id: OperationId::new(),
-        survivor: expectation(&tags[0]),
-        retired: vec![expectation(&tags[1])],
+        survivor: expectation(tags[0].0, tags[0].1),
+        retired: vec![expectation(tags[1].0, tags[1].1)],
         basis: vec![basis[0].clone()],
     };
     owner.merge_tags(subject, merge.clone()).await.unwrap();
@@ -201,18 +194,16 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         OperationId::new(),
         "Explicit concept formation after merge",
     );
-    explicit.tags = vec![tags[1].tag_id, tags[0].tag_id, tags[1].tag_id];
+    explicit.tags = vec![tags[1].0, tags[0].0, tags[1].0];
     let formed = owner.form_memory(explicit.clone()).await.unwrap();
-    assert_eq!(formed.tags, vec![tags[0].tag_id]);
+    let formed_view = match read_mutation_cognition(owner, subject, &formed).await {
+        nous_memory::CognitionView::Memory(value) => value,
+        _ => panic!("memory mutation result should materialize as Memory"),
+    };
+    assert_eq!(formed_view.tags, vec![tags[0].0]);
     assert_eq!(
-        owner
-            .form_memory(explicit)
-            .await
-            .unwrap()
-            .revision
-            .header
-            .memory_revision_id(),
-        formed.revision.header.memory_revision_id()
+        owner.form_memory(explicit).await.unwrap().revision_id,
+        formed.revision_id
     );
     let mut invalid = form_input(
         subject,
@@ -234,7 +225,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             .await
             .unwrap();
         assert_eq!(status, "BOUND");
-        assert_eq!(binding[0].canonical, CognitiveRef::Tag(tags[0].tag_id));
+        assert_eq!(binding[0].canonical, CognitiveRef::Tag(tags[0].0));
         assert_eq!(binding[0].display_name, "Release approval");
     }
     let (_, binding) = rt
@@ -242,17 +233,17 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .resolve_identity(subject, "tag", &old_lexical, true)
         .await
         .unwrap();
-    assert_eq!(binding[0].canonical, CognitiveRef::Tag(tags[0].tag_id));
+    assert_eq!(binding[0].canonical, CognitiveRef::Tag(tags[0].0));
     let addresses = rt
         .store
         .identity_addresses(&[
             nous_persistence::IdentityAddressTarget {
                 subject,
-                reference: CognitiveRef::Tag(tags[1].tag_id),
+                reference: CognitiveRef::Tag(tags[1].0),
             },
             nous_persistence::IdentityAddressTarget {
                 subject,
-                reference: CognitiveRef::Tag(tags[0].tag_id),
+                reference: CognitiveRef::Tag(tags[0].0),
             },
         ])
         .await
@@ -267,7 +258,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         catalog
             .tags
             .iter()
-            .find(|t| t.target.tag_id == tags[0].tag_id)
+            .find(|t| t.target.tag_id == tags[0].0)
             .unwrap()
             .aliases
             .contains(&"Release authorization".to_string())
@@ -278,7 +269,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             .fetch_one(rt.store.pool())
             .await
             .unwrap();
-    assert_eq!(unchanged, tags[1].tag_id.0);
+    assert_eq!(unchanged, tags[1].0.0);
     let evidence_endpoint: String = sqlx::query_scalar(
         "SELECT to_ref FROM association_evidence WHERE association_evidence_id=$1",
     )
@@ -286,37 +277,25 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     .fetch_one(rt.store.pool())
     .await
     .unwrap();
-    assert_eq!(evidence_endpoint, tags[1].tag_id.0.to_string());
+    assert_eq!(evidence_endpoint, tags[1].0.0.to_string());
     let projection = rt
         .store
         .topology_projection_input(subject, true)
         .await
         .unwrap();
-    assert!(
-        projection
-            .nodes
-            .contains(&CognitiveRef::Tag(tags[0].tag_id))
-    );
-    assert!(
-        !projection
-            .nodes
-            .contains(&CognitiveRef::Tag(tags[1].tag_id))
-    );
+    assert!(projection.nodes.contains(&CognitiveRef::Tag(tags[0].0)));
+    assert!(!projection.nodes.contains(&CognitiveRef::Tag(tags[1].0)));
     assert!(projection.edges.iter().any(|edge| edge.from
         == CognitiveRef::MemoryRevision(revisions[0])
-        && edge.to == CognitiveRef::Tag(tags[0].tag_id)));
+        && edge.to == CognitiveRef::Tag(tags[0].0)));
     let neighborhood = owner
-        .association_neighborhood(subject, CognitiveRef::Tag(tags[1].tag_id), 64, 1)
+        .association_neighborhood(subject, CognitiveRef::Tag(tags[1].0), 64, 1)
         .await
         .unwrap();
-    assert!(
-        neighborhood
-            .nodes
-            .contains(&CognitiveRef::Tag(tags[0].tag_id))
-    );
+    assert!(neighborhood.nodes.contains(&CognitiveRef::Tag(tags[0].0)));
     assert_eq!(
         neighborhood.associations[0].to,
-        CognitiveRef::Tag(tags[0].tag_id)
+        CognitiveRef::Tag(tags[0].0)
     );
     let bound = rt
         .cognition
@@ -333,9 +312,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
                     Cue::Text(TextCue {
                         text: "release approval".into(),
                     }),
-                    Cue::Tag(TagCue {
-                        tag: tags[1].tag_id,
-                    }),
+                    Cue::Tag(TagCue { tag: tags[1].0 }),
                 ],
                 ..Default::default()
             },
@@ -348,9 +325,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         })
         .await
         .unwrap();
-    assert!(
-        matches!(&bound.source_query.expression.cues[1],Cue::Tag(tag) if tag.tag==tags[0].tag_id)
-    );
+    assert!(matches!(&bound.source_query.expression.cues[1],Cue::Tag(tag) if tag.tag==tags[0].0));
     assert!(bound.representation.text.contains("Release approval"));
     // A subsequent merge flattens interpretation; old immutable facts stay intact.
     owner
@@ -358,39 +333,30 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             subject,
             MergeTagsInput {
                 operation_id: OperationId::new(),
-                survivor: expectation(&tags[2]),
-                retired: vec![expectation(&tags[0])],
+                survivor: expectation(tags[2].0, tags[2].1),
+                retired: vec![expectation(tags[0].0, tags[0].1)],
                 basis: vec![basis[0].clone()],
             },
         )
         .await
         .unwrap();
     assert_eq!(
-        rt.store
-            .canonical_tag_id(subject, tags[1].tag_id)
-            .await
-            .unwrap(),
-        tags[2].tag_id
+        rt.store.canonical_tag_id(subject, tags[1].0).await.unwrap(),
+        tags[2].0
     );
     let split = SplitTagInput {
         producer: None,
         operation_id: OperationId::new(),
-        parent: expectation(&tags[2]),
+        parent: expectation(tags[2].0, tags[2].1),
         children: vec![content("Approval policy"), content("Rollout procedure")],
         basis: vec![basis[0].clone()],
     };
     let children = owner.split_tag(subject, split.clone()).await.unwrap();
     let replay = owner.split_tag(subject, split.clone()).await.unwrap();
+    assert_eq!(children, replay);
     assert_eq!(
-        children.iter().map(|t| t.tag_id).collect::<Vec<_>>(),
-        replay.iter().map(|t| t.tag_id).collect::<Vec<_>>()
-    );
-    assert_eq!(
-        rt.store
-            .canonical_tag_id(subject, tags[2].tag_id)
-            .await
-            .unwrap(),
-        tags[2].tag_id
+        rt.store.canonical_tag_id(subject, tags[2].0).await.unwrap(),
+        tags[2].0
     );
     let before: i64 = sqlx::query_scalar("SELECT count(*) FROM tags WHERE subject_id=$1")
         .bind(subject.0)

@@ -4,7 +4,7 @@
 use crate::*;
 use nous_runtime::{
     ActivationSeed, ActivationSource, BoundQuery, ConceptEnrichment, LaneCandidate, LaneOutput,
-    LaneStatus, QueryActivation, QueryPlan, QuerySemanticEmbedding, TagActivation,
+    LaneStatus, QueryActivation, QuerySemanticEmbedding, TagActivation,
 };
 pub(crate) async fn activate(
     snapshot: &ServingSnapshot,
@@ -26,10 +26,11 @@ pub(crate) async fn activate(
     if activation.frozen {
         return Ok(activation);
     }
-    if bound.concept_enrichment == ConceptEnrichment::Off {
+    if bound.plan.concept_enrichment == ConceptEnrichment::Off {
         return Ok(activation);
     }
-    let policy = nous_runtime::ConceptActivationPolicy::from_snapshot(&bound.config_snapshot)?;
+    let policy =
+        nous_runtime::ConceptActivationPolicy::from_snapshot(&bound.read_context.config_snapshot)?;
     if let Some(generation) = snapshot
         .concept
         .iter()
@@ -131,11 +132,8 @@ pub(crate) async fn activate(
     }
     Ok(activation)
 }
-pub(crate) fn direct_lane(
-    snapshot: &ServingSnapshot,
-    bound: &BoundQuery,
-    plan: &QueryPlan,
-) -> LaneOutput {
+pub(crate) fn direct_lane(snapshot: &ServingSnapshot, bound: &BoundQuery) -> LaneOutput {
+    let plan = &bound.plan;
     let mut output = LaneOutput::empty(EvidenceFamily::TagDirect, LaneStatus::Ready);
     let Some(generation) = snapshot
         .concept

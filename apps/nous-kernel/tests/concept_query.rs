@@ -121,6 +121,9 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         )
         .await
         .unwrap();
+    let CognitiveRef::Tag(tag_id) = tag.reference.clone() else {
+        panic!("tag mutation result should reference Tag");
+    };
     let observed = observation(
         &rt,
         subject,
@@ -133,9 +136,10 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         OperationId::new(),
         "Reader lease retirement safely frees generation assets",
     );
-    input.tags = vec![tag.tag_id];
+    input.tags = vec![tag_id];
     let memory = owner.form_memory(input).await.unwrap();
-    let revision = CognitiveRef::MemoryRevision(memory.revision.header.memory_revision_id());
+    let revision =
+        CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(memory.revision_id.unwrap()));
     let text = Cue::Text(TextCue {
         text: "reader lease retirement".into(),
     });
@@ -154,12 +158,14 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     assert!(
         !bare
             .bound
+            .plan
             .enabled_lanes
             .contains(&EvidenceFamily::TagDirect)
     );
     assert!(
         !bare
             .bound
+            .plan
             .enabled_lanes
             .contains(&EvidenceFamily::TopologyWave)
     );
@@ -170,7 +176,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .concept
             .is_empty()
     );
-    let mut direct = query(subject, vec![Cue::Tag(TagCue { tag: tag.tag_id })]);
+    let mut direct = query(subject, vec![Cue::Tag(TagCue { tag: tag_id })]);
     direct.capabilities.text_embedding = RequirementStrength::Forbidden;
     let direct = rt.execute_query(direct, None).await.unwrap();
     assert_eq!(direct.result.results.len(), 1);
@@ -184,6 +190,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     assert!(
         !direct
             .bound
+            .plan
             .enabled_lanes
             .contains(&EvidenceFamily::TopologyWave)
     );
@@ -223,7 +230,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .activation
             .inferred_tags
             .iter()
-            .any(|activation| activation.tag == tag.tag_id)
+            .any(|activation| activation.tag == tag_id)
     );
     assert_eq!(enriched.bound.activation.model_calls, 0);
     assert_eq!(rt.store.authority_seq(subject).await.unwrap(), before);
@@ -283,13 +290,14 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .unwrap();
         let mut explored = query(
             subject,
-            vec![text.clone(), Cue::Tag(TagCue { tag: tag.tag_id })],
+            vec![text.clone(), Cue::Tag(TagCue { tag: tag_id })],
         );
         explored.exploration = ExplorationIntent::BoundedAssociative;
         let result = rt.execute_query(explored, None).await.unwrap();
         assert!(
             result
                 .bound
+                .plan
                 .enabled_lanes
                 .contains(&EvidenceFamily::TopologyWave)
         );
@@ -301,10 +309,10 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .unwrap();
         assert_eq!(concept.generation_id, concept_id);
         if let Some(vcp) = &snapshot.vcp {
-            let id = vcp.identities.id(&CognitiveRef::Tag(tag.tag_id)).unwrap();
+            let id = vcp.identities.id(&CognitiveRef::Tag(tag_id)).unwrap();
             assert_eq!(
                 vcp.vectors.iter().find(|(key, _)| *key == id).unwrap().1,
-                concept.record(tag.tag_id).unwrap().vector.clone().unwrap()
+                concept.record(tag_id).unwrap().vector.clone().unwrap()
             );
         }
     }
@@ -326,8 +334,8 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             ReviseTagInput {
                 operation_id: OperationId::new(),
                 target: TagExpectation {
-                    tag_id: tag.tag_id,
-                    expected_revision_id: tag.current_revision_id,
+                    tag_id,
+                    expected_revision_id: tag.revision_id.unwrap(),
                 },
                 content: TagContent {
                     label: "reader reclamation".into(),
@@ -357,12 +365,12 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         .find(|g| g.generation_id == updated.bound.activation.concept_generation.unwrap())
         .unwrap();
     assert_eq!(
-        concept.record(tag.tag_id).unwrap().revision,
-        revised.current_revision_id
+        concept.record(tag_id).unwrap().revision,
+        revised.revision_id.unwrap()
     );
     assert!(
         concept
-            .record(tag.tag_id)
+            .record(tag_id)
             .unwrap()
             .semantic
             .text
@@ -374,7 +382,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .iter()
             .find(|g| g.generation_id == concept_id)
             .unwrap()
-            .record(tag.tag_id)
+            .record(tag_id)
             .unwrap()
             .semantic
             .text
@@ -406,7 +414,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             Cue::Text(TextCue {
                 text: "reader reclamation".into(),
             }),
-            Cue::Tag(TagCue { tag: tag.tag_id }),
+            Cue::Tag(TagCue { tag: tag_id }),
         ],
     );
     historical_query.temporal_frame.authority_view = AuthorityView::AsOf(historical_cut);
@@ -438,7 +446,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .unwrap();
     let historical_generation: nous_retrieval::ConceptGeneration =
         serde_json::from_slice(&content).unwrap();
-    let historical_record = historical_generation.record(tag.tag_id).unwrap();
+    let historical_record = historical_generation.record(tag_id).unwrap();
     assert!(historical_record.semantic.text.contains("active readers"));
     assert!(
         !historical_record
@@ -462,12 +470,14 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     assert!(
         semantic
             .bound
+            .plan
             .enabled_lanes
             .contains(&EvidenceFamily::Lexical)
     );
     assert!(
         semantic
             .bound
+            .plan
             .enabled_lanes
             .contains(&EvidenceFamily::Dense)
     );
@@ -484,7 +494,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .activation
             .inferred_tags
             .iter()
-            .any(|activation| activation.tag == tag.tag_id)
+            .any(|activation| activation.tag == tag_id)
     );
     assert!(
         semantic

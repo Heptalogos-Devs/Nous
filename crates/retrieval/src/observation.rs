@@ -38,11 +38,11 @@ impl QueryObservation {
     pub(crate) fn native(
         graph: &WaveGraphGeneration,
         bound: &nous_runtime::BoundQuery,
-        plan: &nous_runtime::QueryPlan,
         source_seeds: Vec<SourceSeed>,
     ) -> Result<Self> {
+        let plan = &bound.plan;
         let constraints = &bound.source_query.expression.constraints;
-        let readout = resolve_wave_readout_policy(&bound.config_snapshot)?;
+        let readout = resolve_wave_readout_policy(&bound.read_context.config_snapshot)?;
         let config_subset_digest = crate::assets::files::digest(&serde_json::json!({
             "build": graph.build_policy,
             "readout": readout,
@@ -58,8 +58,8 @@ impl QueryObservation {
         );
         Ok(Self {
             query_id: bound.query_id.to_string(),
-            profile_id: plan.cognitive_profile,
-            profile_digest: plan.cognitive_profile.digest(),
+            profile_id: plan.retrieval_policy.cognitive_profile,
+            profile_digest: plan.retrieval_policy.cognitive_profile.digest(),
             topology_generation_id: graph.generation_id,
             config_subset_digest,
             bound_at: bound.bound_at,

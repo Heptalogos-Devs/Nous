@@ -10,7 +10,7 @@ use nous_memory::{CognitionView, EpisodePartitionSource, EpisodeView, JournalVie
 use nous_runtime::ManualCognitiveClock;
 use sqlx::Row;
 use std::sync::Arc;
-use test_support::database;
+use test_support::{database, read_mutation_cognition};
 
 use test_support::longitudinal::{
     consolidation_memory, consolidation_schema, journal_source_episode, runtime_with_clock_serving,
@@ -69,7 +69,11 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
         }],
         producer: None,
     };
-    let journal = memory.commit_journal(input.clone()).await.unwrap();
+    let journal_result = memory.commit_journal(input.clone()).await.unwrap();
+    let journal = match read_mutation_cognition(memory, subject, &journal_result).await {
+        CognitionView::Journal(value) => value,
+        _ => panic!("journal mutation result should materialize as Journal"),
+    };
     let mut recall = test_support::query::query(subject);
     recall.expression.targets = vec![nous_core::QueryTarget::Exact {
         reference: CognitiveRef::JournalRevision(journal.revision.header.journal_revision_id()),
@@ -121,18 +125,7 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
         && need.scope_ref == journal.header.journal_id().0.to_string()));
     clock.advance_by(subject, Duration::days(1)).unwrap();
     let replay = memory.commit_journal(input.clone()).await.unwrap();
-    assert_eq!(
-        replay.revision.header.revision_id(),
-        journal.revision.header.revision_id()
-    );
-    assert_eq!(
-        replay.revision.header.formed_at,
-        journal.revision.header.formed_at
-    );
-    assert_eq!(
-        replay.revision.header.recorded_at,
-        journal.revision.header.recorded_at
-    );
+    assert_eq!(replay, journal_result);
     let revised = assert_journal_revalidation(&rt, input, &episode, &invalidated).await;
     let uses = assert_longitudinal_use(&rt, subject, &episode, &revised).await;
     assert_journal_purge(&rt, subject, &revised, &episode, uses, &dependencies).await;
@@ -165,7 +158,11 @@ async fn assert_journal_revalidation(
         expected_epoch: invalidated.header.object_epoch,
         intent: "revalidate".into(),
     });
-    let revised = memory.commit_journal(input.clone()).await.unwrap();
+    let revised_result = memory.commit_journal(input.clone()).await.unwrap();
+    let revised = match read_mutation_cognition(memory, subject, &revised_result).await {
+        CognitionView::Journal(value) => value,
+        _ => panic!("journal mutation result should materialize as Journal"),
+    };
     assert_eq!(revised.header.journal_id(), invalidated.header.journal_id());
     assert_ne!(
         revised.revision.header.revision_id(),
@@ -290,9 +287,9 @@ async fn create_journal_dependents(
         let mut input = content.clone();
         input.operation_id = OperationId::new();
         let result = memory.form_memory(input).await.unwrap();
-        refs.push(CognitiveRef::MemoryRevision(
-            result.revision.header.memory_revision_id(),
-        ));
+        refs.push(CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(
+            result.revision_id.unwrap(),
+        )));
     }
     let mut schema = consolidation_schema(episode);
     schema.content.evidence_links = refs
@@ -309,7 +306,7 @@ async fn create_journal_dependents(
         .collect();
     let result = memory.create_schema(schema).await.unwrap();
     refs.push(CognitiveRef::CognitiveSchemaRevision(
-        result.revision.header.schema_revision_id(),
+        nous_core::CognitiveSchemaRevisionId(result.revision_id.unwrap()),
     ));
     let episode = memory
         .create_episode(nous_memory::EpisodeInput {
@@ -333,9 +330,9 @@ async fn create_journal_dependents(
         })
         .await
         .unwrap();
-    refs.push(CognitiveRef::EpisodeRevision(
-        episode.revision.header.episode_revision_id(),
-    ));
+    refs.push(CognitiveRef::EpisodeRevision(nous_core::EpisodeRevisionId(
+        episode.revision_id.unwrap(),
+    )));
     refs
 }
 

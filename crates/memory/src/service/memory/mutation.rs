@@ -4,7 +4,7 @@
 use super::*;
 
 impl MemoryService {
-    pub async fn form_memory(&self, mut input: ExplicitMemoryInput) -> Result<MemoryView> {
+    pub async fn form_memory(&self, mut input: ExplicitMemoryInput) -> Result<MutationResult> {
         let started_at = self.cognition.now(input.subject);
         input.producer = input
             .producer
@@ -31,31 +31,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let result = receipt.results.first().ok_or_else(|| {
-                        Error::new(
-                            nous_core::ErrorOwner::Memory,
-                            nous_core::ErrorCode::InternalFailure,
-                            "form receipt has no result",
-                        )
-                    })?;
-                    let CognitiveRef::Memory(memory) = &result.reference else {
-                        return Err(Error::new(
-                            nous_core::ErrorOwner::Memory,
-                            nous_core::ErrorCode::InternalFailure,
-                            "form receipt has an invalid result reference",
-                        ));
-                    };
-                    let revision = receipt_revision_id(&receipt, &CognitiveRef::Memory(*memory))?;
-                    return self
-                        .memory(input.subject, *memory, Some(MemoryRevisionId(revision)))
-                        .await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
-                    nous_core::ErrorCode::Unavailable,
-                    "form_memory operation is already in progress",
-                ));
+                return single_mutation_result(receipt, ErrorOwner::Memory);
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -92,15 +68,10 @@ impl MemoryService {
                 ],
             )
             .await?;
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::Memory(memory_id),
-                revision_id.0,
-                Some(1),
-            )])
-            .await?;
-        self.memory(input.subject, memory_id, Some(revision_id))
-            .await
+        let result =
+            MutationResult::revised(CognitiveRef::Memory(memory_id), revision_id.0, Some(1));
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
 
     pub(in crate::service) async fn create_memory_in(
@@ -272,7 +243,7 @@ impl MemoryService {
         subject: SubjectId,
         proposal: MemoryFormationProposal,
         allowed_entity_refs: &[EntityRef],
-    ) -> Result<MemoryView> {
+    ) -> Result<MutationResult> {
         if proposal
             .aboutness
             .iter()
@@ -287,7 +258,7 @@ impl MemoryService {
         self.form_memory(proposal.into_input(subject)).await
     }
 
-    pub async fn revise_memory(&self, mut input: ReviseMemoryInput) -> Result<MemoryView> {
+    pub async fn revise_memory(&self, mut input: ReviseMemoryInput) -> Result<MutationResult> {
         let started_at = self.cognition.now(input.subject);
         input.producer = input
             .producer
@@ -331,22 +302,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let revision =
-                        receipt_revision_id(&receipt, &CognitiveRef::Memory(input.memory_id))?;
-                    return self
-                        .memory(
-                            input.subject,
-                            input.memory_id,
-                            Some(MemoryRevisionId(revision)),
-                        )
-                        .await;
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
-                    nous_core::ErrorCode::Unavailable,
-                    "revise_memory operation is already in progress",
-                ));
+                return single_mutation_result(receipt, ErrorOwner::Memory);
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -383,15 +339,13 @@ impl MemoryService {
                 ],
             )
             .await?;
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::Memory(input.memory_id),
-                revision_id.0,
-                Some(epoch + 1),
-            )])
-            .await?;
-        self.memory(input.subject, input.memory_id, Some(revision_id))
-            .await
+        let result = MutationResult::revised(
+            CognitiveRef::Memory(input.memory_id),
+            revision_id.0,
+            Some(epoch + 1),
+        );
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
 
     pub(in crate::service) async fn revise_memory_in(
@@ -524,16 +478,7 @@ impl MemoryService {
             )
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Memory,
-                    nous_core::ErrorCode::Unavailable,
-                    "relation operation is already in progress",
-                ));
-            }
+            MutationStart::Replay(_) => return Ok(()),
             MutationStart::Active(mutation) => mutation,
         };
         sqlx::query("INSERT INTO memory_revision_relations(from_revision_id,to_revision_id,relation,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING").bind(from.0).bind(to.0).bind(relation.as_str()).bind(self.cognition.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?;

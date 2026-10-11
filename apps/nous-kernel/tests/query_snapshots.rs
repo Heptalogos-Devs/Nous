@@ -49,9 +49,7 @@ async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
         &nous_core::WorkflowSnapshot {
             content: nous_core::WorkflowPayload {
                 payload: serde_json::json!({"model":"frozen"}),
-                dependencies: vec![nous_core::CognitiveRef::Memory(
-                    candidate.header.memory_id(),
-                )],
+                dependencies: vec![candidate.reference.clone()],
                 ..Default::default()
             },
             ..Default::default()
@@ -81,9 +79,9 @@ async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
     runtime
         .purge_cognition(
             subject,
-            nous_core::CognitiveRef::Memory(candidate.header.memory_id()),
+            candidate.reference.clone(),
             OperationId::new(),
-            candidate.header.object_epoch,
+            candidate.object_epoch.unwrap(),
         )
         .await
         .unwrap();

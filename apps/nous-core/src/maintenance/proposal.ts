@@ -17,7 +17,6 @@ import {
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 
 import { type ModelRuntime } from "../model/runtime.js";
-import { type ModelRoleSnapshot } from "../model/execution/snapshot.js";
 import { type ExecutionTelemetry } from "../model/execution/routes.js";
 import {
   partitionIndices,
@@ -70,11 +69,17 @@ export async function buildMaintenanceProposal({
         epoch: plan.target.expectedEpoch.toString(),
       };
     } else {
+      const modelSnapshot = snapshot.model;
+      if (!modelSnapshot)
+        throw new ConnectError(
+          "Maintenance model snapshot is unavailable",
+          Code.Internal,
+        );
       if (need.kind === "episode_resegment") {
         const result = await models.segmentEpisode(
           JSON.stringify(snapshot.plan),
           options.signal ?? undefined,
-          snapshot.model as ModelRoleSnapshot,
+          modelSnapshot,
           reserveModelCall,
         );
         executionTelemetry = result.execution;
@@ -149,7 +154,7 @@ export async function buildMaintenanceProposal({
         const result = await models.maintainConcepts(
           plan.conceptModelInputJson,
           options.signal ?? undefined,
-          snapshot.model as ModelRoleSnapshot,
+          modelSnapshot,
           reserveModelCall,
         );
         executionTelemetry = result.execution;
@@ -173,7 +178,7 @@ export async function buildMaintenanceProposal({
         const result = await models.consolidate(
           JSON.stringify(snapshot.plan),
           options.signal ?? undefined,
-          snapshot.model as ModelRoleSnapshot,
+          modelSnapshot,
           reserveModelCall,
         );
         executionTelemetry = result.execution;
@@ -196,7 +201,7 @@ export async function buildMaintenanceProposal({
         const result = await models.synthesizeJournal(
           JSON.stringify(snapshot.plan),
           options.signal ?? undefined,
-          snapshot.model as ModelRoleSnapshot,
+          modelSnapshot,
           reserveModelCall,
         );
         executionTelemetry = result.execution;

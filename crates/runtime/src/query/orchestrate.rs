@@ -4,15 +4,13 @@
 use super::{
     CandidateRankInput, LaneCandidate, LaneOutput, LaneStatus, rank_candidates_with_policy,
 };
-use crate::{BoundQuery, CognitiveRuntimeService, QueryPlan};
+use crate::{BoundQuery, CognitiveRuntimeService};
 use nous_core::*;
 use std::collections::{BTreeMap, HashMap};
 
 #[async_trait::async_trait]
 pub trait CognitiveContributor: Send + Sync {
-    fn owns(&self, reference: &CognitiveRef) -> bool;
-
-    async fn direct_lanes(&self, bound: &BoundQuery, plan: &QueryPlan) -> Result<Vec<LaneOutput>>;
+    async fn direct_lanes(&self, bound: &BoundQuery) -> Result<Vec<LaneOutput>>;
 
     async fn validate_and_materialize(
         &self,
@@ -20,6 +18,40 @@ pub trait CognitiveContributor: Send + Sync {
         references: &[CognitiveRef],
         bound: &BoundQuery,
     ) -> Result<(Vec<CognitiveHit>, BTreeMap<String, usize>)>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryOwner {
+    Memory,
+    Material,
+}
+
+/// Returns the fixed semantic owner that validates and materializes a query
+/// candidate; all other references use Runtime's generic validation path.
+pub fn query_owner(reference: &CognitiveRef) -> Option<QueryOwner> {
+    match reference {
+        CognitiveRef::Memory(_)
+        | CognitiveRef::MemoryRevision(_)
+        | CognitiveRef::Episode(_)
+        | CognitiveRef::EpisodeRevision(_)
+        | CognitiveRef::Journal(_)
+        | CognitiveRef::JournalRevision(_)
+        | CognitiveRef::CognitiveSchema(_)
+        | CognitiveRef::CognitiveSchemaRevision(_) => Some(QueryOwner::Memory),
+        CognitiveRef::Artifact(_)
+        | CognitiveRef::Occurrence(_)
+        | CognitiveRef::SourceRegion(_)
+        | CognitiveRef::DerivedRepresentation(_)
+        | CognitiveRef::DerivedRegion(_) => Some(QueryOwner::Material),
+        _ => None,
+    }
+}
+
+pub(super) fn contributor_index(reference: &CognitiveRef) -> Option<usize> {
+    match query_owner(reference)? {
+        QueryOwner::Memory => Some(0),
+        QueryOwner::Material => Some(1),
+    }
 }
 
 /// Shared Serving owns projection-backed lexical/dense/topology lanes. Domain
@@ -30,7 +62,7 @@ pub trait SharedLaneProvider: Send + Sync {
     async fn activate(&self, bound: &BoundQuery) -> Result<super::QueryActivation> {
         Ok(bound.activation.clone())
     }
-    async fn lanes(&self, bound: &BoundQuery, plan: &QueryPlan) -> Result<Vec<LaneOutput>>;
+    async fn lanes(&self, bound: &BoundQuery) -> Result<Vec<LaneOutput>>;
 }
 
 /// The current fixed cognition-owner set. Adding an owner is a compile-time
@@ -48,29 +80,16 @@ impl CognitiveRuntimeService {
         contributors: CognitiveContributors<'_>,
     ) -> Result<CognitiveQueryResult> {
         let bound = self.bind_query(query).await?;
-        let plan = QueryPlan::for_bound_query(&bound);
-        self.query_with_plan(bound, contributors, plan).await
-    }
-
-    pub async fn query_with_plan(
-        &self,
-        bound: BoundQuery,
-        contributors: CognitiveContributors<'_>,
-        plan: QueryPlan,
-    ) -> Result<CognitiveQueryResult> {
-        let execution = self
-            .execute_query_with_plan(bound, contributors, plan, None)
-            .await?;
+        let execution = self.execute_bound_query(bound, contributors, None).await?;
         self.record_query_feedback(&execution.bound, &execution.result)
             .await?;
         Ok(execution.result)
     }
 
-    pub async fn execute_query_with_plan(
+    pub async fn execute_bound_query(
         &self,
         bound: BoundQuery,
         contributors: CognitiveContributors<'_>,
-        plan: QueryPlan,
         validated_pool_limit: Option<usize>,
     ) -> Result<super::QueryExecution> {
         let mut bound = bound;
@@ -90,7 +109,7 @@ impl CognitiveRuntimeService {
         {
             bound.activation = shared.activate(&bound).await?;
         }
-        if bound.concept_enrichment == super::ConceptEnrichment::Model
+        if bound.plan.concept_enrichment == super::ConceptEnrichment::Model
             && bound.source_query.capabilities.query_concept_enrichment
                 != RequirementStrength::Forbidden
             && !bound.activation.model_completed
@@ -126,10 +145,9 @@ impl CognitiveRuntimeService {
         }
         let output_limit = validated_pool_limit.unwrap_or(bound.source_query.result_need.limit);
         let execution = if bound.source_query.expression.operation != QueryOperation::Atom {
-            self.query_tree(bound, contributors, plan, output_limit)
-                .await?
+            self.query_tree(bound, contributors, output_limit).await?
         } else {
-            self.query_leaf_execution(bound, &contributors, plan, output_limit)
+            self.query_leaf_execution(bound, &contributors, output_limit)
                 .await?
         };
         Ok(execution)
@@ -138,12 +156,10 @@ impl CognitiveRuntimeService {
         &self,
         bound: BoundQuery,
         contributors: &CognitiveContributors<'_>,
-        plan: QueryPlan,
         output_limit: usize,
     ) -> Result<super::QueryExecution> {
-        let result = self
-            .query_atom_with_plan(&bound, contributors, plan, output_limit)
-            .await?;
+        let bound = std::sync::Arc::new(bound);
+        let result = self.query_atom(&bound, contributors, output_limit).await?;
         let leaves = vec![super::types::BoundLeaf {
             ordinal: 0,
             bound: bound.clone(),
@@ -161,13 +177,13 @@ impl CognitiveRuntimeService {
         })
     }
 
-    pub(super) async fn query_atom_with_plan(
+    pub(super) async fn query_atom(
         &self,
         bound: &BoundQuery,
         contributors: &CognitiveContributors<'_>,
-        plan: QueryPlan,
         output_limit: usize,
     ) -> Result<CognitiveQueryResult> {
+        let plan = &bound.plan;
         let query = &bound.source_query;
         let mut result = CognitiveQueryResult {
             query_id: bound.query_id,
@@ -185,10 +201,10 @@ impl CognitiveRuntimeService {
             .extend(bound.activation.degradation.clone());
         let mut lane_outputs = Vec::new();
         if let Some(shared) = contributors.shared.filter(|_| !exact_read) {
-            lane_outputs.extend(shared.lanes(bound, &plan).await?);
+            lane_outputs.extend(shared.lanes(bound).await?);
         }
         if let Some(memory) = contributors.memory.filter(|_| !exact_read) {
-            lane_outputs.extend(memory.direct_lanes(bound, &plan).await?);
+            lane_outputs.extend(memory.direct_lanes(bound).await?);
         } else if contributors.memory.is_none() && query.projection.has_cognition() {
             return Err(Error::new(
                 nous_core::ErrorOwner::Runtime,
@@ -197,7 +213,7 @@ impl CognitiveRuntimeService {
             ));
         }
         if let Some(material) = contributors.material.filter(|_| !exact_read) {
-            lane_outputs.extend(material.direct_lanes(bound, &plan).await?);
+            lane_outputs.extend(material.direct_lanes(bound).await?);
         }
         let mut exact_output = LaneOutput::empty(EvidenceFamily::Exact, LaneStatus::Ready);
         for binding in &bound.exact_bindings {
@@ -213,7 +229,7 @@ impl CognitiveRuntimeService {
         }
         let runtime_allowed = query.projection.has_cognition()
             || query.projection.domains.contains(&ResultDomain::Evidence);
-        if runtime_allowed && bound.lane_enabled(EvidenceFamily::Runtime) {
+        if runtime_allowed && plan.lane_enabled(EvidenceFamily::Runtime) {
             for (reference, source) in &bound.runtime_sources {
                 lane_outputs.push(LaneOutput {
                     family: EvidenceFamily::Runtime,
@@ -292,11 +308,8 @@ impl CognitiveRuntimeService {
             *lane_drops.entry("domain_ineligible".into()).or_default() += dropped;
         }
         let rank_inputs = candidates.into_values().collect::<Vec<_>>();
-        let ranked = rank_candidates_with_policy(
-            &rank_inputs,
-            &bound.enabled_lanes,
-            &bound.retrieval_policy,
-        );
+        let ranked =
+            rank_candidates_with_policy(&rank_inputs, &plan.enabled_lanes, &plan.retrieval_policy);
         let validation_bound = plan.final_validation_budget.min(ranked.len());
         let validation_budget_exhausted = ranked.len() > validation_bound;
         if validation_budget_exhausted {
@@ -313,36 +326,15 @@ impl CognitiveRuntimeService {
         let mut by_owner = [Vec::<CognitiveRef>::new(), Vec::new()];
         let mut generic = Vec::new();
         for candidate in ranked.iter().take(validation_bound) {
-            let matching = owners
-                .iter()
-                .enumerate()
-                .filter(|(_, owner)| owner.is_some_and(|owner| owner.owns(&candidate.reference)))
-                .map(|(index, _)| index)
-                .collect::<Vec<_>>();
-            if matching.len() > 1 {
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Runtime,
-                    nous_core::ErrorCode::InternalFailure,
-                    "Query candidate is owned by multiple semantic owners",
-                ));
-            }
-            if let Some(index) = matching.first() {
-                by_owner[*index].push(candidate.reference.clone());
-            } else if is_persistent_cognition(&candidate.reference)
-                || matches!(
-                    candidate.reference,
-                    CognitiveRef::Artifact(_)
-                        | CognitiveRef::Occurrence(_)
-                        | CognitiveRef::SourceRegion(_)
-                        | CognitiveRef::DerivedRepresentation(_)
-                        | CognitiveRef::DerivedRegion(_)
-                )
-            {
-                return Err(Error::new(
-                    nous_core::ErrorOwner::Runtime,
-                    nous_core::ErrorCode::Unavailable,
-                    "Service unavailable",
-                ));
+            if let Some(index) = contributor_index(&candidate.reference) {
+                if owners[index].is_none() {
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::Unavailable,
+                        "Service unavailable",
+                    ));
+                }
+                by_owner[index].push(candidate.reference.clone());
             } else {
                 generic.push(candidate.reference.clone());
             }
@@ -368,14 +360,10 @@ impl CognitiveRuntimeService {
             }
         }
         for binding in &bound.exact_bindings {
-            if binding.mutable_object {
-                let owner_validates = owners
-                    .iter()
-                    .flatten()
-                    .any(|owner| owner.owns(&binding.bound_ref));
-                if owner_validates {
-                    continue;
-                }
+            if binding.mutable_object
+                && !contributor_index(&binding.bound_ref)
+                    .is_some_and(|index| owners[index].is_some())
+            {
                 let (current, epoch, _) = self
                     .store
                     .bind_exact_reference(query.subject, &binding.requested_ref)
@@ -429,14 +417,14 @@ impl CognitiveRuntimeService {
                 result.results.push(hit);
             }
         }
-        let (actions, degradation) = self.resource_actions_for_query(query, &plan).await?;
+        let (actions, degradation) = self.resource_actions_for_query(bound).await?;
         result.resource_actions = actions;
         result.degradation.extend(degradation);
         super::preferences::apply(
             &mut result.results,
             &query.expression.preferences,
             bound.bound_at,
-            &bound.retrieval_policy,
+            &plan.retrieval_policy,
         );
         result.results.truncate(output_limit);
         if !result.degradation.is_empty() && result.status != QueryStatus::Partial {
@@ -453,7 +441,7 @@ impl CognitiveRuntimeService {
         if validation_budget_exhausted {
             result.status = QueryStatus::Partial;
         }
-        explain_plan(&mut result, query, &plan);
+        explain_plan(&mut result, bound);
         if let Some(diagnostics) = result.diagnostics.as_mut() {
             if query.diagnostics == DiagnosticsRequest::Full {
                 diagnostics.trace = Some(serde_json::json!({
@@ -557,21 +545,9 @@ fn merge_counts(target: &mut BTreeMap<String, usize>, incoming: BTreeMap<String,
     }
 }
 
-fn is_persistent_cognition(reference: &CognitiveRef) -> bool {
-    matches!(
-        reference,
-        CognitiveRef::Memory(_)
-            | CognitiveRef::MemoryRevision(_)
-            | CognitiveRef::Episode(_)
-            | CognitiveRef::EpisodeRevision(_)
-            | CognitiveRef::Journal(_)
-            | CognitiveRef::JournalRevision(_)
-            | CognitiveRef::CognitiveSchema(_)
-            | CognitiveRef::CognitiveSchemaRevision(_)
-    )
-}
-
-fn explain_plan(result: &mut CognitiveQueryResult, query: &CognitiveQuery, plan: &QueryPlan) {
+fn explain_plan(result: &mut CognitiveQueryResult, bound: &BoundQuery) {
+    let query = &bound.source_query;
+    let plan = &bound.plan;
     if query.diagnostics != DiagnosticsRequest::None {
         let diagnostics = result.diagnostics.get_or_insert(QueryDiagnostics {
             candidate_counts: BTreeMap::new(),

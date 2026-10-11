@@ -4,17 +4,15 @@
 use crate::observation::NATIVE_MECHANISM_ID;
 use crate::{QueryObservation, ServingSnapshot, SourceSeed};
 use nous_core::EvidenceFamily;
-use nous_runtime::{
-    BoundQuery, LaneCandidate, LaneOutput, LaneStatus, QueryPlan, TopologyWorkSummary,
-};
+use nous_runtime::{BoundQuery, LaneCandidate, LaneOutput, LaneStatus, TopologyWorkSummary};
 use std::collections::BTreeMap;
 
 pub(crate) fn topology_lane(
     snapshot: &ServingSnapshot,
     bound: &BoundQuery,
-    plan: &QueryPlan,
     signals: &crate::PreparedQuerySignals,
 ) -> nous_core::Result<LaneOutput> {
+    let plan = &bound.plan;
     let mut output = LaneOutput::empty(EvidenceFamily::TopologyWave, LaneStatus::Ready);
     if !plan.expand_topology {
         output.status = LaneStatus::Disabled;
@@ -27,32 +25,39 @@ pub(crate) fn topology_lane(
             .push("topology serving generation is unavailable".into());
         return Ok(output);
     };
-    if graph.cognitive_profile != plan.cognitive_profile {
+    if graph.cognitive_profile != plan.retrieval_policy.cognitive_profile {
         output.status = LaneStatus::Unavailable;
         output
             .diagnostics
             .push("topology generation does not match bound cognitive profile".into());
         return Ok(output);
     }
-    if plan.cognitive_profile.requirements().query_embedding && signals.embedding().is_none() {
+    if plan
+        .retrieval_policy
+        .cognitive_profile
+        .requirements()
+        .query_embedding
+        && signals.embedding().is_none()
+    {
         output.status = LaneStatus::Unavailable;
         output
             .diagnostics
             .push("bound cognitive profile requires an available permitted query embedding".into());
         return Ok(output);
     }
-    if plan.cognitive_profile != nous_runtime::CognitiveProfile::NousNodePotential {
+    if plan.retrieval_policy.cognitive_profile != nous_runtime::CognitiveProfile::NousNodePotential
+    {
         output.status = LaneStatus::Unavailable;
         output.diagnostics.push(format!(
             "cognitive kernel not implemented: {}",
-            plan.cognitive_profile.id()
+            plan.retrieval_policy.cognitive_profile.id()
         ));
         return Ok(output);
     }
     output.generation_ref = Some(graph.generation_id);
-    let readout = crate::resolve_wave_readout_policy(&bound.config_snapshot)?;
+    let readout = crate::resolve_wave_readout_policy(&bound.read_context.config_snapshot)?;
     let seeds = prepared_source_seeds(graph, bound, signals, &readout);
-    let observation = QueryObservation::native(graph, bound, plan, seeds)?;
+    let observation = QueryObservation::native(graph, bound, seeds)?;
     let river = observation.river();
     output.topology_work = Some(TopologyWorkSummary {
         mechanism: NATIVE_MECHANISM_ID.into(),

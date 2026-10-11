@@ -56,7 +56,7 @@ async fn create_memory(
     subject: SubjectId,
     occurrence: OccurrenceId,
     text: &str,
-) -> nous_memory::MemoryView {
+) -> nous_memory::MutationResult {
     runtime
         .require_memory()
         .unwrap()
@@ -68,7 +68,7 @@ async fn create_memory(
 #[tokio::test]
 async fn copied_upgrade_binds_known_vectors_backs_up_unknown_and_purge_keeps_backup() {
     let (root, url, _postgres) = database().await;
-    let runtime = test_support::open_memory_only_runtime(&url, &root).await;
+    let runtime = test_support::open_runtime(&url, &root).await;
     let subject = test_support::query::subject(&runtime).await;
     let source = runtime
         .material
@@ -78,7 +78,7 @@ async fn copied_upgrade_binds_known_vectors_backs_up_unknown_and_purge_keeps_bac
     let text = "same legacy memory text";
     let first = create_memory(&runtime, subject, source.occurrence.occurrence_id, text).await;
     let second = create_memory(&runtime, subject, source.occurrence.occurrence_id, text).await;
-    let first_ref = CognitiveRef::MemoryRevision(first.revision.header.memory_revision_id());
+    let first_ref = CognitiveRef::MemoryRevision(MemoryRevisionId(first.revision_id.unwrap()));
     let config = stored_embedding_config();
     runtime
         .serving
@@ -175,9 +175,9 @@ async fn copied_upgrade_binds_known_vectors_backs_up_unknown_and_purge_keeps_bac
         .unwrap()
         .begin_purge_cognition(
             subject,
-            CognitiveRef::Memory(first.header.memory_id()),
+            first.reference.clone(),
             first_purge_operation,
-            first.header.object_epoch,
+            first.object_epoch.unwrap(),
         )
         .await
         .unwrap();
@@ -199,9 +199,9 @@ async fn copied_upgrade_binds_known_vectors_backs_up_unknown_and_purge_keeps_bac
     runtime
         .purge_cognition(
             subject,
-            CognitiveRef::Memory(first.header.memory_id()),
+            first.reference.clone(),
             first_purge_operation,
-            first.header.object_epoch,
+            first.object_epoch.unwrap(),
         )
         .await
         .unwrap();
@@ -217,9 +217,9 @@ async fn copied_upgrade_binds_known_vectors_backs_up_unknown_and_purge_keeps_bac
     runtime
         .purge_cognition(
             subject,
-            CognitiveRef::Memory(second.header.memory_id()),
+            second.reference.clone(),
             OperationId::new(),
-            second.header.object_epoch,
+            second.object_epoch.unwrap(),
         )
         .await
         .unwrap();

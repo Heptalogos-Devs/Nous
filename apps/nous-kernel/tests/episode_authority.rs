@@ -15,7 +15,7 @@ use nous_runtime::{CognitiveClock, MaintenanceDisposition, ManualCognitiveClock}
 use std::sync::Arc;
 use test_support::database;
 
-use test_support::longitudinal::{observation, runtime_with_clock};
+use test_support::longitudinal::{observation, runtime_with_clock_serving};
 use test_support::query::subject as create_subject;
 
 async fn read_episode(
@@ -31,6 +31,23 @@ async fn read_episode(
         CognitionView::Episode(episode) => episode,
         _ => panic!("common Cognition read returned the wrong view kind"),
     }
+}
+
+async fn partition_views(
+    owner: &MemoryService,
+    subject: SubjectId,
+    results: &[nous_memory::MutationResult],
+) -> Vec<EpisodeView> {
+    owner
+        .read_mutation_cognitions(subject, results)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|view| match view {
+            CognitionView::Episode(episode) => episode,
+            _ => panic!("partition returned a non-Episode result"),
+        })
+        .collect()
 }
 
 async fn partition_request(
@@ -69,7 +86,7 @@ async fn partition_request(
 async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
     let (root, url, _postgres) = database().await;
     let clock = Arc::new(ManualCognitiveClock::new(Utc::now().trunc_subsecs(6)));
-    let rt = runtime_with_clock(&url, &root, clock.clone()).await;
+    let rt = runtime_with_clock_serving(&url, &root, clock.clone(), false).await;
     let subject = create_subject(&rt).await;
     let session = rt
         .cognition
@@ -107,10 +124,11 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
         &[vec![0, 1], vec![2, 3]],
     )
     .await;
-    let split = memory
+    let split_results = memory
         .apply_episode_partition(split_request.clone())
         .await
         .unwrap();
+    let split = partition_views(memory, subject, &split_results).await;
     assert_eq!(split.len(), 2);
     assert!(
         split
@@ -140,10 +158,7 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
             .any(|relation| relation.relation == "split_from")
     }));
     let replay = memory.apply_episode_partition(split_request).await.unwrap();
-    assert_eq!(
-        replay[0].revision.header.revision_id(),
-        split[0].revision.header.revision_id()
-    );
+    assert_eq!(replay, split_results);
     assert_partition_rollback(&rt, subject, &split, &occurrences).await;
     let repartition_request = partition_request(
         &rt,
@@ -153,10 +168,11 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
         &[vec![0], vec![1, 2, 3]],
     )
     .await;
-    let repartition = memory
+    let repartition_results = memory
         .apply_episode_partition(repartition_request)
         .await
         .unwrap();
+    let repartition = partition_views(memory, subject, &repartition_results).await;
     assert!(repartition.iter().all(|part| {
         part.relations
             .iter()
@@ -172,7 +188,8 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
         &[vec![0, 1, 2, 3]],
     )
     .await;
-    let merged = memory.apply_episode_partition(merge_request).await.unwrap();
+    let merged_results = memory.apply_episode_partition(merge_request).await.unwrap();
+    let merged = partition_views(memory, subject, &merged_results).await;
     assert_eq!(merged.len(), 1);
     assert!(
         merged[0]
@@ -241,10 +258,11 @@ async fn assert_partition_revision(
     let memory = rt.require_memory().unwrap();
     let mut revise = partition_request(rt, subject, merged, occurrences, &[vec![0, 1, 2, 3]]).await;
     revise.segments[0].title = Some("reinterpreted scope".into());
-    let revised = memory
+    let revised_results = memory
         .apply_episode_partition(revise.clone())
         .await
         .unwrap();
+    let revised = partition_views(memory, subject, &revised_results).await;
     assert_eq!(
         revised[0].header.episode_id(),
         merged[0].header.episode_id()
@@ -271,10 +289,7 @@ async fn assert_partition_revision(
     unchanged.segments[0].title = revised[0].revision.title.clone();
     let watermark = rt.store.authority_seq(subject).await.unwrap();
     let no_change = memory.apply_episode_partition(unchanged).await.unwrap();
-    assert_eq!(
-        no_change[0].revision.header.revision_id(),
-        revised[0].revision.header.revision_id()
-    );
+    assert_eq!(no_change, revised_results);
     assert_eq!(rt.store.authority_seq(subject).await.unwrap(), watermark);
     revise.operation_id = nous_core::OperationId::new();
     assert!(memory.apply_episode_partition(revise).await.is_err());
@@ -291,7 +306,7 @@ async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
         .unwrap()
         .with_timezone(&Utc);
     let clock = Arc::new(ManualCognitiveClock::new(historical + Duration::days(730)));
-    let rt = runtime_with_clock(&url, &root, clock.clone()).await;
+    let rt = runtime_with_clock_serving(&url, &root, clock.clone(), false).await;
     let subject = create_subject(&rt).await;
     assert_eq!(
         rt.subjects.subject(subject).await.unwrap().created_at,
@@ -396,12 +411,14 @@ async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
     );
     assert!(plan.members[1].recorded_seq > plan.members[2].recorded_seq);
     let partition = partition_request(&rt, subject, &original, &chronology, &[vec![0, 1, 2]]).await;
-    let committed = rt
+    let committed_results = rt
         .require_memory()
         .unwrap()
         .apply_episode_partition(partition)
         .await
         .unwrap();
+    let committed =
+        partition_views(rt.require_memory().unwrap(), subject, &committed_results).await;
     assert_eq!(
         committed[0]
             .members

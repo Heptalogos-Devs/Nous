@@ -4,7 +4,6 @@
 import type { ModelRole } from "../roles.js";
 import {
   hydrateRole,
-  snapshotSchema,
   type ReadyRole,
   type ModelRoleSnapshot,
   type ModelProducerMetadata,
@@ -83,21 +82,13 @@ export async function executeRoutes<
 ) {
   if (snapshot.role !== name) throw new Error("Reserved model role mismatch");
   const policy = snapshot.configuration.roles[name];
-  let validatedSnapshot: ModelRoleSnapshot | undefined;
-  try {
-    validatedSnapshot = snapshotSchema.parse(snapshot);
-  } catch {
-    // The same unavailable route result is recorded below for each configured route.
-  }
   const attempts: ExecutionAttempt[] = [];
   for (const executionName of policy?.routes ?? []) {
     if (signal?.aborted) interrupt(name, signal.reason, attempts);
     let role: ReadyRole;
     let prepared: Input;
     try {
-      if (!validatedSnapshot)
-        throw new Error("Reserved model snapshot invalid");
-      role = hydrateRole(validatedSnapshot, executionName, credentialOrigins);
+      role = hydrateRole(snapshot, executionName, credentialOrigins);
       prepared = prepare ? prepare(role) : (undefined as Input);
     } catch (error) {
       attempts.push({

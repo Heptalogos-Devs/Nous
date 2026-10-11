@@ -7,8 +7,8 @@ use crate::NousRuntime;
 use chrono::{DateTime, Utc};
 use nous_core::*;
 use nous_memory::{
-    BasisRole, EpisodeInput, EpisodeMemberInput, EpisodeView, EvidenceLocator, EvidenceRef,
-    RevisionBasis,
+    BasisRole, CognitionView, EpisodeInput, EpisodeMemberInput, EpisodeView, EvidenceLocator,
+    EvidenceRef, RevisionBasis,
 };
 use serde::{Deserialize, Serialize};
 
@@ -43,7 +43,7 @@ impl NousRuntime {
                     end: Some(draft.observed_end),
                 }
             };
-            let episode = memory
+            let result = memory
                 .create_episode(EpisodeInput {
                     operation_id: OperationId(uuid::Uuid::new_v5(
                         &uuid::Uuid::NAMESPACE_OID,
@@ -80,6 +80,16 @@ impl NousRuntime {
                         .collect(),
                 })
                 .await?;
+            let mut views = memory
+                .read_mutation_cognitions(subject, std::slice::from_ref(&result))
+                .await?;
+            let Some(CognitionView::Episode(episode)) = views.pop() else {
+                return Err(Error::new(
+                    ErrorOwner::Memory,
+                    ErrorCode::InternalFailure,
+                    "organized experience result did not materialize as Episode",
+                ));
+            };
             self.cognition
                 .acknowledge_episode_draft(
                     subject,

@@ -74,9 +74,7 @@ fn deployment_is_descriptor_aware_and_snapshot_digest_is_subset_scoped() {
         },
     )]);
     let snapshot = ConfigSnapshot::new(None, 1, registry.clone(), values).unwrap();
-    let first = snapshot.digest_for(&[TEST_KEY.path()]).unwrap();
     assert_eq!(snapshot.get(TEST_KEY).unwrap(), 1.0);
-    assert_eq!(first, snapshot.digest_for(&[TEST_KEY.path()]).unwrap());
     assert_eq!(
         registry
             .deployment_values(&json!({"test":{"policy":{"threshold":2.0}}}))

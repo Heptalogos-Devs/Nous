@@ -14,7 +14,7 @@ use nous_material::{
 };
 use nous_memory::{
     BasisRole, CognitiveRole, EvidenceLocator, EvidenceRef, ExplicitMemoryInput, FormationMode,
-    RevisionBasis,
+    MutationResult, RevisionBasis,
 };
 use nous_retrieval::ServingOptions;
 use postgresql_embedded::{PostgreSQL, SettingsBuilder, VersionReq};
@@ -74,10 +74,6 @@ pub(crate) async fn database() -> (TempDir, String, PostgreSQL) {
 }
 
 pub(crate) async fn open_runtime(url: &str, root: &TempDir) -> NousRuntime {
-    open_runtime_with_serving(url, root, false, false, false).await
-}
-
-pub(crate) async fn open_memory_only_runtime(url: &str, root: &TempDir) -> NousRuntime {
     open_runtime_with_serving(url, root, false, false, false).await
 }
 
@@ -181,6 +177,18 @@ pub(crate) fn form_input(
 
 pub(crate) struct LongitudinalEmbedding;
 
+pub(crate) async fn read_mutation_cognition(
+    memory: &nous_memory::MemoryService,
+    subject: nous_core::SubjectId,
+    result: &MutationResult,
+) -> nous_memory::CognitionView {
+    let mut views = memory
+        .read_mutation_cognitions(subject, std::slice::from_ref(result))
+        .await
+        .expect("read mutation cognition");
+    views.pop().expect("mutation cognition view")
+}
+
 #[async_trait::async_trait]
 impl nous_retrieval::TextEmbeddingProvider for LongitudinalEmbedding {
     fn space(&self) -> nous_core::EmbeddingSpaceSignature {
@@ -236,6 +244,7 @@ pub(crate) fn query_slot(
     bound: &nous_runtime::BoundQuery,
 ) -> tokio::sync::OwnedSemaphorePermit {
     let limit = bound
+        .read_context
         .config_snapshot
         .get(nous_runtime::QUERY_SLOTS)
         .unwrap();

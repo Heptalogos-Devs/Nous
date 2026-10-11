@@ -26,6 +26,7 @@ import { type KernelClient } from "../../src/kernel-client.js";
 import { ModelRuntime } from "../../src/model/runtime.js";
 
 import { type ModelRoleSnapshot } from "../../src/model/execution/snapshot.js";
+import { modelRoleSnapshotFixture } from "../model/snapshot-fixture.js";
 
 export const subject = "10000000-0000-4000-8000-000000000001";
 export const revision = "20000000-0000-4000-8000-000000000001";
@@ -72,7 +73,7 @@ export function admitStub<T>(value: T) {
 export function fixture() {
   const models = new ModelRuntime();
   vi.spyOn(models.invocations, "snapshot").mockReturnValue(
-    {} as ModelRoleSnapshot,
+    modelRoleSnapshotFixture("journal_synthesis"),
   );
   const synthesize = vi
     .spyOn(models, "synthesizeJournal")

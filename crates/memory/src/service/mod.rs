@@ -13,7 +13,6 @@ mod episode;
 mod historical;
 mod historical_query;
 mod journal;
-mod lane;
 mod longitudinal_policy;
 mod longitudinal_query;
 mod maintenance_planning;
@@ -34,8 +33,9 @@ use crate::*;
 use chrono::{DateTime, Utc};
 use nous_core::*;
 use nous_object_store::ObjectStore;
+pub use nous_persistence::MutationResult;
 use nous_persistence::{
-    AuthorityStore, MutationEnvelope, MutationReceipt, MutationResult, MutationStart, OwnerLock,
+    AuthorityStore, MutationEnvelope, MutationReceipt, MutationStart, OwnerLock,
     ProjectionInvalidation, database_error as db,
 };
 pub use nous_runtime::{ResidentView, ResourceUpsert, ResourceView, SessionView};
@@ -71,31 +71,18 @@ pub(super) fn cognition_owner(kind: CognitionKind) -> ErrorOwner {
     }
 }
 
-pub(super) fn receipt_revision_id(
-    receipt: &MutationReceipt,
-    object: &CognitiveRef,
-) -> Result<Uuid> {
-    let (kind, _, is_revision) = CognitionKind::from_reference(object)?;
-    let owner = cognition_owner(kind);
-    if is_revision {
-        return Err(Error::new(
+pub(super) fn single_mutation_result(
+    receipt: MutationReceipt,
+    owner: ErrorOwner,
+) -> Result<MutationResult> {
+    match receipt.results.as_slice() {
+        [result] => Ok(result.clone()),
+        _ => Err(Error::new(
             owner,
             ErrorCode::InternalFailure,
-            "committed mutation receipt expected an object reference",
-        ));
+            "single-result mutation receipt has an invalid result count",
+        )),
     }
-    receipt
-        .results
-        .iter()
-        .find(|result| result.reference == *object)
-        .and_then(|result| result.revision_id)
-        .ok_or_else(|| {
-            Error::new(
-                owner,
-                ErrorCode::InternalFailure,
-                "committed mutation receipt has no exact revision result",
-            )
-        })
 }
 
 pub(super) fn decode_cognition_header(

@@ -53,7 +53,11 @@ pub struct SplitTagInput {
 }
 
 impl MemoryService {
-    pub async fn create_tag(&self, subject: SubjectId, mut input: CreateTagRequest) -> Result<Tag> {
+    pub async fn create_tag(
+        &self,
+        subject: SubjectId,
+        mut input: CreateTagRequest,
+    ) -> Result<MutationResult> {
         input.producer = input
             .producer
             .as_ref()
@@ -80,7 +84,9 @@ impl MemoryService {
             )
             .await?
         {
-            MutationStart::Replay(receipt) => return self.replay_tag(subject, receipt).await,
+            MutationStart::Replay(receipt) => {
+                return single_mutation_result(receipt, ErrorOwner::Concept);
+            }
             MutationStart::Active(mutation) => mutation,
         };
         let tag = self
@@ -96,16 +102,16 @@ impl MemoryService {
         mutation
             .publish_workflow_results("memory", &[CognitiveRef::Tag(tag.tag_id)])
             .await?;
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::Tag(tag.tag_id),
-                tag.current_revision_id,
-                None,
-            )])
-            .await?;
-        Ok(tag)
+        let result =
+            MutationResult::revised(CognitiveRef::Tag(tag.tag_id), tag.current_revision_id, None);
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
-    pub async fn revise_tag(&self, subject: SubjectId, mut input: ReviseTagInput) -> Result<Tag> {
+    pub async fn revise_tag(
+        &self,
+        subject: SubjectId,
+        mut input: ReviseTagInput,
+    ) -> Result<MutationResult> {
         input.producer = input
             .producer
             .as_ref()
@@ -123,7 +129,9 @@ impl MemoryService {
             )
             .await?
         {
-            MutationStart::Replay(receipt) => return self.replay_tag(subject, receipt).await,
+            MutationStart::Replay(receipt) => {
+                return single_mutation_result(receipt, ErrorOwner::Concept);
+            }
             MutationStart::Active(mutation) => mutation,
         };
         let revision_id = self
@@ -139,18 +147,16 @@ impl MemoryService {
         mutation
             .publish_workflow_results("memory", &[CognitiveRef::Tag(input.target.tag_id)])
             .await?;
-        mutation
-            .commit(&[MutationResult::revised(
-                CognitiveRef::Tag(input.target.tag_id),
-                revision_id,
-                None,
-            )])
-            .await?;
-        let mut tag = self.tag(subject, input.target.tag_id).await?;
-        tag.current_revision_id = revision_id;
-        Ok(tag)
+        let result =
+            MutationResult::revised(CognitiveRef::Tag(input.target.tag_id), revision_id, None);
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
-    pub async fn merge_tags(&self, subject: SubjectId, input: MergeTagsInput) -> Result<Tag> {
+    pub async fn merge_tags(
+        &self,
+        subject: SubjectId,
+        input: MergeTagsInput,
+    ) -> Result<MutationResult> {
         let digest = operation_digest("merge_tags", subject, &input)?;
         let mut mutation = match self
             .start_mutation(
@@ -162,7 +168,9 @@ impl MemoryService {
             )
             .await?
         {
-            MutationStart::Replay(receipt) => return self.replay_tag(subject, receipt).await,
+            MutationStart::Replay(receipt) => {
+                return single_mutation_result(receipt, ErrorOwner::Concept);
+            }
             MutationStart::Active(mutation) => mutation,
         };
         self.merge_tags_in(mutation.tx(), subject, &input).await?;
@@ -170,18 +178,15 @@ impl MemoryService {
         mutation
             .publish_workflow_results("memory", &[CognitiveRef::Tag(input.survivor.tag_id)])
             .await?;
-        mutation
-            .commit(&[MutationResult::reference(CognitiveRef::Tag(
-                input.survivor.tag_id,
-            ))])
-            .await?;
-        self.tag(subject, input.survivor.tag_id).await
+        let result = MutationResult::reference(CognitiveRef::Tag(input.survivor.tag_id));
+        mutation.commit(std::slice::from_ref(&result)).await?;
+        Ok(result)
     }
     pub async fn split_tag(
         &self,
         subject: SubjectId,
         mut input: SplitTagInput,
-    ) -> Result<Vec<Tag>> {
+    ) -> Result<Vec<MutationResult>> {
         input.producer = input
             .producer
             .as_ref()
@@ -198,34 +203,7 @@ impl MemoryService {
             )
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::new(
-                        nous_core::ErrorOwner::Concept,
-                        nous_core::ErrorCode::Unavailable,
-                        "tag operation in progress",
-                    ));
-                }
-                let mut result = Vec::new();
-                for output in receipt.results {
-                    let (CognitiveRef::Tag(id), Some(revision)) =
-                        (output.reference, output.revision_id)
-                    else {
-                        continue;
-                    };
-                    let mut tag = self.tag(subject, id).await?;
-                    tag.current_revision_id = revision;
-                    result.push(tag);
-                }
-                if result.len() != input.children.len() {
-                    return Err(Error::new(
-                        ErrorOwner::Concept,
-                        ErrorCode::InternalFailure,
-                        "tag split receipt has incomplete outputs",
-                    ));
-                }
-                return Ok(result);
-            }
+            MutationStart::Replay(receipt) => return Ok(receipt.results),
             MutationStart::Active(mutation) => mutation,
         };
         let children = self
@@ -241,53 +219,18 @@ impl MemoryService {
                     .collect::<Vec<_>>(),
             )
             .await?;
-        mutation
-            .commit(
-                &children
-                    .iter()
-                    .map(|child| {
-                        MutationResult::revised(
-                            CognitiveRef::Tag(child.tag_id),
-                            child.current_revision_id,
-                            None,
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .await?;
-        Ok(children)
-    }
-    async fn replay_tag(
-        &self,
-        subject: SubjectId,
-        receipt: nous_persistence::MutationReceipt,
-    ) -> Result<Tag> {
-        if receipt.state != "committed" {
-            return Err(Error::new(
-                nous_core::ErrorOwner::Concept,
-                nous_core::ErrorCode::Unavailable,
-                "tag operation in progress",
-            ));
-        }
-        let result = receipt.results.first().ok_or_else(|| {
-            Error::new(
-                nous_core::ErrorOwner::Concept,
-                nous_core::ErrorCode::InternalFailure,
-                "tag receipt missing result",
-            )
-        })?;
-        let CognitiveRef::Tag(id) = &result.reference else {
-            return Err(Error::new(
-                ErrorOwner::Concept,
-                ErrorCode::InternalFailure,
-                "tag receipt has an invalid result reference",
-            ));
-        };
-        let mut tag = self.tag(subject, *id).await?;
-        if let Some(revision) = result.revision_id {
-            tag.current_revision_id = revision;
-        }
-        Ok(tag)
+        let results = children
+            .iter()
+            .map(|child| {
+                MutationResult::revised(
+                    CognitiveRef::Tag(child.tag_id),
+                    child.current_revision_id,
+                    None,
+                )
+            })
+            .collect::<Vec<_>>();
+        mutation.commit(&results).await?;
+        Ok(results)
     }
     pub(crate) async fn create_tag_in(
         &self,
@@ -527,21 +470,6 @@ impl MemoryService {
                 .bind(subject.0).bind(binding.lexical_ref).bind(previous).execute(&mut **tx).await.map_err(db)?;
         }
         Ok(())
-    }
-    pub(in crate::service) async fn tag(&self, subject: SubjectId, tag_id: TagId) -> Result<Tag> {
-        let row = sqlx::query("SELECT tag_id,subject_id,current_revision_id,canonical_tag_id,created_at,status FROM tags WHERE subject_id=$1 AND tag_id=$2")
-            .bind(subject.0).bind(tag_id.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "Tag not found"))?;
-        Ok(Tag {
-            tag_id: TagId(row.try_get("tag_id").map_err(db)?),
-            subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),
-            current_revision_id: row.try_get("current_revision_id").map_err(db)?,
-            status: row.try_get("status").map_err(db)?,
-            canonical_tag_id: row
-                .try_get::<Option<Uuid>, _>("canonical_tag_id")
-                .map_err(db)?
-                .map(TagId),
-            created_at: row.try_get("created_at").map_err(db)?,
-        })
     }
 }
 

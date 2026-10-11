@@ -4,12 +4,12 @@
 mod test_support;
 
 use nous_kernel::NousRuntime;
-use test_support::{database, open_memory_only_runtime};
+use test_support::{database, open_runtime};
 
 #[tokio::test]
 async fn only_one_kernel_runtime_owns_an_authority_database() {
     let (root, url, _postgres) = database().await;
-    let runtime = open_memory_only_runtime(&url, &root).await;
+    let runtime = open_runtime(&url, &root).await;
     let root_conflict = nous_retrieval::ServingService::new(
         runtime.material.clone(),
         runtime.memory.clone(),
@@ -57,6 +57,6 @@ async fn only_one_kernel_runtime_owns_an_authority_database() {
 
     runtime.store.close().await;
     drop(runtime);
-    let reopened = open_memory_only_runtime(&url, &root).await;
+    let reopened = open_runtime(&url, &root).await;
     reopened.store.close().await;
 }

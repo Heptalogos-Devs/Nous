@@ -55,7 +55,10 @@ async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
             )
             .await
             .unwrap();
-        tags.push(tag.tag_id);
+        let CognitiveRef::Tag(tag_id) = tag.reference else {
+            panic!("tag mutation result should reference Tag");
+        };
+        tags.push(tag_id);
     }
     rt.store
         .bind_identity(

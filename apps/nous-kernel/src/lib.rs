@@ -257,23 +257,6 @@ impl NousRuntime {
         pool_limit: Option<usize>,
     ) -> Pin<Box<dyn Future<Output = Result<nous_runtime::QueryExecution>> + Send + 'a>> {
         Box::pin(async move {
-            if bound.selected_embedding_space.is_none() {
-                bound.selected_embedding_space =
-                    self.serving.embedding().map(|provider| provider.space());
-            }
-            let plan = nous_runtime::QueryPlan::for_bound_query(&bound);
-            self.execute_bound_query_with_plan(bound, plan, pool_limit)
-                .await
-        })
-    }
-
-    pub fn execute_bound_query_with_plan<'a>(
-        &'a self,
-        mut bound: nous_runtime::BoundQuery,
-        plan: nous_runtime::QueryPlan,
-        pool_limit: Option<usize>,
-    ) -> Pin<Box<dyn Future<Output = Result<nous_runtime::QueryExecution>> + Send + 'a>> {
-        Box::pin(async move {
             if bound.source_query.is_exact_read() {
                 let capabilities = self
                     .subjects
@@ -282,7 +265,7 @@ impl NousRuntime {
                     .capabilities;
                 return self
                     .cognition
-                    .execute_query_with_plan(
+                    .execute_bound_query(
                         bound,
                         nous_runtime::CognitiveContributors {
                             material: Some(&self.material),
@@ -293,7 +276,6 @@ impl NousRuntime {
                                 .filter(|_| capabilities.memory)
                                 .map(|memory| memory as &dyn nous_runtime::CognitiveContributor),
                         },
-                        plan,
                         pool_limit,
                     )
                     .await;
@@ -307,6 +289,7 @@ impl NousRuntime {
                     bound.source_query.subject,
                     std::time::Duration::from_secs(
                         bound
+                            .read_context
                             .config_snapshot
                             .get(nous_retrieval::RETIRED_GRACE_SECONDS)?,
                     ),
@@ -321,12 +304,12 @@ impl NousRuntime {
                 if let Some(view) = &bound.activation_view {
                     (nous_retrieval::ProjectionStatus::default(), view.clone())
                 } else {
-                    let (projection, view) = self.serving.prepare_query(&bound, &plan).await?;
+                    let (projection, view) = self.serving.prepare_query(&bound).await?;
                     (projection, view)
                 };
             let mut execution = self
                 .cognition
-                .execute_query_with_plan(
+                .execute_bound_query(
                     bound,
                     nous_runtime::CognitiveContributors {
                         material: Some(&self.material),
@@ -340,7 +323,6 @@ impl NousRuntime {
                             })
                             .flatten(),
                     },
-                    plan,
                     pool_limit,
                 )
                 .await?;

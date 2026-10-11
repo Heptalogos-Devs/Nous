@@ -3,6 +3,7 @@
 
 import { conceptActionResultSchema } from "./concept-maintenance.js";
 import { consolidationResultSchema } from "./consolidation.js";
+import { snapshotSchema as modelSnapshotSchema } from "../model/execution/snapshot.js";
 
 import { z } from "zod";
 
@@ -26,7 +27,7 @@ export function readOutcome(saved: WorkflowPayload) {
 }
 export const snapshotSchema = z.strictObject({
   plan: z.unknown(),
-  model: z.unknown(),
+  model: modelSnapshotSchema.nullable(),
 });
 export const proposalSchema = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("partition"), request: z.unknown() }),

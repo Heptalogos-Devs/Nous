@@ -31,16 +31,26 @@ fn query(effort: CognitiveEffort) -> CognitiveQuery {
     }
 }
 
+fn reference_plan(query: &CognitiveQuery) -> QueryPlan {
+    QueryPlan::from_policy(
+        query,
+        &[],
+        super::super::ConceptEnrichment::Off,
+        super::super::RetrievalPolicy::reference(),
+    )
+    .expect("reference query plan")
+}
+
 #[test]
 fn deep_text_does_not_enable_topology_without_explicit_intent() {
-    assert!(!QueryPlan::for_query(&query(CognitiveEffort::Deep)).expand_topology);
+    assert!(!reference_plan(&query(CognitiveEffort::Deep)).expand_topology);
 }
 
 #[test]
 fn validation_budget_is_the_frozen_reference_formula() {
     let mut value = query(CognitiveEffort::Normal);
     value.result_need.limit = 12;
-    assert_eq!(QueryPlan::for_query(&value).final_validation_budget, 48);
+    assert_eq!(reference_plan(&value).final_validation_budget, 48);
 }
 
 #[test]
@@ -52,7 +62,7 @@ fn exact_read_is_scoped_and_does_not_require_serving() {
     value.session = Some(SessionId::new());
     value.exploration = ExplorationIntent::BoundedAssociative;
     value.capabilities.residual_sensing = RequirementStrength::Required;
-    let plan = QueryPlan::for_query(&value);
+    let plan = reference_plan(&value);
     assert_eq!(plan.enabled_lanes, vec![EvidenceFamily::Exact]);
     assert!(!plan.expand_topology);
     assert!(!plan.sense_cues);
@@ -65,12 +75,12 @@ fn exact_read_is_scoped_and_does_not_require_serving() {
     value.expression.children[0].targets.clear();
     assert!(value.is_exact_read());
     assert_eq!(
-        QueryPlan::for_query(&value).enabled_lanes,
+        reference_plan(&value).enabled_lanes,
         vec![EvidenceFamily::Exact]
     );
     value.expression.targets.clear();
     assert!(!value.is_exact_read());
-    let mixed = QueryPlan::for_query(&value);
+    let mixed = reference_plan(&value);
     assert!(mixed.enabled_lanes.contains(&EvidenceFamily::Exact));
     assert!(mixed.enabled_lanes.contains(&EvidenceFamily::Lexical));
 }

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nous_core::{OperationId, Result, SubjectId};
+use nous_core::{CognitiveRef, OperationId, Result, SubjectId};
+use nous_memory::MutationResult;
 use nous_memory::{AssociationBasis, UseEventRef};
 use nous_memory::{CreateAssociationRequest, CreateTagRequest};
 use nous_persistence::database_error as db;
@@ -12,7 +13,7 @@ impl KernelService {
     pub(super) async fn create_tag(&self, input: p::CreateTagRequest) -> Result<p::Tag> {
         let subject = SubjectId(id(&input.subject_id)?);
         let tag = required(input.tag, "tag")?;
-        let created = self
+        let result = self
             .require_memory()?
             .create_tag(
                 subject,
@@ -26,8 +27,7 @@ impl KernelService {
                 },
             )
             .await?;
-        self.read_tag_revision(subject, created.tag_id, created.current_revision_id)
-            .await
+        self.read_mutation_tag(subject, result).await
     }
     pub(super) async fn get_tag(&self, input: p::ObjectRequest) -> Result<p::Tag> {
         let row=sqlx::query("SELECT t.tag_id,t.current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.tag_id=$2")
@@ -47,12 +47,8 @@ impl KernelService {
                 },
             )
             .await?;
-        self.read_tag_revision(
-            SubjectId(id(&input.subject_id)?),
-            result.tag_id,
-            result.current_revision_id,
-        )
-        .await
+        self.read_mutation_tag(SubjectId(id(&input.subject_id)?), result)
+            .await
     }
     pub(super) async fn merge_tags(&self, input: p::MergeTagsRequest) -> Result<p::Tag> {
         let result = self
@@ -75,13 +71,11 @@ impl KernelService {
                 },
             )
             .await?;
-        self.get_tag(p::ObjectRequest {
-            subject_id: input.subject_id,
-            id: result.tag_id.0.to_string(),
-        })
-        .await
+        self.read_mutation_tag(SubjectId(id(&input.subject_id)?), result)
+            .await
     }
     pub(super) async fn split_tag(&self, input: p::SplitTagRequest) -> Result<p::SplitTagResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
         let results = self
             .require_memory()?
             .split_tag(
@@ -101,16 +95,32 @@ impl KernelService {
             .await?;
         let mut children = Vec::new();
         for result in results {
-            children.push(
-                self.read_tag_revision(
-                    SubjectId(id(&input.subject_id)?),
-                    result.tag_id,
-                    result.current_revision_id,
-                )
-                .await?,
-            );
+            children.push(self.read_mutation_tag(subject, result).await?);
         }
         Ok(p::SplitTagResponse { children })
+    }
+    async fn read_mutation_tag(
+        &self,
+        subject: SubjectId,
+        result: MutationResult,
+    ) -> Result<p::Tag> {
+        let CognitiveRef::Tag(tag) = result.reference else {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InternalFailure,
+                "tag mutation result has a non-Tag reference",
+            ));
+        };
+        match result.revision_id {
+            Some(revision) => self.read_tag_revision(subject, tag, revision).await,
+            None => {
+                self.get_tag(p::ObjectRequest {
+                    subject_id: subject.0.to_string(),
+                    id: tag.0.to_string(),
+                })
+                .await
+            }
+        }
     }
     async fn read_tag_revision(
         &self,

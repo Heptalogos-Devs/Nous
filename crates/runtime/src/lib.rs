@@ -34,9 +34,10 @@ pub use query::{
     DEFAULT_RESULT_LIMIT, LaneCandidate, LaneOutput, LaneStatus, NovelConceptHypothesis,
     QUERY_REPRESENTATION, QueryActivation, QueryActivationView, QueryConceptCandidate,
     QueryConceptOutput, QueryConceptSelection, QueryContextSnapshot, QueryExecution, QueryHostPlan,
-    QueryHostRole, QueryPlan, QueryReadLease, QueryRepresentation, QueryRepresentationLimits,
-    QueryRunHostPolicy, QuerySemanticEmbedding, ReadContext, SharedLaneProvider, TagActivation,
-    TopologyWorkSummary, WorkCycle, build_query_representation, register_retrieval_configuration,
+    QueryHostRole, QueryOwner, QueryPlan, QueryReadLease, QueryRepresentation,
+    QueryRepresentationLimits, QueryRunHostPolicy, QuerySemanticEmbedding, ReadContext,
+    RetrievalPolicy, SharedLaneProvider, TagActivation, TopologyWorkSummary, WorkCycle,
+    build_query_representation, query_owner, register_retrieval_configuration,
 };
 pub use segmentation::{EpisodeDraft, SegmentationProgress};
 pub use work_contexts::*;

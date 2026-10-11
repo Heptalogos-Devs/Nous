@@ -3,6 +3,7 @@
 
 use super::*;
 use nous_core::{CognitiveSchemaId, EntityRef, OperationId, Result, SubjectId, TagId};
+use nous_memory::CognitionView;
 use nous_memory::schema::SchemaView;
 use nous_memory::{
     CreateSchemaInput, ReviseSchemaInput, SchemaContent, SchemaEvidenceLinkInput,
@@ -117,21 +118,40 @@ pub(super) fn schema_view(value: SchemaView) -> p::CognitiveSchema {
 }
 
 impl KernelService {
+    async fn schema_mutation_response(
+        &self,
+        subject: SubjectId,
+        result: &nous_memory::MutationResult,
+    ) -> Result<p::CognitiveSchema> {
+        let mut views = self
+            .require_memory()?
+            .read_mutation_cognitions(subject, std::slice::from_ref(result))
+            .await?;
+        match views.pop() {
+            Some(CognitionView::CognitiveSchema(value)) => Ok(schema_view(value)),
+            _ => Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InternalFailure,
+                "schema mutation result did not materialize as CognitiveSchema",
+            )),
+        }
+    }
+
     pub(super) async fn create_cognitive_schema(
         &self,
         input: p::CreateCognitiveSchemaRequest,
     ) -> Result<p::CognitiveSchema> {
         let subject = SubjectId(id(&input.subject_id)?);
         let schema = required(input.schema, "schema")?;
-        Ok(schema_view(
-            self.require_memory()?
-                .create_schema(schema_input(
-                    subject,
-                    OperationId(id(&input.operation_id)?),
-                    schema,
-                )?)
-                .await?,
-        ))
+        let result = self
+            .require_memory()?
+            .create_schema(schema_input(
+                subject,
+                OperationId(id(&input.operation_id)?),
+                schema,
+            )?)
+            .await?;
+        self.schema_mutation_response(subject, &result).await
     }
 
     pub(super) async fn add_schema_evidence(
@@ -141,20 +161,20 @@ impl KernelService {
         let subject = SubjectId(id(&input.subject_id)?);
         let link = required(input.link, "link")?;
         let basis = basis(required(link.basis, "basis")?)?;
-        Ok(schema_view(
-            self.require_memory()?
-                .add_schema_evidence(
-                    subject,
-                    CognitiveSchemaId(id(&input.schema_id)?),
-                    OperationId(id(&input.operation_id)?),
-                    input.expected_object_epoch,
-                    SchemaEvidenceLinkInput {
-                        role: enum_value(&link.role)?,
-                        basis,
-                    },
-                )
-                .await?,
-        ))
+        let result = self
+            .require_memory()?
+            .add_schema_evidence(
+                subject,
+                CognitiveSchemaId(id(&input.schema_id)?),
+                OperationId(id(&input.operation_id)?),
+                input.expected_object_epoch,
+                SchemaEvidenceLinkInput {
+                    role: enum_value(&link.role)?,
+                    basis,
+                },
+            )
+            .await?;
+        self.schema_mutation_response(subject, &result).await
     }
 
     pub(super) async fn revise_cognitive_schema(
@@ -178,9 +198,8 @@ impl KernelService {
             intent: enum_value(&input.intent)?,
             copy_link_ids,
         };
-        Ok(schema_view(
-            self.require_memory()?.revise_schema(value).await?,
-        ))
+        let result = self.require_memory()?.revise_schema(value).await?;
+        self.schema_mutation_response(subject, &result).await
     }
 
     pub(super) async fn split_cognitive_schema(
@@ -189,13 +208,14 @@ impl KernelService {
     ) -> Result<p::SplitCognitiveSchemaResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
         let operation = OperationId(id(&input.operation_id)?);
+        let child_count = input.children.len();
         let children = input
             .children
             .into_iter()
             .map(|child| schema_input(subject, operation, child))
             .collect::<Result<Vec<_>>>()?;
-        let values = self
-            .require_memory()?
+        let memory = self.require_memory()?;
+        let results = memory
             .split_schemas(
                 subject,
                 CognitiveSchemaId(id(&input.schema_id)?),
@@ -204,9 +224,37 @@ impl KernelService {
                 children,
             )
             .await?;
-        Ok(p::SplitCognitiveSchemaResponse {
-            children: values.into_iter().map(schema_view).collect(),
-        })
+        let child_results = results
+            .into_iter()
+            .filter(|result| {
+                matches!(
+                    &result.reference,
+                    nous_core::CognitiveRef::CognitiveSchemaRevision(_)
+                )
+            })
+            .collect::<Vec<_>>();
+        if child_results.len() != child_count {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InternalFailure,
+                "schema split result count did not match its children",
+            ));
+        }
+        let values = memory
+            .read_mutation_cognitions(subject, &child_results)
+            .await?;
+        let children = values
+            .into_iter()
+            .map(|value| match value {
+                CognitionView::CognitiveSchema(value) => Ok(schema_view(value)),
+                _ => Err(Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InternalFailure,
+                    "schema split result did not materialize as CognitiveSchema",
+                )),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(p::SplitCognitiveSchemaResponse { children })
     }
 
     pub(super) async fn merge_cognitive_schemas(
@@ -222,16 +270,16 @@ impl KernelService {
             .collect::<Result<Vec<_>>>()?;
         let merged_value = required(input.merged, "merged")?;
         let merged = schema_input(subject, operation, merged_value)?;
-        Ok(schema_view(
-            self.require_memory()?
-                .merge_schemas(
-                    subject,
-                    operation,
-                    sources,
-                    input.expected_object_epochs,
-                    merged,
-                )
-                .await?,
-        ))
+        let memory = self.require_memory()?;
+        let result = memory
+            .merge_schemas(
+                subject,
+                operation,
+                sources,
+                input.expected_object_epochs,
+                merged,
+            )
+            .await?;
+        self.schema_mutation_response(subject, &result).await
     }
 }

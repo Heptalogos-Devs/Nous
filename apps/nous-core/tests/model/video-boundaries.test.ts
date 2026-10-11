@@ -71,6 +71,7 @@ import { modelConfigurationSchema } from "../../src/model/configuration.js";
 import { deriveMaterial } from "../../src/model/derivation.js";
 import { ModelRuntime } from "../../src/model/runtime.js";
 import { type ModelInvocations } from "../../src/model/invocations.js";
+import { modelRoleSnapshotFixture } from "./snapshot-fixture.js";
 import type { KernelClient } from "../../src/kernel-client.js";
 import { create } from "@bufbuild/protobuf";
 import { DeriveMaterialRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
@@ -211,10 +212,9 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       role === "speech_transcription"
         ? undefined
         : { capabilities: ["image_input"] },
-    snapshotPrompt: async (role: string) => ({
-      role,
-      configDigest: "fixture-config",
-    }),
+    snapshotPrompt: async (
+      role: "material_description" | "material_structuring",
+    ) => modelRoleSnapshotFixture(role),
     generate: async (
       role: string,
       request: { content: unknown },

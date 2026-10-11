@@ -3,7 +3,7 @@
 
 use super::*;
 use nous_core::{EpisodeId, EpisodeRevisionId, OperationId, Result, SubjectId};
-use nous_memory::{EpisodeInput, EpisodeMemberInput, ReviseEpisodeInput};
+use nous_memory::{CognitionView, EpisodeInput, EpisodeMemberInput, ReviseEpisodeInput};
 
 fn member(value: p::EpisodeMember) -> Result<EpisodeMemberInput> {
     Ok(EpisodeMemberInput {
@@ -67,12 +67,31 @@ fn parsed_parent(value: Option<String>) -> Result<Option<EpisodeRevisionId>> {
 }
 
 impl KernelService {
+    async fn episode_mutation_response(
+        &self,
+        subject: SubjectId,
+        result: &nous_memory::MutationResult,
+    ) -> Result<p::EpisodeResponse> {
+        let mut views = self
+            .require_memory()?
+            .read_mutation_cognitions(subject, std::slice::from_ref(result))
+            .await?;
+        match views.pop() {
+            Some(CognitionView::Episode(value)) => Ok(response(value)),
+            _ => Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InternalFailure,
+                "episode mutation result did not materialize as Episode",
+            )),
+        }
+    }
+
     pub(super) async fn create_episode(
         &self,
         input: p::CreateEpisodeRequest,
     ) -> Result<p::EpisodeResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
-        let value = self
+        let result = self
             .require_memory()?
             .create_episode(EpisodeInput {
                 operation_id: OperationId(id(&input.operation_id)?),
@@ -95,7 +114,7 @@ impl KernelService {
                 basis: input.basis.into_iter().map(basis).collect::<Result<_>>()?,
             })
             .await?;
-        Ok(response(value))
+        self.episode_mutation_response(subject, &result).await
     }
 
     pub(super) async fn revise_episode(
@@ -103,32 +122,32 @@ impl KernelService {
         input: p::ReviseEpisodeRequest,
     ) -> Result<p::EpisodeResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
-        Ok(response(
-            self.require_memory()?
-                .revise_episode(ReviseEpisodeInput {
-                    operation_id: OperationId(id(&input.operation_id)?),
-                    subject,
-                    episode_id: EpisodeId(id(&input.episode_id)?),
-                    expected_object_epoch: input.expected_object_epoch,
-                    intent: input.intent,
-                    title: input.title,
-                    parent_episode_revision_id: parsed_parent(input.parent_episode_revision_id)?,
-                    experience_time: temporal(input.experience_time)?,
-                    boundary_explanation: input.boundary_explanation,
-                    producer_signature_id: input
-                        .producer_signature_id
-                        .as_deref()
-                        .map(id)
-                        .transpose()?,
-                    members: input
-                        .members
-                        .into_iter()
-                        .map(member)
-                        .collect::<Result<_>>()?,
-                    basis: input.basis.into_iter().map(basis).collect::<Result<_>>()?,
-                })
-                .await?,
-        ))
+        let result = self
+            .require_memory()?
+            .revise_episode(ReviseEpisodeInput {
+                operation_id: OperationId(id(&input.operation_id)?),
+                subject,
+                episode_id: EpisodeId(id(&input.episode_id)?),
+                expected_object_epoch: input.expected_object_epoch,
+                intent: input.intent,
+                title: input.title,
+                parent_episode_revision_id: parsed_parent(input.parent_episode_revision_id)?,
+                experience_time: temporal(input.experience_time)?,
+                boundary_explanation: input.boundary_explanation,
+                producer_signature_id: input
+                    .producer_signature_id
+                    .as_deref()
+                    .map(id)
+                    .transpose()?,
+                members: input
+                    .members
+                    .into_iter()
+                    .map(member)
+                    .collect::<Result<_>>()?,
+                basis: input.basis.into_iter().map(basis).collect::<Result<_>>()?,
+            })
+            .await?;
+        self.episode_mutation_response(subject, &result).await
     }
 
     pub(super) async fn link_episode_revisions(
