@@ -262,6 +262,8 @@ impl MemoryService {
             .as_ref()
             .map(AuthorityStore::canonical_producer)
             .transpose()?;
+        input.tags.sort_by_key(|tag| tag.0);
+        input.tags.dedup();
         if input.operation_id.0.is_nil() {
             return Err(Error::Invalid("operation_id is required".into()));
         }
@@ -275,7 +277,7 @@ impl MemoryService {
         let digest = operation_digest(
             "revise_memory",
             input.subject,
-            &serde_json::json!({"memory_id":input.memory_id,"expected_object_epoch":input.expected_object_epoch,"intent":input.intent,"formation_mode":input.formation_mode,"grounding_occurrence_id":input.grounding_occurrence_id,"semantic_role":input.semantic_role,"representation_text":input.representation_text,"title":input.title,"basis":input.basis,"aboutness":input.aboutness,"valid_time":input.valid_time,"epistemic_class":input.epistemic_class,"producer":input.producer}),
+            &serde_json::json!({"memory_id":input.memory_id,"expected_object_epoch":input.expected_object_epoch,"intent":input.intent,"formation_mode":input.formation_mode,"grounding_occurrence_id":input.grounding_occurrence_id,"semantic_role":input.semantic_role,"representation_text":input.representation_text,"title":input.title,"basis":input.basis,"aboutness":input.aboutness,"tags":input.tags,"valid_time":input.valid_time,"epistemic_class":input.epistemic_class,"producer":input.producer}),
         )?;
         let mut mutation = match self
             .start_mutation(input.subject, input.operation_id, "revise_memory", &digest)
@@ -404,7 +406,7 @@ impl MemoryService {
             title: input.title.clone(),
             basis: input.basis.clone(),
             aboutness: input.aboutness.clone(),
-            tags: Vec::new(),
+            tags: input.tags.clone(),
             valid_time: input.valid_time.clone(),
 
             epistemic_class: input.epistemic_class,

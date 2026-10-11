@@ -136,6 +136,7 @@ pub struct ReviseMemoryInput {
     pub title: Option<String>,
     pub basis: Vec<RevisionBasis>,
     pub aboutness: Vec<EntityRef>,
+    pub tags: Vec<TagId>,
     pub valid_time: TemporalExtent,
 
     pub epistemic_class: EpistemicClass,

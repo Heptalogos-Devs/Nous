@@ -340,6 +340,7 @@ async fn assert_owner_timestamp_replay(
             title: None,
             basis: input.basis.clone(),
             aboutness: vec![],
+            tags: vec![],
             valid_time: TemporalExtent::Unknown,
             epistemic_class: input.epistemic_class,
         })

@@ -123,6 +123,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
             title: None,
             basis: basis.clone(),
             aboutness: vec![],
+            tags: vec![],
             valid_time: TemporalExtent::Unknown,
             epistemic_class: EpistemicClass::Observed,
         })

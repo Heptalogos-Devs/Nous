@@ -228,6 +228,7 @@ impl KernelService {
                     title: parsed.title,
                     basis: parsed.basis,
                     aboutness: parsed.aboutness,
+                    tags: parsed.tags,
                     valid_time: parsed.valid_time,
 
                     epistemic_class: parsed.epistemic_class,

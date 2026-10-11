@@ -56,6 +56,7 @@ async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
                 },
             )],
             aboutness: vec![],
+            tags: vec![],
             valid_time: TemporalExtent::Unknown,
             epistemic_class: EpistemicClass::Observed,
         })
@@ -337,6 +338,7 @@ async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
             title: revision.title,
             basis: revision.basis,
             aboutness: revision.aboutness,
+            tags: vec![],
             valid_time: revision.valid_time,
 
             epistemic_class: revision.epistemic_class,

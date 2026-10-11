@@ -102,6 +102,7 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
             title: None,
             basis: first.basis.clone(),
             aboutness: first.aboutness.clone(),
+            tags: vec![],
             valid_time: TemporalExtent::Unknown,
 
             epistemic_class: EpistemicClass::Observed,
@@ -334,6 +335,7 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
             basis_role: BasisRole::Direct,
         })],
         aboutness: Vec::new(),
+        tags: vec![],
         valid_time: Default::default(),
 
         epistemic_class: EpistemicClass::Observed,
