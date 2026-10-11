@@ -82,7 +82,7 @@ impl MemoryService {
         let purge: String = row.try_get("purge_state").map_err(db)?;
         if purge == "purging" {
             let checkpoint =
-                MutationResult::new(object_ref(kind, object_id), None, Some(expected_epoch + 1));
+                MutationResult::new(kind.object_ref(object_id), None, Some(expected_epoch + 1));
             if epoch == expected_epoch + 1 && mutation.checkpoint_matches(&checkpoint).await? {
                 return mutation.checkpoint().await;
             }
@@ -103,13 +103,8 @@ impl MemoryService {
         .fetch_all(&mut **mutation.tx())
         .await
         .map_err(db)?;
-        let identity_refs = std::iter::once(object_ref(kind, object_id))
-            .chain(
-                revision_ids
-                    .iter()
-                    .copied()
-                    .map(|id| revision_ref(kind, id)),
-            )
+        let identity_refs = std::iter::once(kind.object_ref(object_id))
+            .chain(revision_ids.iter().copied().map(|id| kind.revision_ref(id)))
             .collect::<Vec<_>>();
         let revision_refs = revision_ids
             .iter()
@@ -205,7 +200,7 @@ impl MemoryService {
             .map_err(db)?;
         mutation
             .checkpoint_with_result(&MutationResult::new(
-                object_ref(kind, object_id),
+                kind.object_ref(object_id),
                 None,
                 Some(expected_epoch + 1),
             ))
@@ -271,7 +266,7 @@ impl MemoryService {
         }
         if !mutation
             .checkpoint_matches(&MutationResult::new(
-                object_ref(kind, object_id),
+                kind.object_ref(object_id),
                 None,
                 Some(expected_epoch + 1),
             ))
@@ -306,7 +301,7 @@ impl MemoryService {
         .map_err(db)?;
         mutation
             .commit(&[MutationResult::new(
-                object_ref(kind, object_id),
+                kind.object_ref(object_id),
                 None,
                 Some(expected_epoch + 1),
             )])
@@ -368,7 +363,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                let target = object_ref(kind, object_id);
+                let target = kind.object_ref(object_id);
                 let revision = receipt
                     .results
                     .iter()
@@ -385,7 +380,7 @@ impl MemoryService {
                         )
                     })?;
                 return self
-                    .read_cognition(subject, revision_ref(kind, revision))
+                    .read_cognition(subject, kind.revision_ref(revision))
                     .await;
             }
             MutationStart::Active(mutation) => mutation,
@@ -498,12 +493,12 @@ impl MemoryService {
         }
         mutation
             .commit(&[MutationResult::revised(
-                object_ref(kind, object_id),
+                kind.object_ref(object_id),
                 result_revision,
                 Some(next_epoch),
             )])
             .await?;
-        self.read_cognition(subject, revision_ref(kind, result_revision))
+        self.read_cognition(subject, kind.revision_ref(result_revision))
             .await
     }
 }

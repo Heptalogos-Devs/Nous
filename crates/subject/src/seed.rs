@@ -79,8 +79,19 @@ fn validate_seed_document(text: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::IntoStaticStr,
+    strum::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum SeedAdoptionKind {
     Initial,
     Import,
@@ -88,10 +99,7 @@ pub enum SeedAdoptionKind {
 
 impl SeedAdoptionKind {
     fn as_str(self) -> &'static str {
-        match self {
-            Self::Initial => "initial",
-            Self::Import => "import",
-        }
+        self.into()
     }
 }
 
@@ -320,13 +328,11 @@ pub(super) async fn insert_seed(
 }
 
 fn parse_adoption_kind(value: String) -> Result<SeedAdoptionKind> {
-    match value.as_str() {
-        "initial" => Ok(SeedAdoptionKind::Initial),
-        "import" => Ok(SeedAdoptionKind::Import),
-        _ => Err(Error::new(
+    value.parse::<SeedAdoptionKind>().map_err(|_| {
+        Error::new(
             nous_core::ErrorOwner::Subject,
             nous_core::ErrorCode::InternalFailure,
             "invalid Cognitive Seed adoption kind",
-        )),
-    }
+        )
+    })
 }

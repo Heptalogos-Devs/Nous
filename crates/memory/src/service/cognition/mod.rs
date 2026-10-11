@@ -36,23 +36,3 @@ impl CognitionView {
         }
     }
 }
-
-pub(super) fn object_ref(kind: CognitionKind, id: Uuid) -> CognitiveRef {
-    match kind {
-        CognitionKind::Memory => CognitiveRef::Memory(MemoryId(id)),
-        CognitionKind::CognitiveSchema => CognitiveRef::CognitiveSchema(CognitiveSchemaId(id)),
-        CognitionKind::Episode => CognitiveRef::Episode(EpisodeId(id)),
-        CognitionKind::Journal => CognitiveRef::Journal(JournalId(id)),
-    }
-}
-
-pub(super) fn revision_ref(kind: CognitionKind, id: Uuid) -> CognitiveRef {
-    match kind {
-        CognitionKind::Memory => CognitiveRef::MemoryRevision(MemoryRevisionId(id)),
-        CognitionKind::CognitiveSchema => {
-            CognitiveRef::CognitiveSchemaRevision(CognitiveSchemaRevisionId(id))
-        }
-        CognitionKind::Episode => CognitiveRef::EpisodeRevision(EpisodeRevisionId(id)),
-        CognitionKind::Journal => CognitiveRef::JournalRevision(JournalRevisionId(id)),
-    }
-}

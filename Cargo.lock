@@ -2011,6 +2011,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "strum",
  "thiserror",
  "uuid",
 ]
@@ -2088,6 +2089,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "strum",
  "uuid",
 ]
 
@@ -2172,6 +2174,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "sqlx",
+ "strum",
  "tokio",
  "uuid",
 ]
@@ -2189,6 +2192,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "strum",
  "toml",
  "uuid",
 ]

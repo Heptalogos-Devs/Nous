@@ -79,8 +79,9 @@ pub enum EvidenceLocator {
     DerivedRegion(DerivedRegionId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum BasisRole {
     Direct,
     Interpretation,
@@ -89,16 +90,13 @@ pub enum BasisRole {
 
 impl BasisRole {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Direct => "direct",
-            Self::Interpretation => "interpretation",
-            Self::Contextual => "contextual",
-        }
+        self.into()
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum EpistemicRelation {
     Supports,
     Contradicts,
@@ -110,15 +108,7 @@ pub enum EpistemicRelation {
 }
 impl EpistemicRelation {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Supports => "supports",
-            Self::Contradicts => "contradicts",
-            Self::Corroborates => "corroborates",
-            Self::Weakens => "weakens",
-            Self::Corrects => "corrects",
-            Self::Counterexample => "counterexample",
-            Self::InferredFrom => "inferred_from",
-        }
+        self.into()
     }
 }
 pub fn epistemic_relation_text(relation: Option<EpistemicRelation>) -> &'static str {

@@ -7,8 +7,9 @@ use super::*;
 mod mutations;
 mod read;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum JournalPointRole {
     Summary,
     Outcome,
@@ -21,15 +22,7 @@ pub enum JournalPointRole {
 
 impl JournalPointRole {
     pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Summary => "summary",
-            Self::Outcome => "outcome",
-            Self::Change => "change",
-            Self::Decision => "decision",
-            Self::OpenQuestion => "open_question",
-            Self::SalientEvent => "salient_event",
-            Self::Reflection => "reflection",
-        }
+        self.into()
     }
 }
 

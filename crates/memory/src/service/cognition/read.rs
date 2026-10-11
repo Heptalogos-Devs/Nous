@@ -291,7 +291,7 @@ impl MemoryService {
                     ));
                 }
                 (true, None) => result.reference.clone(),
-                (false, Some(revision)) => revision_ref(kind, revision),
+                (false, Some(revision)) => kind.revision_ref(revision),
                 (false, None) => result.reference.clone(),
             };
             references.push(reference);
@@ -344,7 +344,7 @@ impl MemoryService {
         .fetch_all(self.store.pool())
         .await
         .map_err(db)?;
-        Ok(ids.into_iter().map(|id| object_ref(kind, id)).collect())
+        Ok(ids.into_iter().map(|id| kind.object_ref(id)).collect())
     }
 
     /// Return exact revision refs after an owner-local revision cursor.
@@ -393,7 +393,7 @@ impl MemoryService {
         if ids.is_empty() {
             self.read_cognition(subject, object_ref.clone()).await?;
         }
-        Ok(ids.into_iter().map(|id| revision_ref(kind, id)).collect())
+        Ok(ids.into_iter().map(|id| kind.revision_ref(id)).collect())
     }
 }
 
@@ -439,7 +439,6 @@ fn historical_cognition_header(
     let (_, head_id, is_revision) = CognitionKind::from_reference(head)?;
     debug_assert!(is_revision);
     Ok(CognitionHeader::new(
-        current.kind(),
         current.subject_id,
         current.object_id(),
         head_id,

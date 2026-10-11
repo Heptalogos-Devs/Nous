@@ -94,7 +94,6 @@ pub(super) fn decode_cognition_header(
 ) -> Result<CognitionHeader> {
     let owner = cognition_owner(kind);
     Ok(CognitionHeader::new(
-        kind,
         SubjectId(row.try_get("subject_id").map_err(db)?),
         object_id,
         current_revision_id,

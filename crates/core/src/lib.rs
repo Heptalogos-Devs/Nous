@@ -162,8 +162,9 @@ pub enum AuthorityClass {
     ResourceDescriptor,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum EpistemicClass {
     Observed,
     Reported,
@@ -175,14 +176,7 @@ pub enum EpistemicClass {
 
 impl EpistemicClass {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Observed => "observed",
-            Self::Reported => "reported",
-            Self::Derived => "derived",
-            Self::Inferred => "inferred",
-            Self::Narrative => "narrative",
-            Self::Simulated => "simulated",
-        }
+        self.into()
     }
 }
 
@@ -279,8 +273,9 @@ pub enum Modality {
     Binary,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum RepresentationKind {
     ExtractedText,
     Ocr,
@@ -296,18 +291,7 @@ pub enum RepresentationKind {
 
 impl RepresentationKind {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ExtractedText => "extracted_text",
-            Self::Ocr => "ocr",
-            Self::Transcript => "transcript",
-            Self::AudioDescription => "audio_description",
-            Self::ImageDescription => "image_description",
-            Self::SceneDescription => "scene_description",
-            Self::Summary => "summary",
-            Self::StructuredInterpretation => "structured_interpretation",
-            Self::ResourceSynopsis => "resource_synopsis",
-            Self::Other => "other",
-        }
+        self.into()
     }
 }
 

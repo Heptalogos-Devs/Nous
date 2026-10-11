@@ -42,6 +42,26 @@ impl CognitionKind {
         }
     }
 
+    pub fn object_ref(self, id: Uuid) -> CognitiveRef {
+        match self {
+            Self::Memory => CognitiveRef::Memory(MemoryId(id)),
+            Self::CognitiveSchema => CognitiveRef::CognitiveSchema(CognitiveSchemaId(id)),
+            Self::Episode => CognitiveRef::Episode(EpisodeId(id)),
+            Self::Journal => CognitiveRef::Journal(JournalId(id)),
+        }
+    }
+
+    pub fn revision_ref(self, id: Uuid) -> CognitiveRef {
+        match self {
+            Self::Memory => CognitiveRef::MemoryRevision(MemoryRevisionId(id)),
+            Self::CognitiveSchema => {
+                CognitiveRef::CognitiveSchemaRevision(CognitiveSchemaRevisionId(id))
+            }
+            Self::Episode => CognitiveRef::EpisodeRevision(EpisodeRevisionId(id)),
+            Self::Journal => CognitiveRef::JournalRevision(JournalRevisionId(id)),
+        }
+    }
+
     pub fn from_reference(reference: &CognitiveRef) -> Result<(Self, Uuid, bool)> {
         Ok(match reference {
             CognitiveRef::Memory(id) => (Self::Memory, id.0, false),
@@ -129,7 +149,6 @@ pub struct CognitionHeader {
 
 impl CognitionHeader {
     pub fn new(
-        kind: CognitionKind,
         subject_id: SubjectId,
         object_id: Uuid,
         current_revision_id: Uuid,
@@ -138,11 +157,11 @@ impl CognitionHeader {
         created_at: DateTime<Utc>,
         details: CognitionDetails,
     ) -> Self {
-        debug_assert_eq!(kind, details.kind());
+        let kind = details.kind();
         Self {
-            object_ref: cognition_object_ref(kind, object_id),
+            object_ref: kind.object_ref(object_id),
             subject_id,
-            current_revision_ref: cognition_revision_ref(kind, current_revision_id),
+            current_revision_ref: kind.revision_ref(current_revision_id),
             object_epoch,
             lifecycle,
             created_at,
@@ -223,10 +242,10 @@ impl CognitionRevisionHeader {
         producer_signature_id: Option<Uuid>,
     ) -> Self {
         Self {
-            revision_ref: cognition_revision_ref(kind, revision_id),
-            object_ref: cognition_object_ref(kind, object_id),
+            revision_ref: kind.revision_ref(revision_id),
+            object_ref: kind.object_ref(object_id),
             revision_no,
-            parent_revision_ref: parent_revision_id.map(|id| cognition_revision_ref(kind, id)),
+            parent_revision_ref: parent_revision_id.map(|id| kind.revision_ref(id)),
             formed_at,
             recorded_at,
             producer_signature_id,
@@ -291,26 +310,6 @@ impl CognitionRevisionHeader {
     }
 }
 
-fn cognition_object_ref(kind: CognitionKind, id: Uuid) -> CognitiveRef {
-    match kind {
-        CognitionKind::Memory => CognitiveRef::Memory(MemoryId(id)),
-        CognitionKind::CognitiveSchema => CognitiveRef::CognitiveSchema(CognitiveSchemaId(id)),
-        CognitionKind::Episode => CognitiveRef::Episode(nous_core::EpisodeId(id)),
-        CognitionKind::Journal => CognitiveRef::Journal(nous_core::JournalId(id)),
-    }
-}
-
-fn cognition_revision_ref(kind: CognitionKind, id: Uuid) -> CognitiveRef {
-    match kind {
-        CognitionKind::Memory => CognitiveRef::MemoryRevision(MemoryRevisionId(id)),
-        CognitionKind::CognitiveSchema => {
-            CognitiveRef::CognitiveSchemaRevision(CognitiveSchemaRevisionId(id))
-        }
-        CognitionKind::Episode => CognitiveRef::EpisodeRevision(nous_core::EpisodeRevisionId(id)),
-        CognitionKind::Journal => CognitiveRef::JournalRevision(nous_core::JournalRevisionId(id)),
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CognitionAction {
     Suppress,
@@ -321,8 +320,9 @@ pub enum CognitionAction {
     SetAccessibility(AccessibilityMode),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum CognitiveRole {
     Experiential,
     Declarative,
@@ -331,16 +331,13 @@ pub enum CognitiveRole {
 
 impl CognitiveRole {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Experiential => "experiential",
-            Self::Declarative => "declarative",
-            Self::ProceduralExperience => "procedural_experience",
-        }
+        self.into()
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum FormationMode {
     Grounded,
     Synthesized,
@@ -348,10 +345,7 @@ pub enum FormationMode {
 
 impl FormationMode {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Grounded => "grounded",
-            Self::Synthesized => "synthesized",
-        }
+        self.into()
     }
 }
 
@@ -373,8 +367,9 @@ pub enum AccessibilityLevel {
     Explicit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum RevisionIntent {
     Correct,
     Rephrase,
@@ -383,11 +378,7 @@ pub enum RevisionIntent {
 
 impl RevisionIntent {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Correct => "correct",
-            Self::Rephrase => "rephrase",
-            Self::Reinterpret => "reinterpret",
-        }
+        self.into()
     }
 }
 
@@ -410,8 +401,9 @@ pub struct MemoryRevisionEvidence {
     pub evidence: EvidenceRef,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum MemoryRelation {
     DerivedFrom,
     Contradicts,
@@ -422,13 +414,7 @@ pub enum MemoryRelation {
 
 impl MemoryRelation {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::DerivedFrom => "derived_from",
-            Self::Contradicts => "contradicts",
-            Self::TemporalSuccessor => "temporal_successor",
-            Self::ReplacesBasis => "replaces_basis",
-            Self::Elaborates => "elaborates",
-        }
+        self.into()
     }
 }
 
@@ -463,8 +449,9 @@ pub struct TagRevision {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum AssociationPolarity {
     Positive,
     Negative,
@@ -472,15 +459,13 @@ pub enum AssociationPolarity {
 
 impl AssociationPolarity {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Positive => "positive",
-            Self::Negative => "negative",
-        }
+        self.into()
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum AssociationBasisClass {
     HostExplicit,
     SourceEvidence,
@@ -522,13 +507,7 @@ impl AssociationBasis {
 
 impl AssociationBasisClass {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::HostExplicit => "host_explicit",
-            Self::SourceEvidence => "source_evidence",
-            Self::CognitiveDerivation => "cognitive_derivation",
-            Self::MeaningfulUse => "meaningful_use",
-            Self::DerivedStructure => "derived_structure",
-        }
+        self.into()
     }
 }
 
@@ -767,8 +746,11 @@ pub struct CognitiveSchemaRevision {
     pub formation_kind: SchemaFormationKind,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum SchemaFormationKind {
     #[default]
     ExplicitImport,
@@ -777,15 +759,13 @@ pub enum SchemaFormationKind {
 
 impl SchemaFormationKind {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ExplicitImport => "explicit_import",
-            Self::Synthesized => "synthesized",
-        }
+        self.into()
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum SchemaEvidenceRole {
     Support,
     Counterexample,
@@ -794,11 +774,7 @@ pub enum SchemaEvidenceRole {
 
 impl SchemaEvidenceRole {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Support => "support",
-            Self::Counterexample => "counterexample",
-            Self::BoundaryCase => "boundary_case",
-        }
+        self.into()
     }
 }
 

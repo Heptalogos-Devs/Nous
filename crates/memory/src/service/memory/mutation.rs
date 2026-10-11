@@ -141,7 +141,7 @@ impl MemoryService {
         )
         .await?;
         sqlx::query("INSERT INTO memory_revisions(memory_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
-            .bind(revision_id.0).bind(revision_intent.map(|value| value.as_str())).bind(input.formation_mode.as_str()).bind(input.grounding_occurrence_id.map(|id| id.0)).bind(&input.semantic_role).bind(&input.title).bind(&input.representation_text).bind(format!("{:?}",input.epistemic_class).to_lowercase()).bind(valid_kind).bind(valid_start).bind(valid_end).execute(&mut **tx).await.map_err(db)?;
+            .bind(revision_id.0).bind(revision_intent.map(|value| value.as_str())).bind(input.formation_mode.as_str()).bind(input.grounding_occurrence_id.map(|id| id.0)).bind(&input.semantic_role).bind(&input.title).bind(&input.representation_text).bind(input.epistemic_class.as_str()).bind(valid_kind).bind(valid_start).bind(valid_end).execute(&mut **tx).await.map_err(db)?;
         for (index, basis) in input.basis.iter().enumerate() {
             self.insert_basis_in_tx(tx, revision_id, index as i32, basis)
                 .await?;

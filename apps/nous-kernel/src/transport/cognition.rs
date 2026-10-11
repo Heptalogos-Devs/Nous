@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nous_core::{
-    CognitiveRef, EpisodeRevisionId, JournalRevisionId, MemoryRevisionId, OperationId, Result,
-    SubjectId,
-};
+use nous_core::{CognitiveRef, OperationId, Result, SubjectId};
 use nous_memory::{CognitionAction, CognitionKind, CognitionView};
 use uuid::Uuid;
 
@@ -64,17 +61,6 @@ fn cognition_kind(value: &str) -> Result<CognitionKind> {
             nous_core::ErrorCode::InvalidRequest,
             "kind must be memory, cognitive_schema, episode, or journal",
         )),
-    }
-}
-
-fn revision_ref(kind: CognitionKind, id: Uuid) -> CognitiveRef {
-    match kind {
-        CognitionKind::Memory => CognitiveRef::MemoryRevision(MemoryRevisionId(id)),
-        CognitionKind::CognitiveSchema => {
-            CognitiveRef::CognitiveSchemaRevision(nous_core::CognitiveSchemaRevisionId(id))
-        }
-        CognitionKind::Episode => CognitiveRef::EpisodeRevision(EpisodeRevisionId(id)),
-        CognitionKind::Journal => CognitiveRef::JournalRevision(JournalRevisionId(id)),
     }
 }
 
@@ -152,7 +138,7 @@ impl KernelService {
         }
         let scope = format!("cognition-history:{}:{}:{}", subject.0, kind.as_str(), id);
         let (limit, after_id) = page(input.page, &scope)?;
-        let after = after_id.map(|id| revision_ref(kind, id));
+        let after = after_id.map(|id| kind.revision_ref(id));
         let mut references = self
             .require_memory()?
             .cognition_history_refs(subject, &object, after.as_ref(), limit + 1)

@@ -5,8 +5,9 @@ use chrono::{DateTime, Utc};
 use nous_core::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum UseKind {
     Presented,
     Referenced,
@@ -19,15 +20,7 @@ pub enum UseKind {
 
 impl UseKind {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Presented => "presented",
-            Self::Referenced => "referenced",
-            Self::ActedOn => "acted_on",
-            Self::ResultSupported => "result_supported",
-            Self::ResultRefuted => "result_refuted",
-            Self::Corrected => "corrected",
-            Self::Pinned => "pinned",
-        }
+        self.into()
     }
 
     pub fn meaningful(self) -> bool {
@@ -74,8 +67,9 @@ pub struct ResidentRef {
     pub metadata: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ResidentState {
     Resident,
     Provisional,
@@ -84,11 +78,7 @@ pub enum ResidentState {
 
 impl ResidentState {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Resident => "resident",
-            Self::Provisional => "provisional",
-            Self::Evicted => "evicted",
-        }
+        self.into()
     }
 }
 

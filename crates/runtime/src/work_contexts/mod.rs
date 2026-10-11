@@ -16,8 +16,19 @@ mod lifecycle;
 mod mutation;
 mod read;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::IntoStaticStr,
+    strum::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum WorkContextState {
     Open,
     Paused,
@@ -26,11 +37,7 @@ pub enum WorkContextState {
 
 impl WorkContextState {
     fn as_str(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Paused => "paused",
-            Self::Ended => "ended",
-        }
+        self.into()
     }
 }
 
@@ -92,16 +99,13 @@ pub struct UpdateWorkContextInput {
 }
 
 fn parse_state(value: String) -> Result<WorkContextState> {
-    match value.as_str() {
-        "open" => Ok(WorkContextState::Open),
-        "paused" => Ok(WorkContextState::Paused),
-        "ended" => Ok(WorkContextState::Ended),
-        _ => Err(Error::new(
+    value.parse::<WorkContextState>().map_err(|_| {
+        Error::new(
             nous_core::ErrorOwner::Runtime,
             nous_core::ErrorCode::InternalFailure,
             "invalid WorkContext state",
-        )),
-    }
+        )
+    })
 }
 
 fn validate_payload(
