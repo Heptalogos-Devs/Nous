@@ -79,7 +79,6 @@ impl QueryContextSnapshot {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueryRepresentation {
-    pub representation_version: String,
     pub text: String,
     pub sha256: String,
     pub source_refs: Vec<(CognitiveRef, String)>,
@@ -333,18 +332,16 @@ pub fn build_query_representation(
         builder.section("Consumer/task", consumer, 256);
     }
     let text = builder.render();
-    finish(text, sources, builder.flags, "cognitive-query-v2")
+    finish(text, sources, builder.flags)
 }
 fn finish(
     text: String,
     mut sources: Vec<(CognitiveRef, String)>,
     flags: BTreeSet<String>,
-    version: &str,
 ) -> QueryRepresentation {
     sources.sort_by_key(|(reference, source)| (reference.to_string(), source.clone()));
     sources.dedup();
     QueryRepresentation {
-        representation_version: version.into(),
         sha256: Sha256::digest(text.as_bytes())
             .iter()
             .map(|byte| format!("{byte:02x}"))

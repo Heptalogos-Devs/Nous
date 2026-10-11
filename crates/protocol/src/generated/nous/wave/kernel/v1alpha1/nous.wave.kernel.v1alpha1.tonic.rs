@@ -942,7 +942,7 @@ pub mod kernel_query_service_server {
             &self,
             request: tonic::Request<super::PrepareQueryRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::super::super::v1alpha1::PreparedQueryResponse>,
+            tonic::Response<super::super::super::v1alpha1::QueryInspection>,
             tonic::Status,
         >;
         /// Server streaming response type for the RunQuery method.
@@ -1093,7 +1093,7 @@ pub mod kernel_query_service_server {
                         T: KernelQueryService,
                     > tonic::server::UnaryService<super::PrepareQueryRequest>
                     for PrepareQuerySvc<T> {
-                        type Response = super::super::super::v1alpha1::PreparedQueryResponse;
+                        type Response = super::super::super::v1alpha1::QueryInspection;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,

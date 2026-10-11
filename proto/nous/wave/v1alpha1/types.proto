@@ -105,7 +105,7 @@ message QueryTemporalFrame { google.protobuf.Timestamp clock_now = 1; QueryAutho
 message AccessibilityQueryPolicy { string effort = 1; bool exact_target_bypasses_auto_level = 2; }
 message ReadContext { string subject_id = 1 [(reference_kind) = "subject"]; QueryAuthorityViewKind view = 2; optional string historical_view_digest = 3; QueryTemporalFrame temporal = 4; AccessibilityQueryPolicy accessibility = 5; int64 bound_authority_seq = 6; int64 purge_epoch = 7; }
 message QuerySourceRef { CognitiveRef reference = 1; string source = 2; }
-message QueryRepresentation { string version = 1; string text = 2; string sha256 = 3; repeated QuerySourceRef source_refs = 4; repeated string truncation_flags = 5; }
+message QueryRepresentation { string text = 2; string sha256 = 3; repeated QuerySourceRef source_refs = 4; repeated string truncation_flags = 5; }
 message QueryContextSnapshot { optional Session session = 1; optional WorkContext work_context = 2; repeated CognitiveRef situation_refs = 3; repeated QuerySourceRef source_refs = 4; repeated Degradation history_exclusions = 5; string digest = 6; }
 message QueryExactBinding { CognitiveRef requested_ref = 1; CognitiveRef bound_ref = 2; optional int64 bound_object_epoch = 3; bool mutable_object = 4; }
 message QueryEmbeddingSpaceView { string space_hash = 1; string model_identity = 2; uint32 dimension = 3; }
@@ -116,9 +116,8 @@ message QueryConceptOutput { repeated QueryConceptSelection existing_tags = 1; r
 message QueryTagActivation { CognitiveRef tag = 1; double strength = 2; string source = 3; string origin = 4; }
 message QueryActivationSeed { CognitiveRef reference = 1; string origin = 2; double strength = 3; }
 message QueryActivationInspection { bool frozen = 1; repeated QueryConceptCandidate concept_catalog = 2; repeated QueryTagActivation explicit_tags = 3; repeated QueryTagActivation inferred_tags = 4; repeated QueryActivationSeed seeds = 5; repeated CognitiveRef runtime_refs = 6; string exploration = 7; string generation_id = 8; string query_embedding_digest = 9; repeated Degradation degradation = 10; uint32 model_calls = 11; bool model_completed = 12; }
-message QueryPlanInspection { string profile_id = 1; string profile_source = 2; repeated string enabled_lanes = 3; map<string,uint32> lane_budgets = 4; uint32 candidate_limit = 5; uint32 final_validation_budget = 6; bool topology_required = 7; string readout_policy_digest = 8; }
+message QueryPlanInspection { string profile_id = 1; string profile_source = 2; repeated string enabled_lanes = 3; map<string,uint32> lane_budgets = 4; uint32 candidate_limit = 5; uint32 final_validation_budget = 6; bool topology_required = 7; string readout_policy_digest = 8; string concept_enrichment_mode = 9; bool embedding_required = 10; string effective_rerank_requirement = 11; }
 message QueryInspection { string query_id = 1; QueryExpr canonical_query = 2; QueryRepresentation representation = 3; QueryContextSnapshot context = 4; ReadContext read_context = 5; repeated QueryExactBinding exact_bindings = 6; QueryActivationInspection activation = 7; QueryPlanInspection plan = 8; string config_snapshot_digest = 9; optional QueryEmbeddingSpaceView selected_embedding_space = 10; QueryCapabilities capabilities = 11; }
-message PreparedQueryResponse { QueryInspection bound_query = 1; reserved 2; string embedding_text = 3; bool embedding_required = 4; string text_embedding_requirement = 5; string rerank_requirement = 6; string concept_enrichment_mode = 7; string concept_enrichment_requirement = 8; bool historical_view = 9; }
 message Evidence { CognitiveRef reference = 1; string basis_role = 2; optional string epistemic_relation = 3; }
 message Hit {
   CognitiveRef reference = 1;

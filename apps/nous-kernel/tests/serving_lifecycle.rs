@@ -180,6 +180,20 @@ async fn purge_retry_resumes_after_serving_artifact_deletion_fails() {
         .await
         .unwrap();
     let purge_epoch = runtime.store.serving_purge_epoch(subject).await.unwrap();
+    let exact_revision =
+        CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId(memory.revision_id.unwrap()));
+    assert!(matches!(
+        runtime
+            .require_memory()
+            .unwrap()
+            .read_cognition(subject, exact_revision)
+            .await,
+        Err(nous_core::Error {
+            owner: nous_core::ErrorOwner::Memory,
+            code: nous_core::ErrorCode::NotFound,
+            ..
+        })
+    ));
 
     let artifact_path = std::path::Path::new(&artifact.artifact_location);
     std::fs::remove_dir_all(artifact_path).unwrap();

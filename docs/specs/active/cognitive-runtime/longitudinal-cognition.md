@@ -75,7 +75,7 @@ Query/Serving、WorkContext、UseEvent 和下游失效合同分别见 [Query](..
 
 Memory planner 只围绕一个 current eligible exact cognition。局部输入包含 focus 语义、来源、aboutness Entity、已附 Tags、名称/别名匹配、既有 embedding material 的相似候选和一跳 AssociationEvidence；不拼整个 Subject cognition catalog，不调用 embedding provider。当前 owner plan 为本次调用构造 typed canonical refs、TagRevisionTarget、AssociationSupport 与有界描述；模型只看到 local keys，不写入独立 workflow snapshot。
 
-`concept_maintenance` role 使用 `prompts/memory/concept-maintenance.md` 和独立 Structured Contract，最多四个 ordered suggestions，配置可以进一步收紧。Core 校验模型输出后逐项调用 Create/Revise/Merge/SplitTag、Create/RevokeAssociation；每项使用正常 owner operation ID/receipt。每项结果为 committed/no_change/rejected_invalid/stale/skipped_dependency，临时 `new_` keys 解析为先前成功返回的 Tag identity。后续失败保留先前成功，依赖失败只跳过依赖项，独立项继续；不同请求沿用相同 owner identity 时可能冲突。owner invariant 停止该 grant，返回 internal_failure。
+`concept_maintenance` role 使用 `prompts/memory/concept-maintenance.md` 和独立 Structured Contract，最多四个 ordered suggestions，配置可以进一步收紧。Core 校验模型输出后逐项调用 Create/Revise/Merge/SplitTag、Create/RevokeAssociation；每项使用 owner operation ID/receipt。每项结果为 committed/no_change/rejected_invalid/stale/skipped_dependency，临时 `new_` keys 解析为先前成功返回的 Tag identity。后续失败保留先前成功，依赖失败只跳过依赖项，独立项继续；新执行从当前 owner state 重新计划，不续接未完成 proposal。owner invariant 停止该 grant，返回 internal_failure。
 
 Tag merge/split 保留 exact supports 和 lineage，一个明确来源可以支持 alias/equivalence 或语义分化；不要求两个独立根。merge/split 自身仍为天然原子操作。后置 `tag_attachment` 是正向 exact cognition→Tag AssociationEvidence，不修改旧 cognition revision。owner 校验 Subject、当前 endpoint 生命周期、relation registry、方向/极性、显式支持和 producer，不递归证明整个 cognition graph。Serving 直接使用既有 Memory dependencies、Episode members、Journal sources、Schema evidence 作为结构 adjacency；不要求复制 AssociationEvidence。contradiction/negative evidence 保留独立语义。
 

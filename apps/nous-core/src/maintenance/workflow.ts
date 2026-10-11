@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from "@bufbuild/protobuf";
+import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { z } from "zod";
 import { type MaintenanceNeed } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
@@ -14,7 +15,6 @@ import { GenerationFailure } from "../model/execution/routes.js";
 import { executeConceptMaintenance } from "./concept-maintenance.js";
 import { executeConsolidation } from "./consolidation.js";
 import { authorityRejection } from "./rejection.js";
-import { maintenanceOperationId } from "./identity.js";
 import { buildMaintenanceProposal } from "./proposal.js";
 
 /** Run one claimed need within the caller's maintenance grant. */
@@ -41,13 +41,11 @@ export async function runModelMaintenance(
       nextDue: plan.nextDue,
     };
 
-  const operationId = maintenanceOperationId(need);
   try {
-    const { proposal } = await buildMaintenanceProposal({
+    const proposal = await buildMaintenanceProposal({
       models,
       need,
       plan,
-      operationId,
       options,
       reserveModelCall,
     });
@@ -61,7 +59,6 @@ export async function runModelMaintenance(
         kernel,
         plan,
         proposal.proposal,
-        operationId,
         proposal.producer,
         options,
       );
@@ -70,20 +67,19 @@ export async function runModelMaintenance(
         kernel,
         plan,
         proposal.proposal,
-        operationId,
         proposal.producer,
         options,
       );
     } else if (proposal.action === "withdraw") {
       await kernel.memory.mutateCognition(
         create(CognitionMutationRequestSchema, {
-          operationId,
+          operationId: randomUUID(),
           subjectId: need.subjectId,
           objectRef: create(CognitiveRefSchema, {
             kind: "journal",
             value: proposal.journalId,
           }),
-          expectedObjectEpoch: BigInt(proposal.epoch),
+          expectedObjectEpoch: proposal.expectedEpoch,
           action: { case: "withdraw", value: {} },
         }),
         options,

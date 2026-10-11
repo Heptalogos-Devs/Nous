@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from "@bufbuild/protobuf";
+import { randomUUID } from "node:crypto";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
 import { authorityRejection } from "./rejection.js";
@@ -14,7 +15,6 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import type { ConsolidationProposal } from "../model/schemas/consolidation.js";
-import { maintenanceActionOperationId } from "./identity.js";
 
 type Action = ConsolidationProposal["actions"][number];
 type ConsolidationActionResult = {
@@ -67,7 +67,6 @@ export async function executeConsolidation(
   kernel: KernelClient,
   plan: MaintenancePlan,
   proposal: ConsolidationProposal,
-  operationId: string,
   producer: ProducerSignature,
   options: CallOptions,
 ) {
@@ -177,7 +176,7 @@ export async function executeConsolidation(
   };
   for (let index = 0; index < proposal.actions.length; index++) {
     const action = proposal.actions[index]!;
-    const id = maintenanceActionOperationId(operationId, index, action.action);
+    const id = randomUUID();
     let result: ConsolidationActionResult = {
       index,
       status: "no_change",

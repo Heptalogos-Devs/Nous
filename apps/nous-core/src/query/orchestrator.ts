@@ -305,11 +305,6 @@ export class QueryOrchestrator {
           let outcome;
           let modelCalls = 0;
           try {
-            if (!work.representation)
-              throw new ConnectError(
-                "Query concept representation missing",
-                Code.Internal,
-              );
             if (!this.models.invocations.profile("query_concept_enrichment"))
               throw domainError(
                 "Query concept model role unavailable",
@@ -324,7 +319,7 @@ export class QueryOrchestrator {
             const response = await this.models.invocations.generate(
               "query_concept_enrichment",
               {
-                content: work.representation.text,
+                content: work.representation,
                 context: () => ({
                   existing_tags: work.existingTags,
                   temporal_frame: work.temporalFrame,

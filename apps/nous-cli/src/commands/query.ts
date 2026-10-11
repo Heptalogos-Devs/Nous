@@ -41,12 +41,7 @@ async function query(
   if (preparing) {
     const response = await client.cognition.prepareQuery(request);
     if (values.raw) return response;
-    const bound = response.boundQuery;
-    if (!bound)
-      throw new CliError(
-        "INTERNAL_FAILURE",
-        "Core omitted the typed query inspection",
-      );
+    const bound = response;
     const context = bound.context;
     const workContext = context?.workContext;
     const session = context?.session;
@@ -57,7 +52,7 @@ async function query(
       inspection: bound,
       representation: {
         sha256: bound.representation?.sha256,
-        chars: Array.from(response.embeddingText).length,
+        chars: Array.from(bound.representation?.text ?? "").length,
         truncationFlags: bound.representation?.truncationFlags ?? [],
       },
       context: {
@@ -89,12 +84,12 @@ async function query(
       projection: bound.canonicalQuery?.modifiers?.projection,
       temporalFrame: bound.readContext?.temporal,
       capabilities: {
-        textEmbedding: response.textEmbeddingRequirement,
-        rerank: response.rerankRequirement,
-        conceptEnrichment: response.conceptEnrichmentRequirement,
-        conceptEnrichmentMode: response.conceptEnrichmentMode,
+        textEmbedding: bound.capabilities?.textEmbedding,
+        rerank: bound.plan?.effectiveRerankRequirement,
+        conceptEnrichment: bound.capabilities?.queryConceptEnrichment,
+        conceptEnrichmentMode: bound.plan?.conceptEnrichmentMode,
       },
-      embeddingRequired: response.embeddingRequired,
+      embeddingRequired: bound.plan?.embeddingRequired,
       degradation: activation?.degradation,
     };
   }

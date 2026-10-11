@@ -167,6 +167,21 @@ async function main() {
     )
       throw new Error("Memory provenance does not trace to Observation");
 
+    const prepared = await client.cognition.prepareQuery(
+      create(QueryRequestSchema, {
+        subjectId,
+        expression: queryExpression("Alice is present"),
+      }),
+    );
+    if (
+      !prepared.queryId ||
+      !prepared.representation?.text ||
+      !prepared.plan?.conceptEnrichmentMode
+    )
+      throw new Error(
+        "public PrepareQuery did not return the bound inspection",
+      );
+
     const recalled = await query(client, undefined, "Alice is present");
     if (!recalled.hits.some((hit) => hitMatches(hit, memoryId, revisionId)))
       throw new Error("public Query did not recall the formed Memory");

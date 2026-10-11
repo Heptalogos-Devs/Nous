@@ -371,7 +371,6 @@ pub(super) fn query_representation(
     representation: &nous_runtime::QueryRepresentation,
 ) -> p::QueryRepresentation {
     p::QueryRepresentation {
-        version: representation.representation_version.clone(),
         text: representation.text.clone(),
         sha256: representation.sha256.clone(),
         source_refs: representation
@@ -564,6 +563,13 @@ pub(super) fn inspect_bound_query(bound: &nous_runtime::BoundQuery) -> Result<p:
             final_validation_budget: plan.final_validation_budget as u32,
             topology_required: bound.plan.expand_topology,
             readout_policy_digest,
+            concept_enrichment_mode: enum_name(plan.concept_enrichment),
+            embedding_required: super::query_workflow::query_embedding_needed(bound),
+            effective_rerank_requirement: enum_name(if query.is_exact_read() {
+                RequirementStrength::Forbidden
+            } else {
+                query.capabilities.rerank
+            }),
         }),
         config_snapshot_digest: bound.read_context.config_snapshot.effective_digest.clone(),
         selected_embedding_space: bound.selected_embedding_space.as_ref().map(|space| {

@@ -156,5 +156,4 @@ fn representation_is_semantic_deterministic_and_bounded() {
         raw.text,
         "Intent:\nWhat did I discuss yesterday?\n\nCurrent objects:\nNous Wave issue triage"
     );
-    assert_eq!(raw.representation_version, "cognitive-query-v2");
 }

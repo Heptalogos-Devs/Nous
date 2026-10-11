@@ -494,8 +494,6 @@ pub struct QuerySourceRef {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryRepresentation {
-    #[prost(string, tag="1")]
-    pub version: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
     pub text: ::prost::alloc::string::String,
     #[prost(string, tag="3")]
@@ -635,6 +633,12 @@ pub struct QueryPlanInspection {
     pub topology_required: bool,
     #[prost(string, tag="8")]
     pub readout_policy_digest: ::prost::alloc::string::String,
+    #[prost(string, tag="9")]
+    pub concept_enrichment_mode: ::prost::alloc::string::String,
+    #[prost(bool, tag="10")]
+    pub embedding_required: bool,
+    #[prost(string, tag="11")]
+    pub effective_rerank_requirement: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryInspection {
@@ -660,25 +664,6 @@ pub struct QueryInspection {
     pub selected_embedding_space: ::core::option::Option<QueryEmbeddingSpaceView>,
     #[prost(message, optional, tag="11")]
     pub capabilities: ::core::option::Option<QueryCapabilities>,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct PreparedQueryResponse {
-    #[prost(message, optional, tag="1")]
-    pub bound_query: ::core::option::Option<QueryInspection>,
-    #[prost(string, tag="3")]
-    pub embedding_text: ::prost::alloc::string::String,
-    #[prost(bool, tag="4")]
-    pub embedding_required: bool,
-    #[prost(string, tag="5")]
-    pub text_embedding_requirement: ::prost::alloc::string::String,
-    #[prost(string, tag="6")]
-    pub rerank_requirement: ::prost::alloc::string::String,
-    #[prost(string, tag="7")]
-    pub concept_enrichment_mode: ::prost::alloc::string::String,
-    #[prost(string, tag="8")]
-    pub concept_enrichment_requirement: ::prost::alloc::string::String,
-    #[prost(bool, tag="9")]
-    pub historical_view: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Evidence {

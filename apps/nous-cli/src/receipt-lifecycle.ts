@@ -61,19 +61,18 @@ export function createReceiptLifecycle(
   const replay: Record<string, (request: unknown) => Promise<unknown>> = {};
   function savedRequest(receipt: OperationReceipt) {
     const spec = receiptDefinition(receipt.command);
-    const request = thawRequest(
-      receipt.command,
-      receipt.request.typeName,
-      receipt.request.protoJson,
-    );
-    const identity = receiptIdentity(receipt.command, request);
+    const request = thawRequest(spec, receipt.request);
+    const identity = receiptIdentity(receipt.command, request, spec);
     return { request, spec, identity };
   }
   async function executeReceipt(
     id: string,
     receipt: Extract<OperationReceipt, { status: "pending" }>,
     invoke: (request: unknown) => Promise<unknown>,
-    saved = savedRequest(receipt),
+    saved: {
+      request: unknown;
+      spec: ReturnType<typeof receiptDefinition>;
+    } = savedRequest(receipt),
   ) {
     const { request } = saved;
     let result: unknown;
@@ -83,7 +82,7 @@ export function createReceiptLifecycle(
       throw withReceiptId(error, id);
     }
     try {
-      const frozenResult = freezeResult(receipt.command, result);
+      const frozenResult = freezeResult(saved.spec, result);
       await local.writeReceipt(id, {
         ...receipt,
         status: "complete",
@@ -124,7 +123,7 @@ export function createReceiptLifecycle(
       const receipt = receiptSchema.parse({
         receiptId: id,
         command: name,
-        request: frozen.frozen,
+        request: frozen.protoJson,
         status: "pending",
         createdAt,
         updatedAt: createdAt,
@@ -271,7 +270,7 @@ export function createReceiptLifecycle(
         "Use --subject with the Subject ID frozen in this operation receipt",
       );
     if (receipt.status === "complete")
-      return thawResult(receipt.command, receipt.result);
+      return thawResult(saved.spec, receipt.result);
     const invoke = replay[receipt.command];
     if (!invoke)
       throw new CliError("INVALID_ARGUMENT", "Receipt command is unavailable");

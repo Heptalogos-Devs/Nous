@@ -10,7 +10,6 @@ import { consolidationSchema } from "../../src/model/schemas/consolidation.js";
 import { executeConsolidation } from "../../src/maintenance/consolidation.js";
 const occurrence = "10000000-0000-4000-8000-000000000001";
 const revision = "20000000-0000-4000-8000-000000000001";
-const operation = "40000000-0000-4000-8000-000000000001";
 const plan = create(MaintenancePlanSchema, {
   subjectId: "30000000-0000-4000-8000-000000000001",
   authoritySeq: 12n,
@@ -114,7 +113,6 @@ it("uses canonical owner APIs and returned earlier-action refs for strong Memory
     f.kernel,
     plan,
     proposal,
-    operation,
     create(ProducerSignatureSchema),
     {},
   );

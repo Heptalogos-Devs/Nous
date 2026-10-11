@@ -11,7 +11,7 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 service KernelQueryService {
   rpc GetCognitiveTime(nous.wave.v1alpha1.SubjectRequest) returns (google.protobuf.Timestamp);
-  rpc PrepareQuery(PrepareQueryRequest) returns (nous.wave.v1alpha1.PreparedQueryResponse);
+  rpc PrepareQuery(PrepareQueryRequest) returns (nous.wave.v1alpha1.QueryInspection);
   rpc RunQuery(stream QueryRunRequest) returns (stream QueryRunUpdate);
 }
 service KernelMaintenanceService {

@@ -574,8 +574,8 @@ pub struct QueryEmbeddingWork {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryConceptWork {
-    #[prost(message, optional, tag="1")]
-    pub representation: ::core::option::Option<super::super::v1alpha1::QueryRepresentation>,
+    #[prost(string, tag="1")]
+    pub representation: ::prost::alloc::string::String,
     #[prost(message, repeated, tag="2")]
     pub existing_tags: ::prost::alloc::vec::Vec<super::super::v1alpha1::QueryConceptCandidate>,
     #[prost(message, optional, tag="3")]

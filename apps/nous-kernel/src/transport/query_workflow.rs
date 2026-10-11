@@ -35,36 +35,13 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
     async fn prepare_query(
         &self,
         request: Request<k::PrepareQueryRequest>,
-    ) -> std::result::Result<Response<p::PreparedQueryResponse>, Status> {
+    ) -> std::result::Result<Response<p::QueryInspection>, Status> {
         let input = request.into_inner();
         let result: Result<_> = async {
             let bound = self
                 .bind_query_request(required(input.query, "query")?)
                 .await?;
-            let embedding_text = bound.representation.text.clone();
-            let embedding_required = query_embedding_needed(&bound);
-            let inspection = super::query_projection::inspect_bound_query(&bound)?;
-            let text_embedding_requirement =
-                enum_name(bound.source_query.capabilities.text_embedding);
-            let rerank_requirement = enum_name(if bound.source_query.is_exact_read() {
-                RequirementStrength::Forbidden
-            } else {
-                bound.source_query.capabilities.rerank
-            });
-            let concept_enrichment_mode = enum_name(bound.plan.concept_enrichment);
-            let concept_enrichment_requirement =
-                enum_name(bound.source_query.capabilities.query_concept_enrichment);
-            let historical_view = bound.read_context.is_historical();
-            Ok(p::PreparedQueryResponse {
-                bound_query: Some(inspection),
-                embedding_text,
-                embedding_required,
-                text_embedding_requirement,
-                rerank_requirement,
-                concept_enrichment_mode,
-                concept_enrichment_requirement,
-                historical_view,
-            })
+            super::query_projection::inspect_bound_query(&bound)
         }
         .await;
         result.map(Response::new).map_err(status)
@@ -619,7 +596,7 @@ impl KernelService {
             .cognition
             .ensure_read_context_current(&bound.read_context)
             .await?;
-        let representation = super::query_projection::query_representation(&bound.representation);
+        let representation = bound.representation.text.clone();
         let existing_tags = bound
             .activation
             .concept_catalog
@@ -636,7 +613,7 @@ impl KernelService {
         ));
         Ok(k::QueryRunUpdate {
             frame: Some(k::query_run_update::Frame::Concept(k::QueryConceptWork {
-                representation: Some(representation),
+                representation,
                 existing_tags,
                 temporal_frame,
             })),
@@ -744,7 +721,7 @@ fn unexpected_query_frame(frame: Option<k::query_run_request::Frame>) -> Status 
     }
 }
 
-fn query_embedding_needed(bound: &BoundQuery) -> bool {
+pub(super) fn query_embedding_needed(bound: &BoundQuery) -> bool {
     let need = bound.plan.serving_need(&bound.source_query);
     !bound.source_query.is_exact_read()
         && bound.source_query.capabilities.text_embedding != RequirementStrength::Forbidden

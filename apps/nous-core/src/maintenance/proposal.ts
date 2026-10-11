@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create, toJson } from "@bufbuild/protobuf";
+import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
 import type {
   ApplyEpisodePartitionRequest,
@@ -43,7 +44,7 @@ export type MaintenanceProposal =
       proposal: ReturnType<typeof conceptMaintenanceSchema.parse>;
       producer: ProducerSignature;
     }
-  | { action: "withdraw"; journalId: string; epoch: string }
+  | { action: "withdraw"; journalId: string; expectedEpoch: bigint }
   | { action: "no_change" };
 
 /** Builds and validates one in-memory proposal from the current owner plan. */
@@ -51,17 +52,15 @@ export async function buildMaintenanceProposal({
   models,
   need,
   plan,
-  operationId,
   options,
   reserveModelCall,
 }: {
   models: ModelRuntime;
   need: MaintenanceNeed;
   plan: MaintenancePlan;
-  operationId: string;
   options: ExecutionOptions;
   reserveModelCall: () => void;
-}): Promise<{ proposal: MaintenanceProposal }> {
+}): Promise<MaintenanceProposal> {
   if (plan.status === "withdraw") {
     if (!plan.target)
       throw new ConnectError(
@@ -69,11 +68,9 @@ export async function buildMaintenanceProposal({
         Code.InvalidArgument,
       );
     return {
-      proposal: {
-        action: "withdraw",
-        journalId: plan.target.journalId,
-        epoch: plan.target.expectedEpoch.toString(),
-      },
+      action: "withdraw",
+      journalId: plan.target.journalId,
+      expectedEpoch: plan.target.expectedEpoch,
     };
   }
 
@@ -110,28 +107,26 @@ export async function buildMaintenanceProposal({
           "No-change proposal omitted unorganized experience",
           Code.InvalidArgument,
         );
-      return { proposal: { action: "no_change" } };
+      return { action: "no_change" };
     }
     return {
-      proposal: {
-        action: "partition",
-        request: create(ApplyEpisodePartitionRequestSchema, {
-          operationId,
-          subjectId: need.subjectId,
-          expectedAuthoritySeq: plan.authoritySeq,
-          sources: plan.sources,
-          orderedOccurrences: plan.members.map((member) => member.occurrenceId),
-          segments: segments.map((segment) => ({
-            $typeName:
-              "nous.wave.kernel.v1alpha1.EpisodePartitionSegment" as const,
-            ...segment,
-          })),
-          producer: create(
-            ProducerSignatureSchema,
-            modelProducer(result.producerMetadata, "episode_segmentation_text"),
-          ),
-        }),
-      },
+      action: "partition",
+      request: create(ApplyEpisodePartitionRequestSchema, {
+        operationId: randomUUID(),
+        subjectId: need.subjectId,
+        expectedAuthoritySeq: plan.authoritySeq,
+        sources: plan.sources,
+        orderedOccurrences: plan.members.map((member) => member.occurrenceId),
+        segments: segments.map((segment) => ({
+          $typeName:
+            "nous.wave.kernel.v1alpha1.EpisodePartitionSegment" as const,
+          ...segment,
+        })),
+        producer: create(
+          ProducerSignatureSchema,
+          modelProducer(result.producerMetadata, "episode_segmentation_text"),
+        ),
+      }),
     };
   }
 
@@ -144,14 +139,12 @@ export async function buildMaintenanceProposal({
       reserveModelCall,
     );
     return {
-      proposal: {
-        action: "concept",
-        proposal: conceptMaintenanceSchema.parse(result.value),
-        producer: create(
-          ProducerSignatureSchema,
-          modelProducer(result.producerMetadata, "concept_maintenance_text"),
-        ),
-      },
+      action: "concept",
+      proposal: conceptMaintenanceSchema.parse(result.value),
+      producer: create(
+        ProducerSignatureSchema,
+        modelProducer(result.producerMetadata, "concept_maintenance_text"),
+      ),
     };
   }
 
@@ -162,14 +155,12 @@ export async function buildMaintenanceProposal({
       reserveModelCall,
     );
     return {
-      proposal: {
-        action: "consolidation",
-        proposal: consolidationSchema.parse(result.value),
-        producer: create(
-          ProducerSignatureSchema,
-          modelProducer(result.producerMetadata, "memory_consolidation_text"),
-        ),
-      },
+      action: "consolidation",
+      proposal: consolidationSchema.parse(result.value),
+      producer: create(
+        ProducerSignatureSchema,
+        modelProducer(result.producerMetadata, "memory_consolidation_text"),
+      ),
     };
   }
 
@@ -192,8 +183,7 @@ export async function buildMaintenanceProposal({
       "Journal revalidation requires a supported commit",
       Code.InvalidArgument,
     );
-  if (proposal.action === "no_change")
-    return { proposal: { action: "no_change" } };
+  if (proposal.action === "no_change") return { action: "no_change" };
   if (proposal.action === "withdraw") {
     if (!plan.target)
       throw new ConnectError(
@@ -201,38 +191,34 @@ export async function buildMaintenanceProposal({
         Code.InvalidArgument,
       );
     return {
-      proposal: {
-        action: "withdraw",
-        journalId: plan.target.journalId,
-        epoch: plan.target.expectedEpoch.toString(),
-      },
+      action: "withdraw",
+      journalId: plan.target.journalId,
+      expectedEpoch: plan.target.expectedEpoch,
     };
   }
 
   const basis = new Map(plan.basis.map((entry) => [entry.key, entry.basis!]));
   return {
-    proposal: {
-      action: "journal",
-      request: create(CommitJournalRequestSchema, {
-        operationId,
-        subjectId: need.subjectId,
-        expectedAuthoritySeq: plan.authoritySeq,
-        target: plan.target,
-        sources: plan.sources,
-        title: proposal.title ?? undefined,
-        narrative: proposal.narrative,
-        points: proposal.points.map((point, ordinal) => ({
-          $typeName: "nous.wave.v1alpha1.JournalPoint" as const,
-          ordinal,
-          role: point.role,
-          text: point.text,
-          basis: point.basisKeys.map((key) => basis.get(key)!),
-        })),
-        producer: create(
-          ProducerSignatureSchema,
-          modelProducer(result.producerMetadata, "journal_synthesis_text"),
-        ),
-      }),
-    },
+    action: "journal",
+    request: create(CommitJournalRequestSchema, {
+      operationId: randomUUID(),
+      subjectId: need.subjectId,
+      expectedAuthoritySeq: plan.authoritySeq,
+      target: plan.target,
+      sources: plan.sources,
+      title: proposal.title ?? undefined,
+      narrative: proposal.narrative,
+      points: proposal.points.map((point, ordinal) => ({
+        $typeName: "nous.wave.v1alpha1.JournalPoint" as const,
+        ordinal,
+        role: point.role,
+        text: point.text,
+        basis: point.basisKeys.map((key) => basis.get(key)!),
+      })),
+      producer: create(
+        ProducerSignatureSchema,
+        modelProducer(result.producerMetadata, "journal_synthesis_text"),
+      ),
+    }),
   };
 }

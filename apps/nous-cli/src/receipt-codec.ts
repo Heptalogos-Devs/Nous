@@ -324,40 +324,14 @@ function operationId(
   return value;
 }
 
-function freezeMessage(schema: DescMessage, value: unknown, error: string) {
-  if (!isMessage(value, schema)) throw new Error(error);
-  return {
-    typeName: schema.typeName,
-    protoJson: toJson(schema, value as never),
-  };
-}
-
-function thawMessage(
-  schema: DescMessage,
-  typeName: string,
-  protoJson: unknown,
-  error: string,
-) {
-  if (typeName !== schema.typeName) throw new Error(error);
-  return fromJson(schema, protoJson as JsonValue);
-}
-
 export function freezeRequest(command: string, input: unknown) {
   const spec = receiptDefinition(command);
   if (!input || typeof input !== "object")
     throw new Error("Mutation request must be an object");
   const request = create(spec.request as never, input as never);
-  const frozen = freezeMessage(
-    spec.request,
-    request,
-    "Mutation request did not match its registered protobuf schema",
-  );
-  const identity = requestIdentity(
-    command,
-    spec,
-    request as unknown as Record<string, unknown>,
-  );
-  return { frozen, request, spec, identity };
+  const protoJson = toJson(spec.request, request as never);
+  requestIdentity(command, spec, request as unknown as Record<string, unknown>);
+  return { protoJson, request, spec };
 }
 
 function requestIdentity(
@@ -380,43 +354,29 @@ function requestIdentity(
   };
 }
 
-export function receiptIdentity(command: string, request: unknown) {
-  const spec = receiptDefinition(command);
+export function receiptIdentity(
+  command: string,
+  request: unknown,
+  spec: ReceiptDefinition,
+) {
   if (!request || typeof request !== "object")
     throw new Error("Mutation request must be an object");
   return requestIdentity(command, spec, request as Record<string, unknown>);
 }
 
-export function thawRequest(
-  command: string,
-  typeName: string,
-  protoJson: unknown,
-) {
-  const spec = receiptDefinition(command);
-  return thawMessage(
-    spec.request,
-    typeName,
-    protoJson,
-    "Receipt request type does not match its command registry",
-  );
+export function thawRequest(spec: ReceiptDefinition, protoJson: unknown) {
+  return fromJson(spec.request, protoJson as JsonValue);
 }
 
-export function freezeResult(command: string, result: unknown) {
-  return freezeMessage(
-    receiptDefinition(command).response,
-    result,
-    "Mutation response did not match its registered protobuf schema",
-  );
+export function freezeResult(spec: ReceiptDefinition, result: unknown) {
+  const schema = spec.response;
+  if (!isMessage(result, schema))
+    throw new Error(
+      "Mutation response did not match its registered protobuf schema",
+    );
+  return toJson(schema, result as never);
 }
 
-export function thawResult(
-  command: string,
-  value: { typeName: string; protoJson: unknown },
-) {
-  return thawMessage(
-    receiptDefinition(command).response,
-    value.typeName,
-    value.protoJson,
-    "Receipt result type does not match its command registry",
-  );
+export function thawResult(spec: ReceiptDefinition, protoJson: unknown) {
+  return fromJson(spec.response, protoJson as JsonValue);
 }

@@ -22,6 +22,7 @@ import { protocolReferences } from "@nous-wave/client/data";
 import {
   freezeRequest,
   freezeResult,
+  receiptDefinition,
   thawResult,
 } from "../src/receipt-codec.js";
 
@@ -48,11 +49,12 @@ test("ProtoJSON receipts preserve generated messages and opaque Struct data", as
       },
       createdAt: create(TimestampSchema, { seconds: 123n, nanos: 0 }),
     });
-    const frozenResult = freezeResult("subjects.create", result);
+    const spec = receiptDefinition("subjects.create");
+    const frozenResult = freezeResult(spec, result);
     await state.writeReceipt("operation", {
       receiptId: "operation",
       command: "subjects.create",
-      request: frozenRequest.frozen,
+      request: frozenRequest.protoJson,
       status: "pending",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -60,7 +62,7 @@ test("ProtoJSON receipts preserve generated messages and opaque Struct data", as
     await state.writeReceipt("operation", {
       receiptId: "operation",
       command: "subjects.create",
-      request: frozenRequest.frozen,
+      request: frozenRequest.protoJson,
       status: "complete",
       result: frozenResult,
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -70,9 +72,8 @@ test("ProtoJSON receipts preserve generated messages and opaque Struct data", as
     expect(receipt.status).toBe("complete");
     if (receipt.status !== "complete")
       throw new Error("Completion receipt missing");
-    expect(receipt.request.typeName).toBe(CreateSubjectRequestSchema.typeName);
-    expect(receipt.request.protoJson).toEqual(frozenRequest.frozen.protoJson);
-    expect(thawResult("subjects.create", receipt.result)).toEqual(result);
+    expect(receipt.request).toEqual(frozenRequest.protoJson);
+    expect(thawResult(spec, receipt.result)).toEqual(result);
     const json = toJson(SubjectSchema, result) as Record<string, unknown>;
     expect(json.metadata).toEqual({
       $typeName: "user JSON",
@@ -162,7 +163,7 @@ test("different processes serialize receipt retention without blocking new reque
   ).href;
   const worker = `import {cliState} from ${JSON.stringify(module)}; import {consumerStatePolicySchema} from ${JSON.stringify(policyModule)};
     const state=cliState(process.argv[1],JSON.parse(process.argv[2]),consumerStatePolicySchema.parse({receipt_limit:2}));
-    try { const id=process.argv[3]; const now=new Date().toISOString(); await state.writeReceipt(id,{receiptId:id,command:'subjects.create',request:{typeName:'request',protoJson:{}},status:'pending',createdAt:now,updatedAt:now});console.log('saved'); }
+    try { const id=process.argv[3]; const now=new Date().toISOString(); await state.writeReceipt(id,{receiptId:id,command:'subjects.create',request:{},status:'pending',createdAt:now,updatedAt:now});console.log('saved'); }
     catch(error) {console.log(error.code ?? 'failed');}`;
   try {
     const results = await Promise.all(
@@ -206,7 +207,7 @@ test("receipt transitions preserve the frozen request and terminal outcomes", as
     const pending = {
       receiptId: "operation",
       command: "subjects.create",
-      request: { typeName: "request", protoJson: { subjectId } },
+      request: { subjectId },
       status: "pending" as const,
       createdAt: now,
       updatedAt: now,
@@ -215,16 +216,13 @@ test("receipt transitions preserve the frozen request and terminal outcomes", as
     await expect(
       state.writeReceipt("operation", {
         ...pending,
-        request: {
-          ...pending.request,
-          protoJson: { subjectId: "replacement" },
-        },
+        request: { subjectId: "replacement" },
       }),
     ).rejects.toMatchObject({ code: "STATE_CONFLICT" });
     const complete = {
       ...pending,
       status: "complete" as const,
-      result: { typeName: "response", protoJson: { subjectId } },
+      result: { subjectId },
       updatedAt: "2026-01-01T00:00:01.000Z",
     };
     await state.writeReceipt("operation", complete);

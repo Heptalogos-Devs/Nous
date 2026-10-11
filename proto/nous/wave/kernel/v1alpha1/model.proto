@@ -28,7 +28,7 @@ message QueryRerankResult { oneof outcome { QueryRerankOrder order = 1; google.r
 message QueryFinalizeResult { QueryRerankResult rerank = 1; repeated ExternalResourceResult resources = 2; }
 message QueryRunRequest { oneof frame { QueryRunStart start = 1; QueryEmbeddingResult embedding = 2; QueryConceptResult concept = 3; QueryFinalizeResult finalize = 4; EmbeddingNeedsRequest embedding_needs = 5; CommitEmbeddingRequest commit_embedding = 6; } }
 message QueryEmbeddingWork { string representation = 1; EmbeddingConfig config = 2; bool historical_view = 3; }
-message QueryConceptWork { nous.wave.v1alpha1.QueryRepresentation representation = 1; repeated nous.wave.v1alpha1.QueryConceptCandidate existing_tags = 2; nous.wave.v1alpha1.QueryTemporalFrame temporal_frame = 3; }
+message QueryConceptWork { string representation = 1; repeated nous.wave.v1alpha1.QueryConceptCandidate existing_tags = 2; nous.wave.v1alpha1.QueryTemporalFrame temporal_frame = 3; }
 message QueryFinalizeCandidate { nous.wave.v1alpha1.CognitiveRef reference = 1; string text = 2; }
 message QueryFinalizeWork { repeated QueryFinalizeCandidate candidates = 1; repeated nous.wave.v1alpha1.ResourceAction resource_actions = 2; string rerank_query = 3; QueryHostRequirement rerank_requirement = 4; }
 message QueryRunUpdate { oneof frame { QueryEmbeddingWork embedding = 1; QueryConceptWork concept = 2; QueryFinalizeWork finalize = 3; nous.wave.v1alpha1.QueryResponse complete = 4; EmbeddingNeedsResponse embedding_needs = 5; google.protobuf.Empty embedding_committed = 6; } }

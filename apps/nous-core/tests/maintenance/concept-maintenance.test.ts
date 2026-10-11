@@ -63,7 +63,6 @@ const plan = create(MaintenancePlanSchema, {
 const producer = create(ProducerSignatureSchema, {
   operation: "concept_maintenance_text",
 });
-const workflow = "40000000-0000-4000-8000-000000000001";
 const createTag = {
   action: "create_tag",
   key: "new_0",
@@ -114,7 +113,6 @@ function fixture() {
       kernel,
       plan,
       conceptMaintenanceSchema.parse({ actions }),
-      workflow,
       producer,
       {},
     );

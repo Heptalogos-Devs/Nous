@@ -92,10 +92,8 @@ it("keeps failed requests pending for explicit retry and saves the successful re
       receiptId,
       status: "pending",
       request: {
-        protoJson: {
-          subjectId: request.subjectId,
-          operationId: request.operationId,
-        },
+        subjectId: request.subjectId,
+        operationId: request.operationId,
       },
     });
     expect(createSubject).toHaveBeenCalledTimes(1);
@@ -107,7 +105,7 @@ it("keeps failed requests pending for explicit retry and saves the successful re
     );
     expect(await local.receipt(receiptId)).toMatchObject({
       status: "complete",
-      result: { typeName: SubjectSchema.typeName },
+      result: { subjectId: request.subjectId },
     });
     expect(await readdir(path)).toEqual([`${receiptId}.json`]);
     expect(await env.retry(receiptId)).toEqual(result);
@@ -255,9 +253,7 @@ it("derives unified cognition receipt owners from the target and retries the fro
     expect(await local.receipt(memoryReceiptId)).toMatchObject({
       command: "cognition.mutate",
       status: "pending",
-      request: {
-        protoJson: { objectRef: { kind: "memory", value: memoryId } },
-      },
+      request: { objectRef: { kind: "memory", value: memoryId } },
     });
 
     await env.retry(memoryReceiptId);
@@ -290,9 +286,7 @@ it("derives unified cognition receipt owners from the target and retries the fro
     expect(await local.receipt(conceptFile!.slice(0, -5))).toMatchObject({
       command: "cognition.mutate",
       status: "complete",
-      request: {
-        protoJson: { objectRef: { kind: "cognitive_schema", value: schemaId } },
-      },
+      request: { objectRef: { kind: "cognitive_schema", value: schemaId } },
     });
   } finally {
     await rm(root, { recursive: true, force: true });

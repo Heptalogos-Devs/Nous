@@ -192,19 +192,6 @@ impl KernelService {
         let subject = SubjectId(id(&input.subject_id)?);
         let operation = OperationId(id(&input.operation_id)?);
         let reference = from_ref(required(input.object_ref, "object_ref")?)?;
-        let (kind, _, exact) = CognitionKind::from_reference(&reference)?;
-        if exact {
-            let owner = if kind == CognitionKind::CognitiveSchema {
-                nous_core::ErrorOwner::Concept
-            } else {
-                nous_core::ErrorOwner::Memory
-            };
-            return Err(Error::new(
-                owner,
-                nous_core::ErrorCode::InvalidRequest,
-                "lifecycle target must be an object reference",
-            ));
-        }
         let action = match input.action.ok_or_else(|| {
             Error::new(
                 nous_core::ErrorOwner::Memory,

@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
 import { authorityRejection } from "./rejection.js";
 import type { MaintenancePlan } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import type { ProducerSignature } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import { conceptMaintenanceSchema } from "../model/schemas/concept-maintenance.js";
-import { maintenanceActionOperationId } from "./identity.js";
 
 type ConceptActionResult = {
   index: number;
@@ -29,7 +29,6 @@ export async function executeConceptMaintenance(
   kernel: KernelClient,
   plan: MaintenancePlan,
   proposal: z.infer<typeof conceptMaintenanceSchema>,
-  operation: string,
   producer: ProducerSignature,
   options: CallOptions,
 ) {
@@ -121,11 +120,7 @@ export async function executeConceptMaintenance(
   }
   for (let index = 0; index < proposal.actions.length; index++) {
     const action = proposal.actions[index]!;
-    const operationId = maintenanceActionOperationId(
-      operation,
-      index,
-      action.action,
-    );
+    const operationId = randomUUID();
     let result: ConceptActionResult = {
       index,
       status: "committed",

@@ -4245,10 +4245,7 @@ pub mod cognition_service_server {
         async fn prepare_query(
             &self,
             request: tonic::Request<super::QueryRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::PreparedQueryResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::QueryInspection>, tonic::Status>;
         ///
         async fn query(
             &self,
@@ -4398,7 +4395,7 @@ pub mod cognition_service_server {
                         T: CognitionService,
                     > tonic::server::UnaryService<super::QueryRequest>
                     for PrepareQuerySvc<T> {
-                        type Response = super::PreparedQueryResponse;
+                        type Response = super::QueryInspection;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,

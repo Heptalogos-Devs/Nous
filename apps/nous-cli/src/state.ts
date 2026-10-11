@@ -29,14 +29,10 @@ const selectionSchema = z.strictObject({
 });
 export type Selection = z.infer<typeof selectionSchema>;
 
-const protoMessageSchema = z.strictObject({
-  typeName: z.string(),
-  protoJson: z.json(),
-});
 const receiptHeader = {
   receiptId: z.string().min(1).max(128),
   command: z.string().min(1).max(128),
-  request: protoMessageSchema,
+  request: z.json(),
   createdAt: z.string().min(1).max(40),
   updatedAt: z.string().min(1).max(40),
 };
@@ -45,7 +41,7 @@ export const receiptSchema = z.discriminatedUnion("status", [
   z.strictObject({
     ...receiptHeader,
     status: z.literal("complete"),
-    result: protoMessageSchema,
+    result: z.json(),
   }),
 ]);
 export type OperationReceipt = z.infer<typeof receiptSchema>;
