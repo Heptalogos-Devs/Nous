@@ -306,7 +306,11 @@ impl CognitiveRuntimeService {
             result.resource_actions.append(&mut value.resource_actions);
             if let Some(diagnostics) = value.diagnostics {
                 let target = result.diagnostics.as_mut().ok_or_else(|| {
-                    Error::Infrastructure("query tree diagnostics missing".into())
+                    Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InternalFailure,
+                        "query tree diagnostics missing",
+                    )
                 })?;
                 for (key, value) in diagnostics.candidate_counts {
                     target

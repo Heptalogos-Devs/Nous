@@ -55,15 +55,33 @@ impl VcpAssetPolicy {
     pub fn validate(&self) -> Result<()> {
         // JSON null cannot decode as a floating scalar: this also rejects
         // nonfinite values before they enter the numerical kernels.
-        let value = serde_json::to_value(self).map_err(|e| Error::Invalid(e.to_string()))?;
-        serde_json::from_value::<Self>(value).map_err(|e| Error::Invalid(e.to_string()))?;
+        let value = serde_json::to_value(self).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            )
+            .with_source(e)
+        })?;
+        serde_json::from_value::<Self>(value).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            )
+            .with_source(e)
+        })?;
         if self.graph.min_reverse_gain > self.graph.max_reverse_gain
             || !(8..=128).contains(&self.epa_anchors)
             || !(1..=128).contains(&self.epa_max_basis)
             || !(4..=128).contains(&self.epa_samples_per_anchor)
             || !(self.epa_anchors..=4096).contains(&self.epa_candidate_limit)
         {
-            return Err(Error::Invalid("invalid VCP asset policy bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid VCP asset policy bounds",
+            ));
         }
         Ok(())
     }
@@ -139,16 +157,32 @@ impl Default for VcpQueryPolicy {
 }
 impl VcpQueryPolicy {
     pub fn validate(&self) -> Result<()> {
-        let value = serde_json::to_value(self).map_err(|e| Error::Invalid(e.to_string()))?;
-        serde_json::from_value::<Self>(value).map_err(|e| Error::Invalid(e.to_string()))?;
+        let value = serde_json::to_value(self).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            )
+            .with_source(e)
+        })?;
+        serde_json::from_value::<Self>(value).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            )
+            .with_source(e)
+        })?;
         for range in [
             &self.gating.activation_multiplier,
             &self.gating.dynamic_boost_range,
             &self.gating.core_boost_range,
         ] {
             if range.len() != 2 || range[0] > range[1] {
-                return Err(Error::Invalid(
-                    "VCP gating range requires ordered endpoints".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
         }
@@ -159,7 +193,11 @@ impl VcpQueryPolicy {
             || self.sense.max_propagation_states < 100
             || self.fields.max_iterations == 0
         {
-            return Err(Error::Invalid("invalid VCP query policy bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid VCP query policy bounds",
+            ));
         }
         Ok(())
     }
@@ -174,8 +212,22 @@ pub struct VcpReadoutPolicy {
 }
 impl VcpReadoutPolicy {
     pub fn validate(&self) -> Result<()> {
-        let value = serde_json::to_value(self).map_err(|e| Error::Invalid(e.to_string()))?;
-        serde_json::from_value::<Self>(value).map_err(|e| Error::Invalid(e.to_string()))?;
+        let value = serde_json::to_value(self).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            )
+            .with_source(e)
+        })?;
+        serde_json::from_value::<Self>(value).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            )
+            .with_source(e)
+        })?;
         Ok(())
     }
 }

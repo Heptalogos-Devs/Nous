@@ -33,19 +33,29 @@ impl MemoryService {
                                 receipt
                                     .result_ref
                                     .ok_or_else(|| {
-                                        Error::Infrastructure("form receipt has no result".into())
+                                        Error::new(
+                                            nous_core::ErrorOwner::Memory,
+                                            nous_core::ErrorCode::InternalFailure,
+                                            "form receipt has no result",
+                                        )
                                     })?
                                     .parse()
                                     .map_err(|_| {
-                                        Error::Infrastructure("invalid form receipt".into())
+                                        Error::new(
+                                            nous_core::ErrorOwner::Memory,
+                                            nous_core::ErrorCode::InternalFailure,
+                                            "invalid form receipt",
+                                        )
                                     })?,
                             ),
                             receipt.result_revision.map(MemoryRevisionId),
                         )
                         .await;
                 }
-                return Err(Error::Unavailable(
-                    "form_memory operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "form_memory operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
@@ -140,8 +150,10 @@ impl MemoryService {
                 CapabilityOperation::MemoryFormationText
                     | CapabilityOperation::MemoryConsolidationText
             ) {
-                return Err(Error::Invalid(
-                    "Memory producer requires a Memory formation operation".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Memory producer requires a Memory formation operation",
                 ));
             }
             Some(AuthorityStore::register_producer_in(tx, p).await?)
@@ -166,8 +178,13 @@ impl MemoryService {
                 .fetch_one(&mut **tx)
                 .await
                 .map_err(db)?;
-            let canonical = canonical
-                .ok_or_else(|| Error::Invalid("active Tag does not belong to Subject".into()))?;
+            let canonical = canonical.ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "active Tag does not belong to Subject",
+                )
+            })?;
             canonical_tags.insert(canonical);
         }
         for tag in canonical_tags {
@@ -222,15 +239,19 @@ impl MemoryService {
                         | CognitiveRef::EpisodeRevision(_)
                         | CognitiveRef::JournalRevision(_)
                 ) {
-                    return Err(Error::Invalid(
-                        "cognition dependency must target an exact revision".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "cognition dependency must target an exact revision",
                     ));
                 }
                 sqlx::query("INSERT INTO memory_revision_dependencies(memory_revision_id,target_ref_kind,target_ref,basis_role,epistemic_relation) VALUES($1,$2,$3,$4,$5)").bind(revision.0).bind(kind).bind(value).bind(dependency.basis_role.as_str()).bind(epistemic_relation_text(dependency.epistemic_relation)).execute(&mut **tx).await.map_err(db)?;
             }
             RevisionBasis::Seed(_) => {
-                return Err(Error::Invalid(
-                    "Memory revisions cannot use Cognitive Seed support".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Memory revisions cannot use Cognitive Seed support",
                 ));
             }
         }
@@ -248,8 +269,10 @@ impl MemoryService {
             .iter()
             .any(|entity| !allowed_entity_refs.contains(entity))
         {
-            return Err(Error::Invalid(
-                "formation proposal contains an EntityRef outside Host context".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "formation proposal contains an EntityRef outside Host context",
             ));
         }
         self.form_memory(proposal.into_input(subject)).await
@@ -265,7 +288,11 @@ impl MemoryService {
         input.tags.sort_by_key(|tag| tag.0);
         input.tags.dedup();
         if input.operation_id.0.is_nil() {
-            return Err(Error::Invalid("operation_id is required".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "operation_id is required",
+            ));
         }
         validate_content(&input.semantic_role, &input.representation_text)?;
         input.valid_time.validate()?;
@@ -293,8 +320,10 @@ impl MemoryService {
                         )
                         .await;
                 }
-                return Err(Error::Unavailable(
-                    "revise_memory operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "revise_memory operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
@@ -351,11 +380,15 @@ impl MemoryService {
         formed_at: DateTime<Utc>,
     ) -> Result<(MemoryRevisionId, i64)> {
         let row = sqlx::query("SELECT current_revision_id,object_epoch,cognitive_role,purge_state FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE")
-            .bind(input.subject.0).bind(input.memory_id.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::NotFound("memory not found".into()))?;
+            .bind(input.subject.0).bind(input.memory_id.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "memory not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         fence_epoch(epoch, input.expected_object_epoch)?;
         if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-            return Err(Error::FailedPrecondition("memory is purging".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::FailedPrecondition,
+                "memory is purging",
+            ));
         }
         self.validate_object_dependency_cycle(
             input.subject,
@@ -380,8 +413,10 @@ impl MemoryService {
                     .any(|value| value == entity.as_str())
             })
         {
-            return Err(Error::FailedPrecondition(
-                "revision aboutness is disjoint from the existing cognitive matter; form a new Memory object".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::FailedPrecondition,
+                "revision aboutness is disjoint from the existing cognitive matter; form a new Memory object",
             ));
         }
         let revision_no: i32 = sqlx::query_scalar(
@@ -437,7 +472,11 @@ impl MemoryService {
         relation: MemoryRelation,
     ) -> Result<()> {
         if from == to {
-            return Err(Error::Invalid("a relation cannot target itself".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "a relation cannot target itself",
+            ));
         }
         self.store
             .validate_reference(subject, &CognitiveRef::MemoryRevision(from))
@@ -458,8 +497,10 @@ impl MemoryService {
                 if receipt.state == "committed" {
                     return Ok(());
                 }
-                return Err(Error::Unavailable(
-                    "relation operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "relation operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,

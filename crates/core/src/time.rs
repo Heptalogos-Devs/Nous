@@ -27,8 +27,10 @@ impl TemporalExtent {
         } = self
             && start >= end
         {
-            return Err(Error::Invalid(
-                "temporal interval must be half-open with start < end".into(),
+            return Err(Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         Ok(())
@@ -47,8 +49,10 @@ impl TimeInterval {
         if let (Some(start), Some(end)) = (self.start, self.end)
             && start >= end
         {
-            return Err(Error::Invalid(
-                "time interval must be half-open with start < end".into(),
+            return Err(Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         Ok(())

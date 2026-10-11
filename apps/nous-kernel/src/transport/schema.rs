@@ -22,9 +22,13 @@ fn schema_input(
 }
 
 fn schema_content(value: p::CognitiveSchemaContent) -> Result<SchemaContent> {
-    let scope = value
-        .applicability_scope
-        .ok_or_else(|| Error::Invalid("applicability_scope is required".into()))?;
+    let scope = value.applicability_scope.ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "applicability_scope is required",
+        )
+    })?;
     let formation_kind = if value.formation_kind.is_empty() {
         SchemaFormationKind::ExplicitImport
     } else {

@@ -22,7 +22,11 @@ impl MemoryService {
                 .map(|id| parse_reference(&kind, &id.to_string()))
                 .collect::<Result<Vec<_>>>()?;
             let head = revisions.first().cloned().ok_or_else(|| {
-                Error::Infrastructure("historical cognition missing effective revision".into())
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "historical cognition missing effective revision",
+                )
             })?;
             row.state["current_revision_id"] = serde_json::json!(reference_parts(&head).1);
             let recorded_revisions = revisions.clone();
@@ -45,7 +49,14 @@ impl MemoryService {
                     .as_str()
                     .map(str::parse::<Uuid>)
                     .transpose()
-                    .map_err(|_| Error::Infrastructure("invalid canonical Tag state".into()))?
+                    .map_err(|error| {
+                        Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "invalid canonical Tag state",
+                        )
+                        .with_source(error)
+                    })?
                     .map(TagId);
                 Ok(HistoricalTagState {
                     tag: row.tag_id,
@@ -53,7 +64,13 @@ impl MemoryService {
                     canonical_tag,
                     status: row.state["status"]
                         .as_str()
-                        .ok_or_else(|| Error::Infrastructure("Tag state missing status".into()))?
+                        .ok_or_else(|| {
+                            Error::new(
+                                nous_core::ErrorOwner::Memory,
+                                nous_core::ErrorCode::InternalFailure,
+                                "Tag state missing status",
+                            )
+                        })?
                         .into(),
                     semantic: tag_semantic_representation(
                         &row.label,
@@ -85,7 +102,13 @@ pub(super) fn historical_header<'a>(
         Some(view) => view
             .cognition_for(reference)
             .map(|state| Some(&state.state))
-            .ok_or_else(|| Error::NotFound("outside historical Authority view".into())),
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::NotFound,
+                    "outside historical Authority view",
+                )
+            }),
         None => Ok(None),
     }
 }
@@ -95,10 +118,14 @@ pub(super) fn header_text(
     key: &str,
 ) -> Result<String> {
     if let Some(header) = header {
-        header[key]
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| Error::Infrastructure(format!("historical header missing {key}")))
+        header[key].as_str().map(str::to_owned).ok_or_else(|| {
+            Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::InternalFailure,
+                "Historical header field is missing or invalid",
+            )
+            .with_context("field", key)
+        })
     } else {
         row.try_get(key).map_err(db)
     }
@@ -108,9 +135,13 @@ pub(super) fn header_epoch(
     row: &sqlx::postgres::PgRow,
 ) -> Result<i64> {
     if let Some(header) = header {
-        header["object_epoch"]
-            .as_i64()
-            .ok_or_else(|| Error::Infrastructure("historical object epoch missing".into()))
+        header["object_epoch"].as_i64().ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InternalFailure,
+                "historical object epoch missing",
+            )
+        })
     } else {
         row.try_get("object_epoch").map_err(db)
     }

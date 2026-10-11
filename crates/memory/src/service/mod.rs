@@ -87,6 +87,7 @@ impl MemoryService {
             kind,
             digest,
             Some(OwnerLock("memory-authority")),
+            nous_core::ErrorOwner::Memory,
         )
         .await?;
         if let MutationStart::Active(mutation) = &mut start {
@@ -181,8 +182,15 @@ pub struct RebindEntityRequest {
 }
 
 fn parse_enum<T: DeserializeOwned>(value: String, name: &str) -> Result<T> {
-    serde_json::from_value(serde_json::Value::String(value))
-        .map_err(|error| Error::Infrastructure(format!("invalid {name}: {error}")))
+    serde_json::from_value(serde_json::Value::String(value)).map_err(|error| {
+        Error::new(
+            ErrorOwner::Memory,
+            ErrorCode::InternalFailure,
+            "Persisted Memory enum is invalid",
+        )
+        .with_context("field", name)
+        .with_source(error)
+    })
 }
 
 fn temporal_from_columns(
@@ -193,10 +201,20 @@ fn temporal_from_columns(
     match kind.as_str() {
         "unknown" => Ok(TemporalExtent::Unknown),
         "instant" => Ok(TemporalExtent::Instant {
-            at: start.ok_or_else(|| Error::Infrastructure("instant has no timestamp".into()))?,
+            at: start.ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "instant has no timestamp",
+                )
+            })?,
         }),
         "interval" => Ok(TemporalExtent::Interval { start, end }),
-        _ => Err(Error::Infrastructure("invalid temporal extent kind".into())),
+        _ => Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InternalFailure,
+            "invalid temporal extent kind",
+        )),
     }
 }
 

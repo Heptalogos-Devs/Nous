@@ -121,7 +121,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     let subject = rt
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),

@@ -88,7 +88,11 @@ impl ExecutionTelemetry {
                     })
             })
         {
-            return Err(Error::Invalid("invalid execution telemetry".into()));
+            return Err(Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "invalid execution telemetry",
+            ));
         }
         Ok(())
     }

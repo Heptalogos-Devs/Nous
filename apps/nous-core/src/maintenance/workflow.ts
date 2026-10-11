@@ -15,22 +15,22 @@ import {
   ApplyEpisodePartitionRequestSchema,
   ApplyEpisodePartitionResponseSchema,
   CommitJournalRequestSchema,
+  type MaintenancePlan,
   type MaintenanceNeed,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
   GenerationFailure,
   failedExecutionTelemetry,
+  type ExecutionTelemetry,
 } from "../model/execution/routes.js";
 import { type KernelClient } from "../kernel-client.js";
 import { type ModelRuntime } from "../model/runtime.js";
-
 import { JournalResponseSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/journal_pb.js";
 import { protocolReferences } from "@nous-wave/client/data";
 import type { Dependency } from "../durable-operation.js";
 import { canonicalDigest } from "../digest.js";
-
-import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import { openDurableOperation, workflowPayload } from "../durable-operation.js";
 import {
   maintenanceDependencies,
   resultDependencies,
@@ -39,6 +39,14 @@ import {
   proposalSchema,
 } from "./records.js";
 import { buildMaintenanceProposal } from "./proposal.js";
+
+type MaintenancePreflightResult =
+  | { status: "obsolete" }
+  | {
+      status: "blocked_dependency" | "deferred";
+      problemCode: string;
+      nextDue?: MaintenancePlan["nextDue"];
+    };
 
 export async function runModelMaintenance(
   kernel: KernelClient,
@@ -63,73 +71,72 @@ export async function runModelMaintenance(
       scopeRef: need.scopeRef,
     }),
   };
-  const previous = await kernel.modelWorkflow.findWorkflow(identity, options);
-  if (previous.outcome) return readOutcome(previous.outcome);
-  let snapshotJson = previous.snapshot?.content?.payloadJson;
-  if (!snapshotJson) {
-    const plan = await kernel.maintenance.planMaintenance(
-      { claimed: need },
-      options,
-    );
-    if (plan.status === "obsolete") return { status: "obsolete" as const };
-    if (plan.status === "blocked" || plan.status === "deferred")
-      return {
-        status:
-          plan.status === "blocked"
-            ? ("blocked_dependency" as const)
-            : ("deferred" as const),
-        problemCode: plan.problemCode ?? "source_not_settled",
-        nextDue: plan.nextDue,
-      };
-    const role =
-      need.kind === "episode_resegment"
-        ? "episode_segmentation"
-        : need.kind === "concept_maintenance"
-          ? "concept_maintenance"
-          : need.kind === "memory_consolidate"
-            ? "memory_consolidation"
-            : "journal_synthesis";
-    const model =
-      plan.status === "withdraw" ? null : models.invocations.snapshot(role);
-    snapshotJson = JSON.stringify({
-      plan: toJson(MaintenancePlanSchema, plan),
-      model,
-    });
-  }
-  const frozen = snapshotSchema.parse(JSON.parse(snapshotJson));
-  const frozenPlan = fromJson(MaintenancePlanSchema, frozen.plan as JsonValue);
-  const operation = await reserveOperation(
+  const opened = await openDurableOperation<MaintenancePreflightResult>(
     kernel,
     identity,
     {
-      ...(previous.snapshot ?? {
-        content: workflowPayload(frozen, maintenanceDependencies(frozenPlan)),
-      }),
+      execution: options,
       maintenanceClaim: {
-        $typeName: "nous.wave.kernel.v1alpha1.MaintenanceClaim",
         needId: need.needId,
         leaseToken: need.leaseToken!,
         triggerAuthoritySeq: need.triggerAuthoritySeq,
         triggerRevision: need.triggerRevision,
       },
+      snapshotFactory: async () => {
+        const plan = await kernel.maintenance.planMaintenance(
+          { claimed: need },
+          options,
+        );
+        if (plan.status === "obsolete")
+          return { skip: { status: "obsolete" as const } };
+        if (plan.status === "blocked" || plan.status === "deferred")
+          return {
+            skip: {
+              status:
+                plan.status === "blocked"
+                  ? ("blocked_dependency" as const)
+                  : ("deferred" as const),
+              problemCode: plan.problemCode ?? "source_not_settled",
+              nextDue: plan.nextDue,
+            },
+          };
+        const role =
+          need.kind === "episode_resegment"
+            ? "episode_segmentation"
+            : need.kind === "concept_maintenance"
+              ? "concept_maintenance"
+              : need.kind === "memory_consolidate"
+                ? "memory_consolidation"
+                : "journal_synthesis";
+        const model =
+          plan.status === "withdraw" ? null : models.invocations.snapshot(role);
+        return {
+          snapshot: {
+            content: workflowPayload(
+              { plan: toJson(MaintenancePlanSchema, plan), model },
+              maintenanceDependencies(plan),
+            ),
+          },
+        };
+      },
     },
-    options,
   );
-  const reservation = operation.record;
-  if (reservation.outcome) return readOutcome(reservation.outcome);
-  if (reservation.busy || !reservation.lease)
+  if (opened.state === "not_started") return opened.result;
+  if (opened.state === "completed") return readOutcome(opened.outcome);
+  if (opened.state === "busy")
     return { status: "retry" as const, problemCode: "workflow_busy" };
+  const operation = opened.operation;
   return operation.run(async () => {
     try {
       const snapshot = snapshotSchema.parse(
-        JSON.parse(reservation.snapshot!.content!.payloadJson),
+        JSON.parse(opened.snapshot.content!.payloadJson),
       );
       const plan = fromJson(MaintenancePlanSchema, snapshot.plan as JsonValue);
-      let proposed = reservation.proposal?.payloadJson
-        ? proposalSchema.parse(JSON.parse(reservation.proposal?.payloadJson))
+      let proposed = opened.proposal?.payloadJson
+        ? proposalSchema.parse(JSON.parse(opened.proposal.payloadJson))
         : undefined;
       if (!proposed) {
-        proposed = await buildMaintenanceProposal({
+        const built = await buildMaintenanceProposal({
           models,
           need,
           plan,
@@ -137,10 +144,23 @@ export async function runModelMaintenance(
           operationId,
           options,
           reserveModelCall,
-          recordExecution: (value) => operation.recordExecution(value),
         });
-        await operation.saveProposal(proposed);
+        proposed = built.proposal;
+        const mutationOperations =
+          proposed.action === "partition" ||
+          proposed.action === "journal" ||
+          proposed.action === "withdraw"
+            ? [operationId]
+            : [];
+        await operation.checkpoint({
+          proposal: workflowPayload(proposed),
+          ...(built.executionTelemetry
+            ? { executionTelemetry: built.executionTelemetry }
+            : {}),
+          ...(mutationOperations.length ? { mutationOperations } : {}),
+        });
       }
+
       let terminalDependencies: Dependency[] = [];
       if (proposed.action === "partition") {
         const request = fromJson(
@@ -178,15 +198,21 @@ export async function runModelMaintenance(
           saved.progress,
           async (progress) => {
             saved.progress = [...progress];
-            await operation.saveProposal(
-              saved,
-              resultDependencies(saved.progress),
-            );
+            await operation.checkpoint({
+              proposal: workflowPayload(
+                saved,
+                resultDependencies(saved.progress),
+              ),
+            });
           },
-
           operation.mutate.bind(operation),
         );
-        await operation.complete(outcome, resultDependencies(outcome.actions));
+        await operation.checkpoint({
+          outcome: workflowPayload(
+            outcome,
+            resultDependencies(outcome.actions),
+          ),
+        });
         return outcome;
       } else if (proposed.action === "consolidation") {
         const saved = proposed;
@@ -200,17 +226,23 @@ export async function runModelMaintenance(
           saved.progress,
           async (progress) => {
             saved.progress = [...progress];
-            await operation.saveProposal(
-              saved,
-              resultDependencies(saved.progress),
-            );
+            await operation.checkpoint({
+              proposal: workflowPayload(
+                saved,
+                resultDependencies(saved.progress),
+              ),
+            });
           },
-
           operation.mutate.bind(operation),
         );
-        await operation.complete(outcome, resultDependencies(outcome.actions));
+        await operation.checkpoint({
+          outcome: workflowPayload(
+            outcome,
+            resultDependencies(outcome.actions),
+          ),
+        });
         return outcome;
-      } else if (proposed.action === "withdraw")
+      } else if (proposed.action === "withdraw") {
         await operation.mutate(operationId, () =>
           kernel.memory.withdrawJournal(
             {
@@ -222,6 +254,7 @@ export async function runModelMaintenance(
             options,
           ),
         );
+      }
       if (
         (proposed.action === "partition" && need.scopeKind === "track") ||
         (proposed.action === "journal" && need.kind === "journal_review")
@@ -233,9 +266,17 @@ export async function runModelMaintenance(
             ? ("no_change" as const)
             : ("committed" as const),
       };
-      await operation.complete(outcome, terminalDependencies);
+      await operation.checkpoint({
+        outcome: workflowPayload(outcome, terminalDependencies),
+      });
       return outcome;
     } catch (error) {
+      const attached =
+        error && typeof error === "object"
+          ? (error as { workflowExecutionTelemetry?: ExecutionTelemetry })
+              .workflowExecutionTelemetry
+          : undefined;
+      const execution = attached ?? failedExecutionTelemetry(error);
       if (
         authorityRejection(error) === "rejected_invalid" ||
         error instanceof z.ZodError ||
@@ -248,16 +289,18 @@ export async function runModelMaintenance(
           status: "rejected_invalid" as const,
           problemCode: "proposal_invalid",
         };
-        const execution = failedExecutionTelemetry(error);
-        if (execution) await operation.recordExecution(execution);
-        await operation.complete(outcome);
+        await operation.checkpoint({
+          outcome: workflowPayload(outcome),
+          ...(execution ? { executionTelemetry: execution } : {}),
+        });
         return outcome;
       }
       if (authorityRejection(error) === "stale") {
         const outcome = { status: "obsolete" as const };
-        const execution = failedExecutionTelemetry(error);
-        if (execution) await operation.recordExecution(execution);
-        await operation.complete(outcome);
+        await operation.checkpoint({
+          outcome: workflowPayload(outcome),
+          ...(execution ? { executionTelemetry: execution } : {}),
+        });
         await kernel.maintenance.refreshMaintenance({ claimed: need }, options);
         return outcome;
       }

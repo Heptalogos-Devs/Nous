@@ -158,7 +158,10 @@ pub(crate) async fn check_model_catalog_activity(
     assert!(error.message().contains("outside frozen catalog"));
     assert!(matches!(
         rt.execute_query(input.clone(), None).await,
-        Err(Error::Unavailable(_))
+        Err(Error {
+            code: nous_core::ErrorCode::Unavailable,
+            ..
+        })
     ));
     input.capabilities.query_concept_enrichment = RequirementStrength::Forbidden;
     let token = rt

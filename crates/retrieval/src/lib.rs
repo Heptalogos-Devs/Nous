@@ -8,6 +8,7 @@ pub use policy::wave::*;
 mod mechanisms;
 pub use mechanisms::*;
 mod assets;
+pub use assets::{affected_families, family_config_keys};
 mod concept;
 pub use assets::reclamation::ReclamationReport;
 pub use concept::generation::{ConceptGeneration, ConceptRecord};
@@ -104,7 +105,11 @@ pub fn register_configuration(
             if *value <= 604800 {
                 Ok(())
             } else {
-                Err(Error::Invalid("retired grace exceeds seven days".into()))
+                Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "retired grace exceeds seven days",
+                ))
             }
         },
     )?;
@@ -122,8 +127,10 @@ pub fn register_configuration(
             if (MINIMUM_LEXICAL_WRITER_BYTES..=ABSOLUTE_LEXICAL_WRITER_BYTES).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "lexical writer memory exceeds supported bounds".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ))
             }
         },
@@ -181,9 +188,13 @@ impl ServingService {
     /// Host material binding is established once during process startup.
     pub fn initialize_embedding(&self, config: StoredEmbeddingConfig) -> Result<()> {
         let provider = Arc::new(StoredEmbeddingProvider::new(self.store.clone(), config)?);
-        self.embedding
-            .set(provider)
-            .map_err(|_| Error::Conflict("host embedding already initialized".into()))
+        self.embedding.set(provider).map_err(|_| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::Conflict,
+                "host embedding already initialized",
+            )
+        })
     }
 
     pub fn new(

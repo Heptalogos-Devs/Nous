@@ -13,7 +13,11 @@ impl MemoryService {
         mut children: Vec<CreateSchemaInput>,
     ) -> Result<Vec<SchemaView>> {
         if children.len() < 2 || children.len() > 16 {
-            return Err(Error::Invalid("schema split needs 2..16 children".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "schema split needs 2..16 children",
+            ));
         }
         for child in &mut children {
             child.content.producer = canonical_schema_producer(child.content.producer.as_ref())?;
@@ -32,32 +36,46 @@ impl MemoryService {
                 if receipt.state == "committed" {
                     let revisions: Vec<CognitiveSchemaRevisionId> =
                         serde_json::from_str(receipt.result_ref.as_deref().ok_or_else(|| {
-                            Error::Infrastructure("schema split receipt has no results".into())
+                            Error::new(
+                                nous_core::ErrorOwner::Memory,
+                                nous_core::ErrorCode::InternalFailure,
+                                "schema split receipt has no results",
+                            )
                         })?)
                         .map_err(|_| {
-                            Error::Infrastructure("invalid schema split receipt".into())
+                            Error::new(
+                                nous_core::ErrorOwner::Memory,
+                                nous_core::ErrorCode::InternalFailure,
+                                "invalid schema split receipt",
+                            )
                         })?;
                     return self.schema_split_views(subject, &revisions).await;
                 }
-                return Err(Error::Unavailable(
-                    "schema split operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "schema split operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let source=sqlx::query("SELECT current_revision_id,object_epoch,acceptance_state,purge_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("CognitiveSchema not found".into()))?;
+        let source=sqlx::query("SELECT current_revision_id,object_epoch,acceptance_state,purge_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
         if source
             .try_get::<String, _>("acceptance_state")
             .map_err(db)?
             != "accepted"
         {
-            return Err(Error::FailedPrecondition(
-                "source CognitiveSchema is withdrawn".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::FailedPrecondition,
+                "source CognitiveSchema is withdrawn",
             ));
         }
         if source.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-            return Err(Error::FailedPrecondition(
-                "source CognitiveSchema is purging".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::FailedPrecondition,
+                "source CognitiveSchema is purging",
             ));
         }
         let epoch: i64 = source.try_get("object_epoch").map_err(db)?;
@@ -115,8 +133,14 @@ impl MemoryService {
                     .collect::<Vec<_>>(),
             )
             .await?;
-        let result = serde_json::to_string(&revisions)
-            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        let result = serde_json::to_string(&revisions).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InternalFailure,
+                "Persisted schema lineage basis is invalid",
+            )
+            .with_source(error)
+        })?;
         mutation
             .commit("schema_split", Some(&result), None, Some(epoch + 1))
             .await?;
@@ -129,7 +153,11 @@ impl MemoryService {
         revisions: &[CognitiveSchemaRevisionId],
     ) -> Result<Vec<SchemaView>> {
         if revisions.is_empty() {
-            return Err(Error::NotFound("schema split results were purged".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::NotFound,
+                "schema split results were purged",
+            ));
         }
         let mut views = Vec::with_capacity(revisions.len());
         for revision in revisions {
@@ -154,14 +182,18 @@ impl MemoryService {
             || source_ids.len() > 16
             || source_ids.len() != expected_epochs.len()
         {
-            return Err(Error::Invalid(
-                "schema merge needs 2..16 sources and matching epochs".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "schema merge needs 2..16 sources and matching epochs",
             ));
         }
         let unique_sources = source_ids.iter().collect::<std::collections::BTreeSet<_>>();
         if unique_sources.len() != source_ids.len() {
-            return Err(Error::Invalid(
-                "schema merge sources must be distinct".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "schema merge sources must be distinct",
             ));
         }
         self.store.require_subject(subject).await?;
@@ -179,14 +211,20 @@ impl MemoryService {
             MutationStart::Replay(receipt) => {
                 if receipt.state == "committed" {
                     let revision = receipt.result_revision.ok_or_else(|| {
-                        Error::Infrastructure("schema merge receipt has no revision".into())
+                        Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "schema merge receipt has no revision",
+                        )
                     })?;
                     return self
                         .schema_revision(subject, CognitiveSchemaRevisionId(revision))
                         .await;
                 }
-                return Err(Error::Unavailable(
-                    "schema merge operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "schema merge operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
@@ -197,13 +235,17 @@ impl MemoryService {
         for (index, id) in sorted {
             let row=sqlx::query("SELECT object_epoch,current_revision_id,acceptance_state,purge_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(id.0).fetch_one(&mut **mutation.tx()).await.map_err(db)?;
             if row.try_get::<String, _>("acceptance_state").map_err(db)? != "accepted" {
-                return Err(Error::FailedPrecondition(
-                    "schema merge source is withdrawn".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "schema merge source is withdrawn",
                 ));
             }
             if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-                return Err(Error::FailedPrecondition(
-                    "schema merge source is purging".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "schema merge source is purging",
                 ));
             }
             let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
@@ -225,8 +267,10 @@ impl MemoryService {
             merged_links.entry(key).or_insert(link);
         }
         if merged_links.len() < 2 {
-            return Err(Error::Invalid(
-                "merged CognitiveSchema needs at least two active evidence links".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "merged CognitiveSchema needs at least two active evidence links",
             ));
         }
         for link in merged_links.values() {

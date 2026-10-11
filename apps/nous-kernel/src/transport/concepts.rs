@@ -31,7 +31,7 @@ impl KernelService {
     }
     pub(super) async fn get_tag(&self, input: p::ObjectRequest) -> Result<p::Tag> {
         let row=sqlx::query("SELECT t.tag_id,t.current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.tag_id=$2")
-            .bind(id(&input.subject_id)?).bind(id(&input.id)?).fetch_optional(self.0.store.pool()).await.map_err(db)?.ok_or_else(||Error::NotFound("Tag not found".into()))?;
+            .bind(id(&input.subject_id)?).bind(id(&input.id)?).fetch_optional(self.0.store.pool()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "Tag not found"))?;
         tag_row(row)
     }
     pub(super) async fn revise_tag(&self, input: p::ReviseTagRequest) -> Result<p::Tag> {
@@ -131,8 +131,10 @@ impl KernelService {
         input: p::SearchTagsRequest,
     ) -> Result<p::ListTagsResponse> {
         if input.text.trim().is_empty() || input.text.chars().count() > 256 {
-            return Err(Error::Invalid(
-                "tag search requires 1..256 characters".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         self.read_tags(&input.subject_id, &input.text, input.page, "active")
@@ -149,7 +151,11 @@ impl KernelService {
         self.0.store.require_subject(subject).await?;
         let status = if status.is_empty() { "active" } else { status };
         if !matches!(status, "active" | "withdrawn") {
-            return Err(Error::Invalid("invalid tag status".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid tag status",
+            ));
         }
         let scope = format!("tags:{}:{status}:{text}", subject.0);
         let (limit, last) = page(request_page, &scope)?;
@@ -165,7 +171,13 @@ impl KernelService {
                 &scope,
                 id(&items
                     .last()
-                    .ok_or_else(|| Error::Infrastructure("empty tag page".into()))?
+                    .ok_or_else(|| {
+                        Error::new(
+                            nous_core::ErrorOwner::Concept,
+                            nous_core::ErrorCode::InternalFailure,
+                            "empty tag page",
+                        )
+                    })?
                     .tag_id)?,
             )
         } else {
@@ -282,10 +294,13 @@ impl KernelService {
 }
 
 fn association_basis(value: p::AssociationBasis) -> Result<AssociationBasis> {
-    match value
-        .basis
-        .ok_or_else(|| Error::Invalid("empty association support".into()))?
-    {
+    match value.basis.ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Concept,
+            nous_core::ErrorCode::InvalidRequest,
+            "empty association support",
+        )
+    })? {
         p::association_basis::Basis::Revision(value) => {
             Ok(AssociationBasis::Revision(super::basis(value)?))
         }

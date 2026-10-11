@@ -47,8 +47,10 @@ pub(super) fn validate_view(
     let required = query.temporal_frame.authority_view != AuthorityView::Current
         || query.temporal_frame.revision_view != RevisionView::Current;
     if required != historical_authority.is_some() {
-        return Err(Error::Unavailable(
-            "historical query requires its owner-projected Authority and Serving view".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::Unavailable,
+            "Service unavailable",
         ));
     }
     if let Some(view) = historical_authority {
@@ -60,8 +62,10 @@ pub(super) fn validate_view(
             || view.as_of != cutoff
             || view.revision_view != query.temporal_frame.revision_view
         {
-            return Err(Error::Invalid(
-                "historical snapshot disagrees with frozen query frame".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
     }

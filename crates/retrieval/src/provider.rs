@@ -55,8 +55,10 @@ impl TextEmbeddingProvider for RequestEmbedding {
     }
     async fn embed(&self, request: TextEmbeddingRequest) -> Result<TextEmbeddingOutput> {
         if !request.query || request.text != self.text {
-            return Err(Error::Invalid(
-                "embedding disagrees with immutable query representation".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         self.output

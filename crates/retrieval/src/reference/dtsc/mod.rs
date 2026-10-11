@@ -93,7 +93,11 @@ fn fallback(
 
 pub fn reference_dtsc(input: &ReferenceDtscInput) -> Result<ReferenceDtscOutput> {
     if input.dimension == 0 {
-        return Err(Error::Invalid("DTSC dimension must be positive".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InvalidRequest,
+            "DTSC dimension must be positive",
+        ));
     }
     let config = input.config.normalized();
     let field = reference_dtsc_field(&ReferenceDtscFieldInput {

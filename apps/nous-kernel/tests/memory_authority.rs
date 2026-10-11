@@ -62,7 +62,7 @@ async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
         })
         .await;
     assert!(
-        matches!(result, Err(nous_core::Error::Invalid(message)) if message.contains("object cycle"))
+        matches!(result, Err(nous_core::Error { code: nous_core::ErrorCode::InvalidRequest, message, .. }) if message.contains("object cycle"))
     );
     let current = owner
         .memory(subject, original.object.memory_id, None)
@@ -171,7 +171,10 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
         owner
             .mutate_schema_lifecycle(subject, schema_id, OperationId::new(), 1, Action::Restore)
             .await,
-        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::StaleRevision
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::StaleRevision,
+            ..
+        })
     ));
     owner
         .mutate_schema_lifecycle(subject, schema_id, OperationId::new(), 2, Action::Restore)
@@ -210,13 +213,19 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
         .unwrap();
     assert!(matches!(
         owner.schema_revision(subject, revision_id).await,
-        Err(nous_core::Error::NotFound(_))
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::NotFound,
+            ..
+        })
     ));
     assert!(matches!(
         owner
             .mutate_schema_lifecycle(subject, schema_id, suppress_operation, 1, Action::Suppress)
             .await,
-        Err(nous_core::Error::NotFound(_))
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::NotFound,
+            ..
+        })
     ));
     assert!(
         runtime
@@ -269,7 +278,13 @@ async fn synthesized_schema_requires_independent_known_roots() {
             },
         })
         .await;
-    assert!(matches!(same_root, Err(nous_core::Error::Invalid(_))));
+    assert!(matches!(
+        same_root,
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::InvalidRequest,
+            ..
+        })
+    ));
     let independent = runtime
         .require_memory()
         .unwrap()
@@ -346,7 +361,10 @@ async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
         .await;
     assert!(matches!(
         rejected,
-        Err(nous_core::Error::FailedPrecondition(_))
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::FailedPrecondition,
+            ..
+        })
     ));
 }
 
@@ -400,7 +418,13 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
             subject,
         )
         .await;
-    assert!(matches!(invalid, Err(nous_core::Error::Invalid(_))));
+    assert!(matches!(
+        invalid,
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::InvalidRequest,
+            ..
+        })
+    ));
     let event_id = UseEventId::new();
     runtime
         .cognition

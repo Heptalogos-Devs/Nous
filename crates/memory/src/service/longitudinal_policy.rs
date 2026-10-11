@@ -72,8 +72,10 @@ pub fn register_longitudinal_configuration(registry: &mut ConfigRegistryBuilder)
             if (1..=64).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "Journal scope must contain 1..64 Episodes".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Journal scope must contain 1..64 Episodes",
                 ))
             }
         },
@@ -91,8 +93,10 @@ pub fn register_longitudinal_configuration(registry: &mut ConfigRegistryBuilder)
             if (1..=604800).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "Journal span must be 1..604800 seconds".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Journal span must be 1..604800 seconds",
                 ))
             }
         },
@@ -110,8 +114,10 @@ pub fn register_longitudinal_configuration(registry: &mut ConfigRegistryBuilder)
             if (1..=86400).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "Consolidation delay must be 1..86400 seconds".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Consolidation delay must be 1..86400 seconds",
                 ))
             }
         },
@@ -129,8 +135,10 @@ pub fn register_longitudinal_configuration(registry: &mut ConfigRegistryBuilder)
             if (1..=16).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "Consolidation must contain 1..16 actions".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Consolidation must contain 1..16 actions",
                 ))
             }
         },

@@ -2,12 +2,13 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use nous_core::{DomainError, DomainErrorCode, Error, Result};
+use nous_core::{Error, ErrorCode, ErrorOwner, Result};
 
 pub(super) fn fence_epoch(actual: i64, expected: i64) -> Result<()> {
     if actual != expected {
-        return Err(DomainError::new(
-            DomainErrorCode::StaleRevision,
+        return Err(Error::new(
+            ErrorOwner::Memory,
+            ErrorCode::StaleRevision,
             "Expected object epoch is stale",
         )
         .with_context("expected_epoch", expected)
@@ -19,9 +20,12 @@ pub(super) fn fence_epoch(actual: i64, expected: i64) -> Result<()> {
 
 pub(super) fn require_transition(current: &str, from: &str) -> Result<()> {
     if current != from {
-        return Err(Error::FailedPrecondition(format!(
-            "object is not in {from} state"
-        )));
+        return Err(Error::new(
+            ErrorOwner::Memory,
+            ErrorCode::FailedPrecondition,
+            "Object is not in the required state",
+        )
+        .with_context("required_state", from));
     }
     Ok(())
 }

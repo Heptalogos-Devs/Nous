@@ -35,6 +35,7 @@ pub struct ServingRecord {
     pub view: ServingView,
     pub space: String,
     pub authority_watermark: i64,
+    pub purge_epoch: i64,
     pub implementation_id: String,
     pub implementation_revision: String,
     pub config_digest: String,
@@ -49,13 +50,20 @@ fn decode(row: sqlx::postgres::PgRow) -> Result<ServingRecord> {
         generation_id: ServingGenerationId(row.try_get("generation_id").map_err(db)?),
         subject: SubjectId(row.try_get("subject_id").map_err(db)?),
         family: row.try_get("family").map_err(db)?,
-        view: serde_json::from_value(row.try_get("view_descriptor").map_err(db)?)
-            .map_err(|e| Error::Infrastructure(e.to_string()))?,
+        view: serde_json::from_value(row.try_get("view_descriptor").map_err(db)?).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Persistence,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })?,
         space: row
             .try_get::<Option<String>, _>("space_signature")
             .map_err(db)?
             .unwrap_or_default(),
         authority_watermark: row.try_get("authority_watermark").map_err(db)?,
+        purge_epoch: row.try_get("purge_epoch").map_err(db)?,
         implementation_id: row.try_get("implementation_id").map_err(db)?,
         implementation_revision: row.try_get("implementation_revision").map_err(db)?,
         config_digest: row.try_get("config_digest").map_err(db)?,
@@ -96,26 +104,28 @@ impl AuthorityStore {
     }
 
     pub async fn serving_current(&self, subject: SubjectId) -> Result<Vec<ServingRecord>> {
-        sqlx::query("SELECT g.* FROM serving_current c JOIN serving_generations g USING(generation_id) WHERE c.subject_id=$1 AND g.state='ready' ORDER BY c.family,c.space_signature")
+        sqlx::query("SELECT g.* FROM serving_current c JOIN serving_generations g USING(generation_id) JOIN subjects s ON s.subject_id=g.subject_id WHERE c.subject_id=$1 AND g.state='ready' AND g.purge_epoch=s.serving_purge_epoch ORDER BY c.family,c.space_signature")
             .bind(subject.0).fetch_all(self.pool()).await.map_err(db)?.into_iter().map(decode).collect()
     }
 
     /// Immutable artifacts remain reusable across readout/profile changes.
     pub async fn serving_reusable(&self, subject: SubjectId) -> Result<Vec<ServingRecord>> {
-        sqlx::query("SELECT * FROM serving_generations WHERE subject_id=$1 AND view_descriptor->>'kind'='current' AND state IN ('ready','retired') ORDER BY authority_watermark DESC,built_at DESC,generation_id")
+        sqlx::query("SELECT g.* FROM serving_generations g JOIN subjects s USING(subject_id) WHERE g.subject_id=$1 AND g.view_descriptor->>'kind'='current' AND g.state IN ('ready','retired') AND g.purge_epoch=s.serving_purge_epoch ORDER BY g.authority_watermark DESC,g.built_at DESC,generation_id")
             .bind(subject.0).fetch_all(self.pool()).await.map_err(db)?.into_iter().map(decode).collect()
     }
 
     pub async fn promote_generation(&self, id: ServingGenerationId) -> Result<bool> {
         let mut tx = self.begin().await?;
-        let record = sqlx::query("SELECT * FROM serving_generations WHERE generation_id=$1 AND state IN ('ready','retired')")
+        let record = sqlx::query("SELECT g.* FROM serving_generations g JOIN subjects s USING(subject_id) WHERE g.generation_id=$1 AND g.state IN ('ready','retired') AND g.purge_epoch=s.serving_purge_epoch FOR UPDATE OF g")
             .bind(id.0).fetch_optional(&mut *tx).await.map_err(db)?.map(decode).transpose()?;
         let Some(record) = record else {
             return Ok(false);
         };
         if record.view != ServingView::Current {
-            return Err(Error::Invalid(
-                "historical generation cannot be promoted as current".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let key = format!(
@@ -127,6 +137,16 @@ impl AuthorityStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
+        let purge_epoch: i64 = sqlx::query_scalar(
+            "SELECT serving_purge_epoch FROM subjects WHERE subject_id=$1 FOR SHARE",
+        )
+        .bind(record.subject.0)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        if record.purge_epoch != purge_epoch {
+            return Ok(false);
+        }
         let desired: i64 = sqlx::query_scalar("SELECT COALESCE(max(desired_authority_seq),0) FROM projection_watermarks WHERE subject_id=$1 AND family=$2 AND (space_signature=$3 OR space_signature='*')")
             .bind(record.subject.0).bind(&record.family).bind(&record.space).fetch_one(&mut *tx).await.map_err(db)?;
         let desired = if record.family == "topology" {
@@ -172,7 +192,21 @@ impl AuthorityStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let current=sqlx::query("SELECT g.* FROM serving_current c JOIN serving_generations g USING(generation_id) WHERE c.subject_id=$1 AND c.family=$2 AND c.space_signature=$3").bind(record.subject.0).bind(&record.family).bind(&record.space).fetch_optional(&mut *tx).await.map_err(db)?.map(decode).transpose()?;
+        let purge_epoch: i64 = sqlx::query_scalar(
+            "SELECT serving_purge_epoch FROM subjects WHERE subject_id=$1 FOR SHARE",
+        )
+        .bind(record.subject.0)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        if record.purge_epoch != purge_epoch {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Persistence,
+                nous_core::ErrorCode::FailedPrecondition,
+                "Serving build crossed a purge checkpoint",
+            ));
+        }
+        let current=sqlx::query("SELECT g.* FROM serving_current c JOIN serving_generations g USING(generation_id) WHERE c.subject_id=$1 AND c.family=$2 AND c.space_signature=$3 AND g.purge_epoch=$4").bind(record.subject.0).bind(&record.family).bind(&record.space).bind(record.purge_epoch).fetch_optional(&mut *tx).await.map_err(db)?.map(decode).transpose()?;
         if current.as_ref().is_some_and(|value| {
             value.authority_watermark > record.authority_watermark
                 || (value.authority_watermark == record.authority_watermark
@@ -180,15 +214,20 @@ impl AuthorityStore {
                     && value.implementation_id == record.implementation_id
                     && value.implementation_revision == record.implementation_revision)
         }) {
-            let current = current
-                .ok_or_else(|| Error::Infrastructure("serving current row disappeared".into()))?;
+            let current = current.ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Persistence,
+                    nous_core::ErrorCode::InternalFailure,
+                    "serving current row disappeared",
+                )
+            })?;
             tx.commit().await.map_err(db)?;
             return Ok(current);
         }
         let desired: i64 = sqlx::query_scalar("SELECT COALESCE(max(desired_authority_seq),0) FROM projection_watermarks WHERE subject_id=$1 AND family=$2 AND (space_signature=$3 OR space_signature='*')")
             .bind(record.subject.0).bind(&record.family).bind(&record.space).fetch_one(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO serving_generations(generation_id,subject_id,family,space_signature,authority_watermark,implementation_id,implementation_revision,config_digest,artifact_location,artifact_hash,state,built_at,published_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'ready',$11,$12,$13)")
-            .bind(record.generation_id.0).bind(record.subject.0).bind(&record.family).bind(&record.space).bind(record.authority_watermark).bind(&record.implementation_id).bind(&record.implementation_revision).bind(&record.config_digest).bind(&record.artifact_location).bind(&record.artifact_hash).bind(record.built_at).bind(Utc::now()).bind(&record.metadata).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO serving_generations(generation_id,subject_id,family,space_signature,authority_watermark,purge_epoch,implementation_id,implementation_revision,config_digest,artifact_location,artifact_hash,state,built_at,published_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'ready',$12,$13,$14)")
+            .bind(record.generation_id.0).bind(record.subject.0).bind(&record.family).bind(&record.space).bind(record.authority_watermark).bind(record.purge_epoch).bind(&record.implementation_id).bind(&record.implementation_revision).bind(&record.config_digest).bind(&record.artifact_location).bind(&record.artifact_hash).bind(record.built_at).bind(Utc::now()).bind(&record.metadata).execute(&mut *tx).await.map_err(db)?;
         let desired = if record.family == "topology" {
             sqlx::query_scalar::<_, i64>("SELECT authority_seq FROM subjects WHERE subject_id=$1")
                 .bind(record.subject.0)
@@ -226,13 +265,19 @@ impl AuthorityStore {
         subject: SubjectId,
         digest: &str,
     ) -> Result<Vec<ServingRecord>> {
-        sqlx::query("SELECT * FROM serving_generations WHERE subject_id=$1 AND view_descriptor->>'kind'='historical' AND view_descriptor->>'snapshot_digest'=$2 AND state IN ('ready','retired') ORDER BY built_at DESC,generation_id")
+        sqlx::query("SELECT g.* FROM serving_generations g JOIN subjects s USING(subject_id) WHERE g.subject_id=$1 AND g.view_descriptor->>'kind'='historical' AND g.view_descriptor->>'snapshot_digest'=$2 AND g.state IN ('ready','retired') AND g.purge_epoch=s.serving_purge_epoch ORDER BY g.built_at DESC,generation_id")
             .bind(subject.0).bind(digest).fetch_all(self.pool()).await.map_err(db)?.into_iter().map(decode).collect()
     }
     async fn publish_historical_generation(&self, record: ServingRecord) -> Result<ServingRecord> {
         let mut tx = self.begin().await?;
-        let view =
-            serde_json::to_value(&record.view).map_err(|e| Error::Infrastructure(e.to_string()))?;
+        let view = serde_json::to_value(&record.view).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Persistence,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })?;
         let key = format!(
             "historical:{}:{}:{}:{}:{}",
             record.subject.0,
@@ -246,8 +291,22 @@ impl AuthorityStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        sqlx::query("INSERT INTO serving_generations(generation_id,subject_id,family,space_signature,authority_watermark,implementation_id,implementation_revision,config_digest,artifact_location,artifact_hash,state,built_at,published_at,metadata,view_descriptor) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'retired',$11,$11,$12,$13)")
-            .bind(record.generation_id.0).bind(record.subject.0).bind(&record.family).bind(&record.space).bind(record.authority_watermark).bind(&record.implementation_id).bind(&record.implementation_revision).bind(&record.config_digest).bind(&record.artifact_location).bind(&record.artifact_hash).bind(record.built_at).bind(&record.metadata).bind(view).execute(&mut *tx).await.map_err(db)?;
+        let purge_epoch: i64 = sqlx::query_scalar(
+            "SELECT serving_purge_epoch FROM subjects WHERE subject_id=$1 FOR SHARE",
+        )
+        .bind(record.subject.0)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        if record.purge_epoch != purge_epoch {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Persistence,
+                nous_core::ErrorCode::FailedPrecondition,
+                "Serving build crossed a purge checkpoint",
+            ));
+        }
+        sqlx::query("INSERT INTO serving_generations(generation_id,subject_id,family,space_signature,authority_watermark,purge_epoch,implementation_id,implementation_revision,config_digest,artifact_location,artifact_hash,state,built_at,published_at,metadata,view_descriptor) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'retired',$12,$12,$13,$14)")
+            .bind(record.generation_id.0).bind(record.subject.0).bind(&record.family).bind(&record.space).bind(record.authority_watermark).bind(record.purge_epoch).bind(&record.implementation_id).bind(&record.implementation_revision).bind(&record.config_digest).bind(&record.artifact_location).bind(&record.artifact_hash).bind(record.built_at).bind(&record.metadata).bind(view).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
         Ok(record)
     }

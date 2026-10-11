@@ -9,6 +9,8 @@ mod mutations;
 pub use mutations::{
     MutationEnvelope, MutationReceipt, MutationStart, OwnerLock, check_receipt, commit_receipt,
 };
+mod read_stamp;
+pub use read_stamp::AuthorityReadStamp;
 mod model_workflow;
 pub use model_workflow::{
     WORKFLOW_VALUE_MAX_BYTES, WorkflowLease, WorkflowOwner, WorkflowReservation,
@@ -79,7 +81,11 @@ impl AuthorityStore {
         acquire_timeout: std::time::Duration,
     ) -> Result<Self> {
         if max_connections == 0 {
-            return Err(Error::Invalid("max_connections must be positive".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Persistence,
+                nous_core::ErrorCode::InvalidRequest,
+                "max_connections must be positive",
+            ));
         }
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
@@ -94,7 +100,14 @@ impl AuthorityStore {
         sqlx::migrate!("./migrations")
             .run(&self.pool)
             .await
-            .map_err(|error| Error::Infrastructure(error.to_string()))
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Persistence,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })
     }
 
     pub async fn check(&self) -> Result<()> {
@@ -119,7 +132,30 @@ impl AuthorityStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(database_error)?
-            .ok_or_else(|| Error::NotFound("subject not found".into()))
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Persistence,
+                    nous_core::ErrorCode::NotFound,
+                    "subject not found",
+                )
+            })
+    }
+
+    /// Owner purge checkpoints call this inside the same Authority transaction
+    /// that makes the target unreadable. It intentionally allocates no separate
+    /// operation state.
+    pub async fn advance_serving_purge_epoch_in(
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+    ) -> Result<i64> {
+        sqlx::query_scalar::<_, i64>(
+            "UPDATE subjects SET serving_purge_epoch=serving_purge_epoch+1 WHERE subject_id=$1 RETURNING serving_purge_epoch",
+        )
+        .bind(subject.0)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| Error::new(nous_core::ErrorOwner::Subject, nous_core::ErrorCode::NotFound, "subject not found"))
     }
 
     pub async fn begin(&self) -> Result<Transaction<'_, Postgres>> {
@@ -136,12 +172,29 @@ impl AuthorityStore {
 }
 
 pub fn database_error(error: sqlx::Error) -> Error {
-    match &error {
-        sqlx::Error::RowNotFound => Error::NotFound("Authority record not found".into()),
-        sqlx::Error::Database(e) if e.is_unique_violation() => Error::Conflict(error.to_string()),
+    let mapped = match &error {
+        sqlx::Error::RowNotFound => Error::new(
+            nous_core::ErrorOwner::Persistence,
+            nous_core::ErrorCode::NotFound,
+            "Authority record not found",
+        ),
+        sqlx::Error::Database(e) if e.is_unique_violation() => Error::new(
+            nous_core::ErrorOwner::Persistence,
+            nous_core::ErrorCode::Conflict,
+            "Authority record conflicts with existing state",
+        ),
         sqlx::Error::Database(e) if e.is_check_violation() || e.is_foreign_key_violation() => {
-            Error::Invalid(error.to_string())
+            Error::new(
+                nous_core::ErrorOwner::Persistence,
+                nous_core::ErrorCode::InvalidRequest,
+                "Authority record violates a storage constraint",
+            )
         }
-        _ => Error::Infrastructure(error.to_string()),
-    }
+        _ => Error::new(
+            nous_core::ErrorOwner::Persistence,
+            nous_core::ErrorCode::InternalFailure,
+            "Persistence operation failed",
+        ),
+    };
+    mapped.with_source(error)
 }

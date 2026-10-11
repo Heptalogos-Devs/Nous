@@ -44,10 +44,14 @@ impl AuthorityStore {
         let mut edges = Vec::new();
         for source in &sources {
             for tag in &source.tag_ids {
-                let target = CognitiveRef::Tag(TagId(
-                    tag.parse()
-                        .map_err(|_| Error::Infrastructure("invalid concept identity".into()))?,
-                ));
+                let target = CognitiveRef::Tag(TagId(tag.parse().map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InternalFailure,
+                        "invalid concept identity",
+                    )
+                    .with_source(error)
+                })?));
                 historical_pair(
                     &mut edges,
                     source.reference.clone(),

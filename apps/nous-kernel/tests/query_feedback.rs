@@ -37,7 +37,7 @@ fn query(subject: SubjectId, reference: CognitiveRef) -> CognitiveQuery {
 async fn subject(rt: &nous_kernel::NousRuntime) -> SubjectId {
     rt.subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -202,19 +202,28 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     conflict.events[0].query_id = Some(uuid::Uuid::new_v4());
     assert!(matches!(
         rt.cognition.use_feedback(conflict).await,
-        Err(Error::Domain(error)) if error.code == nous_core::DomainErrorCode::OperationIdConflict
+        Err(Error {
+            code: nous_core::ErrorCode::OperationIdConflict,
+            ..
+        })
     ));
     assert!(matches!(
         rt.cognition
             .use_feedback(feedback(subject_a, b.clone(), result.bound.query_id, now))
             .await,
-        Err(Error::Invalid(_))
+        Err(Error {
+            code: nous_core::ErrorCode::InvalidRequest,
+            ..
+        })
     ));
     assert!(matches!(
         rt.cognition
             .use_feedback(feedback(subject_b, foreign, result.bound.query_id, now))
             .await,
-        Err(Error::Invalid(_))
+        Err(Error {
+            code: nous_core::ErrorCode::InvalidRequest,
+            ..
+        })
     ));
     // A validated pool is private; only the finalized response becomes feedback membership.
     let mut pool = query(subject_a, a.clone());
@@ -259,7 +268,10 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
         rt.cognition
             .use_feedback(feedback(subject_a, b, query_id, now))
             .await,
-        Err(Error::Invalid(_))
+        Err(Error {
+            code: nous_core::ErrorCode::InvalidRequest,
+            ..
+        })
     ));
     clock
         .advance_by(subject_a, chrono::Duration::days(8))
@@ -269,7 +281,10 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
         rt.cognition
             .use_feedback(feedback(subject_a, a.clone(), result.bound.query_id, later))
             .await,
-        Err(Error::Invalid(_))
+        Err(Error {
+            code: nous_core::ErrorCode::InvalidRequest,
+            ..
+        })
     ));
     assert_eq!(rt.cognition.use_feedback(event).await.unwrap().1, 1);
     rt.execute_query(query(subject_a, a), None).await.unwrap();

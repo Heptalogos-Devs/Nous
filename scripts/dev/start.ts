@@ -23,7 +23,8 @@ await initializeConfiguration(locations);
 const child = spawn(
   process.execPath,
   [
-    join(root, "node_modules/tsx/dist/cli.mjs"),
+    "--import",
+    import.meta.resolve("tsx"),
     join(root, "apps/nous-core/src/main.ts"),
     "--locator",
     locator,

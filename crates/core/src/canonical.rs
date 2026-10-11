@@ -10,8 +10,14 @@ pub fn canonical_request_digest<T: Serialize>(
     subject: SubjectId,
     request: &T,
 ) -> Result<String> {
-    let value = serde_json::to_value(request)
-        .map_err(|error| Error::Invalid(format!("cannot serialize request: {error}")))?;
+    let value = serde_json::to_value(request).map_err(|error| {
+        Error::new(
+            crate::ErrorOwner::Core,
+            crate::ErrorCode::InvalidRequest,
+            "Invalid request",
+        )
+        .with_source(error)
+    })?;
     let canonical = canonical_json(&value)?;
     let input = format!(
         "{operation_kind}\n{}\n{canonical}",
@@ -25,8 +31,14 @@ fn canonical_json(value: &serde_json::Value) -> Result<String> {
         serde_json::Value::Null => Ok("null".into()),
         serde_json::Value::Bool(value) => Ok(value.to_string()),
         serde_json::Value::Number(value) => Ok(value.to_string()),
-        serde_json::Value::String(value) => serde_json::to_string(value)
-            .map_err(|error| Error::Invalid(format!("cannot encode request string: {error}"))),
+        serde_json::Value::String(value) => serde_json::to_string(value).map_err(|error| {
+            Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "Invalid request",
+            )
+            .with_source(error)
+        }),
         serde_json::Value::Array(values) => values
             .iter()
             .map(canonical_json)
@@ -39,8 +51,12 @@ fn canonical_json(value: &serde_json::Value) -> Result<String> {
             for key in keys {
                 pairs.push(format!(
                     "{}:{}",
-                    serde_json::to_string(key)
-                        .map_err(|error| Error::Invalid(error.to_string()))?,
+                    serde_json::to_string(key).map_err(|error| Error::new(
+                        crate::ErrorOwner::Core,
+                        crate::ErrorCode::InvalidRequest,
+                        "Invalid request"
+                    )
+                    .with_source(error))?,
                     canonical_json(&values[key])?
                 ));
             }

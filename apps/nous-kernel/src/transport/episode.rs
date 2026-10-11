@@ -249,7 +249,13 @@ impl KernelService {
                     .reaccept_episode(subject, episode, operation_id, input.expected_object_epoch)
                     .await?
             }
-            _ => return Err(Error::Invalid("unknown Episode lifecycle operation".into())),
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "unknown Episode lifecycle operation",
+                ));
+            }
         };
         Ok(response(value))
     }

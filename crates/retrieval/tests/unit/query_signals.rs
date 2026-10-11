@@ -56,7 +56,11 @@ impl TextEmbeddingProvider for EmbeddingProbe {
         assert!(request.query);
         assert_eq!(request.text, "query");
         if self.fail {
-            return Err(Error::Unavailable("probe failure".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::Unavailable,
+                "probe failure",
+            ));
         }
         Ok(TextEmbeddingOutput {
             vector: vec![1.0, 0.0],

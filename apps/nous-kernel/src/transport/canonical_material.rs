@@ -48,7 +48,7 @@ rpc_service! {
                     .fetch_optional(self.0.store.pool())
                     .await
                     .map_err(nous_persistence::database_error)?
-                    .ok_or_else(|| Error::NotFound("derived region not found".into()))?;
+                    .ok_or_else(|| Error::new(nous_core::ErrorOwner::Material, nous_core::ErrorCode::NotFound, "derived region not found"))?;
                     Ok(p::DerivedRegion {
                         derived_region_id: input.id,
                         subject_id: input.subject_id,
@@ -90,12 +90,12 @@ rpc_service! {
                             None => false,
                         };
                     if !referenced {
-                        return Err(Error::NotFound("producer is not referenced by Subject".into()));
+                        return Err(Error::new(nous_core::ErrorOwner::Material, nous_core::ErrorCode::NotFound, "producer is not referenced by Subject"));
                     }
                     let r = sqlx::query("SELECT * FROM producer_signatures WHERE producer_signature_id=$1")
                         .bind(producer).fetch_optional(self.0.store.pool()).await
                         .map_err(nous_persistence::database_error)?
-                        .ok_or_else(|| Error::NotFound("producer signature not found".into()))?;
+                        .ok_or_else(|| Error::new(nous_core::ErrorOwner::Material, nous_core::ErrorCode::NotFound, "producer signature not found"))?;
                     Ok(p::ProducerSignature {
             model_role: r.try_get("model_role").map_err(nous_persistence::database_error)?,
             model_profile: r.try_get("model_profile").map_err(nous_persistence::database_error)?,
@@ -114,7 +114,7 @@ rpc_service! {
             ) -> std::result::Result<Response<p::RepresentationListResponse>, Status> {
                 let input = request.into_inner();
                 let result: nous_core::Result<_> = async {
-                    if input.limit == 0 || input.limit > 200 { return Err(Error::Invalid("representation limit must be 1..200".into())); }
+                    if input.limit == 0 || input.limit > 200 { return Err(Error::new(nous_core::ErrorOwner::Material, nous_core::ErrorCode::InvalidRequest, "representation limit must be 1..200")); }
                     let subject = SubjectId(id(&input.subject_id)?);
                     self.0.store.require_subject(subject).await?;
                     let source = input.source_region_id.as_deref().map(id).transpose()?;

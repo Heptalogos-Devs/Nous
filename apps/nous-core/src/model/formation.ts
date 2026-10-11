@@ -8,7 +8,11 @@ import { FormMemoryRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/
 import { type FormationRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "./runtime.js";
-import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import {
+  openDurableOperation,
+  operationBusyError,
+  workflowPayload,
+} from "../durable-operation.js";
 import type { WorkflowPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import { type ModelRoleSnapshot } from "./execution/snapshot.js";
 import { canonicalDigest } from "../digest.js";
@@ -105,86 +109,88 @@ export async function formObservation(
       degradation: [],
     };
   };
-  const previous = await kernel.modelWorkflow.findWorkflow(identity, options);
-  if (previous.outcome) return replay(previous.outcome);
-  let snapshotText = previous.snapshot?.content?.payloadJson;
-  if (!snapshotText) {
-    const model = models.invocations.snapshot("memory_formation");
-    const occurrence = await kernel.material.getOccurrence(
-      { subjectId: r.subjectId, id: r.occurrenceId },
-      options,
-    );
-    let representationId = r.representationId;
-    if (!representationId && occurrence.artifactId) {
-      const artifact = await kernel.material.getArtifact(
-        { subjectId: r.subjectId, id: occurrence.artifactId },
+  const opened = await openDurableOperation(kernel, identity, {
+    execution: options,
+    snapshotFactory: async () => {
+      const model = models.invocations.snapshot("memory_formation");
+      const occurrence = await kernel.material.getOccurrence(
+        { subjectId: r.subjectId, id: r.occurrenceId },
         options,
       );
-      const mime = artifact.mediaType.split(";")[0]!.trim().toLowerCase();
-      const kind = mime.startsWith("image/")
-        ? "image_description"
-        : mime.startsWith("audio/")
-          ? models.audio.input_mode === "direct"
-            ? "audio_description"
-            : "transcript"
-          : mime.startsWith("video/")
-            ? "scene_description"
-            : "extracted_text";
-      const available = await kernel.material.listDerivedRepresentations(
-        {
-          subjectId: r.subjectId,
-          artifactId: occurrence.artifactId,
-          kind,
-          limit: 1,
+      let representationId = r.representationId;
+      if (!representationId && occurrence.artifactId) {
+        const artifact = await kernel.material.getArtifact(
+          { subjectId: r.subjectId, id: occurrence.artifactId },
+          options,
+        );
+        const mime = artifact.mediaType.split(";")[0]!.trim().toLowerCase();
+        const kind = mime.startsWith("image/")
+          ? "image_description"
+          : mime.startsWith("audio/")
+            ? models.audio.input_mode === "direct"
+              ? "audio_description"
+              : "transcript"
+            : mime.startsWith("video/")
+              ? "scene_description"
+              : "extracted_text";
+        const available = await kernel.material.listDerivedRepresentations(
+          {
+            subjectId: r.subjectId,
+            artifactId: occurrence.artifactId,
+            kind,
+            limit: 1,
+          },
+          options,
+        );
+        representationId = available.items[0]?.representationId;
+      }
+      const candidates =
+        mode === "select_from_resolved_mentions"
+          ? (
+              await kernel.materialWorkflow.getResolvedMentions(
+                { subjectId: r.subjectId, occurrenceId: r.occurrenceId },
+                options,
+              )
+            ).candidates.map((candidate) => ({
+              key: candidate.key,
+              surface: candidate.surface,
+              entityRef: candidate.entityRef,
+            }))
+          : [];
+      const frozen = {
+        model,
+        representationId,
+        candidates,
+        sourceMaxBytes: models.materialInputs.formation_source_max_bytes,
+      };
+      return {
+        snapshot: {
+          content: workflowPayload(frozen, [
+            { kind: "occurrence", value: r.occurrenceId },
+            ...(frozen.representationId
+              ? [
+                  {
+                    kind: "derived_representation",
+                    value: frozen.representationId,
+                  },
+                ]
+              : []),
+            ...r.explicitTags.map((value) => ({ kind: "tag", value })),
+          ]),
         },
-        options,
-      );
-      representationId = available.items[0]?.representationId;
-    }
-    const candidates =
-      mode === "select_from_resolved_mentions"
-        ? (
-            await kernel.materialWorkflow.getResolvedMentions(
-              { subjectId: r.subjectId, occurrenceId: r.occurrenceId },
-              options,
-            )
-          ).candidates.map((candidate) => ({
-            key: candidate.key,
-            surface: candidate.surface,
-            entityRef: candidate.entityRef,
-          }))
-        : [];
-    snapshotText = JSON.stringify({
-      model,
-      representationId,
-      candidates,
-      sourceMaxBytes: models.materialInputs.formation_source_max_bytes,
-    });
-  }
-  const frozen = snapshotSchema.parse(JSON.parse(snapshotText));
-  const operation = await reserveOperation(
-    kernel,
-    identity,
-    previous.snapshot ?? {
-      content: workflowPayload(frozen, [
-        { kind: "occurrence", value: r.occurrenceId },
-        ...(frozen.representationId
-          ? [{ kind: "derived_representation", value: frozen.representationId }]
-          : []),
-        ...r.explicitTags.map((value) => ({ kind: "tag", value })),
-      ]),
+      };
     },
-    options,
-  );
-  const reservation = operation.record;
-  if (reservation.outcome) return replay(reservation.outcome);
+  });
+  if (opened.state === "completed") return replay(opened.outcome);
+  if (opened.state === "busy") throw operationBusyError();
+  const operation = opened.operation;
   return operation.run(async () => {
-    let proposed = reservation.proposal?.payloadJson
-      ? proposalSchema.parse(JSON.parse(reservation.proposal?.payloadJson))
+    let proposed = opened.proposal?.payloadJson
+      ? proposalSchema.parse(JSON.parse(opened.proposal.payloadJson))
       : undefined;
     if (!proposed) {
       const snapshot = snapshotSchema.parse(
-        JSON.parse(reservation.snapshot!.content!.payloadJson),
+        JSON.parse(opened.snapshot.content!.payloadJson),
       );
       const source = await kernel.material.materializeEvidence(
         {
@@ -222,7 +228,6 @@ export async function formObservation(
         options.signal ?? undefined,
         snapshot.model as ModelRoleSnapshot,
       );
-      await operation.recordExecution(result.execution);
       if (
         new Set(result.selectedEntityKeys).size !==
           result.selectedEntityKeys.length ||
@@ -230,11 +235,13 @@ export async function formObservation(
           (key) =>
             !snapshot.candidates.some((candidate) => candidate.key === key),
         )
-      )
+      ) {
+        await operation.checkpoint({ executionTelemetry: result.execution });
         throw new ConnectError(
           "Model selected an invalid entity candidate",
           Code.FailedPrecondition,
         );
+      }
       const aboutness =
         mode === "explicit"
           ? r.explicitAboutness
@@ -288,7 +295,11 @@ export async function formObservation(
       proposed = {
         request: toJson(FormMemoryRequestSchema, request),
       };
-      await operation.saveProposal(proposed);
+      await operation.checkpoint({
+        proposal: workflowPayload(proposed),
+        executionTelemetry: result.execution,
+        mutationOperations: [request.operationId],
+      });
     }
     const request = fromJson(
       FormMemoryRequestSchema,
@@ -297,10 +308,12 @@ export async function formObservation(
     const memory = await operation.mutate(request.operationId, () =>
       kernel.memory.formMemory(request, options),
     );
-    await operation.complete({ revisionId: memory.revisionId }, [
-      { kind: "memory", value: memory.memoryId },
-      { kind: "memory_revision", value: memory.revisionId },
-    ]);
+    await operation.checkpoint({
+      outcome: workflowPayload({ revisionId: memory.revisionId }, [
+        { kind: "memory", value: memory.memoryId },
+        { kind: "memory_revision", value: memory.revisionId },
+      ]),
+    });
     return {
       memory,
       degradation: [],

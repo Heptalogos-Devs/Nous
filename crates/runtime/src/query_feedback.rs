@@ -20,8 +20,10 @@ pub(crate) fn register(registry: &mut ConfigRegistryBuilder) -> Result<()> {
             if (1..=31536000).contains(seconds) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "query feedback retention must be 1..31536000 seconds".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ))
             }
         },
@@ -34,8 +36,10 @@ impl CognitiveRuntimeService {
         result: &CognitiveQueryResult,
     ) -> Result<()> {
         if result.query_id != bound.query_id {
-            return Err(Error::Invalid(
-                "query feedback result does not match its bound query".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let subject = bound.source_query.subject;
@@ -43,10 +47,22 @@ impl CognitiveRuntimeService {
         let retention = bound.config_snapshot.get(QUERY_FEEDBACK_RETENTION)?;
         let expires = created
             .checked_add_signed(chrono::Duration::seconds(
-                i64::try_from(retention)
-                    .map_err(|_| Error::Invalid("query retention overflow".into()))?,
+                i64::try_from(retention).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "query retention overflow",
+                    )
+                    .with_source(error)
+                })?,
             ))
-            .ok_or_else(|| Error::Invalid("query expiry overflow".into()))?;
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "query expiry overflow",
+                )
+            })?;
         let revisions = result
             .results
             .iter()
@@ -63,8 +79,10 @@ impl CognitiveRuntimeService {
             })
             .collect::<Vec<_>>();
         if revisions.len() > 256 {
-            return Err(Error::Invalid(
-                "query feedback returned revisions exceed bound".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let activation = &bound.activation;
@@ -90,8 +108,9 @@ impl CognitiveRuntimeService {
         let stored=sqlx::query("INSERT INTO query_feedback_records(subject_id,query_id,session_id,work_context_id,prepared_query_digest,query_activation_digest,signals,returned_revision_refs,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(subject_id,query_id) DO UPDATE SET returned_revision_refs=EXCLUDED.returned_revision_refs WHERE query_feedback_records.prepared_query_digest=EXCLUDED.prepared_query_digest AND query_feedback_records.query_activation_digest=EXCLUDED.query_activation_digest")
             .bind(subject.0).bind(bound.query_id).bind(bound.source_query.session.map(|session|session.0)).bind(bound.source_query.work_context).bind(prepared_digest).bind(activation_digest).bind(signals).bind(serde_json::json!(revisions)).bind(created).bind(expires).execute(&mut *tx).await.map_err(db)?;
         if stored.rows_affected() != 1 {
-            return Err(DomainError::new(
-                DomainErrorCode::OperationIdConflict,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::OperationIdConflict,
                 "Query feedback identity has different prepared activation",
             )
             .into());
@@ -109,9 +128,10 @@ pub(crate) async fn validate_query_use_in(
     let found:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM query_feedback_records WHERE subject_id=$1 AND query_id=$2 AND expires_at>$3 AND returned_revision_refs @> $4::jsonb)")
         .bind(subject.0).bind(query_id).bind(now).bind(serde_json::json!([reference])).fetch_one(&mut **tx).await.map_err(db)?;
     if !found {
-        return Err(Error::Invalid(
-            "query feedback expired, belongs to another Subject, or did not return this revision"
-                .into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
         ));
     }
     Ok(())
@@ -146,8 +166,14 @@ pub async fn linked_query_feedback(
     rows.into_iter()
         .map(|row| {
             let mut signals: QueryFeedbackSignals =
-                serde_json::from_value(row.try_get("signals").map_err(db)?)
-                    .map_err(|error| Error::Infrastructure(error.to_string()))?;
+                serde_json::from_value(row.try_get("signals").map_err(db)?).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?;
             signals.explicit_tags.truncate(16);
             signals.inferred_tags.truncate(8);
             signals.novel_concepts.truncate(4);
@@ -156,8 +182,14 @@ pub async fn linked_query_feedback(
             Ok(LinkedQueryFeedback {
                 query_id: row.try_get("query_id").map_err(db)?,
                 used_revision: focus.clone(),
-                use_kind: serde_json::from_value(serde_json::json!(kind))
-                    .map_err(|error| Error::Infrastructure(error.to_string()))?,
+                use_kind: serde_json::from_value(serde_json::json!(kind)).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?,
                 signals,
             })
         })

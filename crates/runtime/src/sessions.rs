@@ -57,7 +57,7 @@ impl CognitiveRuntimeService {
     ) -> Result<SessionView> {
         let row = sqlx::query("SELECT session_id,subject_id,opened_at,last_activity_at,last_meaningful_use_at,closed_at,runtime_revision,active_work_context_id FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2")
             .bind(subject.0).bind(session.0).fetch_optional(&mut *connection).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("session not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Runtime, nous_core::ErrorCode::NotFound, "session not found"))?;
         let refs = sqlx::query("SELECT ref_kind,ref_value,entry_reason,state,entered_at,last_meaningful_use_at,hold_until FROM resident_refs WHERE session_id=$1 AND state <> 'evicted' ORDER BY entered_at")
             .bind(session.0).fetch_all(&mut *connection).await.map_err(db)?;
         let mut resident = Vec::with_capacity(refs.len());
@@ -128,8 +128,10 @@ impl CognitiveRuntimeService {
                 .reference_in_subject_tx(&mut tx, subject, &admission.reference)
                 .await?
             {
-                return Err(Error::FailedPrecondition(
-                    "resident reference is not owned by Subject".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "resident reference is not owned by Subject",
                 ));
             }
         }
@@ -243,8 +245,10 @@ fn merge_admissions(admissions: Vec<ResidentAdmission>) -> Result<Vec<ResidentAd
     let mut merged = BTreeMap::<String, ResidentAdmission>::new();
     for admission in admissions {
         if admission.state == ResidentState::Evicted {
-            return Err(Error::Invalid(
-                "resident admission state cannot be evicted".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "resident admission state cannot be evicted",
             ));
         }
         let key = admission.reference.to_string();
@@ -280,8 +284,9 @@ fn later_hold(
 }
 
 pub(super) fn stale_session(session: SessionId) -> Error {
-    DomainError::new(
-        DomainErrorCode::StaleContext,
+    nous_core::Error::new(
+        nous_core::ErrorOwner::Runtime,
+        nous_core::ErrorCode::StaleContext,
         "Session is closed or unavailable to the Subject",
     )
     .with_context("session_id", session.0)

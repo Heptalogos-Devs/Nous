@@ -103,19 +103,25 @@ impl MemoryService {
                 if receipt.state == "committed" {
                     return self.episode(subject, episode, None).await;
                 }
-                return Err(Error::Unavailable(
-                    "Episode lifecycle operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "Episode lifecycle operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
         };
         let row = sqlx::query("SELECT object_epoch,suppression_state,acceptance_state,purge_state FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE")
             .bind(subject.0).bind(episode.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "Episode not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(epoch, expected)?;
         if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-            return Err(Error::FailedPrecondition("Episode is purging".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::FailedPrecondition,
+                "Episode is purging",
+            ));
         }
         let current: String = row.try_get(field).map_err(db)?;
         require_transition(&current, from)?;
@@ -130,8 +136,10 @@ impl MemoryService {
                 "UPDATE episode_objects SET acceptance_state=$3,object_epoch=object_epoch+1 WHERE subject_id=$1 AND episode_id=$2",
             ),
             _ => {
-                return Err(Error::Internal(
-                    "unsupported Episode lifecycle field".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "unsupported Episode lifecycle field",
                 ));
             }
         };
@@ -184,13 +192,15 @@ impl MemoryService {
                 if receipt.state == "committed" {
                     return Ok(());
                 }
-                return Err(Error::Unavailable(
-                    "Episode purge operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "Episode purge operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let epoch: i64 = sqlx::query_scalar("SELECT object_epoch FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE").bind(subject.0).bind(episode.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(|| Error::NotFound("Episode not found".into()))?;
+        let epoch: i64 = sqlx::query_scalar("SELECT object_epoch FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE").bind(subject.0).bind(episode.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "Episode not found"))?;
         crate::service::state::fence_epoch(epoch, expected)?;
         let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
         self.invalidate_object_dependents_in(

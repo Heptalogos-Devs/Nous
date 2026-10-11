@@ -46,7 +46,7 @@ pub struct WaveGraphGeneration {
     adjacency: Vec<Vec<(u32, f64)>>,
     raw_support: std::collections::HashMap<(u32, u32), f64>,
     evidence: std::collections::BTreeMap<(u32, u32), Vec<WaveEdgeEvidence>>,
-    pub config: WaveConfig,
+    pub build_policy: WaveBuildPolicy,
 }
 
 impl WaveGraphGeneration {
@@ -68,12 +68,12 @@ impl WaveGraphGeneration {
             nodes: self.nodes.clone(),
             evidence: self.evidence.values().flatten().cloned().collect(),
             edges,
-            config: self.config.clone(),
+            build_policy: self.build_policy.clone(),
         }
     }
 
     pub fn from_artifact(artifact: TopologyArtifact) -> Result<Self> {
-        artifact.config.validate()?;
+        artifact.build_policy.validate()?;
         let mut adjacency = vec![Vec::new(); artifact.nodes.len()];
         let mut raw_support = std::collections::HashMap::new();
         for (from, to, weight, raw) in artifact.edges {
@@ -83,7 +83,11 @@ impl WaveGraphGeneration {
                 || weight < 0.0
                 || !raw.is_finite()
             {
-                return Err(Error::Infrastructure("topology artifact is corrupt".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "topology artifact is corrupt",
+                ));
             }
             adjacency[from as usize].push((to, weight));
             raw_support.insert((from, to), raw);
@@ -102,16 +106,16 @@ impl WaveGraphGeneration {
             node_by_ref,
             adjacency,
             raw_support,
-            config: artifact.config,
+            build_policy: artifact.build_policy,
         })
     }
 
     pub fn build(
         mut nodes: Vec<WaveNode>,
         evidence: &[WaveEdgeEvidence],
-        config: WaveConfig,
+        build_policy: WaveBuildPolicy,
     ) -> Result<Self> {
-        config.validate()?;
+        build_policy.validate()?;
         nodes.sort_by_key(|node| node.serving_id);
         for (index, node) in nodes.iter_mut().enumerate() {
             node.serving_id = index as u32;
@@ -134,7 +138,7 @@ impl WaveGraphGeneration {
                 continue;
             };
             let quality =
-                class_quality(&item.basis_class, &config.class_quality) * item.support_mass;
+                class_quality(&item.basis_class, &build_policy.class_quality) * item.support_mass;
             let entry = by_root
                 .entry((from, to, item.provenance_root.clone()))
                 .or_default();
@@ -163,19 +167,19 @@ impl WaveGraphGeneration {
         let mut raw_support = std::collections::HashMap::new();
         for (&(from, to), &raw) in &aggregate {
             let penalty = (inflow[to as usize] / median)
-                .powf(-config.hub_beta)
-                .clamp(config.hub_penalty_min, config.hub_penalty_max);
+                .powf(-build_policy.hub_beta)
+                .clamp(build_policy.hub_penalty_min, build_policy.hub_penalty_max);
             rows[from as usize].push((to, raw * penalty, raw));
         }
         let mut adjacency = vec![Vec::new(); nodes.len()];
         for (from, row) in rows.into_iter().enumerate() {
             let mut row = row;
             row.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-            row.truncate(config.max_neighbors_per_node);
+            row.truncate(build_policy.max_neighbors_per_node);
             let total: f64 = row.iter().map(|(_, weight, _)| *weight).sum();
             for (to, weight, raw) in row {
                 let conductance = if total > 0.0 {
-                    config.outbound_budget * weight / total
+                    build_policy.outbound_budget * weight / total
                 } else {
                     0.0
                 };
@@ -209,7 +213,7 @@ impl WaveGraphGeneration {
             node_by_ref,
             adjacency,
             raw_support,
-            config,
+            build_policy,
         })
     }
 
@@ -253,7 +257,7 @@ pub struct TopologyArtifact {
     pub nodes: Vec<WaveNode>,
     pub edges: Vec<(u32, u32, f64, f64)>,
     pub evidence: Vec<WaveEdgeEvidence>,
-    pub config: WaveConfig,
+    pub build_policy: WaveBuildPolicy,
 }
 
 fn supported_relation(kind: &str) -> bool {
@@ -319,7 +323,7 @@ mod tests {
                     provenance_root: None,
                 },
             ],
-            WaveConfig::default(),
+            WaveBuildPolicy::default(),
         )
         .expect("graph");
         assert!(graph.outgoing(0).is_empty());
@@ -360,7 +364,7 @@ mod tests {
                     provenance_root: Some("artifact:two".into()),
                 },
             ],
-            WaveConfig::default(),
+            WaveBuildPolicy::default(),
         )
         .expect("graph");
         assert_eq!(graph.edge_raw_support(0, 1), Some(1.3));
@@ -393,7 +397,7 @@ mod tests {
                     provenance_root: None,
                 },
             ],
-            WaveConfig::default(),
+            WaveBuildPolicy::default(),
         )
         .expect("graph");
         assert!(graph.outbound_mass(0) <= 0.90 + f64::EPSILON);

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nous_configuration::*;
-use nous_core::{Error, Result};
+use nous_core::{Error, ErrorCode, ErrorOwner, Result};
 pub const CONCEPT_USE_REVIEW_INTERVAL: ConfigKey<u64> =
     ConfigKey::new("maintenance.concept_use_review_interval");
 pub const MAINTENANCE_ENABLED: ConfigKey<bool> = ConfigKey::new("maintenance.enabled");
@@ -40,8 +40,10 @@ pub fn register_maintenance_configuration(registry: &mut ConfigRegistryBuilder) 
             if (1..=128).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "concept use review interval requires 1..128".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "concept use review interval requires 1..128",
                 ))
             }
         },
@@ -95,8 +97,10 @@ pub fn register_maintenance_configuration(registry: &mut ConfigRegistryBuilder) 
             if (1..=32).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "Maintenance grant must contain 1..32 operations".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Maintenance grant must contain 1..32 operations",
                 ))
             }
         },
@@ -114,8 +118,10 @@ pub fn register_maintenance_configuration(registry: &mut ConfigRegistryBuilder) 
             if (1..=8).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "Episode neighborhood must contain 1..8 Episodes".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Episode neighborhood must contain 1..8 Episodes",
                 ))
             }
         },
@@ -133,8 +139,10 @@ pub fn register_maintenance_configuration(registry: &mut ConfigRegistryBuilder) 
             if (1..=86400).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "Episode neighborhood span must be 1..86400 seconds".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Episode neighborhood span must be 1..86400 seconds",
                 ))
             }
         },
@@ -208,10 +216,14 @@ fn register_work_state_configuration(registry: &mut ConfigRegistryBuilder) -> Re
                 if (1..=ceiling).contains(value) {
                     Ok(())
                 } else {
-                    Err(Error::Invalid(format!(
-                        "{} must be 1..{ceiling}",
-                        key.path()
-                    )))
+                    Err(Error::new(
+                        ErrorOwner::Runtime,
+                        ErrorCode::InvalidRequest,
+                        "Configuration value is outside its allowed range",
+                    )
+                    .with_context("configuration_key", key.path())
+                    .with_context("minimum", 1)
+                    .with_context("maximum", ceiling))
                 }
             },
         )?;
@@ -230,8 +242,10 @@ fn interval(value: &u64) -> Result<()> {
     if (1..=3600).contains(value) {
         Ok(())
     } else {
-        Err(Error::Invalid(
-            "Maintenance interval must be 1..3600 seconds".into(),
+        Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "Maintenance interval must be 1..3600 seconds",
         ))
     }
 }

@@ -14,7 +14,7 @@ async fn purge_keeps_shared_observation_authority() {
     let subject = runtime
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: nous_core::OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),

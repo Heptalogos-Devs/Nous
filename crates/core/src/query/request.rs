@@ -76,8 +76,10 @@ impl CognitiveQuery {
     pub fn validate(&self) -> Result<()> {
         self.projection.validate()?;
         if self.result_need.limit == 0 || self.result_need.limit > MAX_QUERY_RESULT_ITEMS {
-            return Err(Error::Invalid(
-                "result_need.limit must be between 1 and 2048".into(),
+            return Err(Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let mut nodes = vec![(&self.expression, 0)];
@@ -90,15 +92,21 @@ impl CognitiveQuery {
                 || node.targets.len() > 128
                 || node.preferences.len() > 16
             {
-                return Err(Error::Invalid(
-                    "query tree/cue/target bound exceeded".into(),
+                return Err(Error::new(
+                    crate::ErrorOwner::Core,
+                    crate::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
             if (node.operation == QueryOperation::Atom && !node.children.is_empty())
                 || (node.operation != QueryOperation::Atom
                     && (node.children.len() < 2 || !node.cues.is_empty()))
             {
-                return Err(Error::Invalid("invalid query expression shape".into()));
+                return Err(Error::new(
+                    crate::ErrorOwner::Core,
+                    crate::ErrorCode::InvalidRequest,
+                    "invalid query expression shape",
+                ));
             }
             for interval in [
                 node.constraints.occurred,
@@ -117,8 +125,10 @@ impl CognitiveQuery {
         if self.capabilities.text_embedding == RequirementStrength::Forbidden
             && self.capabilities.residual_sensing == RequirementStrength::Required
         {
-            return Err(Error::Invalid(
-                "required residual_sensing conflicts with forbidden text_embedding".into(),
+            return Err(Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         Ok(())

@@ -4,7 +4,7 @@
 
 use crate::{AuthorityStore, ProjectionInvalidation, database_error as db, lock_operation};
 use chrono::Utc;
-use nous_core::{DomainError, DomainErrorCode, OperationId, Result, SubjectId};
+use nous_core::{OperationId, Result, SubjectId};
 use sqlx::Row;
 use uuid::Uuid;
 
@@ -21,6 +21,7 @@ pub async fn check_receipt(
     operation: OperationId,
     kind: &str,
     digest: &str,
+    error_owner: nous_core::ErrorOwner,
 ) -> Result<Option<MutationReceipt>> {
     let row = sqlx::query("SELECT state,result_ref,result_revision,request_digest,operation_kind FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2")
         .bind(subject.0)
@@ -31,8 +32,9 @@ pub async fn check_receipt(
     if let Some(row) = row {
         let existing: String = row.try_get("request_digest").map_err(db)?;
         if existing != digest || row.try_get::<String, _>("operation_kind").map_err(db)? != kind {
-            return Err(DomainError::new(
-                DomainErrorCode::OperationIdConflict,
+            return Err(nous_core::Error::new(
+                error_owner,
+                nous_core::ErrorCode::OperationIdConflict,
                 format!("{kind} operation_id was used with a different request"),
             )
             .with_context("operation_id", operation.0)
@@ -106,8 +108,19 @@ impl<'a> MutationEnvelope<'a> {
         kind: &str,
         digest: &str,
         owner: Option<OwnerLock>,
+        error_owner: nous_core::ErrorOwner,
     ) -> Result<MutationStart<'a>> {
-        Self::start(store, subject, operation, kind, digest, owner, false).await
+        Self::start(
+            store,
+            subject,
+            operation,
+            kind,
+            digest,
+            owner,
+            error_owner,
+            false,
+        )
+        .await
     }
 
     /// Resume an intentional checkpoint while committed results still replay.
@@ -118,8 +131,19 @@ impl<'a> MutationEnvelope<'a> {
         kind: &str,
         digest: &str,
         owner: Option<OwnerLock>,
+        error_owner: nous_core::ErrorOwner,
     ) -> Result<MutationStart<'a>> {
-        Self::start(store, subject, operation, kind, digest, owner, true).await
+        Self::start(
+            store,
+            subject,
+            operation,
+            kind,
+            digest,
+            owner,
+            error_owner,
+            true,
+        )
+        .await
     }
 
     async fn start(
@@ -129,6 +153,7 @@ impl<'a> MutationEnvelope<'a> {
         kind: &str,
         digest: &str,
         owner: Option<OwnerLock>,
+        error_owner: nous_core::ErrorOwner,
         resume: bool,
     ) -> Result<MutationStart<'a>> {
         let mut tx = store.begin().await?;
@@ -140,7 +165,8 @@ impl<'a> MutationEnvelope<'a> {
                 .map_err(db)?;
         }
         lock_operation(&mut tx, subject, operation).await?;
-        if let Some(receipt) = check_receipt(&mut tx, subject, operation, kind, digest).await?
+        if let Some(receipt) =
+            check_receipt(&mut tx, subject, operation, kind, digest, error_owner).await?
             && (!resume || receipt.state == "committed")
         {
             tx.commit().await.map_err(db)?;

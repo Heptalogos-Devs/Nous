@@ -14,6 +14,8 @@ DerivedRepresentation 保存 ordered exact inputs、strategy、representation ki
 
 成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。
 
+`DerivedRepresentation.producer_signature_id` 是可传给 Material `GetProducer` 的 canonical UUID；`producer_signature` 与 `producer.signature_hash` 是签名摘要，不能用作 producer ID。
+
 ## Selected text 与 Serving
 
 Material 对 Occurrence、Artifact、SourceRegion、DerivedRepresentation 和 DerivedRegion 提供有界文本视图。视图包含 exact reference、实际读取的 UTF-8 byte selection、总 byte 数、所选文本的 BLAKE3 content identity，以及历史 Authority snapshot digest。显式坐标必须位于合法 UTF-8 边界；读取预算截断只保留完整字符。精确读取、Serving 文档与 embedding preparation 共用这一读取实现，Region 的索引正文只包含所选片段。

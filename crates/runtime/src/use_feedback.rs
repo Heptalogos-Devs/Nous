@@ -17,16 +17,20 @@ impl CognitiveRuntimeService {
         self.require_subject(input.subject).await?;
         validate_consumer_ref(&input.consumer_ref)?;
         if input.events.is_empty() || input.events.len() > 256 {
-            return Err(Error::Invalid(
-                "ReportUse events must contain 1..256 items".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "ReportUse events must contain 1..256 items",
             ));
         }
         for event in &input.events {
             if event.occurred_at < DateTime::<Utc>::UNIX_EPOCH
                 || event.occurred_at > self.now(input.subject) + chrono::Duration::minutes(5)
             {
-                return Err(Error::Invalid(
-                    "UseEvent occurred_at is outside the allowed range".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "UseEvent occurred_at is outside the allowed range",
                 ));
             }
             if !matches!(
@@ -36,16 +40,29 @@ impl CognitiveRuntimeService {
                     | CognitiveRef::EpisodeRevision(_)
                     | CognitiveRef::JournalRevision(_)
             ) {
-                return Err(Error::Invalid(
-                    "UseEvent requires an exact cognition revision".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "UseEvent requires an exact cognition revision",
                 ));
             }
             if serde_json::to_vec(&event.context)
-                .map_err(|error| Error::Invalid(error.to_string()))?
+                .map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "UseEvent request could not be encoded",
+                    )
+                    .with_source(error)
+                })?
                 .len()
                 > 16 * 1024
             {
-                return Err(Error::Invalid("UseEvent context exceeds 16 KiB".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "UseEvent context exceeds 16 KiB",
+                ));
             }
             validate_context_metadata(&event.context)?;
         }
@@ -59,8 +76,10 @@ impl CognitiveRuntimeService {
             let same_subject: Option<Uuid> = sqlx::query_scalar("SELECT session_id FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2 AND closed_at IS NULL FOR UPDATE")
                 .bind(input.subject.0).bind(session.0).fetch_optional(&mut *tx).await.map_err(db)?;
             if same_subject.is_none() {
-                return Err(Error::FailedPrecondition(
-                    "session is closed or not owned by Subject".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "session is closed or not owned by Subject",
                 ));
             }
         }
@@ -85,8 +104,9 @@ impl CognitiveRuntimeService {
                 seen.insert((input.consumer_ref.clone(), event.event_id), digest.clone())
             {
                 if existing != digest {
-                    return Err(DomainError::new(
-                        DomainErrorCode::OperationIdConflict,
+                    return Err(nous_core::Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::OperationIdConflict,
                         "Duplicate event in ReportUse has different content",
                     )
                     .with_context("event_id", event.event_id.0)
@@ -118,8 +138,9 @@ impl CognitiveRuntimeService {
             if let Some(stored) = stored_digest.as_ref()
                 && stored != &digest
             {
-                return Err(DomainError::new(
-                    DomainErrorCode::OperationIdConflict,
+                return Err(nous_core::Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::OperationIdConflict,
                     "UseEvent idempotency key has a different request digest",
                 )
                 .with_context("event_id", event.event_id.0)
@@ -223,15 +244,28 @@ impl CognitiveRuntimeService {
                 }
                 let count:i64=sqlx::query_scalar("SELECT count(*) FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind=$2 AND ref_value=$3 AND use_kind IN ('referenced','acted_on','result_supported','result_refuted','corrected','pinned')")
                     .bind(input.subject.0).bind(kind).bind(value).fetch_one(&mut *tx).await.map_err(db)?;
-                let count = u64::try_from(count)
-                    .map_err(|_| Error::Infrastructure("invalid use count".into()))?;
+                let count = u64::try_from(count).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InternalFailure,
+                        "invalid use count",
+                    )
+                    .with_source(error)
+                })?;
                 let added = u64::try_from(
                     concept_times
                         .iter()
                         .filter(|(k, v, _)| k == kind && v == value)
                         .count(),
                 )
-                .map_err(|_| Error::Infrastructure("invalid use count".into()))?;
+                .map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InternalFailure,
+                        "invalid use count",
+                    )
+                    .with_source(error)
+                })?;
                 if count / threshold > count.saturating_sub(added) / threshold {
                     self.enqueue_maintenance_in(
                         &mut tx,
@@ -260,8 +294,10 @@ fn validate_consumer_ref(value: &str) -> Result<()> {
         || value.chars().any(char::is_whitespace)
         || value.matches(':').count() < 2
     {
-        return Err(Error::Invalid(
-            "consumer_ref must be a namespaced opaque reference".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "consumer_ref must be a namespaced opaque reference",
         ));
     }
     Ok(())
@@ -276,9 +312,10 @@ fn validate_context_metadata(value: &serde_json::Value) -> Result<()> {
             key.as_str(),
             "raw" | "prompt" | "content" | "memory_text" | "artifact_bytes"
         ) {
-            return Err(Error::Invalid(
-                "UseEvent context may contain metadata only; raw content fields are forbidden"
-                    .into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "UseEvent context may contain metadata only; raw content fields are forbidden",
             ));
         }
     }
@@ -308,8 +345,10 @@ async fn validate_use_target_in(
             id.0,
         ),
         _ => {
-            return Err(Error::Invalid(
-                "UseEvent requires an exact cognition revision".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "UseEvent requires an exact cognition revision",
             ));
         }
     };
@@ -320,12 +359,16 @@ async fn validate_use_target_in(
         .await
         .map_err(db)?;
     match state.as_deref() {
-        None => Err(Error::NotFound(
-            "UseEvent revision is not in Subject".into(),
+        None => Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::NotFound,
+            "UseEvent revision is not in Subject",
         )),
         Some("normal") => Ok(()),
-        Some(_) => Err(Error::FailedPrecondition(
-            "UseEvent target is purging".into(),
+        Some(_) => Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::FailedPrecondition,
+            "UseEvent target is purging",
         )),
     }
 }

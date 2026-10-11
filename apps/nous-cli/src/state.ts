@@ -5,17 +5,12 @@ import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { parse, stringify } from "devalue";
+import { parse as parseDevalue, stringify as stringifyDevalue } from "devalue";
 import { lock } from "proper-lockfile";
 import writeAtomic from "write-file-atomic";
 import { z } from "zod";
 import type { ConsumerStatePolicy } from "@nous-wave/client/consumer-policy";
 import { CliError } from "./agent.js";
-import {
-  protocolSchema,
-  protocolSchemaByName,
-  restoreProtocolData,
-} from "@nous-wave/client/data";
 
 const reference = z.strictObject({
   kind: z.string().max(64),
@@ -35,33 +30,53 @@ const selectionSchema = z.strictObject({
     .optional(),
 });
 export type Selection = z.infer<typeof selectionSchema>;
+
+const requestSchema = z.strictObject({
+  typeName: z.string(),
+  protoJson: z.unknown(),
+});
+const resultSchema = z.strictObject({
+  typeName: z.string(),
+  protoJson: z.unknown(),
+});
+const safeErrorSchema = z.strictObject({
+  transportCode: z.number().int().optional(),
+  code: z.string().optional(),
+  owner: z.string().optional(),
+  message: z.string().max(2048),
+  recovery: z.string().optional(),
+  context: z.record(z.string(), z.string()).default({}),
+  traceId: z.string().optional(),
+});
 const receiptHeader = {
-  format: z.literal("nous.consumer.operation"),
-  name: z.string().max(128),
+  format: z.literal("nous.consumer.operation.v2"),
+  receiptId: z.string().min(1).max(128),
+  command: z.string().min(1).max(128),
+  owner: z.string().min(1).max(32),
+  operationKind: z.string().min(1).max(64),
   subjectId: z.string().optional(),
-  request: z.unknown(),
+  operationId: z.string().min(1).max(128),
+  requestDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  request: requestSchema,
+  createdAt: z.string().min(1).max(40),
+  updatedAt: z.string().min(1).max(40),
 };
-const receiptSchema = z.discriminatedUnion("status", [
+export const receiptSchema = z.discriminatedUnion("status", [
   z.strictObject({ ...receiptHeader, status: z.literal("pending") }),
+  z.strictObject({ ...receiptHeader, status: z.literal("outcome_unknown") }),
   z.strictObject({
     ...receiptHeader,
     status: z.literal("complete"),
-    result: z.unknown(),
+    result: resultSchema,
   }),
   z.strictObject({
     ...receiptHeader,
     status: z.literal("rejected"),
-    rejection: z.strictObject({
-      code: z.union([z.string(), z.number()]),
-      message: z.string(),
-      domainCode: z.string().optional(),
-      recovery: z.string().optional(),
-      context: z.record(z.string(), z.string()).optional(),
-      details: z.array(z.unknown()).optional(),
-      candidates: z.array(z.unknown()).optional(),
-    }),
+    error: safeErrorSchema,
   }),
 ]);
+export type OperationReceipt = z.infer<typeof receiptSchema>;
+
 const emptySelection = (): Selection => ({ format: "nous.consumer.selection" });
 const selectionKeys = [
   "subjectId",
@@ -97,40 +112,22 @@ export function cliState(
       throw new CliError("INVALID_ARGUMENT", "Invalid receipt ID");
     return join(directory(), "operations", `${id}.json`);
   };
-  const read = async (path: string): Promise<unknown> => {
+  const readBytes = async (path: string) => {
     const bytes = await readFile(path);
     if (bytes.byteLength > policy.file_max_bytes)
       throw new CliError(
         "INVALID_ARGUMENT",
         "Consumer state exceeds its configured byte budget",
       );
-    return parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes), {
-      ProtocolData: ([name, value]: [string, unknown]) => {
-        const schema = protocolSchemaByName(name);
-        if (!schema)
-          throw new CliError(
-            "INVALID_ARGUMENT",
-            "Stored protocol data type is unavailable",
-          );
-        return restoreProtocolData(value, schema);
-      },
-    });
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   };
-  const write = async (path: string, value: unknown) => {
-    const text = stringify(value, {
-      ProtocolData: (member) => {
-        const schema = protocolSchema(member);
-        return schema
-          ? [schema.typeName, { ...(member as object) }]
-          : undefined;
-      },
-    });
-    if (Buffer.byteLength(text) > policy.file_max_bytes)
+  const writeText = async (path: string, value: string) => {
+    if (Buffer.byteLength(value) > policy.file_max_bytes)
       throw new CliError(
         "RESOURCE_EXHAUSTED",
         "Consumer state exceeds its configured byte budget",
       );
-    await writeAtomic(path, text, { mode: 0o600 });
+    await writeAtomic(path, value, { mode: 0o600 });
   };
   const transaction = async <T>(work: () => Promise<T>) => {
     const path = directory();
@@ -153,10 +150,25 @@ export function cliState(
   const selection = async (): Promise<Selection> => {
     if (!root) return emptySelection();
     try {
-      return selectionSchema.parse(await read(selectionPath()));
+      return selectionSchema.parse(
+        parseDevalue(await readBytes(selectionPath())),
+      );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT")
         return emptySelection();
+      throw error;
+    }
+  };
+  const receipt = async (id: string): Promise<OperationReceipt> => {
+    try {
+      return receiptSchema.parse(JSON.parse(await readBytes(receiptPath(id))));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw error;
+      if (error instanceof SyntaxError || error instanceof z.ZodError)
+        throw new CliError(
+          "INVALID_ARGUMENT",
+          "Receipt is not a valid v2 operation receipt and cannot be replayed",
+        );
       throw error;
     }
   };
@@ -205,14 +217,17 @@ export function cliState(
         const merged = { ...current };
         for (const name of changed)
           Object.assign(merged, { [name]: desired[name] });
-        await write(selectionPath(), merged);
+        await writeText(selectionPath(), stringifyDevalue(merged));
       });
     },
-    async receipt(id: string) {
-      return receiptSchema.parse(await read(receiptPath(id)));
-    },
-    async writeReceipt(id: string, value: z.infer<typeof receiptSchema>) {
-      const receipt = receiptSchema.parse(value);
+    receipt,
+    async writeReceipt(id: string, value: OperationReceipt) {
+      const next = receiptSchema.parse(value);
+      if (next.receiptId !== id)
+        throw new CliError(
+          "INVALID_ARGUMENT",
+          "Receipt file identity mismatch",
+        );
       await transaction(async () => {
         const path = receiptPath(id);
         const operations = join(directory(), "operations");
@@ -221,22 +236,28 @@ export function cliState(
           /^[a-zA-Z0-9_-]+\.json$/.test(name),
         );
         if (files.includes(`${id}.json`)) {
-          const previous = receiptSchema.parse(await read(path));
-          if (
-            previous.name !== receipt.name ||
-            previous.subjectId !== receipt.subjectId ||
-            !isDeepStrictEqual(previous.request, receipt.request)
-          )
+          const previous = await receipt(id);
+          const immutable = (item: OperationReceipt) => ({
+            receiptId: item.receiptId,
+            command: item.command,
+            owner: item.owner,
+            operationKind: item.operationKind,
+            subjectId: item.subjectId,
+            operationId: item.operationId,
+            requestDigest: item.requestDigest,
+            request: item.request,
+            createdAt: item.createdAt,
+          });
+          if (!isDeepStrictEqual(immutable(previous), immutable(next)))
             throw new CliError(
               "STATE_CONFLICT",
               "Receipt identity already belongs to another frozen request",
             );
-          if (previous.status !== "pending") {
-            if (
-              receipt.status === "pending" ||
-              isDeepStrictEqual(previous, receipt)
-            )
-              return;
+          if (
+            previous.status === "complete" ||
+            previous.status === "rejected"
+          ) {
+            if (isDeepStrictEqual(previous, next)) return;
             throw new CliError(
               "STATE_CONFLICT",
               "Receipt already has a different terminal outcome",
@@ -249,10 +270,14 @@ export function cliState(
         ) {
           let remaining = files.length;
           for (const file of files) {
-            const old = receiptSchema.parse(await read(join(operations, file)));
-            if (old.status !== "pending") {
-              await unlink(join(operations, file));
-              if (--remaining < policy.receipt_limit) break;
+            try {
+              const old = await receipt(file.slice(0, -5));
+              if (old.status === "complete" || old.status === "rejected") {
+                await unlink(join(operations, file));
+                if (--remaining < policy.receipt_limit) break;
+              }
+            } catch {
+              // Unknown or malformed files remain as preserved evidence.
             }
           }
           if (remaining >= policy.receipt_limit)
@@ -261,7 +286,7 @@ export function cliState(
               "Unresolved operation receipts reached the configured limit; recover them before another mutation",
             );
         }
-        await write(path, receipt);
+        await writeText(path, JSON.stringify(next));
       });
     },
   };

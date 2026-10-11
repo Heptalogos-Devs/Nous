@@ -1,11 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    assets::build::{DenseManifest, implementation},
-    assets::files::*,
-    *,
-};
+use crate::{assets::build::DenseManifest, assets::files::*, *};
 use sqlx::Row;
 use std::path::Path;
 
@@ -25,76 +21,120 @@ impl ServingService {
         family: &str,
         snapshot: &nous_configuration::ConfigSnapshot,
     ) -> Result<String> {
-        let capabilities = self.projection_capabilities(subject).await?;
-        let mut config = serde_json::json!({"memory_enabled":capabilities.memory});
-        if family == "topology"
+        let family_keys = super::family::family_config_keys(family).ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "unknown physical Serving family",
+            )
+        })?;
+        let is_vcp_topology = family == "topology"
             && matches!(
                 snapshot.get(nous_runtime::COGNITIVE_PROFILE)?,
                 nous_runtime::CognitiveProfile::VcpDtsc
                     | nous_runtime::CognitiveProfile::VcpRiverMemo
-            )
-        {
+            );
+        let mut config_keys = family_keys;
+        if family == "topology" {
+            if is_vcp_topology {
+                config_keys.retain(|key| !crate::WAVE_BUILD_CONFIG_KEYS.contains(key));
+            } else {
+                config_keys.retain(|key| *key != crate::VCP_ASSETS.path());
+            }
+        }
+        let configuration_digest = snapshot.digest_for(&config_keys)?;
+        let capabilities = self.projection_capabilities(subject).await?;
+        let mut config = serde_json::json!({});
+        config["configuration_digest"] = serde_json::json!(configuration_digest);
+        if matches!(family, "lexical" | "dense" | "topology") {
+            config["memory_enabled"] = serde_json::json!(capabilities.memory);
+        }
+        if is_vcp_topology {
             let provider = self.embedding().ok_or_else(|| {
-                Error::Unavailable(
-                    "VCP serving build requires configured embedding material".into(),
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::Unavailable,
+                    "Service unavailable",
                 )
             })?;
-            config["space"] = serde_json::to_value(provider.space())
-                .map_err(|e| Error::Infrastructure(e.to_string()))?;
-            config["producer"] = serde_json::to_value(provider.producer())
-                .map_err(|e| Error::Infrastructure(e.to_string()))?;
-            config["policy_digest"] = serde_json::Value::String(
-                snapshot.digest_for(&["retrieval.vcp.assets", "episode.synopsis"])?,
-            );
+            config["space"] = serde_json::to_value(provider.space()).map_err(|e| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(e)
+            })?;
+            config["producer"] = serde_json::to_value(provider.producer()).map_err(|e| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(e)
+            })?;
+            config["build_policy"] = serde_json::to_value(snapshot.get(crate::VCP_ASSETS)?)
+                .map_err(|e| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(e)
+                })?;
+            config["synopsis_budget"] = serde_json::json!(snapshot.get(crate::EPISODE_SYNOPSIS)?);
             return digest(&config);
         }
         if family == "topology" {
-            config["propagation"] = serde_json::to_value(resolve_wave_config(snapshot)?)
-                .map_err(|e| Error::Infrastructure(e.to_string()))?;
+            config["build_policy"] = serde_json::to_value(resolve_wave_build_policy(snapshot)?)
+                .map_err(|e| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(e)
+                })?;
+            config["synopsis_budget"] = serde_json::json!(snapshot.get(crate::EPISODE_SYNOPSIS)?);
         }
         if matches!(family, "dense" | "concept")
             && let Some(provider) = self.embedding()
         {
-            config["space"] = serde_json::to_value(provider.space())
-                .map_err(|e| Error::Infrastructure(e.to_string()))?;
-            config["producer"] = serde_json::to_value(provider.producer())
-                .map_err(|e| Error::Infrastructure(e.to_string()))?;
+            config["space"] = serde_json::to_value(provider.space()).map_err(|e| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(e)
+            })?;
+            config["producer"] = serde_json::to_value(provider.producer()).map_err(|e| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(e)
+            })?;
         }
-        if family == "concept" {
-            config["representation_version"] = serde_json::json!(TAG_REPRESENTATION_VERSION);
+        match family {
+            "lexical" => {
+                config["synopsis_budget"] =
+                    serde_json::json!(snapshot.get(crate::EPISODE_SYNOPSIS)?);
+            }
+            "dense" => {}
+            "concept" => {
+                config["representation_version"] = serde_json::json!(TAG_REPRESENTATION_VERSION);
+            }
+            "topology" => {}
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "unknown physical Serving family",
+                ));
+            }
         }
-        let keys: &[&str] = match family {
-            "lexical" => &["serving.lexical.enabled", "episode.synopsis"],
-            "dense" => &["serving.dense.enabled", "retrieval.epa", "episode.synopsis"],
-            "topology" => &[
-                "topology.wave.hub_beta",
-                "topology.wave.hub_penalty_min",
-                "topology.wave.hub_penalty_max",
-                "topology.wave.outbound_budget",
-                "topology.wave.max_hops",
-                "topology.wave.max_states",
-                "topology.wave.max_neighbors_per_node",
-                "topology.wave.minimum_state_energy",
-                "topology.wave.immediate_return_multiplier",
-                "topology.wave.initial_budget_steps",
-                "topology.wave.normal_edge_cost",
-                "topology.wave.fir_gamma",
-                "topology.wave.quality.host_explicit",
-                "topology.wave.quality.source_evidence",
-                "topology.wave.quality.cognitive_derivation",
-                "topology.wave.quality.derived_structure",
-                "topology.wave.quality.meaningful_use",
-                "topology.wave.seed_weights.exact_target",
-                "topology.wave.seed_weights.runtime_situation",
-                "topology.wave.seed_weights.relation_cue",
-                "topology.wave.seed_weights.entity_cue",
-                "topology.wave.seed_weights.tag_cue",
-                "topology.wave.seed_weights.lexical_promoted",
-                "topology.wave.seed_weights.dense_promoted",
-            ],
-            _ => &[],
-        };
-        config["policy_digest"] = serde_json::Value::String(snapshot.digest_for(keys)?);
         digest(&config)
     }
 
@@ -107,7 +147,13 @@ impl ServingService {
             .fetch_optional(self.store.pool())
             .await
             .map_err(nous_persistence::database_error)?
-            .ok_or_else(|| Error::NotFound("subject capabilities not found".into()))?;
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::NotFound,
+                    "subject capabilities not found",
+                )
+            })?;
         Ok(ProjectionCapabilities {
             memory: self.options.memory_enabled
                 && row
@@ -324,8 +370,18 @@ impl ServingService {
         record: &ServingRecord,
         snapshot: &nous_configuration::ConfigSnapshot,
     ) -> bool {
-        let identity = record.implementation_id == implementation(&record.family)
-            && record.implementation_revision == env!("NOUS_SERVING_IMPLEMENTATION_DIGEST");
+        let Ok(family) = super::family::AssetFamily::parse(&record.family) else {
+            return false;
+        };
+        let profile = if matches!(family, super::family::AssetFamily::Topology) {
+            record.metadata.get("cognitive_profile").and_then(|value| {
+                serde_json::from_value::<nous_runtime::CognitiveProfile>(value.clone()).ok()
+            })
+        } else {
+            None
+        };
+        let identity = record.implementation_id == family.implementation()
+            && record.implementation_revision == family.implementation_revision(profile);
         identity
             && self
                 .config_digest(record.subject, &record.family, snapshot)
@@ -370,8 +426,10 @@ impl ServingService {
         let path = Path::new(&record.artifact_location);
         let sums = checksums(path)?;
         if digest(&sums)? != record.artifact_hash {
-            return Err(Error::Infrastructure(
-                "serving generation checksum mismatch".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
             ));
         }
         self.readback(path, &record.family, record.generation_id)
@@ -393,8 +451,10 @@ impl ServingService {
                 let generation: ConceptGeneration = read_json(&path.join("concept.json"))?;
                 generation.validate()?;
                 if generation.generation_id != id {
-                    return Err(Error::Infrastructure(
-                        "concept generation identity mismatch".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
                     ));
                 }
                 Ok(OpenArtifact::Concept(Arc::new(generation)))
@@ -403,8 +463,10 @@ impl ServingService {
                 if path.join("vcp.json").exists() {
                     let assets: VcpGeneration = read_json(&path.join("vcp.json"))?;
                     if assets.generation_id != id {
-                        return Err(Error::Infrastructure(
-                            "VCP generation identity mismatch".into(),
+                        return Err(Error::new(
+                            nous_core::ErrorOwner::Resource,
+                            nous_core::ErrorCode::InternalFailure,
+                            "Operation failed",
                         ));
                     }
                     assets.validate()?;
@@ -414,8 +476,10 @@ impl ServingService {
                 }
                 let artifact: TopologyArtifact = read_json(&path.join("topology.json"))?;
                 if artifact.generation_id != id {
-                    return Err(Error::Infrastructure(
-                        "topology generation identity mismatch".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
                     ));
                 }
                 Ok(OpenArtifact::Topology(Arc::new(
@@ -428,8 +492,10 @@ impl ServingService {
                     && (basis.generation_id != id
                         || basis.basis.embedding_space != manifest.space.space_hash)
                 {
-                    return Err(Error::Infrastructure(
-                        "cue basis generation/space mismatch".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
                     ));
                 }
                 let dense = DenseGeneration::open(

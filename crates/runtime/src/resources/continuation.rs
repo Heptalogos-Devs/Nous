@@ -55,8 +55,10 @@ fn validate_record(
         || (action.current_authority
             && (record.access_status != "allowed" || record.version_status != "current"))
     {
-        return Err(Error::Invalid(
-            "external resource record violates bound action".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "external resource record violates bound action",
         ));
     }
     Ok(())
@@ -69,9 +71,13 @@ fn validate_results(
     let mut seen = HashSet::new();
     let mut bytes = 0usize;
     for response in incoming {
-        let action = actions
-            .get(&response.action_id)
-            .ok_or_else(|| Error::Invalid("unknown resource action identity".into()))?;
+        let action = actions.get(&response.action_id).ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "unknown resource action identity",
+            )
+        })?;
         if !seen.insert(response.action_id)
             || response.resource_ref != action.resource
             || response.records.len() > action.limit
@@ -81,8 +87,10 @@ fn validate_results(
             )
             || (response.status != "success" && !response.records.is_empty())
         {
-            return Err(Error::Invalid(
-                "invalid or repeated resource action result".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid or repeated resource action result",
             ));
         }
         let mut entries = HashSet::new();
@@ -94,15 +102,30 @@ fn validate_results(
                 &record.reference.entry_id,
                 &record.reference.content_digest,
             )) {
-                return Err(Error::Invalid("duplicate external resource record".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "duplicate external resource record",
+                ));
             }
             bytes = bytes.saturating_add(
                 serde_json::to_vec(record)
-                    .map_err(|error| Error::Invalid(error.to_string()))?
+                    .map_err(|error| {
+                        Error::new(
+                            nous_core::ErrorOwner::Runtime,
+                            nous_core::ErrorCode::InvalidRequest,
+                            "Continuation context could not be encoded",
+                        )
+                        .with_source(error)
+                    })?
                     .len(),
             );
             if bytes > 2 * 1024 * 1024 {
-                return Err(Error::Invalid("external query records exceed 2 MiB".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "external query records exceed 2 MiB",
+                ));
             }
         }
     }

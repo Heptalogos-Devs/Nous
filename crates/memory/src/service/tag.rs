@@ -181,7 +181,11 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state != "committed" {
-                    return Err(Error::Unavailable("tag operation in progress".into()));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Concept,
+                        nous_core::ErrorCode::Unavailable,
+                        "tag operation in progress",
+                    ));
                 }
                 let ids: Vec<(Uuid, Uuid)> = sqlx::query_as("SELECT child_tag_id,child_revision_id FROM tag_lineage WHERE subject_id=$1 AND operation_id=$2 AND relation='split_into' ORDER BY child_index")
                     .bind(subject.0).bind(input.operation_id.0).fetch_all(self.store.pool()).await.map_err(db)?;
@@ -224,13 +228,30 @@ impl MemoryService {
         receipt: nous_persistence::MutationReceipt,
     ) -> Result<Tag> {
         if receipt.state != "committed" {
-            return Err(Error::Unavailable("tag operation in progress".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::Unavailable,
+                "tag operation in progress",
+            ));
         }
         let id = receipt
             .result_ref
-            .ok_or_else(|| Error::Infrastructure("tag receipt missing result".into()))?
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InternalFailure,
+                    "tag receipt missing result",
+                )
+            })?
             .parse()
-            .map_err(|_| Error::Infrastructure("invalid Tag receipt".into()))?;
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InternalFailure,
+                    "invalid Tag receipt",
+                )
+                .with_source(error)
+            })?;
         let mut tag = self.tag(subject, TagId(id)).await?;
         if let Some(revision) = receipt.result_revision {
             tag.current_revision_id = revision;
@@ -303,12 +324,13 @@ impl MemoryService {
         target: &TagExpectation,
     ) -> Result<()> {
         let row = sqlx::query("SELECT current_revision_id,status FROM tags WHERE subject_id=$1 AND tag_id=$2 FOR UPDATE")
-            .bind(subject.0).bind(target.tag_id.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::NotFound("Tag outside Subject".into()))?;
+            .bind(subject.0).bind(target.tag_id.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "Tag outside Subject"))?;
         if row.try_get::<Uuid, _>("current_revision_id").map_err(db)? != target.expected_revision_id
             || row.try_get::<String, _>("status").map_err(db)? != "active"
         {
-            return Err(DomainError::new(
-                DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::StaleRevision,
                 "Tag head or status changed",
             )
             .with_context("tag_id", target.tag_id.0)
@@ -324,11 +346,19 @@ impl MemoryService {
         input: &MergeTagsInput,
     ) -> Result<()> {
         if input.retired.is_empty() || input.retired.len() > 7 {
-            return Err(Error::Invalid("merge requires 1..7 retired Tags".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InvalidRequest,
+                "merge requires 1..7 retired Tags",
+            ));
         }
         let mut ids = HashSet::from([input.survivor.tag_id]);
         if input.retired.iter().any(|tag| !ids.insert(tag.tag_id)) {
-            return Err(Error::Invalid("duplicate merge Tag".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InvalidRequest,
+                "duplicate merge Tag",
+            ));
         }
         self.validate_tag_lineage_in(tx, subject, &input.basis)
             .await?;
@@ -361,13 +391,21 @@ impl MemoryService {
         producer: Option<&ProducerSignature>,
     ) -> Result<Vec<Tag>> {
         if !(2..=8).contains(&input.children.len()) {
-            return Err(Error::Invalid("split requires 2..8 child concepts".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InvalidRequest,
+                "split requires 2..8 child concepts",
+            ));
         }
         let mut labels = HashSet::new();
         for child in &input.children {
             child.validate()?;
             if !labels.insert(child.label.trim().to_lowercase()) {
-                return Err(Error::Invalid("duplicate split concept".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "duplicate split concept",
+                ));
             }
         }
         self.validate_tag_lineage_in(tx, subject, &input.basis)
@@ -400,13 +438,19 @@ impl MemoryService {
         basis: &[RevisionBasis],
     ) -> Result<()> {
         if !(1..=16).contains(&basis.len()) {
-            return Err(Error::Invalid("Tag lineage needs 1..16 exact basis".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InvalidRequest,
+                "Tag lineage needs 1..16 exact basis",
+            ));
         }
         let mut keys = HashSet::new();
         for basis in basis {
             if matches!(basis, RevisionBasis::Seed(_)) || !keys.insert(basis.canonical_key()) {
-                return Err(Error::Invalid(
-                    "invalid or duplicate Tag lineage support".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid or duplicate Tag lineage support",
                 ));
             }
         }
@@ -430,7 +474,7 @@ impl MemoryService {
         basis: &[RevisionBasis],
     ) -> Result<()> {
         sqlx::query("INSERT INTO tag_lineage(lineage_id,subject_id,operation_id,parent_tag_id,child_tag_id,parent_revision_id,child_revision_id,child_index,relation,basis,created_at) SELECT $1,$2,$3,$4,$5,p.current_revision_id,c.current_revision_id,$6,$7,$8,$9 FROM tags p JOIN tags c ON c.subject_id=p.subject_id WHERE p.subject_id=$2 AND p.tag_id=$4 AND c.tag_id=$5")
-            .bind(Uuid::now_v7()).bind(subject.0).bind(operation.0).bind(parent.0).bind(child.0).bind(i32::try_from(index).map_err(|_| Error::Invalid("lineage index exceeded".into()))?).bind(relation).bind(serde_json::to_value(basis).map_err(|e| Error::Infrastructure(e.to_string()))?).bind(AuthorityStore::authority_time_in(tx).await?).execute(&mut **tx).await.map_err(db)?;
+            .bind(Uuid::now_v7()).bind(subject.0).bind(operation.0).bind(parent.0).bind(child.0).bind(i32::try_from(index).map_err(|error| Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::InvalidRequest, "lineage index exceeded").with_source(error))?).bind(relation).bind(serde_json::to_value(basis).map_err(|e| Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::InternalFailure, "lineage index exceeded").with_source(e))?).bind(AuthorityStore::authority_time_in(tx).await?).execute(&mut **tx).await.map_err(db)?;
         Ok(())
     }
     async fn sync_tag_identity_in(
@@ -454,7 +498,7 @@ impl MemoryService {
     }
     pub(in crate::service) async fn tag(&self, subject: SubjectId, tag_id: TagId) -> Result<Tag> {
         let row = sqlx::query("SELECT tag_id,subject_id,current_revision_id,canonical_tag_id,created_at,status FROM tags WHERE subject_id=$1 AND tag_id=$2")
-            .bind(subject.0).bind(tag_id.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(|| Error::NotFound("Tag not found".into()))?;
+            .bind(subject.0).bind(tag_id.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Concept, nous_core::ErrorCode::NotFound, "Tag not found"))?;
         Ok(Tag {
             tag_id: TagId(row.try_get("tag_id").map_err(db)?),
             subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),
@@ -471,7 +515,11 @@ impl MemoryService {
 
 fn canonical_concept_producer(producer: &ProducerSignature) -> Result<ProducerSignature> {
     if producer.operation != CapabilityOperation::ConceptMaintenanceText {
-        return Err(Error::Invalid("concept producer operation mismatch".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Concept,
+            nous_core::ErrorCode::InvalidRequest,
+            "concept producer operation mismatch",
+        ));
     }
     AuthorityStore::canonical_producer(producer)
 }

@@ -11,16 +11,34 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 
 pub fn id(value: &str) -> Result<Uuid> {
-    value
-        .parse()
-        .map_err(|_| Error::Invalid("invalid UUID".into()))
+    value.parse().map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InvalidRequest,
+            "invalid UUID",
+        )
+        .with_source(error)
+    })
 }
 pub fn required<T>(value: Option<T>, name: &str) -> Result<T> {
-    value.ok_or_else(|| Error::Invalid(format!("{name} is required")))
+    value.ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InvalidRequest,
+            "Required field is missing",
+        )
+        .with_context("field", name)
+    })
 }
 pub fn enum_value<T: DeserializeOwned>(value: &str) -> Result<T> {
-    serde_json::from_value(serde_json::Value::String(value.into()))
-        .map_err(|_| Error::Invalid(format!("invalid enum value: {value}")))
+    serde_json::from_value(serde_json::Value::String(value.into())).map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
+        )
+        .with_source(error)
+    })
 }
 pub fn enum_name<T: Serialize>(value: T) -> String {
     serde_json::to_value(value).map_or_else(
@@ -36,10 +54,19 @@ pub fn time(value: Option<Timestamp>) -> Result<Option<DateTime<Utc>>> {
     value
         .map(|value| {
             if !(0..1_000_000_000).contains(&value.nanos) {
-                return Err(Error::Invalid("invalid timestamp nanos".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Kernel,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid timestamp nanos",
+                ));
             }
-            DateTime::from_timestamp(value.seconds, value.nanos as u32)
-                .ok_or_else(|| Error::Invalid("invalid timestamp".into()))
+            DateTime::from_timestamp(value.seconds, value.nanos as u32).ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Kernel,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid timestamp",
+                )
+            })
         })
         .transpose()
 }
@@ -56,7 +83,13 @@ pub fn temporal(value: Option<p::TemporalExtent>) -> Result<TemporalExtent> {
     };
     match value.value {
         Some(p::temporal_extent::Value::Instant(value)) => Ok(TemporalExtent::Instant {
-            at: time(Some(value))?.ok_or_else(|| Error::Invalid("invalid instant".into()))?,
+            at: time(Some(value))?.ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Kernel,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid instant",
+                )
+            })?,
         }),
         Some(p::temporal_extent::Value::Interval(value)) => Ok(TemporalExtent::Interval {
             start: time(value.start)?,
@@ -84,15 +117,21 @@ pub fn temporal_proto(value: &TemporalExtent) -> p::TemporalExtent {
 }
 
 pub fn basis(value: p::RevisionBasis) -> Result<RevisionBasis> {
-    match value
-        .basis
-        .ok_or_else(|| Error::Invalid("revision support is empty".into()))?
-    {
+    match value.basis.ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InvalidRequest,
+            "revision support is empty",
+        )
+    })? {
         p::revision_basis::Basis::Evidence(value) => {
-            let locator = match value
-                .locator
-                .ok_or_else(|| Error::Invalid("evidence locator is empty".into()))?
-            {
+            let locator = match value.locator.ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Kernel,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "evidence locator is empty",
+                )
+            })? {
                 p::evidence_ref::Locator::WholeOccurrence(_) => EvidenceLocator::WholeOccurrence,
                 p::evidence_ref::Locator::SourceRegionId(value) => {
                     EvidenceLocator::SourceRegion(nous_core::SourceRegionId(id(&value)?))
@@ -134,8 +173,10 @@ pub fn basis(value: p::RevisionBasis) -> Result<RevisionBasis> {
                 CognitiveRef::CognitiveSeedVersion(id) => Ok(RevisionBasis::Seed(
                     nous_core::SeedBasisRef::new(id, value.semantic_path)?,
                 )),
-                _ => Err(Error::Invalid(
-                    "seed support must target a Cognitive Seed version".into(),
+                _ => Err(Error::new(
+                    nous_core::ErrorOwner::Kernel,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 )),
             }
         }
@@ -267,18 +308,27 @@ pub fn to_object(json: serde_json::Value) -> Option<Struct> {
 pub fn page(page: Option<p::Page>, scope: &str) -> Result<(i64, Option<Uuid>)> {
     let page = page.unwrap_or_default();
     if page.page_size > 200 {
-        return Err(Error::Invalid("page_size exceeds 200".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InvalidRequest,
+            "page_size exceeds 200",
+        ));
     }
     let last = if page.page_token.is_empty() {
         None
     } else {
-        let (digest, last) = page
-            .page_token
-            .split_once('.')
-            .ok_or_else(|| Error::Invalid("invalid page token".into()))?;
+        let (digest, last) = page.page_token.split_once('.').ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Kernel,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid page token",
+            )
+        })?;
         if digest != blake3::hash(scope.as_bytes()).to_hex().as_str() {
-            return Err(Error::Invalid(
-                "page token belongs to another request".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Kernel,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         Some(id(last)?)

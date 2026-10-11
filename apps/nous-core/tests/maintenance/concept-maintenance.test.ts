@@ -3,7 +3,8 @@
 
 import {
   domainError,
-  DomainErrorCode,
+  ErrorCode,
+  ErrorOwner,
   ErrorRecovery,
 } from "@nous-wave/client/errors";
 import { create } from "@bufbuild/protobuf";
@@ -252,7 +253,8 @@ it("continues after a stale item and exposes owner invariant failure", async () 
   const f = fixture();
   f.association.mockRejectedValueOnce(
     domainError("Stale endpoint", Code.Aborted, {
-      code: DomainErrorCode.STALE_REVISION,
+      owner: ErrorOwner.CONCEPT,
+      code: ErrorCode.STALE_REVISION,
       recovery: ErrorRecovery.REFRESH_STATE,
     }),
   );

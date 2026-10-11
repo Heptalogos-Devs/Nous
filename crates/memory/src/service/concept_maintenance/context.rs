@@ -72,8 +72,10 @@ impl MemoryService {
                     Vec::new(),
                 ))
             }
-            _ => Err(Error::Invalid(
-                "concept focus must be exact cognition".into(),
+            _ => Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InvalidRequest,
+                "concept focus must be exact cognition",
             )),
         }
     }
@@ -120,8 +122,10 @@ impl MemoryService {
                 serde_json::json!({"temporalScope":self.journal_revision(subject,*id).await?.revision.temporal_scope})
             }
             _ => {
-                return Err(Error::Invalid(
-                    "concept focus must be exact cognition".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "concept focus must be exact cognition",
                 ));
             }
         };
@@ -147,8 +151,16 @@ impl MemoryService {
                 self.objects
                     .read_text_prefix(
                         &row.try_get::<String, _>("content_hash").map_err(db)?,
-                        u64::try_from(row.try_get::<i64, _>("byte_length").map_err(db)?)
-                            .map_err(|_| Error::Infrastructure("invalid source size".into()))?,
+                        u64::try_from(row.try_get::<i64, _>("byte_length").map_err(db)?).map_err(
+                            |error| {
+                                Error::new(
+                                    nous_core::ErrorOwner::Concept,
+                                    nous_core::ErrorCode::InternalFailure,
+                                    "invalid source size",
+                                )
+                                .with_source(error)
+                            },
+                        )?,
                         remaining.min(2048) as u64,
                     )
                     .await?

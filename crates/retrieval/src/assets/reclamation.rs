@@ -13,6 +13,112 @@ pub struct ReclamationReport {
 }
 
 impl ServingService {
+    /// Purge is epoch-scoped and deliberately bypasses the ordinary grace and
+    /// research-pin protections. Active immutable query leases remain the only
+    /// reason an old artifact survives a completed checkpoint.
+    pub async fn reclaim_purged(
+        &self,
+        subject: SubjectId,
+        current_epoch: i64,
+    ) -> Result<ReclamationReport> {
+        let Ok(_exclusive) = self.read_gate.clone().try_write_owned() else {
+            return Ok(ReclamationReport {
+                readers_active: true,
+                ..Default::default()
+            });
+        };
+        let readers = self
+            .query_readers
+            .lock()
+            .map_err(|_| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "serving reader registry unavailable",
+                )
+            })?
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect::<Vec<_>>();
+        let mut tx = self.store.begin().await?;
+        let actual_epoch: i64 = sqlx::query_scalar(
+            "SELECT serving_purge_epoch FROM subjects WHERE subject_id=$1 FOR SHARE",
+        )
+        .bind(subject.0)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(nous_persistence::database_error)?;
+        if actual_epoch < current_epoch {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::FailedPrecondition,
+                "Serving purge checkpoint is not visible",
+            ));
+        }
+        let current_epoch = actual_epoch;
+        let old_ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT generation_id FROM serving_generations WHERE subject_id=$1 AND purge_epoch<$2 AND artifact_location<>''",
+        )
+        .bind(subject.0)
+        .bind(current_epoch)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(nous_persistence::database_error)?;
+
+        sqlx::query("DELETE FROM serving_current c USING serving_generations g WHERE c.generation_id=g.generation_id AND c.subject_id=$1 AND g.purge_epoch<$2")
+            .bind(subject.0).bind(current_epoch).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
+        sqlx::query("UPDATE serving_generations SET state='retired',published_at=COALESCE(published_at,$3),metadata=metadata-'research_pinned' WHERE subject_id=$1 AND purge_epoch<$2 AND state IN ('ready','retired','failed')")
+            .bind(subject.0).bind(current_epoch).bind(chrono::Utc::now()).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
+
+        // Remove process-owned references before touching bytes. Active readers
+        // retain their own Arc snapshot and are checked below.
+        let retained: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT g.generation_id FROM serving_current c JOIN serving_generations g USING(generation_id) WHERE c.subject_id=$1 AND g.purge_epoch>=$2 AND g.state='ready'")
+            .bind(subject.0).bind(current_epoch).fetch_all(&mut *tx).await.map_err(nous_persistence::database_error)?;
+        self.publisher.update_for(subject, |snapshot| {
+            snapshot.retain_generations(retained.iter().copied().map(ServingGenerationId));
+        });
+
+        let mut report = ReclamationReport::default();
+        for id in old_ids {
+            let id = ServingGenerationId(id);
+            if readers
+                .iter()
+                .any(|reader| reader.snapshot.contains_generation(id))
+            {
+                report.readers_active = true;
+                continue;
+            }
+            let row = sqlx::query("SELECT artifact_location FROM serving_generations WHERE generation_id=$1 AND subject_id=$2 AND purge_epoch<$3 FOR UPDATE")
+                .bind(id.0).bind(subject.0).bind(current_epoch).fetch_optional(&mut *tx).await.map_err(nous_persistence::database_error)?;
+            let Some(row) = row else { continue };
+            let location: String = row
+                .try_get("artifact_location")
+                .map_err(nous_persistence::database_error)?;
+            if location.is_empty() {
+                continue;
+            }
+            let path = PathBuf::from(&location);
+            if path != self.options.root.join(id.0.to_string()) {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "Serving purge artifact is outside its owned root",
+                ));
+            }
+            if path.exists() {
+                report.bytes_reclaimed += directory_bytes(&path)?;
+                std::fs::remove_dir_all(&path).map_err(io)?;
+            }
+            sqlx::query("UPDATE serving_generations SET state='failed',artifact_location='',metadata=jsonb_build_object('reclaimed_at',$2::text,'artifact_hash',artifact_hash) WHERE generation_id=$1")
+                .bind(id.0).bind(chrono::Utc::now().to_rfc3339()).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
+            report.reclaimed.push(id);
+        }
+        tx.commit()
+            .await
+            .map_err(nous_persistence::database_error)?;
+        Ok(report)
+    }
+
     /// A reader includes the complete query and any retained validation ticket.
     /// A busy reader defers collection instead of waiting on an external call.
     pub async fn reclaim_retired(
@@ -29,13 +135,25 @@ impl ServingService {
         let readers = self
             .query_readers
             .lock()
-            .map_err(|_| Error::Infrastructure("serving reader registry unavailable".into()))?
+            .map_err(|_| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "serving reader registry unavailable",
+                )
+            })?
             .iter()
             .filter_map(std::sync::Weak::upgrade)
             .collect::<Vec<_>>();
         let cutoff = chrono::Utc::now()
-            - chrono::Duration::from_std(grace)
-                .map_err(|error| Error::Invalid(error.to_string()))?;
+            - chrono::Duration::from_std(grace).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
+                )
+                .with_source(error)
+            })?;
         let mut tx = self.store.begin().await?;
         // Superseded physical families leave the active catalog once. Their
         // artifacts retain the same reader, research pin and grace protection.
@@ -129,7 +247,11 @@ impl ServingService {
         let changed = sqlx::query("UPDATE serving_generations SET metadata=jsonb_set(metadata,'{research_pinned}',$2) WHERE generation_id=$1 AND state IN ('ready','retired')")
             .bind(id.0).bind(serde_json::json!(pinned)).execute(self.store.pool()).await.map_err(nous_persistence::database_error)?;
         if changed.rows_affected() == 0 {
-            return Err(Error::NotFound("reusable generation not found".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::NotFound,
+                "reusable generation not found",
+            ));
         }
         Ok(())
     }
@@ -141,8 +263,10 @@ fn directory_bytes(path: &std::path::Path) -> Result<u64> {
         let entry = entry.map_err(io)?;
         let kind = entry.file_type().map_err(io)?;
         if kind.is_symlink() {
-            return Err(Error::Infrastructure(
-                "serving artifact contains a symbolic link".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
             ));
         }
         bytes += if kind.is_dir() {

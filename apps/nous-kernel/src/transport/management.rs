@@ -87,7 +87,13 @@ impl KernelService {
             .into_iter()
             .find(|r| r.descriptor.resource_ref.as_str() == input.id)
             .map(|r| resource(r.descriptor))
-            .ok_or_else(|| Error::NotFound("resource not found".into()))
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::NotFound,
+                    "resource not found",
+                )
+            })
     }
     pub(super) async fn list_resources(
         &self,
@@ -98,7 +104,11 @@ impl KernelService {
         let scope = format!("resources:{}:{}", input.subject_id, input.status);
         let page = input.page.unwrap_or_default();
         if page.page_size > 200 {
-            return Err(Error::Invalid("page_size exceeds 200".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "page_size exceeds 200",
+            ));
         }
         let limit = if page.page_size == 0 {
             50
@@ -108,12 +118,19 @@ impl KernelService {
         let last = if page.page_token.is_empty() {
             String::new()
         } else {
-            let (digest, last) = page
-                .page_token
-                .split_once('.')
-                .ok_or_else(|| Error::Invalid("invalid page token".into()))?;
+            let (digest, last) = page.page_token.split_once('.').ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid page token",
+                )
+            })?;
             if digest != blake3::hash(scope.as_bytes()).to_hex().as_str() {
-                return Err(Error::Invalid("page token scope mismatch".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "page token scope mismatch",
+                ));
             }
             last.to_owned()
         };
@@ -138,7 +155,11 @@ impl KernelService {
                 blake3::hash(scope.as_bytes()).to_hex(),
                 items
                     .last()
-                    .ok_or_else(|| Error::Internal("page continuation has no last item".into()))?
+                    .ok_or_else(|| Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "page continuation has no last item"
+                    ))?
                     .resource_ref
             )
         } else {

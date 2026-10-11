@@ -293,7 +293,11 @@ fn compile_expression(
     depth: usize,
 ) -> Result<CognitiveQueryExpr> {
     if depth > 16 {
-        return Err(Error::Invalid("query expression depth exceeded".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "query expression depth exceeded",
+        ));
     }
     let modifiers = expression.modifiers.unwrap_or_default();
     if !root
@@ -308,14 +312,24 @@ fn compile_expression(
             || modifiers.clock_now.is_some()
             || !modifiers.temporal_expressions.is_empty())
     {
-        return Err(Error::Invalid("execution controls are root-only".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "execution controls are root-only",
+        ));
     }
     let mut node = CognitiveQueryExpr {
         operation: match expression.operation.as_str() {
             "atom" => QueryOperation::Atom,
             "all" => QueryOperation::All,
             "any" => QueryOperation::Any,
-            _ => return Err(Error::Invalid("unknown query expression operation".into())),
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "unknown query expression operation",
+                ));
+            }
         },
         ..Default::default()
     };
@@ -325,7 +339,11 @@ fn compile_expression(
     for preference in modifiers.preferences {
         let operand = if let Some(cue) = preference.cue {
             if !preference.key.is_empty() {
-                return Err(Error::Invalid("preference must have one operand".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "preference must have one operand",
+                ));
             }
             let mut value = CognitiveQueryExpr::default();
             append_cue(&mut value, cue)?;
@@ -334,7 +352,11 @@ fn compile_expression(
             } else if let Some(QueryTarget::Exact { reference }) = value.targets.pop() {
                 PreferenceOperand::Exact(reference)
             } else {
-                return Err(Error::Invalid("empty preference cue".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "empty preference cue",
+                ));
             }
         } else {
             PreferenceOperand::Recent(match preference.key.as_str() {
@@ -344,8 +366,10 @@ fn compile_expression(
                 "recent:formed" => TimeAxis::Formed,
                 "recent:recorded" => TimeAxis::Recorded,
                 _ => {
-                    return Err(Error::Invalid(
-                        "recent requires an explicit time axis".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid request",
                     ));
                 }
             })
@@ -372,10 +396,13 @@ fn compile_expression(
 }
 
 fn append_cue(query: &mut CognitiveQueryExpr, cue: p::Cue) -> Result<()> {
-    match cue
-        .cue
-        .ok_or_else(|| Error::Invalid("cue is empty".into()))?
-    {
+    match cue.cue.ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "cue is empty",
+        )
+    })? {
         p::cue::Cue::Text(value) => query.cues.push(Cue::Text(TextCue { text: value })),
         p::cue::Cue::Concept(value) => query.cues.push(Cue::Concept(ConceptCue { text: value })),
         p::cue::Cue::SchemaId(value) => query.cues.push(Cue::Schema(SchemaCue {
@@ -551,7 +578,7 @@ pub(super) fn inspect_bound_query(bound: &nous_runtime::BoundQuery) -> Result<St
         "embedding_digest":bound.representation.sha256,
         "embedding_space":bound.selected_embedding_space,
     }))
-    .map_err(|error| Error::Infrastructure(error.to_string()))
+    .map_err(|error| Error::new(nous_core::ErrorOwner::Runtime, nous_core::ErrorCode::InternalFailure, "Operation failed").with_source(error))
 }
 
 fn enum_or_default<T: serde::de::DeserializeOwned + Default>(input: &str) -> Result<T> {

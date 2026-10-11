@@ -12,6 +12,9 @@ import {
   ConfigurationView,
   configurationValue,
 } from "@nous-wave/client";
+import { create, toJson, type JsonValue } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
+import { CreateSubjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { boot, prepare, stop, type Boot } from "./support.js";
 import { workspaceTemp } from "../workspace.js";
 import { resolveLocations } from "../../apps/nous-core/src/locations.js";
@@ -35,7 +38,8 @@ try {
   const firstSubject = await promisify(execFile)(
     process.execPath,
     [
-      join(locations.program, "node_modules/tsx/dist/cli.mjs"),
+      "--import",
+      import.meta.resolve("tsx"),
       join(locations.program, "apps/nous-core/src/launcher.ts"),
       "--development",
       "--locator",
@@ -53,7 +57,8 @@ try {
     const result = await promisify(execFile)(
       process.execPath,
       [
-        join(locations.program, "node_modules/tsx/dist/cli.mjs"),
+        "--import",
+        import.meta.resolve("tsx"),
         join(locations.program, "apps/nous-core/src/launcher.ts"),
         "--development",
         "--locator",
@@ -67,7 +72,7 @@ try {
       schemaVersion?: string;
       data?: unknown;
     };
-    if (args[0] !== "check") assert.equal(parsed.schemaVersion, "nous.cli.v1");
+    if (args[0] !== "check") assert.equal(parsed.schemaVersion, "nous.cli.v2");
     return (args[0] === "check" ? parsed : parsed.data) as {
       valid?: boolean;
       descriptors?: { path: string; exposure: number }[];
@@ -89,17 +94,26 @@ try {
   assert(
     standard.descriptors.every((d) => d.exposure === ConfigExposure.STANDARD),
   );
-  const schema = (await client.configuration.describe("runtime.resident_limit"))
-    .jsonSchema;
+  const schemaValue = (
+    await client.configuration.describe("runtime.resident_limit")
+  ).jsonSchema;
+  const schema = schemaValue && (toJson(ValueSchema, schemaValue) as JsonValue);
   assert(schema && typeof schema === "object" && !Array.isArray(schema));
-  assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
-  const subject = await client.subjects.create({
-    operationId: randomUUID(),
-    cognitiveSeed: {
-      text: "schema_version = 1",
-      format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
-    },
-  });
+  assert.equal(
+    (schema as Record<string, unknown>).$schema,
+    "https://json-schema.org/draft/2020-12/schema",
+  );
+  const subjectId = randomUUID();
+  const subject = await client.subjects.create(
+    create(CreateSubjectRequestSchema, {
+      subjectId,
+      operationId: randomUUID(),
+      cognitiveSeed: {
+        text: "schema_version = 1",
+        format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
+      },
+    }),
+  );
   const subjectAddress = await client.identity.bind({
     subjectId: subject.subjectId,
     canonical: { kind: "subject", value: subject.subjectId },
@@ -148,7 +162,10 @@ try {
     });
     const item = result.entries[0];
     assert(item);
-    return item;
+    return {
+      ...item,
+      value: item.value ? toJson(ValueSchema, item.value) : undefined,
+    };
   };
   const revision = async () =>
     (
@@ -302,8 +319,15 @@ try {
   assert.equal(replay.revision, change.revision);
   assert.equal((await entry("maintenance.enabled")).value, true);
   await assert.rejects(
-    cli("set", "maintenance.enabled", "false", "--json"),
-    /expected-revision/,
+    cli(
+      "set",
+      "maintenance.enabled",
+      "false",
+      "--expected-revision",
+      String(await revision()),
+      "--json",
+    ),
+    /value-json/,
   );
   await assert.rejects(
     cli(
@@ -320,6 +344,7 @@ try {
   const cliArgs = [
     "set",
     "maintenance.enabled",
+    "--value-json",
     "true",
     "--operation-id",
     cliOperation,

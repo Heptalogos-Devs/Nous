@@ -32,8 +32,10 @@ impl EpaPolicy {
     }
     pub fn validate(&self) -> Result<()> {
         if self.minimum_samples > self.max_representatives {
-            return Err(Error::Invalid(
-                "EPA sample threshold exceeds representative budget".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         Ok(())

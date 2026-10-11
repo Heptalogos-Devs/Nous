@@ -15,7 +15,8 @@ test("checks physical boundaries and the actual tracked/untracked worktree with 
     join(workspacePaths.temporary, "code-length-"),
   );
   const command = [
-    join(repositoryRoot, "node_modules/tsx/dist/cli.mjs"),
+    "--import",
+    import.meta.resolve("tsx"),
     join(repositoryRoot, "scripts/dev/check-code-length.ts"),
   ];
   const options = { cwd: temporary, windowsHide: true };

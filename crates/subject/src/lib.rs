@@ -31,7 +31,7 @@ pub struct SubjectCoreService {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSubject {
-    pub subject_id: Option<SubjectId>,
+    pub subject_id: SubjectId,
     pub operation_id: OperationId,
     pub cognitive_seed: CognitiveSeedInput,
     #[serde(default)]
@@ -80,28 +80,63 @@ impl SubjectCoreService {
     pub async fn create_subject(&self, input: CreateSubject) -> Result<SubjectView> {
         input.cognitive_seed.validate()?;
         if input.operation_id.0.is_nil() {
-            return Err(Error::Invalid("operation_id is required".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Subject,
+                nous_core::ErrorCode::InvalidRequest,
+                "operation_id is required",
+            ));
         }
-        let subject = input.subject_id.unwrap_or_default();
+        let subject = input.subject_id;
+        if subject.0.is_nil() {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Subject,
+                nous_core::ErrorCode::InvalidRequest,
+                "subject_id is required",
+            ));
+        }
+        let digest = nous_core::canonical_request_digest("subject.create", subject, &input)?;
+        let guard = self.objects.reference_guard(false).await?;
+        let mut tx = self.store.begin().await?;
+        let inserted = sqlx::query("INSERT INTO subjects(subject_id,created_at,metadata) VALUES($1,$2,$3) ON CONFLICT(subject_id) DO NOTHING")
+            .bind(subject.0)
+            .bind(self.clock.now(subject))
+            .bind(&input.metadata)
+            .execute(&mut *tx)
+            .await
+            .map_err(nous_persistence::database_error)?
+            .rows_affected() == 1;
+        if !inserted {
+            let recorded: Option<String> = sqlx::query_scalar(
+                "SELECT request_digest FROM subject_seed_adoptions WHERE subject_id=$1 AND operation_id=$2 AND kind='initial'",
+            )
+            .bind(subject.0).bind(input.operation_id.0)
+            .fetch_optional(&mut *tx).await.map_err(nous_persistence::database_error)?;
+            if recorded.as_deref() != Some(digest.as_str()) {
+                return Err(nous_core::Error::new(
+                    nous_core::ErrorOwner::Subject,
+                    nous_core::ErrorCode::OperationIdConflict,
+                    "Subject identity or operation_id was used with a different creation request",
+                )
+                .with_context("subject_id", subject.0)
+                .with_context("operation_id", input.operation_id.0)
+                .into());
+            }
+            tx.commit()
+                .await
+                .map_err(nous_persistence::database_error)?;
+            drop(guard);
+            return self.subject(subject).await;
+        }
         let snapshot = self.configuration.active_system_snapshot()?;
         let process = process_capabilities(&snapshot)?;
         let capabilities = input
             .capabilities
-            .unwrap_or(subject_default_capabilities(&snapshot)?);
-        let capabilities = capabilities.require_process(process)?;
-        let guard = self.objects.reference_guard(false).await?;
+            .unwrap_or(subject_default_capabilities(&snapshot)?)
+            .require_process(process)?;
         let hash = self
             .objects
             .put(input.cognitive_seed.text.as_bytes().to_vec())
             .await?;
-        let mut tx = self.store.begin().await?;
-        sqlx::query("INSERT INTO subjects(subject_id,created_at,metadata) VALUES($1,$2,$3)")
-            .bind(subject.0)
-            .bind(self.clock.now(subject))
-            .bind(input.metadata)
-            .execute(&mut *tx)
-            .await
-            .map_err(nous_persistence::database_error)?;
         sqlx::query("INSERT INTO subject_capabilities(subject_id,memory) VALUES($1,$2)")
             .bind(subject.0)
             .bind(capabilities.memory)
@@ -117,11 +152,7 @@ impl SubjectCoreService {
                 subject,
                 operation_id: input.operation_id,
                 kind: SeedAdoptionKind::Initial,
-                digest: &nous_core::canonical_request_digest(
-                    "subject.create",
-                    subject,
-                    &input.operation_id,
-                )?,
+                digest: &digest,
                 now: self.clock.now(subject),
             },
         )
@@ -137,7 +168,7 @@ impl SubjectCoreService {
         let row = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE s.subject_id=$1")
             .bind(subject.0).fetch_optional(self.store.pool()).await
             .map_err(nous_persistence::database_error)?
-            .ok_or_else(|| Error::NotFound("subject not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Subject, nous_core::ErrorCode::NotFound, "subject not found"))?;
         Ok(SubjectView {
             subject_id: subject,
             created_at: row

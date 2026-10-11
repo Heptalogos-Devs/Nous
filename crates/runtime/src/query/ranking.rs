@@ -135,7 +135,11 @@ impl RetrievalPolicy {
             || self.validation_min == 0
             || self.validation_max < self.validation_min
         {
-            return Err(Error::Invalid("invalid retrieval policy bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid retrieval policy bounds",
+            ));
         }
         Ok(())
     }
@@ -182,8 +186,10 @@ pub fn register_retrieval_configuration(registry: &mut ConfigRegistryBuilder) ->
                 if value.is_finite() && *value > 0.0 {
                     Ok(())
                 } else {
-                    Err(Error::Invalid(
-                        "retrieval value must be finite and positive".into(),
+                    Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid request",
                     ))
                 }
             },
@@ -221,7 +227,11 @@ pub fn register_retrieval_configuration(registry: &mut ConfigRegistryBuilder) ->
                 if *value > 0 {
                     Ok(())
                 } else {
-                    Err(Error::Invalid("retrieval budget must be positive".into()))
+                    Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "retrieval budget must be positive",
+                    ))
                 }
             },
         )?;
@@ -274,7 +284,11 @@ fn register_query_allocations(
                 if *value > 0 && *value <= 65536 {
                     Ok(())
                 } else {
-                    Err(Error::Invalid("query allocation must be 1..65536".into()))
+                    Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "query allocation must be 1..65536",
+                    ))
                 }
             },
         )?;

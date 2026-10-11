@@ -70,7 +70,11 @@ impl ReferenceTransport {
                 .iter()
                 .any(|weight| !weight.is_finite() || *weight < 0.0)
         {
-            return Err(Error::Invalid("invalid reference transport".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid reference transport",
+            ));
         }
         Ok(())
     }
@@ -230,7 +234,11 @@ pub struct ReferenceEpaAnalysis {
 pub fn reference_epa_analysis(input: &ReferenceEpaInput) -> Result<ReferenceEpaAnalysis> {
     let dim = input.query.len();
     if dim != input.mean.len() || input.basis.iter().any(|axis| axis.len() != dim) {
-        return Err(Error::Invalid("reference EPA dimension mismatch".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InvalidRequest,
+            "reference EPA dimension mismatch",
+        ));
     }
     let centered = input
         .query

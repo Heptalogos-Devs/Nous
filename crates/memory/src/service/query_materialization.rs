@@ -190,8 +190,14 @@ pub(super) fn apply_historical_header(
     if view.object.purge_state != PurgeState::Normal {
         return Ok(Some("purged"));
     }
-    view.object = serde_json::from_value(state.state.clone())
-        .map_err(|e| Error::Infrastructure(format!("historical Memory header: {e}")))?;
+    view.object = serde_json::from_value(state.state.clone()).map_err(|e| {
+        Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InternalFailure,
+            "Operation failed",
+        )
+        .with_source(e)
+    })?;
     if view.object.acceptance_state != AcceptanceState::Accepted
         || view.object.integrity_state != IntegrityState::Valid
         || (view.object.suppression_state != SuppressionState::Normal

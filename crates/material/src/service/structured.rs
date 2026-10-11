@@ -10,7 +10,13 @@ fn requested_basis(payload: &serde_json::Value) -> Result<HashSet<CognitiveRef>>
     let summary = payload
         .get("summary")
         .filter(|value| value.is_object())
-        .ok_or_else(|| Error::Invalid("structured summary missing".into()))?;
+        .ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "structured summary missing",
+            )
+        })?;
     let mut fields = vec![summary];
     for group in [
         "observations",
@@ -25,25 +31,39 @@ fn requested_basis(payload: &serde_json::Value) -> Result<HashSet<CognitiveRef>>
             .get(group)
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| {
-                Error::Invalid("structured interpretation field group missing".into())
+                Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "structured interpretation field group missing",
+                )
             })?;
         if items.len() > 64 {
-            return Err(Error::Invalid(
-                "structured interpretation field count exceeded".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "structured interpretation field count exceeded",
             ));
         }
         fields.extend(items);
     }
     for item in fields {
         if item.get("basis_keys").is_some() {
-            return Err(Error::Invalid(
-                "invocation-local support keys cannot be persisted".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "invocation-local support keys cannot be persisted",
             ));
         }
         let basis_refs = item
             .get("basis_refs")
             .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| Error::Invalid("structured field lacks stable basis_refs".into()))?;
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "structured field lacks stable basis_refs",
+                )
+            })?;
         if basis_refs.len() > 16
             || ((matches!(
                 item.get("basis").and_then(serde_json::Value::as_str),
@@ -55,19 +75,33 @@ fn requested_basis(payload: &serde_json::Value) -> Result<HashSet<CognitiveRef>>
                     .is_some_and(|text| !text.trim().is_empty())))
                 && basis_refs.is_empty())
         {
-            return Err(Error::Invalid(
-                "structured field support bounds invalid".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "structured field support bounds invalid",
             ));
         }
         for basis in basis_refs {
             let kind = basis
                 .get("kind")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| Error::Invalid("invalid support kind".into()))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "invalid support kind",
+                    )
+                })?;
             let value = basis
                 .get("value")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| Error::Invalid("invalid support identity".into()))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "invalid support identity",
+                    )
+                })?;
             requested.insert(nous_core::parse_reference(kind, value)?);
         }
     }
@@ -113,8 +147,10 @@ impl MaterialService {
             allowed.insert(nous_core::parse_reference(&kind, &id.to_string())?);
         }
         if !requested.is_subset(&allowed) {
-            return Err(Error::Invalid(
-                "structured field support is outside its input graph".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "structured field support is outside its input graph",
             ));
         }
         Ok(())

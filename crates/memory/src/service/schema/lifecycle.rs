@@ -43,7 +43,11 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state != "committed" {
-                    return Err(Error::Unavailable("Schema lifecycle is in progress".into()));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::Unavailable,
+                        "Schema lifecycle is in progress",
+                    ));
                 }
                 return self
                     .schema_at(
@@ -57,7 +61,7 @@ impl MemoryService {
         };
         let row = sqlx::query("SELECT object_epoch,current_revision_id,acceptance_state,suppression_state,purge_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE")
             .bind(subject.0).bind(schema.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("CognitiveSchema not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
         fence_epoch(row.get("object_epoch"), expected_epoch)?;
         require_transition(&row.get::<String, _>(field), from)?;
         require_transition(&row.get::<String, _>("purge_state"), "normal")?;
@@ -116,7 +120,11 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state != "committed" {
-                    return Err(Error::Unavailable("Schema purge is in progress".into()));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::Unavailable,
+                        "Schema purge is in progress",
+                    ));
                 }
                 return Ok(());
             }
@@ -124,7 +132,7 @@ impl MemoryService {
         };
         let epoch: i64 = sqlx::query_scalar("SELECT object_epoch FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE")
             .bind(subject.0).bind(schema.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("CognitiveSchema not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
         fence_epoch(epoch, expected_epoch)?;
         let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
         self.invalidate_object_dependents_in(

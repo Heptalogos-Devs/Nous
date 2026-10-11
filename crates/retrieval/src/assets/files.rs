@@ -6,13 +6,27 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, path::Path};
 
 pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
-    let bytes = serde_json::to_vec(value).map_err(|e| Error::Infrastructure(e.to_string()))?;
+    let bytes = serde_json::to_vec(value).map_err(|e| {
+        Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InternalFailure,
+            "Operation failed",
+        )
+        .with_source(e)
+    })?;
     std::fs::write(path, bytes).map_err(io)
 }
 
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let bytes = std::fs::read(path).map_err(io)?;
-    serde_json::from_slice(&bytes).map_err(|e| Error::Infrastructure(e.to_string()))
+    serde_json::from_slice(&bytes).map_err(|e| {
+        Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InternalFailure,
+            "Operation failed",
+        )
+        .with_source(e)
+    })
 }
 
 pub fn checksums(root: &Path) -> Result<BTreeMap<String, String>> {
@@ -26,8 +40,10 @@ fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) -> Res
         let entry = entry.map_err(io)?;
         let kind = entry.file_type().map_err(io)?;
         if kind.is_symlink() {
-            return Err(Error::Infrastructure(
-                "serving artifact contains a symbolic link".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
             ));
         }
         if kind.is_dir() {
@@ -36,7 +52,14 @@ fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) -> Res
             let name = entry
                 .path()
                 .strip_prefix(root)
-                .map_err(|e| Error::Infrastructure(e.to_string()))?
+                .map_err(|e| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(e)
+                })?
                 .to_string_lossy()
                 .replace('\\', "/");
             let bytes = std::fs::read(entry.path()).map_err(io)?;
@@ -47,13 +70,23 @@ fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) -> Res
 }
 
 pub fn digest(value: &impl Serialize) -> Result<String> {
-    Ok(
-        blake3::hash(&serde_json::to_vec(value).map_err(|e| Error::Infrastructure(e.to_string()))?)
-            .to_hex()
-            .to_string(),
-    )
+    Ok(blake3::hash(&serde_json::to_vec(value).map_err(|e| {
+        Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InternalFailure,
+            "Operation failed",
+        )
+        .with_source(e)
+    })?)
+    .to_hex()
+    .to_string())
 }
 
 pub fn io(error: std::io::Error) -> Error {
-    Error::Infrastructure(error.to_string())
+    Error::new(
+        nous_core::ErrorOwner::Resource,
+        nous_core::ErrorCode::InternalFailure,
+        "Operation failed",
+    )
+    .with_source(error)
 }

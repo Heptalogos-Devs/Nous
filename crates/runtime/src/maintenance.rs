@@ -87,7 +87,11 @@ impl CognitiveRuntimeService {
             || request.trigger_authority_seq < 0
             || !(0..=100).contains(&request.priority)
         {
-            return Err(Error::Invalid("invalid maintenance scope or policy".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid maintenance scope or policy",
+            ));
         }
         sqlx::query_scalar(
             "INSERT INTO maintenance_needs(need_id,subject_id,kind,scope_kind,scope_ref,trigger_authority_seq,due_at,priority,state,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$9) ON CONFLICT(subject_id,kind,scope_kind,scope_ref) WHERE state IN ('pending','leased','blocked') DO UPDATE SET trigger_revision=maintenance_needs.trigger_revision+CASE WHEN maintenance_needs.state IN ('blocked','leased') OR excluded.trigger_authority_seq>maintenance_needs.trigger_authority_seq THEN 1 ELSE 0 END,state=CASE WHEN maintenance_needs.state='blocked' THEN 'pending' ELSE maintenance_needs.state END,retry_not_before=NULL,retry_count=0,blocked_config_digest=NULL, trigger_authority_seq=GREATEST(maintenance_needs.trigger_authority_seq,excluded.trigger_authority_seq),due_at=LEAST(maintenance_needs.due_at,excluded.due_at),priority=GREATEST(maintenance_needs.priority,excluded.priority),updated_at=excluded.updated_at RETURNING need_id",
@@ -131,7 +135,11 @@ impl CognitiveRuntimeService {
                     .bytes()
                     .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
         }) {
-            return Err(Error::Invalid("invalid model execution digest".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid model execution digest",
+            ));
         }
         if limit == 0
             || limit > 128
@@ -141,7 +149,11 @@ impl CognitiveRuntimeService {
                 .iter()
                 .any(|kind| !MAINTENANCE_KINDS.contains(&kind.as_str()))
         {
-            return Err(Error::Invalid("invalid maintenance claim envelope".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid maintenance claim envelope",
+            ));
         }
         let mut tx = self.store.begin().await?;
         let now = self.now(subject);
@@ -175,9 +187,13 @@ impl CognitiveRuntimeService {
         claimed: &MaintenanceNeed,
         disposition: MaintenanceDisposition,
     ) -> Result<()> {
-        let token = claimed
-            .lease_token
-            .ok_or_else(|| Error::Invalid("need is not leased".into()))?;
+        let token = claimed.lease_token.ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "need is not leased",
+            )
+        })?;
         let retry_delay = match &disposition {
             MaintenanceDisposition::Retry { delay_seconds, .. } => {
                 let maximum = self
@@ -185,8 +201,10 @@ impl CognitiveRuntimeService {
                     .snapshot_for_subject(claimed.subject_id)?
                     .get(RETRY_MAX)?;
                 if *delay_seconds == 0 || u64::from(*delay_seconds) > maximum {
-                    return Err(Error::Invalid(
-                        "retry delay exceeds maintenance policy".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "retry delay exceeds maintenance policy",
                     ));
                 }
                 Some(f64::from(*delay_seconds))
@@ -239,8 +257,9 @@ impl CognitiveRuntimeService {
                 tx.commit().await.map_err(db)?;
                 return Ok(());
             }
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::LeaseLost,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::LeaseLost,
                 "Maintenance lease expired or replaced",
             )
             .with_context("need_id", claimed.need_id)

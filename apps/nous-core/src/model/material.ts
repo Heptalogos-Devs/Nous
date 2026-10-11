@@ -44,7 +44,7 @@ export class ModelMaterialPipeline {
               {
                 subjectId,
                 preparationToken,
-                reference: need.reference,
+                bindingReferences: need.references,
                 material: {
                   text: need.text,
                   spaceHash: needs.config.spaceHash,

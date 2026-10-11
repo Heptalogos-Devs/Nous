@@ -37,6 +37,9 @@ impl ServingService {
         view: Option<&HistoricalAuthoritySnapshot>,
         serving: &ServingSnapshot,
     ) -> Result<ServingRecord> {
+        // Capture before any source reads. Publication rejects this build if a
+        // purge checkpoint advanced while its immutable inputs were collected.
+        let purge_epoch = self.store.serving_purge_epoch(subject).await?;
         let staging = tempfile::Builder::new()
             .prefix(".staging-")
             .tempdir_in(&self.options.root)
@@ -57,8 +60,15 @@ impl ServingService {
                 .await?
             }
             super::family::AssetFamily::Concept => {
-                self.build_concept(subject, id, space, staging.path(), view)
-                    .await?
+                self.build_concept(
+                    subject,
+                    id,
+                    space,
+                    staging.path(),
+                    snapshot.get(crate::EPISODE_SYNOPSIS)?,
+                    view,
+                )
+                .await?
             }
             super::family::AssetFamily::Dense => {
                 self.build_dense(subject, id, space, staging.path(), snapshot, view, serving)
@@ -84,10 +94,11 @@ impl ServingService {
         std::fs::rename(staging.path(), &target).map_err(io)?;
         let implementation_id = implementation(family).to_owned();
         let config_digest = self.config_digest(subject, family, snapshot).await?;
-        let implementation_revision = env!("NOUS_SERVING_IMPLEMENTATION_DIGEST");
         let cognitive_profile = (family == "topology")
             .then(|| topology_asset_profile(snapshot))
             .transpose()?;
+        let implementation_revision =
+            super::family::AssetFamily::parse(family)?.implementation_revision(cognitive_profile);
         let record = ServingRecord {
             generation_id: id,
             subject,
@@ -101,6 +112,7 @@ impl ServingService {
             }),
             space: space.into(),
             authority_watermark: watermark,
+            purge_epoch,
             implementation_id: implementation_id.clone(),
             implementation_revision: implementation_revision.to_string(),
             config_digest: config_digest.clone(),
@@ -109,7 +121,13 @@ impl ServingService {
             built_at: chrono::Utc::now(),
             metadata: serde_json::json!({ "checksums": sums, "cognitive_profile": cognitive_profile }),
         };
-        let published = self.store.publish_generation(record).await?;
+        let published = match self.store.publish_generation(record).await {
+            Ok(published) => published,
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&target);
+                return Err(error);
+            }
+        };
         if published.generation_id != id {
             std::fs::remove_dir_all(&target).map_err(io)?;
         }
@@ -148,7 +166,14 @@ impl ServingService {
             lexical.add_documents(&documents, writer_bytes)
         })
         .await
-        .map_err(|e| Error::Infrastructure(e.to_string()))??;
+        .map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })??;
         Ok(input.watermark)
     }
 
@@ -204,7 +229,14 @@ impl ServingService {
                 write_json(&path, &generation)
             })
             .await
-            .map_err(|e| Error::Infrastructure(e.to_string()))??;
+            .map_err(|e| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(e)
+            })??;
             return Ok(watermark);
         }
         let input = self
@@ -242,7 +274,7 @@ impl ServingService {
             })
             .collect();
         let path = dir.join("topology.json");
-        let config = resolve_wave_config(snapshot)?;
+        let config = resolve_wave_build_policy(snapshot)?;
         let cognitive_profile = nous_runtime::CognitiveProfile::NousNodePotential;
         tokio::task::spawn_blocking(move || {
             let mut graph = WaveGraphGeneration::build(nodes, &edges, config)?;
@@ -251,7 +283,14 @@ impl ServingService {
             write_json(&path, &graph.artifact())
         })
         .await
-        .map_err(|e| Error::Infrastructure(e.to_string()))??;
+        .map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })??;
         Ok(input.authority_watermark)
     }
 
@@ -274,7 +313,13 @@ impl ServingService {
                 producer: concepts
                     .and_then(|generation| generation.record(tag))
                     .and_then(|record| record.vector_producer.clone())
-                    .ok_or_else(|| Error::Invalid("concept vector producer missing".into()))?,
+                    .ok_or_else(|| {
+                        Error::new(
+                            nous_core::ErrorOwner::Resource,
+                            nous_core::ErrorCode::InvalidRequest,
+                            "concept vector producer missing",
+                        )
+                    })?,
             }
         } else {
             provider
@@ -291,15 +336,19 @@ impl ServingService {
                 .iter()
                 .any(|p| p.signature_hash == output.producer.signature_hash)
         {
-            return Err(Error::Conflict(
-                "projection embedding disagrees with configured space/producer".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::Conflict,
+                "Conflict",
             ));
         }
         if output.vector.len() != provider.space().dimension as usize
             || output.vector.iter().any(|value| !value.is_finite())
         {
-            return Err(Error::Invalid(
-                "projection embedding has invalid dimension or values".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         Ok(Some(output))
@@ -317,13 +366,19 @@ impl ServingService {
         let capabilities = self.projection_capabilities(subject).await?;
         let budget = snapshot.get(crate::EPISODE_SYNOPSIS)?;
         let epa_policy = snapshot.get(crate::EPA_POLICY)?;
-        let provider = self
-            .embedding()
-            .ok_or_else(|| Error::Unavailable("text embedding provider is unavailable".into()))?;
+        let provider = self.embedding().ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::Unavailable,
+                "text embedding provider is unavailable",
+            )
+        })?;
         let space = provider.space();
         if space_key != space.space_hash {
-            return Err(Error::Unavailable(
-                "embedding space has no configured provider".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::Unavailable,
+                "Service unavailable",
             ));
         }
         let input = self
@@ -419,7 +474,14 @@ impl ServingService {
             )
         })
         .await
-        .map_err(|e| Error::Infrastructure(e.to_string()))??;
+        .map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })??;
         Ok(input.watermark)
     }
 }

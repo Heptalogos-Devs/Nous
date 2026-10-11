@@ -16,8 +16,10 @@ pub(crate) async fn activate(
         .as_ref()
         .is_some_and(|view| snapshot.view_digest.as_ref() != Some(&view.snapshot_digest))
     {
-        return Err(Error::Unavailable(
-            "query activation requires a compatible historical Serving view".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Concept,
+            nous_core::ErrorCode::Unavailable,
+            "Service unavailable",
         ));
     }
     let mut activation = bound.activation.clone();

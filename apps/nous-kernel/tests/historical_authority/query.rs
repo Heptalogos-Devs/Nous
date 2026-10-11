@@ -124,7 +124,10 @@ pub(crate) async fn check_historical_binding(
         rt.cognition
             .bind_query_with_authority_view(future_query, config, Some(Arc::new(view.clone())))
             .await,
-        Err(Error::NotFound(_))
+        Err(Error {
+            code: nous_core::ErrorCode::NotFound,
+            ..
+        })
     ));
 }
 

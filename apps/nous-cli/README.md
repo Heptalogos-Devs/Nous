@@ -2,13 +2,13 @@
 
 [仓库地图](../../INDEX.md) · [Applications](../README.md) · [Agent 使用](../../docs/agent/README.md)
 
-命令实现按操作类别放在 [commands](src/commands/index.ts)；Terminal 与 MCP 调用同一个命令核心。`runtime.ts` 固定本次选择和输入，`state.ts` 管理 consumer 事务，`friendly.ts` 只处理呈现。测试和测试用 Client 在 `tests/`，不随 CLI/MCP 打包。
+命令实现按操作类别放在 [commands](src/commands/index.ts)；Terminal 与 MCP 调用同一个命令核心。`runtime.ts` 固定本次选择和输入，`receipt-lifecycle.ts` 负责本地操作回执，`state.ts` 管理 consumer 事务，`friendly.ts` 只处理呈现。测试和测试用 Client 在 `tests/`，不随 CLI/MCP 打包。
 
 第一方 reference consumer，通过 `@nous-wave/client` 调用 Core；命令使用 citty 0.2.2，复杂输入使用 smol-toml 与 Zod。CLI 的选择、查询结果索引和操作 receipt 保存在 InstanceRoot，属于 consumer 本地状态。
 
 共享状态按 Core discovery 中的稳定 instanceId 与 `--consumer` 共同隔离，目录为 `InstanceRoot/consumers/<身份摘要>/`。Core 重启保留实例身份；同一 state root 中不同实例或 consumer 使用不同选择和回执。每条命令固定开始时的 Subject、Session、WorkContext 与输入，后续 RPC 不重读另一条命令的选择。原子写与跨进程锁仅用于本地短事务，不覆盖 RPC 或模型等待。独立字段更新合并；同字段、Subject 或 query context 冲突保留业务结果并返回 `STATE_UNSAVED` notice，后续操作使用返回的 exact references。
 
-`consumer_state` 配置提供回执容量、文件字节预算和锁时限，完整 active policy 在命令开始时固定。当前 selection/operation 各使用一个 format 标识，回执保留 BigInt 与任意 JSON 正文键的区别；旧 consumer 格式不由当前生产入口读取。未知回执的原请求与身份须在清理旧运行材料前保全。
+`consumer_state` 配置提供回执容量、文件字节预算和锁时限，完整 active policy 在命令开始时固定。selection 保持本地 devalue 格式；操作回执使用 `nous.consumer.operation.v2` 与固定命令 schema 的 ProtoJSON request/result，状态为 pending、outcome_unknown、complete 或 rejected。未知结果始终复用冻结 subject、operation ID、digest 与请求；operation ID 的 owner receipt 才决定服务器状态。当前生产入口不读取旧 v1 receipt，也不把 pending/timeout/disconnect 解释为未提交。
 
 按[根 README](../../README.md)准备开发环境并运行 `corepack pnpm dev`，另一个终端可执行：
 
@@ -29,11 +29,11 @@ corepack pnpm nous use result:1 --kind referenced
 
 默认输出语义文本，正常操作使用 `result:N`、稳定 LexicalRef 或能唯一解析的名称。Subject、Session、WorkContext、认知 revision 和 Material 来源都返回可再次输入的词汇引用，例如 `sub:titil-lamat-napor`、`ctx:guhur-muguz-pojij`。这些引用由 Authority 持久保存，跨进程与 consumer state root 有效；不是 UUID 的截断，也不随标题修改改变。相同名称有歧义时，使用明确的词汇引用。精确 revision 的词汇引用仍指向原 revision。
 
-`--subject`、`--session`、`--work-context` 与各命令引用参数接受返回的词汇引用。`identity bind --kind <kind> --canonical <词汇引用> --name <名称> --alias <别名>` 可显式设置可读名称；普通显示不会覆盖既有名称或别名。原始来源、Memory 内容与自由文本保持原文，因此历史资料中已有的 UUID 不被改写。
+`--subject`、`--session`、`--work-context` 与各命令引用参数接受返回的词汇引用。`identity bind --kind <kind> --canonical <词汇引用> --name <名称> --alias <别名>` 可显式设置可读名称；`identity rebind <Mention UUID> --binding-state bound|unbound|disputed [--entity-ref <Entity>]` 显式修订提及实体绑定。普通显示不会覆盖既有名称或别名。原始来源、Memory 内容与自由文本保持原文，因此历史资料中已有的 UUID 不被改写。
 
 地址由对象创建事务或显式 Identity 服务分配；正常呈现依据协议声明的引用字段去重并只读批量查询。用户 JSON 中的 `$typeName`、`$unknown`、`subjectId` 等键保持原值，不因字段名或字符串形状转换。Query 的 `ref` 是当前 canonical `{kind,value}`，`result:N` 保存 exact reference，正常文本的 `lexicalRef` 优先指向该 exact revision。`query prepare` 将 context 的 WorkContext 与 Session 分组展示；详细 query trace 由 `--developer` 保留。
 
-`--json` 返回 `schemaVersion="nous.cli.v1"` 的机器 envelope，保留 canonical IDs，int64 使用十进制字符串。`--developer` 保留诊断身份和 query trace，`--raw --developer` 显式选择原始 Client DTO。正常文本省略这些内部追踪身份。成功仅写 stdout，错误仅写 stderr 并返回非零码；错误保留 code、message、details、candidates 和未知结果的 receipt。
+`--json` 返回 `schemaVersion="nous.cli.v2"` 的完整 ProtoJSON envelope，保留命令 data 的全部字段，protobuf int64 使用十进制字符串。`--developer` 保留诊断身份和 query trace，`--raw --developer` 跳过词汇地址呈现，但仍返回完整 v2 envelope。正常文本省略内部追踪身份。成功仅写 stdout，错误仅写 stderr 并返回非零码；typed error 分开呈现 transport code、owner code、owner、recovery、context、details、candidates、trace ID 与未知结果回执。
 
 Launcher 提供 RunRoot/InstanceRoot。`--subject`、`--session`、`--work-context` 覆盖本地选择。查询和幂等修改需要 InstanceRoot 保存续接状态；只读查询准备、配置与 status 可仅指定 RunRoot。Query 的 `result:N` 按实际命中顺序保存真实引用，并限定到原 Subject。Memory、Schema、Episode、Journal 保留 exact immutable revision，`show/trace/use` 不替换成最新 head。Evidence/Resource 与混合 hits 正常展示，每条只提供 owner 支持的后续动作；外部 Resource records 单独显示稳定来源身份。
 
@@ -42,6 +42,8 @@ Launcher 提供 RunRoot/InstanceRoot。`--subject`、`--session`、`--work-conte
 `context set --text <text>` 或 `--file <path|->` 更新自由文本；`--purpose` 可同时修改目的。`pin/unpin` 使用 `--cognition`、`--entity`、`--tag` 的逗号分隔引用；cognition 只接受 exact revision 或 Occurrence。`clear --scope text|anchors|all` 清理相应字段；`pause/resume/end` 管理生命周期，`select <id>` 保存选择，`foreground [id]` 在选中 Session 激活，`foreground --clear` 解除激活。所有更新保留未修改字段并提交读取到的 expected revision。context_text 上限 64 KiB，与 query representation 预算分离。
 
 修改前保存 operation identity、规范输入、时间戳和 expected revision。未知结果返回 `retry <receipt>`；重试读取原 receipt，不重新读取新的 revision、重新解析引用或生成 operation ID。Observe、formation、config override、Tag/Association、WorkContext 和 UseEvent 使用各 owner 的幂等身份。Session lifecycle、Identity bind 和 derivation 的领域合同单独决定重试行为。
+
+`operation inspect <receipt-id>` 并列显示本地 v2 receipt status 与 owner 按 oneof identity 查询的 server status，不会同步或覆盖任一方状态，也不显示冻结 request/result。没有本地 receipt 时，可使用明确的身份类型：`operation inspect mutation <operation-kind> <subject> <operation-id>`、`operation inspect subject-create <subject> <operation-id>`、`operation inspect configuration <operation-id>`、`operation inspect observation <subject> <request-id>` 或 `operation inspect workflow <subject> <owner> <operation-key>`。CLI 按所选身份类型构造固定 protobuf oneof，Core 验证实际 operation kind/owner。示例：`operation inspect mutation revise_memory <subject-id> <operation-id>`。`UNKNOWN` 和 status lookup transport failure 都保持 outcome unknown；workflow `COMPLETED` 只说明执行终结，不等于领域操作成功。回执身份必须在同一 `--instance-root`、`--consumer` 下读取。
 
 复杂 Tag/Association 文件为语义 TOML，上限 64 KiB；没有 Client DTO JSON 输入模式。例如：
 
@@ -80,6 +82,54 @@ role = "contextual"
 
 `show` 显示 cognition revision 内容或 Material 对象元数据。核对原始来源时，复制返回的 `obs:`、`src:`、`art:`、`repr:` 或 `region:` 词汇引用执行 `read <引用>`；也可续接 `read result:N` 的 Material hit。读取通过 Material Authority，默认最多 64 KiB，`--max-bytes` 可设到 1 MiB，返回实际范围、总量与 partial。文本材料返回原文，二进制材料返回元数据和 derive 提示。
 
+`memory list --page-size 50 --page-token <token>` 保留 Authority 分页，`memory get <ref>` 读取当前 Memory，`memory revision <exact-revision>` 读取不可变修订，`memory history <ref> --page-size 50 --page-token <token>` 返回完整历史。`memory revise <ref> --request-file <semantic.toml> --expected-epoch <epoch>` 使用 typed MemoryContent 和稳定 operation ID。语义 TOML 的字段包括 `intent`、`cognitive_role`、`formation_mode`、`semantic_role`、`text`、`epistemic_class`、`[[basis]]`、`aboutness` 与 `tags`；有效时间可按 TemporalExtent 的 JSON 结构填写。
+
+Memory 生命周期由 `memory suppress|restore|withdraw|reaccept|purge <ref> --expected-epoch <epoch>` 显式管理；`memory accessibility <ref> --mode auto|normal|deep|explicit --expected-epoch <epoch>` 只调整可访问性。`memory link --from <exact revision> --to <exact revision> --relation <relation>` 建立修订关系。每个修改都保存稳定 operation identity 并通过 `retry <receipt-id>` 原样恢复。
+
+`subject create [--request-file <subject.toml>]` 在本地 pending receipt 前生成固定 Subject ID 和 operation ID。无输入文件时，seed、metadata 和 capabilities 都留给 Core 的 `new_subject_defaults` 配置决定；CLI 不会强行开启 Memory 或伪造 schema seed。需要自定义时可填写：
+
+```toml
+[cognitive_seed]
+text = "初始认知种子正文"
+format = "application/vnd.nous-wave.cognitive-seed+toml;version=1"
+
+[cognitive_seed.provenance]
+source = "approved-import"
+
+[metadata]
+purpose = "project memory"
+
+[capabilities]
+memory = true
+```
+
+`subject get <Subject>` 读取 Subject，`subject seed <Subject>` 读取当前已采纳的 Cognitive Seed。`subject adopt-seed <Subject> --request-file <seed.toml>` 需要 TOML 的 `text`、`kind = "initial"|"import"`，可选 `format` 与 `provenance`；CLI 冻结 operation ID 和完整语义请求，Seed 文档文本本身需符合 Cognitive Seed TOML schema。
+
+资源注册与读取使用 `resource list|get|put|remove`。`resource put --request-file <resource.toml>` 接受 ResourceDescriptor 的语义 TOML；外部条目通过 `resource materialize --request-file <entry.toml>` 按 provider profile、stable external reference 和获取时间 materialize。注册描述示例：
+
+```toml
+resource_ref = "resource:project-drive"
+display_label = "Project drive"
+authority_class = "external"
+coverage = { kind = "documents" }
+query_dimensions = ["text"]
+modalities = ["text"]
+freshness_policy = { max_age_hours = 24 }
+access_cost_class = "low"
+readiness = "ready"
+adapter_kind = "drive"
+provider_profile = "work-drive"
+provider_locator = "drive://project"
+```
+
+`material limits` 读取上传上限；`material artifacts --page-size <n> --page-token <token>` 分页列出本 Subject 的 Artifact。`material representations [--artifact <ref>|--source-region <ref>] [--kind <kind>] --limit <n>` 列出关联派生表示；`material producer <producer_signature_id UUID>` 使用表示中的 canonical ID 读取 Subject 引用的 producer 描述。`producer_signature` 与 `producer.signature_hash` 是签名摘要，不是该 ID。`show` 和 `read` 继续按精确 Material reference 读取元数据或受界限的 admitted content。
+
+`schema create|evidence|revise|split|merge` 接受 `--request-file` 语义 TOML；`schema get|revision` 读取对象与 exact 修订，`suppress|restore|withdraw|reaccept|purge` 接受 `--expected-epoch` 生命周期变更。创建/修订内容包含 `structural_claim`、`applicability_scope`、`boundary_definition`、可选 `formation_kind` 和 `[[evidence_links]]`；aboutness 与 tags 使用可解析引用。Split 文件以 `[[children]]` 表示子模式；Merge 文件以 `schemas` 和 `merged` 提供输入修订与合并内容。
+
+`episode list|get|revision|history` 读取完整有界历史；`episode create|revise` 从语义 TOML 接收 `track_key`、边界说明、exact members 与至少一个 `[[basis]]`，修订还要求 `--expected-epoch` 和 `--intent correct|resegment|reinterpret`。`episode link --from <revision> --to <revision> --relation <relation>` 连结精确修订；生命周期命令使用 expected epoch。`journal list|get|revision|history` 同样支持读取；`journal suppress|restore|withdraw|reaccept|purge` 使用 expected epoch，CLI 不创建或重写 Journal 内容。
+
+配置读取默认同时显示 active 与 desired：`config get <path> [--view active|desired|both]`。写入必须使用完整 JSON 值的 `config set <path> --value-json '<json>' --expected-revision <desired revision>`；清除同样显式带 expected revision。变更后 CLI 重新读取 active/desired，并按 descriptor effect 提供 projection 状态，不推断重启或 serving rebuild 已完成。旧 `--desired` 与位置 JSON 值不接受。
+
 `maintenance grant --max-operations 2 --max-model-calls 1 --max-elapsed-ms 30000` 明确授权有界维护；每次实际模型调用都计入预算，包括 execution fallback。Use 接受 exact cognition revision，refutation 是负反馈，不能自动授权模型活动或概念修改。Tag list/search 与 association neighborhood 维持有界分页和遍历。
 
 Query 返回本 consumer 的 `query:last`。`use result:N` 自动关联该查询；通过词汇引用反馈时可写 `use <memrev:引用> --kind referenced --query-id query:last`。`query:last` 与 `result:N` 都在下一次 query 时更新，失败的新 query 清除它们，不能跨 Subject 使用。
@@ -107,7 +157,6 @@ tool_timeout_sec = 960
 ```
 
 Portable 使用包内 Node 与 `program/cli/mcp-main.js`，去掉 `--import tsx`。其他支持 stdio 的 Host（包括 OpenCode）可复用同一 command/args。Agent 从 `nous_help` 和 `nous_help` 的 `topic="nousql"` 开始，然后通过 `nous_command` 选择 Subject、打开 Session、恢复 WorkContext。每个并行使用者在配置中绑定自己的 state root/consumer；同一 Agent 重启保留该目录与 Subject ID。
-
 
 视频输入配置与派生输出是两个选择。`derive <src:引用> --strategy description_only|direct_structured|describe_then_structure` 选择输出流程；`frames` 是 `video` 配置对象内的 `input_mode` 值。用 `nous config describe video` / `nous config get video` 查看 JSON Schema、完整值及应用方式；修改整块对象时保留其现有限制，并按回执重启 Core。帧采样作为有界模型预处理，解释会保存原视频来源及采样时刻/coverage；当前不提供独立 frame Artifact 的导出命令。
 

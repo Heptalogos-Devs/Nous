@@ -10,8 +10,10 @@ pub(super) fn validate_query_input(query: &CognitiveQuery) -> Result<()> {
         .flat_map(|scope| &scope.cues)
         .any(|cue| matches!(cue, Cue::Text(text) if !text.text.trim().is_empty()))
     {
-        return Err(Error::Invalid(
-            "query requires nonempty intent TextCue".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
         ));
     }
     if query
@@ -20,8 +22,9 @@ pub(super) fn validate_query_input(query: &CognitiveQuery) -> Result<()> {
         .flat_map(|scope| &scope.cues)
         .any(|cue| matches!(cue, Cue::Text(text) if text.text.contains("<UNRESOLVED:")))
     {
-        return Err(DomainError::new(
-            DomainErrorCode::UnresolvedMachinePlaceholder,
+        return Err(nous_core::Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::UnresolvedMachinePlaceholder,
             "Resolve machine placeholders before querying",
         )
         .into());

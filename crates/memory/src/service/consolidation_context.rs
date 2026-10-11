@@ -49,8 +49,10 @@ impl MemoryService {
                     .map(|link| link.basis)
                     .collect(),
                 _ => {
-                    return Err(Error::Invalid(
-                        "Consolidation dependency is not an exact cognition revision".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Consolidation dependency is not an exact cognition revision",
                     ));
                 }
             };

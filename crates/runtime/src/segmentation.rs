@@ -37,8 +37,10 @@ impl CognitiveRuntimeService {
         close: bool,
     ) -> Result<SegmentationProgress> {
         if track != "interaction" || !(1..=256).contains(&limit) {
-            return Err(Error::Invalid(
-                "invalid automatic segmentation envelope".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid automatic segmentation envelope",
             ));
         }
         self.require_subject(subject).await?;
@@ -170,8 +172,10 @@ impl CognitiveRuntimeService {
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$3 AND operation_kind='create_episode' AND state='committed' AND result_revision=$2)")
             .bind(subject.0).bind(revision.0).bind(operation).fetch_one(&mut *tx).await.map_err(db)?;
         if !exists {
-            return Err(Error::FailedPrecondition(
-                "committed Episode revision is foreign or missing".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::FailedPrecondition,
+                "committed Episode revision is foreign or missing",
             ));
         }
         let _changed = sqlx::query(
@@ -249,9 +253,13 @@ async fn close_if_due(
         let row = sqlx::query("SELECT d.observed_end,w.state AS work_context_state FROM episode_drafts d JOIN experience_items e ON e.subject_id=d.subject_id AND e.recorded_seq=d.last_recorded_seq LEFT JOIN work_contexts w ON w.work_context_id=e.active_work_context_id WHERE d.draft_id=$1")
                 .bind(id).fetch_one(&mut **tx).await.map_err(db)?;
         let end: DateTime<Utc> = row.try_get("observed_end").map_err(db)?;
-        let due = end
-            .checked_add_signed(policy.hard_idle)
-            .ok_or_else(|| Error::Invalid("Episode due time overflow".into()))?;
+        let due = end.checked_add_signed(policy.hard_idle).ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "Episode due time overflow",
+            )
+        })?;
         let ended = row
             .try_get::<Option<String>, _>("work_context_state")
             .map_err(db)?

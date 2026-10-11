@@ -77,7 +77,11 @@ pub(super) fn register(registry: &mut ConfigRegistryBuilder) -> Result<()> {
                 if *value > 0 {
                     Ok(())
                 } else {
-                    Err(Error::Invalid("concept budget must be positive".into()))
+                    Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "concept budget must be positive",
+                    ))
                 }
             },
         )?;
@@ -99,8 +103,10 @@ pub(super) fn register(registry: &mut ConfigRegistryBuilder) -> Result<()> {
             if value.is_finite() && (-1.0..=1.0).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid(
-                    "concept similarity must be finite and within -1..1".into(),
+                Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ))
             }
         },

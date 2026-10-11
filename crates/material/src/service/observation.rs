@@ -27,7 +27,11 @@ impl MaterialService {
         limit: u32,
     ) -> Result<(Vec<OccurrenceId>, bool)> {
         if !(1..=200).contains(&limit) {
-            return Err(Error::Invalid("occurrence limit must be 1..200".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Observation,
+                nous_core::ErrorCode::InvalidRequest,
+                "occurrence limit must be 1..200",
+            ));
         }
         self.store
             .validate_reference(subject, &CognitiveRef::Artifact(artifact))
@@ -63,9 +67,14 @@ impl MaterialService {
                 .await?;
         }
         let mut tx = self.store.begin().await?;
-        let request_digest = blake3::hash(
-            &serde_json::to_vec(&input).map_err(|error| Error::Invalid(error.to_string()))?,
-        )
+        let request_digest = blake3::hash(&serde_json::to_vec(&input).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Observation,
+                nous_core::ErrorCode::InvalidRequest,
+                "Observation request could not be encoded",
+            )
+            .with_source(error)
+        })?)
         .to_hex()
         .to_string();
         if let Some(request_id) = request_id {
@@ -78,11 +87,11 @@ impl MaterialService {
                 .bind(request_id).fetch_optional(&mut *tx).await.map_err(db)? {
                 if row.try_get::<Uuid,_>("subject_id").map_err(db)? != input.subject.0
                     || row.try_get::<String,_>("request_digest").map_err(db)? != request_digest {
-                    return Err(nous_core::DomainError::new(nous_core::DomainErrorCode::OperationIdConflict, "Observation request_id already binds different input")
+                    return Err(nous_core::Error::new(nous_core::ErrorOwner::Observation, nous_core::ErrorCode::OperationIdConflict,  "Observation request_id already binds different input")
                         .with_context("request_id", request_id).into());
                 }
                 let accepted: AcceptedObservation = serde_json::from_value(row.try_get("accepted").map_err(db)?)
-                    .map_err(|error| Error::Infrastructure(error.to_string()))?;
+                    .map_err(|error| Error::new(nous_core::ErrorOwner::Observation, nous_core::ErrorCode::InternalFailure, "Stored observation receipt is invalid").with_source(error))?;
                 tx.commit().await.map_err(db)?;
                 self.admit_observation(&input, accepted.occurrence.occurrence_id).await?;
                 return Ok(accepted);
@@ -193,7 +202,11 @@ impl MaterialService {
         let mut mention_ids = Vec::new();
         for mention in &input.entities {
             if mention.surface.trim().is_empty() {
-                return Err(Error::Invalid("entity mention surface is required".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Observation,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "entity mention surface is required",
+                ));
             }
             if let Some(entity) = &mention.entity_ref {
                 EntityRef::new(entity.as_str())?;
@@ -217,8 +230,10 @@ impl MaterialService {
         .await?;
         if let Some(session) = input.session {
             if occurrence.observed_at > now + chrono::Duration::minutes(5) {
-                return Err(Error::Invalid(
-                    "observed_at is too far in the future".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Observation,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "observed_at is too far in the future",
                 ));
             }
             self.cognition
@@ -271,7 +286,7 @@ impl MaterialService {
         if let Some(request_id) = request_id {
             sqlx::query("INSERT INTO observation_request_bindings(request_id,subject_id,request_digest,occurrence_id,accepted) VALUES($1,$2,$3,$4,$5)")
                 .bind(request_id).bind(input.subject.0).bind(request_digest).bind(occurrence_id.0)
-                .bind(serde_json::to_value(&accepted).map_err(|error| Error::Infrastructure(error.to_string()))?)
+                .bind(serde_json::to_value(&accepted).map_err(|error| Error::new(nous_core::ErrorOwner::Observation, nous_core::ErrorCode::InternalFailure, "Observation receipt could not be encoded").with_source(error))?)
                 .execute(&mut *tx).await.map_err(db)?;
         }
         tx.commit().await.map_err(db)?;
@@ -331,8 +346,14 @@ impl MaterialService {
                     .await
             }
             ObservationMaterial::StructuredJson { value } => {
-                let bytes =
-                    serde_json::to_vec(value).map_err(|error| Error::Invalid(error.to_string()))?;
+                let bytes = serde_json::to_vec(value).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Observation,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Observed structured value could not be encoded",
+                    )
+                    .with_source(error)
+                })?;
                 self.bytes_to_artifact(
                     subject,
                     bytes,
@@ -360,8 +381,10 @@ impl MaterialService {
         now: DateTime<Utc>,
     ) -> Result<(Option<Artifact>, Option<Vec<u8>>)> {
         if bytes.len() as u64 > self.max_upload_bytes {
-            return Err(Error::Invalid(
-                "material exceeds configured byte bound".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Observation,
+                nous_core::ErrorCode::InvalidRequest,
+                "material exceeds configured byte bound",
             ));
         }
         let (hash, size) = self
@@ -402,7 +425,11 @@ impl MaterialService {
         let now = self.cognition.now(subject);
         if !self.store.subject_exists(subject).await? {
             drop(guard);
-            return Err(Error::NotFound("subject not found".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Observation,
+                nous_core::ErrorCode::NotFound,
+                "subject not found",
+            ));
         }
         let proposed_artifact_id = ArtifactId::new();
         let mut tx = self.store.begin().await?;
@@ -433,7 +460,7 @@ impl MaterialService {
 
     pub async fn artifact(&self, subject: SubjectId, artifact: ArtifactId) -> Result<Artifact> {
         let row = sqlx::query("SELECT artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata FROM artifacts WHERE subject_id=$1 AND artifact_id=$2")
-            .bind(subject.0).bind(artifact.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(||Error::NotFound("artifact not found".into()))?;
+            .bind(subject.0).bind(artifact.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Observation, nous_core::ErrorCode::NotFound, "artifact not found"))?;
         Ok(Artifact {
             artifact_id: ArtifactId(row.try_get("artifact_id").map_err(db)?),
             subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),

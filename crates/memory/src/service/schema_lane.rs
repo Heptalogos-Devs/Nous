@@ -206,7 +206,10 @@ pub(crate) async fn materialize_schema_revisions(
         let reference = CognitiveRef::CognitiveSchemaRevision(revision);
         let header = match super::historical::historical_header(bound, &reference) {
             Ok(header) => header,
-            Err(Error::NotFound(_)) => {
+            Err(Error {
+                code: nous_core::ErrorCode::NotFound,
+                ..
+            }) => {
                 *drops.entry("outside_historical_view".into()).or_default() += 1;
                 continue;
             }

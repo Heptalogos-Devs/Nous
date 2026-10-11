@@ -23,29 +23,39 @@ impl CognitiveRuntimeService {
         if binding.iter().any(|value| !value.is_empty())
             && binding.iter().any(|value| value.is_empty())
         {
-            return Err(Error::Invalid(
-                "resource provider binding must be complete".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "resource provider binding must be complete",
             ));
         }
         if input.adapter_kind.len() > 128
             || input.provider_profile.len() > 128
             || input.provider_locator.len() > 4096
         {
-            return Err(Error::Invalid(
-                "resource provider binding exceeds bounds".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "resource provider binding exceeds bounds",
             ));
         }
         ResourceRef::new(input.resource_ref.as_str())?;
         if input.authority_class.trim().is_empty() {
-            return Err(Error::Invalid(
-                "resource authority_class is required".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "resource authority_class is required",
             ));
         }
         if !matches!(
             input.readiness.as_str(),
             "ready" | "degraded" | "unavailable"
         ) {
-            return Err(Error::Invalid("invalid resource readiness".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid resource readiness",
+            ));
         }
         let mut tx = self.store.begin().await?;
         sqlx::query("INSERT INTO resources(subject_id,resource_ref,display_label,authority_class,coverage,query_dimensions,modalities,freshness_policy,access_cost_class,readiness,updated_at,adapter_kind,provider_profile,provider_locator) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(subject_id,resource_ref) DO UPDATE SET display_label=excluded.display_label,authority_class=excluded.authority_class,coverage=excluded.coverage,query_dimensions=excluded.query_dimensions,modalities=excluded.modalities,freshness_policy=excluded.freshness_policy,access_cost_class=excluded.access_cost_class,readiness=excluded.readiness,updated_at=excluded.updated_at,adapter_kind=excluded.adapter_kind,provider_profile=excluded.provider_profile,provider_locator=excluded.provider_locator")
@@ -198,11 +208,18 @@ impl CognitiveRuntimeService {
 }
 
 pub(crate) fn descriptor_digest(descriptor: &ResourceDescriptor) -> Result<String> {
-    Ok(blake3::hash(
-        &serde_json::to_vec(descriptor).map_err(|error| Error::Invalid(error.to_string()))?,
+    Ok(
+        blake3::hash(&serde_json::to_vec(descriptor).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "Resource descriptor could not be encoded",
+            )
+            .with_source(error)
+        })?)
+        .to_hex()
+        .to_string(),
     )
-    .to_hex()
-    .to_string())
 }
 
 pub(crate) fn decode_resource(

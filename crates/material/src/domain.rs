@@ -34,13 +34,17 @@ impl Artifact {
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit())
         {
-            return Err(Error::Invalid(
-                "artifact content hash must be BLAKE3 hex".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "artifact content hash must be BLAKE3 hex",
             ));
         }
         if self.media_type.trim().is_empty() || self.storage_key.trim().is_empty() {
-            return Err(Error::Invalid(
-                "artifact media_type/storage_key is required".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "artifact media_type/storage_key is required",
             ));
         }
         Ok(())
@@ -65,7 +69,11 @@ pub struct ObservationOccurrence {
 impl ObservationOccurrence {
     pub fn validate(&self) -> Result<()> {
         if self.observed_at < DateTime::<Utc>::UNIX_EPOCH {
-            return Err(Error::Invalid("observed_at is before Unix epoch".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "observed_at is before Unix epoch",
+            ));
         }
         Ok(())
     }
@@ -96,10 +104,18 @@ impl SourceRegion {
             "structural_path",
         ];
         if !KINDS.contains(&self.coordinate_kind.as_str()) {
-            return Err(Error::Invalid("unsupported source coordinate kind".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "unsupported source coordinate kind",
+            ));
         }
         if self.coordinate_hash.is_empty() {
-            return Err(Error::Invalid("source coordinate hash is required".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "source coordinate hash is required",
+            ));
         }
         Ok(())
     }
@@ -133,8 +149,10 @@ impl DerivedRepresentation {
     pub fn validate(&self) -> Result<()> {
         let mut seen = std::collections::HashSet::new();
         if self.inputs.is_empty() || self.inputs.len() > 64 || self.strategy.trim().is_empty() {
-            return Err(Error::Invalid(
-                "derivation requires 1..64 ordered inputs and a strategy".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "derivation requires 1..64 ordered inputs and a strategy",
             ));
         }
         for (ordinal, input) in self.inputs.iter().enumerate() {
@@ -152,8 +170,10 @@ impl DerivedRepresentation {
                         self.derived_representation_id,
                     )
             {
-                return Err(Error::Invalid(
-                    "invalid, duplicate, or cyclic derivation input".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid, duplicate, or cyclic derivation input",
                 ));
             }
         }
@@ -161,8 +181,10 @@ impl DerivedRepresentation {
             && self.payload_json.is_none()
             && self.payload_artifact_id.is_none()
         {
-            return Err(Error::Invalid(
-                "derived representation needs text, structured JSON or artifact payload".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "derived representation needs text, structured JSON or artifact payload",
             ));
         }
         if self
@@ -170,18 +192,26 @@ impl DerivedRepresentation {
             .as_ref()
             .is_some_and(|value| !value.is_object() || value.to_string().len() > 262_144)
         {
-            return Err(Error::Invalid("invalid structured payload bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid structured payload bounds",
+            ));
         }
         if self.revision < 1 {
-            return Err(Error::Invalid(
-                "derived representation revision starts at 1".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "derived representation revision starts at 1",
             ));
         }
         if self.representation_kind == RepresentationKind::StructuredInterpretation
             && (self.payload_json.is_none() || self.producer.output_schema_digest.is_none())
         {
-            return Err(Error::Invalid(
-                "structured interpretation requires payload and schema identity".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "structured interpretation requires payload and schema identity",
             ));
         }
         Ok(())
@@ -211,7 +241,11 @@ impl DerivedRegion {
         ];
         if !KINDS.contains(&self.coordinate_kind.as_str()) || self.coordinate_hash.trim().is_empty()
         {
-            return Err(Error::Invalid("invalid derived coordinate".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid derived coordinate",
+            ));
         }
         Ok(())
     }

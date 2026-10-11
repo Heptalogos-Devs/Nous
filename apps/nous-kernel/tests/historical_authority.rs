@@ -28,7 +28,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     let subject = rt
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -374,7 +374,10 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         rt.store
             .bind_reference_in_view(subject, &baseline.cognition[0].head, Some(&baseline))
             .await,
-        Err(Error::NotFound(_))
+        Err(Error {
+            code: nous_core::ErrorCode::NotFound,
+            ..
+        })
     ));
     assert!(
         owner
@@ -395,7 +398,7 @@ async fn historical_material_query_runs_without_memory_micro_system() {
     let subject = rt
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),

@@ -24,7 +24,10 @@ impl MemoryService {
     ) -> Result<bool> {
         let exact = match self.store.bind_exact_reference(subject, reference).await {
             Ok((exact, _, _)) => exact,
-            Err(Error::NotFound(_)) => return Ok(false),
+            Err(Error {
+                code: nous_core::ErrorCode::NotFound,
+                ..
+            }) => return Ok(false),
             Err(error) => return Err(error),
         };
         let (query, id) = match exact {
@@ -45,8 +48,10 @@ impl MemoryService {
                 id.0,
             ),
             _ => {
-                return Err(Error::Invalid(
-                    "contextual cognition requires an owned cognition reference".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "contextual cognition requires an owned cognition reference",
                 ));
             }
         };
@@ -88,7 +93,7 @@ impl MemoryService {
                     sqlx::query("SELECT occurrence_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2 FOR SHARE")
                         .bind(subject.0).bind(evidence.occurrence_id.0)
                         .fetch_optional(&mut **tx).await.map_err(db)?
-                        .ok_or_else(|| Error::Invalid("evidence occurrence is outside Subject".into()))?;
+                        .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "evidence occurrence is outside Subject"))?;
                 }
                 RevisionBasis::CognitionDependency(dependency) => {
                     let (query, id, _) = dependency_query(&dependency.target_revision, true)?;
@@ -101,8 +106,10 @@ impl MemoryService {
                     require_dependency_row(row)?;
                 }
                 RevisionBasis::Seed(_) => {
-                    return Err(Error::Invalid(
-                        "Memory revisions cannot use Cognitive Seed support".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Memory revisions cannot use Cognitive Seed support",
                     ));
                 }
             }
@@ -128,8 +135,10 @@ impl MemoryService {
         while let Some(reference) = stack.pop() {
             let object_key = self.revision_object_key(subject, &reference).await?;
             if object_key == owner_key {
-                return Err(Error::Invalid(
-                    "cognition dependency would create an object cycle".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "cognition dependency would create an object cycle",
                 ));
             }
             if !visited.insert(reference.to_string()) {
@@ -159,7 +168,11 @@ impl MemoryService {
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<ProvenanceSummary> {
         if view.is_some_and(|view| view.subject != subject) {
-            return Err(Error::Invalid("provenance view subject mismatch".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "provenance view subject mismatch",
+            ));
         }
         let mut summary = ProvenanceSummary::default();
         let mut stack = Vec::new();
@@ -183,8 +196,10 @@ impl MemoryService {
                     stack.push((dependency.target_revision.clone(), false));
                 }
                 RevisionBasis::Seed(_) => {
-                    return Err(Error::Invalid(
-                        "Memory revisions cannot use Cognitive Seed support".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Memory revisions cannot use Cognitive Seed support",
                     ));
                 }
             }
@@ -200,8 +215,10 @@ impl MemoryService {
                 continue;
             }
             if active.contains(&key) {
-                return Err(Error::FailedPrecondition(
-                    "cognition dependency cycle detected".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "cognition dependency cycle detected",
                 ));
             }
             if visited.contains(&key) {
@@ -226,8 +243,10 @@ impl MemoryService {
                         stack.push((dependency.target_revision, false));
                     }
                     RevisionBasis::Seed(_) => {
-                        return Err(Error::Invalid(
-                            "Memory revisions cannot use Cognitive Seed support".into(),
+                        return Err(Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InvalidRequest,
+                            "Memory revisions cannot use Cognitive Seed support",
                         ));
                     }
                 }
@@ -255,8 +274,10 @@ impl MemoryService {
                 if view
                     .is_some_and(|view| view.subject != subject || !view.association_contains(*id))
                 {
-                    return Err(Error::NotFound(
-                        "association is outside captured view".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::NotFound,
+                        "association is outside captured view",
                     ));
                 }
                 self.association(subject, *id)
@@ -272,8 +293,10 @@ impl MemoryService {
             }
             CognitiveRef::Tag(_) => return Ok(BTreeSet::new()),
             _ => {
-                return Err(Error::Invalid(
-                    "provenance requires an owned exact cognition/association".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "provenance requires an owned exact cognition/association",
                 ));
             }
         };
@@ -294,8 +317,10 @@ impl MemoryService {
         }
         let summary = self.provenance_summary(subject, basis).await?;
         if summary.normalized_inputs.len() < 2 {
-            return Err(Error::Invalid(
-                "synthesized formation needs at least two normalized inputs".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "synthesized formation needs at least two normalized inputs",
             ));
         }
         let independent_roots = summary
@@ -304,8 +329,10 @@ impl MemoryService {
             .filter(|root| matches!(root.certainty, EvidenceRootCertainty::Known))
             .count();
         if independent_roots < 2 {
-            return Err(Error::Invalid(
-                "synthesized formation needs two known independent provenance roots".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "synthesized formation needs two known independent provenance roots",
             ));
         }
         Ok(())
@@ -338,7 +365,13 @@ impl MemoryService {
             .fetch_optional(self.store.pool())
             .await
             .map_err(db)?
-            .ok_or_else(|| Error::Invalid("cognition dependency is outside Subject".into()))?;
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "cognition dependency is outside Subject",
+                )
+            })?;
         let object: Uuid = row.try_get("object_id").map_err(db)?;
         Ok(format!("{kind}:{object}"))
     }
@@ -358,8 +391,10 @@ impl MemoryService {
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<Vec<RevisionBasis>> {
         if view.is_some_and(|view| view.cognition_for(&reference).is_none()) {
-            return Err(Error::NotFound(
-                "cognition support is outside the captured view".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::NotFound,
+                "cognition support is outside the captured view",
             ));
         }
         match reference {
@@ -380,8 +415,10 @@ impl MemoryService {
                 .into_iter()
                 .flat_map(|point| point.basis)
                 .collect()),
-            _ => Err(Error::Invalid(
-                "cognition dependency needs exact revision".into(),
+            _ => Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "cognition dependency needs exact revision",
             )),
         }
     }
@@ -428,8 +465,10 @@ fn dependency_query(
             id.0,
             "journal",
         )),
-        _ => Err(Error::Invalid(
-            "cognition dependency needs exact revision".into(),
+        _ => Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "cognition dependency needs exact revision",
         )),
     }
 }
@@ -439,11 +478,15 @@ fn require_dependency_row(row: Option<sqlx::postgres::PgRow>) -> Result<()> {
         .map(|row| row.try_get::<String, _>("purge_state").map_err(db))
         .transpose()?;
     match state.as_deref() {
-        None => Err(Error::Invalid(
-            "cognition dependency is outside Subject".into(),
+        None => Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "cognition dependency is outside Subject",
         )),
-        Some("purging") => Err(Error::FailedPrecondition(
-            "cognition dependency target is purging".into(),
+        Some("purging") => Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::FailedPrecondition,
+            "cognition dependency target is purging",
         )),
         Some(_) => Ok(()),
     }

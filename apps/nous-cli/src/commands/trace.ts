@@ -4,8 +4,8 @@
 import { CliError } from "../agent.js";
 import type { NousClient } from "@nous-wave/client";
 import type { CliEnvironment } from "../runtime.js";
-import { restoreProtocolData, clientDataSchemas } from "@nous-wave/client/data";
-const { CognitiveRefSchema } = clientDataSchemas;
+import { create } from "@bufbuild/protobuf";
+import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 
 export async function traceCommands(
   env: CliEnvironment,
@@ -73,7 +73,7 @@ export async function traceCommands(
         id: materialRef.value,
       });
       derivations.push({
-        reference: restoreProtocolData({ ...materialRef }, CognitiveRefSchema),
+        reference: create(CognitiveRefSchema, materialRef),
         representation,
       });
       for (const ancestor of representation.inputs)
@@ -84,7 +84,7 @@ export async function traceCommands(
         id: materialRef.value,
       });
       derivations.push({
-        reference: restoreProtocolData({ ...materialRef }, CognitiveRefSchema),
+        reference: create(CognitiveRefSchema, materialRef),
         region,
       });
       await traceMaterial({
@@ -101,7 +101,7 @@ export async function traceCommands(
         id: region.artifactId,
       });
       derivations.push({
-        reference: restoreProtocolData({ ...materialRef }, CognitiveRefSchema),
+        reference: create(CognitiveRefSchema, materialRef),
         region,
         artifact,
       });
@@ -151,7 +151,7 @@ export async function traceCommands(
       })
     : undefined;
   return {
-    reference: restoreProtocolData({ ...reference }, CognitiveRefSchema),
+    reference: create(CognitiveRefSchema, reference),
     cognition,
     producer,
     sources,

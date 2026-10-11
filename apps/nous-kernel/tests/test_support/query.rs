@@ -41,7 +41,7 @@ pub(crate) async fn subject(runtime: &nous_kernel::NousRuntime) -> nous_core::Su
     runtime
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: nous_core::OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),

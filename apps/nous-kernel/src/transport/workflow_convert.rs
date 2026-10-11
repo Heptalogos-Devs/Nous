@@ -77,7 +77,11 @@ fn count(value: Option<f64>) -> Result<Option<u64>> {
             {
                 Ok(value as u64)
             } else {
-                Err(Error::Invalid("invalid execution usage count".into()))
+                Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid execution usage count",
+                ))
             }
         })
         .transpose()

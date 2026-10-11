@@ -8,7 +8,7 @@ Core owns model and Resource host calls; Material owns Artifact/Observation/Deri
 
 ## 持久操作
 
-共享合同位于 [workflow envelope Proto](../../../../proto/nous/wave/kernel/v1alpha1/workflow_envelope.proto)：租约包含 Subject、owner、operation key 和 token；snapshot 将领域 payload、认知形成时间与 maintenance claim 分开；proposal/outcome 显式声明依赖引用和 purged 状态。领域 payload 由对应 owner 校验，Persistence 不读取其内部键。Core 的 `durable-operation.ts` 共用 reservation、proposal/outcome 保存、失败 telemetry 和有界释放，领域流程保留自己的提交与拒绝语义。
+共享合同位于 [workflow envelope Proto](../../../../proto/nous/wave/kernel/v1alpha1/workflow_envelope.proto)：租约包含 Subject、owner、operation key 和 token；snapshot 将领域 payload、认知形成时间与 maintenance claim 分开；proposal/outcome 显式声明依赖引用和 purged 状态。领域 payload 由对应 owner 校验，Persistence 不读取其内部键。Core 的 `openDurableOperation` 是唯一操作入口：它先用 `FindWorkflow` 校验并取回已冻结状态，仅在不存在时构造完整 snapshot，再用 `ReserveWorkflow` 原子竞争；冷启动因此是两个真实 RPC。并发 miss 以 Persistence 首个已提交的完整 snapshot 为准，retry 不重读冻结选择。`DurableOperation.checkpoint` 是 Core 唯一保存路径；模型 proposal 与该次实际 telemetry 同一 checkpoint，mutation ID 在 owner RPC 前 checkpoint，失败 telemetry 与有界 release 使用 cleanup 预算。Maintenance 仍将 Need claim 与 child workflow 分开；child deadline 是 parent deadline 与当前 execution opportunity deadline 的较早者，每次 checkpoint 都重验同一 live parent token，新的 claim 仅刷新 snapshot 中的 claim envelope。
 
 引用依赖从 canonical Proto 的 `reference_kind` 与 `CognitiveRef` 提取，opaque 用户 JSON 和普通正文不产生依赖。Core 在调用 canonical mutation 前登记其稳定 operation ID；领域 owner 在同一 Authority 事务中发布实际结果依赖。Purge 因此覆盖 Authority 已提交、Host 尚未保存 outcome 的窗口。Telemetry 使用正式的 attempts、usage 和省略计数；缺失 usage 保持未知，累积只保留最早 64 次 attempt。
 

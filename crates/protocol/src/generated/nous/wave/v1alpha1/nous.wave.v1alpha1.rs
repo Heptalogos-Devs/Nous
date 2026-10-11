@@ -221,17 +221,21 @@ impl ConfigurationView {
 /// context contains owner-selected IDs/revisions, never opaque user content.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ErrorDetail {
-    #[prost(enumeration="DomainErrorCode", tag="1")]
+    #[prost(enumeration="ErrorCode", tag="1")]
     pub code: i32,
     #[prost(enumeration="ErrorRecovery", tag="2")]
     pub recovery: i32,
     #[prost(map="string, string", tag="3")]
     pub context: ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    #[prost(enumeration="ErrorOwner", tag="4")]
+    pub owner: i32,
+    #[prost(string, tag="5")]
+    pub trace_id: ::prost::alloc::string::String,
 }
 /// Business semantics are independent of the generic Connect/gRPC status code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum DomainErrorCode {
+pub enum ErrorCode {
     Unspecified = 0,
     UnknownReference = 1,
     AmbiguousReference = 2,
@@ -244,43 +248,67 @@ pub enum DomainErrorCode {
     OperationInProgress = 9,
     LeaseLost = 10,
     CapabilityUnavailable = 11,
+    InvalidRequest = 12,
+    NotFound = 13,
+    Conflict = 14,
+    FailedPrecondition = 15,
+    Unavailable = 16,
+    InternalFailure = 17,
+    CapacityExhausted = 18,
+    InstanceAlreadyRunning = 19,
 }
-impl DomainErrorCode {
+impl ErrorCode {
     /// String value of the enum field names used in the ProtoBuf definition.
     ///
     /// The values are not transformed in any way and thus are considered stable
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            Self::Unspecified => "DOMAIN_ERROR_CODE_UNSPECIFIED",
-            Self::UnknownReference => "DOMAIN_ERROR_CODE_UNKNOWN_REFERENCE",
-            Self::AmbiguousReference => "DOMAIN_ERROR_CODE_AMBIGUOUS_REFERENCE",
-            Self::ReferenceTypeMismatch => "DOMAIN_ERROR_CODE_REFERENCE_TYPE_MISMATCH",
-            Self::ReferenceTombstoned => "DOMAIN_ERROR_CODE_REFERENCE_TOMBSTONED",
-            Self::UnresolvedMachinePlaceholder => "DOMAIN_ERROR_CODE_UNRESOLVED_MACHINE_PLACEHOLDER",
-            Self::StaleContext => "DOMAIN_ERROR_CODE_STALE_CONTEXT",
-            Self::StaleRevision => "DOMAIN_ERROR_CODE_STALE_REVISION",
-            Self::OperationIdConflict => "DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT",
-            Self::OperationInProgress => "DOMAIN_ERROR_CODE_OPERATION_IN_PROGRESS",
-            Self::LeaseLost => "DOMAIN_ERROR_CODE_LEASE_LOST",
-            Self::CapabilityUnavailable => "DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE",
+            Self::Unspecified => "ERROR_CODE_UNSPECIFIED",
+            Self::UnknownReference => "ERROR_CODE_UNKNOWN_REFERENCE",
+            Self::AmbiguousReference => "ERROR_CODE_AMBIGUOUS_REFERENCE",
+            Self::ReferenceTypeMismatch => "ERROR_CODE_REFERENCE_TYPE_MISMATCH",
+            Self::ReferenceTombstoned => "ERROR_CODE_REFERENCE_TOMBSTONED",
+            Self::UnresolvedMachinePlaceholder => "ERROR_CODE_UNRESOLVED_MACHINE_PLACEHOLDER",
+            Self::StaleContext => "ERROR_CODE_STALE_CONTEXT",
+            Self::StaleRevision => "ERROR_CODE_STALE_REVISION",
+            Self::OperationIdConflict => "ERROR_CODE_OPERATION_ID_CONFLICT",
+            Self::OperationInProgress => "ERROR_CODE_OPERATION_IN_PROGRESS",
+            Self::LeaseLost => "ERROR_CODE_LEASE_LOST",
+            Self::CapabilityUnavailable => "ERROR_CODE_CAPABILITY_UNAVAILABLE",
+            Self::InvalidRequest => "ERROR_CODE_INVALID_REQUEST",
+            Self::NotFound => "ERROR_CODE_NOT_FOUND",
+            Self::Conflict => "ERROR_CODE_CONFLICT",
+            Self::FailedPrecondition => "ERROR_CODE_FAILED_PRECONDITION",
+            Self::Unavailable => "ERROR_CODE_UNAVAILABLE",
+            Self::InternalFailure => "ERROR_CODE_INTERNAL_FAILURE",
+            Self::CapacityExhausted => "ERROR_CODE_CAPACITY_EXHAUSTED",
+            Self::InstanceAlreadyRunning => "ERROR_CODE_INSTANCE_ALREADY_RUNNING",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
-            "DOMAIN_ERROR_CODE_UNSPECIFIED" => Some(Self::Unspecified),
-            "DOMAIN_ERROR_CODE_UNKNOWN_REFERENCE" => Some(Self::UnknownReference),
-            "DOMAIN_ERROR_CODE_AMBIGUOUS_REFERENCE" => Some(Self::AmbiguousReference),
-            "DOMAIN_ERROR_CODE_REFERENCE_TYPE_MISMATCH" => Some(Self::ReferenceTypeMismatch),
-            "DOMAIN_ERROR_CODE_REFERENCE_TOMBSTONED" => Some(Self::ReferenceTombstoned),
-            "DOMAIN_ERROR_CODE_UNRESOLVED_MACHINE_PLACEHOLDER" => Some(Self::UnresolvedMachinePlaceholder),
-            "DOMAIN_ERROR_CODE_STALE_CONTEXT" => Some(Self::StaleContext),
-            "DOMAIN_ERROR_CODE_STALE_REVISION" => Some(Self::StaleRevision),
-            "DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT" => Some(Self::OperationIdConflict),
-            "DOMAIN_ERROR_CODE_OPERATION_IN_PROGRESS" => Some(Self::OperationInProgress),
-            "DOMAIN_ERROR_CODE_LEASE_LOST" => Some(Self::LeaseLost),
-            "DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE" => Some(Self::CapabilityUnavailable),
+            "ERROR_CODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "ERROR_CODE_UNKNOWN_REFERENCE" => Some(Self::UnknownReference),
+            "ERROR_CODE_AMBIGUOUS_REFERENCE" => Some(Self::AmbiguousReference),
+            "ERROR_CODE_REFERENCE_TYPE_MISMATCH" => Some(Self::ReferenceTypeMismatch),
+            "ERROR_CODE_REFERENCE_TOMBSTONED" => Some(Self::ReferenceTombstoned),
+            "ERROR_CODE_UNRESOLVED_MACHINE_PLACEHOLDER" => Some(Self::UnresolvedMachinePlaceholder),
+            "ERROR_CODE_STALE_CONTEXT" => Some(Self::StaleContext),
+            "ERROR_CODE_STALE_REVISION" => Some(Self::StaleRevision),
+            "ERROR_CODE_OPERATION_ID_CONFLICT" => Some(Self::OperationIdConflict),
+            "ERROR_CODE_OPERATION_IN_PROGRESS" => Some(Self::OperationInProgress),
+            "ERROR_CODE_LEASE_LOST" => Some(Self::LeaseLost),
+            "ERROR_CODE_CAPABILITY_UNAVAILABLE" => Some(Self::CapabilityUnavailable),
+            "ERROR_CODE_INVALID_REQUEST" => Some(Self::InvalidRequest),
+            "ERROR_CODE_NOT_FOUND" => Some(Self::NotFound),
+            "ERROR_CODE_CONFLICT" => Some(Self::Conflict),
+            "ERROR_CODE_FAILED_PRECONDITION" => Some(Self::FailedPrecondition),
+            "ERROR_CODE_UNAVAILABLE" => Some(Self::Unavailable),
+            "ERROR_CODE_INTERNAL_FAILURE" => Some(Self::InternalFailure),
+            "ERROR_CODE_CAPACITY_EXHAUSTED" => Some(Self::CapacityExhausted),
+            "ERROR_CODE_INSTANCE_ALREADY_RUNNING" => Some(Self::InstanceAlreadyRunning),
             _ => None,
         }
     }
@@ -331,6 +359,74 @@ impl ErrorRecovery {
             "ERROR_RECOVERY_RETRY_OPERATION" => Some(Self::RetryOperation),
             "ERROR_RECOVERY_NEW_OPERATION" => Some(Self::NewOperation),
             "ERROR_RECOVERY_CHECK_CONFIGURATION" => Some(Self::CheckConfiguration),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ErrorOwner {
+    Unspecified = 0,
+    Identity = 1,
+    Subject = 2,
+    Memory = 3,
+    Material = 4,
+    Runtime = 5,
+    Configuration = 6,
+    Concept = 7,
+    Observation = 8,
+    Resource = 9,
+    ModelWorkflow = 10,
+    Kernel = 11,
+    Core = 12,
+    Persistence = 13,
+    Instance = 14,
+    Cli = 15,
+}
+impl ErrorOwner {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ERROR_OWNER_UNSPECIFIED",
+            Self::Identity => "ERROR_OWNER_IDENTITY",
+            Self::Subject => "ERROR_OWNER_SUBJECT",
+            Self::Memory => "ERROR_OWNER_MEMORY",
+            Self::Material => "ERROR_OWNER_MATERIAL",
+            Self::Runtime => "ERROR_OWNER_RUNTIME",
+            Self::Configuration => "ERROR_OWNER_CONFIGURATION",
+            Self::Concept => "ERROR_OWNER_CONCEPT",
+            Self::Observation => "ERROR_OWNER_OBSERVATION",
+            Self::Resource => "ERROR_OWNER_RESOURCE",
+            Self::ModelWorkflow => "ERROR_OWNER_MODEL_WORKFLOW",
+            Self::Kernel => "ERROR_OWNER_KERNEL",
+            Self::Core => "ERROR_OWNER_CORE",
+            Self::Persistence => "ERROR_OWNER_PERSISTENCE",
+            Self::Instance => "ERROR_OWNER_INSTANCE",
+            Self::Cli => "ERROR_OWNER_CLI",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ERROR_OWNER_UNSPECIFIED" => Some(Self::Unspecified),
+            "ERROR_OWNER_IDENTITY" => Some(Self::Identity),
+            "ERROR_OWNER_SUBJECT" => Some(Self::Subject),
+            "ERROR_OWNER_MEMORY" => Some(Self::Memory),
+            "ERROR_OWNER_MATERIAL" => Some(Self::Material),
+            "ERROR_OWNER_RUNTIME" => Some(Self::Runtime),
+            "ERROR_OWNER_CONFIGURATION" => Some(Self::Configuration),
+            "ERROR_OWNER_CONCEPT" => Some(Self::Concept),
+            "ERROR_OWNER_OBSERVATION" => Some(Self::Observation),
+            "ERROR_OWNER_RESOURCE" => Some(Self::Resource),
+            "ERROR_OWNER_MODEL_WORKFLOW" => Some(Self::ModelWorkflow),
+            "ERROR_OWNER_KERNEL" => Some(Self::Kernel),
+            "ERROR_OWNER_CORE" => Some(Self::Core),
+            "ERROR_OWNER_PERSISTENCE" => Some(Self::Persistence),
+            "ERROR_OWNER_INSTANCE" => Some(Self::Instance),
+            "ERROR_OWNER_CLI" => Some(Self::Cli),
             _ => None,
         }
     }
@@ -408,8 +504,8 @@ pub struct Subject {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateSubjectRequest {
-    #[prost(string, optional, tag="1")]
-    pub subject_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag="2")]
     pub cognitive_seed: ::core::option::Option<CognitiveSeed>,
     #[prost(message, optional, tag="3")]
@@ -2429,6 +2525,8 @@ pub struct DerivedRepresentation {
     pub strategy: ::prost::alloc::string::String,
     #[prost(message, optional, tag="13")]
     pub structured_payload: ::core::option::Option<::prost_types::Struct>,
+    #[prost(string, optional, tag="14")]
+    pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RepresentationListResponse {
@@ -2493,6 +2591,89 @@ pub struct ProjectionStatus {
     pub families: ::prost::alloc::vec::Vec<ProjectionFamilyStatus>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MutationReceiptIdentity {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub operation_kind: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SubjectCreateIdentity {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConfigurationMutationIdentity {
+    #[prost(string, tag="1")]
+    pub operation_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ObservationRequestIdentity {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub request_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ModelWorkflowIdentity {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub owner: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub operation_key: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetOperationStatusRequest {
+    #[prost(oneof="get_operation_status_request::Identity", tags="1, 2, 3, 4, 5")]
+    pub identity: ::core::option::Option<get_operation_status_request::Identity>,
+}
+/// Nested message and enum types in `GetOperationStatusRequest`.
+pub mod get_operation_status_request {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Identity {
+        #[prost(message, tag="1")]
+        MutationReceipt(super::MutationReceiptIdentity),
+        #[prost(message, tag="2")]
+        SubjectCreate(super::SubjectCreateIdentity),
+        #[prost(message, tag="3")]
+        ConfigurationMutation(super::ConfigurationMutationIdentity),
+        #[prost(message, tag="4")]
+        ObservationRequest(super::ObservationRequestIdentity),
+        #[prost(message, tag="5")]
+        ModelWorkflow(super::ModelWorkflowIdentity),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetOperationStatusResponse {
+    #[prost(enumeration="OperationState", tag="1")]
+    pub state: i32,
+    #[prost(enumeration="ErrorOwner", tag="2")]
+    pub owner: i32,
+    #[prost(string, optional, tag="3")]
+    pub subject_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="4")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="5")]
+    pub updated_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="6")]
+    pub lease_until: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="7")]
+    pub committed_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="8")]
+    pub result_reference: ::core::option::Option<CognitiveRef>,
+    #[prost(string, optional, tag="9")]
+    pub result_revision_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, optional, tag="10")]
+    pub result_epoch: ::core::option::Option<i64>,
+    #[prost(string, optional, tag="11")]
+    pub terminal_code: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MaterializeResourceRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
@@ -2513,6 +2694,42 @@ pub struct ResourceMaterialization {
     pub content: ::prost::alloc::string::String,
     #[prost(string, tag="4")]
     pub media_type: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum OperationState {
+    /// buf:lint:ignore ENUM_ZERO_VALUE_SUFFIX
+    Unknown = 0,
+    InProgress = 1,
+    Committed = 2,
+    FailedTerminal = 3,
+    Completed = 4,
+}
+impl OperationState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unknown => "OPERATION_STATE_UNKNOWN",
+            Self::InProgress => "OPERATION_STATE_IN_PROGRESS",
+            Self::Committed => "OPERATION_STATE_COMMITTED",
+            Self::FailedTerminal => "OPERATION_STATE_FAILED_TERMINAL",
+            Self::Completed => "OPERATION_STATE_COMPLETED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "OPERATION_STATE_UNKNOWN" => Some(Self::Unknown),
+            "OPERATION_STATE_IN_PROGRESS" => Some(Self::InProgress),
+            "OPERATION_STATE_COMMITTED" => Some(Self::Committed),
+            "OPERATION_STATE_FAILED_TERMINAL" => Some(Self::FailedTerminal),
+            "OPERATION_STATE_COMPLETED" => Some(Self::Completed),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FormationRequest {

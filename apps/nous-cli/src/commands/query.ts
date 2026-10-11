@@ -4,9 +4,6 @@ import { CliError, boundedInteger } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { restoreProtocolData, clientDataSchemas } from "@nous-wave/client/data";
-const { CognitiveRefSchema, WorkContextSchema, SessionSchema } =
-  clientDataSchemas;
 const cognitionKinds = new Set([
   "memory_revision",
   "cognitive_schema_revision",
@@ -41,93 +38,54 @@ export async function queryCommands(
   };
   if (preparing) {
     const response = await client.cognition.prepareQuery(request);
-    if (values.raw)
-      return {
-        ...response,
-        boundQuery: JSON.parse(response.boundQuery) as unknown,
-      };
-    const bound = JSON.parse(response.boundQuery) as {
-      representation?: { sha256?: string; truncation_flags?: string[] };
-      context_snapshot?: {
-        digest?: string;
-        work_context?: {
-          work_context_id: string;
-          revision: number;
-          purpose: string;
-          cognition_anchors: { kind: string; id: string }[];
-          entity_anchors: string[];
-          tag_anchors: string[];
-        };
-        session?: {
-          session_id: string;
-          runtime_revision: number;
-          resident: unknown[];
-        };
-        history_exclusions?: unknown[];
-      };
-      result_projection?: unknown;
-      temporal_frame?: unknown;
-      query_activation?: {
-        degradation?: unknown;
-        explicit_tags?: unknown[];
-        inferred_tags?: unknown[];
-        model_calls?: number;
-      };
-    };
+    if (values.raw) return response;
+    const bound = response.boundQuery;
+    if (!bound)
+      throw new CliError(
+        "INTERNAL_FAILURE",
+        "Core omitted the typed query inspection",
+      );
+    const context = bound.context;
+    const workContext = context?.workContext;
+    const session = context?.session;
+    const activation = bound.activation;
     return {
       intent: nousql,
+      queryId: bound.queryId,
+      inspection: bound,
       representation: {
         sha256: bound.representation?.sha256,
         chars: Array.from(response.embeddingText).length,
-        truncationFlags: bound.representation?.truncation_flags ?? [],
+        truncationFlags: bound.representation?.truncationFlags ?? [],
       },
       context: {
-        digest: bound.context_snapshot?.digest,
-        workContext:
-          bound.context_snapshot?.work_context &&
-          restoreProtocolData(
-            {
-              workContextId:
-                bound.context_snapshot.work_context.work_context_id,
-              revision: bound.context_snapshot.work_context.revision,
-              purpose: bound.context_snapshot.work_context.purpose,
-              cognitionAnchors:
-                bound.context_snapshot.work_context.cognition_anchors.map(
-                  (reference) =>
-                    restoreProtocolData(
-                      { kind: reference.kind, value: reference.id },
-                      CognitiveRefSchema,
-                    ),
-                ),
-              entityAnchors: bound.context_snapshot.work_context.entity_anchors,
-              tagAnchors: bound.context_snapshot.work_context.tag_anchors,
-            },
-            WorkContextSchema,
-          ),
-        session:
-          bound.context_snapshot?.session &&
-          restoreProtocolData(
-            {
-              sessionId: bound.context_snapshot.session.session_id,
-              runtimeRevision: bound.context_snapshot.session.runtime_revision,
-              residentCount: bound.context_snapshot.session.resident.length,
-            },
-            SessionSchema,
-          ),
-        historyExclusions: bound.context_snapshot?.history_exclusions,
+        digest: context?.digest,
+        workContext: workContext && {
+          workContextId: workContext.workContextId,
+          revision: workContext.revision.toString(),
+          purpose: workContext.purpose,
+          cognitionAnchors: workContext.cognitionAnchors,
+          entityAnchors: workContext.entityAnchors,
+          tagAnchors: workContext.tagAnchors,
+        },
+        session: session && {
+          sessionId: session.sessionId,
+          runtimeRevision: session.runtimeRevision.toString(),
+          residentCount: session.residentRefs.length,
+        },
+        historyExclusions: context?.historyExclusions,
       },
       activation: {
-        queryAndContextTags: bound.query_activation?.explicit_tags?.map(
-          (value) =>
-            restoreProtocolData({ kind: "tag", value }, CognitiveRefSchema),
+        queryAndContextTags: activation?.explicitTags.flatMap((value) =>
+          value.tag ? [value.tag] : [],
         ),
-        inferredTags: bound.query_activation?.inferred_tags?.map((value) =>
-          restoreProtocolData({ kind: "tag", value }, CognitiveRefSchema),
+        inferredTags: activation?.inferredTags.flatMap((value) =>
+          value.tag ? [value.tag] : [],
         ),
-        modelCalls: bound.query_activation?.model_calls,
+        modelCalls: activation?.modelCalls,
       },
-      projection: bound.result_projection,
-      temporalFrame: bound.temporal_frame,
+      projection: bound.projection,
+      temporalFrame: bound.readContext?.temporal,
       capabilities: {
         textEmbedding: response.textEmbeddingRequirement,
         rerank: response.rerankRequirement,
@@ -135,7 +93,7 @@ export async function queryCommands(
         conceptEnrichmentMode: response.conceptEnrichmentMode,
       },
       embeddingRequired: response.embeddingRequired,
-      degradation: bound.query_activation?.degradation,
+      degradation: activation?.degradation,
     };
   }
   // A failed new query must not leave result:N pointing at an unrelated old answer.
@@ -297,9 +255,9 @@ export async function readCommands(env: CliEnvironment, reference?: string) {
   return {
     reference: material.reference,
     mediaType: material.mediaType,
-    totalBytes: material.totalBytes,
-    rangeStart: material.rangeStart,
-    rangeEnd: material.rangeEnd,
+    totalBytes: material.totalBytes.toString(),
+    rangeStart: material.rangeStart.toString(),
+    rangeEnd: material.rangeEnd.toString(),
     partial: material.partial,
     ...(outputPath ? { outputPath } : {}),
     ...(textLike

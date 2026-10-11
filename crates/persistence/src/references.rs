@@ -75,7 +75,13 @@ impl AuthorityStore {
             .fetch_optional(self.pool())
             .await
             .map_err(db)?
-            .ok_or_else(|| Error::NotFound("cognition exact target not found".into()))?;
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Identity,
+                    nous_core::ErrorCode::NotFound,
+                    "cognition exact target not found",
+                )
+            })?;
         let revision = row.try_get("current_revision_id").map_err(db)?;
         let exact = match reference {
             CognitiveRef::Memory(_) => CognitiveRef::MemoryRevision(MemoryRevisionId(revision)),
@@ -97,7 +103,11 @@ impl AuthorityStore {
         if self.subject_exists(subject).await? {
             Ok(())
         } else {
-            Err(Error::NotFound("subject not found".into()))
+            Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::NotFound,
+                "subject not found",
+            ))
         }
     }
 
@@ -302,7 +312,11 @@ impl AuthorityStore {
         if self.reference_in_subject(subject, reference).await? {
             Ok(())
         } else {
-            Err(Error::NotFound("cognitive reference not found".into()))
+            Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::NotFound,
+                "cognitive reference not found",
+            ))
         }
     }
 }

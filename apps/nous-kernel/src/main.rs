@@ -46,9 +46,13 @@ async fn run() -> Result<()> {
         );
         return Ok(());
     }
-    let config = cli
-        .config
-        .ok_or_else(|| Error::Invalid("--config is required".into()))?;
+    let config = cli.config.ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InvalidRequest,
+            "--config is required",
+        )
+    })?;
     let mut input = BufReader::new(tokio::io::stdin());
     let mut token = String::new();
     tokio::time::timeout(
@@ -58,19 +62,49 @@ async fn run() -> Result<()> {
             .read_line(&mut token),
     )
     .await
-    .map_err(|_| Error::Invalid("Kernel bootstrap timed out".into()))?
-    .map_err(|e| Error::Invalid(e.to_string()))?;
+    .map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InvalidRequest,
+            "Kernel bootstrap timed out",
+        )
+        .with_source(error)
+    })?
+    .map_err(|e| {
+        Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
+        )
+        .with_source(e)
+    })?;
     let token = token.trim().to_owned();
     if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(Error::Invalid("invalid Kernel bootstrap credential".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InvalidRequest,
+            "invalid Kernel bootstrap credential",
+        ));
     }
     let (runtime, managed) = bootstrap::open(&config).await?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
-        .map_err(|e| Error::Infrastructure(e.to_string()))?;
-    let endpoint = listener
-        .local_addr()
-        .map_err(|e| Error::Infrastructure(e.to_string()))?;
+        .map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Kernel,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })?;
+    let endpoint = listener.local_addr().map_err(|e| {
+        Error::new(
+            nous_core::ErrorOwner::Kernel,
+            nous_core::ErrorCode::InternalFailure,
+            "Operation failed",
+        )
+        .with_source(e)
+    })?;
     let server = nous_kernel::transport::router(runtime.clone(), token)
         .await
         .serve_with_incoming(TcpListenerStream::new(listener));
@@ -79,7 +113,7 @@ async fn run() -> Result<()> {
         serde_json::json!({"endpoint":format!("http://{endpoint}")})
     );
     let result = tokio::select! {
-        result=server=>result.map_err(|e|Error::Infrastructure(e.to_string())),
+        result=server=>result.map_err(|e|Error::new(nous_core::ErrorOwner::Kernel, nous_core::ErrorCode::InternalFailure, "Operation failed").with_source(e)),
         _=async {let mut byte=[0u8;1];loop{match input.read(&mut byte).await{Ok(0)|Err(_)=>break,Ok(_)=>{}}}}=>Ok(()),
         _=tokio::signal::ctrl_c()=>Ok(()),
     };

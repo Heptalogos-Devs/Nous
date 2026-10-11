@@ -35,7 +35,11 @@ pub(super) fn register_concept_configuration(registry: &mut ConfigRegistryBuilde
         ConfigSemanticEffect::AuthorityFormation,
         |p| {
             if !(1..=32).contains(&p.max_candidates) || !(1..=4).contains(&p.max_suggestions) {
-                return Err(Error::Invalid("concept policy bounds exceeded".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "concept policy bounds exceeded",
+                ));
             }
             Ok(())
         },

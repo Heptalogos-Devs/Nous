@@ -76,8 +76,10 @@ impl AccessibilityPolicy {
             || !self.deep_threshold.is_finite()
             || self.normal_threshold <= self.deep_threshold
         {
-            return Err(Error::Invalid(
-                "invalid accessibility reference parameters".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid accessibility reference parameters",
             ));
         }
         Ok(self)
@@ -117,11 +119,18 @@ impl AccessibilityPolicy {
             .fetch_optional(store.pool())
             .await
             .map_err(db)?
-            .ok_or_else(|| Error::NotFound("memory not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "memory not found"))?;
         let mode: AccessibilityMode = serde_json::from_value(serde_json::Value::String(
             row.try_get::<String, _>("accessibility_mode").map_err(db)?,
         ))
-        .map_err(|_| Error::Infrastructure("invalid accessibility mode".into()))?;
+        .map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InternalFailure,
+                "invalid accessibility mode",
+            )
+            .with_source(error)
+        })?;
         let created: DateTime<Utc> = row.try_get("created_at").map_err(db)?;
         if !matches!(mode, AccessibilityMode::Auto) {
             return Ok(match mode {
@@ -191,8 +200,10 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
         if value.is_finite() && *value > 0.0 {
             Ok(())
         } else {
-            Err(Error::Invalid(
-                "accessibility value must be finite and positive".into(),
+            Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "accessibility value must be finite and positive",
             ))
         }
     };
@@ -200,8 +211,10 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
         if value.is_finite() && *value >= 0.0 {
             Ok(())
         } else {
-            Err(Error::Invalid(
-                "accessibility weight must be finite and nonnegative".into(),
+            Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "accessibility weight must be finite and nonnegative",
             ))
         }
     };
@@ -209,8 +222,10 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
         if value.is_finite() {
             Ok(())
         } else {
-            Err(Error::Invalid(
-                "accessibility threshold must be finite".into(),
+            Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "accessibility threshold must be finite",
             ))
         }
     };
@@ -353,13 +368,15 @@ impl MemoryService {
                 if receipt.state == "committed" {
                     return self.memory(subject, memory, None).await;
                 }
-                return Err(Error::Unavailable(
-                    "accessibility operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "accessibility operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let epoch:i64=sqlx::query_scalar("SELECT object_epoch FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE").bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("memory not found".into()))?;
+        let epoch:i64=sqlx::query_scalar("SELECT object_epoch FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE").bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "memory not found"))?;
         crate::service::state::fence_epoch(epoch, expected_object_epoch)?;
         sqlx::query("UPDATE memory_objects SET accessibility_mode=$3,object_epoch=object_epoch+1 WHERE subject_id=$1 AND memory_id=$2").bind(subject.0).bind(memory.0).bind(format!("{mode:?}").to_lowercase()).execute(&mut **mutation.tx()).await.map_err(db)?;
         mutation

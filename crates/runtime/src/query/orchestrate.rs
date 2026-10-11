@@ -76,8 +76,10 @@ impl CognitiveRuntimeService {
             && (bound.source_query.temporal_frame.authority_view != AuthorityView::Current
                 || bound.source_query.temporal_frame.revision_view != RevisionView::Current)
         {
-            return Err(Error::Unavailable(
-                "historical query requires its owner-projected Authority and Serving view".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::Unavailable,
+                "Service unavailable",
             ));
         }
         if let Some(shared) = contributors
@@ -94,8 +96,10 @@ impl CognitiveRuntimeService {
             if bound.source_query.capabilities.query_concept_enrichment
                 == RequirementStrength::Required
             {
-                return Err(Error::Unavailable(
-                    "required query concept model unavailable".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::Unavailable,
+                    "Service unavailable",
                 ));
             }
             if !bound
@@ -112,7 +116,11 @@ impl CognitiveRuntimeService {
         }
         bound.activation.frozen = true;
         if validated_pool_limit.is_some_and(|limit| limit == 0 || limit > 64) {
-            return Err(Error::Invalid("validated pool limit must be 1..64".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "validated pool limit must be 1..64",
+            ));
         }
         let output_limit = validated_pool_limit.unwrap_or(bound.source_query.result_need.limit);
         let execution = if bound.source_query.expression.operation != QueryOperation::Atom {
@@ -188,7 +196,11 @@ impl CognitiveRuntimeService {
         if let Some(memory) = contributors.memory.filter(|_| !exact_read) {
             lane_outputs.extend(memory.direct_lanes(&bound, &plan).await?);
         } else if contributors.memory.is_none() && query.projection.has_cognition() {
-            return Err(Error::Unavailable("Memory MicroSystem is disabled".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::Unavailable,
+                "Memory MicroSystem is disabled",
+            ));
         }
         if let Some(material) = contributors.material.filter(|_| !exact_read) {
             lane_outputs.extend(material.direct_lanes(&bound, &plan).await?);
@@ -314,10 +326,11 @@ impl CognitiveRuntimeService {
                 .map(|(index, _)| index)
                 .collect::<Vec<_>>();
             if matching.len() > 1 {
-                return Err(Error::Infrastructure(format!(
-                    "multiple owners claim {}",
-                    candidate.reference
-                )));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                ));
             }
             if let Some(index) = matching.first() {
                 by_owner[*index].push(candidate.reference.clone());
@@ -331,10 +344,11 @@ impl CognitiveRuntimeService {
                         | CognitiveRef::DerivedRegion(_)
                 )
             {
-                return Err(Error::Unavailable(format!(
-                    "no semantic owner available for {}",
-                    candidate.reference
-                )));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::Unavailable,
+                    "Service unavailable",
+                ));
             } else {
                 generic.push(candidate.reference.clone());
             }
@@ -409,7 +423,14 @@ impl CognitiveRuntimeService {
                         .get(&candidate.reference)
                         .map(serde_json::to_string)
                         .transpose()
-                        .map_err(|error| Error::Infrastructure(error.to_string()))?,
+                        .map_err(|error| {
+                            Error::new(
+                                nous_core::ErrorOwner::Runtime,
+                                nous_core::ErrorCode::InternalFailure,
+                                "Operation failed",
+                            )
+                            .with_source(error)
+                        })?,
                 };
                 result.results.push(hit);
             }

@@ -146,7 +146,10 @@ fn native_dtsc_curve_metrics_rewards_guards_and_full_order_match() {
         if case.get("error").is_some() {
             assert!(matches!(
                 reference_dtsc(&input),
-                Err(nous_core::Error::Invalid(_))
+                Err(nous_core::Error {
+                    code: nous_core::ErrorCode::InvalidRequest,
+                    ..
+                })
             ));
             continue;
         }

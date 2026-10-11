@@ -7,11 +7,13 @@ use nous_retrieval::{QueryEmbedding, TextEmbeddingOutput};
 
 impl KernelService {
     pub(super) fn embedding_config(&self) -> Result<k::EmbeddingConfig> {
-        let provider = self
-            .0
-            .serving
-            .embedding()
-            .ok_or_else(|| Error::Unavailable("embedding space not configured".into()))?;
+        let provider = self.0.serving.embedding().ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::Unavailable,
+                "embedding space not configured",
+            )
+        })?;
         let space = provider.space();
         Ok(k::EmbeddingConfig {
             space_hash: space.space_hash,
@@ -31,24 +33,32 @@ impl KernelService {
         inputs: Vec<k::QueryEmbedding>,
     ) -> Result<Vec<QueryEmbedding>> {
         if inputs.len() > 1 {
-            return Err(Error::Invalid(
-                "one prepared query accepts at most one embedding".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let mut materials = vec![];
         for material in inputs {
-            let provider = self
-                .0
-                .serving
-                .embedding()
-                .ok_or_else(|| Error::Unavailable("embedding space not configured".into()))?;
+            let provider = self.0.serving.embedding().ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::Unavailable,
+                    "embedding space not configured",
+                )
+            })?;
             let space = provider.space();
             let producer = provider
                 .producers()
                 .into_iter()
                 .find(|p| p.signature_hash == material.producer_hash)
                 .ok_or_else(|| {
-                    Error::Invalid("query embedding producer is not authorized".into())
+                    Error::new(
+                        nous_core::ErrorOwner::ModelWorkflow,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "query embedding producer is not authorized",
+                    )
                 })?;
             if material.text != bound.representation.text
                 || material.text.len() > 131072
@@ -57,8 +67,10 @@ impl KernelService {
                 || material.vector.len() != space.dimension as usize
                 || material.vector.iter().any(|v| !v.is_finite())
             {
-                return Err(Error::Invalid(
-                    "query embedding is incompatible with selected space/producer".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
             materials.push(QueryEmbedding {
@@ -90,8 +102,10 @@ impl KernelService {
             || input.concept_output.is_some()
             || input.concept_failure.is_some()
         {
-            return Err(Error::Invalid(
-                "query concept model activity is not permitted".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let materials = self.query_materials(bound, input.embeddings)?;
@@ -127,8 +141,10 @@ impl KernelService {
             || (output.is_some() && calls == 0)
             || (output.is_none() && failure.is_none() && calls != 0)
         {
-            return Err(Error::Invalid(
-                "invalid query concept model call accounting".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         if output.is_none() && failure.is_none() {
@@ -140,16 +156,28 @@ impl KernelService {
                 == nous_core::RequirementStrength::Forbidden
             || (output.is_some() && failure.is_some())
         {
-            return Err(Error::Invalid(
-                "unexpected query concept model result".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         if let Some(output) = output {
             if output.len() > 16384 {
-                return Err(Error::Invalid("query concept output exceeds bounds".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "query concept output exceeds bounds",
+                ));
             }
-            let output = serde_json::from_str(&output)
-                .map_err(|_| Error::Invalid("invalid query concept output".into()))?;
+            let output = serde_json::from_str(&output).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid query concept output",
+                )
+                .with_source(error)
+            })?;
             let policy =
                 nous_runtime::ConceptActivationPolicy::from_snapshot(&bound.config_snapshot)?;
             bound.activation.apply_concept_model(output, &policy)?;
@@ -193,9 +221,20 @@ impl KernelService {
 
 pub(super) fn workflow_json(value: &str) -> Result<serde_json::Value> {
     if value.len() > nous_persistence::WORKFLOW_VALUE_MAX_BYTES {
-        return Err(Error::Invalid("workflow value exceeds bound".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorCode::InvalidRequest,
+            "workflow value exceeds bound",
+        ));
     }
-    serde_json::from_str(value).map_err(|_| Error::Invalid("workflow JSON is invalid".into()))
+    serde_json::from_str(value).map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorCode::InvalidRequest,
+            "workflow JSON is invalid",
+        )
+        .with_source(error)
+    })
 }
 
 pub(super) fn private_workflow_owner(owner: &str) -> Result<()> {
@@ -203,8 +242,10 @@ pub(super) fn private_workflow_owner(owner: &str) -> Result<()> {
     if ["memory", "material"].contains(&owner) {
         Ok(())
     } else {
-        Err(Error::Invalid(
-            "workflow owner has no private execution route".into(),
+        Err(Error::new(
+            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
         ))
     }
 }

@@ -13,7 +13,7 @@ impl MemoryService {
         let row = sqlx::query("SELECT o.episode_id,o.subject_id,o.track_key,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,o.created_at,r.episode_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end,r.boundary_explanation,r.formed_at,r.recorded_at,r.producer_signature_id FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id AND r.episode_revision_id=COALESCE($3,o.current_revision_id) WHERE o.subject_id=$1 AND o.episode_id=$2")
             .bind(subject.0).bind(episode.0).bind(revision.map(|value| value.0))
             .fetch_optional(self.store.pool()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "Episode not found"))?;
         let revision_id: Uuid = row.try_get("episode_revision_id").map_err(db)?;
         let members = load_members(self.store.pool(), revision_id).await?;
         let basis = load_basis(self.store.pool(), revision_id).await?;
@@ -87,7 +87,7 @@ impl MemoryService {
     ) -> Result<EpisodeView> {
         let episode: Uuid = sqlx::query_scalar("SELECT episode_id FROM episode_revisions WHERE subject_id=$1 AND episode_revision_id=$2")
             .bind(subject.0).bind(revision.0).fetch_optional(self.store.pool()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("Episode revision not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "Episode revision not found"))?;
         self.episode(subject, EpisodeId(episode), Some(revision))
             .await
     }

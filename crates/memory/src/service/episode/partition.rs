@@ -48,15 +48,28 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state != "committed" {
-                    return Err(Error::Unavailable(
-                        "Episode partition is in progress".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::Unavailable,
+                        "Episode partition is in progress",
                     ));
                 }
                 let revisions: Vec<EpisodeRevisionId> =
                     serde_json::from_str(&receipt.result_ref.ok_or_else(|| {
-                        Error::Infrastructure("partition receipt has no revisions".into())
+                        Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "partition receipt has no revisions",
+                        )
                     })?)
-                    .map_err(|error| Error::Infrastructure(error.to_string()))?;
+                    .map_err(|error| {
+                        Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "Episode partition receipt is invalid",
+                        )
+                        .with_source(error)
+                    })?;
                 return self.partition_views(input.subject, revisions).await;
             }
             MutationStart::Active(mutation) => mutation,
@@ -69,8 +82,9 @@ impl MemoryService {
                 .await
                 .map_err(db)?;
         if watermark != input.expected_authority_seq {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::StaleRevision,
                 "Episode partition snapshot is stale",
             )
             .into());
@@ -280,8 +294,10 @@ fn validate_partition(input: &EpisodePartitionInput) -> Result<()> {
             .len()
             != input.ordered_occurrences.len()
     {
-        return Err(Error::Invalid(
-            "Episode partition must cover bounded ordered members exactly once".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "Episode partition must cover bounded ordered members exactly once",
         ));
     }
     Ok(())
@@ -299,8 +315,9 @@ async fn lock_sources(
     let rows = sqlx::query("SELECT o.*,r.episode_revision_id,r.revision_no,r.parent_episode_revision_id,r.title,r.boundary_explanation FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR UPDATE OF o")
         .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
     if rows.len() != ids.len() {
-        return Err(nous_core::DomainError::new(
-            nous_core::DomainErrorCode::StaleRevision,
+        return Err(nous_core::Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::StaleRevision,
             "Episode partition source disappeared",
         )
         .into());
@@ -313,7 +330,13 @@ async fn lock_sources(
             .sources
             .iter()
             .find(|source| source.revision.0 == revision)
-            .ok_or_else(|| Error::Internal("unbound Episode source".into()))?;
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "unbound Episode source",
+                )
+            })?;
         if row.get::<Uuid, _>("current_revision_id") != revision
             || row.get::<i64, _>("object_epoch") != expected.expected_epoch
             || row.get::<String, _>("track_key") != track
@@ -323,8 +346,9 @@ async fn lock_sources(
             || row.get::<String, _>("suppression_state") != "normal"
             || row.get::<String, _>("purge_state") != "normal"
         {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::StaleRevision,
                 "Episode partition source state is stale",
             )
             .into());
@@ -341,8 +365,10 @@ async fn lock_sources(
         member.get::<String, _>("ref_kind") != "occurrence"
             || !supplied.contains(&member.get::<String, _>("ref_value"))
     }) {
-        return Err(Error::Invalid(
-            "automatic partition must retain every source occurrence".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "automatic partition must retain every source occurrence",
         ));
     }
     let positions: std::collections::HashMap<String, usize> = input
@@ -355,14 +381,22 @@ async fn lock_sources(
     for member in &members {
         let revision: Uuid = member.try_get("episode_revision_id").map_err(db)?;
         let value: String = member.try_get("ref_value").map_err(db)?;
-        let position = *positions
-            .get(&value)
-            .ok_or_else(|| Error::Invalid("partition omitted source member".into()))?;
+        let position = *positions.get(&value).ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "partition omitted source member",
+            )
+        })?;
         if last
             .insert(revision, position)
             .is_some_and(|prior| prior >= position)
         {
-            return Err(Error::Invalid("partition reordered source members".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "partition reordered source members",
+            ));
         }
     }
     Ok(rows)
@@ -396,14 +430,18 @@ async fn validate_partition_occurrences(
     let rows = sqlx::query("SELECT o.occurrence_id,o.observed_at FROM observation_occurrences o JOIN experience_items e ON e.occurrence_id=o.occurrence_id AND e.subject_id=o.subject_id WHERE o.subject_id=$1 AND o.occurrence_id=ANY($2::uuid[]) ORDER BY o.observed_at,e.recorded_seq FOR SHARE OF o,e")
         .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
     if rows.len() != ids.len() {
-        return Err(Error::FailedPrecondition(
-            "partition occurrence is foreign or missing".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::FailedPrecondition,
+            "partition occurrence is foreign or missing",
         ));
     }
     let ordered: Vec<Uuid> = rows.iter().map(|row| row.get("occurrence_id")).collect();
     if ordered != ids {
-        return Err(Error::Invalid(
-            "partition members must follow experience chronology".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "partition members must follow experience chronology",
         ));
     }
     let times: std::collections::HashMap<Uuid, DateTime<Utc>> = rows
@@ -412,10 +450,13 @@ async fn validate_partition_occurrences(
         .collect();
     ids.into_iter()
         .map(|id| {
-            times
-                .get(&id)
-                .copied()
-                .ok_or_else(|| Error::Internal("partition member time missing".into()))
+            times.get(&id).copied().ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "partition member time missing",
+                )
+            })
         })
         .collect()
 }
@@ -437,16 +478,20 @@ fn partition_payload(
         .iter()
         .map(|index| occurrences[*index])
         .collect();
-    let start = times
-        .iter()
-        .min()
-        .copied()
-        .ok_or_else(|| Error::Invalid("empty partition segment".into()))?;
-    let end = times
-        .iter()
-        .max()
-        .copied()
-        .ok_or_else(|| Error::Invalid("empty partition segment".into()))?;
+    let start = times.iter().min().copied().ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "empty partition segment",
+        )
+    })?;
+    let end = times.iter().max().copied().ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "empty partition segment",
+        )
+    })?;
     let experience_time = if start == end {
         TemporalExtent::Instant { at: start }
     } else {
@@ -498,8 +543,14 @@ async fn commit_partition_result(
     mut mutation: nous_persistence::MutationEnvelope<'_>,
     outputs: &[EpisodeRevisionId],
 ) -> Result<()> {
-    let result =
-        serde_json::to_string(outputs).map_err(|error| Error::Infrastructure(error.to_string()))?;
+    let result = serde_json::to_string(outputs).map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InternalFailure,
+            "Episode partition result could not be encoded",
+        )
+        .with_source(error)
+    })?;
     mutation
         .publish_workflow_results(
             "memory",

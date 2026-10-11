@@ -17,7 +17,13 @@ impl MemoryService {
             "restore" => ("suppression_state", "suppressed", "normal"),
             "withdraw" => ("acceptance_state", "accepted", "withdrawn"),
             "reaccept" => ("acceptance_state", "withdrawn", "accepted"),
-            _ => return Err(Error::Invalid("invalid Journal lifecycle action".into())),
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid Journal lifecycle action",
+                ));
+            }
         };
         let digest = operation_digest(
             "journal_lifecycle",
@@ -30,8 +36,10 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state != "committed" {
-                    return Err(Error::Unavailable(
-                        "Journal lifecycle is in progress".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::Unavailable,
+                        "Journal lifecycle is in progress",
                     ));
                 }
                 return self
@@ -57,12 +65,20 @@ impl MemoryService {
         .fetch_optional(&mut **mutation.tx())
         .await
         .map_err(db)?
-        .ok_or_else(|| Error::NotFound("Journal not found".into()))?;
+        .ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::NotFound,
+                "Journal not found",
+            )
+        })?;
         fence_epoch(row.get("object_epoch"), expected_epoch)?;
         require_transition(&row.get::<String, _>(field), from)?;
         if row.get::<String, _>("purge_state") != "normal" {
-            return Err(Error::FailedPrecondition(
-                "Journal lifecycle transition is invalid".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::FailedPrecondition,
+                "Journal lifecycle transition is invalid",
             ));
         }
         let statement = if field == "suppression_state" {
@@ -121,7 +137,11 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state != "committed" {
-                    return Err(Error::Unavailable("Journal purge is in progress".into()));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::Unavailable,
+                        "Journal purge is in progress",
+                    ));
                 }
                 return Ok(());
             }
@@ -130,8 +150,9 @@ impl MemoryService {
         let epoch:Option<i64>=sqlx::query_scalar("SELECT object_epoch FROM journal_objects WHERE subject_id=$1 AND journal_id=$2 FOR UPDATE")
             .bind(subject.0).bind(journal.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?;
         if epoch != Some(expected_epoch) {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::StaleRevision,
                 "Journal purge epoch is stale",
             )
             .into());

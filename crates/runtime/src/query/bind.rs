@@ -169,16 +169,20 @@ fn validate_hard_constraints(query: &CognitiveQuery) -> Result<()> {
             role.as_str(),
             "experiential" | "declarative" | "procedural_experience"
         ) {
-            return Err(Error::Invalid(format!(
-                "unsupported cognitive role constraint: {role}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            ));
         }
     }
     for mode in &query.expression.constraints.formation_modes_include {
         if !matches!(mode.as_str(), "grounded" | "synthesized") {
-            return Err(Error::Invalid(format!(
-                "unsupported formation mode constraint: {mode}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            ));
         }
     }
     for evidence_class in &query.expression.constraints.evidence_classes {
@@ -186,9 +190,11 @@ fn validate_hard_constraints(query: &CognitiveQuery) -> Result<()> {
             evidence_class.as_str(),
             "observed" | "reported" | "derived" | "inferred" | "narrative" | "simulated"
         ) {
-            return Err(Error::Invalid(format!(
-                "unsupported evidence class constraint: {evidence_class}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            ));
         }
     }
     Ok(())
@@ -230,7 +236,11 @@ impl CognitiveRuntimeService {
                 .bind_reference_in_view(query.subject, &CognitiveRef::Tag(tag), view)
                 .await?;
             let CognitiveRef::Tag(canonical) = canonical else {
-                return Err(Error::Internal("invalid canonical Tag binding".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InternalFailure,
+                    "invalid canonical Tag binding",
+                ));
             };
             canonical_tags.insert(tag, canonical);
         }
@@ -437,7 +447,11 @@ impl CognitiveRuntimeService {
             &mut enabled_lanes,
         );
         if enabled_lanes.is_empty() && !query.requests_resources() {
-            return Err(Error::Invalid("query has no enabled retrieval lane".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "query has no enabled retrieval lane",
+            ));
         }
         let lane_budgets = budget_values(&query, &enabled_lanes, &retrieval_policy);
         let bound_at_authority_seq = self.store.authority_seq(query.subject).await?;

@@ -1,7 +1,9 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{QueryRiver, SourceSeed, WaveGraphGeneration, propagate_with_budget};
+use crate::{
+    QueryRiver, SourceSeed, WaveGraphGeneration, propagate_with_budget, resolve_wave_readout_policy,
+};
 use nous_core::{Result, ServingGenerationId, TimePredicate};
 use serde::Serialize;
 
@@ -40,14 +42,17 @@ impl QueryObservation {
         source_seeds: Vec<SourceSeed>,
     ) -> Result<Self> {
         let constraints = &bound.source_query.expression.constraints;
+        let readout = resolve_wave_readout_policy(&bound.config_snapshot)?;
         let config_subset_digest = crate::assets::files::digest(&serde_json::json!({
-            "wave": graph.config,
+            "build": graph.build_policy,
+            "readout": readout,
             "max_hops": plan.topology_rounds,
             "max_states": plan.topology_nodes,
         }))?;
         let river = propagate_with_budget(
             graph,
             &source_seeds,
+            &readout,
             plan.topology_rounds,
             plan.topology_nodes,
         );

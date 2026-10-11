@@ -118,22 +118,40 @@ fn validate_episode_input(
     basis: &[RevisionBasis],
 ) -> Result<()> {
     if !track.is_empty() && (track.len() > 128 || track.chars().any(char::is_control)) {
-        return Err(Error::Invalid("Episode track_key is out of bounds".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "Episode track_key is out of bounds",
+        ));
     }
     if title.as_ref().is_some_and(|value| value.len() > 8192) {
-        return Err(Error::Invalid("Episode title is out of bounds".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "Episode title is out of bounds",
+        ));
     }
     time.validate()?;
     if boundary.trim().is_empty() || boundary.len() > 16384 {
-        return Err(Error::Invalid(
-            "Episode boundary explanation is out of bounds".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "Episode boundary explanation is out of bounds",
         ));
     }
     if members.is_empty() || members.len() > 2048 {
-        return Err(Error::Invalid("Episode members are out of bounds".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "Episode members are out of bounds",
+        ));
     }
     if basis.is_empty() || basis.len() > 256 {
-        return Err(Error::Invalid("Episode basis are out of bounds".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "Episode basis are out of bounds",
+        ));
     }
     let mut keys = BTreeSet::new();
     for member in members {
@@ -141,8 +159,10 @@ fn validate_episode_input(
             || member.role.len() > 128
             || !keys.insert(member.reference.to_string())
         {
-            return Err(Error::Invalid(
-                "Episode members must be unique and bounded".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "Episode members must be unique and bounded",
             ));
         }
     }
@@ -163,14 +183,20 @@ async fn validate_episode_refs_in_tx(
                 | CognitiveRef::CognitiveSchemaRevision(_)
                 | CognitiveRef::EpisodeRevision(_)
         ) {
-            return Err(Error::Invalid("invalid Episode member reference".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid Episode member reference",
+            ));
         }
         if !store
             .reference_in_subject_tx(tx, subject, &member.reference)
             .await?
         {
-            return Err(Error::FailedPrecondition(
-                "Episode member is outside Subject".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::FailedPrecondition,
+                "Episode member is outside Subject",
             ));
         }
     }
@@ -188,7 +214,11 @@ async fn validate_episode_basis_in_tx(
             RevisionBasis::Evidence(value) => {
                 let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2)").bind(subject.0).bind(value.occurrence_id.0).fetch_one(&mut **tx).await.map_err(db)?;
                 if !exists {
-                    return Err(Error::Invalid("Episode evidence is outside Subject".into()));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Episode evidence is outside Subject",
+                    ));
                 }
             }
             RevisionBasis::CognitionDependency(value) => {
@@ -198,20 +228,28 @@ async fn validate_episode_basis_in_tx(
                         | CognitiveRef::CognitiveSchemaRevision(_)
                         | CognitiveRef::EpisodeRevision(_)
                 ) {
-                    return Err(Error::Invalid(
-                        "Episode support must target an exact revision".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Episode support must target an exact revision",
                     ));
                 }
                 if !store
                     .reference_in_subject_tx(tx, subject, &value.target_revision)
                     .await?
                 {
-                    return Err(Error::Invalid("Episode support is outside Subject".into()));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Episode support is outside Subject",
+                    ));
                 }
             }
             RevisionBasis::Seed(_) => {
-                return Err(Error::Invalid(
-                    "Episode cannot use Cognitive Seed support".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Episode cannot use Cognitive Seed support",
                 ));
             }
         }
@@ -238,15 +276,17 @@ async fn validate_parent_and_overlap(
         .await
         .map_err(db)?;
     if let Some(parent) = parent {
-        let parent_time = sqlx::query("SELECT experience_time_kind,experience_time_start,experience_time_end FROM episode_revisions WHERE episode_revision_id=$1 AND subject_id=$2").bind(parent.0).bind(subject.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::Invalid("Episode parent is outside Subject".into()))?;
+        let parent_time = sqlx::query("SELECT experience_time_kind,experience_time_start,experience_time_end FROM episode_revisions WHERE episode_revision_id=$1 AND subject_id=$2").bind(parent.0).bind(subject.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "Episode parent is outside Subject"))?;
         let parent_extent = temporal_from_columns(
             parent_time.try_get("experience_time_kind").map_err(db)?,
             parent_time.try_get("experience_time_start").map_err(db)?,
             parent_time.try_get("experience_time_end").map_err(db)?,
         )?;
         if !contains_extent(&parent_extent, time) {
-            return Err(Error::Invalid(
-                "Episode child lies outside parent experience span".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "Episode child lies outside parent experience span",
             ));
         }
     }
@@ -258,8 +298,10 @@ async fn validate_parent_and_overlap(
             row.try_get("experience_time_end").map_err(db)?,
         )?;
         if known_overlap(&sibling, time) {
-            return Err(Error::Conflict(
-                "same-track Episode sibling experience spans overlap".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::Conflict,
+                "same-track Episode sibling experience spans overlap",
             ));
         }
     }
@@ -299,8 +341,10 @@ async fn ensure_no_parent_cycle(
     let mut seen = BTreeSet::new();
     loop {
         if parent == episode || !seen.insert(parent) {
-            return Err(Error::Conflict(
-                "Episode parent hierarchy contains a cycle".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::Conflict,
+                "Episode parent hierarchy contains a cycle",
             ));
         }
         let row = sqlx::query(
@@ -310,11 +354,13 @@ async fn ensure_no_parent_cycle(
         .fetch_optional(&mut **tx)
         .await
         .map_err(db)?
-        .ok_or_else(|| Error::Invalid("Episode parent revision does not exist".into()))?;
+        .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "Episode parent revision does not exist"))?;
         let parent_episode: Uuid = row.try_get("episode_id").map_err(db)?;
         if parent_episode == episode {
-            return Err(Error::Conflict(
-                "Episode parent hierarchy contains a cycle".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::Conflict,
+                "Episode parent hierarchy contains a cycle",
             ));
         }
         let next: Option<Uuid> = row.try_get("parent_episode_revision_id").map_err(db)?;
@@ -440,8 +486,10 @@ async fn insert_episode_support(
             )
         }
         RevisionBasis::Seed(_) => {
-            return Err(Error::Invalid(
-                "Episode cannot use Cognitive Seed support".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "Episode cannot use Cognitive Seed support",
             ));
         }
     };

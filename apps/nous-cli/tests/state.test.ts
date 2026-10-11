@@ -11,53 +11,88 @@ import { cliState } from "../src/state.js";
 import { identity, policy } from "./support/client.js";
 import { repositoryRoot } from "../../../scripts/workspace.js";
 import { pathToFileURL } from "node:url";
-import { create } from "@bufbuild/protobuf";
-import { SubjectSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import { protocolData, protocolSchema } from "@nous-wave/client/data";
+import { create, toJson } from "@bufbuild/protobuf";
+import { TimestampSchema } from "@bufbuild/protobuf/wkt";
+import {
+  CreateSubjectRequestSchema,
+  SubjectSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { protocolReferences } from "@nous-wave/client/data";
+import {
+  freezeRequest,
+  freezeResult,
+  thawResult,
+} from "../src/receipt-codec.js";
 
-test("frozen request codecs preserve BigInt separately from arbitrary JSON keys", async () => {
+test("v2 ProtoJSON receipts preserve generated messages and opaque Struct data", async () => {
   const root = await mkdtemp(join(workspacePaths.temporary, "consumer-codec-"));
+  const subjectId = "33333333-3333-4333-8333-333333333333";
   try {
     const state = cliState(root, identity, policy);
-    const request = { expectedRevision: 7n, constraints: { $bigint: "5" } };
-    await state.writeReceipt("operation", {
-      format: "nous.consumer.operation",
-      name: "context.update",
-      request,
-      status: "pending",
+    const request = create(CreateSubjectRequestSchema, {
+      subjectId,
+      operationId: "create-once",
+      cognitiveSeed: {
+        text: "schema_version = 1",
+        format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
+      },
     });
-    expect((await state.receipt("operation")).request).toEqual(request);
-    const body = {
-      $typeName: "google.protobuf.Struct",
-      $unknown: "original JSON",
-      subjectId: "33333333-3333-4333-8333-333333333333",
-    };
-    const result = protocolData(
-      create(SubjectSchema, {
-        subjectId: body.subjectId,
-        metadata: body,
-        createdAt: { seconds: 123n, nanos: 0 },
-      }),
-    );
-    expect(result.metadata).toEqual(body);
+    const frozenRequest = freezeRequest("subjects.create", request);
+    const result = create(SubjectSchema, {
+      subjectId,
+      metadata: {
+        $typeName: "user JSON",
+        $unknown: ["subject:33333333-3333-4333-8333-333333333333"],
+        subjectId,
+      },
+      createdAt: create(TimestampSchema, { seconds: 123n, nanos: 0 }),
+    });
+    const frozenResult = freezeResult("subjects.create", result);
     await state.writeReceipt("operation", {
-      format: "nous.consumer.operation",
-      name: "context.update",
-      request,
+      format: "nous.consumer.operation.v2",
+      receiptId: "operation",
+      command: "subjects.create",
+      owner: "SUBJECT",
+      operationKind: "subject_create",
+      subjectId,
+      operationId: frozenRequest.operationId,
+      requestDigest: "a".repeat(64),
+      request: frozenRequest.frozen,
+      status: "pending",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await state.writeReceipt("operation", {
+      format: "nous.consumer.operation.v2",
+      receiptId: "operation",
+      command: "subjects.create",
+      owner: "SUBJECT",
+      operationKind: "subject_create",
+      subjectId,
+      operationId: frozenRequest.operationId,
+      requestDigest: "a".repeat(64),
+      request: frozenRequest.frozen,
       status: "complete",
-      result,
+      result: frozenResult,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z",
     });
     const receipt = await state.receipt("operation");
     expect(receipt.status).toBe("complete");
     if (receipt.status !== "complete")
       throw new Error("Completion receipt missing");
-    expect(protocolSchema(receipt.result)?.typeName).toBe(
-      "nous.wave.v1alpha1.Subject",
-    );
-    expect(receipt.result).toEqual(result);
-    expect(
-      protocolSchema((receipt.result as { metadata: unknown }).metadata),
-    ).toBeUndefined();
+    expect(receipt.request.typeName).toBe(CreateSubjectRequestSchema.typeName);
+    expect(receipt.request.protoJson).toEqual(frozenRequest.frozen.protoJson);
+    expect(thawResult("subjects.create", receipt.result)).toEqual(result);
+    const json = toJson(SubjectSchema, result) as Record<string, unknown>;
+    expect(json.metadata).toEqual({
+      $typeName: "user JSON",
+      $unknown: ["subject:33333333-3333-4333-8333-333333333333"],
+      subjectId,
+    });
+    expect(protocolReferences(result, SubjectSchema)).toEqual([
+      { kind: "subject", value: subjectId },
+    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -125,7 +160,7 @@ test("different processes serialize only the shared consumer receipt transaction
   ).href;
   const worker = `import {cliState} from ${JSON.stringify(module)}; import {consumerStatePolicySchema} from ${JSON.stringify(policyModule)};
     const state=cliState(process.argv[1],JSON.parse(process.argv[2]),consumerStatePolicySchema.parse({receipt_limit:2}));
-    try { await state.writeReceipt(process.argv[3],{format:'nous.consumer.operation',name:'pending',request:{operationId:process.argv[3]},status:'pending'});console.log('saved'); }
+    try { const id=process.argv[3]; const now=new Date().toISOString(); await state.writeReceipt(id,{format:'nous.consumer.operation.v2',receiptId:id,command:'subjects.create',owner:'SUBJECT',operationKind:'subject_create',subjectId:'33333333-3333-4333-8333-333333333333',operationId:id,requestDigest:'a'.repeat(64),request:{typeName:'request',protoJson:{}},status:'pending',createdAt:now,updatedAt:now});console.log('saved'); }
     catch(error) {if(error.code!=='RESOURCE_EXHAUSTED')throw error;console.log(error.code);}`;
   try {
     const results = await Promise.all(
@@ -161,39 +196,60 @@ test("different processes serialize only the shared consumer receipt transaction
   }
 }, 15000);
 
-test("concurrent receipt transitions preserve frozen input and terminal outcomes", async () => {
+test("receipt transitions preserve frozen identity and terminal outcomes", async () => {
   const root = await mkdtemp(
     join(workspacePaths.temporary, "consumer-receipt-cas-"),
   );
+  const subjectId = "33333333-3333-4333-8333-333333333333";
+  const now = "2026-01-01T00:00:00.000Z";
   try {
     const state = cliState(root, identity, policy);
     const pending = {
-      format: "nous.consumer.operation" as const,
-      name: "context.update",
-      request: { operationId: "original", expectedRevision: 7n },
+      format: "nous.consumer.operation.v2" as const,
+      receiptId: "operation",
+      command: "subjects.create",
+      owner: "SUBJECT",
+      operationKind: "subject_create",
+      subjectId,
+      operationId: "original",
+      requestDigest: "a".repeat(64),
+      request: { typeName: "request", protoJson: { subjectId } },
       status: "pending" as const,
+      createdAt: now,
+      updatedAt: now,
     };
     await state.writeReceipt("operation", pending);
     await expect(
       state.writeReceipt("operation", {
         ...pending,
-        request: { ...pending.request, operationId: "replacement" },
+        request: {
+          ...pending.request,
+          protoJson: { subjectId: "replacement" },
+        },
       }),
     ).rejects.toMatchObject({ code: "STATE_CONFLICT" });
     const complete = {
       ...pending,
       status: "complete" as const,
-      result: { revision: 8n },
+      result: { typeName: "response", protoJson: { subjectId } },
+      updatedAt: "2026-01-01T00:00:01.000Z",
     };
-    await Promise.all([
-      state.writeReceipt("operation", complete),
+    await state.writeReceipt("operation", complete);
+    await expect(
       state.writeReceipt("operation", pending),
-    ]);
+    ).rejects.toMatchObject({
+      code: "STATE_CONFLICT",
+    });
     await expect(
       state.writeReceipt("operation", {
         ...pending,
         status: "rejected",
-        rejection: { code: 9, message: "late rejection" },
+        error: {
+          code: "INVALID_REQUEST",
+          owner: "SUBJECT",
+          message: "late refusal",
+          context: {},
+        },
       }),
     ).rejects.toMatchObject({ code: "STATE_CONFLICT" });
     expect(await state.receipt("operation")).toEqual(complete);

@@ -148,7 +148,13 @@ impl KernelService {
                 delay_seconds: input.retry_delay_seconds,
                 problem_code: required(input.problem_code, "problem_code")?,
             },
-            _ => return Err(Error::Invalid("invalid maintenance disposition".into())),
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid maintenance disposition",
+                ));
+            }
         };
         self.0
             .cognition
@@ -230,8 +236,10 @@ impl KernelService {
             .enumerate()
             .map(|(ordinal, point)| {
                 if point.ordinal != ordinal as i32 {
-                    return Err(Error::Invalid(
-                        "Journal point ordinals must be contiguous".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid request",
                     ));
                 }
                 Ok(JournalPoint {

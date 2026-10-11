@@ -3,8 +3,8 @@
 
 use nous_core::{CognitiveRef, MemoryRevisionId};
 use nous_retrieval::{
-    SourceSeed, WaveConfig, WaveEdgeEvidence, WaveGraphGeneration, WaveNode, WaveNodeKind,
-    propagate_with_budget,
+    SourceSeed, WaveBuildPolicy, WaveEdgeEvidence, WaveGraphGeneration, WaveNode, WaveNodeKind,
+    WaveReadoutPolicy, propagate_with_budget,
 };
 use serde_json::{Value, json};
 
@@ -47,7 +47,7 @@ fn graph() -> WaveGraphGeneration {
             edge(2, 3, 1.0, "merge"),
             edge(3, 1, 0.5, "cycle"),
         ],
-        WaveConfig::default(),
+        WaveBuildPolicy::default(),
     )
     .expect("baseline graph")
 }
@@ -64,7 +64,7 @@ fn observation(graph: &WaveGraphGeneration, max_states: usize, seeded: bool) -> 
     } else {
         Vec::new()
     };
-    let river = propagate_with_budget(graph, &seeds, 4, max_states);
+    let river = propagate_with_budget(graph, &seeds, &WaveReadoutPolicy::default(), 4, max_states);
     let mut provenance = river.provenance.clone();
     for node in &mut provenance {
         node.origin_seeds.sort();

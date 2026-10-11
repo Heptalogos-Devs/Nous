@@ -105,8 +105,10 @@ pub fn register_episode_configuration(
                 if (1..=86400).contains(value) {
                     Ok(())
                 } else {
-                    Err(nous_core::Error::Invalid(
-                        "Episode interval must be 1..86400 seconds".into(),
+                    Err(nous_core::Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Episode interval must be 1..86400 seconds",
                     ))
                 }
             },
@@ -127,8 +129,10 @@ pub fn register_episode_configuration(
             if (1..=4).contains(value) {
                 Ok(())
             } else {
-                Err(nous_core::Error::Invalid(
-                    "context switch count must be 1..4".into(),
+                Err(nous_core::Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "context switch count must be 1..4",
                 ))
             }
         },

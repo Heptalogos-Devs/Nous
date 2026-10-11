@@ -61,12 +61,7 @@ impl KernelService {
             .0
             .subjects
             .create_subject(CreateSubject {
-                subject_id: input
-                    .subject_id
-                    .as_deref()
-                    .map(id)
-                    .transpose()?
-                    .map(SubjectId),
+                subject_id: SubjectId(id(&input.subject_id)?),
                 operation_id: OperationId(id(&input.operation_id)?),
                 cognitive_seed: seed(required(input.cognitive_seed, "cognitive_seed")?),
                 metadata: object(input.metadata),
@@ -98,8 +93,13 @@ impl KernelService {
         let next_page_token = if more {
             next_token(
                 &scope,
-                *ids.last()
-                    .ok_or_else(|| Error::Internal("page continuation has no last item".into()))?,
+                *ids.last().ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Subject,
+                        nous_core::ErrorCode::InternalFailure,
+                        "page continuation has no last item",
+                    )
+                })?,
             )
         } else {
             String::new()
@@ -133,8 +133,10 @@ impl KernelService {
             "initial" => SeedAdoptionKind::Initial,
             "import" | "" => SeedAdoptionKind::Import,
             _ => {
-                return Err(Error::Invalid(
-                    "invalid Cognitive Seed adoption kind".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Subject,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
         };
@@ -203,7 +205,11 @@ impl KernelService {
         let subject = SubjectId(id(&input.subject_id)?);
         self.0.store.require_subject(subject).await?;
         if !matches!(input.status.as_str(), "" | "open" | "closed") {
-            return Err(Error::Invalid("invalid session status".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Subject,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid session status",
+            ));
         }
         let scope = format!("sessions:{}:{}", input.subject_id, input.status);
         let (limit, last) = page(input.page, &scope)?;
@@ -214,8 +220,13 @@ impl KernelService {
         let next_page_token = if more {
             next_token(
                 &scope,
-                *ids.last()
-                    .ok_or_else(|| Error::Internal("page continuation has no last item".into()))?,
+                *ids.last().ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Subject,
+                        nous_core::ErrorCode::InternalFailure,
+                        "page continuation has no last item",
+                    )
+                })?,
             )
         } else {
             String::new()

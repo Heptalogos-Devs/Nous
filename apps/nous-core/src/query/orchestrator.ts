@@ -4,8 +4,9 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   domainError,
-  DomainErrorCode,
+  ErrorCode,
   ErrorRecovery,
+  ErrorOwner,
 } from "@nous-wave/client/errors";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
 import { create } from "@bufbuild/protobuf";
@@ -59,9 +60,10 @@ export class QueryOrchestrator {
           if (!this.models.embeddingModel)
             throw domainError(
               "Query embedding role unavailable",
-              Code.FailedPrecondition,
+              Code.Unavailable,
               {
-                code: DomainErrorCode.CAPABILITY_UNAVAILABLE,
+                code: ErrorCode.CAPABILITY_UNAVAILABLE,
+                owner: ErrorOwner.RESOURCE,
                 recovery: ErrorRecovery.CHECK_CONFIGURATION,
                 context: { capability: "model.query_embedding" },
               },
@@ -74,7 +76,7 @@ export class QueryOrchestrator {
             if (prepared.degradation.length)
               throw new ConnectError(
                 "Historical embedding material unavailable",
-                Code.FailedPrecondition,
+                Code.Unavailable,
               );
           }
           const config = await this.kernel.materialWorkflow.getEmbeddingConfig(
@@ -101,7 +103,7 @@ export class QueryOrchestrator {
             if (!producers.includes(vectors.producer.signature_hash))
               throw new ConnectError(
                 "Embedding producer is not in the prepared configuration",
-                Code.FailedPrecondition,
+                Code.Unavailable,
               );
             missing.forEach((text, index) =>
               this.queryVectors.set(
@@ -140,7 +142,7 @@ export class QueryOrchestrator {
           )
             throw new ConnectError(
               "Required query embedding unavailable",
-              Code.FailedPrecondition,
+              Code.Unavailable,
             );
           failure =
             error instanceof Error ? error.message : "Embedding unavailable";
@@ -171,9 +173,10 @@ export class QueryOrchestrator {
           if (!this.models.invocations.profile("query_concept_enrichment"))
             throw domainError(
               "Query concept model role unavailable",
-              Code.FailedPrecondition,
+              Code.Unavailable,
               {
-                code: DomainErrorCode.CAPABILITY_UNAVAILABLE,
+                code: ErrorCode.CAPABILITY_UNAVAILABLE,
+                owner: ErrorOwner.RESOURCE,
                 recovery: ErrorRecovery.CHECK_CONFIGURATION,
                 context: { capability: "model.query_concept_enrichment" },
               },
@@ -198,7 +201,7 @@ export class QueryOrchestrator {
           )
             throw new ConnectError(
               "Required query concept model unavailable",
-              Code.FailedPrecondition,
+              Code.Unavailable,
             );
           conceptFailure =
             error instanceof Error
@@ -218,9 +221,10 @@ export class QueryOrchestrator {
       if (intent && !profile && rerankRequired)
         throw domainError(
           "Required query rerank role unavailable",
-          Code.FailedPrecondition,
+          Code.Unavailable,
           {
-            code: DomainErrorCode.CAPABILITY_UNAVAILABLE,
+            code: ErrorCode.CAPABILITY_UNAVAILABLE,
+            owner: ErrorOwner.RESOURCE,
             recovery: ErrorRecovery.CHECK_CONFIGURATION,
             context: { capability: "model.query_rerank" },
           },
@@ -281,7 +285,7 @@ export class QueryOrchestrator {
               if (rerankRequired)
                 throw new ConnectError(
                   "Required rerank invocation unavailable",
-                  Code.FailedPrecondition,
+                  Code.Unavailable,
                 );
               rerankFailed = true;
             }

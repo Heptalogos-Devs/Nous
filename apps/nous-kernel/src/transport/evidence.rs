@@ -34,7 +34,11 @@ impl KernelService {
                 "instant" => p::TemporalExtent {
                     value: Some(p::temporal_extent::Value::Instant(timestamp(
                         occurred_start.ok_or_else(|| {
-                            Error::Infrastructure("instant occurrence has no time".into())
+                            Error::new(
+                                nous_core::ErrorOwner::Observation,
+                                nous_core::ErrorCode::InternalFailure,
+                                "instant occurrence has no time",
+                            )
                         })?,
                     ))),
                 },
@@ -87,7 +91,13 @@ impl KernelService {
                 .get(key)
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
-                .ok_or_else(|| Error::Invalid(format!("missing producer field: {key}")))
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Observation,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid request",
+                    )
+                })
         };
         Ok(p::DerivedRepresentation {
             representation_id: input.id,
@@ -117,6 +127,11 @@ impl KernelService {
                 .try_get::<Option<Uuid>, _>("payload_artifact_id")
                 .map_err(db)?
                 .map(|i| i.to_string()),
+            producer_signature_id: Some(
+                r.try_get::<Uuid, _>("producer_signature_id")
+                    .map_err(db)?
+                    .to_string(),
+            ),
         })
     }
 }

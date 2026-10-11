@@ -40,7 +40,11 @@ impl ContextResolver for NousRuntime {
                 nous_memory::SuppressionState::Normal
             ) || !matches!(memory.object.purge_state, nous_memory::PurgeState::Normal)
             {
-                return Err(Error::Unavailable("Memory is suppressed".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Kernel,
+                    nous_core::ErrorCode::Unavailable,
+                    "Memory is suppressed",
+                ));
             }
             let level = self
                 .require_memory()?
@@ -51,8 +55,10 @@ impl ContextResolver for NousRuntime {
                 )
                 .await?;
             if !nous_memory::accessibility_eligible(level, CognitiveEffort::Normal, explicit) {
-                return Err(Error::Unavailable(
-                    "Memory accessibility requires deeper or explicit recall".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Kernel,
+                    nous_core::ErrorCode::Unavailable,
+                    "Service unavailable",
                 ));
             }
 
@@ -100,7 +106,13 @@ impl ContextResolver for NousRuntime {
                 .await?
                 .into_iter()
                 .find(|view| view.descriptor.resource_ref == *resource)
-                .ok_or_else(|| Error::NotFound("Resource not found".into()))?
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Kernel,
+                        nous_core::ErrorCode::NotFound,
+                        "Resource not found",
+                    )
+                })?
                 .descriptor;
             return Ok(ContextSource {
                 source_revision: None,
@@ -153,8 +165,14 @@ fn material_context(
             Err(error) => error.valid_up_to(),
         };
         Some(
-            String::from_utf8(material.bytes[..end].to_vec())
-                .map_err(|e| Error::Infrastructure(e.to_string()))?,
+            String::from_utf8(material.bytes[..end].to_vec()).map_err(|e| {
+                Error::new(
+                    nous_core::ErrorOwner::Kernel,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(e)
+            })?,
         )
     } else {
         None

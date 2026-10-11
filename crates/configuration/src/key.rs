@@ -75,8 +75,10 @@ impl Default for SubjectCapabilities {
 impl SubjectCapabilities {
     pub fn require_process(self, process: ProcessCapabilities) -> Result<Self> {
         if self.memory && !process.memory {
-            return Err(Error::Invalid(
-                "subject memory capability is unavailable in this process".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::CapabilityUnavailable,
+                "Subject memory capability is unavailable in this process",
             ));
         }
         Ok(self)
@@ -116,9 +118,12 @@ impl FromStr for ConfigPath {
 
     fn from_str(value: &str) -> Result<Self> {
         if !valid_key_path(value) {
-            return Err(Error::Invalid(format!(
-                "invalid configuration key: {value}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid configuration key",
+            )
+            .with_context("path", value));
         }
         Ok(Self(Arc::from(value)))
     }

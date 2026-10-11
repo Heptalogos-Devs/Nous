@@ -57,15 +57,19 @@ impl VcpServingGeneration {
         )?;
         for (id, vector) in &assets.vectors {
             if candidates.vector(*id as u64) != Some(vector.as_slice()) {
-                return Err(Error::Infrastructure(
-                    "VCP candidate index disagrees with asset vectors".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
                 ));
             }
         }
         for (id, _) in &assets.labels {
             if tags.vector(*id as u64) != candidates.vector(*id as u64) {
-                return Err(Error::Infrastructure(
-                    "VCP Tag index disagrees with candidate vectors".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
                 ));
             }
         }
@@ -93,7 +97,11 @@ impl VcpServingGeneration {
             .filter(|record| projection.allows_reference(&record.reference))
             .map(|record| {
                 u32::try_from(record.serving_doc_id).map_err(|_| {
-                    Error::Invalid("VCP filtered index exceeds bitmap ID range".into())
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "VCP filtered index exceeds bitmap ID range",
+                    )
                 })
             })
             .collect::<Result<roaring::RoaringBitmap>>()?;
@@ -112,7 +120,11 @@ impl VcpServingGeneration {
             .into_iter()
             .map(|hit| {
                 let id = i64::try_from(hit.serving_doc_id).map_err(|_| {
-                    Error::Infrastructure("VCP index identity exceeds signed range".into())
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "VCP index identity exceeds signed range",
+                    )
                 })?;
                 let name = self
                     .assets
@@ -121,13 +133,21 @@ impl VcpServingGeneration {
                     .ok()
                     .map(|i| self.assets.labels[i].1.clone())
                     .ok_or_else(|| {
-                        Error::Infrastructure("VCP Tag index identity lacks label".into())
+                        Error::new(
+                            nous_core::ErrorOwner::Resource,
+                            nous_core::ErrorCode::InternalFailure,
+                            "VCP Tag index identity lacks label",
+                        )
                     })?;
                 let vector = self
                     .tags
                     .vector(hit.serving_doc_id)
                     .ok_or_else(|| {
-                        Error::Infrastructure("VCP Tag index identity lacks vector".into())
+                        Error::new(
+                            nous_core::ErrorOwner::Resource,
+                            nous_core::ErrorCode::InternalFailure,
+                            "VCP Tag index identity lacks vector",
+                        )
                     })?
                     .to_vec();
                 Ok(ReferenceResidualCandidate {
@@ -176,7 +196,11 @@ fn build_index(assets: &VcpGeneration, tags_only: bool) -> Result<DenseGeneratio
             .ok()
             .map(|i| assets.vectors[i].1.as_slice())
             .ok_or_else(|| {
-                Error::Infrastructure("VCP index record lacks generation vector".into())
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "VCP index record lacks generation vector",
+                )
             })?;
         index.insert(record, vector)?;
     }

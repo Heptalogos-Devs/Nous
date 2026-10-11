@@ -127,7 +127,10 @@ fn longitudinal_availability(
     let revision: Uuid = row.get("revision_id");
     let header = match super::historical::historical_header(bound, exact) {
         Ok(header) => header,
-        Err(Error::NotFound(_)) => return Ok(None),
+        Err(Error {
+            code: nous_core::ErrorCode::NotFound,
+            ..
+        }) => return Ok(None),
         Err(error) => return Err(error),
     };
     let epoch = super::historical::header_epoch(header, row)?;
@@ -298,8 +301,15 @@ async fn longitudinal_evidence(
         let mut seen = BTreeSet::new();
         for row in rows {
             let revision: Uuid = row.get("journal_revision_id");
-            let basis: RevisionBasis = serde_json::from_value(row.get("basis"))
-                .map_err(|error| Error::Infrastructure(error.to_string()))?;
+            let basis: RevisionBasis =
+                serde_json::from_value(row.get("basis")).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?;
             if !seen.insert((revision, basis.canonical_key())) {
                 continue;
             }
@@ -312,8 +322,10 @@ async fn longitudinal_evidence(
                     (dependency.target_revision, dependency.basis_role)
                 }
                 RevisionBasis::Seed(_) => {
-                    return Err(Error::Infrastructure(
-                        "Journal has invalid Seed support".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
                     ));
                 }
             };

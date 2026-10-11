@@ -14,8 +14,8 @@ pub use nous_core::cognition::{
 };
 use nous_core::{
     AssociationEvidenceId, CognitiveRef, CognitiveSchemaId, CognitiveSchemaRevisionId, EntityRef,
-    EpistemicClass, Error, MemoryId, MemoryRevisionId, OccurrenceId, OperationId, Result,
-    SchemaEvidenceLinkId, SubjectId, TagId, TemporalExtent, UseEventId,
+    EpistemicClass, Error, ErrorCode, ErrorOwner, MemoryId, MemoryRevisionId, OccurrenceId,
+    OperationId, Result, SchemaEvidenceLinkId, SubjectId, TagId, TemporalExtent, UseEventId,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -303,12 +303,20 @@ pub struct ExplicitMemoryInput {
 impl ExplicitMemoryInput {
     pub fn validate(&self) -> Result<()> {
         if self.operation_id.0.is_nil() {
-            return Err(Error::Invalid("operation_id is required".into()));
+            return Err(Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
+                "operation_id is required",
+            ));
         }
         validate_content(&self.semantic_role, &self.representation_text)?;
         self.valid_time.validate()?;
         if self.basis.is_empty() {
-            return Err(Error::Invalid("a Memory revision needs support".into()));
+            return Err(Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
+                "a Memory revision needs support",
+            ));
         }
         validate_basis(
             self.formation_mode,
@@ -318,11 +326,19 @@ impl ExplicitMemoryInput {
         let mut keys = std::collections::BTreeSet::new();
         for basis in &self.basis {
             if !keys.insert(basis.canonical_key()) {
-                return Err(Error::Invalid("duplicate revision support".into()));
+                return Err(Error::new(
+                    ErrorOwner::Memory,
+                    ErrorCode::InvalidRequest,
+                    "duplicate revision support",
+                ));
             }
         }
         if self.tags.len() > 128 {
-            return Err(Error::Invalid("explicit Tag bound exceeded".into()));
+            return Err(Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
+                "explicit Tag bound exceeded",
+            ));
         }
         let mut aboutness = std::collections::BTreeSet::new();
         for entity in &self.aboutness {
@@ -330,7 +346,11 @@ impl ExplicitMemoryInput {
             aboutness.insert(entity.as_str());
         }
         if aboutness.len() != self.aboutness.len() {
-            return Err(Error::Invalid("duplicate aboutness entity".into()));
+            return Err(Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
+                "duplicate aboutness entity",
+            ));
         }
         Ok(())
     }
@@ -338,13 +358,17 @@ impl ExplicitMemoryInput {
 
 pub fn validate_content(semantic_role: &str, representation_text: &str) -> Result<()> {
     if semantic_role.trim().is_empty() || semantic_role.len() > 128 {
-        return Err(Error::Invalid(
-            "semantic_role is required and bounded".into(),
+        return Err(Error::new(
+            ErrorOwner::Memory,
+            ErrorCode::InvalidRequest,
+            "semantic_role is required and bounded",
         ));
     }
     if representation_text.trim().is_empty() || representation_text.len() > 1_000_000 {
-        return Err(Error::Invalid(
-            "representation_text is required and bounded".into(),
+        return Err(Error::new(
+            ErrorOwner::Memory,
+            ErrorCode::InvalidRequest,
+            "representation_text is required and bounded",
         ));
     }
     Ok(())
@@ -358,25 +382,31 @@ fn validate_basis(
     match mode {
         FormationMode::Grounded => {
             let occurrence = grounding_occurrence.ok_or_else(|| {
-                Error::Invalid("grounded formation requires grounding_occurrence_id".into())
+                Error::new(
+                    ErrorOwner::Memory,
+                    ErrorCode::InvalidRequest,
+                    "grounded formation requires grounding_occurrence_id",
+                )
             })?;
             if !basis.iter().any(|basis| {
                 matches!(basis, RevisionBasis::Evidence(evidence) if evidence.occurrence_id == occurrence)
             }) {
-                return Err(Error::Invalid(
-                    "grounding occurrence must be in the evidence support set".into(),
-                ));
+                return Err(Error::new(ErrorOwner::Memory, ErrorCode::InvalidRequest, "grounding occurrence must be in the evidence support set"));
             }
         }
         FormationMode::Synthesized => {
             if grounding_occurrence.is_some() {
-                return Err(Error::Invalid(
-                    "synthesized formation cannot have grounding_occurrence_id".into(),
+                return Err(Error::new(
+                    ErrorOwner::Memory,
+                    ErrorCode::InvalidRequest,
+                    "synthesized formation cannot have grounding_occurrence_id",
                 ));
             }
             if basis.len() < 2 {
-                return Err(Error::Invalid(
-                    "synthesized formation needs at least two distinct inputs".into(),
+                return Err(Error::new(
+                    ErrorOwner::Memory,
+                    ErrorCode::InvalidRequest,
+                    "synthesized formation needs at least two distinct inputs",
                 ));
             }
         }

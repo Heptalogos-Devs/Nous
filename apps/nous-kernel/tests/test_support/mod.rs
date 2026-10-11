@@ -30,6 +30,7 @@ pub(crate) async fn database() -> (TempDir, String, PostgreSQL) {
         .version(VersionReq::parse("=18.6.0").expect("version"))
         .trust_installation_dir(true)
         .host("127.0.0.1")
+        .config("unix_socket_directories", "''")
         .port(0)
         .username("postgres")
         .password("nous_wave")

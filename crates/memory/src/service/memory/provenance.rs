@@ -22,8 +22,10 @@ impl MemoryService {
                             | CognitiveRef::EpisodeRevision(_)
                             | CognitiveRef::JournalRevision(_)
                     ) {
-                        return Err(Error::Invalid(
-                            "cognition dependency must target an exact revision".into(),
+                        return Err(Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InvalidRequest,
+                            "cognition dependency must target an exact revision",
                         ));
                     }
                     self.store
@@ -31,8 +33,10 @@ impl MemoryService {
                         .await?;
                 }
                 RevisionBasis::Seed(_) => {
-                    return Err(Error::Invalid(
-                        "Memory revisions cannot use Cognitive Seed support".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Memory revisions cannot use Cognitive Seed support",
                     ));
                 }
             }
@@ -51,31 +55,37 @@ impl MemoryService {
         evidence: &EvidenceRef,
     ) -> Result<()> {
         let row = sqlx::query("SELECT artifact_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2")
-            .bind(subject.0).bind(evidence.occurrence_id.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(|| Error::Invalid("evidence occurrence is outside Subject".into()))?;
+            .bind(subject.0).bind(evidence.occurrence_id.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "evidence occurrence is outside Subject"))?;
         let occurrence_artifact: Option<Uuid> = row.try_get("artifact_id").map_err(db)?;
         match evidence.locator {
             EvidenceLocator::WholeOccurrence => {}
             EvidenceLocator::SourceRegion(id) => {
                 let artifact: Uuid = sqlx::query_scalar("SELECT artifact_id FROM source_regions WHERE subject_id=$1 AND source_region_id=$2").bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
                 if Some(artifact) != occurrence_artifact {
-                    return Err(Error::Invalid(
-                        "source region artifact does not match occurrence".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "source region artifact does not match occurrence",
                     ));
                 }
             }
             EvidenceLocator::DerivedRepresentation(id) => {
                 let artifact: Option<Uuid> = sqlx::query_scalar("SELECT sr.artifact_id FROM representation_source_regions($1,$2) roots JOIN source_regions sr USING(source_region_id) WHERE sr.artifact_id=(SELECT artifact_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$3)").bind(subject.0).bind(id.0).bind(evidence.occurrence_id.0).fetch_optional(self.store.pool()).await.map_err(db)?.flatten();
                 if artifact.is_none() || artifact != occurrence_artifact {
-                    return Err(Error::Invalid(
-                        "derived representation source does not match occurrence".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "derived representation source does not match occurrence",
                     ));
                 }
             }
             EvidenceLocator::DerivedRegion(id) => {
                 let artifact: Option<Uuid> = sqlx::query_scalar("SELECT sr.artifact_id FROM derived_regions dr JOIN LATERAL representation_source_regions($1,dr.derived_representation_id) roots ON true JOIN source_regions sr USING(source_region_id) WHERE dr.subject_id=$1 AND dr.derived_region_id=$2 AND sr.artifact_id=(SELECT artifact_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$3)").bind(subject.0).bind(id.0).bind(evidence.occurrence_id.0).fetch_optional(self.store.pool()).await.map_err(db)?.flatten();
                 if artifact.is_none() || artifact != occurrence_artifact {
-                    return Err(Error::Invalid(
-                        "derived region source does not match occurrence".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "derived region source does not match occurrence",
                     ));
                 }
             }

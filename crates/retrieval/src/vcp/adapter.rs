@@ -28,17 +28,35 @@ impl VcpIdentityMap {
             .ok()
             .map(|i| i as i64 + 1)
             .ok_or_else(|| {
-                Error::Invalid("VCP reference is outside the generation identity map".into())
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "VCP reference is outside the generation identity map",
+                )
             })
     }
     pub fn reference(&self, id: i64) -> Result<&CognitiveRef> {
         if id <= 0 {
-            return Err(Error::Invalid("VCP node ID must be positive".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "VCP node ID must be positive",
+            ));
         }
-        let index = usize::try_from(id - 1)
-            .map_err(|_| Error::Invalid("VCP node ID must be positive".into()))?;
+        let index = usize::try_from(id - 1).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "VCP node ID must be positive",
+            )
+            .with_source(error)
+        })?;
         self.references.get(index).ok_or_else(|| {
-            Error::Invalid("VCP output ID is outside the generation identity map".into())
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "VCP output ID is outside the generation identity map",
+            )
         })
     }
     pub fn references(&self) -> &[CognitiveRef] {
@@ -71,8 +89,10 @@ pub fn vcp_candidate_curve(
     source: &VcpCurveSource,
 ) -> Result<ReferenceCurve> {
     if source.vector.is_empty() || source.vector.iter().any(|v| !v.is_finite()) {
-        return Err(Error::Invalid(
-            "VCP candidate requires a finite embedding vector".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
         ));
     }
     let mut members = source
@@ -80,8 +100,10 @@ pub fn vcp_candidate_curve(
         .iter()
         .map(|m| {
             if m.vector.len() != source.vector.len() || m.vector.iter().any(|v| !v.is_finite()) {
-                return Err(Error::Invalid(
-                    "VCP curve member embedding does not match candidate dimension".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
             Ok((ids.id(&m.reference)?, m.vector.clone()))

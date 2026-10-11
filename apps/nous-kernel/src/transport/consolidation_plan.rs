@@ -170,7 +170,7 @@ impl KernelService {
                     .join("\n")
             });
         sqlx::query_scalar("SELECT DISTINCT b.canonical_ref FROM lexical_bindings b JOIN lexical_visibility v USING(lexical_ref) WHERE v.subject_id=$1 AND b.object_kind='entity' AND b.tombstoned_at IS NULL AND ((length(v.display_name)>1 AND strpos(lower($2),lower(v.display_name))>0) OR EXISTS(SELECT 1 FROM unnest(v.aliases) alias WHERE length(alias)>1 AND strpos(lower($2),lower(alias))>0)) ORDER BY b.canonical_ref LIMIT $3")
-            .bind(subject.0).bind(cue).bind(i64::try_from(limit).map_err(|_|Error::Invalid("entity catalog limit exceeded".into()))?).fetch_all(self.0.store.pool()).await.map_err(nous_persistence::database_error)
+            .bind(subject.0).bind(cue).bind(i64::try_from(limit).map_err(|error|Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "entity catalog limit exceeded").with_source(error))?).fetch_all(self.0.store.pool()).await.map_err(nous_persistence::database_error)
     }
     async fn finish_consolidation_catalog(
         &self,

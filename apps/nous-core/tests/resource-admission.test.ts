@@ -1,11 +1,13 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import type { MessageInitShape } from "@bufbuild/protobuf";
 import { workflowPayload } from "../src/durable-operation.js";
 import type { WorkflowPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import { coreExecutionSchema } from "../src/configuration/catalog.js";
 import { create } from "@bufbuild/protobuf";
 import { MaterializeResourceRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
+import { ReserveWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { expect, test } from "vitest";
 import type { KernelClient } from "../src/kernel-client.js";
 import { ResourceRegistry } from "../src/resources/registry.js";
@@ -41,17 +43,30 @@ test("a saved external proposal is revalidated before admission while an accepte
       },
     },
   ]);
+  let snapshot:
+    | MessageInitShape<typeof ReserveWorkflowRequestSchema>["snapshot"]
+    | undefined;
   let outcome: WorkflowPayload | undefined;
   const kernel = {
     modelWorkflow: {
-      reserveWorkflow: async () => ({
-        lease: { token: "lease" },
-        proposal: workflowPayload({
-          content: "saved material",
-          mediaType: "text/plain",
-        }),
-        outcome,
-      }),
+      findWorkflow: async () =>
+        outcome ? { found: true, snapshot, outcome } : { found: false },
+      reserveWorkflow: async (
+        input: MessageInitShape<typeof ReserveWorkflowRequestSchema>,
+      ) => {
+        snapshot ??= input.snapshot;
+        return outcome
+          ? { snapshot, outcome, busy: false }
+          : {
+              lease: { token: "lease" },
+              snapshot,
+              proposal: workflowPayload({
+                content: "saved material",
+                mediaType: "text/plain",
+              }),
+              busy: false,
+            };
+      },
       saveWorkflow: async (value: { outcome?: WorkflowPayload }) => {
         outcome = value.outcome;
       },

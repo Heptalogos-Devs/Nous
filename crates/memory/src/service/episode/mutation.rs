@@ -38,10 +38,21 @@ impl MemoryService {
                     let id = receipt
                         .result_ref
                         .ok_or_else(|| {
-                            Error::Infrastructure("Episode receipt has no result".into())
+                            Error::new(
+                                nous_core::ErrorOwner::Memory,
+                                nous_core::ErrorCode::InternalFailure,
+                                "Episode receipt has no result",
+                            )
                         })?
                         .parse()
-                        .map_err(|_| Error::Infrastructure("invalid Episode receipt".into()))?;
+                        .map_err(|error| {
+                            Error::new(
+                                nous_core::ErrorOwner::Memory,
+                                nous_core::ErrorCode::InternalFailure,
+                                "invalid Episode receipt",
+                            )
+                            .with_source(error)
+                        })?;
                     return self
                         .episode(
                             input.subject,
@@ -50,8 +61,10 @@ impl MemoryService {
                         )
                         .await;
                 }
-                return Err(Error::Unavailable(
-                    "create Episode operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "create Episode operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
@@ -211,7 +224,11 @@ impl MemoryService {
             &input.basis,
         )?;
         if !matches!(input.intent.as_str(), "resegment" | "reinterpret") {
-            return Err(Error::Invalid("invalid Episode revision intent".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid Episode revision intent",
+            ));
         }
         let digest = operation_digest(
             "revise_episode",
@@ -242,19 +259,25 @@ impl MemoryService {
                         )
                         .await;
                 }
-                return Err(Error::Unavailable(
-                    "revise Episode operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "revise Episode operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
         };
         let row = sqlx::query("SELECT track_key,current_revision_id,object_epoch,purge_state FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE")
             .bind(input.subject.0).bind(input.episode_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "Episode not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(epoch, input.expected_object_epoch)?;
         if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-            return Err(Error::FailedPrecondition("Episode is purging".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::FailedPrecondition,
+                "Episode is purging",
+            ));
         }
         validate_episode_refs_in_tx(&self.store, mutation.tx(), input.subject, &input.members)
             .await?;
@@ -370,7 +393,11 @@ impl MemoryService {
                 "split_from" | "merged_from" | "temporal_successor" | "derived_from"
             )
         {
-            return Err(Error::Invalid("invalid Episode relation".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid Episode relation",
+            ));
         }
         let digest = operation_digest(
             "link_episode_revisions",
@@ -385,8 +412,10 @@ impl MemoryService {
                 if receipt.state == "committed" {
                     return Ok(());
                 }
-                return Err(Error::Unavailable(
-                    "Episode relation operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "Episode relation operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
@@ -394,7 +423,11 @@ impl MemoryService {
         for revision in [from, to] {
             let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM episode_revisions WHERE subject_id=$1 AND episode_revision_id=$2)").bind(subject.0).bind(revision.0).fetch_one(&mut **mutation.tx()).await.map_err(db)?;
             if !exists {
-                return Err(Error::NotFound("Episode revision not found".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::NotFound,
+                    "Episode revision not found",
+                ));
             }
         }
         sqlx::query("INSERT INTO episode_revision_relations(from_revision_id,to_revision_id,relation,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")

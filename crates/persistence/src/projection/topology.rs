@@ -131,10 +131,14 @@ async fn topology_snapshot_in(
         for source in sources {
             nodes.insert(source.reference.clone());
             for tag in source.tag_ids {
-                let tag = CognitiveRef::Tag(TagId(
-                    tag.parse()
-                        .map_err(|_| Error::Infrastructure("invalid Tag id".into()))?,
-                ));
+                let tag = CognitiveRef::Tag(TagId(tag.parse().map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InternalFailure,
+                        "invalid Tag id",
+                    )
+                    .with_source(error)
+                })?));
                 nodes.insert(tag.clone());
                 let root = format!("structure:tag:{}:{}", source.reference, tag);
                 edges.push(link(
@@ -146,9 +150,14 @@ async fn topology_snapshot_in(
                 edges.push(link(tag, source.reference.clone(), "tag_attachment", root));
             }
             for schema in source.schema_ids {
-                let schema_id: Uuid = schema
-                    .parse()
-                    .map_err(|_| Error::Infrastructure("invalid schema id".into()))?;
+                let schema_id: Uuid = schema.parse().map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InternalFailure,
+                        "invalid schema id",
+                    )
+                    .with_source(error)
+                })?;
                 let revision = sqlx::query_scalar::<_, Uuid>(
                         "SELECT current_revision_id FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'",
                     )

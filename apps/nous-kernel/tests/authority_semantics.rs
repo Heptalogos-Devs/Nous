@@ -25,6 +25,7 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
         "test_mutation",
         &digest,
         owner,
+        nous_core::ErrorOwner::Memory,
     )
     .await
     .unwrap() else {
@@ -44,6 +45,7 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
         "test_mutation",
         &digest,
         owner,
+        nous_core::ErrorOwner::Memory,
     )
     .await
     .unwrap() else {
@@ -72,6 +74,7 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
         "test_mutation",
         &digest,
         owner,
+        nous_core::ErrorOwner::Memory,
     )
     .await
     .unwrap() else {
@@ -85,10 +88,14 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
             operation,
             "test_mutation",
             "different",
-            owner
+            owner,
+            nous_core::ErrorOwner::Memory
         )
         .await,
-        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::OperationIdConflict
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::OperationIdConflict,
+            ..
+        })
     ));
     let MutationStart::Active(mutation) = MutationEnvelope::resume(
         &rt.store,
@@ -97,6 +104,7 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
         "test_mutation",
         &digest,
         owner,
+        nous_core::ErrorOwner::Memory,
     )
     .await
     .unwrap() else {
@@ -113,6 +121,7 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
         "test_mutation",
         &digest,
         owner,
+        nous_core::ErrorOwner::Memory,
     )
     .await
     .unwrap() else {
@@ -136,7 +145,7 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
 async fn envelope_subject(rt: &nous_kernel::NousRuntime) -> SubjectId {
     rt.subjects
         .create_subject(nous_subject::CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: nous_subject::CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -149,4 +158,38 @@ async fn envelope_subject(rt: &nous_kernel::NousRuntime) -> SubjectId {
         .await
         .unwrap()
         .subject_id
+}
+
+#[tokio::test]
+async fn subject_creation_replays_exact_request_and_rejects_changed_content() {
+    let (root, url, _postgres) = test_support::database().await;
+    let rt = test_support::open_runtime(&url, &root).await;
+    let request = nous_subject::CreateSubject {
+        subject_id: SubjectId::new(),
+        operation_id: OperationId::new(),
+        cognitive_seed: nous_subject::CognitiveSeedInput {
+            text: "schema_version = 1".into(),
+            format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
+            provenance: serde_json::json!({"source": "operator"}),
+        },
+        metadata: serde_json::json!({"title": "Replayable subject"}),
+        capabilities: None,
+    };
+    let (first, replay) = tokio::join!(
+        rt.subjects.create_subject(request.clone()),
+        rt.subjects.create_subject(request.clone())
+    );
+    let first = first.unwrap();
+    let replay = replay.unwrap();
+    assert_eq!(first.subject_id, replay.subject_id);
+    assert_eq!(first.created_at, replay.created_at);
+    assert_eq!(first.authority_seq, replay.authority_seq);
+    let mut changed = request.clone();
+    changed.metadata = serde_json::json!({"title": "Changed"});
+    assert!(matches!(rt.subjects.create_subject(changed).await,
+        Err(error) if error.code == nous_core::ErrorCode::OperationIdConflict));
+    let mut occupied = request;
+    occupied.operation_id = OperationId::new();
+    assert!(matches!(rt.subjects.create_subject(occupied).await,
+        Err(error) if error.code == nous_core::ErrorCode::OperationIdConflict));
 }

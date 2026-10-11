@@ -122,10 +122,24 @@ impl AuthorityStore {
                     lexical_ref: row.try_get("lexical_ref").map_err(db)?,
                     object_kind: row.try_get("object_kind").map_err(db)?,
                     canonical_ref: row.try_get("canonical_ref").map_err(db)?,
-                    display_name: serde_json::from_value(state["display_name"].clone())
-                        .map_err(|error| Error::Infrastructure(error.to_string()))?,
-                    aliases: serde_json::from_value(state["aliases"].clone())
-                        .map_err(|error| Error::Infrastructure(error.to_string()))?,
+                    display_name: serde_json::from_value(state["display_name"].clone()).map_err(
+                        |error| {
+                            Error::new(
+                                nous_core::ErrorOwner::Persistence,
+                                nous_core::ErrorCode::InternalFailure,
+                                "Operation failed",
+                            )
+                            .with_source(error)
+                        },
+                    )?,
+                    aliases: serde_json::from_value(state["aliases"].clone()).map_err(|error| {
+                        Error::new(
+                            nous_core::ErrorOwner::Persistence,
+                            nous_core::ErrorCode::InternalFailure,
+                            "Operation failed",
+                        )
+                        .with_source(error)
+                    })?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;

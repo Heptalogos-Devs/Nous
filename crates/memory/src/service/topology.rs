@@ -4,6 +4,12 @@
 use super::*;
 use nous_persistence::database_error as db;
 
+mod validation;
+use validation::{
+    association_basis_parts, parse_use_event_key, validate_association_endpoint,
+    validate_association_input,
+};
+
 impl MemoryService {
     pub async fn create_association(
         &self,
@@ -33,20 +39,28 @@ impl MemoryService {
                             subject,
                             AssociationEvidenceId(
                                 id.ok_or_else(|| {
-                                    Error::Infrastructure(
-                                        "association receipt missing result".into(),
+                                    Error::new(
+                                        ErrorOwner::Concept,
+                                        ErrorCode::InternalFailure,
+                                        "association receipt missing result",
                                     )
                                 })?
                                 .parse()
                                 .map_err(|_| {
-                                    Error::Infrastructure("invalid association receipt".into())
+                                    Error::new(
+                                        ErrorOwner::Concept,
+                                        ErrorCode::InternalFailure,
+                                        "invalid association receipt",
+                                    )
                                 })?,
                             ),
                         )
                         .await;
                 }
-                return Err(Error::Unavailable(
-                    "association operation is already in progress".into(),
+                return Err(Error::new(
+                    ErrorOwner::Concept,
+                    ErrorCode::Unavailable,
+                    "association operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
@@ -66,8 +80,10 @@ impl MemoryService {
                 .producer_signature_id
                 .is_some_and(|id| id != registered)
             {
-                return Err(Error::Invalid(
-                    "association producer identity mismatch".into(),
+                return Err(Error::new(
+                    ErrorOwner::Concept,
+                    ErrorCode::InvalidRequest,
+                    "association producer identity mismatch",
                 ));
             }
             input.producer_signature_id = Some(registered);
@@ -126,8 +142,9 @@ impl MemoryService {
                 let active: Option<Uuid> = sqlx::query_scalar("SELECT tag_id FROM tags WHERE subject_id=$1 AND tag_id=$2 AND status='active' FOR SHARE")
                     .bind(subject.0).bind(id.0).fetch_optional(&mut **tx).await.map_err(db)?;
                 return active.map(|_| ()).ok_or_else(|| {
-                    nous_core::DomainError::new(
-                        nous_core::DomainErrorCode::StaleRevision,
+                    nous_core::Error::new(
+                        ErrorOwner::Concept,
+                        ErrorCode::StaleRevision,
                         "concept Tag endpoint is stale",
                     )
                     .into()
@@ -147,8 +164,9 @@ impl MemoryService {
             .await
             .map_err(db)?;
         if current != Some(id) {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                ErrorOwner::Concept,
+                ErrorCode::StaleRevision,
                 "concept cognition endpoint is stale",
             )
             .into());
@@ -206,8 +224,10 @@ impl MemoryService {
         max_depth: usize,
     ) -> Result<AssociationNeighborhood> {
         if !(1..=256).contains(&max_nodes) || !(1..=4).contains(&max_depth) {
-            return Err(Error::Invalid(
-                "neighborhood requires 1..256 nodes and 1..4 depth".into(),
+            return Err(Error::new(
+                ErrorOwner::Concept,
+                ErrorCode::InvalidRequest,
+                "neighborhood requires 1..256 nodes and 1..4 depth",
             ));
         }
         self.store.require_subject(subject).await?;
@@ -283,7 +303,13 @@ impl MemoryService {
         .fetch_optional(self.store.pool())
         .await
         .map_err(db)?
-        .ok_or_else(|| Error::NotFound("association evidence not found".into()))?;
+        .ok_or_else(|| {
+            Error::new(
+                ErrorOwner::Concept,
+                ErrorCode::NotFound,
+                "association evidence not found",
+            )
+        })?;
         let from = parse_reference(
             &row.try_get::<String, _>("from_ref_kind").map_err(db)?,
             &row.try_get::<String, _>("from_ref").map_err(db)?,
@@ -313,7 +339,7 @@ impl MemoryService {
                     (None, Some(value), None) => EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(value)),
                     (None, None, Some(value)) => EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(value)),
                     (None, None, None) => EvidenceLocator::WholeOccurrence,
-                    _ => return Err(Error::Infrastructure("association evidence locator is invalid".into())),
+                    _ => return Err(Error::new(ErrorOwner::Concept, ErrorCode::InternalFailure, "association evidence locator is invalid")),
                 };
                 Ok(AssociationBasis::Revision(RevisionBasis::Evidence(EvidenceRef {
                     epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
@@ -370,8 +396,10 @@ impl MemoryService {
                 }
                 AssociationBasis::UseEvent(value) => {
                     if value.subject_id != subject {
-                        return Err(Error::Invalid(
-                            "association UseEvent support belongs to another Subject".into(),
+                        return Err(Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InvalidRequest,
+                            "association UseEvent support belongs to another Subject",
                         ));
                     }
                     let active = sqlx::query_scalar::<_, String>(
@@ -393,8 +421,10 @@ impl MemoryService {
                     .await
                     .map_err(db)?;
                     if active.is_none() && !purged {
-                        return Err(Error::Invalid(
-                            "association UseEvent support was not recorded".into(),
+                        return Err(Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InvalidRequest,
+                            "association UseEvent support was not recorded",
                         ));
                     }
                     use_events.push(active);
@@ -404,32 +434,49 @@ impl MemoryService {
         match input.basis_class {
             AssociationBasisClass::HostExplicit => {}
             AssociationBasisClass::SourceEvidence if !has_source_evidence => {
-                return Err(Error::Invalid(
-                    "source_evidence association needs an EvidenceRef support".into(),
+                return Err(Error::new(
+                    ErrorOwner::Concept,
+                    ErrorCode::InvalidRequest,
+                    "source_evidence association needs an EvidenceRef support",
                 ));
             }
             AssociationBasisClass::CognitiveDerivation
             | AssociationBasisClass::DerivedStructure => {
                 if let Some(producer) = &input.producer {
                     if producer.operation != CapabilityOperation::ConceptMaintenanceText {
-                        return Err(Error::Invalid(
-                            "association producer operation mismatch".into(),
+                        return Err(Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InvalidRequest,
+                            "association producer operation mismatch",
                         ));
                     }
                     serde_json::from_value::<TopologyRelation>(serde_json::json!(
                         input.relation_kind
                     ))
-                    .map_err(|_| Error::Invalid("unregistered concept relation".into()))?;
+                    .map_err(|error| {
+                        Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InvalidRequest,
+                            "unregistered concept relation",
+                        )
+                        .with_source(error)
+                    })?;
                 } else {
                     let producer = input.producer_signature_id.ok_or_else(|| {
-                        Error::Invalid("derived association requires producer provenance".into())
+                        Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InvalidRequest,
+                            "derived association requires producer provenance",
+                        )
                     })?;
                     let exists: bool = sqlx::query_scalar(
                         "SELECT EXISTS(SELECT 1 FROM producer_signatures WHERE producer_signature_id=$1)")
                         .bind(producer).fetch_one(self.store.pool()).await.map_err(db)?;
                     if !exists {
-                        return Err(Error::Invalid(
-                            "producer signature is not registered".into(),
+                        return Err(Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InvalidRequest,
+                            "producer signature is not registered",
                         ));
                     }
                 }
@@ -438,20 +485,26 @@ impl MemoryService {
                     .iter()
                     .all(|basis| matches!(basis, AssociationBasis::UseEvent(_)))
                 {
-                    return Err(Error::Invalid(
-                        "derived association needs revision provenance support".into(),
+                    return Err(Error::new(
+                        ErrorOwner::Concept,
+                        ErrorCode::InvalidRequest,
+                        "derived association needs revision provenance support",
                     ));
                 }
             }
             AssociationBasisClass::MeaningfulUse if use_events.is_empty() => {
-                return Err(Error::Invalid(
-                    "meaningful_use association needs a UseEventRef support".into(),
+                return Err(Error::new(
+                    ErrorOwner::Concept,
+                    ErrorCode::InvalidRequest,
+                    "meaningful_use association needs a UseEventRef support",
                 ));
             }
             AssociationBasisClass::MeaningfulUse => {
                 if use_events.iter().any(Option::is_none) {
-                    return Err(Error::Invalid(
-                        "purged UseEvent receipts cannot prove meaningful-use kind".into(),
+                    return Err(Error::new(
+                        ErrorOwner::Concept,
+                        ErrorCode::InvalidRequest,
+                        "purged UseEvent receipts cannot prove meaningful-use kind",
                     ));
                 }
                 for use_kind in use_events.into_iter().flatten() {
@@ -461,9 +514,10 @@ impl MemoryService {
                     ) || (input.polarity == AssociationPolarity::Negative
                         && use_kind == "result_refuted");
                     if !allowed {
-                        return Err(Error::Invalid(
-                            "UseEvent kind cannot support a positive meaningful-use association"
-                                .into(),
+                        return Err(Error::new(
+                            ErrorOwner::Concept,
+                            ErrorCode::InvalidRequest,
+                            "UseEvent kind cannot support a positive meaningful-use association",
                         ));
                     }
                 }
@@ -492,8 +546,10 @@ impl MemoryService {
                 if receipt.state == "committed" {
                     return Ok(());
                 }
-                return Err(Error::Unavailable(
-                    "association revoke operation is already in progress".into(),
+                return Err(Error::new(
+                    ErrorOwner::Concept,
+                    ErrorCode::Unavailable,
+                    "association revoke operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
@@ -506,7 +562,11 @@ impl MemoryService {
             .await
             .map_err(db)?;
         if changed.rows_affected() == 0 {
-            return Err(Error::NotFound("association evidence not found".into()));
+            return Err(Error::new(
+                ErrorOwner::Concept,
+                ErrorCode::NotFound,
+                "association evidence not found",
+            ));
         }
         mutation
             .invalidate(ProjectionInvalidation::topology())
@@ -546,141 +606,12 @@ impl MemoryService {
             reference,
             CognitiveRef::MemoryRevision(_) | CognitiveRef::CognitiveSchemaRevision(_)
         ) {
-            return Err(Error::Invalid(
-                "durable cognition reference must be an exact revision".into(),
+            return Err(Error::new(
+                ErrorOwner::Memory,
+                ErrorCode::InvalidRequest,
+                "durable cognition reference must be an exact revision",
             ));
         }
         self.store.validate_reference(subject, reference).await
     }
-}
-
-#[expect(
-    clippy::type_complexity,
-    reason = "the tuple mirrors the normalized support columns written atomically"
-)]
-fn association_basis_parts(
-    basis: &AssociationBasis,
-) -> Result<(
-    String,
-    String,
-    String,
-    Option<Uuid>,
-    Option<Uuid>,
-    Option<Uuid>,
-    Option<Uuid>,
-)> {
-    match basis {
-        AssociationBasis::UseEvent(value) => Ok((
-            "use_event".into(),
-            value.canonical_key(),
-            BasisRole::Contextual.as_str().into(),
-            None,
-            None,
-            None,
-            None,
-        )),
-        AssociationBasis::Revision(RevisionBasis::Evidence(value)) => {
-            let (source_region, derived_representation, derived_region) = match value.locator {
-                EvidenceLocator::WholeOccurrence => (None, None, None),
-                EvidenceLocator::SourceRegion(id) => (Some(id.0), None, None),
-                EvidenceLocator::DerivedRepresentation(id) => (None, Some(id.0), None),
-                EvidenceLocator::DerivedRegion(id) => (None, None, Some(id.0)),
-            };
-            Ok((
-                "evidence".into(),
-                value.canonical_key(),
-                value.basis_role.as_str().into(),
-                Some(value.occurrence_id.0),
-                source_region,
-                derived_representation,
-                derived_region,
-            ))
-        }
-        AssociationBasis::Revision(RevisionBasis::CognitionDependency(value)) => {
-            let (kind, reference) = reference_parts(&value.target_revision);
-            Ok((
-                kind,
-                reference,
-                value.basis_role.as_str().into(),
-                None,
-                None,
-                None,
-                None,
-            ))
-        }
-        AssociationBasis::Revision(RevisionBasis::Seed(_)) => Err(Error::Invalid(
-            "Association support cannot use Cognitive Seed support".into(),
-        )),
-    }
-}
-
-fn validate_association_endpoint(reference: &CognitiveRef) -> Result<()> {
-    match reference {
-        CognitiveRef::Memory(_) | CognitiveRef::CognitiveSchema(_) => Err(Error::Invalid(
-            "association cognition endpoints must be exact revisions".into(),
-        )),
-        CognitiveRef::MemoryRevision(_)
-        | CognitiveRef::CognitiveSchemaRevision(_)
-        | CognitiveRef::EpisodeRevision(_)
-        | CognitiveRef::JournalRevision(_)
-        | CognitiveRef::Entity(_)
-        | CognitiveRef::Tag(_)
-        | CognitiveRef::Resource(_) => Ok(()),
-        _ => Err(Error::Invalid(
-            "association endpoint must be cognition revision, Entity, Tag, or Resource".into(),
-        )),
-    }
-}
-
-fn parse_use_event_key(value: &str) -> Result<(String, Uuid)> {
-    let (_, rest) = value
-        .split_once(':')
-        .ok_or_else(|| Error::Infrastructure("invalid association UseEvent key".into()))?;
-    let (consumer, event) = rest
-        .rsplit_once(':')
-        .ok_or_else(|| Error::Infrastructure("invalid association UseEvent key".into()))?;
-    let event = event
-        .parse()
-        .map_err(|_| Error::Infrastructure("invalid association UseEvent id".into()))?;
-    Ok((consumer.into(), event))
-}
-
-fn validate_association_input(input: &CreateAssociationRequest) -> Result<()> {
-    if input.relation_kind.is_empty()
-        || input.relation_kind.len() > 128
-        || !input
-            .relation_kind
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_.:-".contains(&b))
-    {
-        return Err(Error::Invalid("relation_kind is invalid".into()));
-    }
-    if !(1..=16).contains(&input.basis.len()) {
-        return Err(Error::Invalid("association needs 1..16 basis".into()));
-    }
-    input.valid_time.validate()?;
-    validate_association_endpoint(&input.from)?;
-    validate_association_endpoint(&input.to)?;
-    if input.from == input.to {
-        return Err(Error::Invalid("association endpoints must differ".into()));
-    }
-    if input.relation_kind == "tag_attachment" {
-        let cognition = |reference: &CognitiveRef| {
-            matches!(
-                reference,
-                CognitiveRef::MemoryRevision(_)
-                    | CognitiveRef::CognitiveSchemaRevision(_)
-                    | CognitiveRef::EpisodeRevision(_)
-                    | CognitiveRef::JournalRevision(_)
-            )
-        };
-        if input.polarity != AssociationPolarity::Positive
-            || !(cognition(&input.from) && matches!(input.to, CognitiveRef::Tag(_)))
-        {
-            return Err(Error::Invalid(
-                "tag_attachment requires positive cognition to Tag endpoints".into(),
-            ));
-        }
-    }
-    Ok(())
 }

@@ -121,9 +121,11 @@ fn validate_opaque_ref(value: &str, expected_prefix: &str) -> Result<()> {
         || value.chars().any(char::is_whitespace)
         || parts.iter().any(|part| part.is_empty())
     {
-        return Err(Error::Invalid(format!(
-            "invalid {expected_prefix} reference"
-        )));
+        return Err(Error::new(
+            crate::ErrorOwner::Core,
+            crate::ErrorCode::InvalidRequest,
+            "Invalid request",
+        ));
     }
     Ok(())
 }
@@ -471,7 +473,7 @@ pub struct SituationDescriptor {
 }
 
 mod error;
-pub use error::{DomainError, DomainErrorCode, Error, Result};
+pub use error::{Error, ErrorCode, ErrorOwner, Result};
 
 impl fmt::Display for CognitiveRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

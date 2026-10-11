@@ -125,18 +125,24 @@ struct PropagationState {
     origins: BTreeSet<String>,
 }
 
-pub fn propagate(graph: &WaveGraphGeneration, seeds: &[SourceSeed]) -> QueryRiver {
-    propagate_with_budget(graph, seeds, graph.config.max_hops, graph.config.max_states)
+pub fn propagate(
+    graph: &WaveGraphGeneration,
+    seeds: &[SourceSeed],
+    readout: &WaveReadoutPolicy,
+) -> QueryRiver {
+    propagate_with_budget(graph, seeds, readout, readout.max_hops, readout.max_states)
 }
 pub fn propagate_weighted(
     graph: &WaveGraphGeneration,
     seeds: &[WeightedCognitiveSeed],
+    readout: &WaveReadoutPolicy,
 ) -> QueryRiver {
-    propagate_weighted_with_budget(graph, seeds, graph.config.max_hops, graph.config.max_states)
+    propagate_weighted_with_budget(graph, seeds, readout, readout.max_hops, readout.max_states)
 }
 pub fn propagate_weighted_with_budget(
     graph: &WaveGraphGeneration,
     seeds: &[WeightedCognitiveSeed],
+    readout: &WaveReadoutPolicy,
     max_hops: usize,
     max_states: usize,
 ) -> QueryRiver {
@@ -153,7 +159,7 @@ pub fn propagate_weighted_with_budget(
             hop_zero: true,
         })
         .collect::<Vec<_>>();
-    propagate_with_budget(graph, &converted, max_hops, max_states)
+    propagate_with_budget(graph, &converted, readout, max_hops, max_states)
 }
 #[expect(
     clippy::collapsible_if,
@@ -166,9 +172,11 @@ pub fn propagate_weighted_with_budget(
 pub fn propagate_with_budget(
     graph: &WaveGraphGeneration,
     seeds: &[SourceSeed],
+    readout: &WaveReadoutPolicy,
     max_hops: usize,
     max_states: usize,
 ) -> QueryRiver {
+    debug_assert!(readout.validate().is_ok());
     let mut source_field = SparseField::new();
     let total = seeds
         .iter()
@@ -187,16 +195,16 @@ pub fn propagate_with_budget(
                 previous: None,
                 current: seed.node,
                 hop: 0,
-                remaining_budget_steps: graph.config.initial_budget_steps,
+                remaining_budget_steps: readout.initial_budget_steps,
                 energy,
                 origins: BTreeSet::from([seed.origin_cue.clone()]),
             });
         }
     }
-    let max_hops = max_hops.min(graph.config.max_hops).max(1);
-    let max_states = max_states.min(graph.config.max_states).max(1);
+    let max_hops = max_hops.min(readout.max_hops).max(1);
+    let max_states = max_states.min(readout.max_states).max(1);
     let fir_sum = (0..=max_hops)
-        .map(|hop| graph.config.fir_gamma.powi(hop as i32))
+        .map(|hop| readout.fir_gamma.powi(hop as i32))
         .sum::<f64>();
     let mut potential = SparseField::new();
     let mut first = HashMap::new();
@@ -223,7 +231,7 @@ pub fn propagate_with_budget(
             }
             let Some(remaining) = state
                 .remaining_budget_steps
-                .checked_sub(graph.config.normal_edge_cost)
+                .checked_sub(readout.normal_edge_cost)
             else {
                 continue;
             };
@@ -232,11 +240,11 @@ pub fn propagate_with_budget(
                 let energy = state.energy
                     * conductance
                     * if immediate {
-                        graph.config.immediate_return_multiplier
+                        readout.immediate_return_multiplier
                     } else {
                         1.0
                     };
-                if energy < graph.config.minimum_state_energy {
+                if energy < readout.minimum_state_energy {
                     continue;
                 }
                 let next_state = PropagationState {
@@ -298,7 +306,7 @@ pub fn propagate_with_budget(
         }
         for state in &next {
             max_hop_observed = max_hop_observed.max(state.hop);
-            let weight = graph.config.fir_gamma.powi(state.hop as i32) / fir_sum;
+            let weight = readout.fir_gamma.powi(state.hop as i32) / fir_sum;
             *potential.entry(state.current).or_default() += state.energy * weight;
             let entry = first.entry(state.current).or_insert(state.hop);
             *entry = (*entry).min(state.hop);
@@ -360,7 +368,7 @@ mod tests {
     use super::*;
     use nous_core::MemoryRevisionId;
 
-    fn converging_graph(config: WaveConfig) -> WaveGraphGeneration {
+    fn graph() -> WaveGraphGeneration {
         WaveGraphGeneration::from_artifact(TopologyArtifact {
             generation_id: nous_core::ServingGenerationId::new(),
             cognitive_profile: nous_runtime::CognitiveProfile::default(),
@@ -381,7 +389,7 @@ mod tests {
                 (2, 3, 0.8, 1.0),
                 (3, 4, 0.8, 1.0),
             ],
-            config,
+            build_policy: WaveBuildPolicy::default(),
         })
         .expect("converging transport")
     }
@@ -397,32 +405,33 @@ mod tests {
 
     #[test]
     fn remaining_budget_prevents_unaffordable_transitions() {
-        let graph = converging_graph(WaveConfig {
+        let graph = graph();
+        let readout = WaveReadoutPolicy {
             initial_budget_steps: 1,
             ..Default::default()
-        });
-        let river = propagate(&graph, &[seed(0, "a")]);
+        };
+        let river = propagate(&graph, &[seed(0, "a")], &readout);
         assert!(river.node_potential.contains_key(&2));
         assert!(!river.node_potential.contains_key(&3));
         assert!(river.complete);
-        let graph = converging_graph(WaveConfig {
+        let readout = WaveReadoutPolicy {
             initial_budget_steps: 1,
             normal_edge_cost: 2,
             ..Default::default()
-        });
-        let river = propagate(&graph, &[seed(0, "a")]);
+        };
+        let river = propagate(&graph, &[seed(0, "a")], &readout);
         assert_eq!(river.node_potential.len(), 1);
         assert!(river.edges.is_empty());
     }
 
     #[test]
     fn merged_paths_keep_all_source_origins_downstream() {
-        let graph = converging_graph(WaveConfig::default());
+        let graph = graph();
         for seeds in [
             vec![seed(0, "a"), seed(1, "b")],
             vec![seed(1, "b"), seed(0, "a")],
         ] {
-            let river = propagate(&graph, &seeds);
+            let river = propagate(&graph, &seeds, &WaveReadoutPolicy::default());
             for node in [3, 4] {
                 let origins = &river
                     .provenance
@@ -436,72 +445,14 @@ mod tests {
     }
 
     #[test]
-    fn state_budget_is_part_of_merge_and_truncation_is_reported() {
-        let root = CognitiveRef::MemoryRevision(MemoryRevisionId::new());
-        let left = CognitiveRef::MemoryRevision(MemoryRevisionId::new());
-        let right = CognitiveRef::MemoryRevision(MemoryRevisionId::new());
-        let graph = WaveGraphGeneration::build(
-            vec![
-                WaveNode {
-                    serving_id: 0,
-                    reference: root.clone(),
-                    node_kind: WaveNodeKind::Memory,
-                    embedding_key: None,
-                    posting_key: None,
-                    intrinsic_residual_gain: None,
-                },
-                WaveNode {
-                    serving_id: 1,
-                    reference: left.clone(),
-                    node_kind: WaveNodeKind::Memory,
-                    embedding_key: None,
-                    posting_key: None,
-                    intrinsic_residual_gain: None,
-                },
-                WaveNode {
-                    serving_id: 2,
-                    reference: right.clone(),
-                    node_kind: WaveNodeKind::Memory,
-                    embedding_key: None,
-                    posting_key: None,
-                    intrinsic_residual_gain: None,
-                },
-            ],
-            &[
-                WaveEdgeEvidence {
-                    from: root.clone(),
-                    to: left,
-                    basis_class: "host_explicit".into(),
-                    association_kind: "assoc.related".into(),
-                    polarity: "positive".into(),
-                    support_mass: 1.0,
-                    provenance_root: None,
-                },
-                WaveEdgeEvidence {
-                    from: root,
-                    to: right,
-                    basis_class: "host_explicit".into(),
-                    association_kind: "assoc.related".into(),
-                    polarity: "positive".into(),
-                    support_mass: 1.0,
-                    provenance_root: None,
-                },
-            ],
-            WaveConfig {
-                max_states: 1,
-                ..WaveConfig::default()
-            },
-        )
-        .expect("graph");
-        let river = propagate(
+    fn state_budget_truncation_is_reported() {
+        let graph = graph();
+        let river = propagate_with_budget(
             &graph,
-            &[SourceSeed {
-                node: 0,
-                weight: 1.0,
-                seed_family: "exact_target".into(),
-                origin_cue: "test".into(),
-                hop_zero: true,
-            }],
+            &[seed(0, "test-a"), seed(1, "test-b")],
+            &WaveReadoutPolicy::default(),
+            4,
+            1,
         );
         assert!(!river.complete);
         assert!(river.discarded_state_mass > 0.0);

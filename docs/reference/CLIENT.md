@@ -2,27 +2,31 @@
 
 Node consumers connect with `connectNousInstance({ runRoot })` from `@nous-wave/client/node`. The [Client package](../../packages/client/README.md) and canonical [public protocol](../../proto/README.md) define the typed methods. These operations use the same Core and semantic owners as CLI/MCP.
 
-The Client removes transport headers from message DTOs and decodes protobuf Value/Struct at their actual owning types. JSON payloads remain opaque, including keys named `$typeName`, `$unknown` or `subjectId`. First-party consumers use `@nous-wave/client/data` to retain and restore actual protocol schemas without placing them in user JSON.
+Successful Client calls return the generated protobuf-js response message directly. Callers keep the generated field names, `bigint` 64-bit values, bytes, oneofs and unknown binary wire fields; there is no recursive `Data<T>` conversion or implicit schema-restoration step. Use `toJson(schema, message)` / `fromJson(schema, json)` only at an explicit ProtoJSON boundary. Configuration `Value` uses that boundary explicitly, and `google.protobuf.Value`, `Struct` and `ListValue` contents remain opaque. `protocolReferences(message, schema)` walks only real Buf messages and protocol-annotated reference fields; plain objects and lookalike `$typeName` keys are not messages.
+
+Use `create(schema, init)` for hand-built protobuf requests and responses. CLI summaries that intentionally omit fields are ordinary DTOs, not generated messages. A ProtoJSON receipt stores the registered request/response type name and complete typed JSON; it does not preserve unknown binary wire fields that ProtoJSON cannot represent.
 
 Persist the operation ID and exact request before mutations. Same ID/same normalized input replays the original result; changed input conflicts. Read the current object epoch/head before a new revision or lifecycle change, then freeze that expected value for retries. A model proposal is not an Authority mutation until its owner commits it.
 
+`system.operationStatus({ identity })` is a read-only lookup against one existing owner receipt, using one typed identity variant: `mutationReceipt`, `subjectCreate`, `configurationMutation`, `observationRequest` or `modelWorkflow`. `UNKNOWN` means no matching row was found; it does not prove that a write was not committed. A lookup error also leaves the outcome unknown. `COMPLETED` for a model workflow means only that its opaque terminal outcome was stored, not that the domain operation succeeded. The response is a safe status projection and does not include request, configuration, seed, observation or workflow payloads.
+
 ## Required vocabulary
 
-| Field | Accepted values and meaning |
-| --- | --- |
-| `subjects.adoptSeed.kind` | `initial` for initial adoption; `import` for an imported version. Omitted/empty means import. |
-| `CognitiveSeed.format` | `application/vnd.nous-wave.cognitive-seed+toml;version=1`; text is nonempty TOML with `schema_version = 1`. Seed provenance belongs to the versioned source. |
-| `MemoryContent.cognitiveRole` | `experiential`, `declarative`, `procedural_experience`. |
-| `MemoryContent.formationMode` | `grounded` or `synthesized`; grounded requires its actual grounding Occurrence, synthesized requires independent supported inputs. |
-| `MemoryContent.semanticRole` | A nonempty caller/producer semantic label, such as `working_practice` or `reported_fact`; it is not a closed enum. |
-| `MemoryContent.epistemicClass` | Required: `observed`, `reported`, `derived`, `inferred`, `narrative`, `simulated`. This is the claim's epistemic category, not its cognitive role or formation mode. |
-| `memory.revise.intent` | `correct`, `rephrase`, `reinterpret`; preserve the same cognition object's referent/scope continuity. |
-| `memory.setAccessibility.mode` | `auto`, `normal`, `deep`, `explicit`; accessibility does not authorize suppression/purge bypass. |
-| `identity.rebindEntity.bindingState` | `bound`, `unbound`, `disputed`. Bound requires `entityRef`; unbound forbids one. Mention ID belongs to an actual source Occurrence. |
+| Field                                     | Accepted values and meaning                                                                                                                                              |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `subjects.adoptSeed.kind`                 | `initial` for initial adoption; `import` for an imported version. Omitted/empty means import.                                                                            |
+| `CognitiveSeed.format`                    | `application/vnd.nous-wave.cognitive-seed+toml;version=1`; text is nonempty TOML with `schema_version = 1`. Seed provenance belongs to the versioned source.             |
+| `MemoryContent.cognitiveRole`             | `experiential`, `declarative`, `procedural_experience`.                                                                                                                  |
+| `MemoryContent.formationMode`             | `grounded` or `synthesized`; grounded requires its actual grounding Occurrence, synthesized requires independent supported inputs.                                       |
+| `MemoryContent.semanticRole`              | A nonempty caller/producer semantic label, such as `working_practice` or `reported_fact`; it is not a closed enum.                                                       |
+| `MemoryContent.epistemicClass`            | Required: `observed`, `reported`, `derived`, `inferred`, `narrative`, `simulated`. This is the claim's epistemic category, not its cognitive role or formation mode.     |
+| `memory.revise.intent`                    | `correct`, `rephrase`, `reinterpret`; preserve the same cognition object's referent/scope continuity.                                                                    |
+| `memory.setAccessibility.mode`            | `auto`, `normal`, `deep`, `explicit`; accessibility does not authorize suppression/purge bypass.                                                                         |
+| `identity.rebindEntity.bindingState`      | `bound`, `unbound`, `disputed`. Bound requires `entityRef`; unbound forbids one. Mention ID belongs to an actual source Occurrence.                                      |
 | `model.formFromObservation.aboutnessMode` | `explicit`, `select_from_resolved_mentions`, `none`. Explicit aboutness refs require explicit mode. CLI `--aboutness` chooses explicit unless the caller specifies mode. |
-| `Episode.revise.intent` | `resegment`, `reinterpret`; members and sources remain exact references. |
-| `CognitiveSchemaContent.formationKind` | `explicit_import`, `synthesized`. Explicit import needs actual evidence; synthesized needs at least two independent known source roots. |
-| Schema evidence role | `support`, `counterexample`, `boundary_case`; formation basis role separately uses `direct`, `interpretation`, `contextual`. |
+| `Episode.revise.intent`                   | `resegment`, `reinterpret`; members and sources remain exact references.                                                                                                 |
+| `CognitiveSchemaContent.formationKind`    | `explicit_import`, `synthesized`. Explicit import needs actual evidence; synthesized needs at least two independent known source roots.                                  |
+| Schema evidence role                      | `support`, `counterexample`, `boundary_case`; formation basis role separately uses `direct`, `interpretation`, `contextual`.                                             |
 
 ## Source-backed correction and lifecycle
 

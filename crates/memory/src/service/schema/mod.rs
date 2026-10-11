@@ -26,8 +26,10 @@ fn validate_schema_content(content: &SchemaContent) -> Result<()> {
         || content.boundary_definition.trim().is_empty()
         || content.boundary_definition.len() > 16 * 1024
     {
-        return Err(Error::Invalid(
-            "schema content is required and bounded".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "schema content is required and bounded",
         ));
     }
     content.applicability_scope.valid_time.validate()
@@ -35,7 +37,11 @@ fn validate_schema_content(content: &SchemaContent) -> Result<()> {
 
 fn validate_schema_revision_content(input: &ReviseSchemaInput) -> Result<()> {
     if input.operation_id.0.is_nil() {
-        return Err(Error::Invalid("operation_id is required".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "operation_id is required",
+        ));
     }
     validate_schema_content(&input.content)
 }
@@ -75,8 +81,10 @@ fn decode_schema_link_input(row: sqlx::postgres::PgRow) -> Result<SchemaEvidence
             }
             (None, None, None) => EvidenceLocator::WholeOccurrence,
             _ => {
-                return Err(Error::Infrastructure(
-                    "schema evidence locator is invalid".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "schema evidence locator is invalid",
                 ));
             }
         };
@@ -129,8 +137,10 @@ impl MemoryService {
             .map(|link| link.basis.clone())
             .collect();
         if basis.is_empty() {
-            return Err(Error::Invalid(
-                "Schema revision requires evidence links".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "Schema revision requires evidence links",
             ));
         }
         for basis in &basis {
@@ -227,8 +237,10 @@ fn canonical_schema_producer(
     producer
         .map(|producer| {
             if producer.operation != CapabilityOperation::MemoryConsolidationText {
-                return Err(Error::Invalid(
-                    "Schema producer requires a cognition consolidation operation".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Schema producer requires a cognition consolidation operation",
                 ));
             }
             AuthorityStore::canonical_producer(producer)

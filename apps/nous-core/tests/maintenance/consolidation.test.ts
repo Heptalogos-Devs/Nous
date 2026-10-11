@@ -3,7 +3,8 @@
 
 import {
   domainError,
-  DomainErrorCode,
+  ErrorCode,
+  ErrorOwner,
   ErrorRecovery,
 } from "@nous-wave/client/errors";
 import { expect, it, vi } from "vitest";
@@ -226,7 +227,8 @@ it("makes a stale target terminal while independent creation still commits", asy
   const f = fixture();
   f.revise.mockRejectedValueOnce(
     domainError("stale epoch", Code.Aborted, {
-      code: DomainErrorCode.STALE_REVISION,
+      owner: ErrorOwner.MEMORY,
+      code: ErrorCode.STALE_REVISION,
       recovery: ErrorRecovery.REFRESH_STATE,
     }),
   );

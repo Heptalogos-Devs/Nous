@@ -71,8 +71,10 @@ impl MaterialService {
                 self.representation_roots(subject, representation, view)
                     .await
             }
-            _ => Err(Error::Invalid(
-                "lineage requires a Material reference".into(),
+            _ => Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "lineage requires a Material reference",
             )),
         }
     }
@@ -84,8 +86,10 @@ impl MaterialService {
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<()> {
         if view.is_some_and(|view| view.subject != subject || !view.material_contains(reference)) {
-            return Err(Error::NotFound(
-                "Material reference is outside the captured view".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::NotFound,
+                "Material reference is outside the captured view",
             ));
         }
         Ok(())
@@ -99,7 +103,7 @@ impl MaterialService {
     ) -> Result<EvidenceRoot> {
         let row = sqlx::query("SELECT source_class,external_object_ref,artifact_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2 AND ($3::timestamptz IS NULL OR created_at<=$3)")
             .bind(subject.0).bind(occurrence.0).bind(view.map(|v|v.as_of)).fetch_optional(self.store.pool()).await.map_err(db)?
-            .ok_or_else(|| Error::Invalid("evidence occurrence is outside Subject/view".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Material, nous_core::ErrorCode::InvalidRequest, "evidence occurrence is outside Subject/view"))?;
         if let Some(artifact) = row.try_get::<Option<Uuid>, _>("artifact_id").map_err(db)? {
             return self.artifact_root(subject, artifact, view).await;
         }
@@ -128,8 +132,10 @@ impl MaterialService {
         let artifacts: Vec<Uuid> = sqlx::query_scalar("SELECT DISTINCT sr.artifact_id FROM representation_source_regions($1,$2) roots JOIN source_regions sr USING(source_region_id) WHERE sr.subject_id=$1 AND ($3::timestamptz IS NULL OR sr.created_at<=$3)")
             .bind(subject.0).bind(representation).bind(view.map(|v|v.as_of)).fetch_all(self.store.pool()).await.map_err(db)?;
         if artifacts.is_empty() {
-            return Err(Error::Invalid(
-                "derived evidence has no valid source roots".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "derived evidence has no valid source roots",
             ));
         }
         let mut roots = BTreeSet::new();

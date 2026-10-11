@@ -437,7 +437,7 @@ async fn subject_profiles_change_new_queries_and_preserve_inflight_preparation()
             runtime
                 .subjects
                 .create_subject(CreateSubject {
-                    subject_id: None,
+                    subject_id: nous_core::SubjectId::default(),
                     operation_id: OperationId::new(),
                     cognitive_seed: CognitiveSeedInput {
                         text: "schema_version = 1".into(),

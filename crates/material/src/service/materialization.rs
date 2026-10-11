@@ -75,8 +75,10 @@ impl MaterialService {
     ) -> Result<MaterializedEvidence> {
         self.require_lineage_view(subject, &request.reference, view)?;
         if request.max_bytes == 0 || request.max_bytes > self.max_upload_bytes {
-            return Err(Error::Invalid(
-                "materialization byte bound is invalid".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "materialization byte bound is invalid",
             ));
         }
         self.store
@@ -100,8 +102,10 @@ impl MaterialService {
             end: selected.end - selected.start,
         });
         if requested.end < requested.start || requested.end > selected.end - selected.start {
-            return Err(Error::Invalid(
-                "requested range is outside selected source".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "requested range is outside selected source",
             ));
         }
         let start = selected.start + requested.start;
@@ -111,8 +115,10 @@ impl MaterialService {
         if text_media {
             for boundary in [selected.start, selected.end, start, requested_end] {
                 if !self.utf8_boundary(&payload, boundary).await? {
-                    return Err(Error::Invalid(
-                        "text selection must use UTF-8 byte boundaries".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "text selection must use UTF-8 byte boundaries",
                     ));
                 }
             }
@@ -122,13 +128,19 @@ impl MaterialService {
         } else if let Some(hash) = payload.hash {
             self.objects.read_range(&hash, start, end).await?
         } else {
-            return Err(Error::Unavailable(
-                "material has no locally available payload".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::Unavailable,
+                "material has no locally available payload",
             ));
         };
         if text_media && let Err(error) = std::str::from_utf8(&bytes) {
             if error.error_len().is_some() || end == requested_end {
-                return Err(Error::Invalid("selected text is not valid UTF-8".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "selected text is not valid UTF-8",
+                ));
             }
             bytes.truncate(error.valid_up_to());
             end = start + bytes.len() as u64;
@@ -153,10 +165,13 @@ impl MaterialService {
         if let Some(text) = &payload.text {
             return Ok(text.is_char_boundary(offset as usize));
         }
-        let hash = payload
-            .hash
-            .as_ref()
-            .ok_or_else(|| Error::Unavailable("text payload is unavailable".into()))?;
+        let hash = payload.hash.as_ref().ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::Unavailable,
+                "text payload is unavailable",
+            )
+        })?;
         let bytes = self.objects.read_range(hash, offset, offset + 1).await?;
         Ok(bytes.first().is_some_and(|byte| byte & 0xc0 != 0x80))
     }
@@ -179,13 +194,20 @@ impl MaterialService {
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<Option<MaterialTextView>> {
         if max_bytes == 0 || max_bytes > self.max_upload_bytes {
-            return Err(Error::Invalid("text projection bound is invalid".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "text projection bound is invalid",
+            ));
         }
         self.require_lineage_view(subject, reference, view)?;
         self.store.validate_reference(subject, reference).await?;
         let payload = match self.payload(subject, reference).await {
             Ok(payload) => payload,
-            Err(Error::Unavailable(_)) => return Ok(None),
+            Err(Error {
+                code: nous_core::ErrorCode::Unavailable,
+                ..
+            }) => return Ok(None),
             Err(error) => return Err(error),
         };
         if !is_text_media(&payload.media_type) {
@@ -203,8 +225,14 @@ impl MaterialService {
                 payload,
             )
             .await?;
-        let text = String::from_utf8(selected.bytes)
-            .map_err(|_| Error::Invalid("selected text is not UTF-8".into()))?;
+        let text = String::from_utf8(selected.bytes).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "selected text is not UTF-8",
+            )
+            .with_source(error)
+        })?;
         let content_identity = text_content_identity(&text);
         Ok(Some(MaterialTextView {
             reference: reference.clone(),
@@ -224,7 +252,11 @@ impl MaterialService {
         if let CognitiveRef::Occurrence(id) = reference {
             let artifact: Option<Uuid> = sqlx::query_scalar("SELECT artifact_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2").bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
             reference = CognitiveRef::Artifact(ArtifactId(artifact.ok_or_else(|| {
-                Error::Unavailable("external occurrence requires its Host resolver".into())
+                Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::Unavailable,
+                    "external occurrence requires its Host resolver",
+                )
             })?));
             provenance.push(reference.clone());
         }
@@ -271,15 +303,19 @@ impl MaterialService {
                     .await?
             }
             _ => {
-                return Err(Error::Unavailable(
-                    "reference needs its semantic owner or Host materializer".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::Unavailable,
+                    "reference needs its semantic owner or Host materializer",
                 ));
             }
         };
         if let Some(range) = selected {
             if range.end < range.start || range.end > payload.length {
-                return Err(Error::Invalid(
-                    "source coordinate is outside payload".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "source coordinate is outside payload",
                 ));
             }
             payload.selected = Some(range);
@@ -304,8 +340,10 @@ impl MaterialService {
                 .await
                 .map_err(db)?;
         if roots.is_empty() {
-            return Err(Error::Invalid(
-                "derived representation has no source roots".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "derived representation has no source roots",
             ));
         }
         provenance.extend(
@@ -359,15 +397,29 @@ fn coordinate_range(kind: &str, coordinate: &serde_json::Value) -> Result<Option
             let start = coordinate
                 .get(start_key)
                 .and_then(|v| v.as_u64())
-                .ok_or_else(|| Error::Invalid("coordinate start is required".into()))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "coordinate start is required",
+                    )
+                })?;
             let end = coordinate
                 .get(end_key)
                 .and_then(|v| v.as_u64())
-                .ok_or_else(|| Error::Invalid("coordinate end is required".into()))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "coordinate end is required",
+                    )
+                })?;
             Ok(Some(ByteRange { start, end }))
         }
-        _ => Err(Error::Unavailable(format!(
-            "coordinate materializer for '{kind}' is unavailable"
-        ))),
+        _ => Err(Error::new(
+            nous_core::ErrorOwner::Material,
+            nous_core::ErrorCode::Unavailable,
+            "Coordinate materializer is unavailable",
+        )),
     }
 }

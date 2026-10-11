@@ -7,6 +7,7 @@ import "nous/wave/v1alpha1/presentation.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
+import "nous/wave/v1alpha1/errors.proto";
 import "nous/wave/v1alpha1/types.proto";
 
 message ResourceDescriptor { string resource_ref = 1 [(reference_kind) = "resource"]; string display_label = 2; string authority_class = 3; google.protobuf.Struct coverage = 4; repeated string query_dimensions = 5; repeated string modalities = 6; google.protobuf.Struct freshness_policy = 7; string access_cost_class = 8; string readiness = 9; string adapter_kind = 10; string provider_profile = 11; string provider_locator = 12; }
@@ -49,7 +50,7 @@ message Occurrence { string occurrence_id = 1 [(reference_kind) = "occurrence"];
 message OccurrenceListRequest { string subject_id = 1 [(reference_kind) = "subject"]; string artifact_id = 2 [(reference_kind) = "artifact"]; uint32 limit = 3; }
 message OccurrenceListResponse { repeated Occurrence items = 1; bool truncated = 2; }
 message SourceRegion { string source_region_id = 1 [(reference_kind) = "source_region"]; string artifact_id = 2 [(reference_kind) = "artifact"]; string coordinate_kind = 3; google.protobuf.Struct coordinate = 4; string coordinate_hash = 5; optional string parent_source_region_id = 6 [(reference_kind) = "source_region"]; }
-message DerivedRepresentation { string representation_id = 1 [(reference_kind) = "derived_representation"]; string subject_id = 2 [(reference_kind) = "subject"]; repeated DerivationInput inputs = 3; string kind = 4; string producer_signature = 5; int32 revision = 6; optional string text = 7; optional string artifact_id = 8 [(reference_kind) = "artifact"]; ProducerSignature producer = 9; google.protobuf.Struct quality = 10; optional string supersedes = 11; string strategy = 12; google.protobuf.Struct structured_payload = 13; }
+message DerivedRepresentation { string representation_id = 1 [(reference_kind) = "derived_representation"]; string subject_id = 2 [(reference_kind) = "subject"]; repeated DerivationInput inputs = 3; string kind = 4; string producer_signature = 5; int32 revision = 6; optional string text = 7; optional string artifact_id = 8 [(reference_kind) = "artifact"]; ProducerSignature producer = 9; google.protobuf.Struct quality = 10; optional string supersedes = 11; string strategy = 12; google.protobuf.Struct structured_payload = 13; optional string producer_signature_id = 14; }
 message RepresentationListResponse { repeated DerivedRepresentation items = 1; bool truncated = 2; }
 message DerivedRegion { string derived_region_id = 1 [(reference_kind) = "derived_region"]; string subject_id = 2 [(reference_kind) = "subject"]; string representation_id = 3 [(reference_kind) = "derived_representation"]; string coordinate_kind = 4; google.protobuf.Struct coordinate = 5; string coordinate_hash = 6; optional string parent_derived_region_id = 7 [(reference_kind) = "derived_region"]; }
 message ComponentStatus { string name = 1; string state = 2; optional string detail = 3; }
@@ -66,9 +67,45 @@ message ProjectionFamilyStatus {
 }
 message ProjectionStatus { repeated ProjectionFamilyStatus families = 1; }
 
+message MutationReceiptIdentity { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; string operation_kind = 3; }
+message SubjectCreateIdentity { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; }
+message ConfigurationMutationIdentity { string operation_id = 1; }
+message ObservationRequestIdentity { string subject_id = 1 [(reference_kind) = "subject"]; string request_id = 2; }
+message ModelWorkflowIdentity { string subject_id = 1 [(reference_kind) = "subject"]; string owner = 2; string operation_key = 3; }
+message GetOperationStatusRequest {
+  oneof identity {
+    MutationReceiptIdentity mutation_receipt = 1;
+    SubjectCreateIdentity subject_create = 2;
+    ConfigurationMutationIdentity configuration_mutation = 3;
+    ObservationRequestIdentity observation_request = 4;
+    ModelWorkflowIdentity model_workflow = 5;
+  }
+}
+enum OperationState {
+  // buf:lint:ignore ENUM_ZERO_VALUE_SUFFIX
+  OPERATION_STATE_UNKNOWN = 0;
+  OPERATION_STATE_IN_PROGRESS = 1;
+  OPERATION_STATE_COMMITTED = 2;
+  OPERATION_STATE_FAILED_TERMINAL = 3;
+  OPERATION_STATE_COMPLETED = 4;
+}
+message GetOperationStatusResponse {
+  OperationState state = 1;
+  ErrorOwner owner = 2;
+  optional string subject_id = 3 [(reference_kind) = "subject"];
+  google.protobuf.Timestamp recorded_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+  google.protobuf.Timestamp lease_until = 6;
+  google.protobuf.Timestamp committed_at = 7;
+  CognitiveRef result_reference = 8;
+  optional string result_revision_id = 9;
+  optional int64 result_epoch = 10;
+  optional string terminal_code = 11;
+}
+
 message MaterializeResourceRequest { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; StableExternalRef reference = 3; google.protobuf.Timestamp observed_at = 4; }
 message ResourceMaterialization { StableExternalRef reference = 1; AcceptedObservation observation = 2; string content = 3; string media_type = 4; }
 service ResourceRegistryService { rpc PutResource(PutResourceRequest) returns (ResourceDescriptor); rpc GetResource(ObjectRequest) returns (ResourceDescriptor); rpc ListResources(ListRequest) returns (ListResourcesResponse); rpc RemoveResource(ObjectRequest) returns (google.protobuf.Empty); }
 service ResourceService { rpc MaterializeResource(MaterializeResourceRequest) returns (ResourceMaterialization); }
 service ConceptService { rpc CreateTag(CreateTagRequest) returns (Tag); rpc GetTag(ObjectRequest) returns (Tag); rpc ListTags(ListRequest) returns (ListTagsResponse); rpc SearchTags(SearchTagsRequest) returns (ListTagsResponse); rpc ReviseTag(ReviseTagRequest) returns (Tag); rpc MergeTags(MergeTagsRequest) returns (Tag); rpc SplitTag(SplitTagRequest) returns (SplitTagResponse); rpc CreateAssociation(CreateAssociationRequest) returns (Association); rpc RevokeAssociation(RevokeAssociationRequest) returns (google.protobuf.Empty); rpc GetNeighborhood(NeighborhoodRequest) returns (NeighborhoodResponse); rpc CreateCognitiveSchema(CreateCognitiveSchemaRequest) returns (CognitiveSchema); rpc GetCognitiveSchema(GetCognitiveSchemaRequest) returns (CognitiveSchema); rpc GetCognitiveSchemaRevision(ObjectRequest) returns (CognitiveSchema); rpc AddSchemaEvidence(AddSchemaEvidenceRequest) returns (CognitiveSchema); rpc ReviseCognitiveSchema(ReviseCognitiveSchemaRequest) returns (CognitiveSchema); rpc SplitCognitiveSchema(SplitCognitiveSchemaRequest) returns (SplitCognitiveSchemaResponse); rpc MergeCognitiveSchemas(MergeCognitiveSchemasRequest) returns (CognitiveSchema); rpc SuppressCognitiveSchema(CognitiveSchemaMutationRequest) returns (CognitiveSchema); rpc RestoreCognitiveSchema(CognitiveSchemaMutationRequest) returns (CognitiveSchema); rpc WithdrawCognitiveSchema(CognitiveSchemaMutationRequest) returns (CognitiveSchema); rpc ReacceptCognitiveSchema(CognitiveSchemaMutationRequest) returns (CognitiveSchema); rpc PurgeCognitiveSchema(CognitiveSchemaMutationRequest) returns (google.protobuf.Empty); }
-service SystemService { rpc GetStatus(google.protobuf.Empty) returns (SystemStatus); rpc GetCapabilities(google.protobuf.Empty) returns (SystemStatus); rpc GetProjectionStatus(SubjectRequest) returns (ProjectionStatus); }
+service SystemService { rpc GetStatus(google.protobuf.Empty) returns (SystemStatus); rpc GetCapabilities(google.protobuf.Empty) returns (SystemStatus); rpc GetProjectionStatus(SubjectRequest) returns (ProjectionStatus); rpc GetOperationStatus(GetOperationStatusRequest) returns (GetOperationStatusResponse); }

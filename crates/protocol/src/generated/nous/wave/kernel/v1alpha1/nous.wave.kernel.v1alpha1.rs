@@ -616,10 +616,10 @@ pub struct EmbeddingNeedsRequest {
     #[prost(message, optional, tag="4")]
     pub cursor: ::core::option::Option<EmbeddingCursor>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EmbeddingNeed {
-    #[prost(message, optional, tag="1")]
-    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
+    #[prost(message, repeated, tag="1")]
+    pub references: ::prost::alloc::vec::Vec<super::super::v1alpha1::CognitiveRef>,
     #[prost(string, tag="2")]
     pub text: ::prost::alloc::string::String,
     #[prost(string, tag="3")]
@@ -638,8 +638,8 @@ pub struct EmbeddingNeedsResponse {
 pub struct CommitEmbeddingRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag="2")]
-    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
+    #[prost(message, repeated, tag="2")]
+    pub binding_references: ::prost::alloc::vec::Vec<super::super::v1alpha1::CognitiveRef>,
     #[prost(message, optional, tag="3")]
     pub material: ::core::option::Option<QueryEmbedding>,
     #[prost(string, optional, tag="4")]

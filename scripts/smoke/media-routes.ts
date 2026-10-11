@@ -6,6 +6,8 @@ import { createServer } from "node:http";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { create } from "@bufbuild/protobuf";
+import { CreateSubjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { parse, stringify } from "smol-toml";
 import { workspaceTemp } from "../workspace.js";
 import { boot, prepare, stop, type Boot } from "./support.js";
@@ -137,15 +139,17 @@ try {
     current = await boot(locator);
     const client = current.client;
     if (!subjectId) {
-      subjectId = (
-        await client.subjects.create({
+      subjectId = randomUUID();
+      await client.subjects.create(
+        create(CreateSubjectRequestSchema, {
+          subjectId,
           operationId: randomUUID(),
           cognitiveSeed: {
             text: "schema_version = 1",
             format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
           },
-        })
-      ).subjectId;
+        }),
+      );
       const artifact = await client.artifacts.uploadFile(subjectId, videoPath, {
         mediaType: "video/mp4",
       });

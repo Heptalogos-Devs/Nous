@@ -73,7 +73,8 @@ test("real stdio carries command help and errors as pure MCP messages", async ()
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [
-      join(repositoryRoot, "node_modules/tsx/dist/cli.mjs"),
+      "--import",
+      "tsx",
       join(repositoryRoot, "apps/nous-cli/src/mcp-main.ts"),
       "--run-root",
       state,

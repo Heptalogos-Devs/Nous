@@ -39,7 +39,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     let subject = rt
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -440,7 +440,7 @@ async fn lexical_allocation_retries_unique_conflicts_and_rolls_back_exhaustion()
     let subject = rt
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -527,7 +527,7 @@ async fn lexical_allocation_retries_unique_conflicts_and_rolls_back_exhaustion()
         .await
         .unwrap_err();
     assert!(
-        matches!(error, Error::Infrastructure(message) if message == "LexicalRef collision retry bound exceeded")
+        matches!(error, Error { code: nous_core::ErrorCode::InternalFailure, message, .. } if message == "LexicalRef collision retry bound exceeded")
     );
     let attempts: i64 = sqlx::query_scalar("SELECT last_value FROM proquint_collision_attempts")
         .fetch_one(rt.store.pool())

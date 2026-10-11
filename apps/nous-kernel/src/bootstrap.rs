@@ -63,17 +63,44 @@ fn default_serving_root() -> String {
 }
 
 pub async fn open(path: &Path) -> Result<(NousRuntime, Option<PostgreSQL>)> {
-    let text = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| Error::Invalid(e.to_string()))?;
-    let config: Config = toml::from_str(&text).map_err(|e| Error::Invalid(e.to_string()))?;
+    let text = tokio::fs::read_to_string(path).await.map_err(|e| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
+        )
+        .with_source(e)
+    })?;
+    let config: Config = toml::from_str(&text).map_err(|e| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
+        )
+        .with_source(e)
+    })?;
     if config.bootstrap.object_store.backend != "fs" {
-        return Err(Error::Invalid("object store backend must be fs".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "object store backend must be fs",
+        ));
     }
-    let absolute = std::path::absolute(path).map_err(|e| Error::Invalid(e.to_string()))?;
-    let root = absolute
-        .parent()
-        .ok_or_else(|| Error::Invalid("config parent required".into()))?;
+    let absolute = std::path::absolute(path).map_err(|e| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
+        )
+        .with_source(e)
+    })?;
+    let root = absolute.parent().ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "config parent required",
+        )
+    })?;
     let bundle = read_bundle(&resolve_path(root, &config.configuration_bundle)).await?;
     // Validate the complete catalog/document before acquiring database resources.
     nous_kernel::configuration_catalog(bundle.core_descriptors.clone())?
@@ -114,8 +141,10 @@ async fn open_database(
     match config.mode.as_str() {
         "external" => {
             if config.url.trim().is_empty() {
-                return Err(Error::Invalid(
-                    "external database mode requires database.url".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Instance,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
             Ok((config.url.clone(), None))
@@ -126,29 +155,51 @@ async fn open_database(
             // The verified existing installation and trust_installation_dir make
             // setup initialization-only: the library cannot take its install branch.
             postgres.setup().await.map_err(|error| {
-                Error::Infrastructure(format!("managed PostgreSQL setup: {error}"))
+                Error::new(
+                    nous_core::ErrorOwner::Instance,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Private PostgreSQL initialization failed",
+                )
+                .with_source(error)
             })?;
             postgres.start().await.map_err(|error| {
-                Error::Infrastructure(format!("managed PostgreSQL start: {error}"))
+                Error::new(
+                    nous_core::ErrorOwner::Instance,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Private PostgreSQL startup failed",
+                )
+                .with_source(error)
             })?;
             let database = if config.name.trim().is_empty() {
                 "nous_wave_20260908"
             } else {
                 &config.name
             };
-            if !postgres
-                .database_exists(database)
-                .await
-                .map_err(|error| Error::Infrastructure(error.to_string()))?
-            {
-                postgres
-                    .create_database(database)
-                    .await
-                    .map_err(|error| Error::Infrastructure(error.to_string()))?;
+            if !postgres.database_exists(database).await.map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Instance,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })? {
+                postgres.create_database(database).await.map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Instance,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?;
             }
             Ok((postgres.settings().url(database), Some(postgres)))
         }
-        other => Err(Error::Invalid(format!("unsupported database.mode {other}"))),
+        other => Err(Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "Unsupported database mode",
+        )
+        .with_context("mode", other)),
     }
 }
 
@@ -165,8 +216,10 @@ async fn private_database_settings(
             executable.into()
         };
         if !install_dir.join("bin").join(name).is_file() {
-            return Err(Error::Unavailable(
-                "PostgreSQL runtime pack is missing; run nous runtime install postgresql".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::Unavailable,
+                "Service unavailable",
             ));
         }
     }
@@ -174,14 +227,33 @@ async fn private_database_settings(
     let secret_dir = resolve_path(root, &config.secret_dir);
     tokio::fs::create_dir_all(&instance_dir)
         .await
-        .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        .map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
     tokio::fs::create_dir_all(&secret_dir)
         .await
-        .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        .map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
     if let Some(parent) = data_dir.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
     }
     let password_file = secret_dir.join("postgres.password");
     let password = match tokio::fs::read_to_string(&password_file).await {
@@ -192,20 +264,40 @@ async fn private_database_settings(
             options.write(true).create_new(true);
             #[cfg(unix)]
             options.mode(0o600);
-            let mut file = options
-                .open(&password_file)
-                .await
-                .map_err(|error| Error::Infrastructure(error.to_string()))?;
+            let mut file = options.open(&password_file).await.map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Instance,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?;
             tokio::io::AsyncWriteExt::write_all(&mut file, value.as_bytes())
                 .await
-                .map_err(|error| Error::Infrastructure(error.to_string()))?;
+                .map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Instance,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?;
             value
         }
-        Err(error) => return Err(Error::Infrastructure(error.to_string())),
+        Err(error) => {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error));
+        }
     };
     if password.is_empty() {
-        return Err(Error::Invalid(
-            "Private PostgreSQL credential is empty".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
         ));
     }
     #[derive(Deserialize, Serialize)]
@@ -216,49 +308,107 @@ async fn private_database_settings(
     }
     let state_file = instance_dir.join("postgres.json");
     let state = match tokio::fs::read(&state_file).await {
-        Ok(bytes) => serde_json::from_slice::<DatabaseState>(&bytes)
-            .map_err(|_| Error::Invalid("Private PostgreSQL state is invalid".into()))?,
+        Ok(bytes) => serde_json::from_slice::<DatabaseState>(&bytes).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InvalidRequest,
+                "Private PostgreSQL state is invalid",
+            )
+            .with_source(error)
+        })?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
-                .map_err(|error| Error::Infrastructure(error.to_string()))?;
+                .map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Instance,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?;
             let value = DatabaseState {
                 port: listener
                     .local_addr()
-                    .map_err(|error| Error::Infrastructure(error.to_string()))?
+                    .map_err(|error| {
+                        Error::new(
+                            nous_core::ErrorOwner::Instance,
+                            nous_core::ErrorCode::InternalFailure,
+                            "Operation failed",
+                        )
+                        .with_source(error)
+                    })?
                     .port(),
                 major: 18,
             };
             tokio::fs::write(
                 &state_file,
-                serde_json::to_vec(&value)
-                    .map_err(|error| Error::Infrastructure(error.to_string()))?,
+                serde_json::to_vec(&value).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Instance,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?,
             )
             .await
-            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Instance,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?;
             value
         }
-        Err(error) => return Err(Error::Infrastructure(error.to_string())),
+        Err(error) => {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error));
+        }
     };
     if state.port == 0 || state.major != 18 {
-        return Err(Error::FailedPrecondition(
-            "Private PostgreSQL version/port requires explicit migration".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::FailedPrecondition,
+            "Failed precondition",
         ));
     }
     match tokio::fs::read_to_string(data_dir.join("PG_VERSION")).await {
         Ok(version) if version.trim() != "18" => {
-            return Err(Error::FailedPrecondition(
-                "PostgreSQL cluster major differs from runtime pack".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::FailedPrecondition,
+                "Failed precondition",
             ));
         }
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-            return Err(Error::Infrastructure(error.to_string()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error));
         }
         _ => {}
     }
     let settings = SettingsBuilder::new()
-        .version(VersionReq::parse("=18.6.0").map_err(|error| Error::Invalid(error.to_string()))?)
+        .version(VersionReq::parse("=18.6.0").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            )
+            .with_source(error)
+        })?)
         .host("127.0.0.1")
+        .config("listen_addresses", "127.0.0.1")
+        .config("unix_socket_directories", "''")
         .port(state.port)
         .username("postgres")
         .password(password)
@@ -273,10 +423,14 @@ async fn private_database_settings(
 
 pub async fn stop_managed(mut postgres: Option<PostgreSQL>) -> Result<()> {
     if let Some(postgres) = postgres.as_mut() {
-        postgres
-            .stop()
-            .await
-            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        postgres.stop().await.map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Instance,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
     }
     Ok(())
 }
@@ -291,11 +445,22 @@ fn resolve_path(root: &Path, value: &str) -> PathBuf {
 }
 
 pub async fn read_bundle(path: &Path) -> Result<nous_configuration::ConfigurationBootstrapBundle> {
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|error| Error::Invalid(error.to_string()))?;
-    let bundle: nous_configuration::ConfigurationBootstrapBundle =
-        serde_json::from_slice(&bytes)
-            .map_err(|_| Error::Invalid("invalid private configuration bundle".into()))?;
+    let bytes = tokio::fs::read(path).await.map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
+        )
+        .with_source(error)
+    })?;
+    let bundle: nous_configuration::ConfigurationBootstrapBundle = serde_json::from_slice(&bytes)
+        .map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Instance,
+            nous_core::ErrorCode::InvalidRequest,
+            "invalid private configuration bundle",
+        )
+        .with_source(error)
+    })?;
     Ok(bundle)
 }

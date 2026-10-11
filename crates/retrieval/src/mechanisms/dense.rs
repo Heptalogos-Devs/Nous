@@ -40,11 +40,21 @@ pub struct DenseGeneration {
 impl DenseGeneration {
     pub fn save(&self, path: &std::path::Path) -> Result<()> {
         self.index
-            .save(
-                path.to_str()
-                    .ok_or_else(|| Error::Invalid("index path must be UTF-8".into()))?,
-            )
-            .map_err(|error| Error::Infrastructure(format!("USearch save: {error}")))
+            .save(path.to_str().ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "index path must be UTF-8",
+                )
+            })?)
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })
     }
 
     pub fn open(
@@ -67,25 +77,46 @@ impl DenseGeneration {
         let mut generation = Self::new_with_metric(space, records.len(), metric)?;
         generation
             .index
-            .load(
-                path.to_str()
-                    .ok_or_else(|| Error::Invalid("index path must be UTF-8".into()))?,
-            )
-            .map_err(|error| Error::Infrastructure(format!("USearch load: {error}")))?;
+            .load(path.to_str().ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "index path must be UTF-8",
+                )
+            })?)
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?;
         for record in records {
             if !record.embedding_space.compatible_with(&generation.space) {
-                return Err(Error::Conflict(
-                    "dense artifact contains an incompatible embedding space".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::Conflict,
+                    "Conflict",
                 ));
             }
             let mut vector = vec![0.0_f32; generation.space.dimension as usize];
             let count = generation
                 .index
                 .get(record.serving_doc_id, &mut vector)
-                .map_err(|error| Error::Infrastructure(format!("USearch readback: {error}")))?;
+                .map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?;
             if count != 1 {
-                return Err(Error::Infrastructure(
-                    "dense record is missing from index".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
                 ));
             }
             validate_vector(&generation.space, &vector)?;
@@ -93,8 +124,10 @@ impl DenseGeneration {
             generation.records.insert(record.serving_doc_id, record);
         }
         if generation.index.size() != generation.records.len() {
-            return Err(Error::Infrastructure(
-                "dense index and record manifest disagree".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
             ));
         }
         generation.generation_id = generation_id;
@@ -111,8 +144,10 @@ impl DenseGeneration {
         metric: MetricKind,
     ) -> Result<Self> {
         if space.dimension == 0 {
-            return Err(Error::Invalid(
-                "embedding dimension must be positive".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let options = IndexOptions {
@@ -124,11 +159,22 @@ impl DenseGeneration {
             expansion_search: 32,
             multi: false,
         };
-        let index = Index::new(&options)
-            .map_err(|error| Error::Infrastructure(format!("USearch initialization: {error}")))?;
-        index
-            .reserve(capacity.max(1))
-            .map_err(|error| Error::Infrastructure(format!("USearch reserve: {error}")))?;
+        let index = Index::new(&options).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
+        index.reserve(capacity.max(1)).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         Ok(Self {
             generation_id: ServingGenerationId::new(),
             space,
@@ -141,14 +187,23 @@ impl DenseGeneration {
     pub fn insert(&mut self, record: VectorRecord, vector: &[f32]) -> Result<()> {
         validate_vector(&self.space, vector)?;
         if !record.embedding_space.compatible_with(&self.space) {
-            return Err(Error::Conflict(
-                "vector embedding space does not match DenseGeneration".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::Conflict,
+                "Conflict",
             ));
         }
         let serving_doc_id = record.serving_doc_id;
         self.index
             .add(record.serving_doc_id, vector)
-            .map_err(|error| Error::Infrastructure(format!("USearch add: {error}")))?;
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?;
         self.records.insert(serving_doc_id, record);
         self.vectors.insert(serving_doc_id, vector.to_vec());
         Ok(())
@@ -159,10 +214,14 @@ impl DenseGeneration {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let matches = self
-            .index
-            .search(vector, limit)
-            .map_err(|error| Error::Infrastructure(format!("USearch search: {error}")))?;
+        let matches = self.index.search(vector, limit).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         Ok(matches
             .keys
             .into_iter()
@@ -191,7 +250,14 @@ impl DenseGeneration {
             .filtered_search(vector, limit, |key| {
                 key <= u64::from(u32::MAX) && allowed.contains(key as u32)
             })
-            .map_err(|error| Error::Infrastructure(format!("USearch filtered search: {error}")))?;
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?;
         Ok(matches
             .keys
             .into_iter()
@@ -228,8 +294,10 @@ impl DenseGeneration {
 
 fn validate_vector(space: &EmbeddingSpaceSignature, vector: &[f32]) -> Result<()> {
     if vector.len() != space.dimension as usize || vector.iter().any(|value| !value.is_finite()) {
-        return Err(Error::Invalid(
-            "embedding vector dimension or values are invalid".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
         ));
     }
     if space.normalization.eq_ignore_ascii_case("l2") {
@@ -239,7 +307,11 @@ fn validate_vector(space: &EmbeddingSpaceSignature, vector: &[f32]) -> Result<()
             .sum::<f64>()
             .sqrt();
         if norm <= f64::EPSILON {
-            return Err(Error::Invalid("normalized embedding vector is zero".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "normalized embedding vector is zero",
+            ));
         }
     }
     Ok(())

@@ -32,8 +32,10 @@ impl MemoryService {
                 "cognitive_schema_revision",
             ),
             _ => {
-                return Err(Error::Infrastructure(
-                    "unknown source cognition kind".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "unknown source cognition kind",
                 ));
             }
         };
@@ -126,8 +128,10 @@ ORDER BY kind,object_id")
                         "UPDATE journal_objects SET integrity_state='revalidation_required',object_epoch=object_epoch+1 WHERE subject_id=$1 AND journal_id=$2 AND integrity_state<>'revalidation_required'"
                     }
                     _ => {
-                        return Err(Error::Infrastructure(
-                            "unknown dependent cognition kind".into(),
+                        return Err(Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "unknown dependent cognition kind",
                         ));
                     }
                 };

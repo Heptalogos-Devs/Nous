@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { cliErrorPayload } from "./agent.js";
-import { renderText } from "./output.js";
+import { renderText, semanticOutput } from "./output.js";
 
 const flag = (args: readonly string[], name: string) =>
   args.some((arg) => arg === `--${name}` || arg === `--${name}=true`);
 
 export function formatResult(value: unknown, args: readonly string[]) {
   return flag(args, "json") || flag(args, "raw")
-    ? JSON.stringify(value, (_, item: unknown) =>
-        typeof item === "bigint" ? item.toString() : item,
-      )
+    ? JSON.stringify(value)
     : renderText(value);
 }
 
@@ -32,5 +30,5 @@ export function formatError(error: unknown, args: readonly string[]) {
       }
       return candidate;
     });
-  return formatResult(payload, args);
+  return formatResult(semanticOutput("error", payload), args);
 }

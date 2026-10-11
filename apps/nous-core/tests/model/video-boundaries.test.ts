@@ -13,6 +13,7 @@ const observed = vi.hoisted(() => ({
   roots: [] as string[],
   tokenInherited: false,
   failFrames: false,
+  ffmpegVersion: "ffmpeg version unit-process-fixture",
 }));
 vi.mock("node:child_process", async (original) => {
   const actual = await original<typeof import("node:child_process")>();
@@ -31,7 +32,7 @@ vi.mock("node:child_process", async (original) => {
         "NOUS_MEDIA_TEST_TOKEN",
       );
       if (args[0] === "-version") {
-        callback(null, "ffmpeg version unit-process-fixture\n", "");
+        callback(null, `${observed.ffmpegVersion}\n`, "");
         return;
       }
       const input = args[args.indexOf("-i") + 1]!;
@@ -62,7 +63,10 @@ vi.mock("node:child_process", async (original) => {
     },
   };
 });
-import { sampleVideo } from "../../src/model/video.js";
+import {
+  inspectVideoPreprocessing,
+  sampleVideo,
+} from "../../src/model/video.js";
 import { modelConfigurationSchema } from "../../src/model/configuration.js";
 import { deriveMaterial } from "../../src/model/derivation.js";
 import { ModelRuntime } from "../../src/model/runtime.js";
@@ -82,12 +86,16 @@ it("bounds samples and subprocess input, excludes gateway credentials and remove
   const instance = await mkdtemp(join(tmpdir(), "nous-video-instance-"));
   const freshTempRoot = join(instance, "separate-temp-volume");
   try {
+    const identity = await inspectVideoPreprocessing(policy, freshTempRoot, [
+      "nous_media_test_token",
+    ]);
     const result = await sampleVideo(
       new Uint8Array([1, 2, 3]),
       policy,
       freshTempRoot,
       ["nous_media_test_token"],
       false,
+      identity,
     );
     expect(result.frames).toHaveLength(3);
     expect(result.quality.sampled_timestamps).toEqual([0, 0.45, 0.9]);
@@ -108,7 +116,7 @@ it("bounds samples and subprocess input, excludes gateway credentials and remove
       });
     observed.failFrames = true;
     await expect(
-      sampleVideo(new Uint8Array([1]), policy, tmpdir(), [], false),
+      sampleVideo(new Uint8Array([1]), policy, tmpdir(), [], false, identity),
     ).rejects.toThrow("FFmpeg frame execution");
     for (const input of observed.roots)
       await expect(stat(dirname(input))).rejects.toMatchObject({
@@ -121,8 +129,14 @@ it("bounds samples and subprocess input, excludes gateway credentials and remove
         tmpdir(),
         [],
         false,
+        identity,
       ),
     ).rejects.toThrow("byte bound");
+    observed.ffmpegVersion = "ffmpeg version changed-during-retry";
+    await expect(
+      sampleVideo(new Uint8Array([1]), policy, tmpdir(), [], false, identity),
+    ).rejects.toThrow("identity changed");
+    observed.ffmpegVersion = "ffmpeg version unit-process-fixture";
   } finally {
     delete process.env.NOUS_MEDIA_TEST_TOKEN;
     await rm(instance, { recursive: true, force: true });
@@ -156,6 +170,7 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       },
     },
     modelWorkflow: {
+      findWorkflow: async () => ({ found: false }),
       reserveWorkflow: async (
         input: MessageInitShape<typeof ReserveWorkflowRequestSchema>,
       ) => ({

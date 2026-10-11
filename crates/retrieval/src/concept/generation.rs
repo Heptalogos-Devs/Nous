@@ -36,13 +36,19 @@ impl ConceptGeneration {
         if self.records.windows(2).any(|r| r[0].tag.0 >= r[1].tag.0)
             || self.space.is_some() != self.producer.is_some()
         {
-            return Err(Error::Invalid(
-                "invalid concept generation identities".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         for record in &self.records {
             if record.vector.is_some() != record.vector_producer.is_some() {
-                return Err(Error::Invalid("concept vector producer missing".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "concept vector producer missing",
+                ));
             }
             if record.semantic.version != TAG_REPRESENTATION_VERSION
                 || record.semantic.digest
@@ -52,7 +58,11 @@ impl ConceptGeneration {
                     .to_hex()
                     .as_str()
             {
-                return Err(Error::Invalid("concept semantic digest mismatch".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "concept semantic digest mismatch",
+                ));
             }
             if let Some(vector) = &record.vector
                 && (self
@@ -61,7 +71,11 @@ impl ConceptGeneration {
                     .is_none_or(|space| vector.len() != space.dimension as usize)
                     || vector.iter().any(|v| !v.is_finite()))
             {
-                return Err(Error::Invalid("invalid concept vector".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid concept vector",
+                ));
             }
         }
         Ok(())
@@ -74,17 +88,13 @@ impl ServingService {
         id: ServingGenerationId,
         space_key: &str,
         dir: &std::path::Path,
+        synopsis_budget: nous_persistence::EpisodeTextBudget,
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<i64> {
         let input = match view {
             Some(view) => {
                 self.store
-                    .historical_projection_input(
-                        view,
-                        self.configuration
-                            .snapshot_for_subject(subject)?
-                            .get(crate::EPISODE_SYNOPSIS)?,
-                    )
+                    .historical_projection_input(view, synopsis_budget)
                     .await?
                     .concepts
             }
@@ -97,8 +107,10 @@ impl ServingService {
                 .filter(|p| p.space().space_hash == space_key)
         };
         if !space_key.is_empty() && provider.is_none() {
-            return Err(Error::Unavailable(
-                "concept embedding space is unavailable".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::Unavailable,
+                "Service unavailable",
             ));
         }
         let cached = self.publisher.snapshot_for(subject);
@@ -135,8 +147,10 @@ impl ServingService {
                         .iter()
                         .any(|producer| producer.signature_hash == output.producer.signature_hash)
                 {
-                    return Err(Error::Conflict(
-                        "concept embedding space/producer mismatch".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Concept,
+                        nous_core::ErrorCode::Conflict,
+                        "Conflict",
                     ));
                 }
                 (Some(output.vector), Some(output.producer))

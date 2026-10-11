@@ -15,7 +15,11 @@ impl AuthorityStore {
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<Vec<TextProjectionSource>> {
         if references.len() > 256 || view.is_some_and(|view| view.subject != subject) {
-            return Err(Error::Invalid("invalid bounded document lookup".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid bounded document lookup",
+            ));
         }
         let mut tx = self.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -60,13 +64,19 @@ impl AuthorityStore {
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<Vec<CognitiveRef>> {
         if limit == 0 || limit > 257 {
-            return Err(Error::Invalid(
-                "document reference page must be 1..257".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         if let Some(view) = view {
             if view.subject != subject {
-                return Err(Error::Invalid("document page Subject mismatch".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "document page Subject mismatch",
+                ));
             }
             let mut references = crate::historical::text::document_references(view, memory_enabled);
             references.sort_by_key(ToString::to_string);

@@ -183,8 +183,10 @@ pub fn reference_pyramid(
             break;
         }
         if tags.iter().any(|t| t.vector.len() != query.len()) {
-            return Err(Error::Invalid(
-                "reference residual dimension mismatch".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let current = norm(&residual).powi(2);

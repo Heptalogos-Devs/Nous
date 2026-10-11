@@ -6,6 +6,14 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+# cargo-shear does not follow these cfg(test) #[path] module declarations.
+[package.metadata.cargo-shear]
+ignored-paths = [
+    "tests/unit/query_signals.rs",
+    "tests/unit/vcp_adapter.rs",
+    "tests/unit/vcp_graph.rs",
+]
+
 [dependencies]
 nous-core.workspace = true
 nous-configuration.workspace = true
@@ -29,9 +37,6 @@ async-trait.workspace = true
 sqlx.workspace = true
 tempfile.workspace = true
 uuid.workspace = true
-
-[build-dependencies]
-blake3.workspace = true
 
 [lints]
 workspace = true

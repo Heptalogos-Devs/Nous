@@ -1,11 +1,11 @@
-//! Owner-assigned business failures; messages are for display only.
+//! Owner-assigned business failures; messages are safe for display only.
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DomainErrorCode {
+pub enum ErrorCode {
     UnknownReference,
     AmbiguousReference,
     ReferenceTypeMismatch,
@@ -17,22 +17,54 @@ pub enum DomainErrorCode {
     OperationInProgress,
     LeaseLost,
     CapabilityUnavailable,
+    InvalidRequest,
+    NotFound,
+    Conflict,
+    FailedPrecondition,
+    Unavailable,
+    InternalFailure,
+    CapacityExhausted,
+    InstanceAlreadyRunning,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorOwner {
+    Identity,
+    Subject,
+    Memory,
+    Material,
+    Runtime,
+    Configuration,
+    Concept,
+    Observation,
+    Resource,
+    ModelWorkflow,
+    Kernel,
+    Core,
+    Persistence,
+    Instance,
+    Cli,
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
-pub struct DomainError {
-    pub code: DomainErrorCode,
+pub struct Error {
+    pub owner: ErrorOwner,
+    pub code: ErrorCode,
     pub message: String,
     pub context: BTreeMap<String, String>,
+    #[source]
+    pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
-impl DomainError {
-    pub fn new(code: DomainErrorCode, message: impl Into<String>) -> Self {
+impl Error {
+    pub fn new(owner: ErrorOwner, code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
+            owner,
             code,
             message: message.into(),
             context: BTreeMap::new(),
+            source: None,
         }
     }
 
@@ -41,26 +73,15 @@ impl DomainError {
         self.context.insert(key.into(), value.to_string());
         self
     }
-}
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error(transparent)]
-    Domain(#[from] DomainError),
-    #[error("{0}")]
-    Invalid(String),
-    #[error("{0}")]
-    NotFound(String),
-    #[error("{0}")]
-    Conflict(String),
-    #[error("{0}")]
-    FailedPrecondition(String),
-    #[error("{0}")]
-    Unavailable(String),
-    #[error("{0}")]
-    Infrastructure(String),
-    #[error("{0}")]
-    Internal(String),
+    #[must_use]
+    pub fn with_source<E>(mut self, source: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.source = Some(Box::new(source));
+        self
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

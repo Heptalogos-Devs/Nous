@@ -9,6 +9,7 @@ import { timestampFromDate, TimestampSchema } from "@bufbuild/protobuf/wkt";
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { connectNous } from "@nous-wave/client/node";
 import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
+import { CreateSubjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { KernelClient } from "../../apps/nous-core/src/kernel-client.js";
 import { createCore } from "../../apps/nous-core/src/server.js";
 import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
@@ -224,15 +225,17 @@ async function scenario(endpoint: string, token: string) {
     return result;
   };
   try {
-    await client.subjects.create({
-      subjectId,
-      operationId: randomUUID(),
-      cognitiveSeed: {
-        text: "schema_version = 1",
-        format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
-        provenance: {},
-      },
-    });
+    await client.subjects.create(
+      create(CreateSubjectRequestSchema, {
+        subjectId,
+        operationId: randomUUID(),
+        cognitiveSeed: {
+          text: "schema_version = 1",
+          format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
+          provenance: {},
+        },
+      }),
+    );
     const session = await client.cognition.openSession({ subjectId });
     const observationIds: string[] = [];
     for (const text of [
@@ -352,7 +355,13 @@ async function scenario(endpoint: string, token: string) {
       purpose: "Continue calibration",
       cognitionAnchors: refs,
     });
-    assert.deepEqual(continuation.workContext?.cognitionAnchors, refs);
+    assert.deepEqual(
+      continuation.workContext?.cognitionAnchors.map(({ kind, value }) => ({
+        kind,
+        value,
+      })),
+      refs,
+    );
     const exact = await client.cognition.query({
       subjectId,
       expression: {

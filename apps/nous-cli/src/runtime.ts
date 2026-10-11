@@ -1,12 +1,14 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { connectNousInstance } from "@nous-wave/client/node";
-import { NousError, type NousClient } from "@nous-wave/client";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
+import { toJson } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { parse as parseToml } from "smol-toml";
 import { CliError, uniqueReference } from "./agent.js";
 import { cliState, type Selection } from "./state.js";
+import { createReceiptLifecycle } from "./receipt-lifecycle.js";
 import {
   consumerStatePolicySchema,
   consumerStatePaths,
@@ -25,6 +27,14 @@ export const stringFlags = [
   "representation",
   "operation-id",
   "expected-revision",
+  "expected-epoch",
+  "value-json",
+  "view",
+  "status",
+  "intent",
+  "from",
+  "to",
+  "relation",
   "aboutness-mode",
   "query-file",
   "subject",
@@ -53,14 +63,21 @@ export const stringFlags = [
   "max-bytes",
   "output",
   "scope",
+  "mode",
   "cognition",
   "entity",
+  "entity-ref",
+  "binding-state",
+  "host-resolution-ref",
+  "reason",
+  "source-region",
+  "artifact",
+  "limit",
 ] as const;
 export const booleanFlags = [
   "json",
   "raw",
   "developer",
-  "desired",
   "advanced",
   "clear",
 ] as const;
@@ -95,7 +112,10 @@ export async function createEnvironment(
           "CONFIGURATION_UNAVAILABLE",
           `Core did not return the active consumer state policy: ${path}`,
         );
-      return [path.slice("consumer_state.".length), entry.value];
+      return [
+        path.slice("consumer_state.".length),
+        toJson(ValueSchema, entry.value),
+      ];
     }),
   );
   const local = cliState(
@@ -155,168 +175,8 @@ export async function createEnvironment(
   };
   const subjectId = state.subjectId ?? "";
   const notices: { code: string; message: string; receipt?: string }[] = [];
-  const replay: Record<string, (request: unknown) => Promise<unknown>> = {};
-  async function executeReceipt(
-    id: string,
-    receipt: Awaited<ReturnType<typeof local.receipt>>,
-    invoke: (request: unknown) => Promise<unknown>,
-  ) {
-    let result: unknown;
-    try {
-      result = await invoke(receipt.request);
-    } catch (error) {
-      if (
-        (error instanceof NousError &&
-          [3, 5, 6, 7, 8, 9, 10, 11, 12, 16].includes(error.code)) ||
-        error instanceof CliError
-      ) {
-        try {
-          await local.writeReceipt(id, {
-            ...receipt,
-            status: "rejected",
-            rejection: {
-              code: error.code,
-              message: error.message,
-              domainCode:
-                error instanceof NousError ? error.domainCode : error.code,
-              recovery: error.recovery,
-              context: error.context,
-              details: [...error.details],
-              candidates: [...error.candidates],
-            },
-          });
-        } catch {
-          Object.assign(error, {
-            receipt: id,
-            notices: [
-              {
-                code: "RECEIPT_UNSAVED",
-                message:
-                  "Authority definitively refused this operation; the local terminal receipt could not be saved",
-              },
-            ],
-          });
-        }
-        throw error;
-      }
-      const failure = new CliError(
-        "OUTCOME_UNKNOWN",
-        `Response unavailable; retry ${id} to reuse the saved operation`,
-      );
-      Object.assign(failure, { receipt: id });
-      throw failure;
-    }
-    try {
-      await local.writeReceipt(id, { ...receipt, status: "complete", result });
-    } catch {
-      notices.push({
-        code: "RECEIPT_UNSAVED",
-        receipt: id,
-        message:
-          "Operation returned successfully; its result is shown, but the local completion receipt could not be saved",
-      });
-    }
-    return result;
-  }
-  function mutation<I extends object, O>(
-    name: string,
-    fn: ((request: I) => Promise<O>) | undefined,
-  ) {
-    replay[name] = (request) => {
-      if (!fn)
-        throw new CliError("INVALID_ARGUMENT", "Client method unavailable");
-      return fn(request as I);
-    };
-    return async (request: I) => {
-      const id = crypto.randomUUID();
-      const receipt = {
-        format: "nous.consumer.operation" as const,
-        name,
-        subjectId:
-          "subjectId" in request && typeof request.subjectId === "string"
-            ? request.subjectId
-            : undefined,
-        request,
-        status: "pending" as const,
-      };
-      await local.writeReceipt(id, receipt);
-      return (await executeReceipt(id, receipt, replay[name]!)) as O;
-    };
-  }
-  const client: NousClient & Pick<typeof original, "artifacts"> = {
-    ...original,
-    subjects: {
-      ...original.subjects,
-      create: mutation("subjects.create", original.subjects?.create),
-    },
-    configuration: {
-      ...original.configuration,
-      setSystem: mutation(
-        "configuration.setSystem",
-        original.configuration?.setSystem,
-      ),
-      setSubject: mutation(
-        "configuration.setSubject",
-        original.configuration?.setSubject,
-      ),
-      clearSystem: mutation(
-        "configuration.clearSystem",
-        original.configuration?.clearSystem,
-      ),
-      clearSubject: mutation(
-        "configuration.clearSubject",
-        original.configuration?.clearSubject,
-      ),
-    },
-    model: {
-      ...original.model,
-      formFromObservation: mutation(
-        "model.formFromObservation",
-        original.model?.formFromObservation,
-      ),
-    },
-    cognition: {
-      ...original.cognition,
-      observe: mutation("cognition.observe", original.cognition?.observe),
-      reportUse: mutation("cognition.reportUse", original.cognition?.reportUse),
-      createWorkContext: mutation(
-        "cognition.createWorkContext",
-        original.cognition?.createWorkContext,
-      ),
-      updateWorkContext: mutation(
-        "cognition.updateWorkContext",
-        original.cognition?.updateWorkContext,
-      ),
-      pauseWorkContext: mutation(
-        "cognition.pauseWorkContext",
-        original.cognition?.pauseWorkContext,
-      ),
-      resumeWorkContext: mutation(
-        "cognition.resumeWorkContext",
-        original.cognition?.resumeWorkContext,
-      ),
-      endWorkContext: mutation(
-        "cognition.endWorkContext",
-        original.cognition?.endWorkContext,
-      ),
-      setActiveWorkContext: mutation(
-        "cognition.setActiveWorkContext",
-        original.cognition?.setActiveWorkContext,
-      ),
-    },
-    concepts: {
-      ...original.concepts,
-      createTag: mutation("concepts.createTag", original.concepts?.createTag),
-      reviseTag: mutation("concepts.reviseTag", original.concepts?.reviseTag),
-      mergeTags: mutation("concepts.mergeTags", original.concepts?.mergeTags),
-      splitTag: mutation("concepts.splitTag", original.concepts?.splitTag),
-      associate: mutation("concepts.associate", original.concepts?.associate),
-      revokeAssociation: mutation(
-        "concepts.revokeAssociation",
-        original.concepts?.revokeAssociation,
-      ),
-    },
-  };
+  const lifecycle = createReceiptLifecycle(original, local, subjectId, notices);
+  const client = lifecycle.client;
   async function resolveReference(text: string, kind = "") {
     const resultNumber = /^result:(\d+)$/.exec(text);
     if (resultNumber) {
@@ -421,35 +281,9 @@ export async function createEnvironment(
         });
       }
     },
-    async retry(id: string) {
-      const receipt = await local.receipt(id);
-      if (
-        receipt.name !== "subjects.create" &&
-        receipt.subjectId &&
-        receipt.subjectId !== subjectId
-      )
-        throw new CliError(
-          "RESULT_SUBJECT_MISMATCH",
-          "Receipt belongs to another Subject",
-        );
-      if (receipt.status === "complete") return receipt.result;
-      if (receipt.status === "rejected")
-        throw new CliError(
-          receipt.rejection?.domainCode ?? "OPERATION_REJECTED",
-          receipt.rejection?.message ?? "Operation was definitively rejected",
-          receipt.rejection?.details ?? [],
-          receipt.rejection?.candidates ?? [],
-          receipt.rejection?.recovery,
-          receipt.rejection?.context,
-        );
-      const invoke = replay[receipt.name];
-      if (!invoke)
-        throw new CliError(
-          "INVALID_ARGUMENT",
-          "Receipt command is unavailable",
-        );
-      return executeReceipt(id, receipt, invoke);
-    },
+    retry: lifecycle.retry,
+    inspectOperation: lifecycle.inspectOperation,
+    inspectOperationIdentity: lifecycle.inspectOperationIdentity,
     mediaType(this: void, path: string) {
       const types: Record<string, string> = {
         ".txt": "text/plain",

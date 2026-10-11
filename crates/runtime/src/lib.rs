@@ -71,7 +71,11 @@ pub fn register_configuration(
             if *value > 0 {
                 Ok(())
             } else {
-                Err(Error::Invalid("resident_limit must be positive".into()))
+                Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "resident_limit must be positive",
+                ))
             }
         },
     )?;
@@ -112,7 +116,11 @@ impl CognitiveRuntimeService {
         clock: std::sync::Arc<dyn CognitiveClock>,
     ) -> Result<Self> {
         if resident_limit == 0 {
-            return Err(Error::Invalid("resident_limit must be positive".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "resident_limit must be positive",
+            ));
         }
         Ok(Self {
             store,

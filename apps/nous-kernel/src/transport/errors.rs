@@ -1,93 +1,126 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use nous_core::{DomainError, DomainErrorCode as DomainCode, Error};
+use nous_core::{Error, ErrorCode, ErrorOwner};
 use nous_protocol::{google::rpc, public as p};
 use prost::Message;
 use tonic::{Code, Status};
+use uuid::Uuid;
 
+/// Convert every owner error to exactly one typed wire detail at the transport boundary.
 pub fn status(error: Error) -> Status {
-    match error {
-        Error::Domain(error) => domain_status(error),
-        Error::Invalid(message) => Status::invalid_argument(message),
-        Error::NotFound(message) => Status::not_found(message),
-        Error::Conflict(message) => Status::aborted(message),
-        Error::FailedPrecondition(message) => Status::failed_precondition(message),
-        Error::Unavailable(message) => Status::unavailable(message),
-        Error::Internal(message) | Error::Infrastructure(message) => {
-            tracing::error!(%message, "kernel operation failed");
-            Status::internal("Kernel operation failed")
-        }
-    }
-}
-
-fn domain_status(error: DomainError) -> Status {
-    use p::{DomainErrorCode as WireCode, ErrorRecovery as Recovery};
-    let (transport, code, recovery) = match error.code {
-        DomainCode::UnknownReference => (
-            Code::NotFound,
-            WireCode::UnknownReference,
-            Recovery::ResolveReference,
-        ),
-        DomainCode::AmbiguousReference => (
-            Code::InvalidArgument,
-            WireCode::AmbiguousReference,
-            Recovery::SelectCandidate,
-        ),
-        DomainCode::ReferenceTypeMismatch => (
-            Code::InvalidArgument,
-            WireCode::ReferenceTypeMismatch,
-            Recovery::CorrectRequest,
-        ),
-        DomainCode::ReferenceTombstoned => (
-            Code::FailedPrecondition,
-            WireCode::ReferenceTombstoned,
-            Recovery::RediscoverReference,
-        ),
-        DomainCode::UnresolvedMachinePlaceholder => (
-            Code::InvalidArgument,
-            WireCode::UnresolvedMachinePlaceholder,
-            Recovery::ResolveReference,
-        ),
-        DomainCode::StaleContext => (
-            Code::FailedPrecondition,
-            WireCode::StaleContext,
-            Recovery::RefreshState,
-        ),
-        DomainCode::StaleRevision => (
-            Code::Aborted,
-            WireCode::StaleRevision,
-            Recovery::RefreshState,
-        ),
-        DomainCode::OperationIdConflict => (
-            Code::Aborted,
-            WireCode::OperationIdConflict,
-            Recovery::NewOperation,
-        ),
-        DomainCode::OperationInProgress => (
-            Code::Aborted,
-            WireCode::OperationInProgress,
-            Recovery::RetryOperation,
-        ),
-        DomainCode::LeaseLost => (Code::Aborted, WireCode::LeaseLost, Recovery::RetryOperation),
-        DomainCode::CapabilityUnavailable => (
-            Code::Unavailable,
-            WireCode::CapabilityUnavailable,
-            Recovery::CheckConfiguration,
-        ),
-    };
+    let (transport, recovery) = status_and_recovery(error.code);
+    let trace_id = Uuid::now_v7().to_string();
     let detail = p::ErrorDetail {
-        code: code.into(),
+        code: wire_code(error.code).into(),
         recovery: recovery.into(),
         context: error.context.into_iter().collect(),
+        owner: wire_owner(error.owner).into(),
+        trace_id: trace_id.clone(),
     };
+    if error.code == ErrorCode::InternalFailure {
+        tracing::error!(
+            owner = ?error.owner,
+            code = ?error.code,
+            trace_id = %trace_id,
+            source = ?error.source,
+            diagnostic = %error.message,
+            "kernel operation failed"
+        );
+    } else {
+        tracing::debug!(
+            owner = ?error.owner,
+            code = ?error.code,
+            trace_id = %trace_id,
+            source = ?error.source,
+            diagnostic = %error.message,
+            "kernel error response"
+        );
+    }
+    let message = error.message;
     let status = rpc::Status {
         code: transport as i32,
-        message: error.message.clone(),
+        message: message.clone(),
         details: vec![prost_types::Any {
             type_url: "type.googleapis.com/nous.wave.v1alpha1.ErrorDetail".into(),
             value: detail.encode_to_vec(),
         }],
     };
-    Status::with_details(transport, error.message, status.encode_to_vec().into())
+    Status::with_details(transport, message, status.encode_to_vec().into())
+}
+
+fn status_and_recovery(code: ErrorCode) -> (Code, p::ErrorRecovery) {
+    use p::ErrorRecovery as Recovery;
+    match code {
+        ErrorCode::UnknownReference => (Code::NotFound, Recovery::ResolveReference),
+        ErrorCode::AmbiguousReference => (Code::InvalidArgument, Recovery::SelectCandidate),
+        ErrorCode::ReferenceTypeMismatch => (Code::InvalidArgument, Recovery::CorrectRequest),
+        ErrorCode::ReferenceTombstoned => (Code::FailedPrecondition, Recovery::RediscoverReference),
+        ErrorCode::UnresolvedMachinePlaceholder => {
+            (Code::InvalidArgument, Recovery::ResolveReference)
+        }
+        ErrorCode::StaleContext => (Code::FailedPrecondition, Recovery::RefreshState),
+        ErrorCode::StaleRevision => (Code::Aborted, Recovery::RefreshState),
+        ErrorCode::OperationIdConflict => (Code::Aborted, Recovery::NewOperation),
+        ErrorCode::OperationInProgress | ErrorCode::LeaseLost => {
+            (Code::Aborted, Recovery::RetryOperation)
+        }
+        ErrorCode::CapabilityUnavailable => (Code::Unavailable, Recovery::CheckConfiguration),
+        ErrorCode::InvalidRequest => (Code::InvalidArgument, Recovery::CorrectRequest),
+        ErrorCode::NotFound => (Code::NotFound, Recovery::Unspecified),
+        ErrorCode::Conflict => (Code::Aborted, Recovery::Unspecified),
+        ErrorCode::FailedPrecondition => (Code::FailedPrecondition, Recovery::Unspecified),
+        ErrorCode::Unavailable => (Code::Unavailable, Recovery::Unspecified),
+        ErrorCode::InternalFailure => (Code::Internal, Recovery::Unspecified),
+        ErrorCode::CapacityExhausted => (Code::ResourceExhausted, Recovery::RefreshState),
+        ErrorCode::InstanceAlreadyRunning => (Code::AlreadyExists, Recovery::CheckConfiguration),
+    }
+}
+
+fn wire_code(code: ErrorCode) -> p::ErrorCode {
+    use ErrorCode as C;
+    use p::ErrorCode as W;
+    match code {
+        C::UnknownReference => W::UnknownReference,
+        C::AmbiguousReference => W::AmbiguousReference,
+        C::ReferenceTypeMismatch => W::ReferenceTypeMismatch,
+        C::ReferenceTombstoned => W::ReferenceTombstoned,
+        C::UnresolvedMachinePlaceholder => W::UnresolvedMachinePlaceholder,
+        C::StaleContext => W::StaleContext,
+        C::StaleRevision => W::StaleRevision,
+        C::OperationIdConflict => W::OperationIdConflict,
+        C::OperationInProgress => W::OperationInProgress,
+        C::LeaseLost => W::LeaseLost,
+        C::CapabilityUnavailable => W::CapabilityUnavailable,
+        C::InvalidRequest => W::InvalidRequest,
+        C::NotFound => W::NotFound,
+        C::Conflict => W::Conflict,
+        C::FailedPrecondition => W::FailedPrecondition,
+        C::Unavailable => W::Unavailable,
+        C::InternalFailure => W::InternalFailure,
+        C::CapacityExhausted => W::CapacityExhausted,
+        C::InstanceAlreadyRunning => W::InstanceAlreadyRunning,
+    }
+}
+
+fn wire_owner(owner: ErrorOwner) -> p::ErrorOwner {
+    use ErrorOwner as O;
+    use p::ErrorOwner as W;
+    match owner {
+        O::Identity => W::Identity,
+        O::Subject => W::Subject,
+        O::Memory => W::Memory,
+        O::Material => W::Material,
+        O::Runtime => W::Runtime,
+        O::Configuration => W::Configuration,
+        O::Concept => W::Concept,
+        O::Observation => W::Observation,
+        O::Resource => W::Resource,
+        O::ModelWorkflow => W::ModelWorkflow,
+        O::Kernel => W::Kernel,
+        O::Core => W::Core,
+        O::Persistence => W::Persistence,
+        O::Instance => W::Instance,
+        O::Cli => W::Cli,
+    }
 }

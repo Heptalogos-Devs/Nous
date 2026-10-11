@@ -36,8 +36,8 @@ impl ServingService {
         let observation =
             match VcpQueryObservation::prepare(generation, bound, plan, embedding, Some(signals)) {
                 Ok(observation) => observation,
-                Err(Error::Unavailable(detail)) => {
-                    output.diagnostics.push(detail);
+                Err(error) if error.code == nous_core::ErrorCode::Unavailable => {
+                    output.diagnostics.push(error.message);
                     return Ok(output);
                 }
                 Err(error) => return Err(error),
@@ -65,8 +65,14 @@ impl ServingService {
                     .map(|score| {
                         Ok((
                             score.id,
-                            serde_json::to_value(score)
-                                .map_err(|e| Error::Infrastructure(e.to_string()))?,
+                            serde_json::to_value(score).map_err(|e| {
+                                Error::new(
+                                    nous_core::ErrorOwner::Resource,
+                                    nous_core::ErrorCode::InternalFailure,
+                                    "Operation failed",
+                                )
+                                .with_source(e)
+                            })?,
                         ))
                     })
                     .collect::<Result<Vec<_>>>()?
@@ -85,13 +91,25 @@ impl ServingService {
                     .map(|score| {
                         Ok((
                             score.id,
-                            serde_json::to_value(score)
-                                .map_err(|e| Error::Infrastructure(e.to_string()))?,
+                            serde_json::to_value(score).map_err(|e| {
+                                Error::new(
+                                    nous_core::ErrorOwner::Resource,
+                                    nous_core::ErrorCode::InternalFailure,
+                                    "Operation failed",
+                                )
+                                .with_source(e)
+                            })?,
                         ))
                     })
                     .collect::<Result<Vec<_>>>()?
             }
-            _ => return Err(Error::Invalid("VCP lane received a non-VCP profile".into())),
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "VCP lane received a non-VCP profile",
+                ));
+            }
         };
         crate::vcp::routes::explain_routes(generation, &observation, &mut ranked)?;
         // A fallback artifact or concurrent Authority mutation must not supply

@@ -135,8 +135,13 @@ pub(crate) async fn memory_sources(
                 CognitiveRef::Tag(TagId(id))
             } else {
                 CognitiveRef::CognitiveSchemaRevision(CognitiveSchemaRevisionId(
-                    revision
-                        .ok_or_else(|| Error::Infrastructure("schema revision missing".into()))?,
+                    revision.ok_or_else(|| {
+                        Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InternalFailure,
+                            "schema revision missing",
+                        )
+                    })?,
                 ))
             };
             sources.push(TextProjectionSource {

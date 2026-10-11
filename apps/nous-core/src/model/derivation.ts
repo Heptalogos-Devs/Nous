@@ -1,7 +1,12 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import {
+  openDurableOperation,
+  isOperationBusyError,
+  operationBusyError,
+  workflowPayload,
+} from "../durable-operation.js";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
 import type { DeriveMaterialRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
@@ -16,7 +21,16 @@ import type { ModelRole } from "./roles.js";
 import { modelProducer } from "./producer.js";
 import { z } from "zod";
 import type { DerivedRepresentation } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { sampleVideo } from "./video.js";
+import {
+  inspectVideoPreprocessing,
+  sampleVideo,
+  type SampledVideo,
+  type VideoPreprocessingIdentity,
+} from "./video.js";
+import {
+  DerivationSourceTooLarge,
+  lazyDerivationSource,
+} from "./derivation-source.js";
 import { canonicalDigest } from "../digest.js";
 import {
   materialInterpretationSchemaDigest,
@@ -76,7 +90,6 @@ export async function deriveMaterial(
   const maxSourceBytes = isAudio
     ? models.audio.max_source_bytes
     : models.video.max_source_bytes;
-  let source;
   if ((isVideo || isAudio) && region.coordinateKind === "whole_artifact") {
     if (artifact.byteLength > BigInt(maxSourceBytes))
       return {
@@ -88,41 +101,16 @@ export async function deriveMaterial(
           },
         ],
       };
-    const chunks: Uint8Array[] = [];
-    let length = 0;
-    for await (const chunk of kernel.artifacts.downloadArtifact(
-      { subjectId: request.subjectId, artifactId: region.artifactId },
-      options,
-    )) {
-      length += chunk.content.length;
-      if (length > maxSourceBytes)
-        throw new Error("Media stream exceeds configured byte bound");
-      chunks.push(chunk.content);
-    }
-    source = {
-      content: Buffer.concat(chunks),
-      mediaType: artifact.mediaType,
-      partial: false,
-    };
-  } else
-    source = await kernel.material.materializeEvidence(
-      {
-        subjectId: request.subjectId,
-        reference: { kind: "source_region", value: request.sourceRegionId },
-        maxBytes: BigInt(models.materialInputs.derivation_source_max_bytes),
-      },
-      options,
-    );
-  if (source.partial)
-    return {
-      representations: [],
-      degradation: [
-        {
-          code: "derivation_source_too_large",
-          detail: "Select a bounded source region",
-        },
-      ],
-    };
+  }
+  const source = lazyDerivationSource(
+    kernel,
+    request,
+    region,
+    artifact,
+    maxSourceBytes,
+    models.materialInputs.derivation_source_max_bytes,
+    options,
+  );
   const representations: DerivedRepresentation[] = [];
   const commit = async (
     text: string,
@@ -188,34 +176,44 @@ export async function deriveMaterial(
     representations.push(representation);
     return representation;
   };
+  let paidStageSkipReason: string | undefined;
   const paid = async (
     kind: string,
     graph: Parameters<typeof commit>[2],
     role: ModelRole,
-    invoke: (snapshot: ModelRoleSnapshot) => Promise<{
-      text: string;
-      producerMetadata: ModelProducerMetadata;
-      execution: ExecutionTelemetry;
-      inputAccess: ChannelAccess;
-      structuredPayload?: JsonObject;
-    }>,
+    invoke: (snapshot: ModelRoleSnapshot) => Promise<
+      | {
+          text: string;
+          producerMetadata: ModelProducerMetadata;
+          execution: ExecutionTelemetry;
+          inputAccess: ChannelAccess;
+          structuredPayload?: JsonObject;
+          quality?: Record<string, unknown>;
+        }
+      | { skipReason: string }
+    >,
     quality: Record<string, unknown> = {},
-    preprocessingDigest?: string,
+    preprocessingDigest?: string | (() => Promise<string>),
     promptPath?: string,
     adapter?: string,
-  ) => {
+  ): Promise<DerivedRepresentation | undefined> => {
+    paidStageSkipReason = undefined;
     const model = await models.invocations.snapshotPrompt(
       role,
       promptPath,
       adapter,
     );
+    const stagePreprocessingDigest =
+      typeof preprocessingDigest === "function"
+        ? await preprocessingDigest()
+        : preprocessingDigest;
     const key = canonicalDigest({
       subject: request.subjectId,
       graph,
       kind,
       strategy,
       producer: model.configDigest,
-      preprocessingDigest,
+      preprocessingDigest: stagePreprocessingDigest,
       supersedes: representations.length === 0 ? request.supersedes : undefined,
       outputSchemaDigest:
         kind === "structured_interpretation"
@@ -229,24 +227,30 @@ export async function deriveMaterial(
       operationKey: key,
       semanticDigest: key,
     };
-    const operation = await reserveOperation(
-      kernel,
-      identity,
-      {
-        content: workflowPayload(
-          model,
-          graph.map((input) => input.reference!),
-        ),
-      },
-      options,
-    );
-    const reservation = operation.record;
-    if (reservation.outcome) {
-      if (reservation.outcome.purged)
+    const opened = await openDurableOperation(kernel, identity, {
+      execution: options,
+      snapshotFactory: async () => ({
+        snapshot: {
+          content: workflowPayload(
+            { model, preprocessingDigest: stagePreprocessingDigest },
+            graph.map((input) => input.reference!),
+          ),
+        },
+      }),
+    });
+    if (opened.state === "completed") {
+      if (opened.outcome.purged)
         throw new ConnectError("Derivation outcome was purged", Code.NotFound);
       const outcome = z
-        .strictObject({ representationId: z.string().uuid() })
-        .parse(JSON.parse(reservation.outcome.payloadJson));
+        .union([
+          z.strictObject({ representationId: z.string().uuid() }),
+          z.strictObject({ skipped: z.string() }),
+        ])
+        .parse(JSON.parse(opened.outcome.payloadJson));
+      if ("skipped" in outcome) {
+        paidStageSkipReason = outcome.skipped;
+        return undefined;
+      }
       const representation = await kernel.material.getDerivedRepresentation(
         { subjectId: request.subjectId, id: outcome.representationId },
         options,
@@ -254,24 +258,42 @@ export async function deriveMaterial(
       representations.push(representation);
       return representation;
     }
+    if (opened.state === "busy") throw operationBusyError();
+    const operation = opened.operation;
     return operation.run(async () => {
-      let proposal = reservation.proposal?.payloadJson
-        ? (JSON.parse(reservation.proposal?.payloadJson) as {
+      let proposal = opened.proposal?.payloadJson
+        ? (JSON.parse(opened.proposal.payloadJson) as {
             text: string;
             producerMetadata: ModelProducerMetadata;
-            execution: ExecutionTelemetry;
             inputAccess: ChannelAccess;
             structuredPayload?: JsonObject;
+            quality: Record<string, unknown>;
           })
         : undefined;
       if (!proposal) {
-        proposal = await invoke(
-          JSON.parse(
-            reservation.snapshot!.content!.payloadJson,
-          ) as ModelRoleSnapshot,
-        );
-        const { execution, ...saved } = proposal;
-        await operation.saveProposal(saved, [], execution);
+        const frozen = JSON.parse(opened.snapshot.content!.payloadJson) as {
+          model: ModelRoleSnapshot;
+          preprocessingDigest?: string;
+        };
+        const result = await invoke(frozen.model);
+        if ("skipReason" in result) {
+          paidStageSkipReason = result.skipReason;
+          await operation.checkpoint({
+            outcome: workflowPayload({ skipped: result.skipReason }),
+          });
+          return undefined;
+        }
+        proposal = {
+          text: result.text,
+          producerMetadata: result.producerMetadata,
+          inputAccess: result.inputAccess,
+          structuredPayload: result.structuredPayload,
+          quality: { ...quality, ...result.quality },
+        };
+        await operation.checkpoint({
+          proposal: workflowPayload(proposal),
+          executionTelemetry: result.execution,
+        });
       }
       const representation = await commit(
         proposal.text,
@@ -279,21 +301,23 @@ export async function deriveMaterial(
         graph,
         proposal.producerMetadata,
         {
-          ...quality,
+          ...proposal.quality,
           input_access: channelAccessSchema.parse(proposal.inputAccess),
         },
-        preprocessingDigest,
+        stagePreprocessingDigest,
         proposal.structuredPayload,
       );
-      await operation.complete(
-        { representationId: representation.representationId },
-        [
-          {
-            kind: "derived_representation",
-            value: representation.representationId,
-          },
-        ],
-      );
+      await operation.checkpoint({
+        outcome: workflowPayload(
+          { representationId: representation.representationId },
+          [
+            {
+              kind: "derived_representation",
+              value: representation.representationId,
+            },
+          ],
+        ),
+      });
       return representation;
     });
   };
@@ -304,7 +328,7 @@ export async function deriveMaterial(
       role: "source",
     },
   ];
-  const mime = source.mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
+  const mime = artifact.mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
   const textual = mime.startsWith("text/") || mime === "application/json";
   const directContext: StructuredMaterialContext = {
     access: {
@@ -320,20 +344,7 @@ export async function deriveMaterial(
   const signal = options.signal ?? undefined;
   const structureDescription = async (description: DerivedRepresentation) => {
     const access = channelAccessSchema.parse(description.quality?.input_access);
-    const { segments } = await kernel.materialWorkflow.segmentDescription(
-      { subjectId: request.subjectId, id: description.representationId },
-      options,
-    );
-    const catalog: Record<string, { kind: string; value: string }> = {};
-    for (const segment of segments) {
-      if (!segment.reference)
-        throw new Error("Description segment reference is missing");
-      catalog[segment.key] = {
-        kind: segment.reference.kind,
-        value: segment.reference.value,
-      };
-    }
-    return paid(
+    const result = await paid(
       "structured_interpretation",
       [
         {
@@ -346,8 +357,21 @@ export async function deriveMaterial(
         },
       ],
       "material_structuring",
-      (snapshot) =>
-        models.material.structure(
+      async (snapshot) => {
+        const { segments } = await kernel.materialWorkflow.segmentDescription(
+          { subjectId: request.subjectId, id: description.representationId },
+          options,
+        );
+        const catalog: Record<string, { kind: string; value: string }> = {};
+        for (const segment of segments) {
+          if (!segment.reference)
+            throw new Error("Description segment reference is missing");
+          catalog[segment.key] = {
+            kind: segment.reference.kind,
+            value: segment.reference.value,
+          };
+        }
+        return models.material.structure(
           segments.map((item) => `[${item.key}] ${item.text}`).join("\n"),
           signal,
           snapshot,
@@ -355,13 +379,16 @@ export async function deriveMaterial(
             access: textual ? access : representedAccess(access),
             catalog,
           },
-        ),
+        );
+      },
       {},
       canonicalDigest({
         segmentation: "description-utf8-lines-v1",
         interpretation: materialInterpretationIdentity,
       }),
     );
+    if (!result) throw new Error("Description structure stage was skipped");
+    return result;
   };
   if (
     !textual &&
@@ -407,18 +434,22 @@ export async function deriveMaterial(
         strategy === "direct_structured"
           ? "material_direct_structuring"
           : "material_description",
-        (snapshot) =>
-          models.material.describeMedia(
-            source.content,
-            mime,
-            strategy === "direct_structured",
-            signal,
-            snapshot,
-            directContext,
-          ),
+        async (snapshot) => {
+          const loaded = await source();
+          return {
+            ...(await models.material.describeMedia(
+              loaded.content,
+              mime,
+              strategy === "direct_structured",
+              signal,
+              snapshot,
+              directContext,
+            )),
+            quality: { source_bytes: loaded.content.length },
+          };
+        },
         {
           input_mode: "direct",
-          source_bytes: source.content.length,
           modality: mime.startsWith("video/") ? "video" : "audio",
         },
         canonicalDigest({ input_mode: "direct", media_type: mime }),
@@ -427,6 +458,7 @@ export async function deriveMaterial(
           : undefined,
         "gateway-chat-media-v1",
       );
+      if (!selected) throw new Error("Direct media stage was skipped");
       if (strategy === "describe_then_structure")
         await structureDescription(selected);
       return {
@@ -438,27 +470,53 @@ export async function deriveMaterial(
     if (mime.startsWith("video/")) {
       if (!models.tempRoot)
         throw new Error("Resolved TempRoot is required for video sampling");
-      const samples = await sampleVideo(
-        source.content,
-        models.video,
-        models.tempRoot,
-        models.credentialEnvironments,
-        Boolean(models.invocations.profile("speech_transcription")),
-        signal,
+      const includeAudio = Boolean(
+        models.invocations.profile("speech_transcription"),
       );
+      let identityPromise: Promise<VideoPreprocessingIdentity> | undefined;
+      const preprocessingIdentity = () =>
+        (identityPromise ??= inspectVideoPreprocessing(
+          models.video,
+          models.tempRoot!,
+          models.credentialEnvironments,
+        ));
+      let samplesPromise: Promise<SampledVideo> | undefined;
+      const samples = () =>
+        (samplesPromise ??= (async () => {
+          const [loaded, identity] = await Promise.all([
+            source(),
+            preprocessingIdentity(),
+          ]);
+          return sampleVideo(
+            loaded.content,
+            models.video,
+            models.tempRoot!,
+            models.credentialEnvironments,
+            includeAudio,
+            identity,
+            signal,
+          );
+        })());
       let transcript: string | undefined;
       let transcriptReference: { kind: string; value: string } | undefined;
       const sceneInputs = [...inputs];
       const degradation: { code: string; detail: string }[] = [];
-      if (samples.audio) {
+      if (includeAudio) {
         try {
           const representation = await paid(
             "transcript",
             inputs,
             "speech_transcription",
             async (snapshot) => {
+              const sampled = await samples();
+              if (!sampled.audio)
+                return {
+                  skipReason: sampled.hasAudio
+                    ? "audio_extraction_unavailable"
+                    : "no_audio_track",
+                };
               const result = await models.invocations.transcription(
-                samples.audio!,
+                sampled.audio,
                 signal,
                 snapshot,
               );
@@ -471,36 +529,44 @@ export async function deriveMaterial(
                   audio: "original",
                   source_text: "unavailable",
                 },
+                quality: sampled.quality,
               };
             },
-            samples.quality,
-            samples.preprocessingDigest,
+            {},
+            () =>
+              preprocessingIdentity().then(
+                (value) => value.preprocessingDigest,
+              ),
           );
-          transcript = representation.text;
-          transcriptReference = {
-            kind: "derived_representation",
-            value: representation.representationId,
-          };
-          sceneInputs.push({
-            ordinal: 1,
-            reference: {
+          if (representation) {
+            transcript = representation.text;
+            transcriptReference = {
               kind: "derived_representation",
               value: representation.representationId,
-            },
-            role: "transcript",
-          });
-        } catch {
+            };
+            sceneInputs.push({
+              ordinal: 1,
+              reference: {
+                kind: "derived_representation",
+                value: representation.representationId,
+              },
+              role: "transcript",
+            });
+          } else if (paidStageSkipReason === "audio_extraction_unavailable") {
+            degradation.push({
+              code: "video_audio_not_interpreted",
+              detail: "Audio is not included in the scene description",
+            });
+          }
+        } catch (error) {
+          if (isOperationBusyError(error)) throw error;
           if (signal?.aborted) throw signal.reason;
           degradation.push({
             code: "video_transcription_unavailable",
             detail: "Scene description uses frames without a transcript",
           });
         }
-      } else if (samples.hasAudio)
-        degradation.push({
-          code: "video_audio_not_interpreted",
-          detail: "Audio is not included in the scene description",
-        });
+      }
       const sceneContext: StructuredMaterialContext = {
         ...directContext,
         access: {
@@ -520,19 +586,31 @@ export async function deriveMaterial(
         strategy === "direct_structured"
           ? "material_direct_structuring"
           : "material_description",
-        (snapshot) =>
-          models.material.describeScene(
-            samples.frames,
-            transcript,
-            strategy === "direct_structured",
-            signal,
-            snapshot,
-            sceneContext,
-          ),
-        samples.quality,
-        samples.preprocessingDigest,
+        async (snapshot) => {
+          const sampled = await samples();
+          return {
+            ...(await models.material.describeScene(
+              sampled.frames,
+              transcript,
+              strategy === "direct_structured",
+              signal,
+              snapshot,
+              sceneContext,
+            )),
+            quality: { ...sampled.quality, has_audio: sampled.hasAudio },
+          };
+        },
+        {},
+        () =>
+          preprocessingIdentity().then((value) => value.preprocessingDigest),
         strategy === "direct_structured" ? undefined : models.video.prompt,
       );
+      if (!selected) throw new Error("Video scene stage was skipped");
+      if (!includeAudio && selected.quality?.has_audio === true)
+        degradation.push({
+          code: "video_audio_not_interpreted",
+          detail: "Audio is not included in the scene description",
+        });
       if (strategy === "describe_then_structure") {
         try {
           await structureDescription(selected);
@@ -555,60 +633,77 @@ export async function deriveMaterial(
         "structured_interpretation",
         inputs,
         textual ? "material_structuring" : "material_direct_structuring",
-        (snapshot) =>
-          models.material.structure(
+        async (snapshot) => {
+          const loaded = await source();
+          return models.material.structure(
             textual
-              ? new TextDecoder("utf-8", { fatal: true }).decode(source.content)
-              : { bytes: source.content, mediaType: mime },
+              ? new TextDecoder("utf-8", { fatal: true }).decode(loaded.content)
+              : { bytes: loaded.content, mediaType: mime },
             signal,
             snapshot,
             directContext,
-          ),
+          );
+        },
       );
+      if (!structured)
+        throw new Error("Structured derivation stage was skipped");
       return {
         representations,
         selectedRepresentationId: structured.representationId,
         degradation: [],
       };
     }
-    const description = textual
-      ? await commit(
-          new TextDecoder("utf-8", { fatal: true }).decode(source.content),
-          "extracted_text",
-          inputs,
-          undefined,
-          { input_access: directContext.access },
-        )
-      : mime.startsWith("audio/")
-        ? await paid(
-            "transcript",
-            inputs,
-            "speech_transcription",
-            async (snapshot) => {
-              const result = await models.invocations.transcription(
-                source.content,
-                signal,
-                snapshot,
-              );
-              return {
-                text: result.value,
-                producerMetadata: result.producerMetadata,
-                execution: result.execution,
-                inputAccess: {
-                  visual: "unavailable",
-                  audio: "original",
-                  source_text: "unavailable",
-                },
-              };
-            },
-          )
-        : await paid(
-            "image_description",
-            inputs,
-            "material_description",
-            (snapshot) =>
-              models.material.interpret(source.content, mime, signal, snapshot),
+    let description: DerivedRepresentation | undefined;
+    if (textual) {
+      const loaded = await source();
+      description = await commit(
+        new TextDecoder("utf-8", { fatal: true }).decode(loaded.content),
+        "extracted_text",
+        inputs,
+        undefined,
+        { input_access: directContext.access },
+      );
+    } else if (mime.startsWith("audio/")) {
+      description = await paid(
+        "transcript",
+        inputs,
+        "speech_transcription",
+        async (snapshot) => {
+          const loaded = await source();
+          const result = await models.invocations.transcription(
+            loaded.content,
+            signal,
+            snapshot,
           );
+          return {
+            text: result.value,
+            producerMetadata: result.producerMetadata,
+            execution: result.execution,
+            inputAccess: {
+              visual: "unavailable",
+              audio: "original",
+              source_text: "unavailable",
+            },
+          };
+        },
+      );
+    } else {
+      description = await paid(
+        "image_description",
+        inputs,
+        "material_description",
+        async (snapshot) => {
+          const loaded = await source();
+          return models.material.interpret(
+            loaded.content,
+            mime,
+            signal,
+            snapshot,
+          );
+        },
+      );
+    }
+    if (!description) throw new Error("Material description stage was skipped");
     if (strategy === "describe_then_structure") {
       await structureDescription(description);
     }
@@ -618,7 +713,22 @@ export async function deriveMaterial(
       degradation: [],
     };
   } catch (error) {
+    if (isOperationBusyError(error)) throw error;
     if (signal?.aborted) throw error;
+    if (error instanceof DerivationSourceTooLarge)
+      return {
+        representations,
+        selectedRepresentationId: representations[0]?.representationId,
+        degradation: [
+          {
+            code: error.degradationCode,
+            detail:
+              error.degradationCode === "media_source_too_large"
+                ? "Media exceeds configured input byte bound"
+                : "Select a bounded source region",
+          },
+        ],
+      };
     return {
       representations,
       selectedRepresentationId: representations[0]?.representationId,

@@ -46,7 +46,11 @@ impl MaterialService {
         max_upload_bytes: u64,
     ) -> Result<Self> {
         if max_upload_bytes == 0 {
-            return Err(Error::Invalid("max_upload_bytes must be positive".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "max_upload_bytes must be positive",
+            ));
         }
         Ok(Self {
             store,

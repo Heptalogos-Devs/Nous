@@ -4,9 +4,16 @@
 use super::*;
 use nous_persistence::database_error as db;
 fn derivation_identity(representation: &DerivedRepresentation) -> Result<(String, String)> {
-    let input_digest = blake3::hash(
-        &serde_json::to_vec(&representation.inputs).map_err(|e| Error::Invalid(e.to_string()))?,
-    )
+    let input_digest = blake3::hash(&serde_json::to_vec(&representation.inputs).map_err(
+        |error| {
+            Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InternalFailure,
+                "Derived representation inputs could not be encoded",
+            )
+            .with_source(error)
+        },
+    )?)
     .to_hex()
     .to_string();
     let key = blake3::hash(
@@ -18,7 +25,14 @@ fn derivation_identity(representation: &DerivedRepresentation) -> Result<(String
             &representation.strategy,
             representation.supersedes,
         ))
-        .map_err(|e| Error::Invalid(e.to_string()))?,
+        .map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InternalFailure,
+                "Derived representation identity could not be encoded",
+            )
+            .with_source(error)
+        })?,
     )
     .to_hex()
     .to_string();
@@ -63,7 +77,13 @@ impl MaterialService {
                     "SELECT subject_id FROM derived_regions WHERE derived_region_id=$1 FOR SHARE",
                     id.0,
                 ),
-                _ => return Err(Error::Invalid("invalid derivation input kind".into())),
+                _ => {
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "invalid derivation input kind",
+                    ));
+                }
             };
             let owner: Option<Uuid> = sqlx::query_scalar(query)
                 .bind(id)
@@ -71,8 +91,10 @@ impl MaterialService {
                 .await
                 .map_err(db)?;
             if owner != Some(representation.subject_id.0) {
-                return Err(Error::Invalid(
-                    "derivation input is missing or outside Subject".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "derivation input is missing or outside Subject",
                 ));
             }
         }
@@ -86,8 +108,10 @@ impl MaterialService {
             .await
             .map_err(db)?;
             if owner != Some(representation.subject_id.0) {
-                return Err(Error::Invalid(
-                    "derived payload artifact is outside Subject".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "derived payload artifact is outside Subject",
                 ));
             }
         }
@@ -95,10 +119,20 @@ impl MaterialService {
             let revision: Option<i32> = sqlx::query_scalar("SELECT revision FROM derived_representations WHERE subject_id=$1 AND derived_representation_id=$2 FOR SHARE").bind(representation.subject_id.0).bind(previous.0).fetch_optional(&mut *tx).await.map_err(db)?;
             revision
                 .ok_or_else(|| {
-                    Error::Invalid("superseded representation is outside Subject".into())
+                    Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "superseded representation is outside Subject",
+                    )
                 })?
                 .checked_add(1)
-                .ok_or_else(|| Error::Invalid("representation revision overflow".into()))?
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "representation revision overflow",
+                    )
+                })?
         } else {
             1
         };
@@ -133,7 +167,13 @@ impl MaterialService {
                 CognitiveRef::SourceRegion(id) => (Some(id.0), None, None),
                 CognitiveRef::DerivedRepresentation(id) => (None, Some(id.0), None),
                 CognitiveRef::DerivedRegion(id) => (None, None, Some(id.0)),
-                _ => return Err(Error::Invalid("invalid derivation input".into())),
+                _ => {
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "invalid derivation input",
+                    ));
+                }
             };
             sqlx::query("INSERT INTO derived_representation_inputs(derived_representation_id,ordinal,role,source_region_id,input_representation_id,derived_region_id) VALUES($1,$2,$3,$4,$5,$6)").bind(representation.derived_representation_id.0).bind(input.ordinal as i32).bind(&input.role).bind(source).bind(derived).bind(region).execute(&mut *tx).await.map_err(db)?;
         }
@@ -195,8 +235,10 @@ impl MaterialService {
             || region.coordinate_kind.trim().is_empty()
             || region.coordinate_hash.trim().is_empty()
         {
-            return Err(Error::Invalid(
-                "derived region is invalid or outside Subject".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "derived region is invalid or outside Subject",
             ));
         }
         if let Some(parent) = region.parent_derived_region_id {
@@ -210,8 +252,10 @@ impl MaterialService {
             .await
             .map_err(db)?;
             if !parent_valid {
-                return Err(Error::Invalid(
-                    "derived region parent is outside the representation".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "derived region parent is outside the representation",
                 ));
             }
         }

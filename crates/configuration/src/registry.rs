@@ -46,12 +46,14 @@ impl RegisteredDescriptor {
             None => value.clone(),
         };
         self.schema.validate(&value).map_err(|error| {
-            // Diagnostics expose schema location, never a possibly sensitive value.
-            Error::Invalid(format!(
-                "invalid configuration {} at {}",
-                self.descriptor.path,
-                error.instance_path()
-            ))
+            // Keep the full diagnostic for private logs only; it may include the value.
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid configuration value",
+            )
+            .with_context("path", &self.descriptor.path)
+            .with_source(error.to_owned())
         })?;
         Ok(value)
     }
@@ -76,7 +78,14 @@ impl ConfigRegistry {
     pub fn normalize(&self, path: &str, value: &Value) -> Result<Value> {
         self.descriptors
             .get(path)
-            .ok_or_else(|| Error::Invalid(format!("unknown configuration path: {path}")))?
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Unknown configuration path",
+                )
+                .with_context("path", path)
+            })?
             .normalize(value)
     }
 
@@ -123,9 +132,12 @@ impl ConfigRegistry {
         } else if let Value::Object(children) = value {
             // Even an empty unknown table is an unknown configuration path.
             if !path.is_empty() && !self.paths().any(|key| key.starts_with(&format!("{path}."))) {
-                return Err(Error::Invalid(format!(
-                    "unknown configuration path: {path}"
-                )));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Unknown configuration path",
+                )
+                .with_context("path", path));
             }
             for (name, child) in children {
                 let child_path = if path.is_empty() {
@@ -134,16 +146,22 @@ impl ConfigRegistry {
                     format!("{path}.{name}")
                 };
                 if name.contains('.') || !valid_key_path(&child_path) {
-                    return Err(Error::Invalid(format!(
-                        "invalid configuration path: {child_path}"
-                    )));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Configuration,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid configuration path",
+                    )
+                    .with_context("path", child_path));
                 }
                 self.visit(&child_path, child, output)?;
             }
         } else {
-            return Err(Error::Invalid(format!(
-                "unknown configuration path: {path}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Configuration section must be an object",
+            )
+            .with_context("path", path));
         }
         Ok(())
     }
@@ -185,14 +203,29 @@ impl ConfigRegistryBuilder {
     {
         let path = key.path();
         validator(&default)?;
-        let reference_default =
-            serde_json::to_value(default).map_err(|error| Error::Invalid(error.to_string()))?;
+        let reference_default = serde_json::to_value(default).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "Configuration default could not be serialized",
+            )
+            .with_context("path", path)
+            .with_source(error)
+        })?;
         let json_schema = serde_json::to_value(
             schemars::generate::SchemaSettings::draft2020_12()
                 .into_generator()
                 .into_root_schema_for::<T>(),
         )
-        .map_err(|error| Error::Internal(error.to_string()))?;
+        .map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "Configuration schema could not be serialized",
+            )
+            .with_context("path", path)
+            .with_source(error)
+        })?;
         let descriptor = ConfigDescriptor {
             path: path.to_owned(),
             owner: owner.into(),
@@ -211,10 +244,24 @@ impl ConfigRegistryBuilder {
             reference_profile: None,
         };
         let owner_normalizer: ConfigNormalizer = Arc::new(move |value| {
-            let parsed: T = serde_json::from_value(value.clone())
-                .map_err(|_| Error::Invalid(format!("invalid configuration {path}")))?;
+            let parsed: T = serde_json::from_value(value.clone()).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid configuration value",
+                )
+                .with_context("path", path)
+                .with_source(error)
+            })?;
             validator(&parsed)?;
-            serde_json::to_value(parsed).map_err(|error| Error::Internal(error.to_string()))
+            serde_json::to_value(parsed).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })
         });
         self.insert(descriptor, Some(owner_normalizer))
     }
@@ -245,14 +292,22 @@ impl ConfigRegistryBuilder {
         path: &str,
         update: impl FnOnce(&mut ConfigDescriptor),
     ) -> Result<()> {
-        let entry = self
-            .descriptors
-            .remove(path)
-            .ok_or_else(|| Error::Invalid(format!("unknown configuration path: {path}")))?;
+        let entry = self.descriptors.remove(path).ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Unknown configuration path",
+            )
+            .with_context("path", path)
+        })?;
         let mut descriptor = entry.descriptor;
         update(&mut descriptor);
         if descriptor.path != path {
-            return Err(Error::Invalid("descriptor identity cannot change".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "descriptor identity cannot change",
+            ));
         }
         self.insert(descriptor, entry.owner_normalizer)
     }
@@ -264,26 +319,35 @@ impl ConfigRegistryBuilder {
     ) -> Result<()> {
         let path = &descriptor.path;
         if !valid_key_path(path) || descriptor.owner.is_empty() || descriptor.category.is_empty() {
-            return Err(Error::Invalid(format!(
-                "invalid configuration descriptor: {path}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid configuration descriptor",
+            )
+            .with_context("path", path));
         }
         if self.descriptors.keys().any(|key| {
             key == path
                 || key.starts_with(&format!("{path}."))
                 || path.starts_with(&format!("{key}."))
         }) {
-            return Err(Error::Conflict(format!(
-                "overlapping configuration descriptor: {path}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::Conflict,
+                "Configuration descriptor overlaps an existing path",
+            )
+            .with_context("path", path));
         }
         if descriptor.storage_policy == ConfigStoragePolicy::DeploymentOnly
             && (descriptor.scope_policy != ConfigScopePolicy::SystemOnly
                 || descriptor.apply_mode != ConfigApplyMode::RestartProcess)
         {
-            return Err(Error::Invalid(format!(
-                "deployment-only descriptor must be system/restart: {path}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Deployment-only configuration must be system scoped and restart applied",
+            )
+            .with_context("path", path));
         }
         if descriptor
             .json_schema
@@ -291,12 +355,22 @@ impl ConfigRegistryBuilder {
             .and_then(Value::as_str)
             != Some(CONFIG_SCHEMA_DIALECT)
         {
-            return Err(Error::Invalid(format!(
-                "configuration schema must use Draft 2020-12: {path}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Configuration schema must use Draft 2020-12",
+            )
+            .with_context("path", path));
         }
-        jsonschema::draft202012::meta::validate(&descriptor.json_schema)
-            .map_err(|_| Error::Invalid(format!("invalid configuration schema: {path}")))?;
+        jsonschema::draft202012::meta::validate(&descriptor.json_schema).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid configuration schema",
+            )
+            .with_context("path", path)
+            .with_source(error.to_owned())
+        })?;
         let entry = PendingDescriptor {
             descriptor,
             owner_normalizer,
@@ -312,9 +386,14 @@ impl ConfigRegistryBuilder {
             .values()
             .map(|entry| crate::identity::descriptor_identity(&entry.descriptor))
             .collect::<Vec<_>>();
-        let semantic_digest = blake3::hash(
-            &serde_json::to_vec(&identity).map_err(|error| Error::Internal(error.to_string()))?,
-        )
+        let semantic_digest = blake3::hash(&serde_json::to_vec(&identity).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?)
         .to_hex()
         .to_string();
         let catalog_digest = blake3::hash(
@@ -325,7 +404,14 @@ impl ConfigRegistryBuilder {
                     .map(|entry| &entry.descriptor)
                     .collect::<Vec<_>>(),
             )
-            .map_err(|error| Error::Internal(error.to_string()))?,
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?,
         )
         .to_hex()
         .to_string();
@@ -337,10 +423,14 @@ impl ConfigRegistryBuilder {
                         let schema = jsonschema::draft202012::options()
                             .should_validate_formats(true)
                             .build(&pending.descriptor.json_schema)
-                            .map_err(|_| {
-                                Error::Invalid(format!(
-                                    "cannot compile configuration schema: {path}"
-                                ))
+                            .map_err(|error| {
+                                Error::new(
+                                    nous_core::ErrorOwner::Configuration,
+                                    nous_core::ErrorCode::InvalidRequest,
+                                    "Configuration schema could not be compiled",
+                                )
+                                .with_context("path", &path)
+                                .with_source(error)
                             })?;
                         let entry = RegisteredDescriptor {
                             descriptor: pending.descriptor,

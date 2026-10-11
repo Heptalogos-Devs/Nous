@@ -96,7 +96,11 @@ fn parse_state(value: String) -> Result<WorkContextState> {
         "open" => Ok(WorkContextState::Open),
         "paused" => Ok(WorkContextState::Paused),
         "ended" => Ok(WorkContextState::Ended),
-        _ => Err(Error::Infrastructure("invalid WorkContext state".into())),
+        _ => Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InternalFailure,
+            "invalid WorkContext state",
+        )),
     }
 }
 
@@ -109,33 +113,55 @@ fn validate_payload(
     cognition_anchors: &[CognitiveRef],
 ) -> Result<()> {
     if purpose.is_empty() || purpose.len() > 8192 {
-        return Err(Error::Invalid(
-            "WorkContext purpose is out of bounds".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "WorkContext purpose is out of bounds",
         ));
     }
     validate_text_array("unresolved_questions", questions)?;
     validate_text_array("resume_conditions", resume_conditions)?;
     if serde_json::to_vec(constraints)
-        .map_err(|error| Error::Invalid(error.to_string()))?
+        .map_err(|error| {
+            Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::InvalidRequest,
+                "WorkContext constraints could not be encoded",
+            )
+            .with_source(error)
+        })?
         .len()
         > 65_536
     {
-        return Err(Error::Invalid(
-            "WorkContext constraints are too large".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "WorkContext constraints are too large",
         ));
     }
     if serde_json::to_vec(budget)
-        .map_err(|error| Error::Invalid(error.to_string()))?
+        .map_err(|error| {
+            Error::new(
+                ErrorOwner::Runtime,
+                ErrorCode::InvalidRequest,
+                "WorkContext budget summary could not be encoded",
+            )
+            .with_source(error)
+        })?
         .len()
         > 16_384
     {
-        return Err(Error::Invalid(
-            "WorkContext budget summary is too large".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "WorkContext budget summary is too large",
         ));
     }
     if cognition_anchors.len() > 256 {
-        return Err(Error::Invalid(
-            "WorkContext reference bound exceeded".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "WorkContext reference bound exceeded",
         ));
     }
     let mut keys = BTreeSet::new();
@@ -148,12 +174,18 @@ fn validate_payload(
                 | CognitiveRef::EpisodeRevision(_)
                 | CognitiveRef::JournalRevision(_)
         ) {
-            return Err(Error::Invalid(
-                "WorkContext cognition_anchors must be exact continuation refs".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "WorkContext cognition_anchors must be exact continuation refs",
             ));
         }
         if !keys.insert(reference.to_string()) {
-            return Err(Error::Invalid("duplicate WorkContext reference".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "duplicate WorkContext reference",
+            ));
         }
     }
     Ok(())
@@ -165,21 +197,41 @@ fn validate_text_array(name: &str, values: &[String]) -> Result<()> {
             .iter()
             .any(|value| value.is_empty() || value.len() > 2048)
     {
-        return Err(Error::Invalid(format!("{name} is out of bounds")));
+        return Err(Error::new(
+            ErrorOwner::Runtime,
+            ErrorCode::InvalidRequest,
+            "WorkContext text field is out of bounds",
+        )
+        .with_context("field", name));
     }
     Ok(())
 }
 pub(super) fn replay_context(receipt: MutationReceipt) -> Result<Uuid> {
     if receipt.state != "committed" {
-        return Err(Error::Unavailable(
-            "WorkContext operation is already in progress".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::Unavailable,
+            "WorkContext operation is already in progress",
         ));
     }
     receipt
         .result_ref
-        .ok_or_else(|| Error::Infrastructure("WorkContext receipt has no result".into()))?
+        .ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InternalFailure,
+                "WorkContext receipt has no result",
+            )
+        })?
         .parse()
-        .map_err(|_| Error::Infrastructure("invalid WorkContext receipt".into()))
+        .map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InternalFailure,
+                "invalid WorkContext receipt",
+            )
+            .with_source(error)
+        })
 }
 fn typed_anchors(entities: &[EntityRef], tags: &[TagId]) -> Vec<CognitiveRef> {
     entities
@@ -191,8 +243,10 @@ fn typed_anchors(entities: &[EntityRef], tags: &[TagId]) -> Vec<CognitiveRef> {
 }
 fn validate_anchors(text: &str, entities: &[EntityRef], tags: &[TagId]) -> Result<()> {
     if text.len() > 65536 || entities.len() > 256 || tags.len() > 256 {
-        return Err(Error::Invalid(
-            "WorkContext typed context bounds exceeded".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "WorkContext typed context bounds exceeded",
         ));
     }
     let anchors = typed_anchors(entities, tags);
@@ -201,7 +255,11 @@ fn validate_anchors(text: &str, entities: &[EntityRef], tags: &[TagId]) -> Resul
         .map(ToString::to_string)
         .collect::<BTreeSet<_>>();
     if unique.len() != anchors.len() {
-        return Err(Error::Invalid("duplicate WorkContext anchor".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Runtime,
+            nous_core::ErrorCode::InvalidRequest,
+            "duplicate WorkContext anchor",
+        ));
     }
     Ok(())
 }

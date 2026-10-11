@@ -61,7 +61,7 @@ it("recovers an unknown context mutation using the exact saved identity and expe
     expect(failure).toMatchObject({
       code: "OUTCOME_UNKNOWN",
     });
-    const receipt = (failure as { receipt: string }).receipt;
+    const receipt = (failure as { receiptId: string }).receiptId;
     expect(typeof receipt).toBe("string");
     context.revision = 7n;
     await runCli(["retry", receipt, ...flags], connect);
@@ -174,7 +174,7 @@ it("freezes semantic TOML targets and input before a recoverable mutation", asyn
         connect,
       );
     } catch (error) {
-      receipt = (error as { receipt: string }).receipt;
+      receipt = (error as { receiptId: string }).receiptId;
     }
     expect(receipt).toBeTruthy();
     await writeFile(

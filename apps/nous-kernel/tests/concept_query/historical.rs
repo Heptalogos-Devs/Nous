@@ -133,13 +133,13 @@ pub(super) async fn check_historical_embedding(
     );
     if let Some(need) = needs
         .iter()
-        .find(|need| need.reference == CognitiveRef::Tag(tag))
+        .find(|need| need.references.contains(&CognitiveRef::Tag(tag)))
     {
         assert!(
             rt.serving
                 .commit_embedding(
                     subject,
-                    need.reference.clone(),
+                    need.references.clone(),
                     need.text.clone(),
                     &generation.space.as_ref().unwrap().space_hash,
                     &generation.producer.as_ref().unwrap().signature_hash,
@@ -151,7 +151,7 @@ pub(super) async fn check_historical_embedding(
         rt.serving
             .commit_embedding_in_view(
                 subject,
-                need.reference.clone(),
+                need.references.clone(),
                 need.text.clone(),
                 &generation.space.as_ref().unwrap().space_hash,
                 &generation.producer.as_ref().unwrap().signature_hash,

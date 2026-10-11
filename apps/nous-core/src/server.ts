@@ -168,6 +168,8 @@ export async function createCore(settings: CoreOptions) {
     },
     getProjectionStatus: (r, c) =>
       kernel.system.getProjectionStatus(r, options(c)),
+    getOperationStatus: (r, c) =>
+      kernel.system.getOperationStatus(r, options(c)),
   };
   await app.register(fastifyConnectPlugin, {
     routes: (router) => {

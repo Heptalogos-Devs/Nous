@@ -81,6 +81,7 @@ pub trait AssociativeExpansion: Send + Sync {
         &self,
         graph: &WaveGraphGeneration,
         seeds: &[WeightedCognitiveSeed],
+        readout: &WaveReadoutPolicy,
         rounds: usize,
         nodes: usize,
     ) -> QueryRiver;
@@ -95,9 +96,10 @@ impl AssociativeExpansion for BoundedWaveExpansion {
         &self,
         graph: &WaveGraphGeneration,
         seeds: &[WeightedCognitiveSeed],
+        readout: &WaveReadoutPolicy,
         rounds: usize,
         nodes: usize,
     ) -> QueryRiver {
-        propagate_weighted_with_budget(graph, seeds, rounds, nodes)
+        propagate_weighted_with_budget(graph, seeds, readout, rounds, nodes)
     }
 }

@@ -38,13 +38,19 @@ impl MemoryService {
         let mut result = MaintenanceScope::empty("ready");
         match kind {
             "episode_revision" => {
-                let revision =
-                    EpisodeRevisionId(scope.parse().map_err(|_| {
-                        Error::Invalid("invalid Episode consolidation scope".into())
-                    })?);
+                let revision = EpisodeRevisionId(scope.parse().map_err(|_| {
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "invalid Episode consolidation scope",
+                    )
+                })?);
                 let episode = match self.episode_revision(subject, revision).await {
                     Ok(value) => value,
-                    Err(Error::NotFound(_)) => return Ok(MaintenanceScope::empty("obsolete")),
+                    Err(Error {
+                        code: nous_core::ErrorCode::NotFound,
+                        ..
+                    }) => return Ok(MaintenanceScope::empty("obsolete")),
                     Err(error) => return Err(error),
                 };
                 if episode.object.current_revision_id != revision || !episode_eligible(&episode) {
@@ -53,13 +59,19 @@ impl MemoryService {
                 result.episodes.push(episode);
             }
             "journal_revision" => {
-                let revision =
-                    JournalRevisionId(scope.parse().map_err(|_| {
-                        Error::Invalid("invalid Journal consolidation scope".into())
-                    })?);
+                let revision = JournalRevisionId(scope.parse().map_err(|_| {
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "invalid Journal consolidation scope",
+                    )
+                })?);
                 let journal = match self.journal_revision(subject, revision).await {
                     Ok(value) => value,
-                    Err(Error::NotFound(_)) => return Ok(MaintenanceScope::empty("obsolete")),
+                    Err(Error {
+                        code: nous_core::ErrorCode::NotFound,
+                        ..
+                    }) => return Ok(MaintenanceScope::empty("obsolete")),
                     Err(error) => return Err(error),
                 };
                 if journal.object.current_revision_id != revision
@@ -79,7 +91,13 @@ impl MemoryService {
                 }
                 result.journal = Some(journal);
             }
-            _ => return Err(Error::Invalid("invalid consolidation source kind".into())),
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid consolidation source kind",
+                ));
+            }
         }
         result.occurrences = scope_occurrences(&result.episodes)?;
         Ok(result)
@@ -96,14 +114,20 @@ impl MemoryService {
         let neighbor_span =
             chrono::Duration::seconds(config.get(nous_runtime::EPISODE_NEIGHBOR_SPAN)? as i64);
         let (track, anchor, late, parent) = if scope_kind == "episode_revision" {
-            let revision = EpisodeRevisionId(
-                scope
-                    .parse()
-                    .map_err(|_| Error::Invalid("invalid Episode review scope".into()))?,
-            );
+            let revision = EpisodeRevisionId(scope.parse().map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid Episode review scope",
+                )
+                .with_source(error)
+            })?);
             let source = match self.episode_revision(subject, revision).await {
                 Ok(value) => value,
-                Err(Error::NotFound(_)) => return Ok(MaintenanceScope::empty("obsolete")),
+                Err(Error {
+                    code: nous_core::ErrorCode::NotFound,
+                    ..
+                }) => return Ok(MaintenanceScope::empty("obsolete")),
                 Err(error) => return Err(error),
             };
             if source.object.current_revision_id != revision || !episode_eligible(&source) {
@@ -128,7 +152,11 @@ impl MemoryService {
                 None,
             )
         } else {
-            return Err(Error::Invalid("invalid Episode review scope kind".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid Episode review scope kind",
+            ));
         };
         let Some(anchor) = anchor else {
             return Ok(MaintenanceScope::empty("obsolete"));
@@ -209,17 +237,23 @@ impl MemoryService {
             let journal = match self
                 .journal(
                     subject,
-                    JournalId(
-                        scope
-                            .parse()
-                            .map_err(|_| Error::Invalid("invalid Journal scope".into()))?,
-                    ),
+                    JournalId(scope.parse().map_err(|error| {
+                        Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InvalidRequest,
+                            "invalid Journal scope",
+                        )
+                        .with_source(error)
+                    })?),
                     None,
                 )
                 .await
             {
                 Ok(value) => value,
-                Err(Error::NotFound(_)) => return Ok(MaintenanceScope::empty("obsolete")),
+                Err(Error {
+                    code: nous_core::ErrorCode::NotFound,
+                    ..
+                }) => return Ok(MaintenanceScope::empty("obsolete")),
                 Err(error) => return Err(error),
             };
             if journal.object.purge_state != PurgeState::Normal
@@ -317,8 +351,10 @@ impl MemoryService {
                 if let CognitiveRef::Occurrence(id) = member.reference {
                     occurrences.insert(id.0);
                 } else {
-                    return Err(Error::Invalid(
-                        "automatic review requires occurrence members".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "automatic review requires occurrence members",
                     ));
                 }
             }
@@ -327,16 +363,20 @@ impl MemoryService {
             occurrences.insert(late.0);
         }
         if occurrences.len() > 2048 {
-            return Err(Error::Invalid(
-                "maintenance experience scope exceeds 2048 members".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "maintenance experience scope exceeds 2048 members",
             ));
         }
         let ids: Vec<Uuid> = occurrences.into_iter().collect();
         let ordered: Vec<Uuid>=sqlx::query_scalar("SELECT occurrence_id FROM experience_items WHERE subject_id=$1 AND occurrence_id=ANY($2::uuid[]) ORDER BY observed_at,recorded_seq")
             .bind(subject.0).bind(&ids).fetch_all(self.store.pool()).await.map_err(db)?;
         if ordered.len() != ids.len() {
-            return Err(Error::Invalid(
-                "maintenance members require Session experience".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "maintenance members require Session experience",
             ));
         }
         Ok(ordered.into_iter().map(OccurrenceId).collect())
@@ -352,8 +392,10 @@ fn scope_occurrences(episodes: &[EpisodeView]) -> Result<Vec<OccurrenceId>> {
         })
         .collect();
     if occurrences.len() > 2048 {
-        return Err(Error::Invalid(
-            "maintenance scope exceeds 2048 occurrence members".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "maintenance scope exceeds 2048 occurrence members",
         ));
     }
     Ok(occurrences.into_iter().collect())

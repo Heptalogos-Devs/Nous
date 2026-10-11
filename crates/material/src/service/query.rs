@@ -65,16 +65,24 @@ impl MaterialService {
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<HashMap<CognitiveRef, EvidenceTimes>> {
         if refs.len() > 256 {
-            return Err(Error::Invalid("reference time envelope exceeded".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "reference time envelope exceeded",
+            ));
         }
         let mut kinds = Vec::new();
         let mut values = Vec::new();
         let mut result = HashMap::new();
         for reference in refs {
             let text = reference.to_string();
-            let (kind, value) = text
-                .split_once(':')
-                .ok_or_else(|| Error::Invalid("invalid time reference".into()))?;
+            let (kind, value) = text.split_once(':').ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid time reference",
+                )
+            })?;
             kinds.push(kind.to_owned());
             values.push(value.to_owned());
             result.insert(reference.clone(), EvidenceTimes::default());
@@ -103,15 +111,23 @@ SELECT DISTINCT p.kind,p.value,p.formed_at,o.occurrence_id,o.occurred_time_kind,
             let occurred = match kind.as_str() {
                 "instant" => TemporalExtent::Instant {
                     at: start.ok_or_else(|| {
-                        Error::Infrastructure("instant occurrence has no time".into())
+                        Error::new(
+                            nous_core::ErrorOwner::Material,
+                            nous_core::ErrorCode::InternalFailure,
+                            "instant occurrence has no time",
+                        )
                     })?,
                 },
                 "interval" => TemporalExtent::Interval { start, end },
                 _ => TemporalExtent::Unknown,
             };
-            let times = result
-                .get_mut(&reference)
-                .ok_or_else(|| Error::Infrastructure("unexpected reference time row".into()))?;
+            let times = result.get_mut(&reference).ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InternalFailure,
+                    "unexpected reference time row",
+                )
+            })?;
             times
                 .sources
                 .push((occurred, row.get("observed_at"), row.get("recorded_at")));
@@ -305,7 +321,11 @@ impl nous_runtime::CognitiveContributor for MaterialService {
     ) -> Result<(Vec<CognitiveHit>, std::collections::BTreeMap<String, usize>)> {
         let query = &bound.source_query;
         if subject != query.subject {
-            return Err(Error::Invalid("material query subject mismatch".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "material query subject mismatch",
+            ));
         }
         let visible: Vec<_> = references
             .iter()
@@ -344,9 +364,13 @@ SELECT * FROM records
                 &row.get::<String, _>("kind"),
                 &row.get::<String, _>("value"),
             )?;
-            let metadata = times
-                .get_mut(&reference)
-                .ok_or_else(|| Error::Infrastructure("unexpected Material query record".into()))?;
+            let metadata = times.get_mut(&reference).ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InternalFailure,
+                    "unexpected Material query record",
+                )
+            })?;
             let recorded_at: DateTime<Utc> = row.get("recorded_at");
             metadata.formed_at = row.get("formed_at");
             let c = &query.expression.constraints;

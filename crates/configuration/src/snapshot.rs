@@ -52,7 +52,14 @@ impl ConfigSnapshot {
             .collect::<Vec<_>>();
         let effective_digest = blake3::hash(
             serde_json::to_string(&(registry.semantic_digest(), &digest_input))
-                .map_err(|error| Error::Internal(error.to_string()))?
+                .map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Configuration,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?
                 .as_bytes(),
         )
         .to_hex()
@@ -78,12 +85,23 @@ impl ConfigSnapshot {
     where
         T: DeserializeOwned,
     {
-        let value = self
-            .values
-            .get(path)
-            .ok_or_else(|| Error::Internal(format!("configuration key is not resolved: {path}")))?;
-        serde_json::from_value(value.json.clone())
-            .map_err(|error| Error::Internal(format!("resolved configuration {path}: {error}")))
+        let value = self.values.get(path).ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "Configuration key is not resolved in this snapshot",
+            )
+            .with_context("path", path)
+        })?;
+        serde_json::from_value(value.json.clone()).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "Resolved configuration value is invalid",
+            )
+            .with_context("path", path)
+            .with_source(error)
+        })
     }
 
     pub fn json(&self, path: &str) -> Option<&Value> {
@@ -102,7 +120,12 @@ impl ConfigSnapshot {
             .into_iter()
             .map(|key| {
                 let value = self.json(key).ok_or_else(|| {
-                    Error::Invalid(format!("configuration key is not resolved: {key}"))
+                    Error::new(
+                        nous_core::ErrorOwner::Configuration,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Configuration key is not present in this snapshot",
+                    )
+                    .with_context("path", key)
                 })?;
                 let descriptor = self.registry.descriptor(key).expect("snapshot descriptor");
                 Ok(serde_json::json!({"key": key, "value": value, "contract": crate::identity::descriptor_identity(descriptor)}))
@@ -110,7 +133,14 @@ impl ConfigSnapshot {
             .collect::<Result<Vec<_>>>()?;
         Ok(blake3::hash(
             serde_json::to_string(&values)
-                .map_err(|error| Error::Internal(error.to_string()))?
+                .map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Configuration,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?
                 .as_bytes(),
         )
         .to_hex()
@@ -123,19 +153,33 @@ impl ConfigSnapshot {
         key: crate::ConfigKey<T>,
         value: T,
     ) -> Result<Self> {
-        let descriptor = self
-            .registry
-            .descriptor(key.path())
-            .ok_or_else(|| Error::Invalid("query override key is not registered".into()))?;
+        let descriptor = self.registry.descriptor(key.path()).ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Configuration query override key is not registered",
+            )
+            .with_context("path", key.path())
+        })?;
         if descriptor.apply_mode != crate::ConfigApplyMode::Live
             || descriptor.semantic_effect != crate::ConfigSemanticEffect::QueryPolicy
         {
-            return Err(Error::Invalid(
-                "operation override is limited to live query policy".into(),
-            ));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Configuration key does not allow query overrides",
+            )
+            .with_context("path", key.path()));
         }
-        let value =
-            serde_json::to_value(value).map_err(|error| Error::Invalid(error.to_string()))?;
+        let value = serde_json::to_value(value).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Configuration override value is invalid",
+            )
+            .with_context("path", key.path())
+            .with_source(error)
+        })?;
         self.registry.validate(key.path(), &value)?;
         let mut values = self.values.as_ref().clone();
         values.insert(

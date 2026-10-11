@@ -19,7 +19,11 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
             if (1..=64).contains(value) {
                 Ok(())
             } else {
-                Err(Error::Invalid("query lease slots must be 1..64".into()))
+                Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "query lease slots must be 1..64",
+                ))
             }
         },
     )?;

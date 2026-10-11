@@ -103,14 +103,22 @@ pub(super) async fn canonical_preferences(
             continue;
         };
         let canonical = if let Some(view) = view {
-            view.canonical_tag(tag)
-                .ok_or_else(|| Error::NotFound("historical Tag unavailable".into()))
+            view.canonical_tag(tag).ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::NotFound,
+                    "historical Tag unavailable",
+                )
+            })
         } else {
             service.store.canonical_tag_id(subject, tag).await
         };
         match canonical {
             Ok(tag) => result.push(CognitiveRef::Tag(tag)),
-            Err(Error::NotFound(_)) => {}
+            Err(Error {
+                code: nous_core::ErrorCode::NotFound,
+                ..
+            }) => {}
             Err(error) => return Err(error),
         }
     }

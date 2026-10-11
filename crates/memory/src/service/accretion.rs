@@ -34,7 +34,11 @@ pub(super) fn register_accretion_configuration(registry: &mut ConfigRegistryBuil
         ConfigSemanticEffect::AuthorityFormation,
         |p| {
             if !(4..=256).contains(&p.generic_degree) || !(1..=16).contains(&p.recurrence_review) {
-                return Err(Error::Invalid("invalid accretion policy".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid accretion policy",
+                ));
             }
             Ok(())
         },
@@ -102,8 +106,15 @@ impl MemoryService {
                 .bind(subject.0).bind(&kinds).bind(&values).fetch_all(self.store.pool()).await.map_err(db)?;
         let mut meaningful = 0u64;
         for row in use_rows {
-            let count = u64::try_from(row.try_get::<i64, _>("count").map_err(db)?)
-                .map_err(|_| Error::Infrastructure("invalid use count".into()))?;
+            let count =
+                u64::try_from(row.try_get::<i64, _>("count").map_err(db)?).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InternalFailure,
+                        "invalid use count",
+                    )
+                    .with_source(error)
+                })?;
             let kind: String = row.try_get("use_kind").map_err(db)?;
             if matches!(
                 kind.as_str(),
@@ -123,9 +134,23 @@ impl MemoryService {
         let degree=sqlx::query("SELECT count(*)::bigint degree,count(DISTINCT relation_kind)::bigint diversity,count(*) FILTER(WHERE polarity='negative')::bigint negative FROM association_evidence a WHERE a.subject_id=$1 AND a.revoked_at IS NULL AND ((a.from_ref_kind=$2 AND a.from_ref=$3) OR (a.to_ref_kind=$2 AND a.to_ref=$3) OR ($2='tag' AND ((a.from_ref_kind='tag' AND canonical_tag($1,CASE WHEN a.from_ref_kind='tag' THEN a.from_ref::uuid END)=$4) OR (a.to_ref_kind='tag' AND canonical_tag($1,CASE WHEN a.to_ref_kind='tag' THEN a.to_ref::uuid END)=$4))))")
                 .bind(subject.0).bind(kind).bind(value).bind(if let CognitiveRef::Tag(id)=center {Some(id.0)}else {None}).fetch_one(self.store.pool()).await.map_err(db)?;
         let degree_count = usize::try_from(degree.try_get::<i64, _>("degree").map_err(db)?)
-            .map_err(|_| Error::Infrastructure("invalid degree".into()))?;
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "invalid degree",
+                )
+                .with_source(error)
+            })?;
         counterevidence += u64::try_from(degree.try_get::<i64, _>("negative").map_err(db)?)
-            .map_err(|_| Error::Infrastructure("invalid negative count".into()))?;
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "invalid negative count",
+                )
+                .with_source(error)
+            })?;
         let descriptors = self
             .store
             .query_descriptors(subject, &refs.iter().take(32).cloned().collect::<Vec<_>>())
@@ -219,8 +244,10 @@ impl MemoryService {
             }
             CognitiveRef::MemoryRevision(_) => return Ok((vec![center.clone()], 1)),
             _ => {
-                return Err(Error::Invalid(
-                    "accretion center must be Tag, Schema or exact Memory".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "accretion center must be Tag, Schema or exact Memory",
                 ));
             }
         };
@@ -243,10 +270,14 @@ impl MemoryService {
             .build()
             .bind(subject.0)
             .bind(id)
-            .bind(
-                i64::try_from(limit)
-                    .map_err(|_| Error::Invalid("member budget exceeded".into()))?,
-            )
+            .bind(i64::try_from(limit).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "member budget exceeded",
+                )
+                .with_source(error)
+            })?)
             .fetch_all(self.store.pool())
             .await
             .map_err(db)?;
@@ -266,8 +297,14 @@ impl MemoryService {
             .collect::<Result<Vec<_>>>()?;
         Ok((
             refs,
-            usize::try_from(total)
-                .map_err(|_| Error::Infrastructure("invalid member count".into()))?,
+            usize::try_from(total).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "invalid member count",
+                )
+                .with_source(error)
+            })?,
         ))
     }
 }

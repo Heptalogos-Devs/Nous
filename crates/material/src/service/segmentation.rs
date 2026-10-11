@@ -15,8 +15,10 @@ const ABSOLUTE_DESCRIPTION_REGIONS: usize = 512;
 
 fn ranges(text: &str, segment_bytes: usize) -> Result<Vec<(usize, usize)>> {
     if text.is_empty() || text.len() > ABSOLUTE_DESCRIPTION_BYTES {
-        return Err(Error::Invalid(
-            "description segmentation requires bounded text".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Material,
+            nous_core::ErrorCode::InvalidRequest,
+            "description segmentation requires bounded text",
         ));
     }
     let mut result = vec![];
@@ -31,8 +33,10 @@ fn ranges(text: &str, segment_bytes: usize) -> Result<Vec<(usize, usize)>> {
         }
         result.push((start, end));
         if result.len() > ABSOLUTE_DESCRIPTION_REGIONS {
-            return Err(Error::Invalid(
-                "description segmentation exceeds 512 regions".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "description segmentation exceeds 512 regions",
             ));
         }
         start = end;
@@ -52,9 +56,14 @@ impl MaterialService {
         let mut tx = self.store.begin().await?;
         let text: Option<String> = sqlx::query_scalar("SELECT payload_text FROM derived_representations WHERE subject_id=$1 AND derived_representation_id=$2 FOR SHARE")
             .bind(subject.0).bind(representation.0).fetch_optional(&mut *tx).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("description representation not found".into()))?;
-        let text =
-            text.ok_or_else(|| Error::Invalid("description has no text projection".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Material, nous_core::ErrorCode::NotFound, "description representation not found"))?;
+        let text = text.ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "description has no text projection",
+            )
+        })?;
         let mut segments = vec![];
         for (ordinal, (start, end)) in ranges(&text, segment_bytes)?.into_iter().enumerate() {
             let slice = &text[start..end];

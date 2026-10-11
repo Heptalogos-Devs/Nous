@@ -3,13 +3,24 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { NousError } from "@nous-wave/client";
+import { create } from "@bufbuild/protobuf";
+import {
+  QueryActivationInspectionSchema,
+  QueryContextSnapshotSchema,
+  QueryInspectionSchema,
+  QueryRepresentationSchema,
+  ReportUseResponseSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import type { ReportUseRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
   domainError,
-  DomainErrorCode,
+  ErrorCode,
+  ErrorOwner,
   ErrorRecovery,
 } from "@nous-wave/client/errors";
 import type { connectNousInstance } from "@nous-wave/client/node";
 import { execFile } from "node:child_process";
+import { rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import { runCli } from "./support/client.js";
 import { cliErrorPayload } from "../src/agent.js";
@@ -174,7 +185,14 @@ it("continues canonical Material references returned by observe and trace", asyn
 describe("Agent CLI protocol", () => {
   it("prepares with explicit context and summarizes the frozen inspection", async () => {
     const prepared = {
-      boundQuery: '{"representation":{"sha256":"digest"}}',
+      boundQuery: create(QueryInspectionSchema, {
+        queryId: "query-id",
+        representation: create(QueryRepresentationSchema, {
+          sha256: "digest",
+        }),
+        context: create(QueryContextSnapshotSchema, {}),
+        activation: create(QueryActivationInspectionSchema, {}),
+      }),
       embeddingText: "complete intent",
       embeddingRequired: true,
     };
@@ -216,7 +234,7 @@ describe("Agent CLI protocol", () => {
       connect,
     );
     expect(result).toMatchObject({
-      schemaVersion: "nous.cli.v1",
+      schemaVersion: "nous.cli.v2",
       data: {
         intent: "decision $return(memory)",
         representation: { sha256: "digest", chars: 15 },
@@ -270,49 +288,66 @@ describe("Agent CLI protocol", () => {
           '{"code":"UNRESOLVED_QUERY_REFERENCE","details":[{"start":0}]}',
         ),
       ),
-    ).toMatchObject({
-      code: "INVALID_ARGUMENT",
-      details: [],
-    });
+    ).toMatchObject({ details: [] });
     expect(
       cliErrorPayload(
-        new NousError(domainError("STALE_CONTEXT is display text", 10, {})),
+        new Error(
+          '{"code":"UNRESOLVED_QUERY_REFERENCE","details":[{"start":0}]}',
+        ),
       ),
-    ).toMatchObject({ code: "ABORTED" });
+    ).not.toHaveProperty("code");
+    expect(
+      cliErrorPayload(
+        new NousError(
+          domainError("STALE_CONTEXT is display text", 10, {
+            code: ErrorCode.STALE_CONTEXT,
+            owner: ErrorOwner.RUNTIME,
+            recovery: ErrorRecovery.REFRESH_STATE,
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      code: "STALE_CONTEXT",
+      owner: "RUNTIME",
+      recovery: "REFRESH_STATE",
+    });
     for (const code of [
-      DomainErrorCode.OPERATION_ID_CONFLICT,
-      DomainErrorCode.OPERATION_IN_PROGRESS,
-    ]) {
+      ErrorCode.OPERATION_ID_CONFLICT,
+      ErrorCode.OPERATION_IN_PROGRESS,
+    ] as const) {
       expect(
         cliErrorPayload(
           new NousError(
             domainError("Same display, distinct recovery", 10, {
               code,
+              owner: ErrorOwner.RUNTIME,
               recovery:
-                code === DomainErrorCode.OPERATION_ID_CONFLICT
+                code === ErrorCode.OPERATION_ID_CONFLICT
                   ? ErrorRecovery.NEW_OPERATION
                   : ErrorRecovery.RETRY_OPERATION,
             }),
           ),
         ),
-      ).toMatchObject({ code: DomainErrorCode[code] });
+      ).toMatchObject({ code: ErrorCode[code], owner: "RUNTIME" });
     }
   });
 
   it("supports discovery without an instance and emits parse errors only on stderr", async () => {
     const entry = "apps/nous-cli/src/main.ts";
     const help = await exec(process.execPath, [
-      "node_modules/tsx/dist/cli.mjs",
+      "--import",
+      "tsx",
       entry,
       "help",
       "--json",
     ]);
     const parsed: unknown = JSON.parse(help.stdout);
     expect(parsed).toHaveProperty("data.commands");
-    expect(help.stdout).toContain('"command":"query prepare|inspect"');
+    expect(help.stdout).toContain('"command":"query inspect"');
     expect(help.stderr).toBe("");
     const failure: unknown = await exec(process.execPath, [
-      "node_modules/tsx/dist/cli.mjs",
+      "--import",
+      "tsx",
       entry,
       "--nonexistent",
       "--json",
@@ -327,70 +362,74 @@ describe("Agent CLI protocol", () => {
       throw new Error("missing process stderr");
     const payload: unknown = JSON.parse(failure.stderr);
     expect(payload).toMatchObject({
-      code: "INVALID_ARGUMENT",
-      details: [],
-      candidates: [],
+      schemaVersion: "nous.cli.v2",
+      kind: "error",
+      data: {
+        code: "INVALID_ARGUMENT",
+        owner: "CLI",
+        details: [],
+        candidates: [],
+      },
     });
   });
 });
 
 it("uses exact typed revisions and caller-stable feedback identity", async () => {
-  const reportUse = vi.fn().mockResolvedValue({ acceptedCount: 1 });
+  const root = await workspaceTemp("tests", "cli-use-feedback-");
+  const reportUse = vi.fn(async (_request: ReportUseRequest) =>
+    create(ReportUseResponseSchema, { acceptedCount: 1 }),
+  );
   const client = { cognition: { reportUse } } as unknown as Awaited<
     ReturnType<typeof connectNousInstance>
   >;
   const connect = vi.fn().mockResolvedValue(client);
   const ref = "journal_revision:33333333-3333-4333-8333-333333333333";
-  await runCli(
-    [
-      "use",
-      ref,
-      "--instance-root",
-      "/tmp/nous-cli-agent-tests",
-      "--run-root",
-      "/tmp/nous",
-      "--subject",
-      "s",
-      "--kind",
-      "result_supported",
-      "--event-id",
-      "event",
-      "--query-id",
-      "44444444-4444-4444-8444-444444444444",
-      "--occurred-at",
-      "2026-10-07T00:00:00Z",
-    ],
-    connect,
-  );
-  expect(reportUse).toHaveBeenCalledWith(
-    expect.objectContaining({
-      events: [
-        {
-          eventId: "event",
-          queryId: "44444444-4444-4444-8444-444444444444",
-          kind: "result_supported",
-          reference: {
-            kind: "journal_revision",
-            value: "33333333-3333-4333-8333-333333333333",
-          },
-          occurredAt: { seconds: 1791331200n, nanos: 0 },
-        },
-      ],
-    }),
-  );
-  await expect(
-    runCli(
+  try {
+    await runCli(
       [
         "use",
-        "memory:33333333-3333-4333-8333-333333333333",
+        ref,
         "--instance-root",
-        "/tmp/nous-cli-agent-tests",
+        root,
         "--run-root",
-        "/tmp/nous",
+        root,
         "--subject",
         "s",
+        "--kind",
+        "result_supported",
+        "--event-id",
+        "event",
+        "--query-id",
+        "44444444-4444-4444-8444-444444444444",
+        "--occurred-at",
+        "2026-10-07T00:00:00Z",
       ],
       connect,
-    ),
-  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    );
+    const event = reportUse.mock.calls[0]![0].events[0]!;
+    expect(event.eventId).toBe("event");
+    expect(event.queryId).toBe("44444444-4444-4444-8444-444444444444");
+    expect(event.kind).toBe("result_supported");
+    expect(event.reference?.kind).toBe("journal_revision");
+    expect(event.reference?.value).toBe("33333333-3333-4333-8333-333333333333");
+    expect(event.occurredAt?.seconds).toBe(1791331200n);
+    expect(event.occurredAt?.nanos).toBe(0);
+    await expect(
+      runCli(
+        [
+          "use",
+          "memory:33333333-3333-4333-8333-333333333333",
+          "--instance-root",
+          root,
+          "--run-root",
+          root,
+          "--subject",
+          "s",
+        ],
+        connect,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

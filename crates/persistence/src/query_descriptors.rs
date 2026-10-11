@@ -19,7 +19,11 @@ impl AuthorityStore {
         refs: &[CognitiveRef],
     ) -> Result<Vec<QueryDescriptor>> {
         if refs.len() > 256 {
-            return Err(Error::Invalid("query descriptor catalog exceeded".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "query descriptor catalog exceeded",
+            ));
         }
         let (kinds, values): (Vec<_>, Vec<_>) = refs.iter().map(reference_parts).unzip();
         let rows = sqlx::query(r#"

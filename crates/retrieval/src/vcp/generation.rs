@@ -37,7 +37,11 @@ impl VcpGeneration {
         for document in &material.documents {
             let id = ids.id(&document.reference)?;
             if vectors.insert(id, document.vector.clone()).is_some() {
-                return Err(Error::Invalid("duplicate VCP projected document".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "duplicate VCP projected document",
+                ));
             }
             if matches!(document.reference, CognitiveRef::Tag(_)) {
                 labels.insert(id, document.representation_text.clone());
@@ -53,7 +57,11 @@ impl VcpGeneration {
                 .map(|reference| {
                     let id = ids.id(reference)?;
                     let vector = vectors.get(&id).ok_or_else(|| {
-                        Error::Unavailable("VCP curve concept has no embedding material".into())
+                        Error::new(
+                            nous_core::ErrorOwner::Resource,
+                            nous_core::ErrorCode::Unavailable,
+                            "VCP curve concept has no embedding material",
+                        )
                     })?;
                     Ok(VcpCurveMember {
                         reference: reference.clone(),
@@ -158,16 +166,20 @@ impl VcpGeneration {
             || VcpIdentityMap::new(self.identities.references().iter().cloned()).references()
                 != self.identities.references()
         {
-            return Err(Error::Invalid(
-                "invalid VCP generation identity/profile/space".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         self.graph.graph.transport.validate()?;
         if self.vectors.windows(2).any(|v| v[0].0 >= v[1].0)
             || self.labels.windows(2).any(|v| v[0].0 >= v[1].0)
         {
-            return Err(Error::Invalid(
-                "VCP vector/label IDs must be unique and sorted".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
 
@@ -178,7 +190,11 @@ impl VcpGeneration {
                 || vector.len() != self.space.dimension as usize
                 || vector.iter().any(|v| !v.is_finite())
             {
-                return Err(Error::Invalid("invalid VCP generation vector".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid VCP generation vector",
+                ));
             }
         }
         for id in &self.graph.graph.transport.node_ids {
@@ -188,8 +204,10 @@ impl VcpGeneration {
             if !seen.contains(id)
                 || !matches!(self.identities.reference(*id)?, CognitiveRef::Tag(_))
             {
-                return Err(Error::Invalid(
-                    "VCP label must identify an embedded Tag".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
         }
@@ -204,16 +222,20 @@ impl VcpGeneration {
             if !curve_ids.insert(curve.id)
                 || vectors.get(&curve.id).copied() != Some(&curve.chunk_vector)
             {
-                return Err(Error::Invalid(
-                    "VCP curve body disagrees with generation vector".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
             let mut tags = std::collections::BTreeSet::new();
             for tag in &curve.tags {
                 self.identities.reference(tag.id)?;
                 if !tags.insert(tag.id) || vectors.get(&tag.id).copied() != Some(&tag.vector) {
-                    return Err(Error::Invalid(
-                        "VCP curve tag disagrees with generation vector".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid request",
                     ));
                 }
             }
@@ -226,8 +248,10 @@ impl VcpGeneration {
                 .collect::<std::collections::BTreeSet<_>>()
                 != curve_ids
         {
-            return Err(Error::Invalid(
-                "VCP candidate evidence identities disagree".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         if self.curve_orders.len() != curve_ids.len()
@@ -238,7 +262,11 @@ impl VcpGeneration {
                 .collect::<std::collections::BTreeSet<_>>()
                 != curve_ids
         {
-            return Err(Error::Invalid("VCP curve order identities disagree".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "VCP curve order identities disagree",
+            ));
         }
         if self.epa.success
             && (self.epa.mean.len() != self.space.dimension as usize
@@ -251,7 +279,11 @@ impl VcpGeneration {
                 || self.epa.mean.iter().any(|v| !v.is_finite())
                 || self.epa.energies.iter().any(|v| !v.is_finite() || *v < 0.0))
         {
-            return Err(Error::Invalid("invalid VCP EPA basis".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid VCP EPA basis",
+            ));
         }
         for edge in &self.graph.graph.provenance {
             self.identities.reference(edge.source_id)?;
@@ -262,7 +294,11 @@ impl VcpGeneration {
                     || !mass.is_finite()
                     || *mass <= 0.0
             }) {
-                return Err(Error::Invalid("invalid VCP provenance root".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid VCP provenance root",
+                ));
             }
         }
         Ok(())

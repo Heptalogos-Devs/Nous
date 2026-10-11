@@ -19,7 +19,7 @@ async fn subject(runtime: &nous_kernel::NousRuntime) -> nous_core::SubjectId {
     runtime
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -138,7 +138,10 @@ async fn resident_batch_is_atomic_and_invalid_persisted_refs_are_visible() {
         .await;
     assert!(matches!(
         result,
-        Err(nous_core::Error::FailedPrecondition(_))
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::FailedPrecondition,
+            ..
+        })
     ));
     let clean = runtime
         .cognition
@@ -158,7 +161,13 @@ async fn resident_batch_is_atomic_and_invalid_persisted_refs_are_visible() {
         .cognition
         .session(subject_a, session.session_id)
         .await;
-    assert!(matches!(result, Err(nous_core::Error::Invalid(_))));
+    assert!(matches!(
+        result,
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::InvalidRequest,
+            ..
+        })
+    ));
 }
 
 #[tokio::test]

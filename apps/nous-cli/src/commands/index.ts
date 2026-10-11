@@ -10,14 +10,17 @@ import {
 import { connectNousInstance } from "@nous-wave/client/node";
 import {
   createEnvironment,
-  stringFlags,
-  booleanFlags,
-  listFlags,
   type CliValues,
   type CliEnvironment,
 } from "../runtime.js";
 import { semanticOutput } from "../output.js";
 import { CliError, commandInventory } from "../agent.js";
+import {
+  commandDescriptors,
+  commandFlags,
+  sharedFlags,
+  type CommandDescriptor,
+} from "./command-descriptors.js";
 import { nousqlHelp } from "../nousql-help.js";
 import { configCommands } from "./config.js";
 import { statusCommands } from "./status.js";
@@ -35,11 +38,21 @@ import { useCommands } from "./use.js";
 import { traceCommands } from "./trace.js";
 import { contextCommands } from "./context.js";
 import { queryCommands, showCommands, readCommands } from "./query.js";
-const argsDef: ArgsDef = Object.fromEntries<ArgDef>([
-  ...stringFlags.map((name) => [name, { type: "string" }] as const),
-  ...listFlags.map((name) => [name, { type: "string" }] as const),
-  ...booleanFlags.map((name) => [name, { type: "boolean" }] as const),
-]);
+import { memoryCommands } from "./memory.js";
+import { resourceCommands } from "./resource.js";
+import { schemaCommands } from "./schema.js";
+import { episodeCommands } from "./episode.js";
+import { journalCommands } from "./journal.js";
+import { operationCommands } from "./operation.js";
+import { materialCommands } from "./material.js";
+
+type Handler = (
+  env: CliEnvironment,
+  action?: string,
+  argument?: string,
+  positionals?: string[],
+) => Promise<unknown>;
+
 const defaults: CliValues = {
   consumer: "consumer:nous-cli:default",
   "max-operations": "1",
@@ -50,31 +63,67 @@ const defaults: CliValues = {
   "max-depth": "2",
   "max-batches": "16",
 };
-function valuesOf(ctx: CommandContext): CliValues {
-  for (const key of Object.keys(ctx.args))
-    if (
-      key !== "_" &&
-      !Object.keys(argsDef).some(
-        (name) =>
-          name === key ||
-          name.replace(/-([a-z])/g, (_, letter: string) =>
-            letter.toUpperCase(),
-          ) === key,
-      )
-    )
-      throw new CliError("INVALID_ARGUMENT", `Unknown option --${key}`);
+const rootArgs: ArgsDef = Object.fromEntries<ArgDef>(
+  sharedFlags.map(({ name, type, description }) => [
+    name,
+    { type, description },
+  ]),
+);
+const descriptorByPath = new Map(
+  commandDescriptors.map((descriptor) => [descriptor.command, descriptor]),
+);
+const camel = (name: string) =>
+  name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+const listFlagNames = new Set(["tag", "aboutness", "alias"]);
+
+function descriptorFor(path: string): CommandDescriptor {
+  const descriptor = descriptorByPath.get(path);
+  if (!descriptor) throw new Error(`Command descriptor missing: ${path}`);
+  return descriptor;
+}
+
+function argsFor(descriptor: CommandDescriptor): ArgsDef {
+  return Object.fromEntries<ArgDef>(
+    commandFlags(descriptor).map(({ name, type, description }) => [
+      name,
+      { type, description },
+    ]),
+  );
+}
+
+function rejectUnknownOptions(
+  rawArgs: readonly string[],
+  descriptor: CommandDescriptor,
+) {
+  const allowed = new Set(commandFlags(descriptor).map(({ name }) => name));
+  for (const raw of rawArgs) {
+    if (!raw.startsWith("--") || raw === "--") continue;
+    const name = raw.slice(2).split("=", 1)[0]!;
+    if (!allowed.has(name))
+      throw new CliError("INVALID_ARGUMENT", `Unknown option --${name}`);
+  }
+}
+
+function valuesOf(
+  ctx: CommandContext,
+  descriptor?: CommandDescriptor,
+): CliValues {
+  const flags = descriptor ? commandFlags(descriptor) : sharedFlags;
   const values: CliValues = {};
-  for (const name of stringFlags)
-    if (typeof ctx.args[name] === "string") values[name] = ctx.args[name];
-  for (const name of booleanFlags)
-    if (typeof ctx.args[name] === "boolean") values[name] = ctx.args[name];
-  for (const name of listFlags) {
-    const value: unknown = ctx.args[name];
-    if (typeof value === "string")
-      values[name] = value.split(",").filter(Boolean);
+  for (const { name, type } of flags) {
+    const value: unknown = ctx.args[name] ?? ctx.args[camel(name)];
+    if (type === "string" && typeof value === "string")
+      if (listFlagNames.has(name))
+        values[name as "tag" | "aboutness" | "alias"] = value
+          .split(",")
+          .filter(Boolean);
+      else values[name as keyof CliValues] = value as never;
+    if (type === "boolean" && typeof value === "boolean")
+      values[name as keyof CliValues] = value as never;
   }
   return values;
 }
+
 export async function runCli(
   rawArgs: string[],
   connect = connectNousInstance,
@@ -84,29 +133,40 @@ export async function runCli(
   let globals: CliValues = defaults;
   let result: unknown;
   let completed = false;
-  type Handler = (
-    env: CliEnvironment,
-    action?: string,
-    argument?: string,
-    positionals?: string[],
-  ) => Promise<unknown>;
-  const leaf = (family: string, handler: Handler, action?: string) =>
-    defineCommand({
-      args: argsDef,
+  const leaf = (path: string, handler: Handler) => {
+    const descriptor = descriptorFor(path);
+    return defineCommand({
+      args: argsFor(descriptor),
       async run(ctx) {
-        const values = { ...globals, ...valuesOf(ctx) };
+        rejectUnknownOptions(ctx.rawArgs, descriptor);
+        const values = {
+          ...globals,
+          ...valuesOf(ctx, descriptor),
+        };
         const env = await createEnvironment(values, connect, input);
-        if (!["config", "status", "subject", "retry"].includes(family))
+        const parts = path.split(" ");
+        const family = parts[0]!;
+        const action = parts[1];
+        if (
+          ![
+            "config",
+            "status",
+            "subject",
+            "retry",
+            "operation",
+            "help",
+          ].includes(family) &&
+          !(family === "material" && action === "limits")
+        )
           env.required(
             env.subjectId,
             "Selected Subject (run subject create/use)",
           );
-        result = await handler(
-          env,
-          action ?? ctx.args._[0],
-          action ? ctx.args._[0] : ctx.args._[1],
-          [family, ...(action ? [action] : []), ...ctx.args._],
-        );
+        const argument = ctx.args._[0];
+        result = await handler(env, action, argument, [
+          ...parts,
+          ...ctx.args._,
+        ]);
         if (present && !values.raw && !values.json && !values.developer) {
           try {
             result = await present(result, env);
@@ -118,61 +178,82 @@ export async function runCli(
             });
           }
         }
-        if (!values.raw)
-          result = semanticOutput(
-            action ? `${family}.${action}` : family,
-            result,
-          );
+        result = semanticOutput(path.replaceAll(" ", "."), result);
         if (env.notices.length)
-          result = values.raw
-            ? { data: result, notices: env.notices }
-            : { ...(result as object), notices: env.notices };
+          result = { ...(result as object), notices: env.notices };
         completed = true;
       },
     });
-  const family = (name: string, handler: Handler, actions: string[]) =>
-    defineCommand({
-      args: argsDef,
-      subCommands: Object.fromEntries(
-        actions.map((action) => [action, leaf(name, handler, action)]),
-      ),
-    });
-  const query = family("query", queryCommands, ["prepare", "inspect"]);
-  query.setup = (ctx) => {
-    if (!["prepare", "inspect"].includes(ctx.args._[0] ?? ""))
-      ctx.cmd.subCommands = {};
   };
-  query.run = async (ctx) => {
-    if (!completed) await leaf("query", queryCommands).run!(ctx);
+
+  const familyHandlers: Record<string, Handler> = {
+    config: configCommands,
+    subject: subjectCommands,
+    session: sessionCommands,
+    observe: observeCommands,
+    embeddings: embeddingsCommands,
+    identity: identityCommands,
+    maintenance: maintenanceCommands,
+    tag: tagCommands,
+    association: associationCommands,
+    memory: memoryCommands,
+    resource: resourceCommands,
+    schema: schemaCommands,
+    episode: episodeCommands,
+    journal: journalCommands,
+    operation: operationCommands,
+    query: queryCommands,
+    context: contextCommands,
+    material: materialCommands,
   };
+  const directHandlers: Record<string, Handler> = {
+    status: statusCommands,
+    derive: (env, _action, argument) => deriveCommands(env, argument),
+    form: (env, _action, argument) => formCommands(env, argument),
+    use: (env, _action, argument) => useCommands(env, argument),
+    trace: (env, _action, argument) => traceCommands(env, argument),
+    show: async (_env, _action, argument) => showCommands(_env, argument),
+    read: async (_env, _action, argument) => readCommands(_env, argument),
+    retry: async (env, _action, argument) =>
+      env.retry(env.required(argument, "Receipt ID")),
+  };
+  const pathsByRoot = new Map<string, string[]>();
+  for (const descriptor of commandDescriptors) {
+    const [root, action] = descriptor.command.split(" ");
+    if (!root || root === "help" || !action) continue;
+    const actions = pathsByRoot.get(root) ?? [];
+    actions.push(action);
+    pathsByRoot.set(root, actions);
+  }
+
   const help = defineCommand({
-    args: argsDef,
+    args: rootArgs,
     subCommands: {
       ...Object.fromEntries(
         [
           ...new Set(
-            commandInventory.commands.map(
-              (command) => command.command.split(" ")[0]!,
-            ),
+            commandDescriptors.map(({ command }) => command.split(" ")[0]!),
           ),
-        ].map((name) => [
-          name,
-          defineCommand({
-            args: argsDef,
-            run() {
-              result = semanticOutput(
-                `help.${name}`,
-                commandInventory.commands.filter(
-                  (command) => command.command.split(" ")[0] === name,
-                ),
-              );
-              completed = true;
-            },
-          }),
-        ]),
+        ]
+          .filter((name) => name !== "help")
+          .map((name) => [
+            name,
+            defineCommand({
+              args: rootArgs,
+              run() {
+                result = semanticOutput(
+                  `help.${name}`,
+                  commandDescriptors.filter(
+                    (descriptor) => descriptor.command.split(" ")[0] === name,
+                  ),
+                );
+                completed = true;
+              },
+            }),
+          ]),
       ),
       nousql: defineCommand({
-        args: argsDef,
+        args: rootArgs,
         run() {
           result = semanticOutput("help.nousql", nousqlHelp);
           completed = true;
@@ -186,73 +267,54 @@ export async function runCli(
       }
     },
   });
+
+  const subCommands: Record<string, ReturnType<typeof defineCommand>> = {
+    help,
+  };
+  for (const descriptor of commandDescriptors) {
+    const [root, action] = descriptor.command.split(" ");
+    if (!root || root === "help") continue;
+    if (!action) {
+      const handler = directHandlers[root];
+      if (handler) subCommands[root] = leaf(root, handler);
+    }
+  }
+  for (const [root, actions] of pathsByRoot) {
+    const handler = familyHandlers[root];
+    if (!handler) throw new Error(`Command handler missing: ${root}`);
+    const family = defineCommand({
+      args: rootArgs,
+      subCommands: Object.fromEntries(
+        actions.map((action) => [action, leaf(`${root} ${action}`, handler)]),
+      ),
+    });
+    if (root === "query") {
+      family.setup = (ctx) => {
+        if (!actions.includes(ctx.args._[0] ?? "")) ctx.cmd.subCommands = {};
+      };
+      family.run = async (ctx) => {
+        if (!completed) await leaf("query", queryCommands).run!(ctx);
+      };
+    }
+    subCommands[root] = family;
+  }
   const root = defineCommand({
-    args: argsDef,
+    args: rootArgs,
     setup(ctx) {
       globals = { ...defaults, ...valuesOf(ctx) };
       if (globals.raw && !globals.developer)
         throw new CliError("INVALID_ARGUMENT", "--raw requires --developer");
+      if (!ctx.args._.length)
+        rejectUnknownOptions(ctx.rawArgs, { command: "help", flags: [] });
     },
-    subCommands: {
-      help,
-      status: leaf("status", statusCommands),
-      config: family("config", configCommands, [
-        "list",
-        "describe",
-        "get",
-        "set",
-        "clear",
-      ]),
-      subject: family("subject", subjectCommands, ["create", "list", "use"]),
-      session: family("session", sessionCommands, ["open", "show", "close"]),
-      observe: family("observe", observeCommands, ["text", "file"]),
-      derive: leaf("derive", deriveCommands),
-      form: leaf("form", formCommands),
-      embeddings: family("embeddings", embeddingsCommands, ["prepare"]),
-      identity: family("identity", identityCommands, ["bind", "resolve"]),
-      maintenance: family("maintenance", maintenanceCommands, ["grant"]),
-      tag: family("tag", tagCommands, [
-        "create",
-        "get",
-        "list",
-        "search",
-        "resolve",
-        "revise",
-        "merge",
-        "split",
-        "attach",
-      ]),
-      association: family("association", associationCommands, [
-        "create",
-        "revoke",
-        "neighborhood",
-      ]),
-      query,
-      use: leaf("use", useCommands),
-      trace: leaf("trace", traceCommands),
-      show: leaf("show", (env, ref) => showCommands(env, ref)),
-      read: leaf("read", (env, ref) => readCommands(env, ref)),
-      context: family("context", contextCommands, [
-        "create",
-        "list",
-        "show",
-        "set",
-        "pin",
-        "unpin",
-        "clear",
-        "pause",
-        "resume",
-        "end",
-        "select",
-        "foreground",
-      ]),
-      retry: leaf("retry", (env, id) =>
-        env.retry(env.required(id, "Receipt ID")),
-      ),
-    },
+    subCommands,
     run() {
-      return completed ? result : semanticOutput("help", commandInventory);
+      if (!completed) {
+        result = semanticOutput("help", commandInventory);
+        completed = true;
+      }
     },
   });
-  return (await runCommand(root, { rawArgs })).result;
+  await runCommand(root, { rawArgs });
+  return result;
 }

@@ -2,9 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
+import { create } from "@bufbuild/protobuf";
+import { randomUUID } from "node:crypto";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";
 import { ConfigurationService } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
+import {
+  ErrorCode,
+  ErrorDetailSchema,
+  ErrorOwner,
+  ErrorRecovery,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/errors_pb.js";
 import { normalizeCoreConfigurationValue } from "./catalog.js";
 import { z } from "zod";
 
@@ -25,17 +33,29 @@ export function configurationOperations(
         ) as JsonValue,
       );
     } catch (error) {
-      throw new ConnectError(
-        error instanceof z.ZodError
-          ? error.issues
-              .map(
-                (issue) =>
-                  `${[path, ...issue.path].join(".")}: ${issue.message}`,
-              )
-              .join("; ")
-          : `Invalid configuration ${path}`,
-        Code.InvalidArgument,
+      const traceId = randomUUID();
+      console.error(
+        JSON.stringify({
+          event: "configuration_validation_failure",
+          owner: "CONFIGURATION",
+          code: "INVALID_REQUEST",
+          traceId,
+          path,
+          source: error instanceof z.ZodError ? "ZodError" : "NormalizerError",
+        }),
       );
+      throw new ConnectError("Invalid configuration value", Code.InvalidArgument, undefined, [
+        {
+          desc: ErrorDetailSchema,
+          value: create(ErrorDetailSchema, {
+            code: ErrorCode.INVALID_REQUEST,
+            recovery: ErrorRecovery.CORRECT_REQUEST,
+            owner: ErrorOwner.CONFIGURATION,
+            context: { path },
+            traceId,
+          }),
+        },
+      ]);
     }
   };
   return {

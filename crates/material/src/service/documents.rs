@@ -13,8 +13,10 @@ impl MaterialService {
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<std::collections::HashMap<CognitiveRef, MaterialTextView>> {
         if references.len() > 256 {
-            return Err(Error::Invalid(
-                "Material text lookup supports at most 256 references".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "Material text lookup supports at most 256 references",
             ));
         }
         let selected = self.document_selection(subject, references, view).await?;
@@ -38,8 +40,10 @@ impl MaterialService {
     ) -> Result<HashSet<CognitiveRef>> {
         if let Some(view) = view {
             if view.subject != subject {
-                return Err(Error::Invalid(
-                    "Material document view subject mismatch".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Material document view subject mismatch",
                 ));
             }
             return Ok(references

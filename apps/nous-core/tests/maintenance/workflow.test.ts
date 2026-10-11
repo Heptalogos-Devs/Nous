@@ -3,7 +3,8 @@
 
 import {
   domainError,
-  DomainErrorCode,
+  ErrorCode,
+  ErrorOwner,
   ErrorRecovery,
 } from "@nous-wave/client/errors";
 import { ExpectedCognitionSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
@@ -73,7 +74,8 @@ describe("maintenance fixed workflow retry", () => {
     const state = fixture();
     state.commit.mockRejectedValueOnce(
       domainError("Source changed", Code.Aborted, {
-        code: DomainErrorCode.STALE_REVISION,
+        owner: ErrorOwner.MODEL_WORKFLOW,
+        code: ErrorCode.STALE_REVISION,
         recovery: ErrorRecovery.REFRESH_STATE,
       }),
     );
@@ -120,17 +122,18 @@ describe("maintenance fixed workflow retry", () => {
     ).toBe("rejected_invalid");
     expect(invalid.commit).not.toHaveBeenCalled();
     for (const code of [
-      DomainErrorCode.OPERATION_ID_CONFLICT,
-      DomainErrorCode.LEASE_LOST,
-    ]) {
+      ErrorCode.OPERATION_ID_CONFLICT,
+      ErrorCode.LEASE_LOST,
+    ] as const) {
       const conflict = fixture();
       const error = domainError(
         "Different owner failure with the same transport category",
         Code.Aborted,
         {
+          owner: ErrorOwner.MODEL_WORKFLOW,
           code,
           recovery:
-            code === DomainErrorCode.LEASE_LOST
+            code === ErrorCode.LEASE_LOST
               ? ErrorRecovery.RETRY_OPERATION
               : ErrorRecovery.NEW_OPERATION,
         },

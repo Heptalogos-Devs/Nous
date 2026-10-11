@@ -42,6 +42,7 @@ impl CognitiveRuntimeService {
             input.operation_id,
             "create_work_context",
             &digest,
+            nous_core::ErrorOwner::Runtime,
         )
         .await?
         {
@@ -143,6 +144,7 @@ impl CognitiveRuntimeService {
             input.operation_id,
             "update_work_context",
             &digest,
+            nous_core::ErrorOwner::Runtime,
         )
         .await?
         {
@@ -159,15 +161,20 @@ impl CognitiveRuntimeService {
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?
-        .ok_or_else(|| Error::NotFound("WorkContext not found".into()))?;
+        .ok_or_else(|| Error::new(nous_core::ErrorOwner::Runtime, nous_core::ErrorCode::NotFound, "WorkContext not found"))?;
         let state: String = row.try_get("state").map_err(db)?;
         let revision: i64 = row.try_get("revision").map_err(db)?;
         if state == WorkContextState::Ended.as_str() {
-            return Err(Error::FailedPrecondition("WorkContext is ended".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::FailedPrecondition,
+                "WorkContext is ended",
+            ));
         }
         if revision != input.expected_revision {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::StaleRevision,
                 "WorkContext revision is stale",
             )
             .with_context("work_context_id", input.work_context_id)
@@ -234,8 +241,10 @@ async fn validate_refs_in_tx(
             .reference_in_subject_tx(tx, subject, reference)
             .await?
         {
-            return Err(Error::FailedPrecondition(
-                "WorkContext reference is not owned by Subject".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::FailedPrecondition,
+                "WorkContext reference is not owned by Subject",
             ));
         }
     }

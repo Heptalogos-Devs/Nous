@@ -8,22 +8,29 @@ use nous_configuration::{
 use nous_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WaveConfig {
+/// Identity-bearing inputs that change the immutable native topology artifact.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WaveBuildPolicy {
     pub hub_beta: f64,
     pub hub_penalty_min: f64,
     pub hub_penalty_max: f64,
     pub outbound_budget: f64,
+    pub max_neighbors_per_node: usize,
+    #[serde(default)]
+    pub class_quality: std::collections::BTreeMap<String, f64>,
+}
+
+/// Query-frozen policy. Changes apply to the next QueryRun and never rebuild
+/// the native topology generation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WaveReadoutPolicy {
     pub max_hops: usize,
     pub max_states: usize,
-    pub max_neighbors_per_node: usize,
     pub minimum_state_energy: f64,
     pub immediate_return_multiplier: f64,
     pub initial_budget_steps: u32,
     pub normal_edge_cost: u32,
     pub fir_gamma: f64,
-    #[serde(default)]
-    pub class_quality: std::collections::BTreeMap<String, f64>,
     #[serde(default)]
     pub seed_weights: std::collections::BTreeMap<String, f64>,
 }
@@ -67,6 +74,22 @@ pub const SEED_LEXICAL_KEY: ConfigKey<f64> =
 pub const SEED_DENSE_KEY: ConfigKey<f64> =
     ConfigKey::new("topology.wave.seed_weights.dense_promoted");
 
+/// Configuration keys whose values are captured into a native topology build.
+/// Kept beside the typed build policy so descriptor classification and build
+/// compatibility share one canonical list.
+pub const WAVE_BUILD_CONFIG_KEYS: &[&str] = &[
+    HUB_BETA_KEY.path(),
+    HUB_PENALTY_MIN_KEY.path(),
+    HUB_PENALTY_MAX_KEY.path(),
+    OUTBOUND_BUDGET_KEY.path(),
+    MAX_NEIGHBORS_KEY.path(),
+    QUALITY_HOST_EXPLICIT_KEY.path(),
+    QUALITY_SOURCE_EVIDENCE_KEY.path(),
+    QUALITY_COGNITIVE_DERIVATION_KEY.path(),
+    QUALITY_DERIVED_STRUCTURE_KEY.path(),
+    QUALITY_MEANINGFUL_USE_KEY.path(),
+];
+
 #[expect(
     clippy::too_many_lines,
     reason = "Wave registration keeps the complete reference policy catalog in one owner boundary"
@@ -79,21 +102,33 @@ pub fn register_wave_configuration(registry: &mut ConfigRegistryBuilder) -> Resu
         if value.is_finite() {
             Ok(())
         } else {
-            Err(Error::Invalid("Wave value must be finite".into()))
+            Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Wave value must be finite",
+            ))
         }
     };
     let positive_usize = |value: &usize| {
         if *value > 0 {
             Ok(())
         } else {
-            Err(Error::Invalid("Wave bound must be positive".into()))
+            Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Wave bound must be positive",
+            ))
         }
     };
     let positive_u32 = |value: &u32| {
         if *value > 0 {
             Ok(())
         } else {
-            Err(Error::Invalid("Wave bound must be positive".into()))
+            Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Wave bound must be positive",
+            ))
         }
     };
     macro_rules! float {
@@ -107,6 +142,21 @@ pub fn register_wave_configuration(registry: &mut ConfigRegistryBuilder) -> Resu
                 ConfigScopePolicy::SystemOnly,
                 ConfigApplyMode::ServingRebuild,
                 ConfigSemanticEffect::ServingProjection,
+                finite,
+            )?;
+        };
+    }
+    macro_rules! float_readout {
+        ($key:expr, $default:expr, $description:expr) => {
+            registry.register(
+                $key,
+                "cognitive-retrieval",
+                $description,
+                $default,
+                ConfigExposure::Developer,
+                ConfigScopePolicy::SystemOnly,
+                ConfigApplyMode::Live,
+                ConfigSemanticEffect::QueryPolicy,
                 finite,
             )?;
         };
@@ -126,7 +176,7 @@ pub fn register_wave_configuration(registry: &mut ConfigRegistryBuilder) -> Resu
             )?;
         };
     }
-    macro_rules! u32_key {
+    macro_rules! usize_readout {
         ($key:expr, $default:expr, $description:expr) => {
             registry.register(
                 $key,
@@ -135,8 +185,23 @@ pub fn register_wave_configuration(registry: &mut ConfigRegistryBuilder) -> Resu
                 $default,
                 ConfigExposure::Developer,
                 ConfigScopePolicy::SystemOnly,
-                ConfigApplyMode::ServingRebuild,
-                ConfigSemanticEffect::ServingProjection,
+                ConfigApplyMode::Live,
+                ConfigSemanticEffect::QueryPolicy,
+                positive_usize,
+            )?;
+        };
+    }
+    macro_rules! u32_readout {
+        ($key:expr, $default:expr, $description:expr) => {
+            registry.register(
+                $key,
+                "cognitive-retrieval",
+                $description,
+                $default,
+                ConfigExposure::Developer,
+                ConfigScopePolicy::SystemOnly,
+                ConfigApplyMode::Live,
+                ConfigSemanticEffect::QueryPolicy,
                 positive_u32,
             )?;
         };
@@ -161,12 +226,12 @@ pub fn register_wave_configuration(registry: &mut ConfigRegistryBuilder) -> Resu
         reference.get(OUTBOUND_BUDGET_KEY)?,
         "Wave outbound conductance budget."
     );
-    usize_key!(
+    usize_readout!(
         MAX_HOPS_KEY,
         reference.get(MAX_HOPS_KEY)?,
         "Wave maximum hops."
     );
-    usize_key!(
+    usize_readout!(
         MAX_STATES_KEY,
         reference.get(MAX_STATES_KEY)?,
         "Wave maximum states."
@@ -176,27 +241,27 @@ pub fn register_wave_configuration(registry: &mut ConfigRegistryBuilder) -> Resu
         reference.get(MAX_NEIGHBORS_KEY)?,
         "Wave maximum neighbors per node."
     );
-    float!(
+    float_readout!(
         MINIMUM_STATE_ENERGY_KEY,
         reference.get(MINIMUM_STATE_ENERGY_KEY)?,
         "Wave minimum state energy."
     );
-    float!(
+    float_readout!(
         IMMEDIATE_RETURN_MULTIPLIER_KEY,
         reference.get(IMMEDIATE_RETURN_MULTIPLIER_KEY)?,
         "Wave immediate return multiplier."
     );
-    u32_key!(
+    u32_readout!(
         INITIAL_BUDGET_STEPS_KEY,
         reference.get(INITIAL_BUDGET_STEPS_KEY)?,
         "Wave initial budget steps."
     );
-    u32_key!(
+    u32_readout!(
         NORMAL_EDGE_COST_KEY,
         reference.get(NORMAL_EDGE_COST_KEY)?,
         "Wave normal edge cost."
     );
-    float!(
+    float_readout!(
         FIR_GAMMA_KEY,
         reference.get(FIR_GAMMA_KEY)?,
         "Wave finite impulse response gamma."
@@ -226,37 +291,37 @@ pub fn register_wave_configuration(registry: &mut ConfigRegistryBuilder) -> Resu
         reference.get(QUALITY_MEANINGFUL_USE_KEY)?,
         "Wave meaningful-use edge quality."
     );
-    float!(
+    float_readout!(
         SEED_EXACT_KEY,
         reference.get(SEED_EXACT_KEY)?,
         "Wave exact-target seed weight."
     );
-    float!(
+    float_readout!(
         SEED_RUNTIME_KEY,
         reference.get(SEED_RUNTIME_KEY)?,
         "Wave runtime seed weight."
     );
-    float!(
+    float_readout!(
         SEED_RELATION_KEY,
         reference.get(SEED_RELATION_KEY)?,
         "Wave relation-cue seed weight."
     );
-    float!(
+    float_readout!(
         SEED_ENTITY_KEY,
         reference.get(SEED_ENTITY_KEY)?,
         "Wave entity-cue seed weight."
     );
-    float!(
+    float_readout!(
         SEED_TAG_KEY,
         reference.get(SEED_TAG_KEY)?,
         "Wave tag-cue seed weight."
     );
-    float!(
+    float_readout!(
         SEED_LEXICAL_KEY,
         reference.get(SEED_LEXICAL_KEY)?,
         "Wave lexical-promotion seed weight."
     );
-    float!(
+    float_readout!(
         SEED_DENSE_KEY,
         reference.get(SEED_DENSE_KEY)?,
         "Wave dense-promotion seed weight."
@@ -265,20 +330,13 @@ pub fn register_wave_configuration(registry: &mut ConfigRegistryBuilder) -> Resu
     Ok(())
 }
 
-pub fn resolve_wave_config(snapshot: &ConfigSnapshot) -> Result<WaveConfig> {
-    let config = WaveConfig {
+pub fn resolve_wave_build_policy(snapshot: &ConfigSnapshot) -> Result<WaveBuildPolicy> {
+    let policy = WaveBuildPolicy {
         hub_beta: snapshot.get(HUB_BETA_KEY)?,
         hub_penalty_min: snapshot.get(HUB_PENALTY_MIN_KEY)?,
         hub_penalty_max: snapshot.get(HUB_PENALTY_MAX_KEY)?,
         outbound_budget: snapshot.get(OUTBOUND_BUDGET_KEY)?,
-        max_hops: snapshot.get(MAX_HOPS_KEY)?,
-        max_states: snapshot.get(MAX_STATES_KEY)?,
         max_neighbors_per_node: snapshot.get(MAX_NEIGHBORS_KEY)?,
-        minimum_state_energy: snapshot.get(MINIMUM_STATE_ENERGY_KEY)?,
-        immediate_return_multiplier: snapshot.get(IMMEDIATE_RETURN_MULTIPLIER_KEY)?,
-        initial_budget_steps: snapshot.get(INITIAL_BUDGET_STEPS_KEY)?,
-        normal_edge_cost: snapshot.get(NORMAL_EDGE_COST_KEY)?,
-        fir_gamma: snapshot.get(FIR_GAMMA_KEY)?,
         class_quality: std::collections::BTreeMap::from([
             (
                 "host_explicit".into(),
@@ -301,6 +359,20 @@ pub fn resolve_wave_config(snapshot: &ConfigSnapshot) -> Result<WaveConfig> {
                 snapshot.get(QUALITY_MEANINGFUL_USE_KEY)?,
             ),
         ]),
+    };
+    policy.validate()?;
+    Ok(policy)
+}
+
+pub fn resolve_wave_readout_policy(snapshot: &ConfigSnapshot) -> Result<WaveReadoutPolicy> {
+    let policy = WaveReadoutPolicy {
+        max_hops: snapshot.get(MAX_HOPS_KEY)?,
+        max_states: snapshot.get(MAX_STATES_KEY)?,
+        minimum_state_energy: snapshot.get(MINIMUM_STATE_ENERGY_KEY)?,
+        immediate_return_multiplier: snapshot.get(IMMEDIATE_RETURN_MULTIPLIER_KEY)?,
+        initial_budget_steps: snapshot.get(INITIAL_BUDGET_STEPS_KEY)?,
+        normal_edge_cost: snapshot.get(NORMAL_EDGE_COST_KEY)?,
+        fir_gamma: snapshot.get(FIR_GAMMA_KEY)?,
         seed_weights: std::collections::BTreeMap::from([
             ("exact_target".into(), snapshot.get(SEED_EXACT_KEY)?),
             ("runtime_situation".into(), snapshot.get(SEED_RUNTIME_KEY)?),
@@ -311,50 +383,83 @@ pub fn resolve_wave_config(snapshot: &ConfigSnapshot) -> Result<WaveConfig> {
             ("dense_promoted".into(), snapshot.get(SEED_DENSE_KEY)?),
         ]),
     };
-    config.validate()?;
-    if config.hub_penalty_min > config.hub_penalty_max {
-        return Err(Error::Invalid(
-            "Wave hub penalty bounds are inverted".into(),
-        ));
-    }
-    Ok(config)
+    policy.validate()?;
+    Ok(policy)
 }
 
-impl Default for WaveConfig {
+impl Default for WaveBuildPolicy {
     fn default() -> Self {
         let mut registry = ConfigRegistryBuilder::new();
         register_wave_configuration(&mut registry).expect("Wave reference catalog");
-        resolve_wave_config(
+        resolve_wave_build_policy(
             &registry
                 .finish()
                 .expect("Wave catalog")
                 .reference_snapshot()
                 .expect("Wave reference snapshot"),
         )
-        .expect("Wave reference policy")
+        .expect("Wave build policy")
     }
 }
 
-impl WaveConfig {
+impl WaveBuildPolicy {
     pub fn validate(&self) -> Result<()> {
         if !(0.0..=1.0).contains(&self.outbound_budget)
-            || self.max_hops == 0
-            || self.max_states == 0
             || self.max_neighbors_per_node == 0
-            || !(0.0..1.0).contains(&self.immediate_return_multiplier)
-            || !(0.0..1.0).contains(&self.fir_gamma)
-            || self.normal_edge_cost == 0
-            || self.initial_budget_steps == 0
+            || self.hub_penalty_min > self.hub_penalty_max
+            || !self.hub_beta.is_finite()
+            || !self.hub_penalty_min.is_finite()
+            || !self.hub_penalty_max.is_finite()
             || self
                 .class_quality
                 .values()
                 .any(|value| !value.is_finite() || *value < 0.0)
+        {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid WaveBuildPolicy bounds",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for WaveReadoutPolicy {
+    fn default() -> Self {
+        let mut registry = ConfigRegistryBuilder::new();
+        register_wave_configuration(&mut registry).expect("Wave reference catalog");
+        resolve_wave_readout_policy(
+            &registry
+                .finish()
+                .expect("Wave catalog")
+                .reference_snapshot()
+                .expect("Wave reference snapshot"),
+        )
+        .expect("Wave readout policy")
+    }
+}
+
+impl WaveReadoutPolicy {
+    pub fn validate(&self) -> Result<()> {
+        if self.max_hops == 0
+            || self.max_states == 0
+            || !(0.0..1.0).contains(&self.immediate_return_multiplier)
+            || !(0.0..1.0).contains(&self.fir_gamma)
+            || !self.minimum_state_energy.is_finite()
+            || self.minimum_state_energy < 0.0
+            || self.normal_edge_cost == 0
+            || self.initial_budget_steps == 0
             || self
                 .seed_weights
                 .values()
                 .any(|value| !value.is_finite() || *value < 0.0)
         {
-            return Err(Error::Invalid("invalid WaveConfig bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid WaveReadoutPolicy bounds",
+            ));
         }
         Ok(())
     }

@@ -58,7 +58,8 @@ export async function boot(locator: string): Promise<Boot> {
   const child = spawn(
     process.execPath,
     [
-      join(repo, "node_modules/tsx/dist/cli.mjs"),
+      "--import",
+      "tsx",
       join(repo, "apps/nous-core/src/main.ts"),
       "--development",
       "--locator",

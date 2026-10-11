@@ -13,7 +13,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file nous/wave/v1alpha1/errors.proto.
  */
 export const file_nous_wave_v1alpha1_errors: GenFile = /*@__PURE__*/
-  fileDesc("Ch9ub3VzL3dhdmUvdjFhbHBoYTEvZXJyb3JzLnByb3RvEhJub3VzLndhdmUudjFhbHBoYTEi5AEKC0Vycm9yRGV0YWlsEjEKBGNvZGUYASABKA4yIy5ub3VzLndhdmUudjFhbHBoYTEuRG9tYWluRXJyb3JDb2RlEjMKCHJlY292ZXJ5GAIgASgOMiEubm91cy53YXZlLnYxYWxwaGExLkVycm9yUmVjb3ZlcnkSPQoHY29udGV4dBgDIAMoCzIsLm5vdXMud2F2ZS52MWFscGhhMS5FcnJvckRldGFpbC5Db250ZXh0RW50cnkaLgoMQ29udGV4dEVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEqjgQKD0RvbWFpbkVycm9yQ29kZRIhCh1ET01BSU5fRVJST1JfQ09ERV9VTlNQRUNJRklFRBAAEicKI0RPTUFJTl9FUlJPUl9DT0RFX1VOS05PV05fUkVGRVJFTkNFEAESKQolRE9NQUlOX0VSUk9SX0NPREVfQU1CSUdVT1VTX1JFRkVSRU5DRRACEi0KKURPTUFJTl9FUlJPUl9DT0RFX1JFRkVSRU5DRV9UWVBFX01JU01BVENIEAMSKgomRE9NQUlOX0VSUk9SX0NPREVfUkVGRVJFTkNFX1RPTUJTVE9ORUQQBBI0CjBET01BSU5fRVJST1JfQ09ERV9VTlJFU09MVkVEX01BQ0hJTkVfUExBQ0VIT0xERVIQBRIjCh9ET01BSU5fRVJST1JfQ09ERV9TVEFMRV9DT05URVhUEAYSJAogRE9NQUlOX0VSUk9SX0NPREVfU1RBTEVfUkVWSVNJT04QBxIrCidET01BSU5fRVJST1JfQ09ERV9PUEVSQVRJT05fSURfQ09ORkxJQ1QQCBIrCidET01BSU5fRVJST1JfQ09ERV9PUEVSQVRJT05fSU5fUFJPR1JFU1MQCRIgChxET01BSU5fRVJST1JfQ09ERV9MRUFTRV9MT1NUEAoSLAooRE9NQUlOX0VSUk9SX0NPREVfQ0FQQUJJTElUWV9VTkFWQUlMQUJMRRALKtcCCg1FcnJvclJlY292ZXJ5Eh4KGkVSUk9SX1JFQ09WRVJZX1VOU1BFQ0lGSUVEEAASJAogRVJST1JfUkVDT1ZFUllfUkVTT0xWRV9SRUZFUkVOQ0UQARIjCh9FUlJPUl9SRUNPVkVSWV9TRUxFQ1RfQ0FORElEQVRFEAISIgoeRVJST1JfUkVDT1ZFUllfQ09SUkVDVF9SRVFVRVNUEAMSJwojRVJST1JfUkVDT1ZFUllfUkVESVNDT1ZFUl9SRUZFUkVOQ0UQBBIgChxFUlJPUl9SRUNPVkVSWV9SRUZSRVNIX1NUQVRFEAUSIgoeRVJST1JfUkVDT1ZFUllfUkVUUllfT1BFUkFUSU9OEAYSIAocRVJST1JfUkVDT1ZFUllfTkVXX09QRVJBVElPThAHEiYKIkVSUk9SX1JFQ09WRVJZX0NIRUNLX0NPTkZJR1VSQVRJT04QCGIGcHJvdG8z");
+  fileDesc("Ch9ub3VzL3dhdmUvdjFhbHBoYTEvZXJyb3JzLnByb3RvEhJub3VzLndhdmUudjFhbHBoYTEinwIKC0Vycm9yRGV0YWlsEisKBGNvZGUYASABKA4yHS5ub3VzLndhdmUudjFhbHBoYTEuRXJyb3JDb2RlEjMKCHJlY292ZXJ5GAIgASgOMiEubm91cy53YXZlLnYxYWxwaGExLkVycm9yUmVjb3ZlcnkSPQoHY29udGV4dBgDIAMoCzIsLm5vdXMud2F2ZS52MWFscGhhMS5FcnJvckRldGFpbC5Db250ZXh0RW50cnkSLQoFb3duZXIYBCABKA4yHi5ub3VzLndhdmUudjFhbHBoYTEuRXJyb3JPd25lchIQCgh0cmFjZV9pZBgFIAEoCRouCgxDb250ZXh0RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASq0BQoJRXJyb3JDb2RlEhoKFkVSUk9SX0NPREVfVU5TUEVDSUZJRUQQABIgChxFUlJPUl9DT0RFX1VOS05PV05fUkVGRVJFTkNFEAESIgoeRVJST1JfQ09ERV9BTUJJR1VPVVNfUkVGRVJFTkNFEAISJgoiRVJST1JfQ09ERV9SRUZFUkVOQ0VfVFlQRV9NSVNNQVRDSBADEiMKH0VSUk9SX0NPREVfUkVGRVJFTkNFX1RPTUJTVE9ORUQQBBItCilFUlJPUl9DT0RFX1VOUkVTT0xWRURfTUFDSElORV9QTEFDRUhPTERFUhAFEhwKGEVSUk9SX0NPREVfU1RBTEVfQ09OVEVYVBAGEh0KGUVSUk9SX0NPREVfU1RBTEVfUkVWSVNJT04QBxIkCiBFUlJPUl9DT0RFX09QRVJBVElPTl9JRF9DT05GTElDVBAIEiQKIEVSUk9SX0NPREVfT1BFUkFUSU9OX0lOX1BST0dSRVNTEAkSGQoVRVJST1JfQ09ERV9MRUFTRV9MT1NUEAoSJQohRVJST1JfQ09ERV9DQVBBQklMSVRZX1VOQVZBSUxBQkxFEAsSHgoaRVJST1JfQ09ERV9JTlZBTElEX1JFUVVFU1QQDBIYChRFUlJPUl9DT0RFX05PVF9GT1VORBANEhcKE0VSUk9SX0NPREVfQ09ORkxJQ1QQDhIiCh5FUlJPUl9DT0RFX0ZBSUxFRF9QUkVDT05ESVRJT04QDxIaChZFUlJPUl9DT0RFX1VOQVZBSUxBQkxFEBASHwobRVJST1JfQ09ERV9JTlRFUk5BTF9GQUlMVVJFEBESIQodRVJST1JfQ09ERV9DQVBBQ0lUWV9FWEhBVVNURUQQEhInCiNFUlJPUl9DT0RFX0lOU1RBTkNFX0FMUkVBRFlfUlVOTklORxATKtcCCg1FcnJvclJlY292ZXJ5Eh4KGkVSUk9SX1JFQ09WRVJZX1VOU1BFQ0lGSUVEEAASJAogRVJST1JfUkVDT1ZFUllfUkVTT0xWRV9SRUZFUkVOQ0UQARIjCh9FUlJPUl9SRUNPVkVSWV9TRUxFQ1RfQ0FORElEQVRFEAISIgoeRVJST1JfUkVDT1ZFUllfQ09SUkVDVF9SRVFVRVNUEAMSJwojRVJST1JfUkVDT1ZFUllfUkVESVNDT1ZFUl9SRUZFUkVOQ0UQBBIgChxFUlJPUl9SRUNPVkVSWV9SRUZSRVNIX1NUQVRFEAUSIgoeRVJST1JfUkVDT1ZFUllfUkVUUllfT1BFUkFUSU9OEAYSIAocRVJST1JfUkVDT1ZFUllfTkVXX09QRVJBVElPThAHEiYKIkVSUk9SX1JFQ09WRVJZX0NIRUNLX0NPTkZJR1VSQVRJT04QCCqwAwoKRXJyb3JPd25lchIbChdFUlJPUl9PV05FUl9VTlNQRUNJRklFRBAAEhgKFEVSUk9SX09XTkVSX0lERU5USVRZEAESFwoTRVJST1JfT1dORVJfU1VCSkVDVBACEhYKEkVSUk9SX09XTkVSX01FTU9SWRADEhgKFEVSUk9SX09XTkVSX01BVEVSSUFMEAQSFwoTRVJST1JfT1dORVJfUlVOVElNRRAFEh0KGUVSUk9SX09XTkVSX0NPTkZJR1VSQVRJT04QBhIXChNFUlJPUl9PV05FUl9DT05DRVBUEAcSGwoXRVJST1JfT1dORVJfT0JTRVJWQVRJT04QCBIYChRFUlJPUl9PV05FUl9SRVNPVVJDRRAJEh4KGkVSUk9SX09XTkVSX01PREVMX1dPUktGTE9XEAoSFgoSRVJST1JfT1dORVJfS0VSTkVMEAsSFAoQRVJST1JfT1dORVJfQ09SRRAMEhsKF0VSUk9SX09XTkVSX1BFUlNJU1RFTkNFEA0SGAoURVJST1JfT1dORVJfSU5TVEFOQ0UQDhITCg9FUlJPUl9PV05FUl9DTEkQD2IGcHJvdG8z");
 
 /**
  * Carried as a typed Connect detail / google.rpc.Status Any.
@@ -23,9 +23,9 @@ export const file_nous_wave_v1alpha1_errors: GenFile = /*@__PURE__*/
  */
 export type ErrorDetail = Message<"nous.wave.v1alpha1.ErrorDetail"> & {
   /**
-   * @generated from field: nous.wave.v1alpha1.DomainErrorCode code = 1;
+   * @generated from field: nous.wave.v1alpha1.ErrorCode code = 1;
    */
-  code: DomainErrorCode;
+  code: ErrorCode;
 
   /**
    * @generated from field: nous.wave.v1alpha1.ErrorRecovery recovery = 2;
@@ -36,6 +36,16 @@ export type ErrorDetail = Message<"nous.wave.v1alpha1.ErrorDetail"> & {
    * @generated from field: map<string, string> context = 3;
    */
   context: { [key: string]: string };
+
+  /**
+   * @generated from field: nous.wave.v1alpha1.ErrorOwner owner = 4;
+   */
+  owner: ErrorOwner;
+
+  /**
+   * @generated from field: string trace_id = 5;
+   */
+  traceId: string;
 };
 
 /**
@@ -48,74 +58,114 @@ export const ErrorDetailSchema: GenMessage<ErrorDetail> = /*@__PURE__*/
 /**
  * Business semantics are independent of the generic Connect/gRPC status code.
  *
- * @generated from enum nous.wave.v1alpha1.DomainErrorCode
+ * @generated from enum nous.wave.v1alpha1.ErrorCode
  */
-export enum DomainErrorCode {
+export enum ErrorCode {
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_UNSPECIFIED = 0;
+   * @generated from enum value: ERROR_CODE_UNSPECIFIED = 0;
    */
   UNSPECIFIED = 0,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_UNKNOWN_REFERENCE = 1;
+   * @generated from enum value: ERROR_CODE_UNKNOWN_REFERENCE = 1;
    */
   UNKNOWN_REFERENCE = 1,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_AMBIGUOUS_REFERENCE = 2;
+   * @generated from enum value: ERROR_CODE_AMBIGUOUS_REFERENCE = 2;
    */
   AMBIGUOUS_REFERENCE = 2,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_REFERENCE_TYPE_MISMATCH = 3;
+   * @generated from enum value: ERROR_CODE_REFERENCE_TYPE_MISMATCH = 3;
    */
   REFERENCE_TYPE_MISMATCH = 3,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_REFERENCE_TOMBSTONED = 4;
+   * @generated from enum value: ERROR_CODE_REFERENCE_TOMBSTONED = 4;
    */
   REFERENCE_TOMBSTONED = 4,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_UNRESOLVED_MACHINE_PLACEHOLDER = 5;
+   * @generated from enum value: ERROR_CODE_UNRESOLVED_MACHINE_PLACEHOLDER = 5;
    */
   UNRESOLVED_MACHINE_PLACEHOLDER = 5,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_STALE_CONTEXT = 6;
+   * @generated from enum value: ERROR_CODE_STALE_CONTEXT = 6;
    */
   STALE_CONTEXT = 6,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_STALE_REVISION = 7;
+   * @generated from enum value: ERROR_CODE_STALE_REVISION = 7;
    */
   STALE_REVISION = 7,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT = 8;
+   * @generated from enum value: ERROR_CODE_OPERATION_ID_CONFLICT = 8;
    */
   OPERATION_ID_CONFLICT = 8,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_OPERATION_IN_PROGRESS = 9;
+   * @generated from enum value: ERROR_CODE_OPERATION_IN_PROGRESS = 9;
    */
   OPERATION_IN_PROGRESS = 9,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_LEASE_LOST = 10;
+   * @generated from enum value: ERROR_CODE_LEASE_LOST = 10;
    */
   LEASE_LOST = 10,
 
   /**
-   * @generated from enum value: DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE = 11;
+   * @generated from enum value: ERROR_CODE_CAPABILITY_UNAVAILABLE = 11;
    */
   CAPABILITY_UNAVAILABLE = 11,
+
+  /**
+   * @generated from enum value: ERROR_CODE_INVALID_REQUEST = 12;
+   */
+  INVALID_REQUEST = 12,
+
+  /**
+   * @generated from enum value: ERROR_CODE_NOT_FOUND = 13;
+   */
+  NOT_FOUND = 13,
+
+  /**
+   * @generated from enum value: ERROR_CODE_CONFLICT = 14;
+   */
+  CONFLICT = 14,
+
+  /**
+   * @generated from enum value: ERROR_CODE_FAILED_PRECONDITION = 15;
+   */
+  FAILED_PRECONDITION = 15,
+
+  /**
+   * @generated from enum value: ERROR_CODE_UNAVAILABLE = 16;
+   */
+  UNAVAILABLE = 16,
+
+  /**
+   * @generated from enum value: ERROR_CODE_INTERNAL_FAILURE = 17;
+   */
+  INTERNAL_FAILURE = 17,
+
+  /**
+   * @generated from enum value: ERROR_CODE_CAPACITY_EXHAUSTED = 18;
+   */
+  CAPACITY_EXHAUSTED = 18,
+
+  /**
+   * @generated from enum value: ERROR_CODE_INSTANCE_ALREADY_RUNNING = 19;
+   */
+  INSTANCE_ALREADY_RUNNING = 19,
 }
 
 /**
- * Describes the enum nous.wave.v1alpha1.DomainErrorCode.
+ * Describes the enum nous.wave.v1alpha1.ErrorCode.
  */
-export const DomainErrorCodeSchema: GenEnum<DomainErrorCode> = /*@__PURE__*/
+export const ErrorCodeSchema: GenEnum<ErrorCode> = /*@__PURE__*/
   enumDesc(file_nous_wave_v1alpha1_errors, 0);
 
 /**
@@ -179,4 +229,95 @@ export enum ErrorRecovery {
  */
 export const ErrorRecoverySchema: GenEnum<ErrorRecovery> = /*@__PURE__*/
   enumDesc(file_nous_wave_v1alpha1_errors, 1);
+
+/**
+ * @generated from enum nous.wave.v1alpha1.ErrorOwner
+ */
+export enum ErrorOwner {
+  /**
+   * @generated from enum value: ERROR_OWNER_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_IDENTITY = 1;
+   */
+  IDENTITY = 1,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_SUBJECT = 2;
+   */
+  SUBJECT = 2,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_MEMORY = 3;
+   */
+  MEMORY = 3,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_MATERIAL = 4;
+   */
+  MATERIAL = 4,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_RUNTIME = 5;
+   */
+  RUNTIME = 5,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_CONFIGURATION = 6;
+   */
+  CONFIGURATION = 6,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_CONCEPT = 7;
+   */
+  CONCEPT = 7,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_OBSERVATION = 8;
+   */
+  OBSERVATION = 8,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_RESOURCE = 9;
+   */
+  RESOURCE = 9,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_MODEL_WORKFLOW = 10;
+   */
+  MODEL_WORKFLOW = 10,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_KERNEL = 11;
+   */
+  KERNEL = 11,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_CORE = 12;
+   */
+  CORE = 12,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_PERSISTENCE = 13;
+   */
+  PERSISTENCE = 13,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_INSTANCE = 14;
+   */
+  INSTANCE = 14,
+
+  /**
+   * @generated from enum value: ERROR_OWNER_CLI = 15;
+   */
+  CLI = 15,
+}
+
+/**
+ * Describes the enum nous.wave.v1alpha1.ErrorOwner.
+ */
+export const ErrorOwnerSchema: GenEnum<ErrorOwner> = /*@__PURE__*/
+  enumDesc(file_nous_wave_v1alpha1_errors, 2);
 

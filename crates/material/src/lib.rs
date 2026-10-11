@@ -31,8 +31,10 @@ pub fn register_configuration(
             if (4..=65536).contains(value) {
                 Ok(())
             } else {
-                Err(nous_core::Error::Invalid(
-                    "description segment bytes must be 4..65536".into(),
+                Err(nous_core::Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "description segment bytes must be 4..65536",
                 ))
             }
         },
@@ -55,8 +57,10 @@ pub fn register_configuration(
             if *value > 0 && *value <= ABSOLUTE_UPLOAD_BYTES {
                 Ok(())
             } else {
-                Err(nous_core::Error::Invalid(
-                    "upload budget exceeds bounds".into(),
+                Err(nous_core::Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "upload budget exceeds bounds",
                 ))
             }
         },

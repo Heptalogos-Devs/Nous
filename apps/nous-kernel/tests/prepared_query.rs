@@ -41,7 +41,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
     let subject = runtime
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),

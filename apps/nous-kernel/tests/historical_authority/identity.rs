@@ -58,13 +58,19 @@ pub(crate) async fn check_permission_fence(
         rt.store
             .bind_reference_in_view(subject, &view.cognition[0].head, Some(view))
             .await,
-        Err(Error::NotFound(_))
+        Err(Error {
+            code: nous_core::ErrorCode::NotFound,
+            ..
+        })
     ));
     assert!(matches!(
         rt.store
             .bind_reference_in_view(subject, &CognitiveRef::Tag(view.tags[0].tag), Some(view))
             .await,
-        Err(Error::NotFound(_))
+        Err(Error {
+            code: nous_core::ErrorCode::NotFound,
+            ..
+        })
     ));
     assert_eq!(drops["current_permission_denied"], 1);
     let projected = rt

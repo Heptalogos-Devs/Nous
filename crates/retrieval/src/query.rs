@@ -280,8 +280,10 @@ impl ServingService {
             .as_ref()
             .is_some_and(|view| snapshot.view_digest.as_ref() != Some(&view.snapshot_digest))
         {
-            return Err(Error::Unavailable(
-                "candidate generation requires a compatible historical Serving view".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::Unavailable,
+                "Service unavailable",
             ));
         }
         let signals = prepare_signals(
@@ -447,10 +449,13 @@ impl ServingService {
                 )
             }),
         });
-        let mut readers = self
-            .query_readers
-            .lock()
-            .map_err(|_| Error::Infrastructure("serving reader registry unavailable".into()))?;
+        let mut readers = self.query_readers.lock().map_err(|_| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "serving reader registry unavailable",
+            )
+        })?;
         readers.retain(|reader| reader.strong_count() > 0);
         readers.push(Arc::downgrade(&reader));
         drop(readers);

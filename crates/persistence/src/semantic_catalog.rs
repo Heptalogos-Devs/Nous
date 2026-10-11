@@ -12,7 +12,11 @@ impl AuthorityStore {
         texts: &[String],
     ) -> Result<Vec<Option<f64>>> {
         if texts.len() > 32 {
-            return Err(Error::Invalid("semantic catalog exceeded".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Concept,
+                nous_core::ErrorCode::InvalidRequest,
+                "semantic catalog exceeded",
+            ));
         }
         let digest = blake3::hash(focus.as_bytes()).to_hex().to_string();
         let Some(source)=sqlx::query("SELECT space_hash,producer_hash,vector FROM embedding_materials WHERE subject_id=$1 AND content_digest=$2 ORDER BY created_at DESC,space_hash,producer_hash LIMIT 1")

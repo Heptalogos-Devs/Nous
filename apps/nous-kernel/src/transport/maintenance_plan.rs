@@ -47,7 +47,13 @@ impl KernelService {
                     .plan_consolidation_scope(subject, &claimed.scope_kind, &claimed.scope_ref)
                     .await?
             }
-            _ => return Err(Error::Invalid("maintenance kind has no model plan".into())),
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "maintenance kind has no model plan",
+                ));
+            }
         };
         let source = if claimed.kind == "memory_consolidate" {
             consolidation_source(&scope)
@@ -123,8 +129,9 @@ impl KernelService {
             self.consolidation_context(&mut plan).await?;
         }
         if self.0.store.authority_seq(subject).await? != sequence {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::StaleRevision,
                 "maintenance source snapshot changed during planning",
             )
             .into());
@@ -136,8 +143,9 @@ impl KernelService {
         let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM maintenance_needs WHERE subject_id=$1 AND need_id=$2 AND state='leased' AND lease_token=$3 AND lease_until>clock_timestamp() AND kind=$4 AND scope_kind=$5 AND scope_ref=$6)")
             .bind(claimed.subject_id.0).bind(claimed.need_id).bind(claimed.lease_token).bind(&claimed.kind).bind(&claimed.scope_kind).bind(&claimed.scope_ref).fetch_one(self.0.store.pool()).await.map_err(nous_persistence::database_error)?;
         if !valid {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::LeaseLost,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::LeaseLost,
                 "maintenance planning lease expired or replaced",
             )
             .into());
@@ -155,7 +163,10 @@ impl KernelService {
             let focus = parse_reference(&claimed.scope_kind, &claimed.scope_ref)?;
             let concepts = match memory.plan_concepts(subject, focus).await {
                 Ok(plan) => plan,
-                Err(Error::NotFound(_)) => {
+                Err(Error {
+                    code: nous_core::ErrorCode::NotFound,
+                    ..
+                }) => {
                     return Ok(k::MaintenancePlan {
                         subject_id: subject.0.to_string(),
                         authority_seq: sequence,
@@ -315,8 +326,10 @@ fn occurrence_time(row: &sqlx::postgres::PgRow) -> Result<p::TemporalExtent> {
         "interval" => TemporalExtent::Interval { start, end },
         "unknown" => TemporalExtent::Unknown,
         _ => {
-            return Err(Error::Infrastructure(
-                "invalid occurrence temporal kind".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
             ));
         }
     };
@@ -327,9 +340,20 @@ fn experience_text_prefix(bytes: &[u8], partial: bool) -> Result<&str> {
     match std::str::from_utf8(bytes) {
         Ok(text) => Ok(text),
         Err(error) if partial && error.error_len().is_none() => {
-            std::str::from_utf8(&bytes[..error.valid_up_to()])
-                .map_err(|error| Error::Invalid(error.to_string()))
+            std::str::from_utf8(&bytes[..error.valid_up_to()]).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
+                )
+                .with_source(error)
+            })
         }
-        Err(error) => Err(Error::Invalid(format!("experience text encoding: {error}"))),
+        Err(error) => Err(Error::new(
+            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorCode::InvalidRequest,
+            "Material text is not valid UTF-8",
+        )
+        .with_source(error)),
     }
 }

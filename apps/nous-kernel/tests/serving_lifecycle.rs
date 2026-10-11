@@ -49,7 +49,7 @@ async fn serving_reuse_reads_the_typed_implementation_identity() {
         replacement.authority_watermark,
         original.authority_watermark
     );
-    assert_eq!(replacement.implementation_revision.len(), 64);
+    assert_eq!(replacement.implementation_revision, "lexical-v1");
     for key in ["implementation", "implementation_revision", "config_digest"] {
         assert!(replacement.metadata.get(key).is_none());
     }

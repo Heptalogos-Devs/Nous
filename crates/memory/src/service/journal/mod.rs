@@ -107,7 +107,7 @@ impl MemoryService {
     ) -> Result<JournalView> {
         let row = sqlx::query("SELECT o.*,r.journal_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end,r.narrative,r.formed_at,r.recorded_at,r.producer_signature_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id AND r.journal_revision_id=COALESCE($3,o.current_revision_id) WHERE o.subject_id=$1 AND o.journal_id=$2")
             .bind(subject.0).bind(journal.0).bind(revision.map(|id| id.0)).fetch_optional(self.store.pool()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("Journal not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "Journal not found"))?;
         let revision = JournalRevisionId(row.try_get("journal_revision_id").map_err(db)?);
         let point_rows = sqlx::query("SELECT p.ordinal,p.role,p.text,COALESCE(jsonb_agg(s.basis ORDER BY s.basis_no) FILTER(WHERE s.basis_no IS NOT NULL),'[]') AS basis FROM journal_revision_points p LEFT JOIN journal_point_basis s USING(journal_revision_id,ordinal) WHERE p.journal_revision_id=$1 GROUP BY p.ordinal,p.role,p.text ORDER BY p.ordinal")
             .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)?;
@@ -117,8 +117,16 @@ impl MemoryService {
                 Ok(JournalPoint {
                     role: parse_enum(row.try_get("role").map_err(db)?, "Journal point role")?,
                     text: row.try_get("text").map_err(db)?,
-                    basis: serde_json::from_value(row.try_get("basis").map_err(db)?)
-                        .map_err(|error| Error::Infrastructure(error.to_string()))?,
+                    basis: serde_json::from_value(row.try_get("basis").map_err(db)?).map_err(
+                        |error| {
+                            Error::new(
+                                nous_core::ErrorOwner::Memory,
+                                nous_core::ErrorCode::InternalFailure,
+                                "Operation failed",
+                            )
+                            .with_source(error)
+                        },
+                    )?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -191,7 +199,13 @@ impl MemoryService {
             .bind(subject.0).bind(revision.0).fetch_optional(self.store.pool()).await.map_err(db)?;
         self.journal(
             subject,
-            JournalId(id.ok_or_else(|| Error::NotFound("Journal revision not found".into()))?),
+            JournalId(id.ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::NotFound,
+                    "Journal revision not found",
+                )
+            })?),
             Some(revision),
         )
         .await
@@ -206,10 +220,18 @@ impl MemoryService {
         status: &str,
     ) -> Result<Vec<JournalView>> {
         if !(1..=201).contains(&limit) {
-            return Err(Error::Invalid("Journal page limit is out of bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "Journal page limit is out of bounds",
+            ));
         }
         if !["", "accepted", "withdrawn"].contains(&status) {
-            return Err(Error::Invalid("invalid Journal status filter".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid Journal status filter",
+            ));
         }
         self.store.require_subject(subject).await?;
         if let Some(journal) = journal {

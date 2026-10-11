@@ -126,7 +126,7 @@ async fn run_smoke() {
     let mut child = tokio::process::Command::new(
         std::env::var_os("NOUS_LONGITUDINAL_NODE").unwrap_or_else(|| "node".into()),
     )
-    .arg(repo.join("node_modules/tsx/dist/cli.mjs"))
+    .args(["--import", "tsx"])
     .arg(repo.join("scripts/smoke/longitudinal.ts"))
     .current_dir(&repo)
     .env("NOUS_LONGITUDINAL_ENDPOINT", &server.endpoint)

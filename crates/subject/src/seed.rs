@@ -3,8 +3,8 @@
 
 use chrono::{DateTime, Utc};
 use nous_core::{
-    ArtifactId, CognitiveSeedVersionId, Error, OperationId, Result, SubjectId,
-    canonical_request_digest,
+    ArtifactId, CognitiveSeedVersionId, Error, ErrorCode, ErrorOwner, OperationId, Result,
+    SubjectId, canonical_request_digest,
 };
 use nous_persistence::database_error as db;
 use serde::{Deserialize, Serialize};
@@ -31,13 +31,18 @@ fn default_seed_format() -> String {
 impl CognitiveSeedInput {
     pub fn validate(&self) -> Result<()> {
         if self.text.trim().is_empty() {
-            return Err(Error::Invalid("Cognitive Seed content is required".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Subject,
+                nous_core::ErrorCode::InvalidRequest,
+                "Cognitive Seed content is required",
+            ));
         }
         if self.format != COGNITIVE_SEED_FORMAT {
-            return Err(Error::Invalid(format!(
-                "unsupported Cognitive Seed format: {}",
-                self.format
-            )));
+            return Err(Error::new(
+                ErrorOwner::Subject,
+                ErrorCode::InvalidRequest,
+                "Unsupported Cognitive Seed format",
+            ));
         }
         validate_seed_document(&self.text)?;
         Ok(())
@@ -45,16 +50,31 @@ impl CognitiveSeedInput {
 }
 
 fn validate_seed_document(text: &str) -> Result<()> {
-    let value: toml::Value = toml::from_str(text)
-        .map_err(|error| Error::Invalid(format!("invalid Cognitive Seed TOML: {error}")))?;
+    let value: toml::Value = toml::from_str(text).map_err(|error| {
+        Error::new(
+            ErrorOwner::Subject,
+            ErrorCode::InvalidRequest,
+            "Invalid Cognitive Seed TOML",
+        )
+        .with_source(error)
+    })?;
     let schema_version = value
         .get("schema_version")
         .and_then(toml::Value::as_integer)
-        .ok_or_else(|| Error::Invalid("Cognitive Seed schema_version is required".into()))?;
+        .ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Subject,
+                nous_core::ErrorCode::InvalidRequest,
+                "Cognitive Seed schema_version is required",
+            )
+        })?;
     if schema_version != 1 {
-        return Err(Error::Invalid(format!(
-            "unsupported Cognitive Seed schema_version: {schema_version}"
-        )));
+        return Err(Error::new(
+            ErrorOwner::Subject,
+            ErrorCode::InvalidRequest,
+            "Unsupported Cognitive Seed schema_version",
+        )
+        .with_context("schema_version", schema_version));
     }
     Ok(())
 }
@@ -152,13 +172,20 @@ impl SubjectCoreService {
             .fetch_optional(self.store.pool())
             .await
             .map_err(db)?
-            .ok_or_else(|| Error::NotFound("Cognitive Seed adoption not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Subject, nous_core::ErrorCode::NotFound, "Cognitive Seed adoption not found"))?;
         let text = String::from_utf8(
             self.objects
                 .get(&row.try_get::<String, _>("content_hash").map_err(db)?)
                 .await?,
         )
-        .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        .map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Subject,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         Ok(CognitiveSeedView {
             version: CognitiveSeedVersion {
                 seed_version_id: CognitiveSeedVersionId(
@@ -192,7 +219,7 @@ impl SubjectCoreService {
             .fetch_optional(self.store.pool())
             .await
             .map_err(db)?
-            .ok_or_else(|| Error::NotFound("Cognitive Seed adoption not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Subject, nous_core::ErrorCode::NotFound, "Cognitive Seed adoption not found"))?;
         self.cognitive_seed(subject, adoption).await
     }
 }
@@ -233,7 +260,7 @@ pub(super) async fn insert_seed(
     {
         let existing: String = row.try_get("request_digest").map_err(db)?;
         if existing != digest {
-            return Err(nous_core::DomainError::new(nous_core::DomainErrorCode::OperationIdConflict, "Cognitive Seed operation_id was used with a different request")
+            return Err(nous_core::Error::new(nous_core::ErrorOwner::Subject, nous_core::ErrorCode::OperationIdConflict,  "Cognitive Seed operation_id was used with a different request")
                 .with_context("operation_id", operation_id.0).into());
         }
         return row.try_get("adoption_id").map_err(db);
@@ -296,8 +323,10 @@ fn parse_adoption_kind(value: String) -> Result<SeedAdoptionKind> {
     match value.as_str() {
         "initial" => Ok(SeedAdoptionKind::Initial),
         "import" => Ok(SeedAdoptionKind::Import),
-        _ => Err(Error::Infrastructure(
-            "invalid Cognitive Seed adoption kind".into(),
+        _ => Err(Error::new(
+            nous_core::ErrorOwner::Subject,
+            nous_core::ErrorCode::InternalFailure,
+            "invalid Cognitive Seed adoption kind",
         )),
     }
 }

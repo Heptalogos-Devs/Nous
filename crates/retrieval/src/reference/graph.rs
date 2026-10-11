@@ -137,8 +137,10 @@ fn file_facts(input: &ReferenceGraphInput) -> Vec<(i64, DirectedFacts)> {
 /// Prepare pairwise and anchor lookup once for the entire file collection.
 pub fn reference_graph_file_facts(input: &ReferenceGraphInput) -> Result<Vec<ReferenceFileFacts>> {
     if input.config.min_reverse_gain > input.config.max_reverse_gain {
-        return Err(Error::Invalid(
-            "invalid reference reverse gain range".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
         ));
     }
     Ok(file_facts(input)
@@ -193,8 +195,10 @@ pub fn reference_graph_from_facts(
     let mut fact = BTreeMap::new();
     for &(from, to, mass) in facts {
         if !mass.is_finite() || mass < 0.0 {
-            return Err(Error::Invalid(
-                "graph fact mass must be finite and nonnegative".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         add(&mut fact, from, to, mass);

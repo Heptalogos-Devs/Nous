@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CliEnvironment } from "../runtime.js";
 import { CliError } from "../agent.js";
+import { create } from "@bufbuild/protobuf";
+import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 export async function contextCommands(
   env: CliEnvironment,
   action?: string,
@@ -141,7 +143,10 @@ export async function contextCommands(
         patch.cognitionAnchors = patch.cognitionAnchors.filter(
           (value) => value.kind !== ref.kind || value.value !== ref.value,
         );
-        if (action === "pin") patch.cognitionAnchors.push(ref);
+        if (action === "pin")
+          patch.cognitionAnchors.push(
+            create(CognitiveRefSchema, { kind: ref.kind, value: ref.value }),
+          );
       } else
         throw new CliError(
           "REFERENCE_TYPE_MISMATCH",

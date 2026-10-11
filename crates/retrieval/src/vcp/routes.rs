@@ -49,13 +49,25 @@ pub(crate) fn explain_routes(
     // that ontology; they are not automatically learned Association objects.
     for edge in &generation.graph.graph.provenance {
         for (root_id, mass) in &edge.file_contributions {
-            let index = usize::try_from(*root_id - 1)
-                .map_err(|_| Error::Invalid("VCP root ID invalid".into()))?;
+            let index = usize::try_from(*root_id - 1).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "VCP root ID invalid",
+                )
+                .with_source(error)
+            })?;
             let root = generation
                 .graph
                 .provenance_roots
                 .get(index)
-                .ok_or_else(|| Error::Invalid("VCP root ID outside asset".into()))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "VCP root ID outside asset",
+                    )
+                })?;
             if *mass > 0.0 && document_roots.contains_key(root) {
                 basis.entry((edge.source_id,edge.target_id)).or_default().push(json!({
                     "provenance_root": root,"association_kind": "vcp.document_cooccurrence",
@@ -65,9 +77,13 @@ pub(crate) fn explain_routes(
         }
     }
     for (id, metadata) in ranked {
-        let object = metadata
-            .as_object_mut()
-            .ok_or_else(|| Error::Invalid("VCP readout metadata must be an object".into()))?;
+        let object = metadata.as_object_mut().ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "VCP readout metadata must be an object",
+            )
+        })?;
         let path = routes.get(id);
         let references = path
             .map(|path| {

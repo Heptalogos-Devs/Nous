@@ -117,7 +117,7 @@ async function main() {
         command === "mcp" ? "mcp-main.js" : "main.js",
       );
   const nodeArgs = development
-    ? [join(locations.program, "node_modules", "tsx", "dist", "cli.mjs"), entry]
+    ? ["--import", import.meta.resolve("tsx"), entry]
     : [entry];
   if (serve)
     nodeArgs.push(...profileArgs, ...forwarded.slice(commandOffset + 1));

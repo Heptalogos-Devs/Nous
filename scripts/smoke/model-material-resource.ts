@@ -15,7 +15,6 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const tsx = join(root, "node_modules/tsx/dist/cli.mjs");
 const kernel =
   process.env.NOUS_WAVE_KERNEL_EXECUTABLE ??
   join(
@@ -187,7 +186,8 @@ async function boot() {
   core = spawn(
     process.execPath,
     [
-      tsx,
+      "--import",
+      "tsx",
       "scripts/research/dogfooding.ts",
       "--documents",
       documentsPath,
@@ -263,7 +263,8 @@ async function cli(...args: string[]) {
   const child = spawn(
     process.execPath,
     [
-      tsx,
+      "--import",
+      "tsx",
       "apps/nous-cli/src/main.ts",
       "--run-root",
       join(dataRoot, "run"),
@@ -712,8 +713,8 @@ routes = ["memory_formation"]
     }),
     (error: unknown) =>
       error instanceof NousError &&
-      error.code === 10 &&
-      error.domainCode === "OPERATION_ID_CONFLICT" &&
+      error.transportCode === 10 &&
+      error.errorCode === "OPERATION_ID_CONFLICT" &&
       error.recovery === "NEW_OPERATION" &&
       error.context.operation_key === formationRequest.operationId,
   );
@@ -724,7 +725,7 @@ routes = ["memory_formation"]
     ),
     (error: unknown) =>
       error instanceof NousError &&
-      error.domainCode === "UNKNOWN_REFERENCE" &&
+      error.errorCode === "UNKNOWN_REFERENCE" &&
       error.recovery === "RESOLVE_REFERENCE" &&
       error.context.reference === "absent-smoke-identity",
   );
@@ -738,7 +739,7 @@ routes = ["memory_formation"]
     }),
     (error: unknown) =>
       error instanceof NousError &&
-      error.domainCode === "STALE_CONTEXT" &&
+      error.errorCode === "STALE_CONTEXT" &&
       error.recovery === "REFRESH_STATE" &&
       error.context.session_id === sessionId,
   );

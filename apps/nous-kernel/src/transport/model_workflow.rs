@@ -48,15 +48,21 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
             if input.owner == "memory" {
                 id(&input.operation_key)?;
                 if self.0.memory.is_none() {
-                    return Err(Error::Unavailable("Memory owner unavailable".into()));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::ModelWorkflow,
+                        nous_core::ErrorCode::Unavailable,
+                        "Memory owner unavailable",
+                    ));
                 }
             }
             private_workflow_owner(&input.owner)?;
             let mut snapshot = envelope::snapshot(required(input.snapshot, "workflow snapshot")?)?;
             if let Some(claim) = &snapshot.maintenance_claim {
                 if input.owner != "memory" {
-                    return Err(Error::Invalid(
-                        "maintenance workflow route requires Memory".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::ModelWorkflow,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid request",
                     ));
                 }
                 let expected = uuid::Uuid::new_v5(
@@ -68,8 +74,10 @@ impl k::kernel_model_workflow_service_server::KernelModelWorkflowService for Ker
                     .as_bytes(),
                 );
                 if input.operation_key != expected.to_string() {
-                    return Err(Error::Invalid(
-                        "maintenance workflow identity does not match obligation".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::ModelWorkflow,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid request",
                     ));
                 }
             }

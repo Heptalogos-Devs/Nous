@@ -126,7 +126,11 @@ impl KernelService {
         input: p::ListRequest,
     ) -> Result<p::ListArtifactsResponse> {
         if !input.status.is_empty() {
-            return Err(Error::Invalid("Artifact has no status filter".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "Artifact has no status filter",
+            ));
         }
         let subject = SubjectId(id(&input.subject_id)?);
         self.0.store.require_subject(subject).await?;
@@ -139,8 +143,13 @@ impl KernelService {
         let next_page_token = if more {
             next_token(
                 &scope,
-                *ids.last()
-                    .ok_or_else(|| Error::Internal("page continuation has no last item".into()))?,
+                *ids.last().ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Material,
+                        nous_core::ErrorCode::InternalFailure,
+                        "page continuation has no last item",
+                    )
+                })?,
             )
         } else {
             String::new()
@@ -161,14 +170,22 @@ impl KernelService {
         input: p::MaterializeRequest,
     ) -> Result<p::MaterializedEvidence> {
         if input.max_bytes > MAX_UNARY_MATERIAL_BYTES {
-            return Err(Error::Invalid(
-                "unary materialization exceeds 1 MiB; use stream".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let range = match (input.start, input.end) {
             (None, None) => None,
             (Some(start), Some(end)) => Some(ByteRange { start, end }),
-            _ => return Err(Error::Invalid("both range endpoints required".into())),
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Material,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "both range endpoints required",
+                ));
+            }
         };
         let result = self
             .0
@@ -227,8 +244,17 @@ impl k::artifact_stream_service_server::ArtifactStreamService for KernelService 
             Ok(k::UploadChunk {
                 part: Some(k::upload_chunk::Part::Content(bytes)),
             }) if bytes.len() <= 262_144 => Ok(bytes),
-            Ok(_) => Err(Error::Invalid("invalid upload chunk".into())),
-            Err(error) => Err(Error::Unavailable(error.to_string())),
+            Ok(_) => Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid upload chunk",
+            )),
+            Err(error) => Err(Error::new(
+                nous_core::ErrorOwner::Material,
+                nous_core::ErrorCode::Unavailable,
+                "Upload stream was interrupted",
+            )
+            .with_source(error)),
         });
         self.0
             .material

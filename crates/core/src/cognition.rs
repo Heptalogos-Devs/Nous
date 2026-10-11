@@ -30,8 +30,10 @@ impl SeedBasisRef {
             || semantic_path.len() > 512
             || semantic_path.chars().any(char::is_whitespace)
         {
-            return Err(Error::Invalid(
-                "invalid Cognitive Seed semantic path".into(),
+            return Err(Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         Ok(Self {
@@ -128,7 +130,14 @@ pub fn parse_epistemic_relation(value: String) -> Result<Option<EpistemicRelatio
     }
     serde_json::from_value(serde_json::Value::String(value))
         .map(Some)
-        .map_err(|_| Error::Infrastructure("invalid epistemic relation".into()))
+        .map_err(|error| {
+            Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InternalFailure,
+                "invalid epistemic relation",
+            )
+            .with_source(error)
+        })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,12 +275,20 @@ impl RevisionBasis {
 
 pub fn validate_exact_basis(basis: &[RevisionBasis]) -> Result<()> {
     if basis.is_empty() {
-        return Err(Error::Invalid("a cognition revision needs support".into()));
+        return Err(Error::new(
+            crate::ErrorOwner::Core,
+            crate::ErrorCode::InvalidRequest,
+            "a cognition revision needs support",
+        ));
     }
     let mut keys = BTreeSet::new();
     for basis in basis {
         if !keys.insert(basis.canonical_key()) {
-            return Err(Error::Invalid("duplicate revision support".into()));
+            return Err(Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "duplicate revision support",
+            ));
         }
         if let RevisionBasis::CognitionDependency(value) = basis
             && !matches!(
@@ -282,8 +299,10 @@ pub fn validate_exact_basis(basis: &[RevisionBasis]) -> Result<()> {
                     | CognitiveRef::JournalRevision(_)
             )
         {
-            return Err(Error::Invalid(
-                "cognition support must target an exact revision".into(),
+            return Err(Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
     }

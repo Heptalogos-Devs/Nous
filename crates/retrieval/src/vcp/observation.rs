@@ -29,8 +29,10 @@ impl VcpQueryObservation {
         signals: Option<&crate::PreparedQuerySignals>,
     ) -> Result<Self> {
         if bound.source_query.capabilities.text_embedding == RequirementStrength::Forbidden {
-            return Err(Error::Unavailable(
-                "bound query forbids VCP embedding observation".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Observation,
+                nous_core::ErrorCode::Unavailable,
+                "Service unavailable",
             ));
         }
         if !matches!(
@@ -40,8 +42,10 @@ impl VcpQueryObservation {
             || crate::assets::files::digest(&generation.policy)?
                 != crate::assets::files::digest(&bound.config_snapshot.get(VCP_ASSETS)?)?
         {
-            return Err(Error::Unavailable(
-                "VCP generation disagrees with frozen bound profile/policy".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Observation,
+                nous_core::ErrorCode::Unavailable,
+                "Service unavailable",
             ));
         }
         if !embedding.space.compatible_with(&generation.space)
@@ -51,22 +55,28 @@ impl VcpQueryObservation {
                 .as_ref()
                 .is_some_and(|space| !space.compatible_with(&generation.space))
         {
-            return Err(Error::Unavailable(
-                "VCP query embedding space/producer mismatch".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Observation,
+                nous_core::ErrorCode::Unavailable,
+                "Service unavailable",
             ));
         }
         if embedding.vector.len() != generation.space.dimension as usize
             || embedding.vector.iter().any(|v| !v.is_finite())
         {
-            return Err(Error::Invalid(
-                "VCP query embedding has invalid dimension/values".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Observation,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let mut policy = bound.config_snapshot.get(VCP_QUERY)?;
         policy.validate()?;
         if !plan.expand_topology || plan.topology_nodes < 100 {
-            return Err(Error::Unavailable(
-                "bound VCP work budget cannot admit frozen Sense minimum".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Observation,
+                nous_core::ErrorCode::Unavailable,
+                "Service unavailable",
             ));
         }
         policy.sense.max_safe_hops = policy.sense.max_safe_hops.min(plan.topology_rounds);

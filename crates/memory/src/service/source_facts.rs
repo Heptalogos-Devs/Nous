@@ -17,7 +17,11 @@ pub(super) fn push_source_facts(
             Ok((
                 kind,
                 value.parse::<Uuid>().map_err(|_| {
-                    Error::Invalid("cognition source root must be an exact revision".into())
+                    Error::new(
+                        nous_core::ErrorOwner::Observation,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "cognition source root must be an exact revision",
+                    )
                 })?,
             ))
         })

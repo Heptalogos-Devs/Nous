@@ -7,6 +7,8 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID, createHash } from "node:crypto";
+import { create } from "@bufbuild/protobuf";
+import { CreateSubjectRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { parseArgs } from "node:util";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
@@ -126,18 +128,22 @@ const save = async () => {
   await writeFile(statePath, json(state));
 };
 if (!state.subjectId) {
+  state.subjectId = randomUUID();
+  await save();
   const subject = await client.subjects.create(
-    {
+    create(CreateSubjectRequestSchema, {
+      subjectId: state.subjectId,
       operationId: state.createId,
       capabilities: { memory: true },
       cognitiveSeed: {
         text: "schema_version = 1",
         format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
       },
-    },
+    }),
     options,
   );
-  state.subjectId = subject.subjectId;
+  if (subject.subjectId !== state.subjectId)
+    throw new Error("Subject create returned another frozen Subject ID");
   await save();
 }
 const subjectId = state.subjectId;

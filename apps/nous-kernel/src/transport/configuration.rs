@@ -8,9 +8,14 @@ use nous_core::OperationId;
 use p::configuration_service_server::ConfigurationService;
 
 fn ceiling(raw: i32) -> nous_core::Result<u8> {
-    match p::ConfigExposure::try_from(raw)
-        .map_err(|_| Error::Invalid("invalid exposure ceiling".into()))?
-    {
+    match p::ConfigExposure::try_from(raw).map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Configuration,
+            nous_core::ErrorCode::InvalidRequest,
+            "invalid exposure ceiling",
+        )
+        .with_source(error)
+    })? {
         p::ConfigExposure::Unspecified | p::ConfigExposure::Standard => Ok(1),
         p::ConfigExposure::Advanced => Ok(2),
         p::ConfigExposure::Developer => Ok(3),
@@ -63,6 +68,37 @@ fn change(outcome: ConfigChangeOutcome) -> p::ConfigurationChange {
     }
 }
 
+fn pending_effect(
+    descriptor: &ConfigDescriptor,
+    changed: bool,
+    projections: Option<&p::ProjectionStatus>,
+) -> Option<String> {
+    match descriptor.apply_mode {
+        ConfigApplyMode::RestartProcess => changed.then(|| "restart_required".into()),
+        ConfigApplyMode::ServingRebuild => {
+            let Some(projections) = projections else {
+                return Some("subject_projection_status_required".into());
+            };
+            let families = nous_retrieval::affected_families(&[&descriptor.path]);
+            if families.is_empty() {
+                return Some("projection_status_unavailable".into());
+            }
+            families
+                .iter()
+                .any(|family| {
+                    let matching = projections
+                        .families
+                        .iter()
+                        .filter(|status| status.name == *family)
+                        .collect::<Vec<_>>();
+                    matching.is_empty() || matching.iter().any(|status| status.state != "READY")
+                })
+                .then(|| "serving_rebuild_required".into())
+        }
+        ConfigApplyMode::Live | ConfigApplyMode::NewSubjectsOnly => None,
+    }
+}
+
 #[tonic::async_trait]
 impl ConfigurationService for KernelService {
     async fn list_config_descriptors(
@@ -97,7 +133,13 @@ impl ConfigurationService for KernelService {
                 .registry()
                 .descriptor(&r.path)
                 .map(descriptor)
-                .ok_or_else(|| Error::NotFound("configuration descriptor not found".into()))
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Configuration,
+                        nous_core::ErrorCode::NotFound,
+                        "configuration descriptor not found",
+                    )
+                })
         })
         .await
     }
@@ -120,19 +162,40 @@ impl ConfigurationService for KernelService {
                 Some(s) => self.0.configuration.desired_snapshot_for_subject(s)?,
                 None => self.0.configuration.desired_system_snapshot()?,
             };
-            let snapshot = match p::ConfigurationView::try_from(r.view)
-                .map_err(|_| Error::Invalid("invalid configuration view".into()))?
-            {
+            let snapshot = match p::ConfigurationView::try_from(r.view).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid configuration view",
+                )
+                .with_source(error)
+            })? {
                 p::ConfigurationView::Unspecified | p::ConfigurationView::Active => &active,
                 p::ConfigurationView::Desired => &desired,
             };
             for path in &r.paths {
                 if self.0.configuration.registry().descriptor(path).is_none() {
-                    return Err(Error::Invalid(format!(
-                        "unknown configuration path: {path}"
-                    )));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Configuration,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid request",
+                    ));
                 }
             }
+            let projection_status = if subject.is_some()
+                && snapshot.descriptors().any(|d| {
+                    d.apply_mode == ConfigApplyMode::ServingRebuild
+                        && (r.paths.is_empty() || r.paths.contains(&d.path))
+                }) {
+                Some(
+                    self.get_projection_status(p::SubjectRequest {
+                        subject_id: subject.expect("subject scope was checked").0.to_string(),
+                    })
+                    .await?,
+                )
+            } else {
+                None
+            };
             let entries = snapshot
                 .descriptors()
                 .filter(|d| {
@@ -146,8 +209,11 @@ impl ConfigurationService for KernelService {
                     source: enum_name(snapshot.source(&d.path).expect("resolved source")),
                     owner: d.owner.clone(),
                     apply_mode: enum_name(d.apply_mode),
-                    pending_effect: (active.json(&d.path) != desired.json(&d.path))
-                        .then(|| "restart_required".into()),
+                    pending_effect: pending_effect(
+                        d,
+                        active.json(&d.path) != desired.json(&d.path),
+                        projection_status.as_ref(),
+                    ),
                 })
                 .collect();
             Ok(p::ConfigurationSnapshot {
@@ -257,16 +323,23 @@ impl k::kernel_configuration_service_server::KernelConfigurationService for Kern
                 .effective_digest
                 != r.configuration_digest
             {
-                return Err(nous_core::DomainError::new(
-                    nous_core::DomainErrorCode::StaleRevision,
+                return Err(nous_core::Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::StaleRevision,
                     "startup configuration changed",
                 )
                 .into());
             }
             if let Some(config) = r.resolved_embedding {
                 let config: nous_retrieval::StoredEmbeddingConfig =
-                    serde_json::from_value(object(Some(config)))
-                        .map_err(|_| Error::Invalid("invalid host embedding binding".into()))?;
+                    serde_json::from_value(object(Some(config))).map_err(|error| {
+                        Error::new(
+                            nous_core::ErrorOwner::Configuration,
+                            nous_core::ErrorCode::InvalidRequest,
+                            "invalid host embedding binding",
+                        )
+                        .with_source(error)
+                    })?;
                 self.0.serving.initialize_embedding(config)?;
             }
             Ok(())

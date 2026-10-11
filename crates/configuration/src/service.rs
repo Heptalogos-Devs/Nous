@@ -6,7 +6,7 @@ use crate::{
     ConfigStoragePolicy,
 };
 use chrono::Utc;
-use nous_core::{DomainError, DomainErrorCode, Error, OperationId, Result, SubjectId};
+use nous_core::{Error, OperationId, Result, SubjectId};
 use nous_persistence::{AuthorityStore, database_error as db};
 use serde_json::Value;
 use sqlx::Row;
@@ -124,11 +124,13 @@ impl ConfigurationService {
     }
 
     fn snapshot(&self, subject: Option<SubjectId>, desired: bool) -> Result<ConfigSnapshot> {
-        let state = self
-            .inner
-            .state
-            .read()
-            .map_err(|_| Error::Internal("configuration state lock poisoned".into()))?;
+        let state = self.inner.state.read().map_err(|_| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "configuration state lock poisoned",
+            )
+        })?;
         self.snapshot_from_state(&state, subject, desired)
     }
 
@@ -258,33 +260,46 @@ impl ConfigurationService {
     ) -> Result<ConfigChangeOutcome> {
         let _mutation = self.inner.mutation.lock().await;
         if expected_revision.is_some_and(|revision| revision < 0) {
-            return Err(Error::Invalid(
-                "expected configuration revision must be nonnegative".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Expected configuration revision must be nonnegative",
             ));
         }
         if operation_id.0.is_nil() {
-            return Err(Error::Invalid(
-                "configuration operation_id is required".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Configuration operation_id is required",
             ));
         }
-        let descriptor = self
-            .inner
-            .registry
-            .descriptor(key)
-            .ok_or_else(|| Error::Invalid(format!("unknown configuration key: {key}")))?;
+        let descriptor = self.inner.registry.descriptor(key).ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Unknown configuration key",
+            )
+            .with_context("path", key)
+        })?;
         if descriptor.storage_policy == ConfigStoragePolicy::DeploymentOnly {
-            return Err(Error::Invalid(format!(
-                "configuration path is deployment-only: {key}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Configuration key is deployment-only",
+            )
+            .with_context("path", key));
         }
         let value = value
             .map(|value| self.inner.registry.normalize(key, &value))
             .transpose()?;
         if subject.is_some() && descriptor.scope_policy != ConfigScopePolicy::SubjectOverrideAllowed
         {
-            return Err(Error::Invalid(format!(
-                "configuration key is system-only: {key}"
-            )));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InvalidRequest,
+                "Configuration key is system-only",
+            )
+            .with_context("path", key));
         }
         let action = if value.is_some() { "set" } else { "clear" };
         let request = serde_json::json!({
@@ -296,7 +311,14 @@ impl ConfigurationService {
         });
         let digest = blake3::hash(
             serde_json::to_string(&request)
-                .map_err(|error| Error::Internal(error.to_string()))?
+                .map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Configuration,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?
                 .as_bytes(),
         )
         .to_hex()
@@ -305,7 +327,13 @@ impl ConfigurationService {
             .inner
             .state
             .read()
-            .map_err(|_| Error::Internal("configuration state lock poisoned".into()))?
+            .map_err(|_| {
+                Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::InternalFailure,
+                    "configuration state lock poisoned",
+                )
+            })?
             .clone();
         let mut tx = self.inner.store.begin().await?;
         let existing = sqlx::query(
@@ -318,8 +346,9 @@ impl ConfigurationService {
         if let Some(row) = existing {
             let existing_digest: String = row.try_get("request_digest").map_err(db)?;
             if existing_digest != digest {
-                return Err(DomainError::new(
-                    DomainErrorCode::OperationIdConflict,
+                return Err(nous_core::Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::OperationIdConflict,
                     "Configuration operation_id was used with a different request",
                 )
                 .with_context("operation_id", operation_id.0)
@@ -343,7 +372,7 @@ impl ConfigurationService {
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?
-        .ok_or_else(|| DomainError::new(DomainErrorCode::StaleRevision, "Configuration revision changed; read the current desired policy before replacing it")
+        .ok_or_else(|| nous_core::Error::new(nous_core::ErrorOwner::Configuration, nous_core::ErrorCode::StaleRevision,  "Configuration revision changed; read the current desired policy before replacing it")
             .with_context("path", key))?;
         match (subject, value.as_ref()) {
             (Some(subject), Some(value)) => {
@@ -386,11 +415,13 @@ impl ConfigurationService {
             .bind(operation_id.0).bind(&digest).bind(subject.map(|value| value.0)).bind(key).bind(action).bind(revision).bind(format_apply_mode(descriptor.apply_mode)).bind(pending_restart).bind(&active_digest).bind(&desired_digest).bind(Utc::now()).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
         {
-            let mut state = self
-                .inner
-                .state
-                .write()
-                .map_err(|_| Error::Internal("configuration state lock poisoned".into()))?;
+            let mut state = self.inner.state.write().map_err(|_| {
+                Error::new(
+                    nous_core::ErrorOwner::Configuration,
+                    nous_core::ErrorCode::InternalFailure,
+                    "configuration state lock poisoned",
+                )
+            })?;
             *state = next_state;
         }
         Ok(ConfigChangeOutcome {
@@ -433,17 +464,28 @@ fn validate_persisted(
     subject: bool,
 ) -> Result<()> {
     let descriptor = registry.descriptor(key).ok_or_else(|| {
-        Error::Infrastructure(format!("persisted unknown configuration key: {key}"))
+        Error::new(
+            nous_core::ErrorOwner::Configuration,
+            nous_core::ErrorCode::InternalFailure,
+            "Persisted configuration key is unknown",
+        )
+        .with_context("path", key)
     })?;
     if subject && descriptor.scope_policy != ConfigScopePolicy::SubjectOverrideAllowed {
-        return Err(Error::Infrastructure(format!(
-            "persisted subject override is system-only: {key}"
-        )));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Configuration,
+            nous_core::ErrorCode::InternalFailure,
+            "Persisted subject override violates configuration scope",
+        )
+        .with_context("path", key));
     }
     if descriptor.storage_policy == ConfigStoragePolicy::DeploymentOnly {
-        return Err(Error::Infrastructure(format!(
-            "persisted deployment-only override: {key}"
-        )));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Configuration,
+            nous_core::ErrorCode::InternalFailure,
+            "Persisted override targets deployment-only configuration",
+        )
+        .with_context("path", key));
     }
     registry.validate(key, value)
 }
@@ -471,8 +513,10 @@ fn parse_apply_mode(value: String) -> Result<ConfigApplyMode> {
         "serving_rebuild" => Ok(ConfigApplyMode::ServingRebuild),
         "new_subjects_only" => Ok(ConfigApplyMode::NewSubjectsOnly),
         "restart_process" => Ok(ConfigApplyMode::RestartProcess),
-        _ => Err(Error::Infrastructure(
-            "invalid configuration apply mode".into(),
+        _ => Err(Error::new(
+            nous_core::ErrorOwner::Configuration,
+            nous_core::ErrorCode::InternalFailure,
+            "Persisted configuration apply mode is invalid",
         )),
     }
 }

@@ -48,7 +48,11 @@ pub fn vcp_graph_assets(
             .iter()
             .find(|document| &document.reference == reference)
             .ok_or_else(|| {
-                nous_core::Error::Infrastructure("VCP membership source missing".into())
+                nous_core::Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "VCP membership source missing",
+                )
             })?;
         for (from, to, mass) in file.facts {
             *facts.entry((from, to)).or_default() += mass;

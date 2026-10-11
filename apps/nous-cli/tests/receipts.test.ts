@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NousError } from "@nous-wave/client";
+import { create } from "@bufbuild/protobuf";
 import {
   domainError,
-  DomainErrorCode,
+  ErrorCode,
+  ErrorOwner,
   ErrorRecovery,
 } from "@nous-wave/client/errors";
 import type { connectNousInstance } from "@nous-wave/client/node";
+import { SubjectSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -28,7 +31,8 @@ it("preserves an owner rejection and recovery when reading a terminal receipt", 
   const operationId = crypto.randomUUID();
   const refusal = new NousError(
     domainError("Different input reused an operation identity", 10, {
-      code: DomainErrorCode.OPERATION_ID_CONFLICT,
+      code: ErrorCode.OPERATION_ID_CONFLICT,
+      owner: ErrorOwner.SUBJECT,
       recovery: ErrorRecovery.NEW_OPERATION,
       context: { operation_id: operationId },
     }),
@@ -44,12 +48,19 @@ it("preserves an owner rejection and recovery when reading a terminal receipt", 
   } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   try {
     const env = await createEnvironment(
-      { "run-root": root, "instance-root": root },
+      {
+        "run-root": root,
+        "instance-root": root,
+        subject: "22222222-2222-4222-8222-222222222222",
+      },
       async () => original,
     );
-    await expect(env.client.subjects.create({ operationId })).rejects.toBe(
-      refusal,
-    );
+    await expect(
+      env.client.subjects.create({
+        subjectId: "22222222-2222-4222-8222-222222222222",
+        operationId,
+      }),
+    ).rejects.toBe(refusal);
     const [namespace] = await readdir(join(root, "consumers"));
     const [file] = await readdir(
       join(root, "consumers", namespace!, "operations"),
@@ -59,9 +70,10 @@ it("preserves an owner rejection and recovery when reading a terminal receipt", 
       await cliState(root, identity, policy).receipt(receiptId),
     ).toMatchObject({
       status: "rejected",
-      rejection: {
-        code: 10,
-        domainCode: "OPERATION_ID_CONFLICT",
+      error: {
+        transportCode: 10,
+        code: "OPERATION_ID_CONFLICT",
+        owner: "SUBJECT",
         recovery: "NEW_OPERATION",
         context: { operation_id: operationId },
       },
@@ -71,9 +83,9 @@ it("preserves an owner rejection and recovery when reading a terminal receipt", 
       .catch((error: unknown) => error);
     expect(cliErrorPayload(recovered)).toMatchObject({
       code: "OPERATION_ID_CONFLICT",
+      owner: "CLI",
       recovery: "NEW_OPERATION",
       context: { operation_id: operationId },
-      details: refusal.details,
     });
     expect(calls).toBe(1);
   } finally {
@@ -85,12 +97,13 @@ it("reclaims definite rejections and finalizes a recovered unknown request rejec
   const root = await mkdtemp(
     join(workspacePaths.temporary, "rejected-receipt-"),
   );
-  const refusal = new NousError({
-    rawMessage: "Invalid Subject",
-    code: 3,
-    details: [],
-    findDetails: () => [],
-  } as unknown as ConstructorParameters<typeof NousError>[0]);
+  const refusal = new NousError(
+    domainError("Invalid Subject", 3, {
+      code: ErrorCode.INVALID_REQUEST,
+      owner: ErrorOwner.SUBJECT,
+      recovery: ErrorRecovery.CORRECT_REQUEST,
+    }),
+  );
   let unknown = false;
   const original = {
     subjects: {
@@ -105,12 +118,19 @@ it("reclaims definite rejections and finalizes a recovered unknown request rejec
   } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   try {
     const env = await createEnvironment(
-      { "run-root": root, "instance-root": root },
+      {
+        "run-root": root,
+        "instance-root": root,
+        subject: "22222222-2222-4222-8222-222222222222",
+      },
       async () => original,
     );
     for (let i = 0; i < policy.receipt_limit + 1; i++)
       await expect(
-        env.client.subjects.create({ subjectId: "invalid" }),
+        env.client.subjects.create({
+          subjectId: "22222222-2222-4222-8222-222222222222",
+          operationId: crypto.randomUUID(),
+        }),
       ).rejects.toBe(refusal);
     const [namespace] = await readdir(join(root, "consumers"));
     const path = join(root, "consumers", namespace!, "operations");
@@ -121,22 +141,26 @@ it("reclaims definite rejections and finalizes a recovered unknown request rejec
         .status,
     ).toBe("rejected");
     unknown = true;
+    const retryRequest = {
+      subjectId: "22222222-2222-4222-8222-222222222222",
+      operationId: crypto.randomUUID(),
+    };
     let receipt = "";
     try {
-      await env.client.subjects.create({ subjectId: "invalid" });
+      await env.client.subjects.create(retryRequest);
     } catch (error) {
-      receipt = (error as { receipt: string }).receipt;
+      receipt = (error as { receiptId: string }).receiptId;
     }
     expect(receipt).toBeTruthy();
     expect(
       (await cliState(root, identity, policy).receipt(receipt)).status,
-    ).toBe("pending");
+    ).toBe("outcome_unknown");
     await expect(env.retry(receipt)).rejects.toBe(refusal);
     expect(
       (await cliState(root, identity, policy).receipt(receipt)).status,
     ).toBe("rejected");
     await expect(env.retry(receipt)).rejects.toMatchObject({
-      code: "OPERATION_REJECTED",
+      code: "INVALID_REQUEST",
     });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -155,9 +179,12 @@ it("returns a successful operation when presentation fails and reads complete re
   const connect = async () =>
     ({
       subjects: {
-        create: async () => {
+        create: async (request: { subjectId: string }) => {
           calls++;
-          return result;
+          return create(SubjectSchema, {
+            ...result,
+            subjectId: (request as { subjectId: string }).subjectId,
+          });
         },
       },
     }) as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
@@ -169,19 +196,30 @@ it("returns a successful operation when presentation fails and reads complete re
         throw new Error("Directory unavailable");
       },
     );
-    expect(output).toMatchObject({
-      data: result,
-      notices: [{ code: "PRESENTATION_UNAVAILABLE" }],
-    });
+    const response = output as {
+      data: { status: string; subjectId: string };
+      notices: { code: string }[];
+    };
+    expect(response.data.status).toBe("active");
+    expect(response.data.subjectId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(response.notices[0]?.code).toBe("PRESENTATION_UNAVAILABLE");
+    const createdSubjectId = response.data.subjectId;
     const [namespace] = await readdir(join(root, "consumers"));
     const [file] = await readdir(
       join(root, "consumers", namespace!, "operations"),
     );
     const env = await createEnvironment(
-      { "run-root": root, "instance-root": root },
+      {
+        "run-root": root,
+        "instance-root": root,
+        subject: createdSubjectId,
+      },
       connect,
     );
-    expect(await env.retry(file!.slice(0, -5))).toEqual(result);
+    expect(await env.retry(file!.slice(0, -5))).toMatchObject({
+      subjectId: createdSubjectId,
+      status: "active",
+    });
     expect(calls).toBe(1);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -190,12 +228,14 @@ it("returns a successful operation when presentation fails and reads complete re
 
 it("preserves a known Authority refusal when its terminal receipt exceeds the state budget", async () => {
   const root = await mkdtemp(join(workspacePaths.temporary, "refusal-save-"));
-  const refusal = new NousError({
-    rawMessage: "Invalid request: " + "x".repeat(policy.file_max_bytes),
-    code: 3,
-    details: [],
-    findDetails: () => [],
-  } as unknown as ConstructorParameters<typeof NousError>[0]);
+  const refusal = new NousError(
+    domainError("Invalid request", 3, {
+      code: ErrorCode.INVALID_REQUEST,
+      owner: ErrorOwner.SUBJECT,
+      recovery: ErrorRecovery.CORRECT_REQUEST,
+      context: { payload: "x".repeat(policy.file_max_bytes + 1024) },
+    }),
+  );
   try {
     const env = await createEnvironment(
       { "run-root": root, "instance-root": root },
@@ -209,15 +249,19 @@ it("preserves a known Authority refusal when its terminal receipt exceeds the st
         }) as unknown as Awaited<ReturnType<typeof connectNousInstance>>,
     );
     const returned: unknown = await env.client.subjects
-      .create({ operationId: crypto.randomUUID() })
+      .create({
+        subjectId: "22222222-2222-4222-8222-222222222222",
+        operationId: crypto.randomUUID(),
+      })
       .catch((error: unknown) => error);
     expect(returned === refusal).toBe(true);
-    expect(typeof (refusal as unknown as { receipt?: unknown }).receipt).toBe(
-      "string",
-    );
+    expect(
+      typeof (refusal as unknown as { receiptId?: unknown }).receiptId,
+    ).toBe("string");
     expect(refusal).toHaveProperty("notices.0.code", "RECEIPT_UNSAVED");
     expect(cliErrorPayload(returned)).toMatchObject({
-      code: "INVALID_ARGUMENT",
+      code: "INVALID_REQUEST",
+      owner: "SUBJECT",
       notices: [{ code: "RECEIPT_UNSAVED" }],
     });
   } finally {

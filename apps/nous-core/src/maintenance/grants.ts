@@ -4,7 +4,7 @@
 import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
 import {
   domainErrorDetail,
-  DomainErrorCode,
+  ErrorCode,
   ErrorRecovery,
 } from "@nous-wave/client/errors";
 import type {
@@ -42,8 +42,8 @@ function allowedKinds(models: ModelRuntime, modelBudget: number) {
 }
 function problemClass(error: unknown) {
   const detail = domainErrorDetail(error);
-  if (detail?.code && DomainErrorCode[detail.code])
-    return DomainErrorCode[detail.code]!.toLowerCase();
+  if (detail?.code && ErrorCode[detail.code])
+    return ErrorCode[detail.code]!.toLowerCase();
   return error instanceof ConnectError
     ? `transport_${Code[error.code]?.toLowerCase() ?? "unknown"}`
     : "runtime_failure";

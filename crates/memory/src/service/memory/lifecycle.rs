@@ -104,8 +104,10 @@ impl MemoryService {
                 if receipt.state == "committed" {
                     return self.memory(subject, memory, None).await;
                 }
-                return Err(Error::Unavailable(
-                    "lifecycle operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::Unavailable,
+                    "lifecycle operation is already in progress",
                 ));
             }
             MutationStart::Active(mutation) => mutation,
@@ -113,8 +115,8 @@ impl MemoryService {
         let row = match field {
             "suppression_state" => sqlx::query("SELECT object_epoch,suppression_state FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE"),
             "acceptance_state" => sqlx::query("SELECT object_epoch,acceptance_state FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE"),
-            _ => return Err(Error::Internal("unsupported lifecycle state".into())),
-        }.bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("memory not found".into()))?;
+            _ => return Err(Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InternalFailure, "unsupported lifecycle state")),
+        }.bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "memory not found"))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         let current: String = row.try_get(field).map_err(db)?;
         fence_epoch(epoch, expected_object_epoch)?;
@@ -128,7 +130,7 @@ impl MemoryService {
         match field {
             "suppression_state" => sqlx::query("UPDATE memory_objects SET suppression_state=$3,object_epoch=object_epoch+1 WHERE subject_id=$1 AND memory_id=$2"),
             "acceptance_state" => sqlx::query("UPDATE memory_objects SET acceptance_state=$3,object_epoch=object_epoch+1 WHERE subject_id=$1 AND memory_id=$2"),
-            _ => return Err(Error::Internal("unsupported lifecycle state".into())),
+            _ => return Err(Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InternalFailure, "unsupported lifecycle state")),
         }.bind(subject.0).bind(memory.0).bind(to).execute(&mut **mutation.tx()).await.map_err(db)?;
         sqlx::query("DELETE FROM resident_refs WHERE ref_kind='memory_revision' AND ref_value IN (SELECT memory_revision_id::text FROM memory_revisions WHERE memory_id=$1)").bind(memory.0).execute(&mut **mutation.tx()).await.map_err(db)?;
         let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
@@ -169,7 +171,7 @@ impl MemoryService {
                 }
             }
             MutationStart::Active(mut mutation) => {
-                let row=sqlx::query("SELECT object_epoch,purge_state FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE").bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("memory not found".into()))?;
+                let row=sqlx::query("SELECT object_epoch,purge_state FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE").bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "memory not found"))?;
                 let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
                 let purge_state: String = row.try_get("purge_state").map_err(db)?;
                 fence_epoch(epoch, expected_object_epoch)?;
@@ -208,6 +210,7 @@ impl MemoryService {
             "purge_memory",
             digest,
             Some(OwnerLock("memory-authority")),
+            nous_core::ErrorOwner::Memory,
         )
         .await?
         {

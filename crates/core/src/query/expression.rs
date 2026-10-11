@@ -71,7 +71,11 @@ impl ResultProjection {
     pub fn validate(&self) -> Result<()> {
         let unique: std::collections::BTreeSet<_> = self.domains.iter().collect();
         if self.domains.is_empty() || unique.len() != self.domains.len() {
-            return Err(Error::Invalid("invalid result projection".into()));
+            return Err(Error::new(
+                crate::ErrorOwner::Core,
+                crate::ErrorCode::InvalidRequest,
+                "invalid result projection",
+            ));
         }
         Ok(())
     }

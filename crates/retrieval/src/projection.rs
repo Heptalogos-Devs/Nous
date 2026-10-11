@@ -47,7 +47,11 @@ impl ServingService {
         let (authority_watermark, sources, topology) = match view {
             Some(view) => {
                 if view.subject != subject {
-                    return Err(Error::Invalid("projection view subject mismatch".into()));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "projection view subject mismatch",
+                    ));
                 }
                 let rows = self.store.historical_projection_input(view, budget).await?;
                 (0, rows.sources, rows.topology)
@@ -92,8 +96,10 @@ impl ServingService {
             roots.insert(reference, contribution);
         }
         if view.is_none() && self.store.authority_seq(subject).await? != authority_watermark {
-            return Err(Error::Conflict(
-                "Authority changed while reading owner projection contributions".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::Conflict,
+                "Conflict",
             ));
         }
         let mut edges = Vec::new();
@@ -102,7 +108,11 @@ impl ServingService {
                 ProjectionEdgeProvenance::Structure(identity) => vec![Some(identity)],
                 ProjectionEdgeProvenance::AuthorityBasis(reference) => {
                     let contribution = roots.get(&reference).ok_or_else(|| {
-                        Error::Infrastructure("owner provenance contribution missing".into())
+                        Error::new(
+                            nous_core::ErrorOwner::Resource,
+                            nous_core::ErrorCode::InternalFailure,
+                            "owner provenance contribution missing",
+                        )
                     })?;
                     if contribution.is_empty() {
                         vec![None]

@@ -3,6 +3,7 @@
 
 use super::*;
 
+mod batch_read;
 mod lifecycle;
 mod mutation;
 mod provenance;

@@ -51,8 +51,14 @@ pub struct LexicalGeneration {
 impl LexicalGeneration {
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
         let (schema, ..) = schema();
-        Index::create_in_dir(path.as_ref(), schema)
-            .map_err(|error| Error::Infrastructure(format!("Tantivy create: {error}")))?;
+        Index::create_in_dir(path.as_ref(), schema).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         Self::open(path)
     }
     pub fn in_memory() -> Result<Self> {
@@ -67,13 +73,23 @@ impl LexicalGeneration {
             schema_ids,
             source_class,
         ) = schema();
-        let domain = schema
-            .get_field("domain")
-            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        let domain = schema.get_field("domain").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         let index = Index::create_in_ram(schema);
-        let reader = index
-            .reader()
-            .map_err(|error| Error::Infrastructure(format!("Tantivy reader: {error}")))?;
+        let reader = index.reader().map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         Ok(Self {
             generation_id: ServingGenerationId::new(),
             index,
@@ -91,39 +107,95 @@ impl LexicalGeneration {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let index = Index::open_in_dir(path)
-            .map_err(|error| Error::Infrastructure(format!("Tantivy open: {error}")))?;
+        let index = Index::open_in_dir(path).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         let schema = index.schema();
-        let body = schema
-            .get_field("representation_text")
-            .map_err(|_| Error::Infrastructure("Tantivy body field missing".into()))?;
-        let title = schema
-            .get_field("title")
-            .map_err(|_| Error::Infrastructure("Tantivy title field missing".into()))?;
-        let reference = schema
-            .get_field("reference")
-            .map_err(|_| Error::Infrastructure("Tantivy reference field missing".into()))?;
-        let metadata = schema
-            .get_field("metadata")
-            .map_err(|_| Error::Infrastructure("Tantivy metadata field missing".into()))?;
-        let entity_refs = schema
-            .get_field("entity_refs")
-            .map_err(|_| Error::Infrastructure("Tantivy entity_refs field missing".into()))?;
-        let tag_ids = schema
-            .get_field("tag_ids")
-            .map_err(|_| Error::Infrastructure("Tantivy tag_ids field missing".into()))?;
-        let schema_ids = schema
-            .get_field("schema_ids")
-            .map_err(|_| Error::Infrastructure("Tantivy schema_ids field missing".into()))?;
-        let source_class = schema
-            .get_field("source_class")
-            .map_err(|_| Error::Infrastructure("Tantivy source_class field missing".into()))?;
-        let domain = schema
-            .get_field("domain")
-            .map_err(|error| Error::Infrastructure(error.to_string()))?;
-        let reader = index
-            .reader()
-            .map_err(|error| Error::Infrastructure(format!("Tantivy reader: {error}")))?;
+        let body = schema.get_field("representation_text").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Tantivy body field missing",
+            )
+            .with_source(error)
+        })?;
+        let title = schema.get_field("title").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Tantivy title field missing",
+            )
+            .with_source(error)
+        })?;
+        let reference = schema.get_field("reference").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Tantivy reference field missing",
+            )
+            .with_source(error)
+        })?;
+        let metadata = schema.get_field("metadata").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Tantivy metadata field missing",
+            )
+            .with_source(error)
+        })?;
+        let entity_refs = schema.get_field("entity_refs").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Tantivy entity_refs field missing",
+            )
+            .with_source(error)
+        })?;
+        let tag_ids = schema.get_field("tag_ids").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Tantivy tag_ids field missing",
+            )
+            .with_source(error)
+        })?;
+        let schema_ids = schema.get_field("schema_ids").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Tantivy schema_ids field missing",
+            )
+            .with_source(error)
+        })?;
+        let source_class = schema.get_field("source_class").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Tantivy source_class field missing",
+            )
+            .with_source(error)
+        })?;
+        let domain = schema.get_field("domain").map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
+        let reader = index.reader().map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         Ok(Self {
             generation_id: ServingGenerationId::new(),
             index,
@@ -145,13 +217,23 @@ impl LexicalGeneration {
         documents: &[LexicalDocument],
         writer_bytes: usize,
     ) -> Result<()> {
-        let mut writer: IndexWriter = self
-            .index
-            .writer(writer_bytes)
-            .map_err(|error| Error::Infrastructure(format!("Tantivy writer: {error}")))?;
+        let mut writer: IndexWriter = self.index.writer(writer_bytes).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         for document in documents {
-            let metadata = serde_json::to_string(document)
-                .map_err(|error| Error::Infrastructure(format!("lexical metadata: {error}")))?;
+            let metadata = serde_json::to_string(document).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?;
             let title = document.title.as_deref().unwrap_or("");
             let mut indexed = TantivyDocument::default();
             indexed.add_text(self.body, document.representation_text.clone());
@@ -171,19 +253,39 @@ impl LexicalGeneration {
             if let Some(value) = &document.source_class {
                 indexed.add_text(self.source_class, value);
             }
-            writer
-                .add_document(indexed)
-                .map_err(|error| Error::Infrastructure(format!("Tantivy add: {error}")))?;
+            writer.add_document(indexed).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?;
         }
-        writer
-            .commit()
-            .map_err(|error| Error::Infrastructure(format!("Tantivy commit: {error}")))?;
-        writer
-            .wait_merging_threads()
-            .map_err(|error| Error::Infrastructure(format!("Tantivy finalize: {error}")))?;
-        self.reader
-            .reload()
-            .map_err(|error| Error::Infrastructure(format!("Tantivy reload: {error}")))?;
+        writer.commit().map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
+        writer.wait_merging_threads().map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
+        self.reader.reload().map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error)
+        })?;
         Ok(())
     }
 
@@ -204,10 +306,14 @@ impl LexicalGeneration {
         // NousQL text cues are literal natural language, never Tantivy syntax.
         let mut terms: Vec<(Occur, Box<dyn Query>)> = Vec::new();
         for field in [self.body, self.title] {
-            let mut analyzer = self
-                .index
-                .tokenizer_for_field(field)
-                .map_err(|error| Error::Infrastructure(format!("Tantivy tokenizer: {error}")))?;
+            let mut analyzer = self.index.tokenizer_for_field(field).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?;
             let mut stream = analyzer.token_stream(query);
             let mut seen = std::collections::HashSet::new();
             while stream.advance() {
@@ -254,20 +360,43 @@ impl LexicalGeneration {
                 parsed.as_ref(),
                 &TopDocs::with_limit(limit).order_by_score(),
             )
-            .map_err(|error| Error::Infrastructure(format!("Tantivy search: {error}")))?;
+            .map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error)
+            })?;
         hits.into_iter()
             .map(|(score, address)| {
-                let document: TantivyDocument = searcher
-                    .doc(address)
-                    .map_err(|error| Error::Infrastructure(format!("Tantivy document: {error}")))?;
+                let document: TantivyDocument = searcher.doc(address).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(error)
+                })?;
                 let serving_doc_id = document
                     .get_first(self.reference)
                     .and_then(|value| value.as_str())
                     .ok_or_else(|| {
-                        Error::Infrastructure("Tantivy document lacks serving id".into())
+                        Error::new(
+                            nous_core::ErrorOwner::Resource,
+                            nous_core::ErrorCode::InternalFailure,
+                            "Tantivy document lacks serving id",
+                        )
                     })?
                     .parse::<u64>()
-                    .map_err(|_| Error::Infrastructure("invalid Tantivy serving id".into()))?;
+                    .map_err(|error| {
+                        Error::new(
+                            nous_core::ErrorOwner::Resource,
+                            nous_core::ErrorCode::InternalFailure,
+                            "invalid Tantivy serving id",
+                        )
+                        .with_source(error)
+                    })?;
                 let reference = document
                     .get_first(self.metadata)
                     .and_then(|value| value.as_str())

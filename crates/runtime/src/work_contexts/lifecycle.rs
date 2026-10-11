@@ -82,7 +82,15 @@ impl CognitiveRuntimeService {
         )?;
         let mut tx = self.store.begin().await?;
         lock_operation(&mut tx, subject, operation_id).await?;
-        if let Some(existing) = check_receipt(&mut tx, subject, operation_id, kind, &digest).await?
+        if let Some(existing) = check_receipt(
+            &mut tx,
+            subject,
+            operation_id,
+            kind,
+            &digest,
+            nous_core::ErrorOwner::Runtime,
+        )
+        .await?
         {
             tx.commit().await.map_err(db)?;
             return self.work_context(subject, replay_context(existing)?).await;
@@ -95,12 +103,13 @@ impl CognitiveRuntimeService {
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?
-        .ok_or_else(|| Error::NotFound("WorkContext not found".into()))?;
+        .ok_or_else(|| Error::new(nous_core::ErrorOwner::Runtime, nous_core::ErrorCode::NotFound, "WorkContext not found"))?;
         let state: String = row.try_get("state").map_err(db)?;
         let revision: i64 = row.try_get("revision").map_err(db)?;
         if revision != expected_revision {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::StaleRevision,
                 "WorkContext revision is stale",
             )
             .with_context("work_context_id", work_context_id)
@@ -113,23 +122,31 @@ impl CognitiveRuntimeService {
             WorkContextTransition::Resume if state == "paused" => "open",
             WorkContextTransition::End if matches!(state.as_str(), "open" | "paused") => "ended",
             WorkContextTransition::Pause if state == "paused" => {
-                return Err(Error::FailedPrecondition(
-                    "WorkContext is already paused".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "WorkContext is already paused",
                 ));
             }
             WorkContextTransition::Resume if state == "ended" => {
-                return Err(Error::FailedPrecondition(
-                    "ended WorkContext cannot resume".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "ended WorkContext cannot resume",
                 ));
             }
             WorkContextTransition::End if state == "ended" => {
-                return Err(Error::FailedPrecondition(
-                    "WorkContext is already ended".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "WorkContext is already ended",
                 ));
             }
             _ => {
-                return Err(Error::FailedPrecondition(
-                    "invalid WorkContext transition".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "invalid WorkContext transition",
                 ));
             }
         };
@@ -212,13 +229,16 @@ impl CognitiveRuntimeService {
             operation_id,
             "set_active_work_context",
             &digest,
+            nous_core::ErrorOwner::Runtime,
         )
         .await?
         {
             tx.commit().await.map_err(db)?;
             if existing.state != "committed" {
-                return Err(Error::Unavailable(
-                    "foreground WorkContext operation is already in progress".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::Unavailable,
+                    "foreground WorkContext operation is already in progress",
                 ));
             }
             return self.session(subject, session).await;
@@ -238,8 +258,9 @@ impl CognitiveRuntimeService {
             return Err(crate::sessions::stale_session(session));
         }
         if current != expected_runtime_revision {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::StaleRevision,
                 "Expected runtime revision is stale",
             )
             .with_context("session_id", session.0)
@@ -256,10 +277,12 @@ impl CognitiveRuntimeService {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db)?
-            .ok_or_else(|| Error::NotFound("WorkContext not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Runtime, nous_core::ErrorCode::NotFound, "WorkContext not found"))?;
             if context.try_get::<String, _>("state").map_err(db)? != "open" {
-                return Err(Error::FailedPrecondition(
-                    "only an open WorkContext can be foreground".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::FailedPrecondition,
+                    "only an open WorkContext can be foreground",
                 ));
             }
         }

@@ -11,10 +11,13 @@ pub(super) async fn select(
     family: EvidenceFamily,
     limit: usize,
 ) -> Result<Vec<CognitiveRef>> {
-    let view = bound
-        .historical_authority
-        .as_deref()
-        .ok_or_else(|| Error::Invalid("historical view required".into()))?;
+    let view = bound.historical_authority.as_deref().ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "historical view required",
+        )
+    })?;
     let references: Vec<_> = view
         .cognition
         .iter()
@@ -73,7 +76,13 @@ pub(super) async fn select(
                 .push_bind(roots).push("::uuid[]) AND l.link_id=ANY(").push_bind(view.schema_evidence_links.clone()).push("::uuid[]) AND l.role='support' AND l.epistemic_relation NOT IN ('contradicts','weakens','corrects','counterexample') AND l.basis_kind=c.kind AND l.basis_ref=c.id::text))");
         }
         EvidenceFamily::Temporal => (),
-        _ => return Err(Error::Invalid("not an owner-direct family".into())),
+        _ => {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "not an owner-direct family",
+            ));
+        }
     }
     for (columns, predicate) in [
         (

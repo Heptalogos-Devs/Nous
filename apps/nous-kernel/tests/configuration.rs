@@ -20,7 +20,7 @@ async fn missing_serving_cache_rebuilds_without_changing_authority() {
     let subject = runtime
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -91,7 +91,7 @@ async fn configuration_precedence_permissions_and_restart_state_are_explicit() {
     let subject = runtime
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -182,7 +182,7 @@ async fn configuration_receipts_freeze_subject_scope_and_replay_outcomes() {
     let subject = runtime
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -236,7 +236,10 @@ async fn configuration_receipts_freeze_subject_scope_and_replay_outcomes() {
         service
             .set_subject_override(first_id, subject, EPSILON.path(), json!(0.1), None)
             .await,
-        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::OperationIdConflict
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::OperationIdConflict,
+            ..
+        })
     ));
 }
 
@@ -271,14 +274,10 @@ async fn concurrent_configuration_mutations_publish_one_complete_snapshot() {
         service.set_system_override(second_id, EPSILON.path(), json!(0.13), Some(revision))
     );
     let (winner_id, winner_value, winner) = match (first, second) {
-        (Ok(outcome), Err(nous_core::Error::Domain(error)))
-            if error.code == nous_core::DomainErrorCode::StaleRevision =>
-        {
+        (Ok(outcome), Err(error)) if error.code == nous_core::ErrorCode::StaleRevision => {
             (first_id, 0.12, outcome)
         }
-        (Err(nous_core::Error::Domain(error)), Ok(outcome))
-            if error.code == nous_core::DomainErrorCode::StaleRevision =>
-        {
+        (Err(error), Ok(outcome)) if error.code == nous_core::ErrorCode::StaleRevision => {
             (second_id, 0.13, outcome)
         }
         outcomes => panic!("one revision must admit exactly one writer: {outcomes:?}"),
@@ -296,7 +295,10 @@ async fn concurrent_configuration_mutations_publish_one_complete_snapshot() {
         service
             .clear_system_override(OperationId::new(), EPSILON.path(), Some(revision))
             .await,
-        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::StaleRevision
+        Err(nous_core::Error {
+            code: nous_core::ErrorCode::StaleRevision,
+            ..
+        })
     ));
     let later = service
         .set_system_override(
@@ -331,7 +333,7 @@ async fn rebuild_policy_and_provisioning_defaults_preserve_adopted_subject_state
     let (root, url, _postgres) = database().await;
     let runtime = test_support::open_runtime_with_serving(&url, &root, false, false, true).await;
     let create = || CreateSubject {
-        subject_id: None,
+        subject_id: nous_core::SubjectId::default(),
         operation_id: OperationId::new(),
         cognitive_seed: CognitiveSeedInput {
             text: "schema_version = 1".into(),
@@ -389,6 +391,20 @@ async fn rebuild_policy_and_provisioning_defaults_preserve_adopted_subject_state
         stale.config_digest.as_deref(),
         Some(stale.desired_config_digest.as_str())
     );
+    let config_request = || {
+        tonic::Request::new(nous_protocol::public::GetConfigurationRequest {
+            subject_id: Some(old.subject_id.0.to_string()),
+            paths: vec!["topology.wave.outbound_budget".into()],
+            ..Default::default()
+        })
+    };
+    let pending = nous_protocol::public::configuration_service_server::ConfigurationService::get_configuration(
+        &service, config_request(),
+    ).await.unwrap().into_inner();
+    assert_eq!(
+        pending.entries[0].pending_effect.as_deref(),
+        Some("serving_rebuild_required")
+    );
     let rebuild = runtime.serving.refresh(old.subject_id).await.unwrap();
     assert!(rebuild.rebuilt.contains(&"topology".into()));
     let after = runtime
@@ -418,6 +434,10 @@ async fn rebuild_policy_and_provisioning_defaults_preserve_adopted_subject_state
         ready.config_digest.as_deref(),
         Some(ready.desired_config_digest.as_str())
     );
+    let applied = nous_protocol::public::configuration_service_server::ConfigurationService::get_configuration(
+        &service, config_request(),
+    ).await.unwrap().into_inner();
+    assert!(applied.entries[0].pending_effect.is_none());
     let provision = runtime
         .configuration
         .set_system_override(

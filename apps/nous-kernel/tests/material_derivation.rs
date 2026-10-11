@@ -7,10 +7,60 @@ mod test_support;
 use chrono::Utc;
 use nous_core::{
     CapabilityOperation, CognitiveRef, DerivedRepresentationId, ProducerSignature,
-    RepresentationKind,
+    RepresentationKind, SubjectId,
 };
 use nous_material::{DerivationInput, DerivedRepresentation};
 use nous_subject::{CognitiveSeedInput, CreateSubject};
+
+async fn assert_representation_exposes_gettable_producer(
+    runtime: &nous_kernel::NousRuntime,
+    subject: SubjectId,
+    representation_id: DerivedRepresentationId,
+) {
+    use nous_protocol::nous::wave::v1alpha1 as p;
+    use p::material_service_server::MaterialService;
+
+    let producer_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT producer_signature_id FROM derived_representations WHERE derived_representation_id=$1",
+    )
+    .bind(representation_id.0)
+    .fetch_one(runtime.store.pool())
+    .await
+    .unwrap();
+    let producer_id = producer_id.to_string();
+    let service = nous_kernel::transport::KernelService(runtime.clone());
+    let representations = service
+        .list_derived_representations(tonic::Request::new(p::RepresentationListRequest {
+            subject_id: subject.0.to_string(),
+            source_region_id: None,
+            artifact_id: None,
+            kind: None,
+            limit: 20,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let representation = representations
+        .items
+        .into_iter()
+        .find(|value| value.representation_id == representation_id.0.to_string())
+        .unwrap();
+    assert_eq!(
+        representation.producer_signature_id.as_deref(),
+        Some(producer_id.as_str())
+    );
+    let producer = service
+        .get_producer(tonic::Request::new(p::ObjectRequest {
+            subject_id: subject.0.to_string(),
+            id: producer_id,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let producer_hash = representation.producer.unwrap().signature_hash;
+    assert_eq!(representation.producer_signature, producer_hash);
+    assert_eq!(producer.signature_hash, producer_hash);
+}
 
 #[tokio::test]
 #[expect(
@@ -23,7 +73,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     let subject = runtime
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: nous_core::OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -126,6 +176,12 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
         ))
         .await
         .unwrap();
+    assert_representation_exposes_gettable_producer(
+        &runtime,
+        subject,
+        description.derived_representation_id,
+    )
+    .await;
     assert_ne!(
         description.producer.signature_hash,
         "untrusted supplied hash"

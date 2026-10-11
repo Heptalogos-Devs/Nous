@@ -144,7 +144,11 @@ pub fn reference_sense(
             .iter()
             .any(|(a, b, w)| !ids.contains(a) || !ids.contains(b) || !w.is_finite() || *w < 0.0)
     {
-        return Err(Error::Invalid("invalid reference Sense graph".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InvalidRequest,
+            "invalid reference Sense graph",
+        ));
     }
     let mut rows = BTreeMap::<i64, Vec<(i64, f64)>>::new();
     for (from, to, weight) in &graph.edges {

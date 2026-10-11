@@ -56,9 +56,14 @@ impl StoredEmbeddingProvider {
 pub fn validate_embedding_config(config: &StoredEmbeddingConfig) -> Result<()> {
     let mut space = config.space.clone();
     space.space_hash.clear();
-    let expected = blake3::hash(
-        &serde_json::to_vec(&space).map_err(|error| Error::Invalid(error.to_string()))?,
-    )
+    let expected = blake3::hash(&serde_json::to_vec(&space).map_err(|error| {
+        Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
+        )
+        .with_source(error)
+    })?)
     .to_hex()
     .to_string();
     if config.space.space_hash != expected
@@ -67,8 +72,10 @@ pub fn validate_embedding_config(config: &StoredEmbeddingConfig) -> Result<()> {
         || config.producers.is_empty()
         || config.producers.len() > 4
     {
-        return Err(Error::Invalid(
-            "invalid canonical embedding configuration".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::InvalidRequest,
+            "Invalid request",
         ));
     }
     let mut hashes = std::collections::HashSet::new();
@@ -78,8 +85,10 @@ pub fn validate_embedding_config(config: &StoredEmbeddingConfig) -> Result<()> {
             || producer.operation != CapabilityOperation::TextEmbedding
             || !hashes.insert(&producer.signature_hash)
         {
-            return Err(Error::Invalid(
-                "invalid canonical embedding producer".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
     }
@@ -117,8 +126,10 @@ impl TextEmbeddingProvider for StoredEmbeddingProvider {
                 }
             }
         }
-        Err(Error::Unavailable(
-            "Host did not supply compatible embedding material".into(),
+        Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::Unavailable,
+            "Service unavailable",
         ))
     }
 }

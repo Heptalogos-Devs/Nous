@@ -41,8 +41,10 @@ impl ManualCognitiveClock {
             .unwrap_or_else(|error| error.into_inner());
         let current = subjects.entry(subject).or_insert(self.initial);
         if instant < *current {
-            return Err(Error::Invalid(
-                "CognitiveClock cannot move backwards".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "CognitiveClock cannot move backwards",
             ));
         }
         *current = instant;
@@ -56,12 +58,18 @@ impl ManualCognitiveClock {
             .unwrap_or_else(|error| error.into_inner());
         let current = subjects.entry(subject).or_insert(self.initial);
         if duration < Duration::zero() {
-            return Err(Error::Invalid(
-                "CognitiveClock cannot move backwards".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "CognitiveClock cannot move backwards",
             ));
         }
         *current = current.checked_add_signed(duration).ok_or_else(|| {
-            Error::Invalid("CognitiveClock advance exceeds timestamp range".into())
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "CognitiveClock advance exceeds timestamp range",
+            )
         })?;
         Ok(())
     }

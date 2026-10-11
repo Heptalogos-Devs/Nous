@@ -31,7 +31,13 @@ impl CognitiveRuntimeService {
                 .fetch_optional(&mut *connection)
                 .await
                 .map_err(db)?
-                .ok_or_else(|| Error::NotFound("WorkContext not found".into()))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::NotFound,
+                        "WorkContext not found",
+                    )
+                })?;
         self.work_context_from_row(row, connection).await
     }
 
@@ -106,8 +112,10 @@ impl CognitiveRuntimeService {
                 CognitiveRef::Entity(entity) => entity_anchors.push(entity),
                 CognitiveRef::Tag(tag) => tag_anchors.push(tag),
                 _ => {
-                    return Err(Error::Infrastructure(
-                        "invalid typed WorkContext anchor".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InternalFailure,
+                        "invalid typed WorkContext anchor",
                     ));
                 }
             }

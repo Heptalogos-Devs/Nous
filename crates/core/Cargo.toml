@@ -6,6 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+# cargo-shear does not follow these cfg(test) #[path] module declarations.
+[package.metadata.cargo-shear]
+ignored-paths = ["tests/unit/query_projection.rs"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

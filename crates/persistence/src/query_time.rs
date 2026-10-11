@@ -138,5 +138,11 @@ fn ceil_micro(at: DateTime<Utc>) -> Result<DateTime<Utc>> {
     }
     floor
         .checked_add_signed(chrono::Duration::microseconds(1))
-        .ok_or_else(|| Error::Invalid("time exceeds database range".into()))
+        .ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "time exceeds database range",
+            )
+        })
 }

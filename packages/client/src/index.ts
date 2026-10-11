@@ -3,9 +3,8 @@
 
 import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
-import { protocolData as plain, type Data } from "./data.js";
 import { NousError } from "./errors.js";
-export { NousError, DomainErrorCode, ErrorRecovery } from "./errors.js";
+export { NousError, ErrorCode, ErrorOwner, ErrorRecovery } from "./errors.js";
 import {
   executionOpportunitySchema,
   executionEnvelope,
@@ -68,18 +67,16 @@ function call<I, O>(
   defaultTimeout?:
     number | ((input: I, options?: RequestOptions) => number | Promise<number>),
 ) {
-  return async (input: I, options?: RequestOptions): Promise<Data<O>> => {
+  return async (input: I, options?: RequestOptions): Promise<O> => {
     try {
       const timeoutMs =
         options?.timeoutMs ??
         (typeof defaultTimeout === "function"
           ? await defaultTimeout(input, options)
           : defaultTimeout);
-      return plain(
-        await method(
-          input,
-          timeoutMs === undefined ? options : { ...options, timeoutMs },
-        ),
+      return await method(
+        input,
+        timeoutMs === undefined ? options : { ...options, timeoutMs },
       );
     } catch (error) {
       if (error instanceof ConnectError) throw new NousError(error);
@@ -222,6 +219,7 @@ export function createNousClient(transport: Transport) {
       status: call(system.getStatus),
       capabilities: call(system.getCapabilities),
       projections: call(system.getProjectionStatus),
+      operationStatus: call(system.getOperationStatus),
     },
     subjects: {
       create: call(subjects.createSubject),

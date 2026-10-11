@@ -18,7 +18,7 @@ impl MemoryService {
     ) -> Result<SchemaView> {
         let schema_id: Uuid = sqlx::query_scalar("SELECT r.schema_id FROM cognitive_schema_revisions r JOIN cognitive_schemas s ON s.schema_id=r.schema_id WHERE s.subject_id=$1 AND r.schema_revision_id=$2")
             .bind(subject.0).bind(revision.0).fetch_optional(self.store.pool()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("CognitiveSchema revision not found".into()))?;
+            .ok_or_else(|| Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "CognitiveSchema revision not found"))?;
         self.schema_at(subject, CognitiveSchemaId(schema_id), Some(revision))
             .await
     }
@@ -29,7 +29,7 @@ impl MemoryService {
         revision: Option<CognitiveSchemaRevisionId>,
     ) -> Result<SchemaView> {
         let row = sqlx::query("SELECT s.schema_id,s.subject_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.purge_state,s.created_at,r.schema_revision_id,r.schema_id AS revision_schema_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.structural_claim,r.applicability_description,r.aboutness,r.tags,r.boundary_definition,r.formation_kind,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id AND r.schema_revision_id=COALESCE($3,s.current_revision_id) WHERE s.subject_id=$1 AND s.schema_id=$2")
-            .bind(subject.0).bind(schema_id.0).bind(revision.map(|id| id.0)).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(||Error::NotFound("CognitiveSchema not found".into()))?;
+            .bind(subject.0).bind(schema_id.0).bind(revision.map(|id| id.0)).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(||Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::NotFound, "CognitiveSchema not found"))?;
         let revision_id = CognitiveSchemaRevisionId(row.try_get("schema_revision_id").map_err(db)?);
         let revision = CognitiveSchemaRevision {
             schema_revision_id: revision_id,
@@ -147,8 +147,10 @@ impl MemoryService {
                             }
                             (None, None, None) => EvidenceLocator::WholeOccurrence,
                             _ => {
-                                return Err(Error::Infrastructure(
-                                    "schema evidence locator is invalid".into(),
+                                return Err(Error::new(
+                                    nous_core::ErrorOwner::Memory,
+                                    nous_core::ErrorCode::InternalFailure,
+                                    "schema evidence locator is invalid",
                                 ));
                             }
                         },

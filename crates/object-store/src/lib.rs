@@ -24,17 +24,38 @@ impl ObjectStore {
                 .create(true)
                 .truncate(false)
                 .open(path)
-                .map_err(|e| Error::Infrastructure(e.to_string()))?;
+                .map_err(|e| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(e)
+                })?;
             if exclusive {
                 file.lock()
             } else {
                 file.lock_shared()
             }
-            .map_err(|e| Error::Infrastructure(e.to_string()))?;
+            .map_err(|e| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(e)
+            })?;
             Ok(file)
         })
         .await
-        .map_err(|e| Error::Infrastructure(e.to_string()))?
+        .map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })?
     }
 
     pub async fn hashes(&self) -> Result<impl futures::Stream<Item = Result<String>> + use<>> {
@@ -61,12 +82,22 @@ impl ObjectStore {
     }
 
     pub async fn open(root: &str) -> Result<Self> {
-        tokio::fs::create_dir_all(root)
-            .await
-            .map_err(|e| Error::Infrastructure(e.to_string()))?;
-        let root = tokio::fs::canonicalize(root)
-            .await
-            .map_err(|e| Error::Infrastructure(e.to_string()))?;
+        tokio::fs::create_dir_all(root).await.map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })?;
+        let root = tokio::fs::canonicalize(root).await.map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })?;
         let operator =
             Operator::new(Fs::default().root(&root.to_string_lossy())).map_err(storage_error)?;
         Ok(Self { operator, root })
@@ -78,7 +109,11 @@ impl ObjectStore {
                 .bytes()
                 .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
         {
-            return Err(Error::Invalid("invalid BLAKE3 digest".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid BLAKE3 digest",
+            ));
         }
         Ok(format!("{}/{}", &hash[..2], hash))
     }
@@ -100,12 +135,21 @@ impl ObjectStore {
         S: Stream<Item = Result<Vec<u8>>>,
     {
         if max_bytes == 0 {
-            return Err(Error::Invalid("upload byte limit must be positive".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "upload byte limit must be positive",
+            ));
         }
         let staging = self.root.join(format!(".staging-{}", uuid::Uuid::now_v7()));
-        let mut file = tokio::fs::File::create(&staging)
-            .await
-            .map_err(|e| Error::Infrastructure(e.to_string()))?;
+        let mut file = tokio::fs::File::create(&staging).await.map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })?;
         let mut hasher = blake3::Hasher::new();
         let mut size = 0_u64;
         futures::pin_mut!(chunks);
@@ -117,26 +161,48 @@ impl ObjectStore {
                     return Err(error);
                 }
             };
-            let chunk_len = u64::try_from(chunk.len())
-                .map_err(|_| Error::Invalid("upload chunk is too large".into()))?;
-            size = size
-                .checked_add(chunk_len)
-                .ok_or_else(|| Error::Invalid("upload is too large".into()))?;
+            let chunk_len = u64::try_from(chunk.len()).map_err(|error| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "upload chunk is too large",
+                )
+                .with_source(error)
+            })?;
+            size = size.checked_add(chunk_len).ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "upload is too large",
+                )
+            })?;
             if size > max_bytes {
                 let _ = tokio::fs::remove_file(&staging).await;
-                return Err(Error::Invalid(
-                    "upload exceeds configured byte limit".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
             hasher.update(&chunk);
             if let Err(error) = file.write_all(&chunk).await {
                 let _ = tokio::fs::remove_file(&staging).await;
-                return Err(Error::Infrastructure(error.to_string()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error));
             }
         }
         if let Err(error) = file.flush().await {
             let _ = tokio::fs::remove_file(&staging).await;
-            return Err(Error::Infrastructure(error.to_string()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(error));
         }
         drop(file);
 
@@ -144,24 +210,44 @@ impl ObjectStore {
         let key = Self::key(&hash)?;
         let target = self.root.join(&key);
         if let Some(parent) = target.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| Error::Infrastructure(e.to_string()))?;
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(e)
+            })?;
         }
         match tokio::fs::metadata(&target).await {
             Ok(_) => {
-                tokio::fs::remove_file(&staging)
-                    .await
-                    .map_err(|e| Error::Infrastructure(e.to_string()))?;
+                tokio::fs::remove_file(&staging).await.map_err(|e| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(e)
+                })?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                tokio::fs::rename(&staging, &target)
-                    .await
-                    .map_err(|e| Error::Infrastructure(e.to_string()))?;
+                tokio::fs::rename(&staging, &target).await.map_err(|e| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(e)
+                })?;
             }
             Err(error) => {
                 let _ = tokio::fs::remove_file(&staging).await;
-                return Err(Error::Infrastructure(error.to_string()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(error));
             }
         }
         Ok((hash, size))
@@ -175,8 +261,10 @@ impl ObjectStore {
             .map_err(storage_error)?
             .to_vec();
         if blake3::hash(&bytes).to_hex().as_str() != hash {
-            return Err(Error::Infrastructure(
-                "artifact content hash mismatch".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
             ));
         }
         Ok(bytes)
@@ -184,7 +272,11 @@ impl ObjectStore {
 
     pub async fn read_range(&self, hash: &str, start: u64, end: u64) -> Result<Vec<u8>> {
         if end < start {
-            return Err(Error::Invalid("invalid byte range".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid byte range",
+            ));
         }
         if start == end {
             return Ok(Vec::new());
@@ -208,8 +300,14 @@ impl ObjectStore {
         let text = match std::str::from_utf8(&bytes) {
             Ok(text) => text,
             Err(error) if byte_length > limit && error.error_len().is_none() => {
-                std::str::from_utf8(&bytes[..error.valid_up_to()])
-                    .map_err(|error| Error::Invalid(error.to_string()))?
+                std::str::from_utf8(&bytes[..error.valid_up_to()]).map_err(|error| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Invalid request",
+                    )
+                    .with_source(error)
+                })?
             }
             Err(_) => return Ok(None),
         };
@@ -223,20 +321,33 @@ impl ObjectStore {
     ) -> Result<impl Stream<Item = Result<Vec<u8>>> + Send + use<>> {
         let file = tokio::fs::File::open(self.root.join(Self::key(hash)?))
             .await
-            .map_err(|e| Error::Infrastructure(e.to_string()))?;
+            .map_err(|e| {
+                Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InternalFailure,
+                    "Operation failed",
+                )
+                .with_source(e)
+            })?;
         let expected = hash.to_owned();
         Ok(futures::stream::try_unfold(
             (file, blake3::Hasher::new(), expected),
             |(mut file, mut hasher, expected)| async move {
                 let mut chunk = vec![0; 1024 * 1024];
-                let size = file
-                    .read(&mut chunk)
-                    .await
-                    .map_err(|e| Error::Infrastructure(e.to_string()))?;
+                let size = file.read(&mut chunk).await.map_err(|e| {
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(e)
+                })?;
                 if size == 0 {
                     if hasher.finalize().to_hex().as_str() != expected {
-                        return Err(Error::Infrastructure(
-                            "artifact content hash mismatch".into(),
+                        return Err(Error::new(
+                            nous_core::ErrorOwner::Resource,
+                            nous_core::ErrorCode::InternalFailure,
+                            "Operation failed",
                         ));
                     }
                     return Ok(None);
@@ -262,5 +373,10 @@ impl ObjectStore {
 }
 
 fn storage_error(error: opendal::Error) -> Error {
-    Error::Infrastructure(error.to_string())
+    Error::new(
+        nous_core::ErrorOwner::Resource,
+        nous_core::ErrorCode::InternalFailure,
+        "Operation failed",
+    )
+    .with_source(error)
 }

@@ -73,8 +73,10 @@ impl MemoryService {
                 (None, None, Some(value)) => EvidenceLocator::DerivedRegion(DerivedRegionId(value)),
                 (None, None, None) => EvidenceLocator::WholeOccurrence,
                 _ => {
-                    return Err(Error::Infrastructure(
-                        "evidence locator union is invalid".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InternalFailure,
+                        "evidence locator union is invalid",
                     ));
                 }
             };

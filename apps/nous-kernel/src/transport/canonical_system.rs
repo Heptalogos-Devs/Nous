@@ -7,6 +7,7 @@ rpc_service! {
     p::system_service_server::SystemService {
         forward {
             get_projection_status(p::SubjectRequest) -> p::ProjectionStatus;
+            get_operation_status(p::GetOperationStatusRequest) -> p::GetOperationStatusResponse;
         }
         custom {
             async fn get_status(

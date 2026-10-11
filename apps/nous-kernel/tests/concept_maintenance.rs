@@ -82,7 +82,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
     let subject = rt
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),

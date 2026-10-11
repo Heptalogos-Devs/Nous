@@ -50,7 +50,8 @@ pub(crate) fn topology_lane(
         return Ok(output);
     }
     output.generation_ref = Some(graph.generation_id);
-    let seeds = prepared_source_seeds(graph, bound, signals);
+    let readout = crate::resolve_wave_readout_policy(&bound.config_snapshot)?;
+    let seeds = prepared_source_seeds(graph, bound, signals, &readout);
     let observation = QueryObservation::native(graph, bound, plan, seeds)?;
     let river = observation.river();
     output.topology_work = Some(TopologyWorkSummary {
@@ -135,8 +136,9 @@ fn prepared_source_seeds(
     graph: &crate::WaveGraphGeneration,
     bound: &BoundQuery,
     signals: &crate::PreparedQuerySignals,
+    readout: &crate::WaveReadoutPolicy,
 ) -> Vec<SourceSeed> {
-    let mut seeds = source_seeds(graph, bound);
+    let mut seeds = source_seeds(graph, bound, readout);
     // Closed graph anchors lead associative queries. When none maps into the
     // graph, use the already-prepared retrieval signals as weak source cues.
     if seeds.is_empty() {
@@ -145,22 +147,20 @@ fn prepared_source_seeds(
             (signals.dense(), "dense_promoted"),
         ] {
             if let Some(lane) = lane {
-                seeds.extend(promoted_seeds(graph, lane, family));
+                seeds.extend(promoted_seeds(graph, lane, family, readout));
             }
         }
     }
     seeds
 }
 
-fn source_seeds(graph: &crate::WaveGraphGeneration, bound: &BoundQuery) -> Vec<SourceSeed> {
-    let seed_weight = |name: &str, default: f64| {
-        graph
-            .config
-            .seed_weights
-            .get(name)
-            .copied()
-            .unwrap_or(default)
-    };
+fn source_seeds(
+    graph: &crate::WaveGraphGeneration,
+    bound: &BoundQuery,
+    readout: &crate::WaveReadoutPolicy,
+) -> Vec<SourceSeed> {
+    let seed_weight =
+        |name: &str, default: f64| readout.seed_weights.get(name).copied().unwrap_or(default);
     let mut seeds = Vec::new();
     for seed in &bound.activation.seeds {
         if let Some(node) = graph.node_id(&seed.reference) {
@@ -197,16 +197,12 @@ fn promoted_seeds(
     graph: &crate::WaveGraphGeneration,
     lane: &LaneOutput,
     family: &str,
+    readout: &crate::WaveReadoutPolicy,
 ) -> Vec<SourceSeed> {
     if !matches!(lane.status, LaneStatus::Ready | LaneStatus::Truncated) {
         return Vec::new();
     }
-    let weight = graph
-        .config
-        .seed_weights
-        .get(family)
-        .copied()
-        .unwrap_or(0.6);
+    let weight = readout.seed_weights.get(family).copied().unwrap_or(0.6);
     let mut seen = std::collections::BTreeSet::new();
     lane.candidates
         .iter()
@@ -223,22 +219,22 @@ fn promoted_seeds(
                 hop_zero: true,
             })
         })
-        .take(4.min(graph.config.max_neighbors_per_node))
+        .take(4.min(graph.build_policy.max_neighbors_per_node))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{WaveConfig, WaveGraphGeneration, WaveNode, WaveNodeKind};
+    use crate::{WaveBuildPolicy, WaveGraphGeneration, WaveNode, WaveNodeKind, WaveReadoutPolicy};
     use nous_core::{CognitiveRef, MemoryRevisionId};
     #[test]
     fn promotion_uses_only_bounded_current_graph_signals_and_configured_weight() {
         let references = (0..8)
             .map(|_| CognitiveRef::MemoryRevision(MemoryRevisionId::new()))
             .collect::<Vec<_>>();
-        let mut config = WaveConfig::default();
-        config.seed_weights.insert("lexical_promoted".into(), 0.4);
+        let mut readout = WaveReadoutPolicy::default();
+        readout.seed_weights.insert("lexical_promoted".into(), 0.4);
         let graph = WaveGraphGeneration::build(
             references
                 .iter()
@@ -253,7 +249,7 @@ mod tests {
                 })
                 .collect(),
             &[],
-            config,
+            WaveBuildPolicy::default(),
         )
         .unwrap();
         let mut lane = LaneOutput::empty(EvidenceFamily::Lexical, LaneStatus::Ready);
@@ -276,11 +272,11 @@ mod tests {
                 provider_metadata: serde_json::Value::Null,
             },
         );
-        let seeds = promoted_seeds(&graph, &lane, "lexical_promoted");
+        let seeds = promoted_seeds(&graph, &lane, "lexical_promoted", &readout);
         assert_eq!(seeds.len(), 4);
         assert_eq!(seeds[0].weight, 0.4);
         assert_eq!(seeds[1].weight, 0.2);
         lane.status = LaneStatus::Unavailable;
-        assert!(promoted_seeds(&graph, &lane, "lexical_promoted").is_empty());
+        assert!(promoted_seeds(&graph, &lane, "lexical_promoted", &readout).is_empty());
     }
 }

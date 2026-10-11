@@ -28,13 +28,19 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 if receipt.state != "committed" {
-                    return Err(Error::Unavailable("Journal commit is in progress".into()));
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::Unavailable,
+                        "Journal commit is in progress",
+                    ));
                 }
-                let revision = JournalRevisionId(
-                    receipt
-                        .result_revision
-                        .ok_or_else(|| Error::NotFound("Journal result was purged".into()))?,
-                );
+                let revision = JournalRevisionId(receipt.result_revision.ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::NotFound,
+                        "Journal result was purged",
+                    )
+                })?);
                 return self.journal_revision(input.subject, revision).await;
             }
             MutationStart::Active(mutation) => mutation,
@@ -221,13 +227,19 @@ fn validate_journal(input: &JournalInput) -> Result<()> {
             !["revalidate", "reinterpret", "reframe"].contains(&target.intent.as_str())
         })
     {
-        return Err(Error::Invalid(
-            "Journal scope or content is out of bounds".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "Journal scope or content is out of bounds",
         ));
     }
     for point in &input.points {
         if point.text.trim().is_empty() || point.text.len() > 8192 || point.basis.len() > 16 {
-            return Err(Error::Invalid("Journal point is out of bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "Journal point is out of bounds",
+            ));
         }
         validate_exact_basis(&point.basis)?;
     }
@@ -245,8 +257,9 @@ async fn fence_source_snapshot_in(
             .await
             .map_err(db)?;
     if watermark != input.expected_authority_seq {
-        return Err(nous_core::DomainError::new(
-            nous_core::DomainErrorCode::StaleRevision,
+        return Err(nous_core::Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::StaleRevision,
             "Journal input snapshot is stale",
         )
         .with_context("expected_authority_seq", input.expected_authority_seq)
@@ -265,13 +278,14 @@ async fn journal_target_in(
     };
     let row = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.purge_state,r.revision_no FROM journal_objects o JOIN journal_revisions r ON r.journal_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.journal_id=$2 FOR UPDATE OF o")
         .bind(input.subject.0).bind(target.journal_id.0).fetch_optional(&mut **tx).await.map_err(db)?
-        .ok_or_else(|| nous_core::DomainError::new(nous_core::DomainErrorCode::StaleRevision, "Journal target disappeared"))?;
+        .ok_or_else(|| nous_core::Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::StaleRevision,  "Journal target disappeared"))?;
     if row.get::<Uuid, _>("current_revision_id") != target.expected_revision.0
         || row.get::<i64, _>("object_epoch") != target.expected_epoch
         || row.get::<String, _>("purge_state") != "normal"
     {
-        return Err(nous_core::DomainError::new(
-            nous_core::DomainErrorCode::StaleRevision,
+        return Err(nous_core::Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::StaleRevision,
             "Journal target revision or lifecycle is stale",
         )
         .into());
@@ -297,8 +311,10 @@ async fn validate_journal_scope_in(
     let connected: i64 = sqlx::query_scalar("WITH RECURSIVE old_scope AS (SELECT r.episode_revision_id,r.episode_id FROM journal_revision_sources s JOIN episode_revisions r ON r.episode_revision_id::text=s.ref_value WHERE s.journal_revision_id=$1 AND s.ref_kind='episode_revision'), ancestry(origin,revision) AS (SELECT id,id FROM unnest($2::uuid[]) id UNION SELECT a.origin,e.ancestor FROM ancestry a JOIN LATERAL (SELECT parent_revision_id AS ancestor FROM episode_revisions WHERE episode_revision_id=a.revision AND parent_revision_id IS NOT NULL UNION SELECT to_revision_id FROM episode_revision_relations WHERE from_revision_id=a.revision AND relation IN ('derived_from','split_from','merged_from')) e ON true) SELECT COUNT(DISTINCT a.origin) FROM ancestry a JOIN episode_revisions r ON r.episode_revision_id=a.revision JOIN old_scope o ON o.episode_revision_id=a.revision OR o.episode_id=r.episode_id")
         .bind(target.expected_revision.0).bind(&current).fetch_one(&mut **tx).await.map_err(db)?;
     if connected != current.len() as i64 {
-        return Err(Error::Invalid(
-            "Journal revision sources describe a different narrative scope".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "Journal revision sources describe a different narrative scope",
         ));
     }
     Ok(())
@@ -316,8 +332,9 @@ async fn validate_sources_in(
     let rows = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,r.episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR SHARE OF o")
         .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
     if rows.len() != ids.len() {
-        return Err(nous_core::DomainError::new(
-            nous_core::DomainErrorCode::StaleRevision,
+        return Err(nous_core::Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::StaleRevision,
             "Journal source disappeared",
         )
         .into());
@@ -330,7 +347,13 @@ async fn validate_sources_in(
             .sources
             .iter()
             .find(|source| source.revision.0 == revision)
-            .ok_or_else(|| Error::Internal("unbound Journal source".into()))?;
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InternalFailure,
+                    "unbound Journal source",
+                )
+            })?;
         if row.get::<Uuid, _>("current_revision_id") != revision
             || row.get::<i64, _>("object_epoch") != expected.expected_epoch
             || row.get::<String, _>("acceptance_state") != "accepted"
@@ -338,8 +361,9 @@ async fn validate_sources_in(
             || row.get::<String, _>("suppression_state") != "normal"
             || row.get::<String, _>("purge_state") != "normal"
         {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::StaleRevision,
                 "Journal source state is stale",
             )
             .into());
@@ -410,8 +434,10 @@ async fn validate_source_catalog_in(
                         continue;
                     }
                     if !matches!(evidence.locator, EvidenceLocator::WholeOccurrence) {
-                        return Err(Error::Invalid(
-                            "Journal evidence locator is outside the source catalog".into(),
+                        return Err(Error::new(
+                            nous_core::ErrorOwner::Memory,
+                            nous_core::ErrorCode::InvalidRequest,
+                            "Journal evidence locator is outside the source catalog",
                         ));
                     }
                     CognitiveRef::Occurrence(evidence.occurrence_id).to_string()
@@ -420,14 +446,18 @@ async fn validate_source_catalog_in(
                     dependency.target_revision.to_string()
                 }
                 _ => {
-                    return Err(Error::Invalid(
-                        "Journal point support is outside the source catalog".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "Journal point support is outside the source catalog",
                     ));
                 }
             };
             if !allowed.contains(&key) {
-                return Err(Error::Invalid(
-                    "Journal point support is outside the source catalog".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Journal point support is outside the source catalog",
                 ));
             }
         }
@@ -487,7 +517,7 @@ async fn insert_journal_points(
             .bind(revision.0).bind(ordinal as i32).bind(point.role.as_str()).bind(&point.text).execute(&mut **tx).await.map_err(db)?;
         for (number, basis) in point.basis.iter().enumerate() {
             sqlx::query("INSERT INTO journal_point_basis(journal_revision_id,ordinal,basis_no,basis) VALUES($1,$2,$3,$4)")
-                .bind(revision.0).bind(ordinal as i32).bind(number as i32).bind(serde_json::to_value(basis).map_err(|error|Error::Invalid(error.to_string()))?).execute(&mut **tx).await.map_err(db)?;
+                .bind(revision.0).bind(ordinal as i32).bind(number as i32).bind(serde_json::to_value(basis).map_err(|error|Error::new(nous_core::ErrorOwner::Memory, nous_core::ErrorCode::InvalidRequest, "Invalid request").with_source(error))?).execute(&mut **tx).await.map_err(db)?;
         }
     }
     Ok(())
@@ -501,8 +531,10 @@ async fn journal_producer_in(
         return Ok(None);
     };
     if signature.operation != CapabilityOperation::JournalSynthesisText {
-        return Err(Error::Invalid(
-            "Journal requires a synthesis producer".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Memory,
+            nous_core::ErrorCode::InvalidRequest,
+            "Journal requires a synthesis producer",
         ));
     }
     AuthorityStore::register_producer_in(tx, signature)

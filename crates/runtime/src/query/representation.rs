@@ -38,7 +38,11 @@ pub(super) fn register(registry: &mut ConfigRegistryBuilder) -> Result<()> {
         ConfigSemanticEffect::QueryPolicy,
         |v| {
             if !(256..=32768).contains(&v.total_chars) || v.max_context_items > 64 {
-                return Err(Error::Invalid("invalid query representation bounds".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid query representation bounds",
+                ));
             }
             Ok(())
         },
@@ -57,7 +61,14 @@ pub struct QueryContextSnapshot {
 impl QueryContextSnapshot {
     pub(super) fn freeze(&mut self) -> Result<()> {
         self.digest.clear();
-        let bytes = serde_json::to_vec(self).map_err(|e| Error::Internal(e.to_string()))?;
+        let bytes = serde_json::to_vec(self).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InternalFailure,
+                "Operation failed",
+            )
+            .with_source(e)
+        })?;
         self.digest = Sha256::digest(bytes)
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -377,8 +388,10 @@ impl CognitiveRuntimeService {
         }
         let limits = config_snapshot.get(QUERY_REPRESENTATION)?;
         if intent(&query.expression).chars().count() + "Intent:\n".len() + 2 > limits.total_chars {
-            return Err(Error::Invalid(
-                "query intent exceeds configured representation bound".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let mut selected = representation_sources
@@ -500,8 +513,9 @@ impl CognitiveRuntimeService {
             None
         };
         if let Some(closed) = session.as_ref().filter(|s| s.closed_at.is_some()) {
-            return Err(DomainError::new(
-                DomainErrorCode::StaleContext,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::StaleContext,
                 "The query Session is closed",
             )
             .with_context("session_id", closed.session_id.0)
@@ -515,8 +529,9 @@ impl CognitiveRuntimeService {
         let context = if let Some(id) = context_id {
             let context = self.work_context_in(query.subject, id, &mut tx).await?;
             if context.state != WorkContextState::Open {
-                return Err(DomainError::new(
-                    DomainErrorCode::StaleContext,
+                return Err(nous_core::Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::StaleContext,
                     "The query WorkContext is no longer open",
                 )
                 .with_context("work_context_id", id)

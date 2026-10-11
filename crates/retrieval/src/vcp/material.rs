@@ -44,7 +44,11 @@ impl ServingService {
         serving: &ServingSnapshot,
     ) -> Result<VcpProjectionMaterial> {
         let provider = self.embedding().ok_or_else(|| {
-            Error::Unavailable("VCP serving build requires configured embedding material".into())
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::Unavailable,
+                "VCP serving build requires configured embedding material",
+            )
         })?;
         let space = provider.space();
         let producer = provider.producer();
@@ -72,8 +76,10 @@ impl ServingService {
                     id.parse()
                         .map(|id| CognitiveRef::Tag(TagId(id)))
                         .map_err(|_| {
-                            Error::Infrastructure(
-                                "cognitive projection contains an invalid Tag identity".into(),
+                            Error::new(
+                                nous_core::ErrorOwner::Resource,
+                                nous_core::ErrorCode::InternalFailure,
+                                "Operation failed",
                             )
                         })
                 })
@@ -87,7 +93,11 @@ impl ServingService {
                 )
                 .await?
                 .ok_or_else(|| {
-                    Error::Unavailable("VCP requires compatible shared concept material".into())
+                    Error::new(
+                        nous_core::ErrorOwner::Resource,
+                        nous_core::ErrorCode::Unavailable,
+                        "VCP requires compatible shared concept material",
+                    )
                 })?;
             let evidence_roots = input
                 .evidence_roots

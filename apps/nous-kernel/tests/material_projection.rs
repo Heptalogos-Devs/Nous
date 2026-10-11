@@ -290,7 +290,10 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
                 }
             )
             .await,
-        Err(Error::Invalid(_))
+        Err(Error {
+            code: nous_core::ErrorCode::InvalidRequest,
+            ..
+        })
     ));
     let mut cursor = None;
     let mut need = None;
@@ -304,7 +307,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         for candidate in page.needs {
             if let Some(index) = region_refs
                 .iter()
-                .position(|reference| reference == &candidate.reference)
+                .position(|reference| candidate.references.contains(reference))
             {
                 assert_eq!(candidate.text, expected[index]);
                 need.get_or_insert(candidate);
@@ -329,7 +332,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
     rt.serving
         .commit_embedding(
             subject,
-            first.reference.clone(),
+            first.references.clone(),
             first.text.clone(),
             &provider.space().space_hash,
             &provider.producer().signature_hash,
@@ -347,7 +350,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
     rt.serving
         .commit_embedding(
             subject,
-            need.reference.clone(),
+            need.references.clone(),
             need.text.clone(),
             &provider.space().space_hash,
             &provider.producer().signature_hash,
@@ -359,7 +362,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         rt.serving
             .commit_embedding(
                 subject,
-                need.reference,
+                need.references,
                 format!("{} changed", need.text),
                 &provider.space().space_hash,
                 &provider.producer().signature_hash,

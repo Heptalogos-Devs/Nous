@@ -16,7 +16,11 @@ impl AuthorityStore {
             &producer.config_digest,
         ] {
             if field.trim().is_empty() || field.len() > 4096 {
-                return Err(Error::Invalid("invalid producer signature fields".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid producer signature fields",
+                ));
             }
         }
         if producer
@@ -28,7 +32,11 @@ impl AuthorityStore {
                 .as_ref()
                 .is_some_and(|v| v.trim().is_empty() || v.len() > 512)
         {
-            return Err(Error::Invalid("invalid producer model identity".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid producer model identity",
+            ));
         }
         for value in [
             &producer.model_role,
@@ -40,7 +48,11 @@ impl AuthorityStore {
         .flatten()
         {
             if value.is_empty() || value.len() > 1024 {
-                return Err(Error::Invalid("invalid producer execution identity".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid producer execution identity",
+                ));
             }
         }
         for digest in [
@@ -56,7 +68,11 @@ impl AuthorityStore {
                     .bytes()
                     .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
             {
-                return Err(Error::Invalid("invalid producer execution digest".into()));
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Resource,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "invalid producer execution digest",
+                ));
             }
         }
         let mut canonical = producer.clone();
@@ -66,12 +82,21 @@ impl AuthorityStore {
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         }) {
-            return Err(Error::Invalid("invalid output schema digest".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid output schema digest",
+            ));
         }
         canonical.signature_hash.clear();
-        canonical.signature_hash = blake3::hash(
-            &serde_json::to_vec(&canonical).map_err(|e| Error::Invalid(e.to_string()))?,
-        )
+        canonical.signature_hash = blake3::hash(&serde_json::to_vec(&canonical).map_err(|e| {
+            Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
+            )
+            .with_source(e)
+        })?)
         .to_hex()
         .to_string();
         Ok(canonical)

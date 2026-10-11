@@ -32,7 +32,11 @@ impl QueryActivation {
         policy: &super::ConceptActivationPolicy,
     ) -> Result<()> {
         if output.existing_tags.len() > 8 || output.novel_concepts.len() > 4 {
-            return Err(Error::Invalid("query concept output exceeds bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "query concept output exceeds bounds",
+            ));
         }
         let mut selected = Vec::new();
         let mut keys = std::collections::HashSet::new();
@@ -41,15 +45,23 @@ impl QueryActivation {
                 || !selection.strength.is_finite()
                 || !(0.0..=1.0).contains(&selection.strength)
             {
-                return Err(Error::Invalid(
-                    "invalid query concept key or strength".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
             let candidate = self
                 .concept_catalog
                 .iter()
                 .find(|entry| entry.key == selection.key)
-                .ok_or_else(|| Error::Invalid("query concept key outside frozen catalog".into()))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Runtime,
+                        nous_core::ErrorCode::InvalidRequest,
+                        "query concept key outside frozen catalog",
+                    )
+                })?;
             selected.push(TagActivation {
                 tag: candidate.tag,
                 strength: selection.strength,
@@ -60,7 +72,11 @@ impl QueryActivation {
         if output.novel_concepts.iter().any(|hypothesis| {
             hypothesis.text.trim().is_empty() || hypothesis.text.chars().count() > 512
         }) {
-            return Err(Error::Invalid("invalid query concept hypothesis".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid query concept hypothesis",
+            ));
         }
         for tag in selected {
             if let Some(existing) = self

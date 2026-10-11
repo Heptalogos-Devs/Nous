@@ -16,20 +16,41 @@ pub struct ReferenceProfile {
 }
 impl ReferenceProfile {
     pub fn parse(source: &str) -> Result<Self> {
-        let profile: Self = serde_json::from_str(source)
-            .map_err(|error| Error::Internal(format!("reference profile: {error}")))?;
+        let profile: Self = serde_json::from_str(source).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "Reference profile could not be parsed",
+            )
+            .with_source(error)
+        })?;
         if profile.identity.is_empty() || profile.values.is_empty() {
-            return Err(Error::Internal("invalid reference profile identity".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "invalid reference profile identity",
+            ));
         }
         Ok(profile)
     }
     pub fn get<T: DeserializeOwned>(&self, key: ConfigKey<T>) -> Result<T> {
-        serde_json::from_value(
-            self.values.get(key.path()).cloned().ok_or_else(|| {
-                Error::Internal(format!("reference default missing: {}", key.path()))
-            })?,
-        )
-        .map_err(|error| Error::Internal(format!("reference default {}: {error}", key.path())))
+        serde_json::from_value(self.values.get(key.path()).cloned().ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "Reference profile is missing a registered value",
+            )
+            .with_context("path", key.path())
+        })?)
+        .map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Configuration,
+                nous_core::ErrorCode::InternalFailure,
+                "Reference profile value is invalid",
+            )
+            .with_context("path", key.path())
+            .with_source(error)
+        })
     }
     pub fn tag(&self, registry: &mut ConfigRegistryBuilder, path: &str) -> Result<()> {
         registry.describe(path, |d| {

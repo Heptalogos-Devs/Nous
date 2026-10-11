@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { consumerStatePolicySchema } from "@nous-wave/client/consumer-policy";
+import { create, fromJson, type JsonValue } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
+import {
+  ConfigurationEntrySchema,
+  ConfigurationSnapshotSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import type { connectNousInstance } from "@nous-wave/client/node";
 import { runCli as execute } from "../../src/commands/index.js";
 import { createEnvironment as environment } from "../../src/runtime.js";
@@ -20,18 +26,20 @@ function consumerClient(value: Connection): Connection {
       ...value.configuration,
       get: async (input, options) =>
         input.paths?.includes("consumer_state.receipt_limit")
-          ? {
+          ? create(ConfigurationSnapshotSchema, {
               catalogDigest: "test",
               configurationRevision: 1n,
               effectiveDigest: "test",
-              entries: Object.entries(policy).map(([name, fieldValue]) => ({
-                path: `consumer_state.${name}`,
-                value: fieldValue,
-                source: "reference_default",
-                owner: "official-consumer",
-                applyMode: "restart_process",
-              })),
-            }
+              entries: Object.entries(policy).map(([name, fieldValue]) =>
+                create(ConfigurationEntrySchema, {
+                  path: `consumer_state.${name}`,
+                  value: fromJson(ValueSchema, fieldValue as JsonValue),
+                  source: "reference_default",
+                  owner: "official-consumer",
+                  applyMode: "restart_process",
+                }),
+              ),
+            })
           : value.configuration.get(input, options),
     },
   };

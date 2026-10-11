@@ -3,7 +3,11 @@
 
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import {
+  openDurableOperation,
+  operationBusyError,
+  workflowPayload,
+} from "../durable-operation.js";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
 import { z } from "zod";
 import {
@@ -54,25 +58,26 @@ export async function materializeResource(
       },
     }),
   };
-  const operation = await reserveOperation(
-    kernel,
-    identity,
-    {
-      content: workflowPayload({ reference }, [
-        { kind: "resource", value: reference.resourceRef },
-      ]),
-    },
-    options,
-  );
-  const reservation = operation.record;
-  if (reservation.outcome) {
-    if (reservation.outcome.purged)
+  const opened = await openDurableOperation(kernel, identity, {
+    execution: options,
+    snapshotFactory: async () => ({
+      snapshot: {
+        content: workflowPayload({ reference }, [
+          { kind: "resource", value: reference.resourceRef },
+        ]),
+      },
+    }),
+  });
+  if (opened.state === "completed") {
+    if (opened.outcome.purged)
       throw new ConnectError("Resource outcome was purged", Code.NotFound);
     return fromJson(
       ResourceMaterializationSchema,
-      JSON.parse(reservation.outcome.payloadJson) as JsonValue,
+      JSON.parse(opened.outcome.payloadJson) as JsonValue,
     );
   }
+  if (opened.state === "busy") throw operationBusyError();
+  const operation = opened.operation;
   return operation.run(async () => {
     try {
       const descriptor = await kernel.resourceRegistry.getResource(
@@ -99,13 +104,13 @@ export async function materializeResource(
           "Resource provider identity has changed",
           Code.FailedPrecondition,
         );
-      let proposal = reservation.proposal?.payloadJson
+      let proposal = opened.proposal?.payloadJson
         ? z
             .strictObject({
               content: z.string().max(1048576),
               mediaType: z.string().max(128),
             })
-            .parse(JSON.parse(reservation.proposal?.payloadJson))
+            .parse(JSON.parse(opened.proposal.payloadJson))
         : undefined;
       if (!proposal) {
         const material = await adapter.materialize(
@@ -113,7 +118,10 @@ export async function materializeResource(
           options.signal ?? undefined,
         );
         proposal = { content: material.content, mediaType: material.mediaType };
-        await operation.saveProposal(proposal);
+        await operation.checkpoint({
+          proposal: workflowPayload(proposal),
+          mutationOperations: [request.operationId],
+        });
       }
       const [version, access] = await Promise.all([
         adapter.checkVersion(reference, options.signal ?? undefined),
@@ -124,22 +132,27 @@ export async function materializeResource(
           "Resource version or access no longer permits admission",
           Code.FailedPrecondition,
         );
-      const observation = await kernel.runtime.recordObservation(
-        create(ObservationInputSchema, {
-          subjectId: request.subjectId,
-          requestId: request.operationId,
-          sourceClass: "resource",
-          observedAt: request.observedAt,
-          externalObjectRef: `object:resource-entry:${canonicalDigest(toJson(StableExternalRefSchema, exactReference))}`,
-          context: {
-            external_resource: toJson(StableExternalRefSchema, exactReference),
-          },
-          material: {
-            case: "inlineText",
-            value: { text: proposal.content, mediaType: proposal.mediaType },
-          },
-        }),
-        options,
+      const observation = await operation.mutate(request.operationId, () =>
+        kernel.runtime.recordObservation(
+          create(ObservationInputSchema, {
+            subjectId: request.subjectId,
+            requestId: request.operationId,
+            sourceClass: "resource",
+            observedAt: request.observedAt,
+            externalObjectRef: `object:resource-entry:${canonicalDigest(toJson(StableExternalRefSchema, exactReference))}`,
+            context: {
+              external_resource: toJson(
+                StableExternalRefSchema,
+                exactReference,
+              ),
+            },
+            material: {
+              case: "inlineText",
+              value: { text: proposal.content, mediaType: proposal.mediaType },
+            },
+          }),
+          options,
+        ),
       );
       const result = create(ResourceMaterializationSchema, {
         reference: request.reference,
@@ -147,15 +160,20 @@ export async function materializeResource(
         content: proposal.content,
         mediaType: proposal.mediaType,
       });
-      await operation.complete(toJson(ResourceMaterializationSchema, result), [
-        { kind: "occurrence", value: observation.occurrenceId },
-        ...(observation.sourceRegionId
-          ? [{ kind: "source_region", value: observation.sourceRegionId }]
-          : []),
-        ...(observation.artifactId
-          ? [{ kind: "artifact", value: observation.artifactId }]
-          : []),
-      ]);
+      await operation.checkpoint({
+        outcome: workflowPayload(
+          toJson(ResourceMaterializationSchema, result),
+          [
+            { kind: "occurrence", value: observation.occurrenceId },
+            ...(observation.sourceRegionId
+              ? [{ kind: "source_region", value: observation.sourceRegionId }]
+              : []),
+            ...(observation.artifactId
+              ? [{ kind: "artifact", value: observation.artifactId }]
+              : []),
+          ],
+        ),
+      });
       return result;
     } catch (error) {
       if (options.signal?.aborted) throw error;

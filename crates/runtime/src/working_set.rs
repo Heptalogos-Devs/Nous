@@ -83,8 +83,10 @@ impl CognitiveRuntimeService {
             || profile.context_budget.max_items == 0
             || profile.context_budget.max_items > 2048
         {
-            return Err(Error::Invalid(
-                "consumer identity and a bounded context item budget are required".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "consumer identity and a bounded context item budget are required",
             ));
         }
         self.require_session(request.subject, request.session_id)

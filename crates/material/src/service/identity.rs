@@ -19,14 +19,22 @@ impl MaterialService {
             || host_resolution_ref.as_ref().is_some_and(|v| v.len() > 1024)
             || reason.as_ref().is_some_and(|v| v.len() > 4096)
         {
-            return Err(Error::Invalid("invalid source identity binding".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid source identity binding",
+            ));
         }
         self.store.require_subject(subject).await?;
         let mut tx = self.store.begin().await?;
         let owned: Option<Uuid> = sqlx::query_scalar("SELECT mention_id FROM entity_mentions WHERE subject_id=$1 AND mention_id=$2 FOR UPDATE")
             .bind(subject.0).bind(mention).fetch_optional(&mut *tx).await.map_err(db)?;
         if owned.is_none() {
-            return Err(Error::NotFound("source mention not found".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::NotFound,
+                "source mention not found",
+            ));
         }
         if let Some(entity) = &entity
             && !self
@@ -34,7 +42,11 @@ impl MaterialService {
                 .reference_in_subject_tx(&mut tx, subject, &CognitiveRef::Entity(entity.clone()))
                 .await?
         {
-            return Err(Error::Invalid("Entity does not belong to Subject".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::InvalidRequest,
+                "Entity does not belong to Subject",
+            ));
         }
         let revision: i32 = sqlx::query_scalar("SELECT COALESCE(max(revision_no),0)+1 FROM entity_binding_revisions WHERE mention_id=$1")
             .bind(mention).fetch_one(&mut *tx).await.map_err(db)?;

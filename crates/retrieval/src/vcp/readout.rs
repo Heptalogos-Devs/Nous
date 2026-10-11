@@ -21,8 +21,10 @@ fn check_view(
     offered: &[VcpReadoutCandidate],
 ) -> Result<()> {
     if generation.generation_id != observation.generation_id() {
-        return Err(Error::Unavailable(
-            "VCP readout observation generation/profile mismatch".into(),
+        return Err(Error::new(
+            nous_core::ErrorOwner::Resource,
+            nous_core::ErrorCode::Unavailable,
+            "Service unavailable",
         ));
     }
     let mut seen = BTreeSet::new();
@@ -39,15 +41,21 @@ fn check_view(
             .iter()
             .any(|v| !v.is_finite())
         {
-            return Err(Error::Invalid("invalid VCP offered candidate view".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid VCP offered candidate view",
+            ));
         }
         if candidate
             .self_evidence_roots
             .iter()
             .any(|root| !generation.graph.provenance_roots.contains(root))
         {
-            return Err(Error::Invalid(
-                "VCP self-evidence root is outside generation".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Resource,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
     }

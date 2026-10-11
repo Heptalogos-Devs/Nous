@@ -15,8 +15,10 @@ impl AuthorityStore {
             return self.bind_exact_reference(subject, reference).await;
         };
         if view.subject != subject {
-            return Err(Error::Invalid(
-                "historical view belongs to another Subject".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         if matches!(reference, CognitiveRef::Tag(_)) || view.cognition_for(reference).is_some() {
@@ -27,8 +29,10 @@ impl AuthorityStore {
                     .await
                     .map_err(db)?;
             if !allowed {
-                return Err(Error::NotFound(
-                    "historical Memory Authority is currently disabled".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::NotFound,
+                    "Not found",
                 ));
             }
         }
@@ -36,7 +40,13 @@ impl AuthorityStore {
             return view
                 .canonical_tag(*tag)
                 .map(|tag| (CognitiveRef::Tag(tag), None, false))
-                .ok_or_else(|| Error::NotFound("Tag does not exist in historical view".into()));
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::NotFound,
+                        "Tag does not exist in historical view",
+                    )
+                });
         }
         if let Some(state) = view.cognition_for(reference) {
             let object = &state.object == reference;
@@ -52,8 +62,10 @@ impl AuthorityStore {
                 "episode" => ("episode_objects", "episode_id"),
                 "journal" => ("journal_objects", "journal_id"),
                 _ => {
-                    return Err(Error::Infrastructure(
-                        "invalid historical cognition owner".into(),
+                    return Err(Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
                     ));
                 }
             };
@@ -64,14 +76,20 @@ impl AuthorityStore {
             let available: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(statement.as_str()))
                 .bind(subject.0)
                 .bind(value.parse::<uuid::Uuid>().map_err(|_| {
-                    Error::Infrastructure("invalid historical cognition identity".into())
+                    Error::new(
+                        nous_core::ErrorOwner::Memory,
+                        nous_core::ErrorCode::InternalFailure,
+                        "invalid historical cognition identity",
+                    )
                 })?)
                 .fetch_one(self.pool())
                 .await
                 .map_err(db)?;
             if !available {
-                return Err(Error::NotFound(
-                    "historical cognition is currently purged or absent".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::NotFound,
+                    "Not found",
                 ));
             }
             self.validate_reference(subject, &bound).await?;
@@ -82,8 +100,10 @@ impl AuthorityStore {
             CognitiveRef::Entity(_) | CognitiveRef::Resource(_) | CognitiveRef::ExternalObject(_)
         ) && !view.material_visibility.contains(reference)
         {
-            return Err(Error::NotFound(
-                "reference does not exist in historical view".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::NotFound,
+                "Not found",
             ));
         }
         self.validate_reference(subject, reference).await?;
@@ -103,7 +123,11 @@ impl AuthorityStore {
                 return Ok(("REFERENCE_TYPE_MISMATCH".into(), vec![]));
             }
         } else if locator.is_empty() || locator.len() > 256 {
-            return Err(Error::Invalid("invalid name locator".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid name locator",
+            ));
         }
         let mut bindings = Vec::new();
         for row in &view.lexical_visibility {
@@ -130,7 +154,10 @@ impl AuthorityStore {
                 .await
             {
                 Ok(_) => {}
-                Err(Error::NotFound(_)) => continue,
+                Err(Error {
+                    code: nous_core::ErrorCode::NotFound,
+                    ..
+                }) => continue,
                 Err(error) => return Err(error),
             };
             if bindings
@@ -157,8 +184,10 @@ impl AuthorityStore {
                 status: "LIVE".into(),
             });
             if bindings.len() > 64 {
-                return Err(Error::Invalid(
-                    "identity ambiguity exceeds 64 candidates".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Memory,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
         }
@@ -182,8 +211,10 @@ impl AuthorityStore {
             return self.query_descriptors(subject, refs).await;
         };
         if refs.len() > 256 || view.subject != subject {
-            return Err(Error::Invalid(
-                "historical descriptor catalog scope exceeded".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Memory,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let mut result = Vec::new();
@@ -204,7 +235,10 @@ impl AuthorityStore {
                     .await
                 {
                     Ok((exact, _, _)) => selected.push((reference.clone(), exact)),
-                    Err(Error::NotFound(_)) => {}
+                    Err(Error {
+                        code: nous_core::ErrorCode::NotFound,
+                        ..
+                    }) => {}
                     Err(error) => return Err(error),
                 }
             }

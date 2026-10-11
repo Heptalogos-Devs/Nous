@@ -75,7 +75,11 @@ mod tests {
                     if *value >= 0.0 {
                         Ok(())
                     } else {
-                        Err(nous_core::Error::Invalid("negative".into()))
+                        Err(nous_core::Error::new(
+                            nous_core::ErrorOwner::Configuration,
+                            nous_core::ErrorCode::InvalidRequest,
+                            "negative",
+                        ))
                     }
                 },
             )

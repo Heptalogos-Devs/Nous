@@ -17,7 +17,7 @@ message ListRequest { string subject_id = 1 [(reference_kind) = "subject"]; Page
 message CognitiveSeed { string text = 1; string format = 2; google.protobuf.Struct provenance = 3; }
 message SubjectCapabilities { bool memory = 1; }
 message Subject { string subject_id = 1 [(reference_kind) = "subject"]; google.protobuf.Timestamp created_at = 2; int64 authority_seq = 3; string status = 4; google.protobuf.Struct metadata = 5; SubjectCapabilities capabilities = 6; }
-message CreateSubjectRequest { optional string subject_id = 1 [(reference_kind) = "subject"]; CognitiveSeed cognitive_seed = 2; google.protobuf.Struct metadata = 3; string operation_id = 4; SubjectCapabilities capabilities = 5; }
+message CreateSubjectRequest { string subject_id = 1 [(reference_kind) = "subject"]; CognitiveSeed cognitive_seed = 2; google.protobuf.Struct metadata = 3; string operation_id = 4; SubjectCapabilities capabilities = 5; }
 message ListSubjectsResponse { repeated Subject items = 1; string next_page_token = 2; }
 message CognitiveSeedVersion { CognitiveSeed seed = 1; string seed_version_id = 2 [(reference_kind) = "cognitive_seed_version"]; string subject_id = 3 [(reference_kind) = "subject"]; string artifact_id = 4 [(reference_kind) = "artifact"]; string format = 5; string content_hash = 6; google.protobuf.Timestamp created_at = 7; string adoption_id = 8; string adoption_kind = 9; string operation_id = 10; }
 message AdoptCognitiveSeedRequest { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; CognitiveSeed seed = 3; string kind = 4; }

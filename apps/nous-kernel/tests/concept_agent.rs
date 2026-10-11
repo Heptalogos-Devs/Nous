@@ -25,7 +25,7 @@ async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
     let subject = rt
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -128,7 +128,10 @@ async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
         invalid.relation_kind = "assoc.invented".into();
         assert!(matches!(
             memory.create_association(invalid, subject).await,
-            Err(Error::Invalid(_))
+            Err(Error {
+                code: nous_core::ErrorCode::InvalidRequest,
+                ..
+            })
         ));
         edge_ids.push(edge.association_evidence_id);
     }
@@ -297,6 +300,9 @@ async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
     stale.operation_id = OperationId::new();
     assert!(matches!(
         memory.create_association(stale, subject).await,
-        Err(Error::Domain(error)) if error.code == nous_core::DomainErrorCode::StaleRevision
+        Err(Error {
+            code: nous_core::ErrorCode::StaleRevision,
+            ..
+        })
     ));
 }

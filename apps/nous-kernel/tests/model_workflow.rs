@@ -18,7 +18,7 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
     let subject = runtime
         .subjects
         .create_subject(CreateSubject {
-            subject_id: None,
+            subject_id: nous_core::SubjectId::default(),
             operation_id: OperationId::new(),
             cognitive_seed: CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -142,7 +142,7 @@ async fn workflow_reservation_conflict_proposal_resume_and_outcome_replay() {
     assert!(completed.lease.is_none());
     assert_eq!(completed.snapshot, WorkflowSnapshot::default());
     assert_owner_validation(&runtime.store, subject, &key).await;
-    assert_maintenance_workflow_keeps_parent_opportunity(&runtime, subject).await;
+    assert_maintenance_workflow_uses_bounded_parent_opportunity(&runtime, subject).await;
     assert_child_result_purge_before_host_ack(&runtime, subject).await;
 }
 
@@ -353,7 +353,7 @@ async fn legacy_envelope_migration_preserves_payload_time_unknown_usage_and_decl
     );
 }
 
-async fn assert_maintenance_workflow_keeps_parent_opportunity(
+async fn assert_maintenance_workflow_uses_bounded_parent_opportunity(
     runtime: &nous_kernel::NousRuntime,
     subject: nous_core::SubjectId,
 ) {
@@ -393,8 +393,8 @@ async fn assert_maintenance_workflow_keeps_parent_opportunity(
         .unwrap();
     let workflow_until: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT lease_until FROM model_workflow_operations WHERE subject_id=$1 AND owner='memory' AND operation_key=$2").bind(subject.0).bind(&key).fetch_one(runtime.store.pool()).await.unwrap();
     assert!(
-        workflow_until >= need.lease_until.unwrap(),
-        "a shorter workflow default must not cancel the already authorized maintenance opportunity"
+        workflow_until < need.lease_until.unwrap(),
+        "the child opportunity must end at its own deadline when that precedes the parent claim"
     );
     runtime
         .store
@@ -404,6 +404,167 @@ async fn assert_maintenance_workflow_keeps_parent_opportunity(
                 "memory",
                 &key,
                 reservation.lease.as_ref().unwrap().token,
+            ),
+            Some(&payload(serde_json::json!({"action":"no_change"}))),
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn maintenance_parent_reclaim_fences_a_live_child_and_reuses_its_snapshot() {
+    let (root, url, _postgres) = test_support::database().await;
+    let runtime = test_support::open_runtime(&url, &root).await;
+    let subject = runtime
+        .subjects
+        .create_subject(CreateSubject {
+            subject_id: nous_core::SubjectId::default(),
+            operation_id: OperationId::new(),
+            cognitive_seed: CognitiveSeedInput {
+                text: "schema_version = 1".into(),
+                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
+                provenance: serde_json::json!({}),
+            },
+            metadata: serde_json::json!({}),
+            capabilities: None,
+        })
+        .await
+        .unwrap()
+        .subject_id;
+    let need_id = runtime
+        .cognition
+        .enqueue_maintenance(nous_runtime::MaintenanceRequest {
+            subject,
+            kind: "memory_consolidate".into(),
+            scope_kind: "subject".into(),
+            scope_ref: subject.0.to_string(),
+            trigger_authority_seq: 0,
+            due_at: chrono::Utc::now(),
+            priority: 1,
+        })
+        .await
+        .unwrap();
+    let first = runtime
+        .cognition
+        .lease_maintenance(subject, &["memory_consolidate".into()], 1, 60, None)
+        .await
+        .unwrap()
+        .remove(0);
+    let key = OperationId::new().0.to_string();
+    let old_claim = MaintenanceClaim {
+        need_id,
+        lease_token: first.lease_token.unwrap(),
+        trigger_authority_seq: first.trigger_authority_seq,
+        trigger_revision: first.trigger_revision,
+    };
+    let original_snapshot = WorkflowSnapshot {
+        content: payload(serde_json::json!({"frozen":"first plan"})),
+        maintenance_claim: Some(old_claim.clone()),
+        ..Default::default()
+    };
+    let original = runtime
+        .store
+        .reserve_model_workflow(
+            subject,
+            "memory",
+            &key,
+            "same generation",
+            &original_snapshot,
+            360,
+        )
+        .await
+        .unwrap();
+    let old_child_token = original.lease.as_ref().unwrap().token;
+
+    sqlx::query("UPDATE maintenance_needs SET lease_until=clock_timestamp()-interval '1 second' WHERE subject_id=$1 AND need_id=$2")
+        .bind(subject.0)
+        .bind(need_id)
+        .execute(runtime.store.pool())
+        .await
+        .unwrap();
+    let next = runtime
+        .cognition
+        .lease_maintenance(subject, &["memory_consolidate".into()], 1, 60, None)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(next.need_id, need_id);
+    assert_ne!(next.lease_token, Some(old_claim.lease_token));
+    let still_live: bool = sqlx::query_scalar("SELECT lease_until>clock_timestamp() FROM model_workflow_operations WHERE subject_id=$1 AND owner='memory' AND operation_key=$2")
+        .bind(subject.0)
+        .bind(&key)
+        .fetch_one(runtime.store.pool())
+        .await
+        .unwrap();
+    assert!(
+        still_live,
+        "parent turnover leaves the old child deadline in the future"
+    );
+
+    let stale_save = runtime
+        .store
+        .save_model_workflow(
+            &test_support::workflow_lease(subject, "memory", &key, old_child_token),
+            Some(&payload(serde_json::json!({"stale":"must not save"}))),
+            None,
+            None,
+            &[],
+        )
+        .await;
+    assert!(
+        stale_save.is_err(),
+        "a changed parent claim fences child checkpoints"
+    );
+
+    let new_claim = MaintenanceClaim {
+        need_id,
+        lease_token: next.lease_token.unwrap(),
+        trigger_authority_seq: next.trigger_authority_seq,
+        trigger_revision: next.trigger_revision,
+    };
+    let mut retry_snapshot = original_snapshot;
+    retry_snapshot.maintenance_claim = Some(new_claim.clone());
+    retry_snapshot.content = payload(serde_json::json!({"frozen":"losing plan"}));
+    let resumed = runtime
+        .store
+        .reserve_model_workflow(
+            subject,
+            "memory",
+            &key,
+            "same generation",
+            &retry_snapshot,
+            360,
+        )
+        .await
+        .unwrap();
+    assert!(!resumed.busy);
+    assert_ne!(resumed.lease.as_ref().unwrap().token, old_child_token);
+    assert_eq!(
+        resumed.snapshot.content.payload,
+        serde_json::json!({"frozen":"first plan"}),
+        "a parent retry reuses the accepted snapshot"
+    );
+    assert_eq!(
+        resumed
+            .snapshot
+            .maintenance_claim
+            .as_ref()
+            .unwrap()
+            .lease_token,
+        new_claim.lease_token,
+        "the persisted envelope refreshes only the current parent claim token"
+    );
+    runtime
+        .store
+        .save_model_workflow(
+            &test_support::workflow_lease(
+                subject,
+                "memory",
+                &key,
+                resumed.lease.as_ref().unwrap().token,
             ),
             Some(&payload(serde_json::json!({"action":"no_change"}))),
             None,

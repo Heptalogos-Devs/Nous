@@ -20,7 +20,11 @@ pub fn tag_semantic_representation(
         || description.is_some_and(|v| v.len() > 4096)
         || kind.is_some_and(|v| v.len() > 128)
     {
-        return Err(Error::Invalid("invalid Tag content bounds".into()));
+        return Err(Error::new(
+            crate::ErrorOwner::Concept,
+            crate::ErrorCode::InvalidRequest,
+            "invalid Tag content bounds",
+        ));
     }
     let normalize = |value: &str| {
         value

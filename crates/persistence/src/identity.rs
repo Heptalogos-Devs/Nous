@@ -53,13 +53,23 @@ pub fn lexical_prefix(kind: &str) -> Result<&'static str> {
         "journal_revision" => "journalrev",
         "cognitive_seed_version" => "seed",
         "resource" => "res",
-        _ => return Err(Error::Invalid("object kind has no lexical address".into())),
+        _ => {
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::InvalidRequest,
+                "object kind has no lexical address",
+            ));
+        }
     })
 }
 pub fn validate_lexical(value: &str) -> Result<&str> {
-    let (kind, body) = value
-        .split_once(':')
-        .ok_or_else(|| Error::Invalid("INVALID_LEXICAL_REF".into()))?;
+    let (kind, body) = value.split_once(':').ok_or_else(|| {
+        Error::new(
+            nous_core::ErrorOwner::Identity,
+            nous_core::ErrorCode::InvalidRequest,
+            "INVALID_LEXICAL_REF",
+        )
+    })?;
     if !matches!(
         kind,
         "ent"
@@ -84,7 +94,11 @@ pub fn validate_lexical(value: &str) -> Result<&str> {
             | "seed"
             | "res"
     ) {
-        return Err(Error::Invalid("INVALID_LEXICAL_REF".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Identity,
+            nous_core::ErrorCode::InvalidRequest,
+            "INVALID_LEXICAL_REF",
+        ));
     }
     decode_proquint(body)?;
     Ok(kind)
@@ -129,8 +143,10 @@ impl AuthorityStore {
         targets: &[IdentityAddressTarget],
     ) -> Result<Vec<IdentityAddress>> {
         if targets.len() > 2048 {
-            return Err(Error::Invalid(
-                "identity address batch exceeds 2048 targets".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let requested = targets
@@ -177,8 +193,9 @@ ORDER BY r.ordinal
     /// Locate the Subject address before a consumer has selected a Subject.
     pub async fn subject_for_lexical(&self, lexical: &str) -> Result<SubjectId> {
         if validate_lexical(lexical)? != "sub" {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::ReferenceTypeMismatch,
+            return Err(nous_core::Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::ReferenceTypeMismatch,
                 "Expected a Subject lexical reference",
             )
             .with_context("reference", lexical)
@@ -187,12 +204,16 @@ ORDER BY r.ordinal
         }
         let canonical: String = sqlx::query_scalar("SELECT b.canonical_ref FROM lexical_bindings b JOIN lexical_visibility v USING(lexical_ref) WHERE b.object_kind='subject' AND b.lexical_ref=$1 AND b.tombstoned_at IS NULL AND v.subject_id::text=b.canonical_ref")
             .bind(lexical).fetch_optional(self.pool()).await.map_err(database_error)?
-            .ok_or_else(|| nous_core::DomainError::new(nous_core::DomainErrorCode::UnknownReference, "Subject reference is unknown or unavailable")
+            .ok_or_else(|| nous_core::Error::new(nous_core::ErrorOwner::Identity, nous_core::ErrorCode::UnknownReference,  "Subject reference is unknown or unavailable")
                 .with_context("reference", lexical))?;
-        canonical
-            .parse()
-            .map(SubjectId)
-            .map_err(|_| Error::Infrastructure("invalid Subject address".into()))
+        canonical.parse().map(SubjectId).map_err(|error| {
+            Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::InternalFailure,
+                "invalid Subject address",
+            )
+            .with_source(error)
+        })
     }
 
     pub async fn bind_identity(
@@ -241,11 +262,19 @@ ORDER BY r.ordinal
             .resolve_identity(subject, &kind, &lexical, true)
             .await?;
         if status != "BOUND" {
-            return Err(Error::NotFound(status));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::NotFound,
+                "Not found",
+            ));
         }
-        candidates
-            .pop()
-            .ok_or_else(|| Error::Infrastructure("committed binding missing".into()))
+        candidates.pop().ok_or_else(|| {
+            Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::InternalFailure,
+                "committed binding missing",
+            )
+        })
     }
     /// Bind inside the semantic owner's Authority transaction.
     pub async fn bind_identity_in(
@@ -271,20 +300,34 @@ ORDER BY r.ordinal
         if let CognitiveRef::Tag(tag) = reference {
             reference = crate::tags::canonical_topology_ref_in(tx, subject, CognitiveRef::Tag(tag))
                 .await?
-                .ok_or_else(|| Error::NotFound("active Tag identity not found".into()))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        nous_core::ErrorOwner::Identity,
+                        nous_core::ErrorCode::NotFound,
+                        "active Tag identity not found",
+                    )
+                })?;
         }
         if display_name.len() > 256
             || aliases.len() > 32
             || aliases.iter().any(|a| a.is_empty() || a.len() > 256)
         {
-            return Err(Error::Invalid("invalid identity label bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid identity label bounds",
+            ));
         }
         if !matches!(reference, CognitiveRef::Entity(_))
             && !self
                 .reference_in_subject_tx(tx, subject, &reference)
                 .await?
         {
-            return Err(Error::NotFound("cognitive reference not found".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::NotFound,
+                "cognitive reference not found",
+            ));
         }
         let (kind, canonical) = reference_parts(&reference);
         let prefix = lexical_prefix(&kind)?;
@@ -302,8 +345,9 @@ ORDER BY r.ordinal
                 .try_get::<bool, _>("tombstoned")
                 .map_err(database_error)?
             {
-                return Err(nous_core::DomainError::new(
-                    nous_core::DomainErrorCode::ReferenceTombstoned,
+                return Err(nous_core::Error::new(
+                    nous_core::ErrorOwner::Identity,
+                    nous_core::ErrorCode::ReferenceTombstoned,
                     "The identity has been tombstoned",
                 )
                 .with_context("reference", format!("{kind}:{canonical}"))
@@ -315,7 +359,14 @@ ORDER BY r.ordinal
             let mut inserted = None;
             for _ in 0..32 {
                 let mut bytes = [0; 6];
-                getrandom::fill(&mut bytes).map_err(|e| Error::Infrastructure(e.to_string()))?;
+                getrandom::fill(&mut bytes).map_err(|e| {
+                    Error::new(
+                        nous_core::ErrorOwner::Identity,
+                        nous_core::ErrorCode::InternalFailure,
+                        "Operation failed",
+                    )
+                    .with_source(e)
+                })?;
                 let bits = u64::from_be_bytes([
                     0, 0, bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
                 ]);
@@ -324,7 +375,11 @@ ORDER BY r.ordinal
                     .bind(&candidate).bind(&kind).bind(&canonical).execute(&mut **tx).await.map_err(database_error)?.rows_affected()==1 {inserted=Some(candidate);break;}
             }
             inserted.ok_or_else(|| {
-                Error::Infrastructure("LexicalRef collision retry bound exceeded".into())
+                Error::new(
+                    nous_core::ErrorOwner::Identity,
+                    nous_core::ErrorCode::InternalFailure,
+                    "LexicalRef collision retry bound exceeded",
+                )
             })?
         };
         sqlx::query("INSERT INTO lexical_visibility(subject_id,lexical_ref,display_name,aliases) VALUES($1,$2,$3,$4) ON CONFLICT(subject_id,lexical_ref) DO UPDATE SET display_name=CASE WHEN excluded.display_name='' THEN lexical_visibility.display_name ELSE excluded.display_name END,aliases=CASE WHEN cardinality(excluded.aliases)=0 THEN lexical_visibility.aliases ELSE excluded.aliases END WHERE NOT $5")
@@ -351,7 +406,11 @@ ORDER BY r.ordinal
                 return Ok(("REFERENCE_TYPE_MISMATCH".into(), vec![]));
             }
         } else if locator.is_empty() || locator.len() > 256 {
-            return Err(Error::Invalid("invalid name locator".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid name locator",
+            ));
         }
         let rows = sqlx::query(r#"
 WITH matched AS (
@@ -367,8 +426,10 @@ WITH matched AS (
 SELECT DISTINCT ON(object_kind,canonical_ref) * FROM matched ORDER BY object_kind,canonical_ref,lexical_ref LIMIT 65
 "#).bind(subject.0).bind(kind).bind(locator).bind(lexical).fetch_all(self.pool()).await.map_err(database_error)?;
         if rows.len() > 64 {
-            return Err(Error::Invalid(
-                "identity ambiguity exceeds 64 candidates".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::Identity,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         let mut bindings = Vec::new();

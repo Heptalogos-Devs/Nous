@@ -14,7 +14,13 @@ impl AuthorityStore {
             .await
             .map_err(database_error)?
             .map(TagId)
-            .ok_or_else(|| Error::NotFound("active Tag identity not found".into()))
+            .ok_or_else(|| {
+                Error::new(
+                    nous_core::ErrorOwner::Concept,
+                    nous_core::ErrorCode::NotFound,
+                    "active Tag identity not found",
+                )
+            })
     }
 }
 pub(crate) async fn canonical_topology_ref_in(

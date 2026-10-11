@@ -31,7 +31,7 @@ export async function maintenanceCommands(env: CliEnvironment) {
     ...result,
     ...(result.disposition === "disabled_by_policy"
       ? {
-          next: `config get maintenance.enabled --desired --subject ${subjectId}; then config set maintenance.enabled true --subject ${subjectId} --expected-revision <configurationRevision>`,
+          next: `config get maintenance.enabled --view desired --subject ${subjectId}; then config set maintenance.enabled --value-json true --subject ${subjectId} --expected-revision <configurationRevision>`,
         }
       : {}),
   };

@@ -16,14 +16,92 @@ import { canonicalDigest } from "../digest.js";
 
 type Policy = ModelConfiguration["video"];
 const videoFrameInputIdentity = "labelled-frame-content-v1";
+export type VideoPreprocessingIdentity = {
+  version: string;
+  preprocessingDigest: string;
+};
+export type SampledVideo = {
+  frames: { bytes: Uint8Array; timestamp: number }[];
+  audio?: Uint8Array;
+  hasAudio: boolean;
+  audioProblem?: string;
+  quality: Record<string, unknown>;
+  preprocessingDigest: string;
+};
+
+function processEnvironment(secretNames: readonly string[]) {
+  const secretSet = new Set(secretNames.map((name) => name.toUpperCase()));
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(process.env))
+    if (!secretSet.has(name.toUpperCase())) env[name] = value;
+  return env;
+}
+
+async function ffmpegVersion(
+  policy: Policy,
+  secretNames: readonly string[],
+  signal?: AbortSignal,
+) {
+  const executable = policy.ffmpeg_executable;
+  if (!executable)
+    throw new Error(
+      "FFmpeg runtime is unavailable; use nous runtime install ffmpeg or configure an executable",
+    );
+  return await new Promise<string>((resolve, reject) => {
+    execFile(
+      executable,
+      ["-version"],
+      {
+        windowsHide: true,
+        env: processEnvironment(secretNames),
+        timeout: policy.process_timeout_ms,
+        maxBuffer: 65536,
+        signal,
+      },
+      (error, stdout) => {
+        if (error)
+          reject(
+            new Error(
+              "FFmpeg version execution unavailable or exceeded bounds",
+            ),
+          );
+        else {
+          const version = stdout.split(/\r?\n/)[0] ?? "";
+          if (!version.startsWith("ffmpeg version "))
+            reject(new Error("Configured executable is not FFmpeg"));
+          else resolve(version);
+        }
+      },
+    );
+  });
+}
+
+export async function inspectVideoPreprocessing(
+  policy: Policy,
+  tempRoot: string,
+  secretNames: readonly string[],
+): Promise<VideoPreprocessingIdentity> {
+  void tempRoot;
+  const version = await ffmpegVersion(policy, secretNames);
+  return {
+    version,
+    preprocessingDigest: canonicalDigest({
+      version,
+      policy,
+      videoFrameInputIdentity,
+    }),
+  };
+}
+
 export async function sampleVideo(
   bytes: Uint8Array,
   policy: Policy,
   tempRoot: string,
   secretNames: readonly string[],
   includeAudio: boolean,
+  identity: VideoPreprocessingIdentity,
   signal?: AbortSignal,
-) {
+): Promise<SampledVideo> {
   if (bytes.byteLength > policy.max_source_bytes)
     throw new Error("Video source exceeds configured byte bound");
   const executable = policy.ffmpeg_executable;
@@ -33,10 +111,7 @@ export async function sampleVideo(
     );
   await mkdir(tempRoot, { recursive: true });
   const root = await mkdtemp(join(tempRoot, "nous-video-"));
-  const secretSet = new Set(secretNames.map((name) => name.toUpperCase()));
-  const env: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(process.env))
-    if (!secretSet.has(name.toUpperCase())) env[name] = value;
+  const env = processEnvironment(secretNames);
   const run = (
     phase: "version" | "metadata" | "frame" | "audio",
     args: string[],
@@ -64,10 +139,17 @@ export async function sampleVideo(
       );
     });
   try {
-    const version =
-      (await run("version", ["-version"])).stdout.split(/\r?\n/)[0] ?? "";
-    if (!version.startsWith("ffmpeg version "))
-      throw new Error("Configured executable is not FFmpeg");
+    const version = await ffmpegVersion(policy, secretNames, signal);
+    const preprocessingDigest = canonicalDigest({
+      version,
+      policy,
+      videoFrameInputIdentity,
+    });
+    if (
+      version !== identity.version ||
+      preprocessingDigest !== identity.preprocessingDigest
+    )
+      throw new Error("FFmpeg preprocessing identity changed before sampling");
     const input = join(root, "source.media");
     await writeFile(input, bytes);
     const inputArgs = [
@@ -214,11 +296,7 @@ export async function sampleVideo(
         sampled_duration_seconds: bounded,
         truncated: duration > bounded,
       },
-      preprocessingDigest: canonicalDigest({
-        version,
-        policy,
-        videoFrameInputIdentity,
-      }),
+      preprocessingDigest,
     };
   } finally {
     await rm(root, { recursive: true, force: true });

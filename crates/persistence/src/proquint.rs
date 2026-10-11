@@ -10,7 +10,11 @@ const MAX_ADDRESS: u64 = (1 << 48) - 1;
 
 pub fn encode_proquint(value: u64) -> Result<String> {
     if value > MAX_ADDRESS {
-        return Err(Error::Invalid("Proquint address exceeds 48 bits".into()));
+        return Err(Error::new(
+            nous_core::ErrorOwner::Persistence,
+            nous_core::ErrorCode::InvalidRequest,
+            "Proquint address exceeds 48 bits",
+        ));
     }
     let mut output = String::with_capacity(17);
     for shift in [32, 16, 0] {
@@ -32,7 +36,13 @@ pub fn encode_proquint(value: u64) -> Result<String> {
 }
 
 pub fn decode_proquint(value: &str) -> Result<u64> {
-    let invalid = || Error::Invalid("INVALID_LEXICAL_REF".into());
+    let invalid = || {
+        Error::new(
+            nous_core::ErrorOwner::Persistence,
+            nous_core::ErrorCode::InvalidRequest,
+            "INVALID_LEXICAL_REF",
+        )
+    };
     let bytes = value.as_bytes();
     if bytes.len() != 17 || bytes[5] != b'-' || bytes[11] != b'-' {
         return Err(invalid());

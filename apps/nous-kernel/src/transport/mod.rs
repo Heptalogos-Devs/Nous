@@ -24,6 +24,7 @@ mod identity;
 mod maintenance_workflow;
 mod material_workflow;
 mod model_workflow;
+mod operation;
 mod projection_workflow;
 mod query_workflow;
 mod workflow_convert;
@@ -118,7 +119,16 @@ impl KernelService {
             let reference = from_ref(reference.clone())?;
             match self.0.store.validate_reference(subject, &reference).await {
                 Ok(()) => {}
-                Err(Error::Invalid(_) | Error::NotFound(_)) => {
+                Err(
+                    Error {
+                        code: nous_core::ErrorCode::InvalidRequest,
+                        ..
+                    }
+                    | Error {
+                        code: nous_core::ErrorCode::NotFound,
+                        ..
+                    },
+                ) => {
                     degradation.push(p::Degradation {
                         code: "projection_source_unavailable".into(),
                         detail: reference.to_string(),

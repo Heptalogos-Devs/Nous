@@ -7,13 +7,13 @@ import {
   MemorySchema,
   CognitiveRefSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import { protocolData, protocolReferences } from "@nous-wave/client/data";
+import { protocolReferences } from "@nous-wave/client/data";
 import { expect, it, vi } from "vitest";
 import { friendlyOutput } from "../src/friendly.js";
 import type { CliEnvironment } from "../src/runtime.js";
 import { renderText } from "../src/output.js";
 
-it("preserves arbitrary JSON, exact UUID/ref bodies, labels and diagnostics without address requests", async () => {
+it("preserves arbitrary JSON with protocol-looking keys without address requests", async () => {
   const id = "33333333-3333-4333-8333-333333333333";
   const addresses = vi.fn();
   const bodies = {
@@ -26,7 +26,7 @@ it("preserves arbitrary JSON, exact UUID/ref bodies, labels and diagnostics with
     ],
     diagnostics: { queryId: id, text: id },
   };
-  const value = protocolData(fromJson(StructSchema, bodies));
+  const value = fromJson(StructSchema, bodies);
   expect(protocolReferences(value, StructSchema)).toEqual([]);
   expect(
     await friendlyOutput(value, {
@@ -37,7 +37,7 @@ it("preserves arbitrary JSON, exact UUID/ref bodies, labels and diagnostics with
   expect(addresses).not.toHaveBeenCalled();
 });
 
-it("reads one deduplicated directory batch for schema-declared references and oneof evidence", async () => {
+it("keeps canonical reference data and adds lexical refs only as display metadata", async () => {
   const id = "33333333-3333-4333-8333-333333333333";
   const addresses = vi.fn(
     async (request: {
@@ -59,31 +59,30 @@ it("reads one deduplicated directory batch for schema-declared references and on
     }),
   );
   const bind = vi.fn();
-  const cognition = protocolData(
-    create(MemorySchema, {
-      subjectId: id,
-      text: `Original ${id}`,
-      title: `memory:${id}`,
-      basis: [
-        {
-          basis: {
-            case: "evidence",
-            value: {
-              occurrenceId: id,
-              locator: { case: "sourceRegionId", value: id },
-            },
+  const cognition = create(MemorySchema, {
+    subjectId: id,
+    text: `Original ${id}`,
+    title: `memory:${id}`,
+    basis: [
+      {
+        basis: {
+          case: "evidence",
+          value: {
+            occurrenceId: id,
+            locator: { case: "sourceRegionId", value: id },
           },
         },
-      ],
-    }),
-  );
+      },
+    ],
+  });
   const input = {
     cognition,
     sources: [
       {
-        reference: protocolData(
-          create(CognitiveRefSchema, { kind: "source_region", value: id }),
-        ),
+        reference: create(CognitiveRefSchema, {
+          kind: "source_region",
+          value: id,
+        }),
       },
     ],
   };
@@ -101,20 +100,33 @@ it("reads one deduplicated directory batch for schema-declared references and on
   } as unknown as CliEnvironment);
   expect(result).toMatchObject({
     cognition: {
+      subjectId: id,
       text: `Original ${id}`,
       title: `memory:${id}`,
       basis: [
         {
-          basis: {
-            value: {
+          evidence: {
+            occurrenceId: id,
+            sourceRegionId: id,
+            displayReferences: {
               occurrenceId: "obs:fakoh-todud-rovor",
-              locator: { value: "src:vahol-gutij-nakur" },
+              sourceRegionId: "src:vahol-gutij-nakur",
             },
           },
         },
       ],
+      displayReferences: {
+        subjectId: "sub:tujap-vibuz-gozod",
+      },
     },
-    sources: [{ reference: { value: "src:vahol-gutij-nakur" } }],
+    sources: [
+      {
+        reference: {
+          value: id,
+          displayReferences: { value: "src:vahol-gutij-nakur" },
+        },
+      },
+    ],
   });
   expect(addresses).toHaveBeenCalledTimes(1);
   expect(addresses.mock.calls[0]![0].targets).toHaveLength(3);

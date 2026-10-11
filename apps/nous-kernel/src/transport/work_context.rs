@@ -177,7 +177,13 @@ impl KernelService {
                     .end_work_context(subject, context_id, input.expected_revision, operation_id)
                     .await?
             }
-            _ => return Err(Error::Invalid("unknown WorkContext transition".into())),
+            _ => {
+                return Err(Error::new(
+                    nous_core::ErrorOwner::Runtime,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "unknown WorkContext transition",
+                ));
+            }
         };
         Ok(p::WorkContextResponse {
             work_context: Some(view(value)),
@@ -230,7 +236,11 @@ impl KernelService {
         input: p::ReportUseRequest,
     ) -> Result<p::ReportUseResponse> {
         if input.events.len() > 256 || input.consumer_ref.is_empty() {
-            return Err(Error::Invalid("invalid use feedback bounds".into()));
+            return Err(Error::new(
+                nous_core::ErrorOwner::Runtime,
+                nous_core::ErrorCode::InvalidRequest,
+                "invalid use feedback bounds",
+            ));
         }
         self.0
             .cognition
@@ -253,9 +263,19 @@ impl KernelService {
                             reference: from_ref(required(event.reference, "reference")?)?,
                             use_kind: enum_value(&event.kind)?,
                             occurred_at: time(Some(event.occurred_at.ok_or_else(|| {
-                                Error::Invalid("occurred_at is required".into())
+                                Error::new(
+                                    nous_core::ErrorOwner::Runtime,
+                                    nous_core::ErrorCode::InvalidRequest,
+                                    "occurred_at is required",
+                                )
                             })?))?
-                            .ok_or_else(|| Error::Invalid("occurred_at is invalid".into()))?,
+                            .ok_or_else(|| {
+                                Error::new(
+                                    nous_core::ErrorOwner::Runtime,
+                                    nous_core::ErrorCode::InvalidRequest,
+                                    "occurred_at is invalid",
+                                )
+                            })?,
                             context: object(event.context),
                         })
                     })

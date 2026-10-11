@@ -44,7 +44,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         let input = request.into_inner();
         let result:Result<_>=async {
             let rows=sqlx::query("SELECT m.mention_id,m.surface,b.entity_ref FROM entity_mentions m JOIN LATERAL (SELECT entity_ref,binding_state FROM entity_binding_revisions WHERE mention_id=m.mention_id ORDER BY revision_no DESC LIMIT 1) b ON b.binding_state='bound' AND b.entity_ref IS NOT NULL WHERE m.subject_id=$1 AND m.occurrence_id=$2 ORDER BY m.mention_id LIMIT 129").bind(id(&input.subject_id)?).bind(id(&input.occurrence_id)?).fetch_all(self.0.store.pool()).await.map_err(db)?;
-            if rows.len()>128{return Err(Error::Invalid("resolved mention candidate bound exceeded".into()));}
+            if rows.len()>128{return Err(Error::new(nous_core::ErrorOwner::ModelWorkflow, nous_core::ErrorCode::InvalidRequest, "resolved mention candidate bound exceeded"));}
             let candidates=rows.into_iter().map(|row| Ok(k::ResolvedMention{key:row.try_get::<uuid::Uuid,_>("mention_id").map_err(db)?.to_string(),surface:row.try_get("surface").map_err(db)?,entity_ref:row.try_get("entity_ref").map_err(db)?})).collect::<Result<Vec<_>>>()?;
             Ok(k::ResolvedMentionsResponse{candidates})
         }.await;
@@ -95,7 +95,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                     .needs
                     .into_iter()
                     .map(|need| k::EmbeddingNeed {
-                        reference: Some(to_ref(need.reference)),
+                        references: need.references.into_iter().map(to_ref).collect(),
                         text: need.text,
                         digest: need.digest,
                     })
@@ -125,7 +125,11 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                 .serving
                 .commit_embedding_in_view(
                     SubjectId(id(&input.subject_id)?),
-                    from_ref(required(input.reference, "reference")?)?,
+                    input
+                        .binding_references
+                        .into_iter()
+                        .map(from_ref)
+                        .collect::<Result<Vec<_>>>()?,
                     material.text,
                     &material.space_hash,
                     &material.producer_hash,
@@ -146,8 +150,10 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         let input = request.into_inner();
         let result: Result<_> = async {
             if input.text.trim().is_empty() || input.text.len() > 1_048_576 {
-                return Err(Error::Invalid(
-                    "invalid interpretation proposal bounds".into(),
+                return Err(Error::new(
+                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorCode::InvalidRequest,
+                    "Invalid request",
                 ));
             }
             let subject = SubjectId(id(&input.subject_id)?);
@@ -211,8 +217,10 @@ impl KernelService {
         if bound.source_query.capabilities.text_embedding
             == nous_core::RequirementStrength::Forbidden
         {
-            return Err(Error::Invalid(
-                "prepared query forbids embedding material activity".into(),
+            return Err(Error::new(
+                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorCode::InvalidRequest,
+                "Invalid request",
             ));
         }
         Ok(Some(bound))

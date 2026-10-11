@@ -6,7 +6,8 @@ import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
 import { ResolveIdentityResponseSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
 import {
   domainError,
-  DomainErrorCode,
+  ErrorCode,
+  ErrorOwner,
   ErrorRecovery,
 } from "@nous-wave/client/errors";
 import {
@@ -123,8 +124,9 @@ export class CoreCognition {
         "Projection WorkContext is not active",
         Code.FailedPrecondition,
         {
-          code: DomainErrorCode.STALE_CONTEXT,
+          code: ErrorCode.STALE_CONTEXT,
           recovery: ErrorRecovery.REFRESH_STATE,
+          owner: ErrorOwner.RUNTIME,
           context: {
             session_id: request.sessionId,
             work_context_id: request.activeWorkContextId,
@@ -168,8 +170,9 @@ export class CoreCognition {
     );
     if (after.runtimeRevision !== snapshot.runtimeRevision)
       throw domainError("Session changed during projection", Code.Aborted, {
-        code: DomainErrorCode.STALE_CONTEXT,
+        code: ErrorCode.STALE_CONTEXT,
         recovery: ErrorRecovery.REFRESH_STATE,
+        owner: ErrorOwner.RUNTIME,
         context: {
           session_id: request.sessionId,
           expected_revision: snapshot.runtimeRevision.toString(),
@@ -196,8 +199,9 @@ export class CoreCognition {
         "Session changed before context synchronization",
         Code.Aborted,
         {
-          code: DomainErrorCode.STALE_CONTEXT,
+          code: ErrorCode.STALE_CONTEXT,
           recovery: ErrorRecovery.REFRESH_STATE,
+          owner: ErrorOwner.RUNTIME,
           context: {
             session_id: input.sessionId,
             expected_revision: projection.sourceRuntimeRevision.toString(),
@@ -251,10 +255,10 @@ export class CoreCognition {
           );
           if (result.status !== "BOUND" || !result.candidates[0]?.canonical) {
             const code = {
-              UNKNOWN_REFERENCE: DomainErrorCode.UNKNOWN_REFERENCE,
-              AMBIGUOUS_REFERENCE: DomainErrorCode.AMBIGUOUS_REFERENCE,
-              REFERENCE_TYPE_MISMATCH: DomainErrorCode.REFERENCE_TYPE_MISMATCH,
-              REFERENCE_TOMBSTONED: DomainErrorCode.REFERENCE_TOMBSTONED,
+              UNKNOWN_REFERENCE: ErrorCode.UNKNOWN_REFERENCE,
+              AMBIGUOUS_REFERENCE: ErrorCode.AMBIGUOUS_REFERENCE,
+              REFERENCE_TYPE_MISMATCH: ErrorCode.REFERENCE_TYPE_MISMATCH,
+              REFERENCE_TOMBSTONED: ErrorCode.REFERENCE_TOMBSTONED,
             }[result.status];
             if (!code)
               throw new ConnectError(
@@ -262,11 +266,11 @@ export class CoreCognition {
                 Code.Internal,
               );
             const recovery =
-              code === DomainErrorCode.AMBIGUOUS_REFERENCE
+              code === ErrorCode.AMBIGUOUS_REFERENCE
                 ? ErrorRecovery.SELECT_CANDIDATE
-                : code === DomainErrorCode.REFERENCE_TOMBSTONED
+                : code === ErrorCode.REFERENCE_TOMBSTONED
                   ? ErrorRecovery.REDISCOVER_REFERENCE
-                  : code === DomainErrorCode.REFERENCE_TYPE_MISMATCH
+                  : code === ErrorCode.REFERENCE_TYPE_MISMATCH
                     ? ErrorRecovery.CORRECT_REQUEST
                     : ErrorRecovery.RESOLVE_REFERENCE;
             const error = domainError(
@@ -275,6 +279,7 @@ export class CoreCognition {
               {
                 code,
                 recovery,
+                owner: ErrorOwner.IDENTITY,
                 context: { reference: locator.value, expected_kind: kind },
               },
             );
