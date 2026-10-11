@@ -47,12 +47,15 @@ impl RegisteredDescriptor {
         };
         self.schema.validate(&value).map_err(|error| {
             // Keep the full diagnostic for private logs only; it may include the value.
+            let instance_path = error.instance_path().to_string();
             Error::new(
                 nous_core::ErrorOwner::Configuration,
                 nous_core::ErrorCode::InvalidRequest,
                 "Invalid configuration value",
             )
             .with_context("path", &self.descriptor.path)
+            .with_context("instance_path", instance_path)
+            .with_context("validation_code", error.kind().keyword())
             .with_source(error.to_owned())
         })?;
         Ok(value)

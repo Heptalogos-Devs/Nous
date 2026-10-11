@@ -34,6 +34,16 @@ export function configurationOperations(
       );
     } catch (error) {
       const traceId = randomUUID();
+      const issue = error instanceof z.ZodError ? error.issues[0] : undefined;
+      const fieldPath = issue
+        ? [path, ...issue.path.map((segment) => String(segment))].join(".")
+        : path;
+      const constraint =
+        issue?.code === "too_big"
+          ? `maximum ${issue.maximum}`
+          : issue?.code === "too_small"
+            ? `minimum ${issue.minimum}`
+            : issue?.code;
       console.error(
         JSON.stringify({
           event: "configuration_validation_failure",
@@ -41,11 +51,14 @@ export function configurationOperations(
           code: "INVALID_REQUEST",
           traceId,
           path,
+          ...(issue ? { fieldPath, validationCode: issue.code } : {}),
           source: error instanceof z.ZodError ? "ZodError" : "NormalizerError",
         }),
       );
       throw new ConnectError(
-        "Invalid configuration value",
+        issue
+          ? `Invalid configuration value at ${fieldPath} (${constraint})`
+          : "Invalid configuration value",
         Code.InvalidArgument,
         undefined,
         [
@@ -55,7 +68,12 @@ export function configurationOperations(
               code: ErrorCode.INVALID_REQUEST,
               recovery: ErrorRecovery.CORRECT_REQUEST,
               owner: ErrorOwner.CONFIGURATION,
-              context: { path },
+              context: {
+                path,
+                ...(issue
+                  ? { field_path: fieldPath, validation_code: issue.code }
+                  : {}),
+              },
               traceId,
             }),
           },

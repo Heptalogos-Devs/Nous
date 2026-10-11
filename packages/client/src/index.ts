@@ -84,15 +84,6 @@ function call<I, O>(
     }
   };
 }
-export interface ConfigurationMutation {
-  operationId: string;
-  path: string;
-  expectedRevision: bigint;
-}
-export interface ConfigurationOverride extends ConfigurationMutation {
-  value: JsonValue;
-}
-
 export function createNousClient(transport: Transport) {
   const subjects = createClient(SubjectService, transport);
   const cognition = createClient(CognitionService, transport);
@@ -139,31 +130,10 @@ export function createNousClient(transport: Transport) {
         configuration.getConfigDescriptor({ path }, options),
       ),
       get: call(configuration.getConfiguration),
-      setSystem: call((input: ConfigurationOverride, options?: CallOptions) =>
-        configuration.setSystemOverride(
-          { ...input, value: fromJson(ValueSchema, input.value) },
-          options,
-        ),
-      ),
-      clearSystem: call((input: ConfigurationMutation, options?: CallOptions) =>
-        configuration.clearSystemOverride(input, options),
-      ),
-      setSubject: call(
-        (
-          input: ConfigurationOverride & { subjectId: string },
-          options?: CallOptions,
-        ) =>
-          configuration.setSubjectOverride(
-            { ...input, value: fromJson(ValueSchema, input.value) },
-            options,
-          ),
-      ),
-      clearSubject: call(
-        (
-          input: ConfigurationMutation & { subjectId: string },
-          options?: CallOptions,
-        ) => configuration.clearSubjectOverride(input, options),
-      ),
+      setSystem: call(configuration.setSystemOverride),
+      clearSystem: call(configuration.clearSystemOverride),
+      setSubject: call(configuration.setSubjectOverride),
+      clearSubject: call(configuration.clearSubjectOverride),
     },
     identity: {
       addresses: call(identity.getIdentityAddresses),
@@ -321,7 +291,7 @@ export function createNousClient(transport: Transport) {
 }
 export type NousClient = ReturnType<typeof createNousClient>;
 
-/** CLI and management callers use one JSON syntax for scalar and structured values. */
+/** Parse JSON text into the generated protobuf Value used by configuration RPCs. */
 export function configurationValue(text: string) {
-  return JSON.parse(text) as JsonValue;
+  return fromJson(ValueSchema, JSON.parse(text) as JsonValue);
 }

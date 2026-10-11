@@ -13,6 +13,8 @@ import { repositoryRoot } from "../../../scripts/workspace.js";
 import { pathToFileURL } from "node:url";
 import { create, toJson } from "@bufbuild/protobuf";
 import { TimestampSchema } from "@bufbuild/protobuf/wkt";
+import { configurationValue } from "@nous-wave/client";
+import { SetSystemOverrideRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import {
   CreateSubjectRequestSchema,
   SubjectSchema,
@@ -21,8 +23,30 @@ import { protocolReferences } from "@nous-wave/client/data";
 import {
   freezeRequest,
   freezeResult,
+  thawRequest,
   thawResult,
 } from "../src/receipt-codec.js";
+
+test("configuration receipts freeze and thaw the generated protobuf Value", () => {
+  const request = create(SetSystemOverrideRequestSchema, {
+    operationId: "configuration-operation",
+    path: "maintenance.enabled",
+    expectedRevision: 7n,
+    value: configurationValue("true"),
+  });
+  const frozen = freezeRequest("configuration.setSystem", request);
+  expect(frozen.frozen.protoJson).toMatchObject({ value: true });
+  const thawed = thawRequest(
+    "configuration.setSystem",
+    frozen.frozen.typeName,
+    frozen.frozen.protoJson,
+  );
+  const thawedJson = toJson(
+    SetSystemOverrideRequestSchema,
+    thawed as never,
+  ) as Record<string, unknown>;
+  expect(thawedJson.value).toBe(true);
+});
 
 test("v2 ProtoJSON receipts preserve generated messages and opaque Struct data", async () => {
   const root = await mkdtemp(join(workspacePaths.temporary, "consumer-codec-"));

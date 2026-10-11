@@ -85,7 +85,7 @@ Query 进入 Serving prepare 前检查 retired collection。`serving.retired_gra
 
 Exact target 是 scope 的候选集合边界，不能和 Runtime/lexical/dense/Tag/Schema/topology discovery 混合扩展。Runtime 仍按冻结绑定、projection、hard constraints 和 owner 最终验证读取；整个 expression 的有效 leaf scopes 都是 exact 时，Kernel 直接调用语义 owner，不准备 Serving generation、query embedding、concept enrichment 或 model rerank。对象 target 在 current/as-of view 绑定一个 head；history view 允许旧 immutable revision，不改变对象 exact read 为历史枚举。混合 typed tree 的非 exact scopes 保留各自 discovery 语义。
 
-公开 `CognitionService.PrepareQuery` 与官方 Client `cognition.prepareQuery` 编译 NousQL 或 typed expression、解析 exact selectors、同一 repeatable-read transaction 捕获 Session/foreground WorkContext，并返回既有 `bound_query` 字段语义的 JSON inspection；不执行 retrieval、Serving build 或 provider。Inspection 包含 resolved CognitiveQuery、representation/version/SHA256/source refs/truncation flags、current refs、topology seeds、exact bindings、profile 与 ConfigSnapshot digest。
+公开 `CognitionService.PrepareQuery` 与官方 Client `cognition.prepareQuery` 编译 NousQL 或 typed expression、解析 exact selectors、同一 repeatable-read transaction 捕获 Session/foreground WorkContext，并返回 generated `PreparedQueryResponse`，其中 `bound_query` 是 typed protobuf `QueryInspection`；不执行 retrieval、Serving build 或 provider。Inspection 包含 resolved CognitiveQuery、representation/version/SHA256/source refs/truncation flags、current refs、topology seeds、exact bindings、profile 与 ConfigSnapshot digest。
 
 正式 query 必须包含非空 TextCue。自然语言代词和短 follow-up 是合法意图，不做多语言闭合启发式；只拒绝 `<UNRESOLVED:...>` machine placeholder。NousQL 为必需的未加引号 Unicode 意图与可选 $/@/# 语法岛，见 Agent 手册。Identity selectors 仍由 Directory 唯一解析。
 

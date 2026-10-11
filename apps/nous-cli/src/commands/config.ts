@@ -10,6 +10,12 @@ import {
 import { GetConfigurationRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import type { CliEnvironment } from "../runtime.js";
 import { CliError, nonnegativeInt64 } from "../agent.js";
+import {
+  ClearSubjectOverrideRequestSchema,
+  ClearSystemOverrideRequestSchema,
+  SetSubjectOverrideRequestSchema,
+  SetSystemOverrideRequestSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 
 export async function configCommands(
   env: CliEnvironment,
@@ -82,32 +88,40 @@ export async function configCommands(
       required(values["value-json"], "--value-json with a complete JSON value"),
     );
     change = values.subject
-      ? await client.configuration.setSubject({
-          operationId,
-          path,
-          expectedRevision,
-          value,
-          subjectId: values.subject,
-        })
-      : await client.configuration.setSystem({
-          operationId,
-          path,
-          value,
-          expectedRevision,
-        });
+      ? await client.configuration.setSubject(
+          create(SetSubjectOverrideRequestSchema, {
+            operationId,
+            subjectId: values.subject,
+            path,
+            value,
+            expectedRevision,
+          }),
+        )
+      : await client.configuration.setSystem(
+          create(SetSystemOverrideRequestSchema, {
+            operationId,
+            path,
+            value,
+            expectedRevision,
+          }),
+        );
   } else {
     change = values.subject
-      ? await client.configuration.clearSubject({
-          operationId,
-          path,
-          expectedRevision,
-          subjectId: values.subject,
-        })
-      : await client.configuration.clearSystem({
-          operationId,
-          path,
-          expectedRevision,
-        });
+      ? await client.configuration.clearSubject(
+          create(ClearSubjectOverrideRequestSchema, {
+            operationId,
+            path,
+            expectedRevision,
+            subjectId: values.subject,
+          }),
+        )
+      : await client.configuration.clearSystem(
+          create(ClearSystemOverrideRequestSchema, {
+            operationId,
+            path,
+            expectedRevision,
+          }),
+        );
   }
   const [active, desired] = await Promise.all([
     get(ConfigurationView.ACTIVE),

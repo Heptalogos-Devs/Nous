@@ -46,7 +46,7 @@ CapabilityPolicy 包括 textEmbedding、multimodalInterpretation、residualSensi
 
 ## Preparation 与 inspection
 
-`client.cognition.prepareQuery` 与 Query 共用 compiler/Identity resolver；`nous query prepare|inspect` 显示 root projection、TemporalFrame、captured clock、representation、resolved sources、profile、configuration digest 和 capability requirements，不调用 provider。
+`client.cognition.prepareQuery` 返回 generated `PreparedQueryResponse`，其中 `boundQuery` 是 typed protobuf `QueryInspection`，并与 Query 共用 compiler/Identity resolver；`nous query prepare|inspect` 显示 root projection、TemporalFrame、captured clock、representation、resolved sources、profile、configuration digest 和 capability requirements，不调用 provider。
 
 `prepareQuery`/`query prepare|inspect` 只返回绑定结果 inspection；它不产生后续执行凭据，也不调用 provider。正式 Query 由 Core 启动一个有界 QueryRun，Runtime 保留该请求的 BoundQuery 与 frozen ReadContext；Host 的模型或 Resource 步骤通过 Subject-bound、带 revision 的短暂 QueryRun handle 续接同一运行，完成最终校验后即释放，不供之后的请求复用。Historical embedding cache miss 由 Host 使用当前 QueryRun handle 在 frozen Owner view 中发现、生成并提交，继续复用 existing `embedding_materials`/content digest；有界 batch 不足或模型不可用按能力合同报告。Query embedding 在 activation/dense/VCP/leaves 间复用。Actual generation trace 来自 query 持有的 read view，不来自 `serving_current`。后续 Projection 是新的 Current owner read，并保留 `hit.revision ?? hit.reference` 精确选择。
 

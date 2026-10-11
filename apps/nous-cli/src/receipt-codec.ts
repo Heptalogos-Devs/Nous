@@ -9,7 +9,7 @@ import {
   type DescMessage,
   type JsonValue,
 } from "@bufbuild/protobuf";
-import { EmptySchema, ValueSchema } from "@bufbuild/protobuf/wkt";
+import { EmptySchema } from "@bufbuild/protobuf/wkt";
 import {
   ClearSubjectOverrideRequestSchema,
   ClearSystemOverrideRequestSchema,
@@ -92,13 +92,11 @@ interface ReceiptDefinition {
   operationId(input: Record<string, unknown>): string;
   statusLookup: ReceiptStatusLookup;
   noCommitCodes: readonly string[];
-  prepare?(input: Record<string, unknown>): unknown;
 }
 type ReceiptDefinitionOptions = {
   subjectScope?: ReceiptDefinition["subjectScope"];
   operationId?: ReceiptDefinition["operationId"];
   statusLookup?: ReceiptStatusLookup;
-  prepare?: ReceiptDefinition["prepare"];
 };
 const operationField = (input: Record<string, unknown>) => {
   const id = input.operationId ?? input.requestId ?? input.eventId;
@@ -165,7 +163,6 @@ const definition = (
         "REFERENCE_TOMBSTONED",
       ],
     }[owner] ?? [],
-  prepare: options.prepare,
 });
 
 /** Static request/response and status identities share one receipt registry. */
@@ -189,29 +186,14 @@ const receiptDefinitions = {
     "configuration_mutation",
     SetSystemOverrideRequestSchema,
     ConfigurationChangeSchema,
-    {
-      subjectScope: "optional",
-      prepare: (input) =>
-        create(SetSystemOverrideRequestSchema, {
-          ...input,
-          value: fromJson(ValueSchema, input.value as JsonValue),
-        }),
-      statusLookup: "configurationMutation",
-    },
+    { subjectScope: "optional", statusLookup: "configurationMutation" },
   ),
   "configuration.setSubject": definition(
     "CONFIGURATION",
     "configuration_mutation",
     SetSubjectOverrideRequestSchema,
     ConfigurationChangeSchema,
-    {
-      prepare: (input) =>
-        create(SetSubjectOverrideRequestSchema, {
-          ...input,
-          value: fromJson(ValueSchema, input.value as JsonValue),
-        }),
-      statusLookup: "configurationMutation",
-    },
+    { statusLookup: "configurationMutation" },
   ),
   "configuration.clearSystem": definition(
     "CONFIGURATION",
@@ -533,9 +515,7 @@ export function freezeRequest(command: string, input: unknown) {
   if (!input || typeof input !== "object")
     throw new Error("Mutation request must be an object");
   const record = input as Record<string, unknown>;
-  const request = spec.prepare
-    ? spec.prepare(record)
-    : create(spec.request as never, record as never);
+  const request = create(spec.request as never, record as never);
   if (!isMessage(request, spec.request))
     throw new Error(
       "Mutation request did not match its registered protobuf schema",

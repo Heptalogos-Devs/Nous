@@ -88,6 +88,7 @@ try {
     if (args[0] !== "check") assert.equal(parsed.schemaVersion, "nous.cli.v2");
     return (args[0] === "check" ? parsed : parsed.data) as {
       valid?: boolean;
+      change?: unknown;
       descriptors?: { path: string; exposure: string }[];
     };
   };
@@ -235,7 +236,7 @@ try {
   const sparseGraph = await client.configuration.setSystem({
     operationId: graphOperation,
     path: "models",
-    value: modelGraph,
+    value: configurationValue(JSON.stringify(modelGraph)),
     expectedRevision: graphRevision,
   });
   const frozenGraph = (await entry("models", undefined, true)).value;
@@ -257,7 +258,7 @@ try {
   const explicitGraph = await client.configuration.setSystem({
     operationId: graphOperation,
     path: "models",
-    value: frozenGraph,
+    value: configurationValue(JSON.stringify(frozenGraph)),
     expectedRevision: graphRevision,
   });
   assert.equal(explicitGraph.revision, sparseGraph.revision);
@@ -266,7 +267,7 @@ try {
     client.configuration.setSystem({
       operationId: randomUUID(),
       path: "models",
-      value: modelGraph,
+      value: configurationValue(JSON.stringify(modelGraph)),
       expectedRevision: graphRevision,
     }),
     /revision.*changed|revision.*conflict/i,
@@ -277,10 +278,12 @@ try {
       operationId: randomUUID(),
       expectedRevision: await revision(),
       path: "models",
-      value: {
-        ...modelGraph,
-        roles: { memory_formation: { routes: ["absent"] } },
-      },
+      value: configurationValue(
+        JSON.stringify({
+          ...modelGraph,
+          roles: { memory_formation: { routes: ["absent"] } },
+        }),
+      ),
     }),
     /models.roles.memory_formation.routes.0/,
   );
@@ -291,13 +294,13 @@ try {
     operationId: normalizedOperation,
     expectedRevision: videoRevision,
     path: "video.max_frames",
-    value: 4,
+    value: configurationValue("4"),
   });
   const explicit = await client.configuration.setSystem({
     operationId: normalizedOperation,
     expectedRevision: videoRevision,
     path: "video.max_frames",
-    value: 4,
+    value: configurationValue("4"),
   });
   assert.equal(omitted.desiredDigest, explicit.desiredDigest);
   assert.equal(omitted.revision, explicit.revision);
@@ -318,7 +321,7 @@ try {
       operationId: randomUUID(),
       expectedRevision: await revision(),
       path: "video.max_frames",
-      value: 17,
+      value: configurationValue("17"),
     }),
     /maximum|16/,
   );
@@ -374,6 +377,7 @@ try {
     "--json",
   ];
   const cliChange = await cli(...cliArgs);
+  assert(cliChange.change);
   await client.configuration.setSubject({
     operationId: randomUUID(),
     expectedRevision: await revision(),
@@ -389,7 +393,9 @@ try {
     (await entry("maintenance.enabled", subject.subjectId)).value,
     false,
   );
-  assert.deepEqual(await cli(...cliArgs), cliChange);
+  const beforeReplay = await revision();
+  assert.deepEqual((await cli(...cliArgs)).change, cliChange.change);
+  assert.equal(await revision(), beforeReplay);
   const initial = (await entry("runtime.resident_limit")).value;
   const restart = await client.configuration.setSystem({
     operationId: randomUUID(),
