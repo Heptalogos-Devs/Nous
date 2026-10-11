@@ -6,10 +6,10 @@
 
 - **Memory-only Subject**：Subject identity 与 capability；Memory、CognitiveSchema、Episode、Journal、Tag、AssociationEvidence 的 Authority、不可变修订、provenance、history 和 owner 生命周期；前四类共用对象 / 修订 header、读取与生命周期入口，保留各自内容结构。
 - **材料来源链**：Artifact、Observation、SourceRegion、DerivedRepresentation 与派生 DAG；Material owner 维护内容身份、来源区域、五轴时间和精确 lineage。
-- **认知 Runtime**：Session、ResidentSet、WorkContext、UseEvent、MaintenanceNeed 与 durable checkpoint；Runtime 捕获交互经历，Memory owner 提供 Episode / Journal 与有界维护写入。
+- **认知 Runtime**：Session、ResidentSet、WorkContext、UseEvent、Experience 与 MaintenanceNeed；Runtime 捕获交互经历，Memory owner 提供 Episode / Journal 与有界维护写入。
 - **查询与上下文**：自然语言 Query、exact/history 读取、lexical/dense/runtime/concept/topology lanes、固定计划与 owner 最终校验；QueryRun 支持外部能力往返。Projection 在完成查询后单独读取 owner 内容并保留命中修订；Memory（含 Episode、Journal、Schema）与 Material 使用有界 grouped owner reads。
-- **配置与持久操作**：统一配置 catalog、active/desired/effect 读取和冻结快照；跨外部调用的模型工作复用 durable operation 与 owner receipt，错误包含明确 owner、code 和 recovery。
-- **官方 Client / CLI**：正式 protobuf-js 消息与显式 ProtoJSON 边界；覆盖已有功能的 typed 命令、资源/材料/认知入口、分页读取、operation inspect/retry、本地 receipt 恢复和 shared MCP。
+- **配置与模型调用**：统一配置 catalog、active/desired/effect 读取；Core 以类型化模型结果调用 canonical owner，owner receipt 与 Authority mutation 原子提交。已提交的 DerivedRepresentation 与 Serving 材料仍由各自 owner/cache 保存。
+- **官方 Client / CLI**：正式 protobuf-js 消息与显式 ProtoJSON 边界；覆盖已有功能的 typed 命令、资源/材料/认知入口、分页读取、有限本地 request/result cache、显式手动 retry 和 shared MCP。模型请求不自动崩溃续接；重试可再次调用模型或读取外部资源。
 - **可重建 Serving 与生命周期**：按实际 builder 与构建策略管理代次，查询 readout policy 不改变资产身份；向量材料按有效 source reference 绑定，purge 协调 Authority、Serving 与活动 Core context/query cache。
 - **Windows x64 source-less portable package**：包含 Kernel 与所需私有运行时的装配和安装路径。
 

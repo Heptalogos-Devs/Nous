@@ -25,7 +25,7 @@ import {
   thawResult,
 } from "../src/receipt-codec.js";
 
-test("v2 ProtoJSON receipts preserve generated messages and opaque Struct data", async () => {
+test("ProtoJSON receipts preserve generated messages and opaque Struct data", async () => {
   const root = await mkdtemp(join(workspacePaths.temporary, "consumer-codec-"));
   const subjectId = "33333333-3333-4333-8333-333333333333";
   try {
@@ -50,7 +50,6 @@ test("v2 ProtoJSON receipts preserve generated messages and opaque Struct data",
     });
     const frozenResult = freezeResult("subjects.create", result);
     await state.writeReceipt("operation", {
-      format: "nous.consumer.operation.v2",
       receiptId: "operation",
       command: "subjects.create",
       request: frozenRequest.frozen,
@@ -59,7 +58,6 @@ test("v2 ProtoJSON receipts preserve generated messages and opaque Struct data",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     await state.writeReceipt("operation", {
-      format: "nous.consumer.operation.v2",
       receiptId: "operation",
       command: "subjects.create",
       request: frozenRequest.frozen,
@@ -106,15 +104,11 @@ test("selection updates preserve independent fields and reject conflicting or fo
       workContextId: "context",
     });
     const current = await state.selection();
-    await state.save(
-      { format: "nous.consumer.selection", subjectId: "another" },
-      current,
-    );
+    await state.save({ subjectId: "another" }, current);
     await expect(
       state.save({ ...current, workContextId: "old-subject-context" }, current),
     ).rejects.toMatchObject({ code: "STATE_CONFLICT" });
     expect(await state.selection()).toEqual({
-      format: "nous.consumer.selection",
       subjectId: "another",
       sessionId: undefined,
       workContextId: undefined,
@@ -126,29 +120,25 @@ test("selection updates preserve independent fields and reject conflicting or fo
         { ...identity, consumer: "consumer:other" },
         policy,
       ).selection(),
-    ).toEqual({ format: "nous.consumer.selection" });
+    ).toEqual({});
     expect(
       await cliState(
         root,
         { ...identity, instanceId: crypto.randomUUID() },
         policy,
       ).selection(),
-    ).toEqual({ format: "nous.consumer.selection" });
+    ).toEqual({});
     const namespace = createHash("sha256")
       .update(JSON.stringify([identity.instanceId, identity.consumer]))
       .digest("hex");
     const selectionPath = join(root, "consumers", namespace, "selection.json");
     const encoded = await readFile(selectionPath, "utf8");
-    expect(JSON.parse(encoded)).toEqual({
-      format: "nous.consumer.selection",
-      subjectId: "another",
-    });
+    expect(JSON.parse(encoded)).toEqual({ subjectId: "another" });
     expect(await state.selection()).toMatchObject({ subjectId: "another" });
 
     const incompatible = JSON.stringify({
       format: "nous.consumer.selection",
       subjectId: "another",
-      obsoleteField: true,
     });
     await writeFile(selectionPath, incompatible);
     await expect(state.selection()).rejects.toMatchObject({
@@ -160,7 +150,7 @@ test("selection updates preserve independent fields and reject conflicting or fo
   }
 });
 
-test("different processes serialize only the shared consumer receipt transaction", async () => {
+test("different processes serialize receipt retention without blocking new requests", async () => {
   const root = await mkdtemp(
     join(workspacePaths.temporary, "consumer-processes-"),
   );
@@ -172,8 +162,8 @@ test("different processes serialize only the shared consumer receipt transaction
   ).href;
   const worker = `import {cliState} from ${JSON.stringify(module)}; import {consumerStatePolicySchema} from ${JSON.stringify(policyModule)};
     const state=cliState(process.argv[1],JSON.parse(process.argv[2]),consumerStatePolicySchema.parse({receipt_limit:2}));
-    try { const id=process.argv[3]; const now=new Date().toISOString(); await state.writeReceipt(id,{format:'nous.consumer.operation.v2',receiptId:id,command:'subjects.create',request:{typeName:'request',protoJson:{}},status:'pending',createdAt:now,updatedAt:now});console.log('saved'); }
-    catch(error) {if(error.code!=='RESOURCE_EXHAUSTED')throw error;console.log(error.code);}`;
+    try { const id=process.argv[3]; const now=new Date().toISOString(); await state.writeReceipt(id,{receiptId:id,command:'subjects.create',request:{typeName:'request',protoJson:{}},status:'pending',createdAt:now,updatedAt:now});console.log('saved'); }
+    catch(error) {console.log(error.code ?? 'failed');}`;
   try {
     const results = await Promise.all(
       [0, 1, 2, 3].map((index) =>
@@ -195,10 +185,7 @@ test("different processes serialize only the shared consumer receipt transaction
     );
     expect(
       results.filter((result) => result.stdout.trim() === "saved"),
-    ).toHaveLength(2);
-    expect(
-      results.filter((result) => result.stdout.trim() === "RESOURCE_EXHAUSTED"),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
     const [namespace] = await readdir(join(root, "consumers"));
     expect(
       await readdir(join(root, "consumers", namespace!, "operations")),
@@ -217,7 +204,6 @@ test("receipt transitions preserve the frozen request and terminal outcomes", as
   try {
     const state = cliState(root, identity, policy);
     const pending = {
-      format: "nous.consumer.operation.v2" as const,
       receiptId: "operation",
       command: "subjects.create",
       request: { typeName: "request", protoJson: { subjectId } },
@@ -247,18 +233,6 @@ test("receipt transitions preserve the frozen request and terminal outcomes", as
     ).rejects.toMatchObject({
       code: "STATE_CONFLICT",
     });
-    await expect(
-      state.writeReceipt("operation", {
-        ...pending,
-        status: "rejected",
-        error: {
-          code: "INVALID_REQUEST",
-          owner: "SUBJECT",
-          message: "late refusal",
-          context: {},
-        },
-      }),
-    ).rejects.toMatchObject({ code: "STATE_CONFLICT" });
     expect(await state.receipt("operation")).toEqual(complete);
   } finally {
     await rm(root, { recursive: true, force: true });

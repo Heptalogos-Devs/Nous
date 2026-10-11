@@ -12,10 +12,7 @@ import {
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { KernelClient } from "../../src/kernel-client.js";
 import { conceptMaintenanceSchema } from "../../src/model/schemas/concept-maintenance.js";
-import {
-  executeConceptMaintenance,
-  type ConceptActionResult,
-} from "../../src/maintenance/concept-maintenance.js";
+import { executeConceptMaintenance } from "../../src/maintenance/concept-maintenance.js";
 const content = {
   label: "Release approval",
   description: "Reviewer signoff before rollout",
@@ -112,10 +109,6 @@ function fixture() {
       splitTag: split,
     },
   } as unknown as KernelClient;
-  let progress: ConceptActionResult[] = [];
-  const save = vi.fn(async (results: ConceptActionResult[]) => {
-    progress = [...results];
-  });
   const run = (actions: unknown[]) =>
     executeConceptMaintenance(
       kernel,
@@ -124,10 +117,6 @@ function fixture() {
       workflow,
       producer,
       {},
-      progress,
-      save,
-
-      (_id, commit) => commit(),
     );
   return {
     kernel,
@@ -135,9 +124,7 @@ function fixture() {
     association,
     revise,
     split,
-    save,
     run,
-    progress: () => progress,
   };
 }
 it("creates a concept and attaches its returned identity through typed owner APIs", async () => {
@@ -157,5 +144,5 @@ it("creates a concept and attaches its returned identity through typed owner API
   expect(f.createTag.mock.calls[0]?.[0].operationId).not.toBe(
     f.association.mock.calls[0]?.[0].operationId,
   );
-  expect(f.progress()).toHaveLength(2);
+  expect(outcome.actions).toHaveLength(2);
 });

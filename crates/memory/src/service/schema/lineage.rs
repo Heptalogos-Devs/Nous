@@ -109,16 +109,6 @@ impl MemoryService {
             "source_split",
         )
         .await?;
-        mutation
-            .publish_workflow_results(
-                "memory",
-                &revisions
-                    .iter()
-                    .copied()
-                    .map(CognitiveRef::CognitiveSchemaRevision)
-                    .collect::<Vec<_>>(),
-            )
-            .await?;
         let mut results = vec![MutationResult::new(
             CognitiveRef::CognitiveSchema(schema_id),
             None,
@@ -270,15 +260,6 @@ impl MemoryService {
             "source_merged",
         )
         .await?;
-        mutation
-            .publish_workflow_results(
-                "memory",
-                &[
-                    CognitiveRef::CognitiveSchema(new_id),
-                    CognitiveRef::CognitiveSchemaRevision(new_revision),
-                ],
-            )
-            .await?;
         let result = MutationResult::revised(
             CognitiveRef::CognitiveSchema(new_id),
             new_revision.0,

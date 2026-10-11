@@ -44,9 +44,7 @@ impl MemoryService {
             &input.basis,
         )
         .await?;
-        let formed_at = self
-            .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
-            .await?;
+        let formed_at = started_at;
         let (memory_id, revision_id) = self
             .create_memory_in(mutation.tx(), &input, formed_at)
             .await?;
@@ -58,16 +56,6 @@ impl MemoryService {
             sequence,
         )
         .await?;
-
-        mutation
-            .publish_workflow_results(
-                "memory",
-                &[
-                    CognitiveRef::Memory(memory_id),
-                    CognitiveRef::MemoryRevision(revision_id),
-                ],
-            )
-            .await?;
         let result =
             MutationResult::revised(CognitiveRef::Memory(memory_id), revision_id.0, Some(1));
         mutation.commit(std::slice::from_ref(&result)).await?;
@@ -306,9 +294,7 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let formed_at = self
-            .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
-            .await?;
+        let formed_at = started_at;
         let (revision_id, epoch) = self
             .revise_memory_in(mutation.tx(), &input, formed_at)
             .await?;
@@ -329,16 +315,6 @@ impl MemoryService {
             "source_revised",
         )
         .await?;
-
-        mutation
-            .publish_workflow_results(
-                "memory",
-                &[
-                    CognitiveRef::Memory(input.memory_id),
-                    CognitiveRef::MemoryRevision(revision_id),
-                ],
-            )
-            .await?;
         let result = MutationResult::revised(
             CognitiveRef::Memory(input.memory_id),
             revision_id.0,

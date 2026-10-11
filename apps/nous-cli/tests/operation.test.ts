@@ -47,16 +47,10 @@ it("does not forge a mutation status identity for UseEvent receipts", async () =
     expect(operationStatus).not.toHaveBeenCalled();
     expect(inspection).toMatchObject({
       command: "cognition.reportUse",
-      serverState: "UNKNOWN",
-      certainty: "outcome_unknown",
+      localStatus: "complete",
     });
-    const unsupportedNotice = (
-      inspection as { notices: { code: string; message: string }[] }
-    ).notices[0]!;
-    expect(unsupportedNotice.code).toBe("STATUS_LOOKUP_UNSUPPORTED");
-    expect(unsupportedNotice.message).toContain(
-      "has no operation-status lookup for this command",
-    );
+    expect(inspection).not.toHaveProperty("certainty");
+    expect(inspection).not.toHaveProperty("notices");
     expect(inspection).not.toHaveProperty("request");
     expect(inspection).not.toHaveProperty("result");
   } finally {

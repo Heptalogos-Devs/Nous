@@ -71,14 +71,14 @@ message MutationReceiptIdentity { string subject_id = 1 [(reference_kind) = "sub
 message SubjectCreateIdentity { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; }
 message ConfigurationMutationIdentity { string operation_id = 1; }
 message ObservationRequestIdentity { string subject_id = 1 [(reference_kind) = "subject"]; string request_id = 2; }
-message ModelWorkflowIdentity { string subject_id = 1 [(reference_kind) = "subject"]; string owner = 2; string operation_key = 3; }
 message GetOperationStatusRequest {
+  reserved 5;
+  reserved "model_workflow";
   oneof identity {
     MutationReceiptIdentity mutation_receipt = 1;
     SubjectCreateIdentity subject_create = 2;
     ConfigurationMutationIdentity configuration_mutation = 3;
     ObservationRequestIdentity observation_request = 4;
-    ModelWorkflowIdentity model_workflow = 5;
   }
 }
 enum OperationState {
@@ -88,7 +88,8 @@ enum OperationState {
   OPERATION_STATE_COMMITTED = 2;
   reserved 3;
   reserved "OPERATION_STATE_FAILED_TERMINAL";
-  OPERATION_STATE_COMPLETED = 4;
+  reserved 4;
+  reserved "OPERATION_STATE_COMPLETED";
 }
 message OperationResult {
   CognitiveRef reference = 1;

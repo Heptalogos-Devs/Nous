@@ -1790,7 +1790,6 @@ pub enum ErrorOwner {
     Concept = 7,
     Observation = 8,
     Resource = 9,
-    ModelWorkflow = 10,
     Kernel = 11,
     Core = 12,
     Persistence = 13,
@@ -1814,7 +1813,6 @@ impl ErrorOwner {
             Self::Concept => "ERROR_OWNER_CONCEPT",
             Self::Observation => "ERROR_OWNER_OBSERVATION",
             Self::Resource => "ERROR_OWNER_RESOURCE",
-            Self::ModelWorkflow => "ERROR_OWNER_MODEL_WORKFLOW",
             Self::Kernel => "ERROR_OWNER_KERNEL",
             Self::Core => "ERROR_OWNER_CORE",
             Self::Persistence => "ERROR_OWNER_PERSISTENCE",
@@ -1835,7 +1833,6 @@ impl ErrorOwner {
             "ERROR_OWNER_CONCEPT" => Some(Self::Concept),
             "ERROR_OWNER_OBSERVATION" => Some(Self::Observation),
             "ERROR_OWNER_RESOURCE" => Some(Self::Resource),
-            "ERROR_OWNER_MODEL_WORKFLOW" => Some(Self::ModelWorkflow),
             "ERROR_OWNER_KERNEL" => Some(Self::Kernel),
             "ERROR_OWNER_CORE" => Some(Self::Core),
             "ERROR_OWNER_PERSISTENCE" => Some(Self::Persistence),
@@ -2391,17 +2388,8 @@ pub struct ObservationRequestIdentity {
     pub request_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ModelWorkflowIdentity {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub owner: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub operation_key: ::prost::alloc::string::String,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetOperationStatusRequest {
-    #[prost(oneof="get_operation_status_request::Identity", tags="1, 2, 3, 4, 5")]
+    #[prost(oneof="get_operation_status_request::Identity", tags="1, 2, 3, 4")]
     pub identity: ::core::option::Option<get_operation_status_request::Identity>,
 }
 /// Nested message and enum types in `GetOperationStatusRequest`.
@@ -2416,8 +2404,6 @@ pub mod get_operation_status_request {
         ConfigurationMutation(super::ConfigurationMutationIdentity),
         #[prost(message, tag="4")]
         ObservationRequest(super::ObservationRequestIdentity),
-        #[prost(message, tag="5")]
-        ModelWorkflow(super::ModelWorkflowIdentity),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2477,7 +2463,6 @@ pub enum OperationState {
     Unknown = 0,
     InProgress = 1,
     Committed = 2,
-    Completed = 4,
 }
 impl OperationState {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2489,7 +2474,6 @@ impl OperationState {
             Self::Unknown => "OPERATION_STATE_UNKNOWN",
             Self::InProgress => "OPERATION_STATE_IN_PROGRESS",
             Self::Committed => "OPERATION_STATE_COMMITTED",
-            Self::Completed => "OPERATION_STATE_COMPLETED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2498,7 +2482,6 @@ impl OperationState {
             "OPERATION_STATE_UNKNOWN" => Some(Self::Unknown),
             "OPERATION_STATE_IN_PROGRESS" => Some(Self::InProgress),
             "OPERATION_STATE_COMMITTED" => Some(Self::Committed),
-            "OPERATION_STATE_COMPLETED" => Some(Self::Completed),
             _ => None,
         }
     }

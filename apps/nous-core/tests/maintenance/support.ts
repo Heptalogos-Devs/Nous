@@ -1,30 +1,16 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { create, type MessageInitShape } from "@bufbuild/protobuf";
-import {
-  WorkflowSnapshotSchema,
-  WorkflowPayloadSchema,
-  type WorkflowSnapshot,
-  type WorkflowPayload,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
-import {
-  OpenWorkflowRequestSchema,
-  SaveWorkflowRequestSchema,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
-import { coreExecutionSchema } from "../../src/configuration/catalog.js";
-
+import { create } from "@bufbuild/protobuf";
 import { vi } from "vitest";
-
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
   MaintenanceNeedSchema,
   MaintenancePlanSchema,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { type KernelClient } from "../../src/kernel-client.js";
-
+import { coreExecutionSchema } from "../../src/configuration/catalog.js";
 import { ModelRuntime } from "../../src/model/runtime.js";
-
 import { type ModelRoleSnapshot } from "../../src/model/execution/snapshot.js";
 import { modelRoleSnapshotFixture } from "../model/snapshot-fixture.js";
 
@@ -59,6 +45,7 @@ export const plan = create(MaintenancePlanSchema, {
     },
   ],
 });
+
 export function admitStub<T>(value: T) {
   return async (
     _input: string,
@@ -70,6 +57,7 @@ export function admitStub<T>(value: T) {
     return value;
   };
 }
+
 export function fixture() {
   const models = new ModelRuntime();
   vi.spyOn(models.invocations, "snapshot").mockReturnValue(
@@ -120,9 +108,6 @@ export function fixture() {
         },
       };
     });
-  let snapshot: WorkflowSnapshot | undefined;
-  let proposal: WorkflowPayload | undefined;
-  let outcome: WorkflowPayload | undefined;
   const commit = vi.fn(
     async (
       _input: Parameters<KernelClient["maintenance"]["commitJournal"]>[0],
@@ -136,36 +121,6 @@ export function fixture() {
       planMaintenance: getPlan,
       commitJournal: commit,
       refreshMaintenance: refresh,
-    },
-    modelWorkflow: {
-      openWorkflow: vi.fn(
-        async (input: MessageInitShape<typeof OpenWorkflowRequestSchema>) => {
-          if (outcome)
-            return { state: { case: "completed", value: { outcome } } };
-          if (!snapshot && !input.snapshot)
-            return { state: { case: "missing", value: {} } };
-          snapshot = create(WorkflowSnapshotSchema, snapshot ?? input.snapshot);
-          return {
-            state: {
-              case: "acquired",
-              value: {
-                pending: { snapshot, proposal },
-                lease: { token: "lease" },
-              },
-            },
-          };
-        },
-      ),
-      saveWorkflow: vi.fn(
-        async (input: MessageInitShape<typeof SaveWorkflowRequestSchema>) => {
-          if (input.proposal)
-            proposal = create(WorkflowPayloadSchema, input.proposal);
-          if (input.outcome)
-            outcome = create(WorkflowPayloadSchema, input.outcome);
-          return {};
-        },
-      ),
-      releaseWorkflow: vi.fn(async () => ({})),
     },
   } as unknown as KernelClient;
   return { kernel, models, synthesize, commit, refresh, getPlan };

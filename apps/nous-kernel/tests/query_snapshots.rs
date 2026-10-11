@@ -4,7 +4,6 @@
 mod test_support;
 
 use nous_core::{Cue, EntityRef, OperationId};
-use nous_persistence::WorkflowReservation;
 use test_support::query::{query, subject};
 use test_support::{database, form_input, observation, open_runtime};
 
@@ -39,43 +38,6 @@ async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
     let execution = runtime.execute_query(request, Some(64)).await.unwrap();
     assert_eq!(execution.result.results.len(), 1);
 
-    let key = operation.0.to_string();
-    let reservation = test_support::open_model_workflow(
-        &runtime.store,
-        subject,
-        "memory",
-        &key,
-        "semantic input",
-        &nous_core::WorkflowSnapshot {
-            content: nous_core::WorkflowPayload {
-                payload: serde_json::json!({"model":"frozen"}),
-                dependencies: vec![candidate.reference.clone()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        None,
-        360,
-    )
-    .await
-    .unwrap();
-    let WorkflowReservation::Acquired { lease, .. } = reservation else {
-        panic!("new model workflow reservation should be acquired");
-    };
-    let lease = lease.token;
-    runtime
-        .store
-        .save_model_workflow(
-            &test_support::workflow_lease(subject, "memory", &key, lease),
-            Some(&test_support::workflow_payload(
-                serde_json::json!({"text":"private-cognitive-marker"}),
-            )),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
     runtime
         .purge_cognition(
             subject,
@@ -85,40 +47,6 @@ async fn purge_between_query_binding_and_finalize_rejects_the_bound_result() {
         )
         .await
         .unwrap();
-    use sqlx::Row;
-    let row = sqlx::query("SELECT snapshot,proposal,outcome FROM model_workflow_operations WHERE subject_id=$1 AND owner='memory' AND operation_key=$2").bind(subject.0).bind(&key).fetch_one(runtime.store.pool()).await.unwrap();
-    assert_eq!(
-        row.get::<serde_json::Value, _>("snapshot"),
-        serde_json::to_value(nous_core::WorkflowSnapshot::default()).unwrap()
-    );
-    assert!(
-        row.get::<Option<serde_json::Value>, _>("proposal")
-            .is_none()
-    );
-    assert_eq!(
-        row.get::<serde_json::Value, _>("outcome"),
-        serde_json::to_value(nous_core::WorkflowPayload {
-            purged: true,
-            ..Default::default()
-        })
-        .unwrap()
-    );
-    assert!(
-        runtime
-            .store
-            .save_model_workflow(
-                &test_support::workflow_lease(subject, "memory", &key, lease),
-                Some(&test_support::workflow_payload(
-                    serde_json::json!({"text":"resurrect"})
-                )),
-                None,
-                None,
-                None,
-            )
-            .await
-            .is_err()
-    );
-
     let error = test_support::finish_query_execution(
         &runtime.cognition,
         execution,

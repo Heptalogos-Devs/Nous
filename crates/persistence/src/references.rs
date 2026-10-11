@@ -26,6 +26,89 @@ pub(crate) fn cognition_ref_parts(
 }
 
 impl AuthorityStore {
+    /// Clear context bodies that directly depended on purged owner refs while
+    /// retaining an ended shell for existing longitudinal references.
+    pub async fn purge_work_contexts_in(
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+    ) -> Result<()> {
+        if references.is_empty() {
+            return Ok(());
+        }
+        let parts = references.iter().map(reference_parts).collect::<Vec<_>>();
+        let (kinds, values): (Vec<_>, Vec<_>) = parts.into_iter().unzip();
+        let affected: Vec<uuid::Uuid> = sqlx::query_scalar(
+            r#"
+WITH targets(ref_kind,ref_value) AS (
+    SELECT * FROM unnest($2::text[],$3::text[])
+)
+SELECT DISTINCT wc.work_context_id
+FROM work_contexts wc
+JOIN work_context_refs wcr USING(work_context_id)
+JOIN targets requested USING(ref_kind,ref_value)
+WHERE wc.subject_id=$1
+ORDER BY wc.work_context_id
+"#,
+        )
+        .bind(subject.0)
+        .bind(&kinds)
+        .bind(&values)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db)?;
+        for id in affected {
+            let context = CognitiveRef::WorkContext(nous_core::WorkContextId(id));
+            Self::tombstone_identity_refs_in(tx, subject, std::slice::from_ref(&context)).await?;
+            Self::purge_owner_history_in(tx, subject, std::slice::from_ref(&context)).await?;
+        }
+        sqlx::query(
+            r#"
+WITH targets(ref_kind,ref_value) AS (
+    SELECT * FROM unnest($2::text[],$3::text[])
+)
+UPDATE work_contexts wc SET
+    state='ended',purpose='Purged context',context_text='',
+    unresolved_questions='{}',constraints='{}',resume_conditions='{}',
+    budget_summary='{}',revision=revision+1,
+    ended_at=COALESCE(ended_at,clock_timestamp()),updated_at=clock_timestamp()
+WHERE wc.subject_id=$1 AND EXISTS (
+    SELECT 1 FROM work_context_refs wcr
+    JOIN targets requested USING(ref_kind,ref_value)
+    WHERE wcr.work_context_id=wc.work_context_id
+)
+"#,
+        )
+        .bind(subject.0)
+        .bind(&kinds)
+        .bind(&values)
+        .execute(&mut **tx)
+        .await
+        .map_err(db)?;
+        sqlx::query(
+            r#"
+WITH targets(ref_kind,ref_value) AS (
+    SELECT * FROM unnest($2::text[],$3::text[])
+), affected(work_context_id) AS (
+    SELECT DISTINCT wc.work_context_id
+    FROM work_contexts wc
+    JOIN work_context_refs wcr USING(work_context_id)
+    JOIN targets requested USING(ref_kind,ref_value)
+    WHERE wc.subject_id=$1
+)
+DELETE FROM work_context_refs wcr USING affected
+WHERE wcr.work_context_id=affected.work_context_id
+"#,
+        )
+        .bind(subject.0)
+        .bind(kinds)
+        .bind(values)
+        .execute(&mut **tx)
+        .await
+        .map_err(db)?;
+        Ok(())
+    }
+
     /// Resolve a query exact target once at binding time.  Mutable cognition
     /// object refs are deliberately converted to their current exact revision;
     /// callers retain the returned epoch and must reject a changed head rather

@@ -23,7 +23,7 @@ flowchart TD
 
 | 边界               | 拥有的数据或职责                                                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Core（TypeScript） | 公共 hosting 与调用方编排；模型配置、Prompt、provider 调用及执行遥测；宿主供给的外部 Resource adapter；Query / Projection / Managed Context 的宿主侧工作流。 |
+| Core（TypeScript） | 公共 hosting 与调用方编排；模型配置、Prompt 与 provider 调用；宿主供给的外部 Resource adapter；Query / Projection / Managed Context 的宿主侧工作流。 |
 | Subject            | Subject identity、capability 与 Cognitive Seed adoption。                                                                                                    |
 | Configuration      | 配置定义、校验、作用域、active/desired 解析与不可变快照；不承载领域状态。                                                                                    |
 | Material           | Artifact、Observation、来源区域、派生表示及 materialization / lineage。                                                                                      |
@@ -34,9 +34,9 @@ flowchart TD
 | Retrieval          | 从 owner 提供的 Authority 输入构建、安装、读取和回收可重建 Serving 代次；不持有认知 Authority。                                                              |
 | Protocol           | `proto/` 是跨语言 RPC 合同来源；生成代码不手工编辑。                                                                                                         |
 
-Authority mutation 由语义 owner 校验和提交。Core 执行模型或外部 Resource 工作时不持有 Authority 写事务；生成的候选结果以正式 owner 请求提交，owner 重新校验来源、对象状态、权限和预期修订。持久操作的恢复状态与业务数据由其现有 owner / receipt 机制持有，不建立第二份跨域认知状态。
+Authority mutation 由语义 owner 校验和提交。Core 以类型化输入执行模型或外部 Resource 调用，并将结果交给正式 owner 请求；owner 重新校验来源、对象状态、权限和预期修订后提交 Authority。
 
-Mutation receipt 以 `results` 保存唯一的类型化结果：每项携带 `CognitiveRef`，可附精确修订 UUID 和对象 epoch；拆分、分区输出按提交顺序保留。Receipt 状态仅为 `in_progress` 与 `committed`；Persistence 统一处理未完成重试，领域 owner 收到的 Replay 已提交。创建、修订和拆分直接返回同一 `MutationResult`；提交后的完整响应由接口出口按记录的精确修订读取。Serving 协调的认知 purge 用带对象 epoch 的类型化结果记录可恢复 checkpoint。
+Mutation receipt 保存类型化的 owner 结果：每项携带 `CognitiveRef`，可附精确修订和对象 epoch；拆分、分区输出按提交顺序保留。receipt 与 Authority mutation 原子提交；相同 owner 请求可重放原结果，同一操作身份携带不同请求会冲突。创建、修订和拆分直接返回 `MutationResult`；完整响应按记录的精确修订读取。Serving 协调的认知 purge 仍使用带对象 epoch 的 owner checkpoint。
 
 ### 认知对象与修订
 
@@ -65,15 +65,15 @@ Context projection 使用单一 Kernel batch RPC，按 owner、输入顺序和�
 
 Managed Context 的同步缓存只保存游标、配置身份和各内容段摘要，不保留内容副本。新 projection 与摘要前缀相同则返回追加部分，否则重置；Subject 清除会使已有缓存和进行中的 projection 失效。
 
-### 持久执行与恢复
+### 模型调用与 owner 提交
 
-跨模型或外部调用的持久工作由 Core 组织输入快照、外部执行、提案和结果处理；执行快照冻结本次实际使用的配置及生产者条件。已保存结果和 owner mutation receipt 支持故障后继续，不应因恢复而重复已成功完成的外部生成。存储记录分为 Pending 与 Completed；预约结果分为 Acquired、Busy、Completed，只有 Acquired 携带执行 lease。owner mutation 提交前记录其操作身份，恢复时复用对应 receipt。Query 运行由单条双向 RPC 持有，流结束即释放。
+Core 在一次请求中构造类型化输入、执行模型并校验输出，再直接调用 canonical owner mutation。owner 负责来源、身份、生命周期、权限和 revision/epoch 校验，并以普通 mutation receipt 原子提交结果。模型提案、输出和调用尝试不作为可恢复 workflow checkpoint 持久化；Material owner 正式提交的 DerivedRepresentation 与 embedding 等可重建缓存仍按各自数据合同保存。CLI 可用有界本地 request/result cache 和显式手动 retry；重试可能重新调用模型或读取外部资源，模型输出改变时同一 owner operation ID 可能冲突，不承诺崩溃后自动续接。Query 运行由单条双向 RPC 持有，流结束即释放。
 
 ### Serving 与生命周期
 
 Retrieval Serving 是从 Authority 派生的可重建资产，按输入 Authority view、实际构建实现和构建所需配置确定兼容身份。查询 readout policy 属于当次 Runtime QueryPlan；它改变查询行为但不改变已构建资产的身份。Current 与 historical view 使用受保护的代次。Current 直接由代次的 ready 状态、view 与当前 purge epoch 确定，不另存一张当前代次指针表。
 
-Memory、Schema、Episode 和 Journal 共用 Memory owner 的 purge checkpoint 与 Kernel 的 Serving 回收流程，移除目标 bindings 及受影响的 WorkContext / workflow 引用，并推进 Subject 的 Serving purge epoch。正在进行的 QueryRun 在最终返回前校验 epoch；基于更早视图的 build / publication / reuse 被拒绝。Core 同步使该 Subject 的 query-vector cache 与 context tracks 失效。Serving 回收受本进程 reader gate 限制；共享向量材料只有在 purge 范围外仍有有效来源引用时才保留。无来源归属的旧向量通过显式的离线数据库副本升级流程处理；独立 backup table 不属于普通 owner purge，范围见[当前状态](../current-state/CURRENT_STATE.md)。
+Memory、Schema、Episode 和 Journal 共用 Memory owner 的 purge checkpoint 与 Kernel 的 Serving 回收流程，移除目标 bindings 及受影响的 WorkContext 引用，并推进 Subject 的 Serving purge epoch。正在进行的 QueryRun 在最终返回前校验 epoch；基于更早视图的 build / publication / reuse 被拒绝。Core 同步使该 Subject 的 query-vector cache 与 context tracks 失效。Serving 回收受本进程 reader gate 限制；共享向量材料只有在 purge 范围外仍有有效来源引用时才保留。无来源归属的旧向量通过显式的离线数据库副本升级流程处理；独立 backup table 不属于普通 owner purge，范围见[当前状态](../current-state/CURRENT_STATE.md)。
 
 ## 阅读入口
 

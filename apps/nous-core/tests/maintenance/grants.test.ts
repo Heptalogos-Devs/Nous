@@ -59,13 +59,6 @@ describe("bounded maintenance grants", () => {
   });
   it("defers unfinished work when the granted opportunity actually expires", async () => {
     const state = fixture();
-    const originalSave = state.kernel.modelWorkflow.saveWorkflow;
-    const save = vi.fn(async (...args: Parameters<typeof originalSave>) => {
-      expect(args[1]?.signal?.aborted).toBe(false);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      return originalSave(...args);
-    });
-    state.kernel.modelWorkflow.saveWorkflow = save;
     const finish = vi.fn(
       async (_input: { nextDue?: { seconds: bigint } }) => ({}),
     );
@@ -129,11 +122,8 @@ describe("bounded maintenance grants", () => {
         expect.anything(),
       );
       expect(typeof finish.mock.calls[0]?.[0].nextDue?.seconds).toBe("bigint");
-      const saved = save.mock.calls[0];
-      expect(saved![0].executionTelemetry).toMatchObject({
-        attempts: [{ status: "unknown" }],
-      });
-      expect(saved?.[1]?.signal).toBeInstanceOf(AbortSignal);
+      expect(state.getPlan).toHaveBeenCalledTimes(1);
+      expect(state.commit).not.toHaveBeenCalled();
     } finally {
       log.mockRestore();
     }

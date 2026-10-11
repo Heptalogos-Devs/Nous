@@ -123,37 +123,6 @@ CREATE UNIQUE INDEX maintenance_active_scope ON maintenance_needs(subject_id,kin
 CREATE INDEX maintenance_due ON maintenance_needs(subject_id,due_at,priority DESC)
     WHERE state IN ('pending','leased');
 
-CREATE TABLE model_workflow_operations (
-    subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    owner text NOT NULL CHECK (owner ~ '^[a-z][a-z0-9_]{0,63}$'),
-    operation_key text NOT NULL CHECK (length(operation_key) BETWEEN 1 AND 256),
-    semantic_digest text NOT NULL CHECK (length(semantic_digest) BETWEEN 1 AND 128),
-    snapshot jsonb NOT NULL,
-    proposal jsonb NULL,
-    outcome jsonb NULL,
-    execution_telemetry jsonb NULL,
-    dependencies jsonb NOT NULL DEFAULT '[]',
-    mutation_operation_id uuid NULL,
-    maintenance_trigger_revision bigint NULL CHECK (maintenance_trigger_revision >= 0),
-    maintenance_need_id uuid NULL REFERENCES maintenance_needs(need_id) ON DELETE CASCADE,
-    maintenance_lease_token uuid NULL,
-    maintenance_trigger_authority_seq bigint NULL CHECK (maintenance_trigger_authority_seq >= 0),
-    lease_token uuid NULL,
-    lease_until timestamptz NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY(subject_id,owner,operation_key),
-    CHECK (
-        (maintenance_need_id IS NULL AND maintenance_trigger_revision IS NULL
-            AND maintenance_lease_token IS NULL AND maintenance_trigger_authority_seq IS NULL)
-        OR
-        (maintenance_need_id IS NOT NULL AND maintenance_trigger_revision IS NOT NULL
-            AND maintenance_lease_token IS NOT NULL AND maintenance_trigger_authority_seq IS NOT NULL)
-    )
-);
-
-CREATE INDEX maintenance_workflows ON model_workflow_operations(maintenance_need_id) WHERE maintenance_need_id IS NOT NULL;
-
 CREATE TABLE experience_items (
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
     recorded_seq bigint NOT NULL CHECK (recorded_seq > 0),

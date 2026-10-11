@@ -9,11 +9,6 @@
 
 mod time;
 pub use time::{TemporalExtent, TimeInterval, TimePredicate};
-mod workflow;
-pub use workflow::{
-    AttemptStatus, ExecutionAttempt, ExecutionTelemetry, ExecutionUsage, MaintenanceClaim,
-    WorkflowPayload, WorkflowSnapshot,
-};
 mod topology;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

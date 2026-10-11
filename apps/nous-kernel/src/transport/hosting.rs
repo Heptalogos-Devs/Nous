@@ -6,11 +6,10 @@ use nous_protocol::kernel::kernel_configuration_service_server::KernelConfigurat
 use nous_protocol::kernel::{
     artifact_stream_service_server::ArtifactStreamServiceServer,
     kernel_material_workflow_service_server::KernelMaterialWorkflowServiceServer,
-    kernel_model_workflow_service_server::KernelModelWorkflowServiceServer,
 };
 use nous_protocol::public::configuration_service_server::ConfigurationServiceServer;
 
-const WORKFLOW_PROTOCOL_ENVELOPE_BYTES: usize = 65536;
+const MATERIAL_WORKFLOW_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024 + 65536;
 
 pub async fn router(runtime: NousRuntime, token: String) -> tonic::transport::server::Router {
     let auth = move |request: Request<()>| -> std::result::Result<Request<()>, Status> {
@@ -79,22 +78,12 @@ pub async fn router(runtime: NousRuntime, token: String) -> tonic::transport::se
         .add_service(nous_protocol::kernel::kernel_projection_service_server::KernelProjectionServiceServer::with_interceptor(service.clone(),auth.clone()))
         .add_service(tonic::service::interceptor::InterceptedService::new(
             KernelMaterialWorkflowServiceServer::new(service.clone())
-                .max_decoding_message_size(nous_persistence::WORKFLOW_VALUE_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES)
-                .max_encoding_message_size(nous_persistence::WORKFLOW_VALUE_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES),
+                .max_decoding_message_size(MATERIAL_WORKFLOW_MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MATERIAL_WORKFLOW_MAX_MESSAGE_BYTES),
             auth.clone(),
         ))
         .add_service(ConfigurationServiceServer::with_interceptor(
             service.clone(),
-            auth.clone(),
-        ))
-        .add_service(tonic::service::interceptor::InterceptedService::new(
-            KernelModelWorkflowServiceServer::new(service.clone())
-                .max_decoding_message_size(
-                    nous_persistence::WORKFLOW_VALUE_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES,
-                )
-                .max_encoding_message_size(
-                    nous_persistence::WORKFLOW_VALUE_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES,
-                ),
             auth.clone(),
         ))
         .add_service(ArtifactStreamServiceServer::with_interceptor(

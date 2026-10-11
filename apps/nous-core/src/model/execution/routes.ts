@@ -14,20 +14,17 @@ import {
   usageCounts,
   ProviderFailure,
 } from "../protocols.js";
-import type {
-  ExecutionAttempt as WireAttempt,
-  ExecutionTelemetry as WireTelemetry,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
-type ExecutionAttempt = Omit<WireAttempt, "$typeName" | "status" | "usage"> & {
+type ExecutionAttempt = {
+  executionProfile: string;
+  modelProfile: string;
   status: "succeeded" | "failed" | "skipped" | "unknown";
+  failureClass?: string;
+  latencyMs: number;
   usage?: ReturnType<typeof usageCounts>;
 };
-export type ExecutionTelemetry = Omit<
-  WireTelemetry,
-  "$typeName" | "attempts" | "omittedAttempts"
-> & {
+export type ExecutionTelemetry = {
   attempts: ExecutionAttempt[];
-  omittedAttempts?: number;
+  successfulExecutionProfile?: string;
 };
 export class GenerationFailure extends Error {
   constructor(
@@ -40,30 +37,6 @@ export class GenerationFailure extends Error {
   }
 }
 
-const interruptedExecutions = new WeakMap<object, ExecutionTelemetry>();
-export function failedExecutionTelemetry(
-  error: unknown,
-): ExecutionTelemetry | undefined {
-  return error instanceof GenerationFailure
-    ? (error.execution ?? interruptedExecutions.get(error))
-    : error && typeof error === "object"
-      ? interruptedExecutions.get(error)
-      : undefined;
-}
-function interrupt(
-  role: ModelRole,
-  reason: unknown,
-  attempts: ExecutionAttempt[],
-): never {
-  const error =
-    reason && typeof reason === "object"
-      ? reason
-      : new GenerationFailure(role, "caller_cancelled", {
-          attempts: [...attempts],
-        });
-  interruptedExecutions.set(error, { attempts: [...attempts] });
-  throw error;
-}
 export async function executeRoutes<
   T extends {
     value: unknown;
@@ -84,7 +57,7 @@ export async function executeRoutes<
   const policy = snapshot.configuration.roles[name];
   const attempts: ExecutionAttempt[] = [];
   for (const executionName of policy?.routes ?? []) {
-    if (signal?.aborted) interrupt(name, signal.reason, attempts);
+    signal?.throwIfAborted();
     let role: ReadyRole;
     let prepared: Input;
     try {
@@ -105,11 +78,7 @@ export async function executeRoutes<
       continue;
     }
     // Budget admission is outside fallback handling. Exhaustion never tries another route.
-    try {
-      beforeAttempt?.();
-    } catch (error) {
-      interrupt(name, error, attempts);
-    }
+    beforeAttempt?.();
     const started = performance.now();
     try {
       const result = await invoke(role, prepared);
@@ -154,7 +123,7 @@ export async function executeRoutes<
             : undefined,
         latencyMs: Math.round(performance.now() - started),
       });
-      if (signal?.aborted) interrupt(name, signal.reason, attempts);
+      signal?.throwIfAborted();
     }
   }
   const failure = new GenerationFailure(

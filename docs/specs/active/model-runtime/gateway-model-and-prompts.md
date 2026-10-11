@@ -28,11 +28,11 @@ Capabilities 包括 text、image_input、audio_input、video_input、structured_
 
 Embedding profile 显式声明 dimension、weights revision、task、input representation、preprocessing identity/revision、normalization 与 output semantics。Core 据此形成 EmbeddingSpaceSignature；Kernel 持久化 producer identity 并以 embedding-space identity 隔离 Serving generations。
 
-Model profiles 与 Prompt 在 Core 启动时解析；配置变更在 Core restart 后生效。SDK automatic retry 关闭；有序 execution fallback 处理基础设施、JSON/schema 和 generation input/output 合同错误，领域 Authority 的语义拒绝不触发另一轮生成。固定 snapshot 使用唯一 nous.model.execution format，只保存该角色的有序 routes、依赖资源、规范 controls、Prompt、provider implementation digest 与 output schema digest；无关 profile 或 media policy 不改变该角色身份。当前进程在 admission 前拒绝其他实现或输出合同的执行 snapshot。每个 outbound 调用计入 maintenance 预算。保存 proposal 后基础设施重试不得重新生成。
+Model profiles 与 Prompt 在 Core 启动时解析；配置变更在 Core restart 后生效。SDK automatic retry 关闭；当次调用内的有序 execution fallback 处理基础设施、JSON/schema 和 generation input/output 合同错误，领域 Authority 的语义拒绝不触发另一轮生成。每次 in-process invocation 使用当前解析的该角色 routes、依赖资源、规范 controls、Prompt、provider implementation 与 output schema；这些执行条件不作为跨调用的 durable workflow snapshot 保存。无关 profile 或 media policy 不改变该角色身份。每个 outbound 调用计入当前 maintenance 预算；显式再次执行可重新生成。
 
 资源 schemas/types 由 profiles owner 提供；invocations 持有冻结 routes、admission 和 attempt 记录；protocols 负责 SDK/HTTP 调用且不依赖 ModelRole；Material interpretation owner 构造媒体输入并解释生成输出。每次调用先依据实际 physical input 过滤 route，再发送实际通道访问声明并校验输出。Source startup 与 Portable assembly 对 owning implementation 文件及实际依赖版本计算相同摘要，bundle 内嵌该值，不在 Portable 读取源码。Catalog 呈现身份与这些执行身份保持独立。
 
-Attempt 区分 succeeded、failed、skipped 与 unknown；输入或资源不满足的 route 为 skipped，不发出请求。取消保留已经发生的请求与已知 usage；已传输而响应不可确认的请求记录 unknown，不记成成功或零成本。Provider response 与错误内容只在本地合同检查，公开失败分类不携带 credential 或原始 response body。
+route 在输入或资源不满足时跳过，不发出请求。Provider response 与错误内容只在本地合同检查；公开失败分类不携带 credential 或原始 response body。
 
 ## Prompt registry
 
@@ -52,11 +52,11 @@ Formation 使用 evidenceText、resolvedEntityCandidates、aboutnessMode envelop
 
 ## Producer identity
 
-ProducerSignature 标识实际 adapter/protocol、operation、model identifier/revision、Prompt logical id/digest、实际成功 execution、ModelRole、ModelProfile、inference controls digest、RolePolicy digest、strategy 与 frozen configuration digest。Formation、Material 和维护使用模型 owner 的同一 metadata 映射，implementation 来自实际成功 adapter 的 owning code identity，不另写 SDK 版本常量。Credential、token 与 provider response body 不属于 producer identity。
+ProducerSignature 标识实际 adapter/protocol、operation、model identifier/revision、Prompt logical id/digest、实际成功 execution、ModelRole、ModelProfile、inference controls digest、RolePolicy digest、strategy 与所用 configuration digest。Formation、Material 和维护使用模型 owner 的同一 metadata 映射，implementation 来自实际成功 adapter 的 owning code identity，不另写 SDK 版本常量。Credential、token 与 provider response body 不属于 producer identity。
 
 模型输出形成派生表示或带来源的候选提案；Material 与认知领域 owner 验证并提交，由领域 Authority 持有认知身份与修订。
 
-Core 的 formation、derivation 与 embedding preparation 共用 `core_execution.opportunity` 的 work budget；各 route timeout 限制单次 provider attempt，不能重置外层工作机会。ModelWorkflow private reservation 的 lease 由同一执行机会传入；取消后的 telemetry/save/release 使用剩余 cleanup budget。官方 Client 从 active Configuration 派生响应等待，较短 caller deadline 保留。维护机会与父 claim 语义见 [纵向认知](../cognitive-runtime/longitudinal-cognition.md)。
+Core 的 formation、derivation 与 embedding preparation 共用 `core_execution.opportunity` 的 work budget；各 route timeout 限制单次 provider attempt，不能重置外层工作机会。MaintenanceNeed claim lease 负责维护 worker 协调，不建立 child model-workflow lease 或跨调用 telemetry/checkpoint。官方 Client 从 active Configuration 派生响应等待，较短 caller deadline 保留。维护机会与 claim 语义见 [纵向认知](../cognitive-runtime/longitudinal-cognition.md)。
 
 音频、视频和结构化 Material 的输入模式与提交语义见 [Material Derivation](material-derivation.md)；rerank 的候选、预算与 Authority revalidation 见 [Query/Rerank](../retrieval/rerank.md)。
 

@@ -158,7 +158,6 @@ export async function createEnvironment(
   };
   const sameSubject = !values.subject || values.subject === selected.subjectId;
   const state: Selection = {
-    format: "nous.consumer.selection",
     ...(sameSubject ? selected : { lastQuery: selected.lastQuery }),
     subjectId: values.subject ?? selected.subjectId,
     sessionId: values.session ?? (sameSubject ? selected.sessionId : undefined),

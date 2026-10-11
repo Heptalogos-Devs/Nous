@@ -5,9 +5,8 @@ import { createServer } from "node:http";
 import { expect, test } from "vitest";
 import { modelConfigurationSchema } from "../src/model/configuration.js";
 import { ModelInvocations } from "../src/model/invocations.js";
-import { failedExecutionTelemetry } from "../src/model/execution/routes.js";
 
-test("cancellation preserves the failed route and the transmitted attempt whose outcome is unknown", async () => {
+test("cancellation stops an active model request", async () => {
   let reached: () => void = () => {};
   const transmitted = new Promise<void>((resolve) => {
     reached = resolve;
@@ -68,15 +67,10 @@ test("cancellation preserves the failed route and the transmitted attempt whose 
     await transmitted;
     cancellation.abort(new Error("caller cancelled the bounded operation"));
     const error = await running;
-    expect(
-      failedExecutionTelemetry(error)?.attempts.map(
-        (attempt) => attempt.status,
-      ),
-    ).toEqual(["failed", "unknown"]);
-    expect(failedExecutionTelemetry(error)?.attempts[1]?.failureClass).toBe(
-      "caller_cancelled",
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      "caller cancelled the bounded operation",
     );
-    expect(failedExecutionTelemetry(error)?.attempts[1]?.usage).toBeUndefined();
   } finally {
     delete process.env.NOUS_CANCEL_ROUTE;
     server.closeAllConnections();

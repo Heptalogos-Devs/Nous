@@ -192,14 +192,6 @@ try {
         persisted.structuredPayload?.evidence_access,
         persisted.quality?.input_access,
       );
-      const beforeReplay = calls.length;
-      const replay = await client.model.deriveMaterial({
-        subjectId,
-        sourceRegionId,
-        strategy: "direct_structured",
-      });
-      assert.equal(replay.selectedRepresentationId, representationId);
-      assert.equal(calls.length, beforeReplay);
     }
   }
   await stop(current);
@@ -241,9 +233,9 @@ try {
   );
   assert.deepEqual(calls.slice(beforeCancel), ["preferred", "fallback"]);
   holdFallback = false;
-  const resumed = await current.client.model.deriveMaterial(timedInput);
-  assert.equal(resumed.degradation.length, 0);
-  assert(resumed.selectedRepresentationId);
+  const retried = await current.client.model.deriveMaterial(timedInput);
+  assert.equal(retried.degradation.length, 0);
+  assert(retried.selectedRepresentationId);
   assert.deepEqual(calls.slice(beforeCancel), [
     "preferred",
     "fallback",
@@ -251,7 +243,7 @@ try {
     "fallback",
   ]);
   console.log(
-    "MEDIA_ROUTES public_core=true persisted_access=true opposite_capabilities=true successful_replay_no_provider=true work_deadline_cleanup_resume=true",
+    "MEDIA_ROUTES public_core=true persisted_access=true opposite_capabilities=true work_deadline=true explicit_retry=true",
   );
   verified = true;
 } finally {

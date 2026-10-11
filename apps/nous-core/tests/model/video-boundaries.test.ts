@@ -1,8 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MessageInitShape } from "@bufbuild/protobuf";
-import { OpenWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
 import { expect, it, vi } from "vitest";
 import { dirname, join } from "node:path";
@@ -169,24 +167,6 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       downloadArtifact: async function* () {
         yield { content: new Uint8Array([1, 2, 3]) };
       },
-    },
-    modelWorkflow: {
-      openWorkflow: async (
-        input: MessageInitShape<typeof OpenWorkflowRequestSchema>,
-      ) =>
-        input.snapshot
-          ? {
-              state: {
-                case: "acquired",
-                value: {
-                  lease: { token: "lease" },
-                  pending: { snapshot: input.snapshot },
-                },
-              },
-            }
-          : { state: { case: "missing", value: {} } },
-      saveWorkflow: async () => ({}),
-      releaseWorkflow: async () => ({}),
     },
     materialWorkflow: {
       commitInterpretation: async (input: { kind: string; text: string }) => {

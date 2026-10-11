@@ -27,7 +27,7 @@ SDK generation 使用独立 `instructions` 与 user material；provider adapter 
 
 Structuring 失败保留已提交的 description。普通 recall 不重新解释媒体。显式 `supersedes` 是更新 lineage；同一 lineage/input/producer/strategy request 复用成功结果。
 
-`client.model.formFromObservation({ operationId, subjectId, occurrenceId, representationId?, aboutnessMode?, explicitAboutness? })` 使用指定表示，或按实际媒体策略选择最新描述/转写。operationId 由调用方稳定提供；同 ID/input 重放 outcome，不受后续配置变化影响，不同 input conflict。未解释的 binary source 返回 `material_representation_required`。Aboutness 支持 explicit、select_from_resolved_mentions（默认）与 none；select 模式只使用 Kernel 提供的 resolved mention candidate keys，Actor identity 单独保存于 Observation。
+`client.model.formFromObservation({ operationId, subjectId, occurrenceId, representationId?, aboutnessMode?, explicitAboutness? })` 使用指定表示，或按实际媒体策略选择描述/转写。Core 本次生成 typed Memory 请求，由 Memory owner 校验后与 mutation receipt 原子提交。相同 owner request 可重放原结果；显式重跑时若模型输出改变，同一 operationId 可能冲突。未解释的 binary source 返回 `material_representation_required`。Aboutness 支持 explicit、select_from_resolved_mentions（默认）与 none；select 模式只使用 Kernel 提供的 resolved mention candidate keys，Actor identity 单独保存于 Observation。
 
 Memory revision 的 `producerSignatureId` 可用 `client.material.producer` 读取。Material 的表示、inputs、DerivedRegion、SourceRegion、Artifact 都有同 Subject 的 public read path。`nous trace` 只经 official Client 展开这条链，保存的 producer 不包含 token。
 
@@ -40,7 +40,7 @@ Memory revision 的 `producerSignatureId` 可用 `client.material.producer` 读�
 
 ## 纵向维护角色
 
-`episode_segmentation`、`journal_synthesis`、`memory_consolidation` 使用 text + structured_output profile 和 canonical Zod schema。Core 的 `client.cognition.grantMaintenance({ subjectId, maxOperations, maxModelCalls, maxElapsedMs })` 执行有界机会，Rust owner 验证并提交模型 proposal。Core 在 claim 前只允许可执行角色对应的 maintenance kinds；未配置角色不取得 lease 或增加 attempt count。临时 provider 故障使用 Configuration Service 的有界指数退避。角色配置、Prompt 和超时沿用现有 ModelProfile/ExecutionProfile/RolePolicy 机制。数据身份与重试语义见 [纵向认知合同](../specs/active/cognitive-runtime/longitudinal-cognition.md)。
+`episode_segmentation`、`journal_synthesis`、`memory_consolidation` 使用 text + structured_output profile 和 canonical Zod schema。Core 的 `client.cognition.grantMaintenance({ subjectId, maxOperations, maxModelCalls, maxElapsedMs })` 执行有界机会，owner 验证并提交 typed mutation。Core 在 claim 前只允许可执行角色对应的 maintenance kinds；未配置角色不取得 MaintenanceNeed lease 或增加 attempt count。临时 provider 故障使用 Configuration Service 的有界指数退避。角色配置、Prompt 和超时沿用现有 ModelProfile/ExecutionProfile/RolePolicy 机制。维护协调见[纵向认知合同](../specs/active/cognitive-runtime/longitudinal-cognition.md)。
 
 强模型的长程维护实测可达 235–264 秒。一次 grant 的 elapsed budget 由全部调用共享；先前调用耗时后，下一调用的可用时间会变短。研究 runner 默认每次 grant 一个模型调用；Host 可按实际角色延迟安排后续机会。Node Client 默认 transport timeout 为 30 秒，长程调用须同时给足 API 与 transport 时间，例如：
 
@@ -58,7 +58,7 @@ Formation envelope 的 `evidenceText` 是原始来源或已提交表示正文，
 Projection Steward 接收经 consumer policy 筛选的 id/role/text，执行无任务上下文的忠实压缩。Kernel contribution owner 经现有 ContextResolver materialize Memory 内容，遵守请求文本预算、可访问性与 lifecycle，保存实际 revision 和 evidence；Core 在模型前执行 consumer policy。Steward 不承担未提供 query/Focus 的任务相关性判断。
 
 
-`concept_maintenance` 是独立 structured role，默认 Prompt 为 `prompts/memory/concept-maintenance.md`。Role READY 时才进入 maintenance allowed kinds；generation 沿同一固定 role/config/Prompt snapshot、provider-call reservation、durable proposal/receipt 与 lease/retry 路径。模型输入使用局部 cognition/tag/entity/association/basis keys，禁止自由 UUID 或 catalog 外 refs；single noisy occurrence、单纯词法重叠和 exposure 不证明长期 concept。`no_change` 单独输出，新增 Tag 与后置 attachment 在同一 proposal 中表达。
+`concept_maintenance` 是独立 structured role，默认 Prompt 为 `prompts/memory/concept-maintenance.md`。Role READY 时才进入 maintenance allowed kinds；每次 MaintenanceNeed claim 从当前 owner plan 生成并校验一次模型输出，再提交 typed Tag/Association owner mutations。模型输入使用局部 cognition/tag/entity/association/basis keys，禁止自由 UUID 或 catalog 外 refs；single noisy occurrence、单纯词法重叠和 exposure 不证明长期 concept。`no_change` 单独输出，新增 Tag 与后置 attachment 在同一 proposal 中表达。
 
 
 ## Query concept role 与历史 embedding
@@ -67,4 +67,4 @@ Projection Steward 接收经 consumer policy 筛选的 id/role/text，执行无�
 
 `cognition.prepareQuery`/`query prepare|inspect` 只检查并展示绑定后的 representation/config/capabilities，不调用 provider，也不发放 QueryRun continuation。正式 Query 由 Core 启动一个 QueryRun；历史视图中的 embedding cache miss 由 Host 在同一私有双向流内按冻结 Owner view 发现、生成并提交，复用既有 `embedding_materials`/content identity。提交以精确引用和当时的 Owner-selected 文本校验，不以 current Tag description 替代；有界 batch 不足或模型不可用按 required/optional 合同报告。QueryRun 在最终校验后结束，其历史 ReadContext 不供新 Query 或后续 Projection 沿用。
 
-Execution snapshot 冻结完整 RolePolicy、routes、ExecutionProfiles、ModelProfiles、Prompt 内容和结构化合同。只允许有界 transport/timeout/HTTP/schema 回退；owner 的语义、catalog、ownership、provenance/lifecycle 拒绝不回退。保存 proposal 后重试复用原 proposal。每次实际 maintenance outbound 调用单独计入 grant；ProducerSignature 保存实际成功 route、模型、角色、controls/policy/Prompt/contract digests；workflow receipt 保存最多 64 个累积 attempts、failure class、usage、latency 与省略计数。Embedding 所有备用 route 必须共享完整 space signature，缓存、提交与 Serving 按实际 producer 分区。
+每次 in-process invocation 使用当前 Core 已解析的 RolePolicy、routes、ExecutionProfiles、ModelProfiles、Prompt 与结构化合同；只允许有界 transport/timeout/HTTP/schema fallback，owner 的语义、catalog、ownership、provenance/lifecycle 拒绝不触发新一轮生成。不存在跨调用保存的 proposal 或 model-attempt receipt；显式重试可能重新调用模型，并可因不同 typed owner request 与稳定 operation identity 冲突。每次实际 maintenance outbound 调用计入当前 grant；ProducerSignature 保存实际成功 route、模型、角色、controls/policy/Prompt/contract digests。Embedding 所有备用 route 必须共享完整 space signature，缓存、提交与 Serving 按实际 producer 分区。

@@ -38,7 +38,6 @@ pub enum ErrorOwner {
     Concept,
     Observation,
     Resource,
-    ModelWorkflow,
     Kernel,
     Core,
     Persistence,

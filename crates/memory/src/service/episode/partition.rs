@@ -67,9 +67,7 @@ impl MemoryService {
         let first = &sources[0];
         let track: String = first.try_get("track_key").map_err(db)?;
         let occurrences = validate_partition_occurrences(mutation.tx(), &input).await?;
-        let formed_at = self
-            .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
-            .await?;
+        let formed_at = started;
         let recorded_at = self.cognition.now(input.subject);
         let one_to_one = input.sources.len() == 1 && input.segments.len() == 1;
         if one_to_one && unchanged_partition(mutation.tx(), &input, first).await? {
@@ -499,19 +497,9 @@ fn partition_payload(
 }
 
 async fn commit_partition_result(
-    mut mutation: nous_persistence::MutationEnvelope<'_>,
+    mutation: nous_persistence::MutationEnvelope<'_>,
     outputs: &[EpisodeRevisionId],
 ) -> Result<Vec<MutationResult>> {
-    mutation
-        .publish_workflow_results(
-            "memory",
-            &outputs
-                .iter()
-                .copied()
-                .map(CognitiveRef::EpisodeRevision)
-                .collect::<Vec<_>>(),
-        )
-        .await?;
     let results = outputs
         .iter()
         .copied()

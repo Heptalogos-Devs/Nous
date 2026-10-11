@@ -66,15 +66,8 @@ export function cliErrorPayload(error: unknown) {
     error && typeof error === "object"
       ? (error as Record<string, unknown>)
       : {};
-  const metadata = {
-    ...(typeof record.receiptId === "string"
-      ? { receiptId: record.receiptId }
-      : {}),
-    ...(typeof record.certainty === "string"
-      ? { certainty: record.certainty }
-      : {}),
-    ...(Array.isArray(record.notices) ? { notices: record.notices } : {}),
-  };
+  const receipt =
+    typeof record.receiptId === "string" ? { receiptId: record.receiptId } : {};
   if (error instanceof CliError)
     return {
       ...(typeof record.transportCode === "number"
@@ -83,7 +76,7 @@ export function cliErrorPayload(error: unknown) {
       code: error.code,
       owner: error.owner,
       message: error.message,
-      ...metadata,
+      ...receipt,
       details: error.details,
       candidates: error.candidates,
       recovery: error.recovery,
@@ -98,7 +91,7 @@ export function cliErrorPayload(error: unknown) {
     ...(typeof record.errorCode === "string" ? { code: record.errorCode } : {}),
     ...(typeof record.owner === "string" ? { owner: record.owner } : {}),
     message,
-    ...metadata,
+    ...receipt,
     details:
       error instanceof NousError && Array.isArray(error.details)
         ? error.details

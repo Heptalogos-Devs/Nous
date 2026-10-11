@@ -21,9 +21,9 @@ export function maintenanceOperationId(need: MaintenanceNeed) {
   );
 }
 export function maintenanceActionOperationId(
-  workflow: string,
+  operation: string,
   index: number,
   kind: string,
 ) {
-  return operationIdentity(`${workflow}:${index}:${kind}`);
+  return operationIdentity(`${operation}:${index}:${kind}`);
 }

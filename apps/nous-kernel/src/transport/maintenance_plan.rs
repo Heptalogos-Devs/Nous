@@ -49,7 +49,7 @@ impl KernelService {
             }
             _ => {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Runtime,
                     nous_core::ErrorCode::InvalidRequest,
                     "maintenance kind has no model plan",
                 ));
@@ -130,7 +130,7 @@ impl KernelService {
         }
         if self.0.store.authority_seq(subject).await? != sequence {
             return Err(nous_core::Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::StaleRevision,
                 "maintenance source snapshot changed during planning",
             ));
@@ -143,7 +143,7 @@ impl KernelService {
             .bind(claimed.subject_id.0).bind(claimed.need_id).bind(claimed.lease_token).bind(&claimed.kind).bind(&claimed.scope_kind).bind(&claimed.scope_ref).fetch_one(self.0.store.pool()).await.map_err(nous_persistence::database_error)?;
         if !valid {
             return Err(nous_core::Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::LeaseLost,
                 "maintenance planning lease expired or replaced",
             ));
@@ -325,7 +325,7 @@ fn occurrence_time(row: &sqlx::postgres::PgRow) -> Result<p::TemporalExtent> {
         "unknown" => TemporalExtent::Unknown,
         _ => {
             return Err(Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorOwner::Runtime,
                 nous_core::ErrorCode::InternalFailure,
                 "Occurrence has an unsupported occurred-time kind",
             ));
@@ -340,7 +340,7 @@ fn experience_text_prefix(bytes: &[u8], partial: bool) -> Result<&str> {
         Err(error) if partial && error.error_len().is_none() => {
             std::str::from_utf8(&bytes[..error.valid_up_to()]).map_err(|error| {
                 Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Runtime,
                     nous_core::ErrorCode::InvalidRequest,
                     "Invalid request",
                 )
@@ -348,7 +348,7 @@ fn experience_text_prefix(bytes: &[u8], partial: bool) -> Result<&str> {
             })
         }
         Err(error) => Err(Error::new(
-            nous_core::ErrorOwner::ModelWorkflow,
+            nous_core::ErrorOwner::Runtime,
             nous_core::ErrorCode::InvalidRequest,
             "Material text is not valid UTF-8",
         )

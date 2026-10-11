@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { z } from "zod";
+import type { z } from "zod";
 import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
 import { authorityRejection } from "./rejection.js";
 import type { MaintenancePlan } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
@@ -9,27 +9,18 @@ import type { ProducerSignature } from "@nous-wave/protocol/nous/wave/v1alpha1/t
 import type { KernelClient } from "../kernel-client.js";
 import { conceptMaintenanceSchema } from "../model/schemas/concept-maintenance.js";
 import { maintenanceActionOperationId } from "./identity.js";
-import type { MutationExecutor } from "../durable-operation.js";
 
-export const conceptActionResultSchema = z.strictObject({
-  index: z.number().int().nonnegative(),
-  status: z.enum([
-    "committed",
-    "no_change",
-    "rejected_invalid",
-    "skipped_dependency",
-    "stale",
-  ]),
-  resultRef: z.strictObject({ kind: z.string(), value: z.string() }).nullable(),
-  tagResults: z.array(
-    z.strictObject({
-      key: z.string(),
-      tagId: z.string(),
-      revisionId: z.string(),
-    }),
-  ),
-});
-export type ConceptActionResult = z.infer<typeof conceptActionResultSchema>;
+type ConceptActionResult = {
+  index: number;
+  status:
+    | "committed"
+    | "no_change"
+    | "rejected_invalid"
+    | "skipped_dependency"
+    | "stale";
+  resultRef: { kind: string; value: string } | null;
+  tagResults: { key: string; tagId: string; revisionId: string }[];
+};
 class MissingConceptDependency extends Error {}
 const invalid = (message: string): never => {
   throw new ConnectError(message, Code.InvalidArgument);
@@ -41,9 +32,6 @@ export async function executeConceptMaintenance(
   operation: string,
   producer: ProducerSignature,
   options: CallOptions,
-  progress: ConceptActionResult[],
-  saveProgress: (results: ConceptActionResult[]) => Promise<void>,
-  mutate: MutationExecutor,
 ) {
   const catalog = plan.conceptCatalog ?? invalid("Missing concept catalog");
   if (proposal.actions.length > catalog.maxSuggestions)
@@ -65,7 +53,7 @@ export async function executeConceptMaintenance(
   const basis = new Map(
     catalog.basis.filter((s) => s.basis).map((s) => [s.key, s.basis!]),
   );
-  const results = [...progress];
+  const results: ConceptActionResult[] = [];
   const applyTags = (result: ConceptActionResult) => {
     for (const tag of result.tagResults) {
       tags.set(tag.key, {
@@ -80,7 +68,6 @@ export async function executeConceptMaintenance(
       });
     }
   };
-  for (const result of results) applyTags(result);
   const tag = (key: string, index: number) => {
     const target = tags.get(key);
     if (target) return target;
@@ -132,7 +119,7 @@ export async function executeConceptMaintenance(
       }
     }
   }
-  for (let index = results.length; index < proposal.actions.length; index++) {
+  for (let index = 0; index < proposal.actions.length; index++) {
     const action = proposal.actions[index]!;
     const operationId = maintenanceActionOperationId(
       operation,
@@ -171,23 +158,21 @@ export async function executeConceptMaintenance(
       relation: string,
       keys: string[],
     ) => {
-      const value = await mutate(operationId, () =>
-        kernel.concepts.createAssociation(
-          {
-            operationId,
-            subjectId: plan.subjectId,
-            producer,
-            association: {
-              from: endpoint(fromKey, index),
-              to: endpoint(toKey, index),
-              relationKind: relation,
-              polarity: "positive",
-              basisClass: "cognitive_derivation",
-              basis: selectedBasis(keys),
-            },
+      const value = await kernel.concepts.createAssociation(
+        {
+          operationId,
+          subjectId: plan.subjectId,
+          producer,
+          association: {
+            from: endpoint(fromKey, index),
+            to: endpoint(toKey, index),
+            relationKind: relation,
+            polarity: "positive",
+            basisClass: "cognitive_derivation",
+            basis: selectedBasis(keys),
           },
-          options,
-        ),
+        },
+        options,
       );
       result.resultRef = { kind: "association", value: value.associationId };
     };
@@ -214,19 +199,17 @@ export async function executeConceptMaintenance(
           }
           saveTag(
             action.key,
-            await mutate(operationId, () =>
-              kernel.concepts.createTag(
-                {
-                  operationId,
-                  subjectId: plan.subjectId,
-                  producer,
-                  tag: {
-                    ...content(action.content),
-                    origin: "concept_maintenance",
-                  },
+            await kernel.concepts.createTag(
+              {
+                operationId,
+                subjectId: plan.subjectId,
+                producer,
+                tag: {
+                  ...content(action.content),
+                  origin: "concept_maintenance",
                 },
-                options,
-              ),
+              },
+              options,
             ),
           );
           break;
@@ -235,17 +218,15 @@ export async function executeConceptMaintenance(
           selectedBasis(action.basisKeys);
           saveTag(
             action.tagKey,
-            await mutate(operationId, () =>
-              kernel.concepts.reviseTag(
-                {
-                  operationId,
-                  subjectId: plan.subjectId,
-                  producer,
-                  target: tag(action.tagKey, index),
-                  content: content(action.content),
-                },
-                options,
-              ),
+            await kernel.concepts.reviseTag(
+              {
+                operationId,
+                subjectId: plan.subjectId,
+                producer,
+                target: tag(action.tagKey, index),
+                content: content(action.content),
+              },
+              options,
             ),
           );
           break;
@@ -274,15 +255,13 @@ export async function executeConceptMaintenance(
             target.relation !== "tag_attachment"
           )
             invalid("Detach requires an existing Tag attachment");
-          await mutate(operationId, () =>
-            kernel.concepts.revokeAssociation(
-              {
-                operationId,
-                subjectId: plan.subjectId,
-                associationId: target.associationId,
-              },
-              options,
-            ),
+          await kernel.concepts.revokeAssociation(
+            {
+              operationId,
+              subjectId: plan.subjectId,
+              associationId: target.associationId,
+            },
+            options,
           );
           result.resultRef = {
             kind: "association",
@@ -291,37 +270,31 @@ export async function executeConceptMaintenance(
           break;
         }
         case "merge_tags": {
-          const value = await mutate(operationId, () =>
-            kernel.concepts.mergeTags(
-              {
-                operationId,
-                subjectId: plan.subjectId,
-                survivor: tag(action.survivorKey, index),
-                retired: action.retiredKeys.map((key) => tag(key, index)),
-                basis: revisionBasis(action.basisKeys),
-              },
-              options,
-            ),
+          const value = await kernel.concepts.mergeTags(
+            {
+              operationId,
+              subjectId: plan.subjectId,
+              survivor: tag(action.survivorKey, index),
+              retired: action.retiredKeys.map((key) => tag(key, index)),
+              basis: revisionBasis(action.basisKeys),
+            },
+            options,
           );
           for (const key of [action.survivorKey, ...action.retiredKeys])
             saveTag(key, value);
           break;
         }
         case "split_tag": {
-          const value = await mutate(operationId, () =>
-            kernel.concepts.splitTag(
-              {
-                operationId,
-                subjectId: plan.subjectId,
-                producer,
-                parent: tag(action.tagKey, index),
-                children: action.children.map((child) =>
-                  content(child.content),
-                ),
-                basis: revisionBasis(action.basisKeys),
-              },
-              options,
-            ),
+          const value = await kernel.concepts.splitTag(
+            {
+              operationId,
+              subjectId: plan.subjectId,
+              producer,
+              parent: tag(action.tagKey, index),
+              children: action.children.map((child) => content(child.content)),
+              basis: revisionBasis(action.basisKeys),
+            },
+            options,
           );
           if (value.children.length !== action.children.length)
             throw new ConnectError(
@@ -346,7 +319,6 @@ export async function executeConceptMaintenance(
     }
     results.push(result);
     applyTags(result);
-    await saveProgress(results);
   }
   const committed = results.some((r) => r.status === "committed");
   const failed = results.some(

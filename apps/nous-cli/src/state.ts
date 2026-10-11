@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -16,7 +16,6 @@ const reference = z.strictObject({
   value: z.string().max(2048),
 });
 const selectionSchema = z.strictObject({
-  format: z.literal("nous.consumer.selection"),
   subjectId: z.string().optional(),
   sessionId: z.string().optional(),
   workContextId: z.string().optional(),
@@ -34,17 +33,7 @@ const protoMessageSchema = z.strictObject({
   typeName: z.string(),
   protoJson: z.json(),
 });
-const safeErrorSchema = z.strictObject({
-  transportCode: z.number().int().optional(),
-  code: z.string().optional(),
-  owner: z.string().optional(),
-  message: z.string().max(2048),
-  recovery: z.string().optional(),
-  context: z.record(z.string(), z.string()).default({}),
-  traceId: z.string().optional(),
-});
 const receiptHeader = {
-  format: z.literal("nous.consumer.operation.v2"),
   receiptId: z.string().min(1).max(128),
   command: z.string().min(1).max(128),
   request: protoMessageSchema,
@@ -58,15 +47,10 @@ export const receiptSchema = z.discriminatedUnion("status", [
     status: z.literal("complete"),
     result: protoMessageSchema,
   }),
-  z.strictObject({
-    ...receiptHeader,
-    status: z.literal("rejected"),
-    error: safeErrorSchema,
-  }),
 ]);
 export type OperationReceipt = z.infer<typeof receiptSchema>;
 
-const emptySelection = (): Selection => ({ format: "nous.consumer.selection" });
+const emptySelection = (): Selection => ({});
 const selectionKeys = [
   "subjectId",
   "sessionId",
@@ -161,7 +145,7 @@ export function cliState(
       if (error instanceof SyntaxError || error instanceof z.ZodError)
         throw new CliError(
           "INVALID_ARGUMENT",
-          "Receipt is not a valid v2 operation receipt and cannot be replayed",
+          "Receipt is not valid current operation state and cannot be replayed",
         );
       throw error;
     }
@@ -242,10 +226,7 @@ export function cliState(
               "STATE_CONFLICT",
               "Receipt identity already belongs to another frozen request",
             );
-          if (
-            previous.status === "complete" ||
-            previous.status === "rejected"
-          ) {
+          if (previous.status === "complete") {
             if (isDeepStrictEqual(previous, next)) return;
             throw new CliError(
               "STATE_CONFLICT",
@@ -253,27 +234,26 @@ export function cliState(
             );
           }
         }
-        if (
-          !files.includes(`${id}.json`) &&
-          files.length >= policy.receipt_limit
-        ) {
-          let remaining = files.length;
-          for (const file of files) {
-            try {
-              const old = await receipt(file.slice(0, -5));
-              if (old.status === "complete" || old.status === "rejected") {
-                await unlink(join(operations, file));
-                if (--remaining < policy.receipt_limit) break;
+        if (!files.includes(`${id}.json`)) {
+          const retention = Math.max(0, policy.receipt_limit - 1);
+          const oldestFirst = await Promise.all(
+            files.map(async (name) => {
+              try {
+                return {
+                  name,
+                  modifiedAt: (await stat(join(operations, name))).mtimeMs,
+                };
+              } catch {
+                return { name, modifiedAt: 0 };
               }
-            } catch {
-              // Unknown or malformed files remain as preserved evidence.
-            }
-          }
-          if (remaining >= policy.receipt_limit)
-            throw new CliError(
-              "RESOURCE_EXHAUSTED",
-              "Unresolved operation receipts reached the configured limit; recover them before another mutation",
-            );
+            }),
+          );
+          oldestFirst.sort((left, right) => left.modifiedAt - right.modifiedAt);
+          for (const old of oldestFirst.slice(
+            0,
+            Math.max(0, files.length - retention),
+          ))
+            await unlink(join(operations, old.name)).catch(() => {});
         }
         await writeText(path, JSON.stringify(next));
       });

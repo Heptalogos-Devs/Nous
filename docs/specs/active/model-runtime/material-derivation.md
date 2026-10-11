@@ -4,7 +4,7 @@
 
 ## Owners
 
-TypeScript Core orchestrates external model calls and operation snapshots. The Material owner validates and persists exact input graphs, representations, regions and provenance.
+TypeScript Core orchestrates model calls. The Material owner validates and persists exact input graphs, derived representations, regions and provenance.
 
 ## Identity 与 provenance
 
@@ -12,7 +12,7 @@ Artifact、ObservationOccurrence、SourceRegion、DerivedRepresentation 与 Deri
 
 DerivedRepresentation 保存 ordered exact inputs、strategy、representation kind、ProducerSignature、revision、payload 与 quality。Inputs 可引用 SourceRegion、DerivedRepresentation 或 DerivedRegion，必须属于同一 Subject，不得重复、自引用或形成 cycle。已提交 input set 不可修改。Supersedes 表示显式 refinement lineage，不属于 derivation inputs。
 
-成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。
+成功 DerivedRepresentation 的 identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。已提交表示及派生/Serving cache 是 Material owner 数据；新一轮 derivation 可能重新调用模型，不从独立 workflow checkpoint 续接结果。
 
 `DerivedRepresentation.producer_signature_id` 是可传给 Material `GetProducer` 的 canonical UUID；`producer_signature` 与 `producer.signature_hash` 是签名摘要，不能用作 producer ID。
 
@@ -42,13 +42,13 @@ description segmentation 以 UTF-8 byte coordinates 建立稳定 DerivedRegion�
 
 Video MIME 本身不授予音频证据能力；direct mode 每次 attempt 根据该冻结 route 的 audio_input 能力与实际发送的媒体建立访问方式，不能借用首选 profile 的能力评价 fallback。不可执行的 route 在预算 admission 和 HTTP 前过滤；模型取得同一实际访问声明。frames mode 的音频通道由实际提供的 Transcript 决定。第二阶段从已提交 description 的 quality 取得通道，再转为 representation，不重新读取首选模型能力。
 
-语义校验与文本投影共用 Material owning implementation identity；其内容摘要及实际依赖版本进入 workflow reuse 与 ProducerSignature，修改实现不依赖手工版本常量。源码启动和 Portable build 使用同一 owning 文件摘要，Portable 将值嵌入 bundle。结构化生成合同校验在固定 routes 内完成，无效输出可按明确 fallback 继续；领域提交拒绝不发起另一轮生成。所有 route 失败仍保留成功前序 description 和 degradation。
+语义校验与文本投影共用 Material owning implementation identity；其内容摘要及实际依赖版本进入 ProducerSignature，修改实现不依赖手工版本常量。源码启动和 Portable build 使用同一 owning 文件摘要，Portable 将值嵌入 bundle。结构化生成合同校验在当次 routes 内完成，无效输出可按明确 fallback 继续；领域提交拒绝不发起另一轮生成。所有 route 失败仍保留成功前序 description 和 degradation。
 
 description segments 使用 `material.description_segment_bytes` 的稳定 UTF-8 范围，默认 2,048 bytes，并优先在换行处分段。region coordinates 保存 segmentation policy digest。Text segmentation 输入上限为 1 MiB，最多 512 个 DerivedRegion。Video frames mode 使用 FFmpeg 作有界抽帧；实验观测归 [Research](../../../research/README.md)。
 
 ## Memory formation
 
-`formFromObservation` 使用调用方提供的稳定 operation_id。初次执行固定 model/profile/Prompt/config snapshot，并将语义输入绑定到 operation identity；相同 operation 与相同输入重放原 outcome，相同 operation 携带不同输入返回 conflict。
+`formFromObservation` 使用调用方提供的 operation_id。Core 本次执行模型并把 typed result 映射为 `FormMemoryRequest`; Memory owner 原子提交 Authority 与普通 mutation receipt。相同 owner request 可以返回原结果；若显式重跑时模型输出改变而 operation_id 不变，owner 会按 idempotency contract 返回 conflict。不存在跨请求保存的 model/profile/Prompt snapshot 或可恢复 proposal。
 
 调用方可指定 exact representation_id。未指定时，Core 按 Artifact modality 和配置选择可用 representation：text 用 ExtractedText，image 用 ImageDescription，audio 用 AudioDescription 或 Transcript，video 用 SceneDescription。没有可用 textual representation 的 binary input 返回 `material_representation_required`。
 

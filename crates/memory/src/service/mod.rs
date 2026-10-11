@@ -444,23 +444,6 @@ fn operation_digest<T: Serialize>(kind: &str, subject: SubjectId, value: &T) -> 
 }
 
 impl MemoryService {
-    async fn formation_time_in(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        subject: SubjectId,
-        operation: OperationId,
-        started_at: DateTime<Utc>,
-    ) -> Result<DateTime<Utc>> {
-        Ok(AuthorityStore::workflow_cognitive_time_in(
-            tx,
-            subject,
-            "memory",
-            &operation.0.to_string(),
-        )
-        .await?
-        .unwrap_or(started_at))
-    }
-
     pub fn new(
         material: nous_material::MaterialService,
         configuration: nous_configuration::ConfigurationService,

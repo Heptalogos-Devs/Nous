@@ -1,23 +1,20 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MessageInitShape } from "@bufbuild/protobuf";
-import { workflowPayload } from "../src/durable-operation.js";
-import type { WorkflowPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
-import { coreExecutionSchema } from "../src/configuration/catalog.js";
 import { create } from "@bufbuild/protobuf";
-import { MaterializeResourceRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { OpenWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
-import { WorkflowSnapshotSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import { expect, test } from "vitest";
+import { coreExecutionSchema } from "../src/configuration/catalog.js";
 import type { KernelClient } from "../src/kernel-client.js";
 import { ResourceRegistry } from "../src/resources/registry.js";
 import { materializeResource } from "../src/resources/materialize.js";
+import { MaterializeResourceRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 
-test("a saved external proposal is revalidated before admission while an accepted snapshot replays independently", async () => {
+test("resource materialization revalidates identity and access before owner commit", async () => {
   let revoked = false;
   let changed = false;
+  let fetches = 0;
   let admissions = 0;
+  let admittedInput: unknown;
   const binding = {
     adapterKind: "local-documents",
     providerProfile: "test",
@@ -30,8 +27,16 @@ test("a saved external proposal is revalidated before admission while an accepte
         profileDigest: "profile",
         describe: async () => ({ resourceIds: [], accessible: true }),
         search: async () => [],
-        materialize: async () => {
-          throw new Error("A saved proposal must not fetch its contents again");
+        materialize: async (reference) => {
+          fetches++;
+          expect(reference.entryVersion).toBe(null);
+          return {
+            reference,
+            content: "selected material",
+            mediaType: "text/plain",
+            version: { status: "current", checkedAt: new Date().toISOString() },
+            access: { status: "allowed", checkedAt: new Date().toISOString() },
+          };
         },
         checkVersion: async () => ({
           status: changed ? "stale" : "current",
@@ -44,47 +49,16 @@ test("a saved external proposal is revalidated before admission while an accepte
       },
     },
   ]);
-  let snapshot: MessageInitShape<typeof WorkflowSnapshotSchema> | undefined;
-  let outcome: WorkflowPayload | undefined;
   const kernel = {
-    modelWorkflow: {
-      openWorkflow: async (
-        input: MessageInitShape<typeof OpenWorkflowRequestSchema>,
-      ) => {
-        if (outcome)
-          return { state: { case: "completed", value: { outcome } } };
-        if (!input.snapshot && !snapshot)
-          return { state: { case: "missing", value: {} } };
-        snapshot ??= input.snapshot;
-        return {
-          state: {
-            case: "acquired",
-            value: {
-              lease: { token: "lease" },
-              pending: {
-                snapshot,
-                proposal: workflowPayload({
-                  content: "saved material",
-                  mediaType: "text/plain",
-                }),
-              },
-            },
-          },
-        };
-      },
-      saveWorkflow: async (value: { outcome?: WorkflowPayload }) => {
-        outcome = value.outcome;
-      },
-      releaseWorkflow: async () => {},
-    },
+    execution: coreExecutionSchema.parse(undefined),
     resourceRegistry: { getResource: async () => binding },
     runtime: {
-      recordObservation: async () => {
+      recordObservation: async (input: unknown) => {
         admissions++;
-        return {};
+        admittedInput = input;
+        return { occurrenceId: "occurrence" };
       },
     },
-    execution: coreExecutionSchema.parse(undefined),
   } as unknown as KernelClient;
   const request = create(MaterializeResourceRequestSchema, {
     subjectId: crypto.randomUUID(),
@@ -96,25 +70,55 @@ test("a saved external proposal is revalidated before admission while an accepte
       accessScope: binding.providerLocator,
       profileDigest: "profile",
       resourceRef: "resource:test",
+      providerResourceId: "provider-resource",
+      entryId: "entry",
+      contentDigest: "content-digest",
+      sourceLocator: "document.txt",
+      retrievedAt: new Date().toISOString(),
     },
   });
   changed = true;
   await expect(
     materializeResource(kernel, registry, request, {}),
-  ).rejects.toMatchObject({ code: 9 });
+  ).rejects.toMatchObject({
+    code: 9,
+  });
   changed = false;
   revoked = true;
   await expect(
     materializeResource(kernel, registry, request, {}),
-  ).rejects.toMatchObject({ code: 9 });
+  ).rejects.toMatchObject({
+    code: 9,
+  });
   expect(admissions).toBe(0);
   revoked = false;
   const accepted = await materializeResource(kernel, registry, request, {});
+  expect(accepted.content).toBe("selected material");
+  expect(fetches).toBe(3);
   expect(admissions).toBe(1);
-  revoked = true;
-  changed = true;
-  expect(await materializeResource(kernel, registry, request, {})).toEqual(
-    accepted,
+  expect(admittedInput).toHaveProperty(
+    "externalObjectRef",
+    expect.stringMatching(/^object:resource-entry:[a-f0-9]{64}$/),
   );
+  expect(admittedInput).toMatchObject({
+    requestId: request.operationId,
+    context: {
+      external_resource: {
+        resourceRef: "resource:test",
+        entryId: "entry",
+      },
+    },
+    material: {
+      case: "inlineText",
+      value: { text: "selected material", mediaType: "text/plain" },
+    },
+  });
+  changed = true;
+  await expect(
+    materializeResource(kernel, registry, request, {}),
+  ).rejects.toMatchObject({
+    code: 9,
+  });
+  expect(fetches).toBe(4);
   expect(admissions).toBe(1);
 });

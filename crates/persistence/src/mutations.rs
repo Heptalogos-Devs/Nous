@@ -250,22 +250,6 @@ impl<'a> MutationEnvelope<'a> {
         &mut self.tx
     }
 
-    /// Publish actual owner results before commit, including the host's acknowledgement gap.
-    pub async fn publish_workflow_results(
-        &mut self,
-        owner: &str,
-        references: &[nous_core::CognitiveRef],
-    ) -> Result<()> {
-        AuthorityStore::add_workflow_dependencies_in(
-            &mut self.tx,
-            self.subject,
-            owner,
-            self.operation,
-            references,
-        )
-        .await
-    }
-
     /// Accumulate owner-selected families; allocate one Authority sequence for this transaction.
     pub async fn invalidate(&mut self, changes: ProjectionInvalidation) -> Result<i64> {
         self.invalidation.merge(changes);

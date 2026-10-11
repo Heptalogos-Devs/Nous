@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from "zod";
-import { structuredOutputContract } from "./provider.js";
 import type { JsonObject } from "@bufbuild/protobuf";
 import { channelAccessSchema, type ChannelAccess } from "../input.js";
 import { modelImplementations } from "../implementation.js";
@@ -161,8 +160,6 @@ export const materialInterpretationSchema = z
 export type MaterialInterpretation = z.infer<
   typeof materialInterpretationSchema
 >;
-const contract = structuredOutputContract(materialInterpretationSchema);
-export const materialInterpretationSchemaDigest = contract.digest;
 export const materialInterpretationIdentity = modelImplementations.material;
 type InterpretationInput = {
   access: ChannelAccess;

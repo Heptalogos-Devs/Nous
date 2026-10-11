@@ -82,7 +82,6 @@ const createSubject = async (env: CliEnvironment) => {
     ...(request.metadata ? { metadata: request.metadata } : {}),
   });
   await save({
-    format: "nous.consumer.selection",
     subjectId: subject.subjectId,
   });
   return subject;
@@ -92,7 +91,6 @@ const useSubject = async (env: CliEnvironment, argument?: string) => {
     subjectId: await subjectId(env, argument),
   });
   await env.save({
-    format: "nous.consumer.selection",
     subjectId: subject.subjectId,
   });
   return subject;

@@ -7,10 +7,7 @@ import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1al
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { KernelClient } from "../../src/kernel-client.js";
 import { consolidationSchema } from "../../src/model/schemas/consolidation.js";
-import {
-  executeConsolidation,
-  type ConsolidationActionResult,
-} from "../../src/maintenance/consolidation.js";
+import { executeConsolidation } from "../../src/maintenance/consolidation.js";
 const occurrence = "10000000-0000-4000-8000-000000000001";
 const revision = "20000000-0000-4000-8000-000000000001";
 const operation = "40000000-0000-4000-8000-000000000001";
@@ -91,11 +88,7 @@ function fixture() {
     memory: { formMemory: form, reviseMemory: revise, linkRevisions: link },
     concepts: { createCognitiveSchema: schema },
   } as unknown as KernelClient;
-  let progress: ConsolidationActionResult[] = [];
-  const save = vi.fn(async (results: ConsolidationActionResult[]) => {
-    progress = [...results];
-  });
-  return { kernel, form, revise, link, schema, save, progress: () => progress };
+  return { kernel, form, revise, link, schema };
 }
 it("uses canonical owner APIs and returned earlier-action refs for strong Memory relations", async () => {
   const f = fixture();
@@ -124,10 +117,6 @@ it("uses canonical owner APIs and returned earlier-action refs for strong Memory
     operation,
     create(ProducerSignatureSchema),
     {},
-    [],
-    f.save,
-
-    (_id, commit) => commit(),
   );
   expect(outcome.status).toBe("committed");
   expect(f.form.mock.calls[0]?.[0].input?.groundingOccurrenceId).toBe(
@@ -147,5 +136,5 @@ it("uses canonical owner APIs and returned earlier-action refs for strong Memory
     }),
     {},
   );
-  expect(new Set(f.progress().map((r) => r.index)).size).toBe(4);
+  expect(new Set(outcome.actions.map((result) => result.index)).size).toBe(4);
 });

@@ -88,7 +88,7 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 | ----------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `maintenance.concept`                     | 16 candidates / 4 suggestions                     | Developer、Live、AuthorityFormation：局部 Tag 候选和逐项 ordered suggestions；候选范围 1..32，建议范围 1..4                                            |
 | `maintenance.concept_use_review_interval` | 3                                                 | Advanced、Live、AuthorityFormation：meaningful use count 跨 interval 时排入 concept review，范围 1..128                                                |
-| `maintenance.accretion`                   | enabled / generic_degree 32 / recurrence_review 3 | Developer、Live、AuthorityFormation：按需派生聚合，genericity 和 recurrence review；关闭时不计算 hints，基础 concept workflow 仍工作，无 provider 调用 |
+| `maintenance.accretion`                   | enabled / generic_degree 32 / recurrence_review 3 | Developer、Live、AuthorityFormation：按需派生聚合，genericity 和 recurrence review；关闭时不计算 hints，基础 concept maintenance 仍工作，无 provider 调用 |
 | `maintenance.enabled`                     | true                                              | host maintenance 开关                                                                                                                                  |
 | `maintenance.poll_interval_seconds`       | 30                                                | standalone loop 的基础设施秒                                                                                                                           |
 | `maintenance.worker_lease_seconds`        | 120                                               | worker lease 的基础设施秒                                                                                                                              |
@@ -116,7 +116,7 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 
 `GrantMaintenance` 调用同时提供 operation/model-call/elapsed budgets；有效操作数还受当前 registry policy 限制。`maintenance.poll_interval_seconds`、`maintenance.worker_lease_seconds`、experience batch、member text、retention/retry/tick budget 设置均由 `cognitive-runtime` owner 注册，使用 Developer exposure、SystemOnly scope、Live apply mode 和 Operational semantic effect。其他以上设置允许 Subject override。retry 延迟为 `min(retry_max_seconds, retry_initial_seconds × 2^(连续失败次数−1))`。语义合同见 [纵向认知](../specs/active/cognitive-runtime/longitudinal-cognition.md)。
 
-`material.inputs` 是 Developer 运行输入预算：`formation_source_max_bytes` 默认 32768，`derivation_source_max_bytes` 默认 1048576。超界 source 必须选择 bounded representation/region；预算不允许截断完整来源后仍声明完整支持。Memory formation workflow 保存首次采用的 source budget，retry 使用该快照。
+`material.inputs` 是 Developer 运行输入预算：`formation_source_max_bytes` 默认 32768，`derivation_source_max_bytes` 默认 1048576。超界 source 必须选择 bounded representation/region；预算不允许截断完整来源后仍声明完整支持。每次 Memory formation 使用当前 Core 配置的输入预算；手动重试按当次运行重新读取和处理输入，不恢复旧模型调用状态。
 
 `retrieval.query.default_result_limit` 默认 12，作用于未声明 result limit 的公开 Query。`core_execution.public_rpc_response_max_bytes` 默认 4194304；公开 RPC request 预算使用 `http_body_limit_bytes`。
 

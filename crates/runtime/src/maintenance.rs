@@ -264,9 +264,6 @@ impl CognitiveRuntimeService {
             )
             .with_context("need_id", claimed.need_id));
         }
-        // Only maintenance-bound completed workflows lose their runtime purpose after ack.
-        sqlx::query("DELETE FROM model_workflow_operations WHERE subject_id=$1 AND maintenance_need_id=$2 AND outcome IS NOT NULL")
-            .bind(claimed.subject_id.0).bind(claimed.need_id).execute(&mut *tx).await.map_err(db)?;
         self.cleanup_maintenance_in(&mut tx, claimed.subject_id)
             .await?;
         tx.commit().await.map_err(db)?;
@@ -285,8 +282,6 @@ impl CognitiveRuntimeService {
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
     ) -> Result<()> {
-        sqlx::query("DELETE FROM model_workflow_operations w USING maintenance_needs n WHERE w.subject_id=$1 AND w.maintenance_need_id=n.need_id AND w.maintenance_trigger_revision<n.trigger_revision AND (w.outcome IS NOT NULL OR w.lease_until IS NULL OR w.lease_until<=clock_timestamp())")
-            .bind(subject.0).execute(&mut **tx).await.map_err(db)?;
         let retention = self
             .configuration
             .snapshot_for_subject(subject)?

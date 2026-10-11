@@ -10,7 +10,6 @@ import type { CliEnvironment } from "../runtime.js";
 import {
   ConfigurationMutationIdentitySchema,
   GetOperationStatusRequestSchema,
-  ModelWorkflowIdentitySchema,
   MutationReceiptIdentitySchema,
   ObservationRequestIdentitySchema,
   SubjectCreateIdentitySchema,
@@ -65,18 +64,6 @@ async function explicitIdentity(
         requestId: value(2, "Request ID"),
       }),
     };
-  } else if (kind === "workflow") {
-    const subjectId = (
-      await env.resolveReference(value(1, "Subject reference"), "subject")
-    ).value;
-    identity = {
-      case: "modelWorkflow" as const,
-      value: create(ModelWorkflowIdentitySchema, {
-        subjectId,
-        owner: value(2, "Workflow owner"),
-        operationKey: value(3, "Operation key"),
-      }),
-    };
   } else {
     throw new CliError(
       "INVALID_ARGUMENT",
@@ -100,13 +87,9 @@ async function inspectOperation(
     );
   const args = positionals.slice(2);
   if (
-    [
-      "mutation",
-      "subject-create",
-      "configuration",
-      "observation",
-      "workflow",
-    ].includes(args[0] ?? "")
+    ["mutation", "subject-create", "configuration", "observation"].includes(
+      args[0] ?? "",
+    )
   )
     return explicitIdentity(env, args[0]!, args);
   return env.inspectOperation(env.required(argument, "Saved receipt ID"));
@@ -120,7 +103,7 @@ export function createOperationCommand(leaf: CliLeaf) {
         description:
           "Inspect a saved receipt or query owner-backed status using an explicit typed identity; never displays request or result bodies.",
         parameters: [
-          "<saved receipt ID> | mutation <operation-kind> <subject-id> <operation-id> | subject-create <subject-id> <operation-id> | configuration <operation-id> | observation <subject-id> <request-id> | workflow <subject-id> <memory|material> <operation-key>",
+          "<saved receipt ID> | mutation <operation-kind> <subject-id> <operation-id> | subject-create <subject-id> <operation-id> | configuration <operation-id> | observation <subject-id> <request-id>",
         ],
         example:
           "nous operation inspect mutation revise_memory <subject-id> <operation-id>",

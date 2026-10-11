@@ -13,12 +13,7 @@ import {
 import { ConfigurationService } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import {
   ConceptService,
-  ConfigurationMutationIdentitySchema,
-  ModelWorkflowIdentitySchema,
-  MutationReceiptIdentitySchema,
-  ObservationRequestIdentitySchema,
   ResourceService,
-  SubjectCreateIdentitySchema,
   type GetOperationStatusRequest,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import {
@@ -33,7 +28,6 @@ type ReceiptStatusLookup =
   | "subjectCreate"
   | "configurationMutation"
   | "observationRequest"
-  | "modelWorkflow"
   | "mutationReceipt"
   | "unsupported";
 
@@ -49,30 +43,7 @@ interface ReceiptDefinition {
   request: DescMessage;
   response: DescMessage;
   statusLookup: ReceiptStatusLookup;
-  noCommitCodes(owner: string): readonly string[];
 }
-
-const cognitionNoCommitCodes = [
-  "INVALID_REQUEST",
-  "STALE_REVISION",
-  "OPERATION_ID_CONFLICT",
-  "UNKNOWN_REFERENCE",
-  "REFERENCE_TYPE_MISMATCH",
-  "REFERENCE_TOMBSTONED",
-] as const;
-const ownerNoCommitCodes: Record<string, readonly string[]> = {
-  SUBJECT: ["INVALID_REQUEST", "OPERATION_ID_CONFLICT"],
-  CONFIGURATION: ["INVALID_REQUEST", "STALE_REVISION", "OPERATION_ID_CONFLICT"],
-  OBSERVATION: [
-    "INVALID_REQUEST",
-    "OPERATION_ID_CONFLICT",
-    "UNKNOWN_REFERENCE",
-  ],
-  MODEL_WORKFLOW: [],
-  RUNTIME: ["INVALID_REQUEST", "STALE_CONTEXT", "OPERATION_ID_CONFLICT"],
-  CONCEPT: cognitionNoCommitCodes,
-  MEMORY: cognitionNoCommitCodes,
-};
 
 function cognitionMutationOwner(input: Record<string, unknown>) {
   const target = input.objectRef;
@@ -129,7 +100,7 @@ const receiptRegistrations = {
     ConfigurationService.method.clearSubjectOverride,
   ],
   "model.formFromObservation": [
-    "MODEL_WORKFLOW",
+    "MEMORY",
     "form_memory",
     ModelService.method.formFromObservation,
   ],
@@ -255,7 +226,7 @@ const receiptRegistrations = {
     ConceptService.method.mergeCognitiveSchemas,
   ],
   "resources.materialize": [
-    "MODEL_WORKFLOW",
+    "OBSERVATION",
     "resource_materialization",
     ResourceService.method.materializeResource,
   ],
@@ -263,27 +234,23 @@ const receiptRegistrations = {
   Record<ReceiptClientMethodPath, ReceiptRegistration>
 >;
 
-const operationIdentitySchemas = {
-  mutationReceipt: MutationReceiptIdentitySchema,
-  subjectCreate: SubjectCreateIdentitySchema,
-  configurationMutation: ConfigurationMutationIdentitySchema,
-  observationRequest: ObservationRequestIdentitySchema,
-  modelWorkflow: ModelWorkflowIdentitySchema,
-} as const;
+const operationIdentityFields: Record<string, readonly string[]> = {
+  mutationReceipt: ["subjectId", "operationId", "operationKind"],
+  subjectCreate: ["subjectId", "operationId"],
+  configurationMutation: ["operationId"],
+  observationRequest: ["subjectId", "requestId"],
+};
 
 export function safeOperationStatusIdentity(
   identity: GetOperationStatusRequest["identity"],
 ) {
-  if (!identity.case) return { case: "unspecified" };
-  const fields = operationIdentitySchemas[identity.case].fields;
+  const identityCase = identity.case || "unspecified";
+  const fields = operationIdentityFields[identityCase];
+  if (!identity.case || !fields) return { case: identityCase };
+  const value = identity.value as Record<string, unknown>;
   return {
-    case: identity.case,
-    ...Object.fromEntries(
-      fields.map(({ localName }) => [
-        localName,
-        (identity.value as Record<string, unknown>)[localName],
-      ]),
-    ),
+    case: identityCase,
+    ...Object.fromEntries(fields.map((field) => [field, value[field]])),
   };
 }
 
@@ -305,7 +272,6 @@ function statusLookup(
     return "unsupported";
   if (owner === "CONFIGURATION") return "configurationMutation";
   if (owner === "OBSERVATION") return "observationRequest";
-  if (owner === "MODEL_WORKFLOW") return "modelWorkflow";
   return "mutationReceipt";
 }
 
@@ -330,7 +296,6 @@ export function receiptDefinition(command: string): ReceiptDefinition {
     request: method.input,
     response: method.output,
     statusLookup: statusLookup(command as ReceiptCommand, resolvedOwner),
-    noCommitCodes: (ownerName) => ownerNoCommitCodes[ownerName] ?? [],
   };
   return definition;
 }

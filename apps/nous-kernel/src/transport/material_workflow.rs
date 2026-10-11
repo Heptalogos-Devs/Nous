@@ -44,7 +44,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         let input = request.into_inner();
         let result:Result<_>=async {
             let rows=sqlx::query("SELECT m.mention_id,m.surface,b.entity_ref FROM entity_mentions m JOIN LATERAL (SELECT entity_ref,binding_state FROM entity_binding_revisions WHERE mention_id=m.mention_id ORDER BY revision_no DESC LIMIT 1) b ON b.binding_state='bound' AND b.entity_ref IS NOT NULL WHERE m.subject_id=$1 AND m.occurrence_id=$2 ORDER BY m.mention_id LIMIT 129").bind(id(&input.subject_id)?).bind(id(&input.occurrence_id)?).fetch_all(self.0.store.pool()).await.map_err(db)?;
-            if rows.len()>128{return Err(Error::new(nous_core::ErrorOwner::ModelWorkflow, nous_core::ErrorCode::InvalidRequest, "resolved mention candidate bound exceeded"));}
+            if rows.len()>128{return Err(Error::new(nous_core::ErrorOwner::Material, nous_core::ErrorCode::InvalidRequest, "resolved mention candidate bound exceeded"));}
             let candidates=rows.into_iter().map(|row| Ok(k::ResolvedMention{key:row.try_get::<uuid::Uuid,_>("mention_id").map_err(db)?.to_string(),surface:row.try_get("surface").map_err(db)?,entity_ref:row.try_get("entity_ref").map_err(db)?})).collect::<Result<Vec<_>>>()?;
             Ok(k::ResolvedMentionsResponse{candidates})
         }.await;
@@ -78,7 +78,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         let result: Result<_> = async {
             if input.text.trim().is_empty() || input.text.len() > 1_048_576 {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Material,
                     nous_core::ErrorCode::InvalidRequest,
                     "Invalid request",
                 ));

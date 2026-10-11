@@ -20,18 +20,14 @@ import { createClient, type Transport } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import { ArtifactStreamService } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/kernel_pb.js";
 import { Health } from "@nous-wave/protocol/grpc/health/v1/health_pb.js";
-import {
-  KernelModelWorkflowService,
-  KernelMaterialWorkflowService,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import { KernelMaterialWorkflowService } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 
 import { ConfigurationService } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 
 import { KernelConfigurationService } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/configuration_pb.js";
-const MAX_WORKFLOW_RPC_BYTES = 8 * 1024 * 1024 + 65536;
+const MAX_MATERIAL_RPC_BYTES = 8 * 1024 * 1024 + 65536;
 
 export class KernelClient {
-  readonly modelWorkflow;
   readonly materialWorkflow;
   readonly hostRuntime;
   readonly projection;
@@ -62,7 +58,6 @@ export class KernelClient {
     this.queryWorkflow = createClient(KernelQueryService, transport);
     this.maintenance = createClient(KernelMaintenanceService, transport);
     this.projection = createClient(KernelProjectionService, transport);
-    this.modelWorkflow = createClient(KernelModelWorkflowService, transport);
     this.materialWorkflow = createClient(
       KernelMaterialWorkflowService,
       transport,
@@ -87,8 +82,8 @@ export class KernelClient {
       createGrpcTransport({
         baseUrl: endpoint,
         defaultTimeoutMs: execution.kernel_rpc_timeout_ms,
-        readMaxBytes: MAX_WORKFLOW_RPC_BYTES,
-        writeMaxBytes: MAX_WORKFLOW_RPC_BYTES,
+        readMaxBytes: MAX_MATERIAL_RPC_BYTES,
+        writeMaxBytes: MAX_MATERIAL_RPC_BYTES,
         interceptors: [
           (next) => async (request) => {
             request.header.set("authorization", "Bearer " + token);

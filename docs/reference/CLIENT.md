@@ -8,9 +8,9 @@ Successful Client calls return the generated protobuf-js response message direct
 
 Use `create(schema, init)` for hand-built protobuf requests and responses. CLI summaries that intentionally omit fields are ordinary DTOs, not generated messages. A ProtoJSON receipt stores the registered request/response type name and complete typed JSON; it does not preserve unknown binary wire fields that ProtoJSON cannot represent.
 
-Persist the operation ID and exact request before mutations. Same ID/same normalized input replays the original result; changed input conflicts. Read the current object epoch/head before a new revision or lifecycle change, then freeze that expected value for retries. A model proposal is not an Authority mutation until its owner commits it.
+提交 mutation 前保存 operation ID 和精确 owner request。相同 owner request 可重放原子提交的结果；同一操作身份携带不同 request 会冲突。创建修订或变更 lifecycle 前读取当前 object epoch/head。模型调用直接把 typed output 交给 canonical owner，不另存 proposal 供续接。CLI 的手动 retry 可能再次调用模型；输出变化时同一 owner operation ID 可能冲突。
 
-`system.operationStatus({ identity })` is a read-only lookup against one existing owner receipt, using one typed identity variant: `mutationReceipt`, `subjectCreate`, `configurationMutation`, `observationRequest` or `modelWorkflow`. `UNKNOWN` means no matching row was found; it does not prove that a write was not committed. A lookup error also leaves the outcome unknown. `COMPLETED` for a model workflow means only that its opaque terminal outcome was stored, not that the domain operation succeeded. The response is a safe status projection and does not include request, configuration, seed, observation or workflow payloads.
+`system.operationStatus({ identity })` 只读取已有 owner receipt，支持的 typed identity 为 `mutationReceipt`、`subjectCreate`、`configurationMutation` 或 `observationRequest`；它不查询或续接模型调用。
 
 ## Required vocabulary
 
@@ -58,7 +58,7 @@ Session state is isolated; WorkContexts belong to Subject and can continue acros
 
 ## Maintenance and model execution
 
-`cognition.grantMaintenance({ subjectId, maxOperations, maxModelCalls, maxElapsedMs })` gives a bounded opportunity. Subject effective `maintenance.enabled=false` disables it. Response disposition distinguishes disabled policy, no eligible work, processed work and exhausted opportunity. A second opportunity resumes durable needs/proposals; a grant is not a batch with an invented replay receipt. Actual model calls include route fallback.
+`cognition.grantMaintenance({ subjectId, maxOperations, maxModelCalls, maxElapsedMs })` 提供有界执行机会。Subject effective `maintenance.enabled=false` 时不运行。返回状态区分策略禁用、无可执行 need、已处理与机会耗尽。MaintenanceNeed claim/lease 只协调后台工作；后续 grant 按当前 owner state 重新计划，需要时重新调用模型，不续接旧 proposal。实际模型调用数包含 route fallback。
 
 Model-backed calls have a longer Client default deadline; explicit `timeoutMs` and cancellation take precedence. READY describes executable configured prerequisites, not successful provider calls or prepared Serving. `system.projections({ subjectId })` reports serving state; `model.prepareEmbeddings` builds bounded material using the configured provider batch size. Real query diagnostics and degradation decide whether a requested lane participated.
 

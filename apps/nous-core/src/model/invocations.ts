@@ -160,9 +160,6 @@ export class ModelInvocations {
     const configuration = modelRoleGraph(this.configuration, name);
     const outputSchemaDigest = providerContractForRole(name)?.digest;
     return {
-      format: "nous.model.execution",
-      implementationDigest: modelImplementations.provider,
-      outputSchemaDigest,
       role: name,
       configuration,
       prompt: role.prompt,

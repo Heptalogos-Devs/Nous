@@ -9,7 +9,7 @@ impl KernelService {
     pub(super) fn embedding_config(&self) -> Result<k::EmbeddingConfig> {
         let provider = self.0.serving.embedding().ok_or_else(|| {
             Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorOwner::Core,
                 nous_core::ErrorCode::Unavailable,
                 "embedding space not configured",
             )
@@ -34,7 +34,7 @@ impl KernelService {
     ) -> Result<Vec<QueryEmbedding>> {
         if inputs.len() > 1 {
             return Err(Error::new(
-                nous_core::ErrorOwner::ModelWorkflow,
+                nous_core::ErrorOwner::Core,
                 nous_core::ErrorCode::InvalidRequest,
                 "Query accepts at most one supplied embedding",
             ));
@@ -43,7 +43,7 @@ impl KernelService {
         for material in inputs {
             let provider = self.0.serving.embedding().ok_or_else(|| {
                 Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Core,
                     nous_core::ErrorCode::Unavailable,
                     "embedding space not configured",
                 )
@@ -55,49 +55,49 @@ impl KernelService {
                 .find(|p| p.signature_hash == material.producer_hash)
                 .ok_or_else(|| {
                     Error::new(
-                        nous_core::ErrorOwner::ModelWorkflow,
+                        nous_core::ErrorOwner::Core,
                         nous_core::ErrorCode::InvalidRequest,
                         "query embedding producer is not authorized",
                     )
                 })?;
             if material.text != bound.representation.text {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Core,
                     nous_core::ErrorCode::InvalidRequest,
                     "Query embedding text does not match the prepared query representation",
                 ));
             }
             if material.text.len() > 131072 {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Core,
                     nous_core::ErrorCode::InvalidRequest,
                     "Query embedding text exceeds the 131,072-byte limit",
                 ));
             }
             if material.space_hash != space.space_hash {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Core,
                     nous_core::ErrorCode::InvalidRequest,
                     "Query embedding space does not match the configured space",
                 ));
             }
             if material.producer_hash != producer.signature_hash {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Core,
                     nous_core::ErrorCode::InvalidRequest,
                     "Query embedding producer is not authorized",
                 ));
             }
             if material.vector.len() != space.dimension as usize {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Core,
                     nous_core::ErrorCode::InvalidRequest,
                     "Query embedding vector dimension does not match the configured space",
                 ));
             }
             if material.vector.iter().any(|v| !v.is_finite()) {
                 return Err(Error::new(
-                    nous_core::ErrorOwner::ModelWorkflow,
+                    nous_core::ErrorOwner::Core,
                     nous_core::ErrorCode::InvalidRequest,
                     "Query embedding vector contains a non-finite value",
                 ));
@@ -112,36 +112,5 @@ impl KernelService {
             });
         }
         Ok(materials)
-    }
-}
-
-pub(super) fn workflow_json(value: &str) -> Result<serde_json::Value> {
-    if value.len() > nous_persistence::WORKFLOW_VALUE_MAX_BYTES {
-        return Err(Error::new(
-            nous_core::ErrorOwner::ModelWorkflow,
-            nous_core::ErrorCode::InvalidRequest,
-            "workflow value exceeds bound",
-        ));
-    }
-    serde_json::from_str(value).map_err(|error| {
-        Error::new(
-            nous_core::ErrorOwner::ModelWorkflow,
-            nous_core::ErrorCode::InvalidRequest,
-            "workflow JSON is invalid",
-        )
-        .with_source(error)
-    })
-}
-
-pub(super) fn private_workflow_owner(owner: &str) -> Result<()> {
-    nous_persistence::WorkflowOwner::new(owner)?;
-    if ["memory", "material"].contains(&owner) {
-        Ok(())
-    } else {
-        Err(Error::new(
-            nous_core::ErrorOwner::ModelWorkflow,
-            nous_core::ErrorCode::InvalidRequest,
-            "Only Memory and Material workflow owners are supported here",
-        ))
     }
 }

@@ -1,12 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  openDurableOperation,
-  isOperationBusyError,
-  operationBusyError,
-  workflowPayload,
-} from "../durable-operation.js";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
 import type { DeriveMaterialRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
@@ -16,11 +10,9 @@ import { type ExecutionTelemetry } from "./execution/routes.js";
 import {
   type ModelProducerMetadata,
   type ModelRoleSnapshot,
-  snapshotSchema as modelSnapshotSchema,
 } from "./execution/snapshot.js";
 import type { ModelRole } from "./roles.js";
 import { modelProducer } from "./producer.js";
-import { z } from "zod";
 import type { DerivedRepresentation } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import {
   inspectVideoPreprocessing,
@@ -34,7 +26,6 @@ import {
 } from "./derivation-source.js";
 import { canonicalDigest } from "../digest.js";
 import {
-  materialInterpretationSchemaDigest,
   materialInterpretationIdentity,
   type StructuredMaterialContext,
 } from "./schemas/material-interpretation.js";
@@ -208,121 +199,24 @@ export async function deriveMaterial(
       typeof preprocessingDigest === "function"
         ? await preprocessingDigest()
         : preprocessingDigest;
-    const key = canonicalDigest({
-      subject: request.subjectId,
-      graph,
-      kind,
-      strategy,
-      producer: model.configDigest,
-      preprocessingDigest: stagePreprocessingDigest,
-      supersedes: representations.length === 0 ? request.supersedes : undefined,
-      outputSchemaDigest:
-        kind === "structured_interpretation"
-          ? materialInterpretationSchemaDigest
-          : undefined,
-      interpretation: materialInterpretationIdentity,
-    });
-    const identity = {
-      subjectId: request.subjectId,
-      owner: "material",
-      operationKey: key,
-      semanticDigest: key,
-    };
-    const opened = await openDurableOperation(kernel, identity, {
-      execution: options,
-      snapshotFactory: async () => ({
-        snapshot: {
-          content: workflowPayload(
-            { model, preprocessingDigest: stagePreprocessingDigest },
-            graph.map((input) => input.reference!),
-          ),
-        },
-      }),
-    });
-    if (opened.state === "completed") {
-      if (opened.outcome.purged)
-        throw new ConnectError("Derivation outcome was purged", Code.NotFound);
-      const outcome = z
-        .union([
-          z.strictObject({ representationId: z.string().uuid() }),
-          z.strictObject({ skipped: z.string() }),
-        ])
-        .parse(JSON.parse(opened.outcome.payloadJson));
-      if ("skipped" in outcome) {
-        paidStageSkipReason = outcome.skipped;
-        return undefined;
-      }
-      const representation = await kernel.material.getDerivedRepresentation(
-        { subjectId: request.subjectId, id: outcome.representationId },
-        options,
-      );
-      representations.push(representation);
-      return representation;
+    const result = await invoke(model);
+    if ("skipReason" in result) {
+      paidStageSkipReason = result.skipReason;
+      return undefined;
     }
-    if (opened.state === "busy") throw operationBusyError();
-    const operation = opened.operation;
-    return operation.run(async () => {
-      let proposal = opened.proposal?.payloadJson
-        ? (JSON.parse(opened.proposal.payloadJson) as {
-            text: string;
-            producerMetadata: ModelProducerMetadata;
-            inputAccess: ChannelAccess;
-            structuredPayload?: JsonObject;
-            quality: Record<string, unknown>;
-          })
-        : undefined;
-      if (!proposal) {
-        const frozen = z
-          .strictObject({
-            model: modelSnapshotSchema,
-            preprocessingDigest: z.string().optional(),
-          })
-          .parse(JSON.parse(opened.snapshot.content!.payloadJson));
-        const result = await invoke(frozen.model);
-        if ("skipReason" in result) {
-          paidStageSkipReason = result.skipReason;
-          await operation.checkpoint({
-            outcome: workflowPayload({ skipped: result.skipReason }),
-          });
-          return undefined;
-        }
-        proposal = {
-          text: result.text,
-          producerMetadata: result.producerMetadata,
-          inputAccess: result.inputAccess,
-          structuredPayload: result.structuredPayload,
-          quality: { ...quality, ...result.quality },
-        };
-        await operation.checkpoint({
-          proposal: workflowPayload(proposal),
-          executionTelemetry: result.execution,
-        });
-      }
-      const representation = await commit(
-        proposal.text,
-        kind,
-        graph,
-        proposal.producerMetadata,
-        {
-          ...proposal.quality,
-          input_access: channelAccessSchema.parse(proposal.inputAccess),
-        },
-        stagePreprocessingDigest,
-        proposal.structuredPayload,
-      );
-      await operation.checkpoint({
-        outcome: workflowPayload(
-          { representationId: representation.representationId },
-          [
-            {
-              kind: "derived_representation",
-              value: representation.representationId,
-            },
-          ],
-        ),
-      });
-      return representation;
-    });
+    return commit(
+      result.text,
+      kind,
+      graph,
+      result.producerMetadata,
+      {
+        ...quality,
+        ...result.quality,
+        input_access: channelAccessSchema.parse(result.inputAccess),
+      },
+      stagePreprocessingDigest,
+      result.structuredPayload,
+    );
   };
   const inputs = [
     {
@@ -561,8 +455,7 @@ export async function deriveMaterial(
               detail: "Audio is not included in the scene description",
             });
           }
-        } catch (error) {
-          if (isOperationBusyError(error)) throw error;
+        } catch {
           if (signal?.aborted) throw signal.reason;
           degradation.push({
             code: "video_transcription_unavailable",
@@ -716,7 +609,6 @@ export async function deriveMaterial(
       degradation: [],
     };
   } catch (error) {
-    if (isOperationBusyError(error)) throw error;
     if (signal?.aborted) throw error;
     if (error instanceof DerivationSourceTooLarge)
       return {

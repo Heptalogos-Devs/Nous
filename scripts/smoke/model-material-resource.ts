@@ -26,7 +26,6 @@ const dataRoot = await workspaceTemp("smoke", "model-");
 const configPath = join(dataRoot, "bootstrap.toml");
 // Deterministic local provider contract wiring, never live-model or corpus evidence.
 let structuredEnabled = false;
-let providerCalls = 0;
 let resourceContent = "LocalDocuments external material contract marker.";
 let formationEnabled = false;
 const documentsPath = join(dataRoot, "local-documents.json");
@@ -65,7 +64,6 @@ const provider = createServer((request, response) => {
       );
       return;
     }
-    providerCalls++;
     response.setHeader("Content-Type", "application/json");
     if (!structuredEnabled) {
       response.writeHead(503);
@@ -416,14 +414,6 @@ try {
     new TextDecoder().decode(segmentMaterial.content),
     "Local consumer wiring marker: protocol continuity.",
   );
-  const beforeReplay = providerCalls;
-  const replay = await client.model.deriveMaterial({
-    subjectId,
-    sourceRegionId: String(observation.sourceRegionId),
-    strategy: "describe_then_structure",
-  });
-  assert.equal(replay.selectedRepresentationId, structured.representationId);
-  assert.equal(providerCalls, beforeReplay);
   const resourceDescriptor = await client.resources.put({
     subjectId,
     descriptor: {
@@ -738,7 +728,7 @@ routes = ["memory_formation"]
       error.transportCode === 10 &&
       error.errorCode === "OPERATION_ID_CONFLICT" &&
       error.recovery === "NEW_OPERATION" &&
-      error.context.operation_key === formationRequest.operationId,
+      error.context.operation_id === formationRequest.operationId,
   );
   await assert.rejects(
     restarted.cognition.recall(

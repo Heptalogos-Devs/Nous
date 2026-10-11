@@ -8,7 +8,7 @@
 
 共享状态按 Core discovery 中的稳定 instanceId 与 `--consumer` 共同隔离，目录为 `InstanceRoot/consumers/<身份摘要>/`。Core 重启保留实例身份；同一 state root 中不同实例或 consumer 使用不同选择和回执。每条命令固定开始时的 Subject、Session、WorkContext 与输入，后续 RPC 不重读另一条命令的选择。原子写与跨进程锁仅用于本地短事务，不覆盖 RPC 或模型等待。独立字段更新合并；同字段、Subject 或 query context 冲突保留业务结果并返回 `STATE_UNSAVED` notice，后续操作使用返回的 exact references。
 
-`consumer_state` 配置提供回执容量、文件字节预算和锁时限，完整 active policy 在命令开始时固定。selection 使用 Zod 校验的普通 JSON；操作回执使用 `nous.consumer.operation.v2` 与固定命令 schema 的 ProtoJSON request/result，状态为 pending、complete 或 rejected。`pending` 表示业务终态未确认；RPC 失败不改写回执，未知结果始终复用冻结的完整请求。owner、operation kind、Subject 和稳定 operation ID 均从命令定义与恢复的 protobuf request 推导，不重复写入回执头。operation ID 的 owner receipt 才决定服务器状态。回执格式不合法时报告错误；pending、timeout 或 disconnect 均不表示服务器尚未提交。
+`consumer_state` 配置提供回执容量、文件字节预算和锁时限，active policy 在命令开始时固定。selection 使用 Zod 校验的普通 JSON；有界本地 request/result cache 使用固定命令 schema 的 ProtoJSON 保存 typed request，成功后保存返回结果。请求发送前记为 `pending`，成功后记为 `complete`；RPC 失败后可显式 retry 重发原 request 和 identity。模型调用可能重新生成输出；若 typed owner request 因输出变化，同一 operation ID 可能冲突。owner、operation kind、Subject 和稳定 operation ID 可从命令与缓存 request 推导。
 
 按[根 README](../../README.md)准备开发环境并运行 `corepack pnpm dev`，另一个终端可执行：
 
@@ -38,17 +38,17 @@ corepack pnpm nous use result:1 --kind referenced
 
 地址由对象创建事务或显式 Identity 服务分配；正常呈现依据协议声明的引用字段去重并只读批量查询。用户 JSON 中的 `$typeName`、`$unknown`、`subjectId` 等键保持原值，不因字段名或字符串形状转换。Query 的 `ref` 是当前 canonical `{kind,value}`，`result:N` 保存 exact reference，正常文本的 `lexicalRef` 优先指向该 exact revision。`query prepare` 将 context 的 WorkContext 与 Session 分组展示；详细 query trace 由 `--developer` 保留。
 
-`--json` 返回 `schemaVersion="nous.cli.v2"` 的完整 ProtoJSON envelope，保留命令 data 的全部字段，protobuf int64 使用十进制字符串。`--developer` 保留诊断身份和 query trace，`--raw --developer` 跳过词汇地址呈现，但仍返回完整 v2 envelope。正常文本省略内部追踪身份。成功仅写 stdout，错误仅写 stderr 并返回非零码；typed error 分开呈现 transport code、owner code、owner、recovery、context、details、candidates、trace ID 与未知结果回执。
+`--json` 返回 `schemaVersion="nous.cli.v2"` 的完整 ProtoJSON envelope，保留命令 data 的全部字段，protobuf int64 使用十进制字符串。`--developer` 保留诊断身份和 query trace，`--raw --developer` 跳过词汇地址呈现，但仍返回完整 v2 envelope。正常文本省略内部追踪身份。成功仅写 stdout，错误仅写 stderr 并返回非零码；typed error 分开呈现 transport code、owner code、owner、recovery、context、details、candidates、trace ID，并在可用时带本地 receipt ID。
 
-Launcher 提供 RunRoot/InstanceRoot。`--subject`、`--session`、`--work-context` 覆盖本地选择。查询和幂等修改需要 InstanceRoot 保存续接状态；只读查询准备、配置与 status 可仅指定 RunRoot。Query 的 `result:N` 按实际命中顺序保存真实引用，并限定到原 Subject。Memory、Schema、Episode、Journal 保留 exact immutable revision，`show/trace/use` 不替换成最新 head。Evidence/Resource 与混合 hits 正常展示，每条只提供 owner 支持的后续动作；外部 Resource records 单独显示稳定来源身份。
+Launcher 提供 RunRoot/InstanceRoot。`--subject`、`--session`、`--work-context` 覆盖本地选择。需要本地 selection、query result 或 request/result receipt 的操作使用 InstanceRoot；只读查询准备、配置与 status 可仅指定 RunRoot。Query 的 `result:N` 按实际命中顺序保存真实引用，并限定到原 Subject。Memory、Schema、Episode、Journal 保留 exact immutable revision，`show/trace/use` 不替换成最新 head。Evidence/Resource 与混合 hits 正常展示，每条只提供 owner 支持的后续动作；外部 Resource records 单独显示稳定来源身份。
 
 按[官方 Agent 手册](../../docs/agent/NOUSQL.md#prefer-explicit-referents-for-retrieval)强烈建议显式化能够可靠辨认的指称，使用名称和关键词增强 lexical、embedding 与 Entity/Tag activation；不确定时仍直接查询原文。一次创建并 foreground 的 WorkContext 可连续供多条问题使用，任务变化时才更新文本或 anchors。
 
 `context set --text <text>` 或 `--file <path|->` 更新自由文本；`--purpose` 可同时修改目的。`pin/unpin` 使用 `--cognition`、`--entity`、`--tag` 的逗号分隔引用；cognition 只接受 exact revision 或 Occurrence。`clear --scope text|anchors|all` 清理相应字段；`pause/resume/end` 管理生命周期，`select <id>` 保存选择，`foreground [id]` 在选中 Session 激活，`foreground --clear` 解除激活。所有更新保留未修改字段并提交读取到的 expected revision。context_text 上限 64 KiB，与 query representation 预算分离。
 
-修改前保存 operation identity、规范输入、时间戳和 expected revision。未知结果返回 `retry <receipt>`；重试读取原 receipt，不重新读取新的 revision、重新解析引用或生成 operation ID。Observe、formation、config override、Tag/Association、WorkContext 和 UseEvent 使用各 owner 的幂等身份。Session lifecycle、Identity bind 和 derivation 的领域合同单独决定重试行为。
+修改前固定 operation identity、规范输入和 expected revision。命令返回本地 receipt ID 后，可显式执行 `retry <receipt>` 重发缓存 request；不会重新读取 revision、重新解析引用或生成 operation ID。若请求由 Core 重新调用模型，输出可能不同，并与相同 owner operation identity 冲突。Observe、formation、config override、Tag/Association、WorkContext 和 UseEvent 使用各 owner 的幂等身份。Session lifecycle、Identity bind 和 derivation 的领域合同单独决定重试行为。
 
-`operation inspect <receipt-id>` 并列显示本地 v2 receipt status 与 owner 按 oneof identity 查询的 server status，不会同步或覆盖任一方状态，也不显示冻结 request/result。没有本地 receipt 时，可使用明确的身份类型：`operation inspect mutation <operation-kind> <subject> <operation-id>`、`operation inspect subject-create <subject> <operation-id>`、`operation inspect configuration <operation-id>`、`operation inspect observation <subject> <request-id>` 或 `operation inspect workflow <subject> <owner> <operation-key>`。CLI 按所选身份类型构造固定 protobuf oneof，Core 验证实际 operation kind/owner。示例：`operation inspect mutation revise_memory <subject-id> <operation-id>`。`UNKNOWN` 和 status lookup transport failure 都保持 outcome unknown；workflow `COMPLETED` 只说明执行终结，不等于领域操作成功。回执身份必须在同一 `--instance-root`、`--consumer` 下读取。
+`operation inspect <receipt-id>` 显示本地 receipt 摘要和支持的 owner identity status，不显示冻结的 request/result body。没有本地 receipt 时，可按 owner identity 查询：`operation inspect mutation <operation-kind> <subject> <operation-id>`、`operation inspect subject-create <subject> <operation-id>`、`operation inspect configuration <operation-id>` 或 `operation inspect observation <subject> <request-id>`。CLI 使用对应 protobuf oneof；支持 mutation receipt、Subject creation、configuration mutation 与 Observation request。示例：`operation inspect mutation revise_memory <subject-id> <operation-id>`。本地 receipt 必须在原 `--instance-root`、`--consumer` 下读取。
 
 复杂 Tag/Association 文件为语义 TOML，上限 64 KiB；没有 Client DTO JSON 输入模式。例如：
 
@@ -89,7 +89,7 @@ role = "contextual"
 
 `memory list --page-size 50 --page-token <token>` 保留 Authority 分页，`memory get <ref>` 读取当前 Memory，`memory revision <exact-revision>` 读取不可变修订，`memory history <ref> --page-size 50 --page-token <token>` 返回完整历史。`memory revise <ref> --request-file <semantic.toml> --expected-epoch <epoch>` 使用 typed MemoryContent 和稳定 operation ID。语义 TOML 的字段包括 `intent`、`cognitive_role`、`formation_mode`、`semantic_role`、`text`、`epistemic_class`、`[[basis]]`、`aboutness` 与 `tags`；有效时间可按 TemporalExtent 的 JSON 结构填写。
 
-Memory 生命周期由 `memory suppress|restore|withdraw|reaccept|purge <ref> --expected-epoch <epoch>` 显式管理；`memory accessibility <ref> --mode auto|normal|deep|explicit --expected-epoch <epoch>` 只调整可访问性。`memory link --from <exact revision> --to <exact revision> --relation <relation>` 建立修订关系。每个修改都保存稳定 operation identity 并通过 `retry <receipt-id>` 原样恢复。
+Memory 生命周期由 `memory suppress|restore|withdraw|reaccept|purge <ref> --expected-epoch <epoch>` 显式管理；`memory accessibility <ref> --mode auto|normal|deep|explicit --expected-epoch <epoch>` 只调整可访问性。`memory link --from <exact revision> --to <exact revision> --relation <relation>` 建立修订关系。修改会保存稳定 operation identity；`retry <receipt-id>` 显式重发本地保存的 request，完成回执则返回保存的结果。
 
 `subject create --request-file <subject.toml>` 必须显式提供 Cognitive Seed；CLI 不会在传输层注入种子，也不会从不存在的默认值推断内容。它会先验证请求，再于本地 pending receipt 与 RPC 前生成并固定 Subject ID 和 operation ID。最小文件为：
 
@@ -157,7 +157,7 @@ node --import tsx apps/nous-cli/src/main.ts --run-root <Core RunRoot> --instance
 
 复用长期 Subject 时运行 `subject use <返回的 sub:词汇引用>`，每个并行 Agent 单独 `session open`。不要复制 Core Authority 数据库来隔离本地选择。
 
-`nous --locator <bootstrap.toml> mcp --state-root <Agent 私有目录> --consumer consumer:codex:research` 启动官方 MCP SDK v2 stdio consumer。MCP 必须显式指定私有 state root 和稳定 consumer；它通过参数数组在进程内调用 Terminal 共用的命令核心，并使用同一跨进程状态事务。并发命令各自冻结输入，长操作不阻塞其他调用。stdout/stdin 仅用于 MCP 协议；MCP 输入使用文件或 `--text`，不接受文件 `-`。三个工具为 `nous_help`、`nous_command`（`args` 是 argv 字符串数组，不是 shell 命令）和 `nous_query`。错误保留 CLI 文本与未知结果 receipt；用 `nous_command` 调用 `retry <receipt>` 恢复。
+`nous --locator <bootstrap.toml> mcp --state-root <Agent 私有目录> --consumer consumer:codex:research` 启动官方 MCP SDK v2 stdio consumer。MCP 必须显式指定私有 state root 和稳定 consumer；它通过参数数组在进程内调用 Terminal 共用的命令核心，并使用同一跨进程状态事务。并发命令各自冻结输入，长操作不阻塞其他调用。stdout/stdin 仅用于 MCP 协议；MCP 输入使用文件或 `--text`，不接受文件 `-`。三个工具为 `nous_help`、`nous_command`（`args` 是 argv 字符串数组，不是 shell 命令）和 `nous_query`。受回执管理的 operation RPC 出错时会附本地 receipt ID；需要时通过 `nous_command` 显式调用 `retry <receipt>` 重发保存的 request。
 
 Codex 项目 `.codex/config.toml` 的源码配置示例，替换全部绝对路径：
 

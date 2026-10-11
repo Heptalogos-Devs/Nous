@@ -59,9 +59,7 @@ impl MemoryService {
         .await?;
         let episode_id = EpisodeId::new();
         let revision_id = EpisodeRevisionId::new();
-        let formed_at = self
-            .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
-            .await?;
+        let formed_at = started_at;
         let now = self.cognition.now(input.subject);
         let (time_kind, time_start, time_end) = temporal_columns(&input.experience_time);
         sqlx::query("INSERT INTO cognition_objects(object_kind,object_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at,track_key) VALUES('episode',$1,$2,$3,1,'accepted','valid','normal','normal',$4,$5)")
@@ -265,9 +263,7 @@ impl MemoryService {
         .await
         .map_err(db)?;
         let revision_id = EpisodeRevisionId::new();
-        let formed_at = self
-            .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
-            .await?;
+        let formed_at = started_at;
         let now = self.cognition.now(input.subject);
         let (kind, start, end) = temporal_columns(&input.experience_time);
         let create = EpisodeInput {

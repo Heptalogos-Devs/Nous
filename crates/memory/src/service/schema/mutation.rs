@@ -50,15 +50,6 @@ impl MemoryService {
             sequence,
         )
         .await?;
-        mutation
-            .publish_workflow_results(
-                "memory",
-                &[
-                    CognitiveRef::CognitiveSchema(schema_id),
-                    CognitiveRef::CognitiveSchemaRevision(revision_id),
-                ],
-            )
-            .await?;
         let result = MutationResult::revised(
             CognitiveRef::CognitiveSchema(schema_id),
             revision_id.0,
@@ -378,15 +369,6 @@ impl MemoryService {
             "source_revised",
         )
         .await?;
-        mutation
-            .publish_workflow_results(
-                "memory",
-                &[
-                    CognitiveRef::CognitiveSchema(input.schema_id),
-                    CognitiveRef::CognitiveSchemaRevision(revision_id),
-                ],
-            )
-            .await?;
         let result = MutationResult::revised(
             CognitiveRef::CognitiveSchema(input.schema_id),
             revision_id.0,

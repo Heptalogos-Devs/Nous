@@ -35,14 +35,6 @@ fn operation_owner(kind: &str) -> Option<p::ErrorOwner> {
     })
 }
 
-fn workflow_owner(owner: &str) -> Option<p::ErrorOwner> {
-    match owner {
-        "memory" => Some(p::ErrorOwner::Memory),
-        "material" => Some(p::ErrorOwner::Material),
-        _ => None,
-    }
-}
-
 impl KernelService {
     pub(super) async fn get_operation_status(
         &self,
@@ -215,59 +207,6 @@ impl KernelService {
                         )))),
                         ..Default::default()
                     }],
-                    ..Default::default()
-                })
-            }
-            Identity::ModelWorkflow(identity) => {
-                let subject = id(&identity.subject_id)?;
-                let owner = workflow_owner(&identity.owner).ok_or_else(|| {
-                    Error::new(
-                        nous_core::ErrorOwner::Kernel,
-                        nous_core::ErrorCode::InvalidRequest,
-                        "model workflow owner is not registered",
-                    )
-                })?;
-                if identity.operation_key.is_empty() || identity.operation_key.chars().count() > 256
-                {
-                    return Err(Error::new(
-                        nous_core::ErrorOwner::Kernel,
-                        nous_core::ErrorCode::InvalidRequest,
-                        "invalid model workflow operation_key",
-                    ));
-                }
-                let row = sqlx::query("SELECT (outcome IS NOT NULL) AS completed,created_at,updated_at,lease_until FROM model_workflow_operations WHERE subject_id=$1 AND owner=$2 AND operation_key=$3")
-                    .bind(subject)
-                    .bind(&identity.owner)
-                    .bind(&identity.operation_key)
-                    .fetch_optional(self.0.store.pool())
-                    .await
-                    .map_err(db)?;
-                let Some(row) = row else {
-                    return Ok(p::GetOperationStatusResponse {
-                        state: p::OperationState::Unknown as i32,
-                        owner: owner as i32,
-                        subject_id: Some(subject.to_string()),
-                        ..Default::default()
-                    });
-                };
-                let completed: bool = row.try_get("completed").map_err(db)?;
-                Ok(p::GetOperationStatusResponse {
-                    state: if completed {
-                        p::OperationState::Completed as i32
-                    } else {
-                        p::OperationState::InProgress as i32
-                    },
-                    owner: owner as i32,
-                    subject_id: Some(subject.to_string()),
-                    recorded_at: Some(timestamp(row.try_get("created_at").map_err(db)?)),
-                    updated_at: row
-                        .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")
-                        .map_err(db)?
-                        .map(timestamp),
-                    lease_until: row
-                        .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("lease_until")
-                        .map_err(db)?
-                        .map(timestamp),
                     ..Default::default()
                 })
             }

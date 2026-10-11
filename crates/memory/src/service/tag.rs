@@ -99,9 +99,6 @@ impl MemoryService {
             )
             .await?;
         mutation.invalidate(ProjectionInvalidation::all()).await?;
-        mutation
-            .publish_workflow_results("memory", &[CognitiveRef::Tag(tag.tag_id)])
-            .await?;
         let result =
             MutationResult::revised(CognitiveRef::Tag(tag.tag_id), tag.current_revision_id, None);
         mutation.commit(std::slice::from_ref(&result)).await?;
@@ -144,9 +141,6 @@ impl MemoryService {
             )
             .await?;
         mutation.invalidate(ProjectionInvalidation::all()).await?;
-        mutation
-            .publish_workflow_results("memory", &[CognitiveRef::Tag(input.target.tag_id)])
-            .await?;
         let result =
             MutationResult::revised(CognitiveRef::Tag(input.target.tag_id), revision_id, None);
         mutation.commit(std::slice::from_ref(&result)).await?;
@@ -175,9 +169,6 @@ impl MemoryService {
         };
         self.merge_tags_in(mutation.tx(), subject, &input).await?;
         mutation.invalidate(ProjectionInvalidation::all()).await?;
-        mutation
-            .publish_workflow_results("memory", &[CognitiveRef::Tag(input.survivor.tag_id)])
-            .await?;
         let result = MutationResult::reference(CognitiveRef::Tag(input.survivor.tag_id));
         mutation.commit(std::slice::from_ref(&result)).await?;
         Ok(result)
@@ -210,15 +201,6 @@ impl MemoryService {
             .split_tag_in(mutation.tx(), subject, &input, input.producer.as_ref())
             .await?;
         mutation.invalidate(ProjectionInvalidation::all()).await?;
-        mutation
-            .publish_workflow_results(
-                "memory",
-                &children
-                    .iter()
-                    .map(|child| CognitiveRef::Tag(child.tag_id))
-                    .collect::<Vec<_>>(),
-            )
-            .await?;
         let results = children
             .iter()
             .map(|child| {

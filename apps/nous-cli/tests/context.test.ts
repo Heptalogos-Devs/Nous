@@ -8,7 +8,7 @@ import { runCli } from "./support/client.js";
 import type { connectNousInstance } from "@nous-wave/client/node";
 import type { ReadCognitionRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/cognition_pb.js";
 
-it("recovers an unknown context mutation using the exact saved identity and expected revision", async () => {
+it("explicitly retries a context mutation with the saved request", async () => {
   const root = await mkdtemp(join(tmpdir(), "nous-cli-context-"));
   const context = {
     workContextId: "context",
@@ -60,7 +60,7 @@ it("recovers an unknown context mutation using the exact saved identity and expe
       failure = error;
     }
     expect(failure).toMatchObject({
-      code: "OUTCOME_UNKNOWN",
+      message: "lost RPC response",
     });
     const receipt = (failure as { receiptId: string }).receiptId;
     expect(typeof receipt).toBe("string");

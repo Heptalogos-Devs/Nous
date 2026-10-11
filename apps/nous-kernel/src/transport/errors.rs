@@ -116,7 +116,6 @@ fn wire_owner(owner: ErrorOwner) -> p::ErrorOwner {
         O::Concept => W::Concept,
         O::Observation => W::Observation,
         O::Resource => W::Resource,
-        O::ModelWorkflow => W::ModelWorkflow,
         O::Kernel => W::Kernel,
         O::Core => W::Core,
         O::Persistence => W::Persistence,

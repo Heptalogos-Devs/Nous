@@ -56,9 +56,7 @@ impl MemoryService {
             )
             .await?;
         }
-        let formed = self
-            .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
-            .await?;
+        let formed = started;
         let recorded = self.cognition.now(input.subject);
         let producer = journal_producer_in(mutation.tx(), input.producer.as_ref()).await?;
         let revision = JournalRevisionId::new();
@@ -106,16 +104,6 @@ impl MemoryService {
             recorded,
         )
         .await?;
-
-        mutation
-            .publish_workflow_results(
-                "memory",
-                &[
-                    CognitiveRef::Journal(journal),
-                    CognitiveRef::JournalRevision(revision),
-                ],
-            )
-            .await?;
         let result = MutationResult::revised(CognitiveRef::Journal(journal), revision.0, None);
         mutation.commit(std::slice::from_ref(&result)).await?;
         Ok(result)

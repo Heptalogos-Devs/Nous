@@ -37,27 +37,33 @@ import {
 } from "./support/client.js";
 import { cliState } from "../src/state.js";
 
-it("reclaims definite rejections and finalizes a recovered unknown request rejected by Authority", async () => {
+it("keeps failed requests pending for explicit retry and saves the successful result", async () => {
   const root = await mkdtemp(
-    join(workspacePaths.temporary, "rejected-receipt-"),
+    join(workspacePaths.temporary, "retryable-receipt-"),
   );
-  const refusal = new NousError(
+  const failure = new NousError(
     domainError("Invalid Subject", 3, {
       code: ErrorCode.INVALID_REQUEST,
       owner: ErrorOwner.SUBJECT,
       recovery: ErrorRecovery.CORRECT_REQUEST,
     }),
   );
-  let unknown = false;
+  let firstCall = true;
+  const createSubject = vi.fn(
+    async (_request: { subjectId: string; operationId: string }) => {
+      if (firstCall) {
+        firstCall = false;
+        throw failure;
+      }
+      return create(SubjectSchema, {
+        subjectId: "22222222-2222-4222-8222-222222222222",
+        status: "active",
+      });
+    },
+  );
   const original = {
     subjects: {
-      create: async () => {
-        if (unknown) {
-          unknown = false;
-          throw new Error("Response lost");
-        }
-        throw refusal;
-      },
+      create: createSubject,
     },
   } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   try {
@@ -69,43 +75,43 @@ it("reclaims definite rejections and finalizes a recovered unknown request rejec
       },
       async () => original,
     );
-    for (let i = 0; i < policy.receipt_limit + 1; i++)
-      await expect(
-        env.client.subjects.create({
-          subjectId: "22222222-2222-4222-8222-222222222222",
-          operationId: crypto.randomUUID(),
-        }),
-      ).rejects.toBe(refusal);
-    const [namespace] = await readdir(join(root, "consumers"));
-    const path = join(root, "consumers", namespace!, "operations");
-    const files = await readdir(path);
-    expect(files).toHaveLength(policy.receipt_limit);
-    expect(
-      (await cliState(root, identity, policy).receipt(files[0]!.slice(0, -5)))
-        .status,
-    ).toBe("rejected");
-    unknown = true;
-    const retryRequest = {
+    const request = {
       subjectId: "22222222-2222-4222-8222-222222222222",
       operationId: crypto.randomUUID(),
     };
-    let receipt = "";
-    try {
-      await env.client.subjects.create(retryRequest);
-    } catch (error) {
-      receipt = (error as { receiptId: string }).receiptId;
-    }
-    expect(receipt).toBeTruthy();
-    expect(
-      (await cliState(root, identity, policy).receipt(receipt)).status,
-    ).toBe("pending");
-    await expect(env.retry(receipt)).rejects.toBe(refusal);
-    expect(
-      (await cliState(root, identity, policy).receipt(receipt)).status,
-    ).toBe("rejected");
-    await expect(env.retry(receipt)).rejects.toMatchObject({
-      code: "INVALID_REQUEST",
+    const rejected = await env.client.subjects
+      .create(request)
+      .catch((error: unknown) => error);
+    expect(rejected).toBe(failure);
+    expect(rejected).not.toHaveProperty("certainty");
+    const receiptId = (rejected as { receiptId: string }).receiptId;
+    const [namespace] = await readdir(join(root, "consumers"));
+    const path = join(root, "consumers", namespace!, "operations");
+    const local = cliState(root, identity, policy);
+    expect(await local.receipt(receiptId)).toMatchObject({
+      receiptId,
+      status: "pending",
+      request: {
+        protoJson: {
+          subjectId: request.subjectId,
+          operationId: request.operationId,
+        },
+      },
     });
+    expect(createSubject).toHaveBeenCalledTimes(1);
+    const result = await env.retry(receiptId);
+    expect(result).toMatchObject({ status: "active" });
+    expect(createSubject).toHaveBeenCalledTimes(2);
+    expect(createSubject.mock.calls[1]?.[0]).toEqual(
+      createSubject.mock.calls[0]?.[0],
+    );
+    expect(await local.receipt(receiptId)).toMatchObject({
+      status: "complete",
+      result: { typeName: SubjectSchema.typeName },
+    });
+    expect(await readdir(path)).toEqual([`${receiptId}.json`]);
+    expect(await env.retry(receiptId)).toEqual(result);
+    expect(createSubject).toHaveBeenCalledTimes(2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -242,9 +248,9 @@ it("derives unified cognition receipt owners from the target and retries the fro
       .mutate(memoryRequest)
       .catch((error: unknown) => error);
     expect(failure).toMatchObject({
-      code: "OUTCOME_UNKNOWN",
-      certainty: "outcome_unknown",
+      message: "Response lost",
     });
+    expect(failure).not.toHaveProperty("certainty");
     const memoryReceiptId = (failure as { receiptId: string }).receiptId;
     expect(await local.receipt(memoryReceiptId)).toMatchObject({
       command: "cognition.mutate",
@@ -268,9 +274,9 @@ it("derives unified cognition receipt owners from the target and retries the fro
       owner: "MEMORY",
       serverState: "COMMITTED",
       serverOwner: "CONCEPT",
-      certainty: "outcome_unknown",
-      notices: [{ code: "SERVER_OWNER_MISMATCH" }],
     });
+    expect(status).not.toHaveProperty("certainty");
+    expect(status).not.toHaveProperty("notices");
 
     await env.client.cognition.mutate(
       mutation("cognitive_schema", schemaId, conceptOperationId),

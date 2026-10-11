@@ -160,9 +160,7 @@ impl MemoryService {
         AuthorityStore::advance_serving_purge_epoch_in(mutation.tx(), subject).await?;
         AuthorityStore::tombstone_identity_refs_in(mutation.tx(), subject, &identity_refs).await?;
 
-        let mut workflow_refs = revision_refs.clone();
-        workflow_refs.push(object_id.to_string());
-        purge_workflow_content_in(mutation.tx(), subject, &workflow_refs, &identity_refs).await?;
+        AuthorityStore::purge_work_contexts_in(mutation.tx(), subject, &identity_refs).await?;
         AuthorityStore::purge_embedding_material_uses_in(mutation.tx(), subject, &identity_refs)
             .await?;
         AuthorityStore::purge_owner_history_in(mutation.tx(), subject, &identity_refs).await?;
@@ -508,14 +506,4 @@ impl MemoryService {
         self.read_cognition(subject, revision_ref(kind, result_revision))
             .await
     }
-}
-
-async fn purge_workflow_content_in(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    subject: SubjectId,
-    refs: &[String],
-    identity_refs: &[CognitiveRef],
-) -> Result<()> {
-    AuthorityStore::purge_workflows_in(tx, subject, refs).await?;
-    AuthorityStore::purge_work_contexts_in(tx, subject, identity_refs).await
 }
