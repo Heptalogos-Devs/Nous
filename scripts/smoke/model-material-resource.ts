@@ -27,6 +27,7 @@ const configPath = join(dataRoot, "bootstrap.toml");
 // Deterministic local provider contract wiring, never live-model or corpus evidence.
 let structuredEnabled = false;
 let providerCalls = 0;
+let stewardCalls = 0;
 let resourceContent = "LocalDocuments external material contract marker.";
 let formationEnabled = false;
 const documentsPath = join(dataRoot, "local-documents.json");
@@ -73,12 +74,50 @@ const provider = createServer((request, response) => {
       return;
     }
     const body = JSON.parse(Buffer.concat(chunks).toString()) as {
-      messages: unknown;
+      messages: { role: string; content: string }[];
       response_format: {
         type: string;
         json_schema: { strict: boolean; schema: { required: string[] } };
       };
     };
+    if (
+      body.response_format.json_schema.schema.required.includes("selectedIds")
+    ) {
+      stewardCalls++;
+      const input = body.messages.find((message) => message.role === "user");
+      assert(input);
+      const segments = JSON.parse(input.content) as {
+        id: string;
+        text: string;
+      }[];
+      assert(
+        segments.some((segment) =>
+          segment.text.includes("Foreground Steward continuity marker"),
+        ),
+      );
+      response.end(
+        JSON.stringify({
+          id: "steward",
+          created: 1,
+          model: "local-contract",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  selectedIds: segments.map((segment) => segment.id),
+                  summary: "Foreground Steward continuity marker.",
+                }),
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      );
+      return;
+    }
     if (body.response_format.json_schema.schema.required.includes("text")) {
       if (!formationEnabled) {
         response.writeHead(503);
@@ -172,7 +211,7 @@ if (!providerAddress || typeof providerAddress === "string")
 await mkdir(join(dataRoot, "config"));
 await writeFile(
   join(dataRoot, "config", "nous.toml"),
-  `[host]\nkernel_executable = ${JSON.stringify(kernel)}\nport = 0\n[object_store]\nmax_upload_bytes = 1048576\n[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.smoke]\nbase_url = "http://127.0.0.1:${providerAddress.port}/v1"\ncredential_env = "NOUS_SMOKE_GATEWAY"\n[models.model_profiles.local]\ngateway = "smoke"\nprotocol = "openai-chat"\nmodel = "local-contract"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.material_structuring]\nmodel = "local"\n[models.roles.material_structuring]\nroutes = ["material_structuring"]\n`,
+  `[host]\nkernel_executable = ${JSON.stringify(kernel)}\nport = 0\n[object_store]\nmax_upload_bytes = 1048576\n[[consumers]]\nconsumer_id = "default"\n[[consumers]]\nconsumer_id = "refs-only"\nmaterialize = false\n[models.gateway_profiles.smoke]\nbase_url = "http://127.0.0.1:${providerAddress.port}/v1"\ncredential_env = "NOUS_SMOKE_GATEWAY"\n[models.model_profiles.local]\ngateway = "smoke"\nprotocol = "openai-chat"\nmodel = "local-contract"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.material_structuring]\nmodel = "local"\n[models.roles.material_structuring]\nroutes = ["material_structuring"]\n[models.execution_profiles.projection_steward]\nmodel = "local"\n[models.roles.projection_steward]\nroutes = ["projection_steward"]\n`,
 );
 const runtimeRoot = process.env.NOUS_WAVE_POSTGRES_RUNTIME
   ? dirname(process.env.NOUS_WAVE_POSTGRES_RUNTIME)
@@ -782,6 +821,64 @@ routes = ["memory_formation"]
       error.context.reference === "absent-smoke-identity",
   );
   const sessionId = String(session.sessionId);
+  const foreground = await restarted.runtime.createWorkContext({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    purpose: "Foreground Steward continuity marker.",
+    contextText: "Foreground Steward continuity marker: actual task body.",
+  });
+  assert(foreground.workContext);
+  const currentSession = await restarted.runtime.getSession({
+    subjectId,
+    id: sessionId,
+  });
+  await restarted.runtime.setActiveWorkContext({
+    subjectId,
+    sessionId,
+    operationId: crypto.randomUUID(),
+    expectedRuntimeRevision: currentSession.runtimeRevision,
+    workContextId: foreground.workContext.workContextId,
+  });
+  const projection = {
+    subjectId,
+    sessionId,
+    consumerId: "default",
+    maxItems: 8,
+    maxTextBytes: 4096,
+  };
+  const beforeSteward = providerCalls;
+  const managed = await restarted.cognition.buildManagedContext({ projection });
+  assert(managed.cursor && managed.projection);
+  assert.equal(providerCalls, beforeSteward + 1);
+  assert.equal(stewardCalls, 1);
+  const summary = managed.projection.segments.find(
+    (entry) => entry.semanticRole === "steward_synthesis",
+  );
+  assert(summary?.sourceRevision);
+  assert(summary.text.includes("Foreground Steward continuity marker"));
+  const managedAgain = await restarted.cognition.buildManagedContext({
+    projection,
+    knownCursor: managed.cursor,
+  });
+  assert.equal(providerCalls, beforeSteward + 2);
+  assert.equal(stewardCalls, 2);
+  assert.equal(managedAgain.kind, "APPEND");
+  assert.deepEqual(managedAgain.cursor, managed.cursor);
+  assert.equal(managedAgain.projection?.segments.length, 0);
+  const unchanged = await restarted.cognition.buildProjection(projection);
+  assert.equal(
+    unchanged.segments.find(
+      (entry) => entry.semanticRole === "steward_synthesis",
+    )?.sourceRevision,
+    summary.sourceRevision,
+  );
+  const beforeRefs = providerCalls;
+  const references = await restarted.cognition.buildManagedContext({
+    projection: { ...projection, consumerId: "refs-only" },
+  });
+  assert.equal(providerCalls, beforeRefs);
+  assert(references.projection?.segments.length);
+  assert(references.projection.segments.every((entry) => !entry.text));
   await restarted.runtime.closeSession({ subjectId, id: sessionId });
   await assert.rejects(
     restarted.cognition.query({

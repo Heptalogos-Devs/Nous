@@ -109,7 +109,9 @@ export class ProjectionPlanner {
               throw new Error("A Steward summary requires selected sources");
             const revision = canonicalDigest([
               this.models.invocations.identity("projection_steward"),
-              refined,
+              refined.map(
+                ({ segmentId: _contributionId, ...source }) => source,
+              ),
               output.summary,
             ]);
             refined = [
