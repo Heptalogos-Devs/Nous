@@ -9,14 +9,19 @@ import {
   NoObjectGeneratedError,
   APICallError,
   transcribe,
-  jsonSchema,
+  type FlexibleSchema,
   type UserContent,
 } from "ai";
 import { z } from "zod";
 import { getStreamAsArrayBuffer } from "get-stream";
 import type { ModelProfile, ExecutionProfile } from "./profiles.js";
+import type { ModelRole } from "./roles.js";
 import type { PromptAsset } from "./prompts.js";
 import { directAudioFormats, type DirectMedia } from "./input.js";
+import type {
+  ModelGenerationOutput,
+  ProviderContractFor,
+} from "./schemas/contracts.js";
 
 export type ProviderExecution = {
   profile: ModelProfile;
@@ -25,13 +30,6 @@ export type ProviderExecution = {
   baseURL: string;
   credential: string;
   timeout: number;
-};
-type ProviderOutput = {
-  owner: z.ZodType;
-  sdkSchema: ReturnType<typeof jsonSchema>;
-  providerSchema: Record<string, unknown>;
-  providerName: string;
-  digest: string;
 };
 export function usageCounts(input: unknown) {
   if (!input || typeof input !== "object") return undefined;
@@ -130,13 +128,26 @@ function parseRerankResponse(input: unknown, count: number) {
   return result;
 }
 
-export async function generateProvider(
+type GeneratedProviderOutput<T> = {
+  value: T;
+  usage?: unknown;
+  adapter: string;
+};
+
+export function generateProvider<R extends ModelRole>(
   role: ProviderExecution,
   content: UserContent,
-  output: ProviderOutput | undefined,
+  output: ProviderContractFor<R>,
   signal?: AbortSignal,
   media?: DirectMedia,
-) {
+): Promise<GeneratedProviderOutput<ModelGenerationOutput<R>>>;
+export async function generateProvider<R extends ModelRole>(
+  role: ProviderExecution,
+  content: UserContent,
+  output: ProviderContractFor<R>,
+  signal?: AbortSignal,
+  media?: DirectMedia,
+): Promise<GeneratedProviderOutput<ModelGenerationOutput<ModelRole>>> {
   if (
     role.profile.protocol !== "openai-chat" &&
     role.profile.protocol !== "openai-responses"
@@ -233,7 +244,7 @@ export async function generateProvider(
         })
         .parse(wire);
       const text = result.choices[0]!.message.content;
-      const value = schema ? schema.parse(JSON.parse(text)) : text;
+      const value = output ? output.owner.parse(JSON.parse(text)) : text;
       return {
         value,
         usage: usageCounts(result.usage),
@@ -249,7 +260,9 @@ export async function generateProvider(
       messages: [{ role: "user", content }],
       output: output
         ? Output.object({
-            schema: output.sdkSchema,
+            schema: output.sdkSchema as FlexibleSchema<
+              ModelGenerationOutput<R>
+            >,
             name: output.providerName,
           })
         : undefined,
@@ -268,7 +281,7 @@ export async function generateProvider(
         `output_incomplete_${result.finishReason}`,
         result.totalUsage,
       );
-    const value = schema ? schema.parse(result.output) : result.text;
+    const value = output ? result.output : result.text;
     return {
       value,
       usage: result.totalUsage,

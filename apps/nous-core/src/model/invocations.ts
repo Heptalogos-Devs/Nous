@@ -281,7 +281,7 @@ export class ModelInvocations {
       name,
       async (role, { input, content: supplied }) => {
         const outputContract = providerContractForRole(name);
-        const { adapter, ...output } = await generateProvider(
+        const { adapter, ...output } = await generateProvider<R>(
           role,
           supplied,
           outputContract,
@@ -290,7 +290,7 @@ export class ModelInvocations {
         );
         const result = {
           ...output,
-          value: output.value as ModelGenerationOutput<R>,
+          value: output.value,
           producerMetadata: {
             ...this.metadata(role, adapter),
             outputSchemaDigest: outputContract?.digest,

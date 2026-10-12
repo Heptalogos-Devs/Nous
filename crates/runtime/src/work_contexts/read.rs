@@ -134,17 +134,15 @@ impl CognitiveRuntimeService {
 
     pub async fn runtime_references(
         &self,
-        subject: SubjectId,
-        session: SessionId,
+        session_view: &SessionView,
     ) -> Result<Vec<(CognitiveRef, &'static str)>> {
-        let session_view = self.session(subject, session).await?;
         let mut refs = session_view
             .resident
-            .into_iter()
-            .map(|value| (value.reference, "runtime_resident"))
+            .iter()
+            .map(|value| (value.reference.clone(), "runtime_resident"))
             .collect::<Vec<_>>();
         refs.extend(
-            self.active_work_context_refs(subject, session)
+            self.active_work_context_refs(session_view.subject_id, session_view.session_id)
                 .await?
                 .into_iter()
                 .map(|value| (value, "runtime_work_context")),

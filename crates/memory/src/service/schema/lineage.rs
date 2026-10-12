@@ -29,19 +29,12 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let revisions: Vec<CognitiveSchemaRevisionId> =
-                        serde_json::from_str(receipt.result_ref.as_deref().ok_or_else(|| {
-                            Error::Infrastructure("schema split receipt has no results".into())
-                        })?)
-                        .map_err(|_| {
-                            Error::Infrastructure("invalid schema split receipt".into())
-                        })?;
-                    return self.schema_split_views(subject, &revisions).await;
-                }
-                return Err(Error::Unavailable(
-                    "schema split operation is already in progress".into(),
-                ));
+                let revisions: Vec<CognitiveSchemaRevisionId> =
+                    serde_json::from_str(receipt.result_ref.as_deref().ok_or_else(|| {
+                        Error::Infrastructure("schema split receipt has no results".into())
+                    })?)
+                    .map_err(|_| Error::Infrastructure("invalid schema split receipt".into()))?;
+                return self.schema_split_views(subject, &revisions).await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -177,17 +170,12 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let revision = receipt.result_revision.ok_or_else(|| {
-                        Error::Infrastructure("schema merge receipt has no revision".into())
-                    })?;
-                    return self
-                        .schema_revision(subject, CognitiveSchemaRevisionId(revision))
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "schema merge operation is already in progress".into(),
-                ));
+                let revision = receipt.result_revision.ok_or_else(|| {
+                    Error::Infrastructure("schema merge receipt has no revision".into())
+                })?;
+                return self
+                    .schema_revision(subject, CognitiveSchemaRevisionId(revision))
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };

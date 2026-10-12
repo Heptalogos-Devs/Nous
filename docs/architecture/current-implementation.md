@@ -12,17 +12,17 @@ Kernel 组合 Subject、Configuration、Material、Memory、Runtime、Persistenc
 
 ## Rust owners
 
-| Owner | 当前责任 |
-| --- | --- |
-| `crates/core` | typed IDs、exact references、query DTO、时间与共享语义错误 |
-| `crates/protocol` | 从 `proto/` 生成的 Rust wire bindings |
+| Owner                  | 当前责任                                                                                                             |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `crates/core`          | typed IDs、exact references、query DTO、时间与共享语义错误                                                           |
+| `crates/protocol`      | 从 `proto/` 生成的 Rust wire bindings                                                                                |
 | `crates/configuration` | Rust/Core unified Catalog、JSON Schema validation、overrides、immutable snapshots、digest 与 capability provisioning |
-| `crates/persistence` | PostgreSQL transaction/pool、fresh schema、MutationEnvelope、receipts、projection watermarks |
-| `crates/subject` | Subject identity、Memory capability、Cognitive Seed version/adoption |
-| `crates/material` | Artifact、ObservationOccurrence、SourceRegion、DerivedRepresentation、DerivedRegion 与 materialization |
-| `crates/memory` | Memory、CognitiveSchema、Episode、Journal、Tag、AssociationEvidence、provenance 与 lifecycle |
-| `crates/runtime` | Session、ResidentSet、WorkContext、UseEvent、QueryPlan、lane/result contracts 与 fixed fusion |
-| `crates/retrieval` | lexical/dense/concept Serving、current/historical immutable generations、共享向量与显式 associative diffusion |
+| `crates/persistence`   | PostgreSQL transaction/pool、fresh schema、MutationEnvelope、receipts、projection watermarks                         |
+| `crates/subject`       | Subject identity、Memory capability、Cognitive Seed version/adoption                                                 |
+| `crates/material`      | Artifact、ObservationOccurrence、SourceRegion、DerivedRepresentation、DerivedRegion 与 materialization               |
+| `crates/memory`        | Memory、CognitiveSchema、Episode、Journal、Tag、AssociationEvidence、provenance 与 lifecycle                         |
+| `crates/runtime`       | Session、ResidentSet、WorkContext、UseEvent、QueryPlan、lane/result contracts 与 fixed fusion                        |
+| `crates/retrieval`     | lexical/dense/concept Serving、current/historical immutable generations、共享向量与显式 associative diffusion        |
 
 ## Transport 与 mutation
 
@@ -34,7 +34,7 @@ Model resource schemas 位于 `model/profiles.ts`，role 与聚合配置各有�
 
 私有 workflow services 按实际执行步骤分组：`KernelQueryService` 负责认知时间读取及 query prepare/finalize/release；`KernelModelWorkflowService` 管理 model retry snapshot/proposal/outcome；`KernelMaterialWorkflowService` 提供 derivation/embedding 输入与提交；`KernelMaintenanceService` 提供 needs 的 claim/plan/finish，以及天然原子的 Episode partition 与 Journal 提交；consolidation/concept proposal 由 Core 逐项调用 canonical Memory/Schema/Tag/Association owner API，保存稳定 action identity 和实际结果；`KernelProjectionService` 提供 contribution batch。`KernelConfigurationService` 提供 bootstrap/snapshot，`ArtifactStreamService` 提供流式 Artifact 传输。
 
-Persistence 的 `MutationEnvelope` 持有 Subject/operation identity、可选 owner Subject lock、operation lock、canonical digest receipt、transaction 和 projection invalidation。owner 选择 invalidation families，envelope 为同一事务分配一个 Authority sequence，并在 commit 时发布合并的 watermarks 与 receipt。Replay 返回 receipt，由领域 owner 解码结果；未提交的事务回滚；Memory purge 使用 checkpoint 和 resume 保留分阶段执行。
+Persistence 的 `MutationEnvelope` 持有 Subject/operation identity、可选 owner Subject lock、operation lock、canonical digest receipt、transaction 和 projection invalidation。owner 选择 invalidation families，envelope 为同一事务分配一个 Authority sequence，并在 commit 时发布合并的 watermarks 与 receipt。Replay 返回 receipt，由领域 owner 解码结果；operation identity 行、owner 写入、watermarks 与最终 receipt 处于同一事务，未提交时整体回滚，因此已保存的 receipt 表示已完成 mutation。Memory purge 也一次性撤销依赖、清理 workflow/runtime 引用、保存不含正文的 UseEvent receipts、撤回来源 links、删除对象并提交 watermarks；读取者在 commit 前看到旧状态，commit 后看不到被清除的对象。
 
 Memory、Episode、CognitiveSchema 和 Journal 保留独立模型、typed tables、provenance、head/epoch fence 与 lifecycle SQL。Memory crate 的内部 read、mutation、lifecycle、partition 和 provenance 按领域责任组织；共享纯 epoch/transition 检查不决定领域操作。
 

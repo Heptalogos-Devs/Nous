@@ -206,7 +206,7 @@ impl CognitiveRuntimeService {
         )?;
         let mut tx = self.store.begin().await?;
         lock_operation(&mut tx, subject, operation_id).await?;
-        if let Some(existing) = check_receipt(
+        if check_receipt(
             &mut tx,
             subject,
             operation_id,
@@ -214,13 +214,9 @@ impl CognitiveRuntimeService {
             &digest,
         )
         .await?
+        .is_some()
         {
             tx.commit().await.map_err(db)?;
-            if existing.state != "committed" {
-                return Err(Error::Unavailable(
-                    "foreground WorkContext operation is already in progress".into(),
-                ));
-            }
             return self.session(subject, session).await;
         }
         let row = sqlx::query(

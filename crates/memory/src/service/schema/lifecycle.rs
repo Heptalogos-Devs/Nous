@@ -42,9 +42,6 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable("Schema lifecycle is in progress".into()));
-                }
                 return self
                     .schema_at(
                         subject,
@@ -115,9 +112,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable("Schema purge is in progress".into()));
-                }
+                let _ = receipt;
                 return Ok(());
             }
             MutationStart::Active(mutation) => mutation,

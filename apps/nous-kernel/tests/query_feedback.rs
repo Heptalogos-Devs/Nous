@@ -131,6 +131,7 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     .unwrap();
     let sequence = rt.store.authority_seq(subject_a).await.unwrap();
     let mut intent = query(subject_a, a.clone());
+    intent.result_need.limit = nous_core::MAX_QUERY_RESULT_ITEMS;
     intent
         .expression
         .cues
@@ -144,6 +145,42 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     let expires: chrono::DateTime<chrono::Utc> = row.try_get("expires_at").unwrap();
     assert_eq!((expires - created).num_seconds(), 604800);
     assert_eq!(rt.store.authority_seq(subject_a).await.unwrap(), sequence);
+    let large_query_id = uuid::Uuid::new_v4();
+    let mut large_bound = result.bound.clone();
+    large_bound.query_id = large_query_id;
+    let mut large_result = result.result.clone();
+    large_result.query_id = large_query_id;
+    let template = large_result.results[0].clone();
+    // Exercise the largest-query contract without creating 257 Authority rows.
+    large_result.results = (0..256)
+        .map(|_| {
+            let reference = CognitiveRef::MemoryRevision(MemoryRevisionId::new());
+            let mut hit = template.clone();
+            hit.reference = reference.clone();
+            hit.revision = Some(reference);
+            hit
+        })
+        .collect();
+    let mut last = template;
+    last.reference = b.clone();
+    last.revision = Some(b.clone());
+    large_result.results.push(last);
+    rt.cognition
+        .record_query_feedback(&large_bound, &large_result)
+        .await
+        .unwrap();
+    let returned_count: i32 = sqlx::query_scalar(
+        "SELECT jsonb_array_length(returned_revision_refs) FROM query_feedback_records WHERE subject_id=$1 AND query_id=$2",
+    )
+    .bind(subject_a.0)
+    .bind(large_query_id)
+    .fetch_one(rt.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(returned_count, 257);
+    let mut later_use = feedback(subject_a, b.clone(), large_query_id, now);
+    later_use.events[0].use_kind = UseKind::Presented;
+    assert_eq!(rt.cognition.use_feedback(later_use).await.unwrap().0, 1);
     let event = feedback(subject_a, a.clone(), result.bound.query_id, now);
     assert_eq!(rt.cognition.use_feedback(event.clone()).await.unwrap().0, 1);
     assert_eq!(rt.cognition.use_feedback(event.clone()).await.unwrap().1, 1);

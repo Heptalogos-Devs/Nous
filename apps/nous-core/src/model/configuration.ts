@@ -11,7 +11,7 @@ import {
   generationTokensSchema,
   type ExecutionProfile,
 } from "./profiles.js";
-import { structuredContractForRole } from "./schemas/contracts.js";
+import { providerContractForRole } from "./schemas/contracts.js";
 
 import { roleNames, type ModelRole } from "./roles.js";
 const rolePolicySchema = z.strictObject({
@@ -259,7 +259,7 @@ export function modelRoleProblem(
   )
     return "Role protocol/capability mismatch";
   if (
-    structuredContractForRole(role as ModelRole) &&
+    providerContractForRole(role as ModelRole) &&
     !model.capabilities.includes("structured_output")
   )
     return "Role requires structured_output";

@@ -5,12 +5,20 @@ import { jsonSchema } from "ai";
 import { z } from "zod";
 import { canonicalDigest } from "../../digest.js";
 
-export function structuredOutputContract<T>(owner: z.ZodType<T>) {
+export type StructuredOutputContract<T> = {
+  providerSchema: Record<string, unknown>;
+  digest: string;
+  sdkSchema: ReturnType<typeof jsonSchema<T>>;
+};
+
+export function structuredOutputContract<S extends z.ZodType>(
+  owner: S,
+): StructuredOutputContract<z.output<S>> {
   const providerSchema = z.toJSONSchema(owner, { target: "draft-7" });
   return {
     providerSchema,
     digest: canonicalDigest(providerSchema),
-    sdkSchema: jsonSchema<T>(providerSchema, {
+    sdkSchema: jsonSchema<z.output<S>>(providerSchema, {
       validate(value) {
         const result = owner.safeParse(value);
         return result.success

@@ -47,11 +47,6 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable(
-                        "Episode partition is in progress".into(),
-                    ));
-                }
                 let revisions: Vec<EpisodeRevisionId> =
                     serde_json::from_str(&receipt.result_ref.ok_or_else(|| {
                         Error::Infrastructure("partition receipt has no revisions".into())

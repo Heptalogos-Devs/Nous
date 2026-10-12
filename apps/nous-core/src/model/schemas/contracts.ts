@@ -13,21 +13,29 @@ import {
 } from "./longitudinal.js";
 import { conceptMaintenanceSchema } from "./concept-maintenance.js";
 import { consolidationSchema } from "./consolidation.js";
-import { structuredOutputContract } from "./provider.js";
+import {
+  type StructuredOutputContract,
+  structuredOutputContract,
+} from "./provider.js";
+import { materialInterpretationProviderContract } from "./material-interpretation.js";
 
-function contract<T extends z.ZodType>(
+function contract<S extends z.ZodType>(
   id: string,
   providerName: string,
-  owner: T,
+  owner: S,
+  output: StructuredOutputContract<z.output<S>> = structuredOutputContract(
+    owner,
+  ),
 ) {
-  return { id, providerName, owner };
+  return { id, providerName, owner, ...output };
 }
 const material = contract(
   "material.interpretation",
   "material_interpretation",
   materialInterpretationSchema,
+  materialInterpretationProviderContract,
 );
-const structuredRoleContracts = {
+const roleContracts = {
   query_concept_enrichment: contract(
     "query.concept-enrichment",
     "query_concept_enrichment",
@@ -65,23 +73,22 @@ const structuredRoleContracts = {
     "memory_consolidation",
     consolidationSchema,
   ),
+  material_description: undefined,
+  query_embedding: undefined,
+  query_rerank: undefined,
+  speech_transcription: undefined,
 } as const;
-type StructuredRole = keyof typeof structuredRoleContracts;
-export type ModelGenerationOutput<R extends ModelRole> =
-  R extends StructuredRole
-    ? z.output<(typeof structuredRoleContracts)[R]["owner"]>
-    : string;
+export type ProviderContractFor<R extends ModelRole> =
+  (typeof roleContracts)[R];
+type OutputForContract<C> = C extends { owner: infer S extends z.ZodType }
+  ? z.output<S>
+  : string;
+export type ModelGenerationOutput<R extends ModelRole> = OutputForContract<
+  ProviderContractFor<R>
+>;
 
-export function structuredContractForRole(role: ModelRole) {
-  return (
-    structuredRoleContracts as Partial<
-      Record<ModelRole, { id: string; providerName: string; owner: z.ZodType }>
-    >
-  )[role];
-}
-export function providerContractForRole(role: ModelRole) {
-  const descriptor = structuredContractForRole(role);
-  return descriptor
-    ? { ...descriptor, ...structuredOutputContract(descriptor.owner) }
-    : undefined;
+export function providerContractForRole<R extends ModelRole>(
+  role: R,
+): ProviderContractFor<R> {
+  return roleContracts[role];
 }

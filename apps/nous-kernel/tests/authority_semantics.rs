@@ -10,7 +10,7 @@ use nous_core::{OperationId, SubjectId};
 mod test_support;
 
 #[tokio::test]
-async fn mutation_envelope_merges_families_and_replays_checkpoints() {
+async fn mutation_envelope_rolls_back_and_replays_commits() {
     let (root, url, _postgres) = test_support::database().await;
     let rt = test_support::open_runtime(&url, &root).await;
     let subject = envelope_subject(&rt).await;
@@ -64,22 +64,12 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
             .unwrap(),
         sequence
     );
-    mutation.checkpoint().await.unwrap();
-    let MutationStart::Replay(receipt) = MutationEnvelope::begin(
-        &rt.store,
-        subject,
-        operation,
-        "test_mutation",
-        &digest,
-        owner,
-    )
-    .await
-    .unwrap() else {
-        panic!("checkpoint must replay");
-    };
-    assert_eq!(receipt.state, "in_progress");
+    mutation
+        .commit("test_result", Some("result"), None, Some(1))
+        .await
+        .unwrap();
     assert!(matches!(
-        MutationEnvelope::resume(
+        MutationEnvelope::begin(
             &rt.store,
             subject,
             operation,
@@ -90,7 +80,7 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
         .await,
         Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::OperationIdConflict
     ));
-    let MutationStart::Active(mutation) = MutationEnvelope::resume(
+    let MutationStart::Replay(receipt) = MutationEnvelope::begin(
         &rt.store,
         subject,
         operation,
@@ -100,25 +90,8 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
     )
     .await
     .unwrap() else {
-        panic!("checkpoint must resume");
+        panic!("committed result must replay");
     };
-    mutation
-        .commit("test_result", Some("result"), None, Some(1))
-        .await
-        .unwrap();
-    let MutationStart::Replay(receipt) = MutationEnvelope::resume(
-        &rt.store,
-        subject,
-        operation,
-        "test_mutation",
-        &digest,
-        owner,
-    )
-    .await
-    .unwrap() else {
-        panic!("terminal result must replay");
-    };
-    assert_eq!(receipt.state, "committed");
     assert_eq!(receipt.result_ref.as_deref(), Some("result"));
     assert_eq!(rt.store.authority_seq(subject).await.unwrap(), sequence);
     let families: Vec<(String, String, i64)> = sqlx::query_as("SELECT family,space_signature,desired_authority_seq FROM projection_watermarks WHERE subject_id=$1 AND desired_authority_seq=$2 ORDER BY family")

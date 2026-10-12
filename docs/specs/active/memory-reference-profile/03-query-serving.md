@@ -4,7 +4,6 @@
 
 长期寻址、Query preparation、概念维护和 owner materialization 语义依据 [Architecture-Vault `5b96c63`](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/5b96c63da34b0a4c697b6961ae10ba6aa4de3ee1/docs/Nous-Wave/TARGET_DESIGN.md)。
 
-
 ## Owner
 
 Runtime (crates/runtime) owns QueryPlan, lane budgets, fusion and result contracts. Retrieval (crates/retrieval) implements serving lanes and generations; Core performs model/resource host actions; Memory and Material validate and materialize their own final Authority.
@@ -72,7 +71,6 @@ Episode canonical text 包含 title、boundary explanation、experience time，�
 
 Journal canonical text 包含 title、narrative 和按序 points；查询正文最多 64 KiB，截断保持完整 UTF-8 字符。
 
-
 Topology/Wave/Residual/EPA 只作为显式实验 lane；默认 Reference Query 不因 effort 自动开启 topology。实验结果不改变 baseline fusion、Authority eligibility 或 lifecycle。
 
 ## Serving 复用与回收
@@ -105,12 +103,9 @@ QueryRequest 的 typed `capabilities` 传递 text embedding、multimodal interpr
 
 内部算法比较使用 `BoundQuery::for_profile` 从同一 prepared/context snapshot 生成只读 readout plan。Configuration 的 `query_override` 只允许 Live QueryPolicy，记录 OperationOverride 来源并计算独立 digest；不改变 active/desired/persisted 配置。Serving 根据对应 asset contract 复用 shared artifacts。
 
-
 Native seed preparation first uses closed exact/context/Entity/Tag/relation anchors that map into the current graph. When no anchor maps into that graph, already prepared ready/truncated lexical and dense lanes can supply weak seeds: at most four distinct graph members per lane, bounded by the graph neighbour budget, with configured `lexical_promoted`/`dense_promoted` weight divided by lane rank. Out-of-generation references and rank zero are excluded. The fallback consumes the shared query signal; it makes no additional embedding request and does not change Wave propagation. Direct graph anchors remain authoritative for explicitly associative queries. Seed origin and weight are included in readout; a promoted direct hit is not a multi-hop witness.
 
-
 Topology projection includes every current accepted/valid/unsuppressed Memory, Episode, Journal and CognitiveSchema revision when Memory capability is enabled. Existing Episode cognition members/exact supports, Journal sources, Memory dependencies and active supporting Schema evidence links supply `cognition_basis` edges in both traversal directions, with one shared exact structure identity. These are source/organization adjacency, not causal or independently learned associations. Historical, withdrawn or suppressed endpoints, revoked Schema evidence, counterexamples and contradiction supports do not create positive source edges. Explicit AssociationEvidence to inactive cognition is excluded from the current graph. Native/VCP assets carry versioned implementation and config digests; incompatible assets rebuild while compatible shared vectors remain reusable.
-
 
 Material owner validates and materializes Artifact/Occurrence/SourceRegion/DerivedRepresentation/DerivedRegion in bounded Subject-scoped batches, including rerank final validation. Runtime groups candidate refs by semantic owner and does not interpret Material lineage or time through Persistence. Occurrence times come from the actual Observation; SourceRegion and derived evidence follow their real source artifacts/representation roots. An eligible source row must jointly satisfy requested occurred/observed/recorded predicates; multiple origins cannot satisfy separate predicates by mixing rows. Recorded time belongs to the returned object, and interpretation formation time is distinct from source observation. Unknown time does not satisfy a requested temporal axis, and evidence has no inferred world-valid claim. Initial owner materialization and final validation both enforce these predicates and publish known freshness. Schema owner materialization also applies all five axes and follows exact source lineage, including Memory evidence/dependencies, for occurred/observed metadata.
 
@@ -118,4 +113,4 @@ Material owner validates and materializes Artifact/Occurrence/SourceRegion/Deriv
 
 Host query concept role 只能选择 bounded catalog key 或提出 ephemeral hypotheses；模型不能构造 Tag identity/写 Authority。Required/optional/forbidden 分别沿既有能力合同处理。Historical embedding discovery/commit 使用同一 prepared token 的 frozen Owner view，复用 existing material cache；query embedding 不因 lane/profile 再生成。
 
-Runtime 保存有界 query feedback record：prepared/activation digest、bounded signals、实际返回的 exact revision refs、expiry，默认七天；不保存检索正文。ReportUse 的 query_id 必须同 Subject、未过期且属于 returned membership。稳定 duplicate 可在 record expiry 后重试，accepted UseEvent 不随 feedback 清理删除。Presented 不触发概念 review；refutation 不是 positive reinforcement。Maintenance planner 消费 bounded signals，但只有 Host grant 才可调用模型和提交 canonical Concept mutations。
+Runtime 保存有界 query feedback record：prepared/activation digest、bounded signals、实际返回的 exact revision refs、expiry，默认七天；不保存检索正文。Returned revisions 完整保留该次结果的 membership，数量由 Query 自身的 result limit 约束，不另设更小的 feedback 上限。ReportUse 的 query_id 必须同 Subject、未过期且属于 returned membership。稳定 duplicate 可在 record expiry 后重试，accepted UseEvent 不随 feedback 清理删除。Presented 不触发概念 review；refutation 不是 positive reinforcement。Maintenance planner 消费 bounded signals，但只有 Host grant 才可调用模型和提交 canonical Concept mutations。

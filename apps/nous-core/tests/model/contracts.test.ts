@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, it } from "vitest";
-import { structuredContractForRole } from "../../src/model/schemas/contracts.js";
+import { providerContractForRole } from "../../src/model/schemas/contracts.js";
 
 it("query concept output accepts only local keys and bounded ephemeral hypotheses", () => {
-  const schema = structuredContractForRole("query_concept_enrichment")!.owner;
+  const schema = providerContractForRole("query_concept_enrichment")!.owner;
   expect(
     schema.safeParse({
       existing_tags: [{ key: "c0", strength: 0.8 }],

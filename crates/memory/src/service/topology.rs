@@ -27,27 +27,20 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 let id = receipt.result_ref;
-                if receipt.state == "committed" {
-                    return self
-                        .association(
-                            subject,
-                            AssociationEvidenceId(
-                                id.ok_or_else(|| {
-                                    Error::Infrastructure(
-                                        "association receipt missing result".into(),
-                                    )
-                                })?
-                                .parse()
-                                .map_err(|_| {
-                                    Error::Infrastructure("invalid association receipt".into())
-                                })?,
-                            ),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "association operation is already in progress".into(),
-                ));
+                return self
+                    .association(
+                        subject,
+                        AssociationEvidenceId(
+                            id.ok_or_else(|| {
+                                Error::Infrastructure("association receipt missing result".into())
+                            })?
+                            .parse()
+                            .map_err(|_| {
+                                Error::Infrastructure("invalid association receipt".into())
+                            })?,
+                        ),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -489,12 +482,8 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::Unavailable(
-                    "association revoke operation is already in progress".into(),
-                ));
+                let _ = receipt;
+                return Ok(());
             }
             MutationStart::Active(mutation) => mutation,
         };

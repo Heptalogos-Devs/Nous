@@ -62,11 +62,6 @@ impl CognitiveRuntimeService {
                 .then(|| reference.clone())
             })
             .collect::<Vec<_>>();
-        if revisions.len() > 256 {
-            return Err(Error::Invalid(
-                "query feedback returned revisions exceed bound".into(),
-            ));
-        }
         let activation = &bound.activation;
         let signals = serde_json::json!({
             "explicit_tags":activation.explicit_tags.iter().take(128).collect::<Vec<_>>(),

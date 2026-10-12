@@ -156,14 +156,6 @@ impl KernelService {
         session: SessionId,
     ) -> Result<p::Session> {
         let view = self.0.cognition.session(subject, session).await?;
-        let active_work_context_id: Option<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT active_work_context_id FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2",
-        )
-        .bind(subject.0)
-        .bind(session.0)
-        .fetch_one(self.0.store.pool())
-        .await
-        .map_err(db)?;
         Ok(p::Session {
             session_id: session.0.to_string(),
             subject_id: subject.0.to_string(),
@@ -174,7 +166,7 @@ impl KernelService {
                 .into_iter()
                 .map(|r| to_ref(r.reference))
                 .collect(),
-            active_work_context_id: active_work_context_id.map(|value| value.to_string()),
+            active_work_context_id: view.active_work_context_id.map(|value| value.to_string()),
         })
     }
     pub(super) async fn open_session(&self, input: p::SubjectRequest) -> Result<p::Session> {

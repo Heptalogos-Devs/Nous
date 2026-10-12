@@ -343,14 +343,7 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "set_accessibility", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self.memory(subject, memory, None).await;
-                }
-                return Err(Error::Unavailable(
-                    "accessibility operation is already in progress".into(),
-                ));
-            }
+            MutationStart::Replay(_) => return self.memory(subject, memory, None).await,
             MutationStart::Active(mutation) => mutation,
         };
         let epoch:i64=sqlx::query_scalar("SELECT object_epoch FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE").bind(subject.0).bind(memory.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("memory not found".into()))?;

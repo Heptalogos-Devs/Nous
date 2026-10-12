@@ -161,8 +161,11 @@ export const materialInterpretationSchema = z
 export type MaterialInterpretation = z.infer<
   typeof materialInterpretationSchema
 >;
-const contract = structuredOutputContract(materialInterpretationSchema);
-export const materialInterpretationSchemaDigest = contract.digest;
+export const materialInterpretationProviderContract = structuredOutputContract(
+  materialInterpretationSchema,
+);
+export const materialInterpretationSchemaDigest =
+  materialInterpretationProviderContract.digest;
 export const materialInterpretationIdentity = modelImplementations.material;
 type InterpretationInput = {
   access: ChannelAccess;

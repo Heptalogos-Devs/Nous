@@ -179,10 +179,7 @@ impl MemoryService {
             .start_mutation(subject, input.operation_id, "split_tag", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable("tag operation in progress".into()));
-                }
+            MutationStart::Replay(_) => {
                 let ids: Vec<(Uuid, Uuid)> = sqlx::query_as("SELECT child_tag_id,child_revision_id FROM tag_lineage WHERE subject_id=$1 AND operation_id=$2 AND relation='split_into' ORDER BY child_index")
                     .bind(subject.0).bind(input.operation_id.0).fetch_all(self.store.pool()).await.map_err(db)?;
                 let mut result = Vec::new();
@@ -223,9 +220,6 @@ impl MemoryService {
         subject: SubjectId,
         receipt: nous_persistence::MutationReceipt,
     ) -> Result<Tag> {
-        if receipt.state != "committed" {
-            return Err(Error::Unavailable("tag operation in progress".into()));
-        }
         let id = receipt
             .result_ref
             .ok_or_else(|| Error::Infrastructure("tag receipt missing result".into()))?

@@ -12,7 +12,7 @@ import {
   parseEffectiveConfiguration,
 } from "../../apps/nous-core/src/configuration/schema.js";
 import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
-import { structuredContractForRole } from "../../apps/nous-core/src/model/schemas/contracts.js";
+import { providerContractForRole } from "../../apps/nous-core/src/model/schemas/contracts.js";
 import type { ModelRole } from "../../apps/nous-core/src/model/roles.js";
 import { canonicalDigest } from "../../apps/nous-core/src/digest.js";
 import {
@@ -77,7 +77,7 @@ async function run() {
       captured.messages[1]?.role !== "user" ||
       typeof captured.messages[1]?.content !== "string" ||
       captured.response_format?.json_schema?.name !==
-        structuredContractForRole(role!)?.providerName)
+        providerContractForRole(role!)?.providerName)
   )
     throw new Error(
       "Captured invocation must match the selected role and have one exact text input",

@@ -10,7 +10,6 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct MutationReceipt {
-    pub state: String,
     pub result_ref: Option<String>,
     pub result_revision: Option<Uuid>,
 }
@@ -22,7 +21,7 @@ pub async fn check_receipt(
     kind: &str,
     digest: &str,
 ) -> Result<Option<MutationReceipt>> {
-    let row = sqlx::query("SELECT state,result_ref,result_revision,request_digest,operation_kind FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2")
+    let row = sqlx::query("SELECT result_ref,result_revision,request_digest,operation_kind FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$2")
         .bind(subject.0)
         .bind(operation.0)
         .fetch_optional(&mut **tx)
@@ -40,12 +39,11 @@ pub async fn check_receipt(
             .into());
         }
         return Ok(Some(MutationReceipt {
-            state: row.try_get("state").map_err(db)?,
             result_ref: row.try_get("result_ref").map_err(db)?,
             result_revision: row.try_get("result_revision").map_err(db)?,
         }));
     }
-    sqlx::query("INSERT INTO mutation_receipts(subject_id,operation_id,operation_kind,request_digest,state,created_at) VALUES($1,$2,$3,$4,'in_progress',$5)")
+    sqlx::query("INSERT INTO mutation_receipts(subject_id,operation_id,operation_kind,request_digest,created_at) VALUES($1,$2,$3,$4,$5)")
         .bind(subject.0)
         .bind(operation.0)
         .bind(kind)
@@ -66,7 +64,7 @@ pub async fn commit_receipt(
     result_revision: Option<Uuid>,
     result_epoch: Option<i64>,
 ) -> Result<()> {
-    sqlx::query("UPDATE mutation_receipts SET state='committed',result_kind=$3,result_ref=$4,result_revision=$5,result_epoch=$6,committed_at=$7 WHERE subject_id=$1 AND operation_id=$2")
+    sqlx::query("UPDATE mutation_receipts SET result_kind=$3,result_ref=$4,result_revision=$5,result_epoch=$6,committed_at=$7 WHERE subject_id=$1 AND operation_id=$2")
         .bind(subject.0)
         .bind(operation.0)
         .bind(result_kind)
@@ -107,30 +105,6 @@ impl<'a> MutationEnvelope<'a> {
         digest: &str,
         owner: Option<OwnerLock>,
     ) -> Result<MutationStart<'a>> {
-        Self::start(store, subject, operation, kind, digest, owner, false).await
-    }
-
-    /// Resume an intentional checkpoint while committed results still replay.
-    pub async fn resume(
-        store: &'a AuthorityStore,
-        subject: SubjectId,
-        operation: OperationId,
-        kind: &str,
-        digest: &str,
-        owner: Option<OwnerLock>,
-    ) -> Result<MutationStart<'a>> {
-        Self::start(store, subject, operation, kind, digest, owner, true).await
-    }
-
-    async fn start(
-        store: &'a AuthorityStore,
-        subject: SubjectId,
-        operation: OperationId,
-        kind: &str,
-        digest: &str,
-        owner: Option<OwnerLock>,
-        resume: bool,
-    ) -> Result<MutationStart<'a>> {
         let mut tx = store.begin().await?;
         if let Some(owner) = owner {
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
@@ -140,9 +114,7 @@ impl<'a> MutationEnvelope<'a> {
                 .map_err(db)?;
         }
         lock_operation(&mut tx, subject, operation).await?;
-        if let Some(receipt) = check_receipt(&mut tx, subject, operation, kind, digest).await?
-            && (!resume || receipt.state == "committed")
-        {
+        if let Some(receipt) = check_receipt(&mut tx, subject, operation, kind, digest).await? {
             tx.commit().await.map_err(db)?;
             return Ok(MutationStart::Replay(receipt));
         }
@@ -229,12 +201,6 @@ impl<'a> MutationEnvelope<'a> {
             result_epoch,
         )
         .await?;
-        self.tx.commit().await.map_err(db)
-    }
-
-    /// Persist an intentional multi-phase operation without acknowledging completion.
-    pub async fn checkpoint(mut self) -> Result<()> {
-        self.apply_invalidation().await?;
         self.tx.commit().await.map_err(db)
     }
 }

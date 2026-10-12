@@ -99,14 +99,7 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "episode_lifecycle", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self.episode(subject, episode, None).await;
-                }
-                return Err(Error::Unavailable(
-                    "Episode lifecycle operation is already in progress".into(),
-                ));
-            }
+            MutationStart::Replay(_) => return self.episode(subject, episode, None).await,
             MutationStart::Active(mutation) => mutation,
         };
         let row = sqlx::query("SELECT object_epoch,suppression_state,acceptance_state,purge_state FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE")
@@ -180,14 +173,7 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "purge_episode", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::Unavailable(
-                    "Episode purge operation is already in progress".into(),
-                ));
-            }
+            MutationStart::Replay(_) => return Ok(()),
             MutationStart::Active(mutation) => mutation,
         };
         let epoch: i64 = sqlx::query_scalar("SELECT object_epoch FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE").bind(subject.0).bind(episode.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(|| Error::NotFound("Episode not found".into()))?;

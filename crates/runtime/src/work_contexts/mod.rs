@@ -170,11 +170,6 @@ fn validate_text_array(name: &str, values: &[String]) -> Result<()> {
     Ok(())
 }
 pub(super) fn replay_context(receipt: MutationReceipt) -> Result<Uuid> {
-    if receipt.state != "committed" {
-        return Err(Error::Unavailable(
-            "WorkContext operation is already in progress".into(),
-        ));
-    }
     receipt
         .result_ref
         .ok_or_else(|| Error::Infrastructure("WorkContext receipt has no result".into()))?

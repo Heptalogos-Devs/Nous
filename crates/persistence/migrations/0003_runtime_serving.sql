@@ -9,7 +9,6 @@ CREATE TABLE mutation_receipts (
     operation_id uuid NOT NULL,
     operation_kind text NOT NULL,
     request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
-    state text NOT NULL CHECK (state IN ('in_progress','committed','failed_terminal')),
     result_kind text NULL,
     result_ref_kind text NULL,
     result_ref text NULL,
@@ -17,7 +16,6 @@ CREATE TABLE mutation_receipts (
     result_epoch bigint NULL,
     created_at timestamptz NOT NULL,
     committed_at timestamptz NULL,
-    terminal_problem_code text NULL,
     PRIMARY KEY(subject_id, operation_id)
 );
 CREATE TABLE cognition_dependency_invalidations (
@@ -204,7 +202,7 @@ CREATE TABLE query_feedback_records (
     prepared_query_digest text NOT NULL CHECK (prepared_query_digest ~ '^[0-9a-f]{64}$'),
     query_activation_digest text NOT NULL CHECK (query_activation_digest ~ '^[0-9a-f]{64}$'),
     signals jsonb NOT NULL CHECK (octet_length(signals::text)<=65536),
-    returned_revision_refs jsonb NOT NULL CHECK (jsonb_typeof(returned_revision_refs)='array' AND jsonb_array_length(returned_revision_refs)<=256),
+    returned_revision_refs jsonb NOT NULL CHECK (jsonb_typeof(returned_revision_refs)='array'),
     created_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL CHECK (expires_at>created_at),
     PRIMARY KEY(subject_id,query_id)

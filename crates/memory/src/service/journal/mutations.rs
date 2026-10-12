@@ -27,9 +27,6 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable("Journal commit is in progress".into()));
-                }
                 let revision = JournalRevisionId(
                     receipt
                         .result_revision

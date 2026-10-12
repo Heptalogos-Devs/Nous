@@ -34,25 +34,18 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let id = receipt
-                        .result_ref
-                        .ok_or_else(|| {
-                            Error::Infrastructure("Episode receipt has no result".into())
-                        })?
-                        .parse()
-                        .map_err(|_| Error::Infrastructure("invalid Episode receipt".into()))?;
-                    return self
-                        .episode(
-                            input.subject,
-                            EpisodeId(id),
-                            receipt.result_revision.map(EpisodeRevisionId),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "create Episode operation is already in progress".into(),
-                ));
+                let id = receipt
+                    .result_ref
+                    .ok_or_else(|| Error::Infrastructure("Episode receipt has no result".into()))?
+                    .parse()
+                    .map_err(|_| Error::Infrastructure("invalid Episode receipt".into()))?;
+                return self
+                    .episode(
+                        input.subject,
+                        EpisodeId(id),
+                        receipt.result_revision.map(EpisodeRevisionId),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -233,18 +226,13 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self
-                        .episode(
-                            input.subject,
-                            input.episode_id,
-                            receipt.result_revision.map(EpisodeRevisionId),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "revise Episode operation is already in progress".into(),
-                ));
+                return self
+                    .episode(
+                        input.subject,
+                        input.episode_id,
+                        receipt.result_revision.map(EpisodeRevisionId),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -375,14 +363,7 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "link_episode_revisions", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::Unavailable(
-                    "Episode relation operation is already in progress".into(),
-                ));
-            }
+            MutationStart::Replay(_) => return Ok(()),
             MutationStart::Active(mutation) => mutation,
         };
         for revision in [from, to] {

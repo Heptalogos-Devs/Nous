@@ -75,7 +75,7 @@ impl KernelService {
         let mut segments = self
             .0
             .cognition
-            .runtime_references(subject, session)
+            .runtime_references(&runtime)
             .await?
             .into_iter()
             .map(|(reference, source)| p::ContextSegment {

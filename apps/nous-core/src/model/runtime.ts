@@ -23,8 +23,6 @@ import {
   type ModelConfiguration,
 } from "./configuration.js";
 
-import { formationSchema } from "./schemas/formation.js";
-import { projectionStewardSchema as proposalSchema } from "./schemas/projection.js";
 type SemanticGeneration<R extends ModelRole> = {
   value: ModelGenerationOutput<R>;
   producerMetadata: ModelProducerMetadata;
@@ -127,7 +125,7 @@ export class ModelRuntime {
       { signal: signal, snapshot: snapshot },
     );
     return {
-      ...formationSchema.parse(result.value),
+      ...result.value,
       producerMetadata: result.producerMetadata,
       execution: result.execution,
     };
@@ -148,23 +146,21 @@ export class ModelRuntime {
         ],
       };
     try {
-      const output = proposalSchema.parse(
-        (
-          await this.invocations.generate(
-            "projection_steward",
-            {
-              content: JSON.stringify(
-                segments.map((s) => ({
-                  id: s.segmentId,
-                  role: s.semanticRole,
-                  text: s.text,
-                })),
-              ),
-            },
-            { signal: signal },
-          )
-        ).value,
-      );
+      const output = (
+        await this.invocations.generate(
+          "projection_steward",
+          {
+            content: JSON.stringify(
+              segments.map((s) => ({
+                id: s.segmentId,
+                role: s.semanticRole,
+                text: s.text,
+              })),
+            ),
+          },
+          { signal: signal },
+        )
+      ).value;
       const ids = new Set(segments.map((s) => s.segmentId));
       if (
         new Set(output.selectedIds).size !== output.selectedIds.length ||

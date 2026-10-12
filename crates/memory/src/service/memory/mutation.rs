@@ -25,28 +25,23 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self
-                        .memory(
-                            input.subject,
-                            MemoryId(
-                                receipt
-                                    .result_ref
-                                    .ok_or_else(|| {
-                                        Error::Infrastructure("form receipt has no result".into())
-                                    })?
-                                    .parse()
-                                    .map_err(|_| {
-                                        Error::Infrastructure("invalid form receipt".into())
-                                    })?,
-                            ),
-                            receipt.result_revision.map(MemoryRevisionId),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "form_memory operation is already in progress".into(),
-                ));
+                return self
+                    .memory(
+                        input.subject,
+                        MemoryId(
+                            receipt
+                                .result_ref
+                                .ok_or_else(|| {
+                                    Error::Infrastructure("form receipt has no result".into())
+                                })?
+                                .parse()
+                                .map_err(|_| {
+                                    Error::Infrastructure("invalid form receipt".into())
+                                })?,
+                        ),
+                        receipt.result_revision.map(MemoryRevisionId),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -287,18 +282,13 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self
-                        .memory(
-                            subject,
-                            input.memory_id,
-                            receipt.result_revision.map(MemoryRevisionId),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "revise_memory operation is already in progress".into(),
-                ));
+                return self
+                    .memory(
+                        subject,
+                        input.memory_id,
+                        receipt.result_revision.map(MemoryRevisionId),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -433,14 +423,7 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "link_memory_revisions", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::Unavailable(
-                    "relation operation is already in progress".into(),
-                ));
-            }
+            MutationStart::Replay(_) => return Ok(()),
             MutationStart::Active(mutation) => mutation,
         };
         sqlx::query("INSERT INTO memory_revision_relations(from_revision_id,to_revision_id,relation,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING").bind(from.0).bind(to.0).bind(relation.as_str()).bind(self.cognition.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?;

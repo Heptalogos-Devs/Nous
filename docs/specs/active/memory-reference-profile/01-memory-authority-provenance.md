@@ -50,9 +50,9 @@ CognitiveSchema 的 suppress/restore/withdraw/reaccept/purge 由 Memory owner �
 
 来源对象的 revision、lifecycle、support set 或 purge 变化在同一 Authority 事务中沿当前 exact dependency 传播到 Memory、CognitiveSchema、Episode、Journal。当前 dependent 标记为 `revalidation_required`；同一失效传播中，多个路径到达同一对象只增加一次 epoch。Journal 排入 `journal_revalidate`，来源恢复或重建不会将 dependent 自动改回 valid。重新提交支持经过验证的新 revision 后，该对象恢复 valid。
 
-传播记录保留精确 dependent/source revision 和当前失效原因；immutable 正文及支持引用保持原样。Memory 进入 purging 时就标记下游完整性；完成清除后，指向被清 Memory 的 Schema evidence link 撤回。Serving 的相关 family watermark 共用该事务已分配的 authority sequence，传播到 Memory/Schema 时覆盖其 projection family。
+传播记录保留精确 dependent/source revision 和当前失效原因；immutable 正文及支持引用保持原样。Memory purge 在一个 Authority 事务中标记下游完整性、撤回指向被清 Memory 的 Schema evidence link 并删除其 runtime 引用与对象。事务提交前，读取者看到原有可见状态；提交后，来源与依赖失效同时可见，历史和当前查询都不能绕过 purge。Serving 的相关 family watermark 共用该事务已分配的 authority sequence，传播到 Memory/Schema 时覆盖其 projection family。
 
-Memory、CognitiveSchema、Episode 和 Journal 的 mutation 使用 Persistence `MutationEnvelope`：owner Subject lock 先于 operation lock，receipt 检查 canonical digest，Replay 由 owner 解码。领域验证和 SQL 写入保持在 owner；envelope 合并 owner 选定的 projection families，receipt 与 Authority 写入同事务提交。未完成事务整体回滚。Memory purge 的 purging checkpoint 与最终清除分别提交，resume 校验同一 operation identity/digest。
+Memory、CognitiveSchema、Episode 和 Journal 的 mutation 使用 Persistence `MutationEnvelope`：owner Subject lock 先于 operation lock，receipt 检查 canonical digest，Replay 由 owner 解码。领域验证和 SQL 写入保持在 owner；envelope 合并 owner 选定的 projection families，receipt 与 Authority 写入同事务提交。未完成事务整体回滚，已保存的 receipt 表示已完成 mutation。
 
 同一 operation/event identity 携带相同 canonical digest 时返回相同语义结果；相同 identity 携带不同 digest 时返回 conflict。Purge 后保留不含认知正文的幂等 receipt，不能用 receipt 恢复被清内容。
 
@@ -61,7 +61,6 @@ Mutation replay 的 immutable result revision 保持原身份，当前 lifecycle
 Schema split 回执保存按输入次序创建的 exact child revisions，merge 回执保存 exact merged revision。已提交回放先读取回执，不重新验证后来已 withdrawn、修订或失效的来源，也不改读结果对象的最新 head。领域提交同时发布关联 workflow 的实际结果依赖；其共享合同与一次性数据转换见 [持久操作](../model-runtime/cognitive-io-and-resources.md#持久操作)。
 
 Authority commit 只发布 projection invalidation/watermark；lexical、dense、topology 和 runtime serving 均可重建，不拥有 cognition truth。Memory owner 不持有 concrete Retrieval/Serving；topology candidate generation 属于 Retrieval shared contributor。
-
 
 ## Semantic Concept 与显式 Tag
 

@@ -29,11 +29,6 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable(
-                        "Journal lifecycle is in progress".into(),
-                    ));
-                }
                 return self
                     .journal(
                         subject,
@@ -120,9 +115,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable("Journal purge is in progress".into()));
-                }
+                let _ = receipt;
                 return Ok(());
             }
             MutationStart::Active(mutation) => mutation,
