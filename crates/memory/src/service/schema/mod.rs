@@ -159,7 +159,7 @@ impl MemoryService {
             .map(|link| link.basis.clone())
             .collect();
         self.validate_basis_in_tx(tx, input.subject, &basis).await?;
-        sqlx::query("INSERT INTO cognitive_schemas(schema_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,1,'accepted','valid','normal','normal',$4)")
+        sqlx::query("INSERT INTO cognitive_schemas(schema_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,1,'accepted','valid','normal',$4)")
             .bind(schema_id.0).bind(input.subject.0).bind(revision_id.0).bind(now).execute(&mut **tx).await.map_err(db)?;
         self.write_schema_revision_in(
             tx,

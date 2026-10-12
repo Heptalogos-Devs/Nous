@@ -73,7 +73,6 @@ fn schema_view(value: SchemaView) -> p::CognitiveSchema {
         acceptance_state: enum_name(value.schema.acceptance_state),
         integrity_state: enum_name(value.schema.integrity_state),
         suppression_state: enum_name(value.schema.suppression_state),
-        purge_state: enum_name(value.schema.purge_state),
         title: revision.title.clone().unwrap_or_default(),
         structural_claim: revision.structural_claim.clone(),
         applicability_scope: Some(p::SchemaScope {

@@ -77,7 +77,7 @@ impl AuthorityStore {
             ),
         ] {
             let query = format!(
-                "SELECT o.{object_id} object_id,h.state,array_agg(r.{revision_id} ORDER BY r.recorded_at DESC,r.revision_no DESC) revisions FROM {objects} o JOIN LATERAL (SELECT state FROM authority_object_states WHERE subject_id=o.subject_id AND object_kind=$2 AND object_ref=o.{object_id}::text AND recorded_at<=$3 ORDER BY recorded_at DESC,event_id DESC LIMIT 1) h ON true JOIN {revisions} r ON r.{object_id}=o.{object_id} AND r.recorded_at<=$3 WHERE o.subject_id=$1 AND o.created_at<=$3 AND o.purge_state='normal' GROUP BY o.{object_id},h.state ORDER BY o.{object_id}"
+                "SELECT o.{object_id} object_id,h.state,array_agg(r.{revision_id} ORDER BY r.recorded_at DESC,r.revision_no DESC) revisions FROM {objects} o JOIN LATERAL (SELECT state FROM authority_object_states WHERE subject_id=o.subject_id AND object_kind=$2 AND object_ref=o.{object_id}::text AND recorded_at<=$3 ORDER BY recorded_at DESC,event_id DESC LIMIT 1) h ON true JOIN {revisions} r ON r.{object_id}=o.{object_id} AND r.recorded_at<=$3 WHERE o.subject_id=$1 AND o.created_at<=$3 GROUP BY o.{object_id},h.state ORDER BY o.{object_id}"
             );
             // Identifiers come only from the fixed four-owner table catalog above; values are bound.
             for row in sqlx::query(sqlx::AssertSqlSafe(query.as_str()))

@@ -55,11 +55,6 @@ impl MemoryService {
         .ok_or_else(|| Error::NotFound("Journal not found".into()))?;
         fence_epoch(row.get("object_epoch"), expected_epoch)?;
         require_transition(&row.get::<String, _>(field), from)?;
-        if row.get::<String, _>("purge_state") != "normal" {
-            return Err(Error::FailedPrecondition(
-                "Journal lifecycle transition is invalid".into(),
-            ));
-        }
         let statement = if field == "suppression_state" {
             "UPDATE journal_objects SET suppression_state=$3,object_epoch=object_epoch+1 WHERE subject_id=$1 AND journal_id=$2"
         } else {

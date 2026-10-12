@@ -38,8 +38,7 @@ impl ContextResolver for NousRuntime {
             ) || !matches!(
                 memory.object.suppression_state,
                 nous_memory::SuppressionState::Normal
-            ) || !matches!(memory.object.purge_state, nous_memory::PurgeState::Normal)
-            {
+            ) {
                 return Err(Error::Unavailable("Memory is suppressed".into()));
             }
             let level = self

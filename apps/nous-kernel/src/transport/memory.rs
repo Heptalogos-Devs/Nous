@@ -20,7 +20,6 @@ pub(super) fn view(input: MemoryView) -> p::Memory {
         acceptance_state: enum_name(object.acceptance_state),
         integrity_state: enum_name(object.integrity_state),
         suppression_state: enum_name(object.suppression_state),
-        purge_state: enum_name(object.purge_state),
         accessibility_mode: enum_name(object.accessibility_mode),
         accessibility_level: enum_name(input.accessibility_level),
         semantic_role: revision.semantic_role,

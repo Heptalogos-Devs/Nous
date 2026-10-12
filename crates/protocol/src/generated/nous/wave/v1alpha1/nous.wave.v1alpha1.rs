@@ -1072,8 +1072,6 @@ pub struct Memory {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="8")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="9")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(string, tag="10")]
     pub accessibility_mode: ::prost::alloc::string::String,
     #[prost(string, tag="11")]
@@ -1607,8 +1605,6 @@ pub struct Episode {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="8")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="9")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(message, optional, tag="10")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="11")]
@@ -1872,8 +1868,6 @@ pub struct Journal {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="7")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="8")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(message, optional, tag="9")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="10")]
@@ -2221,8 +2215,6 @@ pub struct CognitiveSchema {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="7")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="8")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(string, tag="9")]
     pub title: ::prost::alloc::string::String,
     #[prost(string, tag="10")]

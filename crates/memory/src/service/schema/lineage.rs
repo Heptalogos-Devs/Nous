@@ -38,7 +38,7 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let source=sqlx::query("SELECT current_revision_id,object_epoch,acceptance_state,purge_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("CognitiveSchema not found".into()))?;
+        let source=sqlx::query("SELECT current_revision_id,object_epoch,acceptance_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("CognitiveSchema not found".into()))?;
         if source
             .try_get::<String, _>("acceptance_state")
             .map_err(db)?
@@ -46,11 +46,6 @@ impl MemoryService {
         {
             return Err(Error::FailedPrecondition(
                 "source CognitiveSchema is withdrawn".into(),
-            ));
-        }
-        if source.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-            return Err(Error::FailedPrecondition(
-                "source CognitiveSchema is purging".into(),
             ));
         }
         let epoch: i64 = source.try_get("object_epoch").map_err(db)?;
@@ -183,15 +178,10 @@ impl MemoryService {
         sorted.sort_by_key(|(_, id)| *id);
         let mut source_revisions = Vec::with_capacity(sorted.len());
         for (index, id) in sorted {
-            let row=sqlx::query("SELECT object_epoch,current_revision_id,acceptance_state,purge_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(id.0).fetch_one(&mut **mutation.tx()).await.map_err(db)?;
+            let row=sqlx::query("SELECT object_epoch,current_revision_id,acceptance_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(id.0).fetch_one(&mut **mutation.tx()).await.map_err(db)?;
             if row.try_get::<String, _>("acceptance_state").map_err(db)? != "accepted" {
                 return Err(Error::FailedPrecondition(
                     "schema merge source is withdrawn".into(),
-                ));
-            }
-            if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-                return Err(Error::FailedPrecondition(
-                    "schema merge source is purging".into(),
                 ));
             }
             let epoch: i64 = row.try_get("object_epoch").map_err(db)?;

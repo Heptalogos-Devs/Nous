@@ -64,7 +64,6 @@ pub struct EpisodeObject {
     pub acceptance_state: AcceptanceState,
     pub integrity_state: IntegrityState,
     pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
     pub created_at: DateTime<Utc>,
 }
 

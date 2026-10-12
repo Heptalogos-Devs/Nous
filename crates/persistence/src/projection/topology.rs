@@ -150,7 +150,7 @@ async fn topology_snapshot_in(
                     .parse()
                     .map_err(|_| Error::Infrastructure("invalid schema id".into()))?;
                 let revision = sqlx::query_scalar::<_, Uuid>(
-                        "SELECT current_revision_id FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'",
+                        "SELECT current_revision_id FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal'",
                     )
                     .bind(subject.0)
                     .bind(schema_id)
@@ -266,7 +266,7 @@ async fn topology_snapshot_in(
         }
 
         let rows = sqlx::query(
-                "SELECT rr.from_revision_id,rr.to_revision_id,rr.relation FROM memory_revision_relations rr JOIN memory_revisions l ON l.memory_revision_id=rr.from_revision_id JOIN memory_revisions r ON r.memory_revision_id=rr.to_revision_id JOIN memory_objects lo ON lo.memory_id=l.memory_id JOIN memory_objects ro ON ro.memory_id=r.memory_id WHERE lo.subject_id=$1 AND ro.subject_id=$1 AND lo.current_revision_id=l.memory_revision_id AND ro.current_revision_id=r.memory_revision_id AND lo.acceptance_state='accepted' AND ro.acceptance_state='accepted' AND lo.integrity_state='valid' AND ro.integrity_state='valid' AND lo.suppression_state='normal' AND ro.suppression_state='normal' AND lo.purge_state='normal' AND ro.purge_state='normal'",
+                "SELECT rr.from_revision_id,rr.to_revision_id,rr.relation FROM memory_revision_relations rr JOIN memory_revisions l ON l.memory_revision_id=rr.from_revision_id JOIN memory_revisions r ON r.memory_revision_id=rr.to_revision_id JOIN memory_objects lo ON lo.memory_id=l.memory_id JOIN memory_objects ro ON ro.memory_id=r.memory_id WHERE lo.subject_id=$1 AND ro.subject_id=$1 AND lo.current_revision_id=l.memory_revision_id AND ro.current_revision_id=r.memory_revision_id AND lo.acceptance_state='accepted' AND ro.acceptance_state='accepted' AND lo.integrity_state='valid' AND ro.integrity_state='valid' AND lo.suppression_state='normal' AND ro.suppression_state='normal'",
             )
             .bind(subject.0)
             .fetch_all(&mut **tx)

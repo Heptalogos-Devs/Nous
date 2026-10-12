@@ -133,7 +133,7 @@ impl MemoryService {
         query.push(revision_table).push(" r JOIN ").push(object_table)
             .push(" o USING(").push(object_column).push(") WHERE o.subject_id=")
             .push_bind(subject.0).push(" AND r.").push(revision_column).push("=")
-            .push_bind(id).push(" AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' FOR SHARE OF o");
+            .push_bind(id).push(" AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FOR SHARE OF o");
         let current: Option<Uuid> = query
             .build_query_scalar()
             .fetch_optional(&mut **tx)

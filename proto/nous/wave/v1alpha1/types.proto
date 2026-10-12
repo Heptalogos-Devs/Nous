@@ -146,6 +146,8 @@ message MemoryContent {
   string epistemic_class = 12;
 }
 message Memory {
+  reserved 9;
+  reserved "purge_state";
   optional string producer_signature_id = 28;
   string memory_id = 1 [(reference_kind) = "memory"];
   string revision_id = 2 [(reference_kind) = "memory_revision"];
@@ -155,7 +157,6 @@ message Memory {
   string acceptance_state = 6;
   string integrity_state = 7;
   string suppression_state = 8;
-  string purge_state = 9;
   string accessibility_mode = 10;
   string accessibility_level = 11;
   string semantic_role = 12;
@@ -284,6 +285,8 @@ message EpisodeRevision {
   repeated RevisionBasis basis = 15;
 }
 message Episode {
+  reserved 9;
+  reserved "purge_state";
   string episode_id = 1 [(reference_kind) = "episode"];
   string subject_id = 2 [(reference_kind) = "subject"];
   string track_key = 3;
@@ -292,7 +295,6 @@ message Episode {
   string acceptance_state = 6;
   string integrity_state = 7;
   string suppression_state = 8;
-  string purge_state = 9;
   google.protobuf.Timestamp created_at = 10;
   EpisodeRevision current_revision = 11;
 }

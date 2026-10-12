@@ -30,6 +30,8 @@ message JournalRevision {
   repeated CognitiveRef sources = 14;
 }
 message Journal {
+  reserved 8;
+  reserved "purge_state";
   string journal_id = 1 [(reference_kind) = "journal"];
   string subject_id = 2 [(reference_kind) = "subject"];
   string current_revision_id = 3 [(reference_kind) = "journal_revision"];
@@ -37,7 +39,6 @@ message Journal {
   string acceptance_state = 5;
   string integrity_state = 6;
   string suppression_state = 7;
-  string purge_state = 8;
   google.protobuf.Timestamp created_at = 9;
   JournalRevision current_revision = 10;
 }

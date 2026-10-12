@@ -46,7 +46,7 @@ pub(crate) async fn schema_direct_lane(
         return Ok(output);
     }
     let rows = sqlx::query(
-        "SELECT s.schema_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.purge_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND (s.schema_id=ANY($2::uuid[]) OR r.schema_revision_id=ANY($3::uuid[]))",
+        "SELECT s.schema_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND (s.schema_id=ANY($2::uuid[]) OR r.schema_revision_id=ANY($3::uuid[]))",
     )
     .bind(query.subject.0)
     .bind(schema_ids.iter().copied().collect::<Vec<_>>())
@@ -104,10 +104,6 @@ pub(crate) async fn schema_direct_lane(
             .try_get::<String, _>("suppression_state")
             .map_err(nous_persistence::database_error)?
             == "normal";
-        let purge = row
-            .try_get::<String, _>("purge_state")
-            .map_err(nous_persistence::database_error)?
-            == "normal";
         let facts = metadata.remove(&revision.0).unwrap_or_default();
         let constraints_match = query.expression.constraints.matches_common(QueryFacts {
             authority: AuthorityClass::SubjectCognition,
@@ -122,7 +118,7 @@ pub(crate) async fn schema_direct_lane(
             .try_get::<Uuid, _>("current_revision_id")
             .map_err(nous_persistence::database_error)?
             == revision.0;
-        if purge && (historical || (accepted && valid && normal && current)) && constraints_match {
+        if (historical || (accepted && valid && normal && current)) && constraints_match {
             let reference = CognitiveRef::CognitiveSchemaRevision(revision);
             output.candidates.push(LaneCandidate {
                 reference: reference.clone(),
@@ -182,7 +178,7 @@ pub(crate) async fn materialize_schema_revisions(
     if revision_ids.is_empty() {
         return Ok((Vec::new(), BTreeMap::new()));
     }
-    let rows = sqlx::query("SELECT s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.purge_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND r.schema_revision_id=ANY($2::uuid[])")
+    let rows = sqlx::query("SELECT s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND r.schema_revision_id=ANY($2::uuid[])")
         .bind(bound.source_query.subject.0)
         .bind(&revision_ids)
         .fetch_all(service.store.pool())
@@ -223,14 +219,7 @@ pub(crate) async fn materialize_schema_revisions(
         let accepted = super::historical::header_text(header, &row, "acceptance_state")?;
         let valid = super::historical::header_text(header, &row, "integrity_state")?;
         let suppression = super::historical::header_text(header, &row, "suppression_state")?;
-        let purge: String = row
-            .try_get("purge_state")
-            .map_err(nous_persistence::database_error)?;
-        if accepted != "accepted"
-            || valid != "valid"
-            || suppression != "normal"
-            || purge != "normal"
-        {
+        if accepted != "accepted" || valid != "valid" || suppression != "normal" {
             *drops.entry("unavailable_lifecycle".into()).or_default() += 1;
             continue;
         }

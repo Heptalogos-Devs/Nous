@@ -102,14 +102,11 @@ impl MemoryService {
             MutationStart::Replay(_) => return self.episode(subject, episode, None).await,
             MutationStart::Active(mutation) => mutation,
         };
-        let row = sqlx::query("SELECT object_epoch,suppression_state,acceptance_state,purge_state FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE")
+        let row = sqlx::query("SELECT object_epoch,suppression_state,acceptance_state FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE")
             .bind(subject.0).bind(episode.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
             .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(epoch, expected)?;
-        if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-            return Err(Error::FailedPrecondition("Episode is purging".into()));
-        }
         let current: String = row.try_get(field).map_err(db)?;
         require_transition(&current, from)?;
         if field == "acceptance_state" && to == "accepted" {

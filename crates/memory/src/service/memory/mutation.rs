@@ -96,7 +96,7 @@ impl MemoryService {
         let now = self.cognition.now(input.subject);
         self.validate_basis_in_tx(tx, input.subject, &input.basis)
             .await?;
-        sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,accessibility_mode,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','normal','auto',$5)")
+        sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,accessibility_mode,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','auto',$5)")
             .bind(memory_id.0).bind(input.subject.0).bind(input.cognitive_role.as_str()).bind(revision_id.0).bind(now).execute(&mut **tx).await.map_err(db)?;
         self.insert_revision_in_tx(
             tx,
@@ -348,13 +348,10 @@ impl MemoryService {
         formed_at: DateTime<Utc>,
     ) -> Result<(MemoryRevisionId, i64)> {
         let subject = input.content.subject;
-        let row = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.cognitive_role,o.purge_state,r.revision_no,ARRAY(SELECT entity_ref FROM memory_revision_aboutness a WHERE a.memory_revision_id=r.memory_revision_id) AS parent_aboutness FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.memory_id=$2 FOR UPDATE OF o")
+        let row = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.cognitive_role,r.revision_no,ARRAY(SELECT entity_ref FROM memory_revision_aboutness a WHERE a.memory_revision_id=r.memory_revision_id) AS parent_aboutness FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.memory_id=$2 FOR UPDATE OF o")
             .bind(subject.0).bind(input.memory_id.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::NotFound("memory not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         fence_epoch(epoch, input.expected_object_epoch)?;
-        if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-            return Err(Error::FailedPrecondition("memory is purging".into()));
-        }
         self.validate_object_dependency_cycle(
             subject,
             &format!("memory:{}", input.memory_id.0),

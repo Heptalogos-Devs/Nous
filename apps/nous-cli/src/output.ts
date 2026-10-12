@@ -76,7 +76,6 @@ function cognitionSummary(value: unknown) {
     "acceptanceState",
     "integrityState",
     "suppressionState",
-    "purgeState",
     "basis",
     "evidenceLinks",
     "aboutness",

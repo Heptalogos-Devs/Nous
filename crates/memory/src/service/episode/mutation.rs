@@ -69,7 +69,7 @@ impl MemoryService {
             .await?;
         let now = self.cognition.now(input.subject);
         let (time_kind, time_start, time_end) = temporal_columns(&input.experience_time);
-        sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','normal',$5)")
+        sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal',$5)")
             .bind(episode_id.0).bind(input.subject.0).bind(&input.track_key).bind(revision_id.0).bind(now)
             .execute(&mut **mutation.tx()).await.map_err(db)?;
         insert_episode_revision(
@@ -236,14 +236,11 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let row = sqlx::query("SELECT o.track_key,o.current_revision_id,o.object_epoch,o.purge_state,r.revision_no FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.episode_id=$2 FOR UPDATE OF o")
+        let row = sqlx::query("SELECT o.track_key,o.current_revision_id,o.object_epoch,r.revision_no FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.episode_id=$2 FOR UPDATE OF o")
             .bind(input.subject.0).bind(input.episode_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
             .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(epoch, input.expected_object_epoch)?;
-        if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-            return Err(Error::FailedPrecondition("Episode is purging".into()));
-        }
         validate_episode_refs_in_tx(&self.store, mutation.tx(), input.subject, &input.members)
             .await?;
         validate_episode_basis_in_tx(&self.store, mutation.tx(), input.subject, &input.basis)

@@ -52,12 +52,11 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let row = sqlx::query("SELECT object_epoch,current_revision_id,acceptance_state,suppression_state,purge_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE")
+        let row = sqlx::query("SELECT object_epoch,current_revision_id,acceptance_state,suppression_state FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE")
             .bind(subject.0).bind(schema.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
             .ok_or_else(|| Error::NotFound("CognitiveSchema not found".into()))?;
         fence_epoch(row.get("object_epoch"), expected_epoch)?;
         require_transition(&row.get::<String, _>(field), from)?;
-        require_transition(&row.get::<String, _>("purge_state"), "normal")?;
         let statement = if field == "suppression_state" {
             "UPDATE cognitive_schemas SET suppression_state=$3,object_epoch=object_epoch+1 WHERE subject_id=$1 AND schema_id=$2"
         } else {

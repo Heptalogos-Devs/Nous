@@ -29,19 +29,19 @@ impl MemoryService {
         };
         let (query, id) = match exact {
             CognitiveRef::MemoryRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM memory_objects o JOIN memory_revisions r USING(memory_id) WHERE o.subject_id=$1 AND r.memory_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')",
+                "SELECT EXISTS(SELECT 1 FROM memory_objects o JOIN memory_revisions r USING(memory_id) WHERE o.subject_id=$1 AND r.memory_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal')",
                 id.0,
             ),
             CognitiveRef::CognitiveSchemaRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM cognitive_schemas o JOIN cognitive_schema_revisions r USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')",
+                "SELECT EXISTS(SELECT 1 FROM cognitive_schemas o JOIN cognitive_schema_revisions r USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal')",
                 id.0,
             ),
             CognitiveRef::EpisodeRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM episode_objects o JOIN episode_revisions r USING(episode_id) WHERE o.subject_id=$1 AND r.episode_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')",
+                "SELECT EXISTS(SELECT 1 FROM episode_objects o JOIN episode_revisions r USING(episode_id) WHERE o.subject_id=$1 AND r.episode_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal')",
                 id.0,
             ),
             CognitiveRef::JournalRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM journal_objects o JOIN journal_revisions r USING(journal_id) WHERE o.subject_id=$1 AND r.journal_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal')",
+                "SELECT EXISTS(SELECT 1 FROM journal_objects o JOIN journal_revisions r USING(journal_id) WHERE o.subject_id=$1 AND r.journal_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal')",
                 id.0,
             ),
             _ => {
@@ -391,36 +391,36 @@ fn dependency_query(
     match reference {
         CognitiveRef::MemoryRevision(id) => Ok((
             if lock {
-                "SELECT o.purge_state,r.memory_id AS object_id FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o"
+                "SELECT r.memory_id AS object_id FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o"
             } else {
-                "SELECT o.purge_state,r.memory_id AS object_id FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2"
+                "SELECT r.memory_id AS object_id FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2"
             },
             id.0,
             "memory",
         )),
         CognitiveRef::CognitiveSchemaRevision(id) => Ok((
             if lock {
-                "SELECT o.purge_state,r.schema_id AS object_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o"
+                "SELECT r.schema_id AS object_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o"
             } else {
-                "SELECT o.purge_state,r.schema_id AS object_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2"
+                "SELECT r.schema_id AS object_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2"
             },
             id.0,
             "schema",
         )),
         CognitiveRef::EpisodeRevision(id) => Ok((
             if lock {
-                "SELECT o.purge_state,r.episode_id AS object_id FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o"
+                "SELECT r.episode_id AS object_id FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o"
             } else {
-                "SELECT o.purge_state,r.episode_id AS object_id FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2"
+                "SELECT r.episode_id AS object_id FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2"
             },
             id.0,
             "episode",
         )),
         CognitiveRef::JournalRevision(id) => Ok((
             if lock {
-                "SELECT o.purge_state,r.journal_id AS object_id FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o"
+                "SELECT r.journal_id AS object_id FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o"
             } else {
-                "SELECT o.purge_state,r.journal_id AS object_id FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2"
+                "SELECT r.journal_id AS object_id FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2"
             },
             id.0,
             "journal",
@@ -432,16 +432,11 @@ fn dependency_query(
 }
 
 fn require_dependency_row(row: Option<sqlx::postgres::PgRow>) -> Result<()> {
-    let state = row
-        .map(|row| row.try_get::<String, _>("purge_state").map_err(db))
-        .transpose()?;
-    match state.as_deref() {
-        None => Err(Error::Invalid(
+    if row.is_none() {
+        Err(Error::Invalid(
             "cognition dependency is outside Subject".into(),
-        )),
-        Some("purging") => Err(Error::FailedPrecondition(
-            "cognition dependency target is purging".into(),
-        )),
-        Some(_) => Ok(()),
+        ))
+    } else {
+        Ok(())
     }
 }

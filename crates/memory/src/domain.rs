@@ -9,7 +9,7 @@
 use chrono::{DateTime, Utc};
 pub use nous_core::cognition::{
     AcceptanceState, BasisRole, CognitionDependency, DependencyRelation, EpistemicRelation,
-    EvidenceLocator, EvidenceRef, EvidenceRoot, EvidenceRootCertainty, IntegrityState, PurgeState,
+    EvidenceLocator, EvidenceRef, EvidenceRoot, EvidenceRootCertainty, IntegrityState,
     RevisionBasis, SuppressionState, dependency_relation,
 };
 use nous_core::{
@@ -100,7 +100,6 @@ pub struct MemoryObject {
     pub acceptance_state: AcceptanceState,
     pub integrity_state: IntegrityState,
     pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
     pub accessibility_mode: AccessibilityMode,
     pub created_at: DateTime<Utc>,
 }
@@ -456,7 +455,6 @@ pub struct CognitiveSchema {
     pub acceptance_state: AcceptanceState,
     pub integrity_state: IntegrityState,
     pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
     pub created_at: DateTime<Utc>,
 }
 

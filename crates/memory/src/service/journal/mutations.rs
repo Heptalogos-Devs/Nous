@@ -141,7 +141,7 @@ impl MemoryService {
             producer,
         } = write;
         if parent.is_none() {
-            sqlx::query("INSERT INTO journal_objects(journal_id,subject_id,current_revision_id,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,'accepted','valid','normal','normal',$4)")
+            sqlx::query("INSERT INTO journal_objects(journal_id,subject_id,current_revision_id,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,'accepted','valid','normal',$4)")
                 .bind(journal.0).bind(input.subject.0).bind(revision.0).bind(recorded).execute(&mut **tx).await.map_err(db)?;
         }
         let (kind, start, end) = temporal_columns(&source_extent);
@@ -260,12 +260,11 @@ async fn journal_target_in(
     let Some(target) = &input.target else {
         return Ok((JournalId::new(), None, 1));
     };
-    let row = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.purge_state,r.revision_no FROM journal_objects o JOIN journal_revisions r ON r.journal_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.journal_id=$2 FOR UPDATE OF o")
+    let row = sqlx::query("SELECT o.current_revision_id,o.object_epoch,r.revision_no FROM journal_objects o JOIN journal_revisions r ON r.journal_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.journal_id=$2 FOR UPDATE OF o")
         .bind(input.subject.0).bind(target.journal_id.0).fetch_optional(&mut **tx).await.map_err(db)?
         .ok_or_else(|| nous_core::DomainError::new(nous_core::DomainErrorCode::StaleRevision, "Journal target disappeared"))?;
     if row.get::<Uuid, _>("current_revision_id") != target.expected_revision.0
         || row.get::<i64, _>("object_epoch") != target.expected_epoch
-        || row.get::<String, _>("purge_state") != "normal"
     {
         return Err(nous_core::DomainError::new(
             nous_core::DomainErrorCode::StaleRevision,
@@ -310,7 +309,7 @@ async fn validate_sources_in(
         .iter()
         .map(|source| source.revision.0)
         .collect();
-    let rows = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,r.episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR SHARE OF o")
+    let rows = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR SHARE OF o")
         .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
     if rows.len() != ids.len() {
         return Err(nous_core::DomainError::new(
@@ -333,7 +332,6 @@ async fn validate_sources_in(
             || row.get::<String, _>("acceptance_state") != "accepted"
             || row.get::<String, _>("integrity_state") != "valid"
             || row.get::<String, _>("suppression_state") != "normal"
-            || row.get::<String, _>("purge_state") != "normal"
         {
             return Err(nous_core::DomainError::new(
                 nous_core::DomainErrorCode::StaleRevision,

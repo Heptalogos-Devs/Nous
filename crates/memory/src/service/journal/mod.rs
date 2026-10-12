@@ -70,7 +70,6 @@ pub struct JournalObject {
     pub acceptance_state: AcceptanceState,
     pub integrity_state: IntegrityState,
     pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
     pub created_at: DateTime<Utc>,
 }
 
@@ -153,7 +152,6 @@ impl MemoryService {
                     row.try_get("suppression_state").map_err(db)?,
                     "suppression state",
                 )?,
-                purge_state: parse_enum(row.try_get("purge_state").map_err(db)?, "purge state")?,
                 created_at: row.try_get("created_at").map_err(db)?,
             },
             revision: JournalRevision {

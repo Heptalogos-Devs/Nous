@@ -45,7 +45,6 @@ fn journal_proto(value: nous_memory::JournalView) -> p::Journal {
         acceptance_state: enum_name(object.acceptance_state),
         integrity_state: enum_name(object.integrity_state),
         suppression_state: enum_name(object.suppression_state),
-        purge_state: enum_name(object.purge_state),
         created_at: Some(timestamp(object.created_at)),
         current_revision: current.then(|| journal_revision_proto(value)),
     }

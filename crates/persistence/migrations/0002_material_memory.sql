@@ -10,7 +10,6 @@ CREATE TABLE memory_objects (
     acceptance_state text NOT NULL CHECK (acceptance_state IN ('accepted','withdrawn')),
     integrity_state text NOT NULL CHECK (integrity_state IN ('valid','revalidation_required')),
     suppression_state text NOT NULL CHECK (suppression_state IN ('normal','suppressed')),
-    purge_state text NOT NULL CHECK (purge_state IN ('normal','purging')),
     accessibility_mode text NOT NULL DEFAULT 'auto' CHECK (accessibility_mode IN ('auto','normal','deep','explicit')),
     created_at timestamptz NOT NULL
 );
@@ -148,7 +147,6 @@ CREATE TABLE cognitive_schemas (
     acceptance_state text NOT NULL CHECK (acceptance_state IN ('accepted','withdrawn')),
     integrity_state text NOT NULL CHECK (integrity_state IN ('valid','revalidation_required')),
     suppression_state text NOT NULL CHECK (suppression_state IN ('normal','suppressed')),
-    purge_state text NOT NULL CHECK (purge_state IN ('normal','purging')),
     created_at timestamptz NOT NULL
 );
 CREATE TABLE cognitive_schema_revisions (
@@ -245,7 +243,6 @@ CREATE TABLE episode_objects (
     acceptance_state text NOT NULL CHECK (acceptance_state IN ('accepted','withdrawn')),
     integrity_state text NOT NULL CHECK (integrity_state IN ('valid','revalidation_required')),
     suppression_state text NOT NULL CHECK (suppression_state IN ('normal','suppressed')),
-    purge_state text NOT NULL CHECK (purge_state IN ('normal','purging')),
     created_at timestamptz NOT NULL,
     UNIQUE(subject_id, episode_id)
 );
@@ -315,7 +312,6 @@ CREATE TABLE journal_objects (
     acceptance_state text NOT NULL CHECK (acceptance_state IN ('accepted','withdrawn')),
     integrity_state text NOT NULL CHECK (integrity_state IN ('valid','revalidation_required')),
     suppression_state text NOT NULL CHECK (suppression_state IN ('normal','suppressed')),
-    purge_state text NOT NULL CHECK (purge_state IN ('normal','purging')),
     created_at timestamptz NOT NULL,
     UNIQUE(subject_id,journal_id)
 );

@@ -44,7 +44,7 @@ Memory (crates/memory) owns Memory/CognitiveSchema/Episode/Journal/Tag/Associati
 
 ## Lifecycle、幂等和 purge
 
-普通 cognition 读取只接受 accepted/valid/normal/not-purging。Suppression、restore、revalidation 和 purge 是独立 lifecycle 操作，不创建虚假 content revision。
+普通 cognition 读取只接受 accepted/valid/normal。Purge 在 Authority transaction 中删除对象；当前、exact 与 historical reads 都以 Subject owner row 的存在作为当前 purge fence。Suppression、restore、revalidation 和 purge 是独立 lifecycle 操作，不创建虚假 content revision。
 
 CognitiveSchema 的 suppress/restore/withdraw/reaccept/purge 由 Memory owner 执行，公开为 ConceptService 的五个 lifecycle RPC。expected object epoch 与 operation digest 固定输入；生命周期变化沿当前 exact dependency 传播，恢复来源不自动恢复 dependent validity。Schema purge 在同一事务删除全部 revisions、清除 resident/WorkContext/Association 引用、撤回其他 Schema 的来源 links、清理可恢复正文的 owner workflow，并为原 UseEvents 保存不含正文的 purge receipts；共享 admitted Material 保留。
 

@@ -292,19 +292,19 @@ async fn validate_use_target_in(
 ) -> Result<()> {
     let (query, id) = match reference {
         CognitiveRef::MemoryRevision(id) => (
-            "SELECT o.purge_state FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o",
+            "SELECT 1 FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o",
             id.0,
         ),
         CognitiveRef::CognitiveSchemaRevision(id) => (
-            "SELECT o.purge_state FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o",
+            "SELECT 1 FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o",
             id.0,
         ),
         CognitiveRef::EpisodeRevision(id) => (
-            "SELECT o.purge_state FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o",
+            "SELECT 1 FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o",
             id.0,
         ),
         CognitiveRef::JournalRevision(id) => (
-            "SELECT o.purge_state FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o",
+            "SELECT 1 FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o",
             id.0,
         ),
         _ => {
@@ -313,19 +313,17 @@ async fn validate_use_target_in(
             ));
         }
     };
-    let state: Option<String> = sqlx::query_scalar(query)
+    let exists = sqlx::query_scalar::<_, i32>(query)
         .bind(subject.0)
         .bind(id)
         .fetch_optional(&mut **tx)
         .await
         .map_err(db)?;
-    match state.as_deref() {
-        None => Err(Error::NotFound(
+    if exists.is_none() {
+        Err(Error::NotFound(
             "UseEvent revision is not in Subject".into(),
-        )),
-        Some("normal") => Ok(()),
-        Some(_) => Err(Error::FailedPrecondition(
-            "UseEvent target is purging".into(),
-        )),
+        ))
+    } else {
+        Ok(())
     }
 }

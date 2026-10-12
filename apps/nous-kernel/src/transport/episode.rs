@@ -58,7 +58,6 @@ pub(super) fn view(value: nous_memory::EpisodeView) -> p::Episode {
         acceptance_state: enum_name(value.object.acceptance_state),
         integrity_state: enum_name(value.object.integrity_state),
         suppression_state: enum_name(value.object.suppression_state),
-        purge_state: enum_name(value.object.purge_state),
         created_at: Some(timestamp(value.object.created_at)),
         current_revision: current.then(|| revision(value.revision, value.members, value.basis)),
     }
