@@ -1,5 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { toJson } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { connectNousInstance } from "@nous-wave/client/node";
 import { NousError, type NousClient } from "@nous-wave/client";
 import { readFile } from "node:fs/promises";
@@ -95,7 +97,10 @@ export async function createEnvironment(
           "CONFIGURATION_UNAVAILABLE",
           `Core did not return the active consumer state policy: ${path}`,
         );
-      return [path.slice("consumer_state.".length), entry.value];
+      return [
+        path.slice("consumer_state.".length),
+        toJson(ValueSchema, entry.value),
+      ];
     }),
   );
   const local = cliState(

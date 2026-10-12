@@ -147,6 +147,7 @@ fn effort_index(effort: CognitiveEffort) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::planned_lanes;
 
     fn query(effort: CognitiveEffort) -> CognitiveQuery {
         CognitiveQuery {
@@ -218,5 +219,10 @@ mod tests {
         let mixed = QueryPlan::for_query(&value);
         assert!(mixed.enabled_lanes.contains(&EvidenceFamily::Exact));
         assert!(mixed.enabled_lanes.contains(&EvidenceFamily::Lexical));
+
+        value.expression.children[0].cues = vec![Cue::Tag(TagCue { tag: TagId::new() })];
+        let lanes = planned_lanes(&value);
+        assert!(lanes.contains(&EvidenceFamily::TagDirect));
+        assert!(lanes.contains(&EvidenceFamily::TopologyWave));
     }
 }

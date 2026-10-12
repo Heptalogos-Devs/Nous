@@ -82,14 +82,6 @@ fn inherit_targets(parent: &[QueryTarget], child: &[QueryTarget]) -> Vec<QueryTa
         child.to_vec()
     }
 }
-fn better_hit(existing: &CognitiveHit, incoming: &CognitiveHit) -> CognitiveHit {
-    if incoming.match_evidence.final_score > existing.match_evidence.final_score {
-        incoming.clone()
-    } else {
-        existing.clone()
-    }
-}
-
 fn leaves(
     node: &CognitiveQueryExpr,
     parent: Option<&CognitiveQueryExpr>,
@@ -131,35 +123,40 @@ fn empty_leaves(node: &CognitiveQueryExpr, output: &mut Vec<Option<CognitiveQuer
 pub(super) fn combine(
     node: &CognitiveQueryExpr,
     results: &mut impl Iterator<Item = Vec<CognitiveHit>>,
-) -> HashMap<CognitiveRef, CognitiveHit> {
-    if node.operation == QueryOperation::Atom {
-        return results
+) -> HashMap<CognitiveRef, (CognitiveHit, Vec<QueryPreference>)> {
+    let mut result = if node.operation == QueryOperation::Atom {
+        results
             .next()
             .unwrap_or_default()
             .into_iter()
-            .map(|hit| (hit.reference.clone(), hit))
-            .collect();
-    }
-    let mut children = node.children.iter();
-    let mut result = children
-        .next()
-        .map(|child| combine(child, results))
-        .unwrap_or_default();
-    for child in children {
-        let incoming = combine(child, results);
-        if node.operation == QueryOperation::All {
-            result.retain(|reference, _| incoming.contains_key(reference));
-        }
-        for (reference, hit) in incoming {
-            if node.operation == QueryOperation::Any || result.contains_key(&reference) {
-                result
-                    .entry(reference)
-                    .and_modify(|existing| {
-                        *existing = better_hit(existing, &hit);
-                    })
-                    .or_insert(hit);
+            .map(|hit| (hit.reference.clone(), (hit, Vec::new())))
+            .collect()
+    } else {
+        let mut children = node.children.iter();
+        let mut result = children
+            .next()
+            .map(|child| combine(child, results))
+            .unwrap_or_default();
+        for child in children {
+            let incoming = combine(child, results);
+            if node.operation == QueryOperation::All {
+                result.retain(|reference, _| incoming.contains_key(reference));
+            }
+            for (reference, (hit, preferences)) in incoming {
+                if let Some((existing, matched)) = result.get_mut(&reference) {
+                    if hit.match_evidence.final_score > existing.match_evidence.final_score {
+                        *existing = hit;
+                    }
+                    matched.extend(preferences);
+                } else if node.operation == QueryOperation::Any {
+                    result.insert(reference, (hit, preferences));
+                }
             }
         }
+        result
+    };
+    for (_, preferences) in result.values_mut() {
+        preferences.splice(0..0, node.preferences.clone());
     }
     result
 }
@@ -349,71 +346,33 @@ fn finalize(
     outputs: Vec<Vec<CognitiveHit>>,
     output_limit: usize,
 ) {
-    let memberships = outputs
-        .iter()
-        .map(|hits| {
-            hits.iter()
-                .map(|hit| hit.reference.clone())
-                .collect::<std::collections::HashSet<_>>()
-        })
-        .collect::<Vec<_>>();
-    result.results = combine(&bound.source_query.expression, &mut outputs.into_iter())
+    let mut hits = combine(&bound.source_query.expression, &mut outputs.into_iter())
         .into_values()
-        .collect();
-    result.results.sort_by(|a, b| {
+        .collect::<Vec<_>>();
+    hits.sort_by(|(a, _), (b, _)| {
         b.match_evidence
             .base_rank_score
             .total_cmp(&a.match_evidence.base_rank_score)
             .then_with(|| a.reference.to_string().cmp(&b.reference.to_string()))
     });
-    for (rank, hit) in result.results.iter_mut().enumerate() {
-        let mut preferences = Vec::new();
-        collect_preferences(
-            &bound.source_query.expression,
-            &hit.reference,
-            &memberships,
-            &mut 0,
-            &mut preferences,
-        );
-        hit.match_evidence.baseline_rank = (rank + 1) as u32;
-        hit.match_evidence.preference_score =
-            super::preferences::score(&preferences, hit, bound.bound_at, &bound.retrieval_policy);
-        hit.match_evidence.final_score =
-            hit.match_evidence.base_rank_score + hit.match_evidence.preference_score;
-    }
+    result.results = hits
+        .into_iter()
+        .enumerate()
+        .map(|(rank, (mut hit, preferences))| {
+            hit.match_evidence.baseline_rank = (rank + 1) as u32;
+            hit.match_evidence.preference_score = super::preferences::score(
+                &preferences,
+                &hit,
+                bound.bound_at,
+                &bound.retrieval_policy,
+            );
+            hit.match_evidence.final_score =
+                hit.match_evidence.base_rank_score + hit.match_evidence.preference_score;
+            hit
+        })
+        .collect();
     super::preferences::order(&mut result.results);
     result.results.truncate(output_limit);
-}
-
-fn collect_preferences(
-    node: &CognitiveQueryExpr,
-    reference: &CognitiveRef,
-    memberships: &[std::collections::HashSet<CognitiveRef>],
-    leaf: &mut usize,
-    preferences: &mut Vec<QueryPreference>,
-) -> bool {
-    let mut local = Vec::new();
-    let matched = if node.operation == QueryOperation::Atom {
-        let matched = memberships[*leaf].contains(reference);
-        *leaf += 1;
-        matched
-    } else {
-        let values: Vec<_> = node
-            .children
-            .iter()
-            .map(|child| collect_preferences(child, reference, memberships, leaf, &mut local))
-            .collect();
-        if node.operation == QueryOperation::All {
-            values.into_iter().all(|value| value)
-        } else {
-            values.into_iter().any(|value| value)
-        }
-    };
-    if matched {
-        preferences.extend(node.preferences.clone());
-        preferences.extend(local);
-    }
-    matched
 }
 
 #[cfg(test)]

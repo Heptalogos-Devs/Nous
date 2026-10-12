@@ -136,10 +136,9 @@ impl MemoryService {
         for basis in &basis {
             validate_exact_basis(std::slice::from_ref(basis))?;
         }
-        self.validate_basis_for_subject(subject, &basis).await?;
+        let provenance = self.validate_basis_for_subject(subject, &basis).await?;
         if content.formation_kind == SchemaFormationKind::Synthesized {
-            self.validate_formation_semantics(subject, FormationMode::Synthesized, &basis)
-                .await?;
+            Self::validate_formation_semantics(FormationMode::Synthesized, &provenance)?;
         }
         Ok(())
     }

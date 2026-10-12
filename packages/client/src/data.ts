@@ -7,15 +7,9 @@ import {
   toJson,
   type DescMessage,
   type DescFile,
-  type JsonValue,
   getOption,
   type DescField,
 } from "@bufbuild/protobuf";
-import {
-  ValueSchema,
-  StructSchema,
-  ListValueSchema,
-} from "@bufbuild/protobuf/wkt";
 import {
   file_nous_wave_v1alpha1_types,
   CognitiveRefSchema,
@@ -32,24 +26,6 @@ import { file_nous_wave_v1alpha1_configuration } from "@nous-wave/protocol/nous/
 import { file_nous_wave_v1alpha1_management } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { file_nous_wave_v1alpha1_model } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 import { file_nous_wave_v1alpha1_services } from "@nous-wave/protocol/nous/wave/v1alpha1/services_pb.js";
-
-export type Data<T> = T extends { $typeName: "google.protobuf.Value" }
-  ? JsonValue
-  : T extends { $typeName: "google.protobuf.Struct" }
-    ? Record<string, JsonValue>
-    : T extends { $typeName: "google.protobuf.ListValue" }
-      ? JsonValue[]
-      : T extends Uint8Array
-        ? Uint8Array
-        : T extends readonly (infer I)[]
-          ? Data<I>[]
-          : T extends object
-            ? {
-                [
-                  K in keyof T as K extends "$typeName" | "$unknown" ? never : K
-                ]: Data<T[K]>;
-              }
-            : T;
 
 const roots = [
   file_nous_wave_v1alpha1_types,
@@ -69,6 +45,7 @@ function registerFile(file: DescFile) {
 }
 roots.forEach(registerFile);
 const registry = createRegistry(...files);
+// Keep schemas off the message itself and out of opaque user JSON.
 const schemas = new WeakMap<object, DescMessage>();
 export const clientDataSchemas = {
   CognitiveRefSchema,
@@ -143,10 +120,17 @@ export function protocolSchema(value: unknown) {
     : undefined;
 }
 
-/** Restore known schema structure after a consumer receipt roundtrip; JSON leaves stay opaque. */
+/** Attach trusted protocol schemas without inspecting JSON-shaped Struct leaves. */
 export function restoreProtocolData<T>(value: T, schema: DescMessage): T {
-  if (!value || typeof value !== "object" || jsonTypes.has(schema.typeName))
+  if (!value || typeof value !== "object") return value;
+  if (jsonTypes.has(schema.typeName)) {
+    if (
+      schema.typeName !== "google.protobuf.Struct" &&
+      isMessage(value, schema)
+    )
+      schemas.set(value, schema);
     return value;
+  }
   schemas.set(value, schema);
   const object = value as Record<string, unknown>;
   for (const field of schema.fields) {
@@ -159,19 +143,22 @@ export function restoreProtocolData<T>(value: T, schema: DescMessage): T {
         ? item.value
         : undefined
       : object[field.localName];
-    if (field.fieldKind === "message")
-      restoreProtocolData(member, field.message);
-    else if (
+    if (field.fieldKind === "message") {
+      if (field.message.typeName !== "google.protobuf.Struct")
+        restoreProtocolData(member, field.message);
+    } else if (
       field.fieldKind === "list" &&
       field.listKind === "message" &&
       Array.isArray(member)
-    )
-      for (const child of member) restoreProtocolData(child, field.message);
-    else if (
+    ) {
+      if (field.message.typeName !== "google.protobuf.Struct")
+        for (const child of member) restoreProtocolData(child, field.message);
+    } else if (
       field.fieldKind === "map" &&
       field.mapKind === "message" &&
       member &&
-      typeof member === "object"
+      typeof member === "object" &&
+      field.message.typeName !== "google.protobuf.Struct"
     )
       for (const child of Object.values(member))
         restoreProtocolData(child, field.message);
@@ -183,83 +170,27 @@ export function protocolSchemaByName(name: string) {
   return registry.getMessage(name);
 }
 
-/** Decode protobuf JSON at its owning type, never inspect arbitrary JSON for protocol keys. */
-export function protocolData<T>(value: T, declared?: DescMessage): Data<T> {
-  // Buf represents Struct fields as JsonObject; a user $typeName is never a message marker there.
-  if (declared?.typeName === "google.protobuf.Struct") return value as Data<T>;
-  if (isMessage(value, ValueSchema))
-    return toJson(ValueSchema, value) as Data<T>;
-  if (isMessage(value, StructSchema))
-    return toJson(StructSchema, value) as Data<T>;
-  if (isMessage(value, ListValueSchema))
-    return toJson(ListValueSchema, value) as Data<T>;
-  if (declared && jsonTypes.has(declared.typeName)) return value as Data<T>;
-  if (value instanceof Uint8Array) return value as Data<T>;
-  if (Array.isArray(value))
-    return (value as unknown[]).map((member) =>
-      protocolData(member),
-    ) as Data<T>;
-  if (value !== null && typeof value === "object") {
-    const message = isMessage(value);
-    const schema =
-      declared ?? (message ? registry.getMessage(value.$typeName) : undefined);
-    const result = Object.fromEntries(
-      Object.entries(value)
-        .filter(
-          ([key]) => !(message && (key === "$typeName" || key === "$unknown")),
-        )
-        .map(([key, member]) => {
-          const oneof = schema?.oneofs.find((group) => group.localName === key);
-          if (oneof && member && typeof member === "object") {
-            const selected = member as { case?: string; value?: unknown };
-            const field = oneof.fields.find(
-              (candidate) => candidate.localName === selected.case,
-            );
-            return [
-              key,
-              field?.fieldKind === "message"
-                ? {
-                    ...selected,
-                    value: protocolData(selected.value, field.message),
-                  }
-                : member,
-            ];
-          }
-          const field = schema?.fields.find(
-            (candidate) => candidate.localName === key,
-          );
-          if (field?.fieldKind === "message")
-            return [key, protocolData(member, field.message)];
-          if (
-            field?.fieldKind === "list" &&
-            field.listKind === "message" &&
-            Array.isArray(member)
-          )
-            return [
-              key,
-              (member as unknown[]).map((child) =>
-                protocolData(child, field.message),
-              ),
-            ];
-          if (
-            field?.fieldKind === "map" &&
-            field.mapKind === "message" &&
-            member &&
-            typeof member === "object"
-          )
-            return [
-              key,
-              Object.fromEntries(
-                Object.entries(member as Record<string, unknown>).map(
-                  ([name, child]) => [name, protocolData(child, field.message)],
-                ),
-              ),
-            ];
-          return [key, member];
-        }),
-    );
-    if (schema) schemas.set(result, schema);
-    return result as Data<T>;
+/** Preserve the generated response and remember its canonical message schemas. */
+export function protocolData<T>(value: T, declared?: DescMessage): T {
+  if (!isMessage(value)) return value;
+  const schema = declared ?? registry.getMessage(value.$typeName);
+  if (!schema || schema.typeName !== value.$typeName) return value;
+  if (jsonTypes.has(schema.typeName)) {
+    schemas.set(value, schema);
+    return value;
   }
-  return value as Data<T>;
+  return restoreProtocolData(value, schema);
+}
+
+/** Expose the existing CLI shape without protobuf markers at its JSON boundary. */
+export function protocolJson(value: unknown) {
+  const schema = protocolSchema(value);
+  if (!schema) return value;
+  if (jsonTypes.has(schema.typeName)) return toJson(schema, value as never);
+  const {
+    $typeName: _typeName,
+    $unknown: _unknown,
+    ...json
+  } = value as Record<string, unknown>;
+  return json;
 }

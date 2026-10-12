@@ -1,5 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { protocolJson } from "@nous-wave/client/data";
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value))
@@ -143,6 +145,8 @@ export function renderText(value: unknown, depth = 0): string {
           : [];
       })
       .join("\n");
+  const json = protocolJson(value);
+  if (json !== value) return renderText(json, depth);
   if ("schemaVersion" in value && "data" in value)
     return renderText(value.data, depth);
   if (

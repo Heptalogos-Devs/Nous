@@ -50,10 +50,10 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        self.validate_basis_for_subject(input.subject, &input.basis)
+        let provenance = self
+            .validate_basis_for_subject(input.subject, &input.basis)
             .await?;
-        self.validate_formation_semantics(input.subject, input.formation_mode, &input.basis)
-            .await?;
+        Self::validate_formation_semantics(input.formation_mode, &provenance)?;
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
             .await?;
@@ -268,10 +268,6 @@ impl MemoryService {
         validate_content(&input.semantic_role, &input.representation_text)?;
         input.valid_time.validate()?;
         self.store.require_subject(input.subject).await?;
-        self.validate_basis_for_subject(input.subject, &input.basis)
-            .await?;
-        self.validate_formation_semantics(input.subject, input.formation_mode, &input.basis)
-            .await?;
         let digest = operation_digest(
             "revise_memory",
             input.subject,
@@ -297,6 +293,10 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
+        let provenance = self
+            .validate_basis_for_subject(input.subject, &input.basis)
+            .await?;
+        Self::validate_formation_semantics(input.formation_mode, &provenance)?;
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
             .await?;
@@ -358,7 +358,7 @@ impl MemoryService {
         self.validate_object_dependency_cycle(
             input.subject,
             &format!("memory:{}", input.memory_id.0),
-            &input.basis.clone(),
+            &input.basis,
         )
         .await?;
         self.validate_basis_in_tx(tx, input.subject, &input.basis)

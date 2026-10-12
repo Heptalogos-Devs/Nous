@@ -69,7 +69,10 @@ describe("managed context synchronization", () => {
       compiler.compile(
         key,
         "1",
-        projection(segment("a", "revised"), segment("b")),
+        projection(
+          { ...segment("a", "revised"), segmentId: "a-revised" },
+          segment("b"),
+        ),
         append.cursor,
       ).kind,
     ).toBe("RESET");

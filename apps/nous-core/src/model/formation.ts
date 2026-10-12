@@ -29,9 +29,6 @@ const snapshotSchema = z.strictObject({
     )
     .max(128),
 });
-const proposalSchema = z.strictObject({
-  request: z.unknown(),
-});
 const outcomeSchema = z.strictObject({ revisionId: z.string() });
 
 export async function formObservation(
@@ -107,8 +104,10 @@ export async function formObservation(
   };
   const previous = await kernel.modelWorkflow.findWorkflow(identity, options);
   if (previous.outcome) return replay(previous.outcome);
-  let snapshotText = previous.snapshot?.content?.payloadJson;
-  if (!snapshotText) {
+  let frozen = previous.snapshot?.content?.payloadJson
+    ? snapshotSchema.parse(JSON.parse(previous.snapshot.content.payloadJson))
+    : undefined;
+  if (!frozen) {
     const model = models.invocations.snapshot("memory_formation");
     const occurrence = await kernel.material.getOccurrence(
       { subjectId: r.subjectId, id: r.occurrenceId },
@@ -154,14 +153,13 @@ export async function formObservation(
             entityRef: candidate.entityRef,
           }))
         : [];
-    snapshotText = JSON.stringify({
+    frozen = snapshotSchema.parse({
       model,
       representationId,
       candidates,
       sourceMaxBytes: models.materialInputs.formation_source_max_bytes,
     });
   }
-  const frozen = snapshotSchema.parse(JSON.parse(snapshotText));
   const operation = await reserveOperation(
     kernel,
     identity,
@@ -179,10 +177,15 @@ export async function formObservation(
   const reservation = operation.record;
   if (reservation.outcome) return replay(reservation.outcome);
   return operation.run(async () => {
-    let proposed = reservation.proposal?.payloadJson
-      ? proposalSchema.parse(JSON.parse(reservation.proposal?.payloadJson))
+    let request = reservation.proposal?.payloadJson
+      ? fromJson(
+          FormMemoryRequestSchema,
+          (JSON.parse(reservation.proposal.payloadJson) as {
+            request: JsonValue;
+          }).request,
+        )
       : undefined;
-    if (!proposed) {
+    if (!request) {
       const snapshot = snapshotSchema.parse(
         JSON.parse(reservation.snapshot!.content!.payloadJson),
       );
@@ -249,7 +252,7 @@ export async function formObservation(
                     .map((candidate) => candidate.entityRef),
                 ),
               ];
-      const request = create(FormMemoryRequestSchema, {
+      request = create(FormMemoryRequestSchema, {
         operationId: r.operationId,
         subjectId: r.subjectId,
         input: {
@@ -285,15 +288,10 @@ export async function formObservation(
           ],
         },
       });
-      proposed = {
+      await operation.saveProposal({
         request: toJson(FormMemoryRequestSchema, request),
-      };
-      await operation.saveProposal(proposed);
+      });
     }
-    const request = fromJson(
-      FormMemoryRequestSchema,
-      proposed.request as JsonValue,
-    );
     const memory = await operation.mutate(request.operationId, () =>
       kernel.memory.formMemory(request, options),
     );

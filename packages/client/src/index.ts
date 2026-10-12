@@ -3,7 +3,7 @@
 
 import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
-import { protocolData as plain, type Data } from "./data.js";
+import { protocolData } from "./data.js";
 import { NousError } from "./errors.js";
 export { NousError, DomainErrorCode, ErrorRecovery } from "./errors.js";
 import {
@@ -68,14 +68,14 @@ function call<I, O>(
   defaultTimeout?:
     number | ((input: I, options?: RequestOptions) => number | Promise<number>),
 ) {
-  return async (input: I, options?: RequestOptions): Promise<Data<O>> => {
+  return async (input: I, options?: RequestOptions): Promise<O> => {
     try {
       const timeoutMs =
         options?.timeoutMs ??
         (typeof defaultTimeout === "function"
           ? await defaultTimeout(input, options)
           : defaultTimeout);
-      return plain(
+      return protocolData(
         await method(
           input,
           timeoutMs === undefined ? options : { ...options, timeoutMs },

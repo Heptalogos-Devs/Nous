@@ -3,15 +3,17 @@
 
 import { cliErrorPayload } from "./agent.js";
 import { renderText } from "./output.js";
+import { protocolJson } from "@nous-wave/client/data";
 
 const flag = (args: readonly string[], name: string) =>
   args.some((arg) => arg === `--${name}` || arg === `--${name}=true`);
 
 export function formatResult(value: unknown, args: readonly string[]) {
   return flag(args, "json") || flag(args, "raw")
-    ? JSON.stringify(value, (_, item: unknown) =>
-        typeof item === "bigint" ? item.toString() : item,
-      )
+    ? JSON.stringify(value, (_, item: unknown) => {
+        const json = protocolJson(item);
+        return typeof json === "bigint" ? json.toString() : json;
+      })
     : renderText(value);
 }
 

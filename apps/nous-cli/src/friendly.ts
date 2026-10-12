@@ -1,7 +1,12 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { protocolSchema, protocolReferenceKind } from "@nous-wave/client/data";
+import {
+  protocolJson,
+  protocolSchema,
+  protocolReferenceKind,
+  restoreProtocolData,
+} from "@nous-wave/client/data";
 import type { CliEnvironment } from "./runtime.js";
 
 /** Only protocol-declared references are addressed; user JSON and scalar text remain opaque. */
@@ -26,6 +31,8 @@ export async function friendlyOutput(
       return value.map((member) => visit(member, scope));
     const source = value as Record<string, unknown>;
     const schema = protocolSchema(value);
+    if (schema?.typeName.startsWith("google.protobuf."))
+      return protocolJson(value);
     const subjectField = schema?.fields.find(
       (field) => protocolReferenceKind(field) === "subject",
     );
@@ -75,7 +82,7 @@ export async function friendlyOutput(
         member.forEach((canonical, index) => address(member, index, canonical));
       else address(parent, key, member);
     }
-    return output;
+    return schema ? restoreProtocolData(output, schema) : output;
   }
   const result = visit(input, env.subjectId);
   const requests = [...targets.values()];

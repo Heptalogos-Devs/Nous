@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { rm, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { toJson } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import {
   ConfigExposure,
   ConfigurationView,
@@ -89,8 +91,11 @@ try {
   assert(
     standard.descriptors.every((d) => d.exposure === ConfigExposure.STANDARD),
   );
-  const schema = (await client.configuration.describe("runtime.resident_limit"))
-    .jsonSchema;
+  const descriptor = await client.configuration.describe(
+    "runtime.resident_limit",
+  );
+  const schema =
+    descriptor.jsonSchema && toJson(ValueSchema, descriptor.jsonSchema);
   assert(schema && typeof schema === "object" && !Array.isArray(schema));
   assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
   const subject = await client.subjects.create({
@@ -148,7 +153,8 @@ try {
     });
     const item = result.entries[0];
     assert(item);
-    return item;
+    assert(item.value);
+    return { ...item, value: toJson(ValueSchema, item.value) };
   };
   const revision = async () =>
     (

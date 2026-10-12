@@ -1,14 +1,14 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { canonicalDigest } from "../digest.js";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { create, type Message } from "@bufbuild/protobuf";
 import {
   ContextCursorSchema,
   type ContextCursor as Cursor,
   type Projection,
-  type ContextSegment as Segment,
   type ManagedContextResponse,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 
@@ -22,11 +22,9 @@ type ContextPatch = Omit<
 
 interface Track {
   cursor: Cursor;
-  segments: Segment[];
+  segmentIds: string[];
   profile: string;
 }
-const digest = (value: unknown) =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export class ContextCompiler {
   private readonly tracks = new Map<string, Track>();
@@ -43,7 +41,7 @@ export class ContextCompiler {
     projection: Projection,
     known?: Cursor,
   ): ContextPatch {
-    const trackId = digest([
+    const trackId = canonicalDigest([
       key.subjectId,
       key.sessionId,
       key.workContextId ?? "",
@@ -58,41 +56,35 @@ export class ContextCompiler {
       previous.profile === profile;
     const appendable =
       synchronized &&
-      previous.segments.length <= projection.segments.length &&
-      previous.segments.every(
-        (segment, index) =>
-          digest(segment) === digest(projection.segments[index]),
+      previous.segmentIds.length <= projection.segments.length &&
+      previous.segmentIds.every(
+        (id, index) => id === projection.segments[index]?.segmentId,
       );
-    if (!appendable) {
-      const cursor = create(ContextCursorSchema, {
-        trackId,
-        epochId: randomUUID(),
-        revision: 1,
-      });
-      this.save(trackId, {
-        cursor,
-        segments: structuredClone(projection.segments),
-        profile,
-      });
-      return { kind: "RESET", cursor, projection };
-    }
-    const delta = projection.segments.slice(previous.segments.length);
-    if (previous.cursor.revision === 0xffffffff)
+    const delta = appendable
+      ? projection.segments.slice(previous.segmentIds.length)
+      : projection.segments;
+    if (appendable && previous.cursor.revision === 0xffffffff)
       throw new ConnectError(
         "Context revision exhausted",
         Code.ResourceExhausted,
       );
-    const cursor = {
-      ...previous.cursor,
-      revision: previous.cursor.revision + (delta.length > 0 ? 1 : 0),
-    };
+    const cursor = appendable
+      ? {
+          ...previous.cursor,
+          revision: previous.cursor.revision + (delta.length > 0 ? 1 : 0),
+        }
+      : create(ContextCursorSchema, {
+          trackId,
+          epochId: randomUUID(),
+          revision: 1,
+        });
     this.save(trackId, {
       cursor,
-      segments: structuredClone(projection.segments),
+      segmentIds: projection.segments.map((segment) => segment.segmentId),
       profile,
     });
     return {
-      kind: "APPEND",
+      kind: appendable ? "APPEND" : "RESET",
       cursor,
       projection: { ...projection, segments: delta },
     };

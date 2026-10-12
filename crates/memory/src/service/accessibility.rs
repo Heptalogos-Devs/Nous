@@ -68,14 +68,8 @@ impl Default for AccessibilityPolicy {
 
 impl AccessibilityPolicy {
     pub fn validate(self) -> Result<Self> {
-        if self.epsilon <= 0.0
-            || self.tau_days <= 0.0
-            || self.decay <= 0.0
-            || self.formation_weight < 0.0
-            || !self.normal_threshold.is_finite()
-            || !self.deep_threshold.is_finite()
-            || self.normal_threshold <= self.deep_threshold
-        {
+        // Snapshot validation enforces each scalar bound; only cross-field order remains.
+        if self.normal_threshold <= self.deep_threshold {
             return Err(Error::Invalid(
                 "invalid accessibility reference parameters".into(),
             ));

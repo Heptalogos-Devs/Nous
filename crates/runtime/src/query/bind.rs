@@ -13,11 +13,8 @@ pub fn planned_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
         return vec![EvidenceFamily::Exact];
     }
     let mut result = Vec::new();
-    for node in query.scopes() {
-        let mut scoped = query.clone();
-        scoped.expression = node.clone();
-        scoped.expression.children.clear();
-        result.extend(local_lanes(&scoped));
+    for scope in query.scopes() {
+        result.extend(local_lanes(query, scope));
     }
     result.sort();
     result.dedup();
@@ -35,10 +32,9 @@ pub(super) fn planned_profile_lanes(
     lanes
 }
 
-fn local_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
+fn local_lanes(query: &CognitiveQuery, scope: &CognitiveQueryExpr) -> Vec<EvidenceFamily> {
     let mut lanes = Vec::new();
-    if query
-        .expression
+    if scope
         .targets
         .iter()
         .any(|target| matches!(target, QueryTarget::Exact { .. }))
@@ -48,22 +44,16 @@ fn local_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
     if query.session.is_some() || !query.situation.current_refs.is_empty() {
         lanes.push(EvidenceFamily::Runtime);
     }
-    if query
-        .expression
-        .cues
-        .iter()
-        .any(|cue| matches!(cue, Cue::Entity(_)))
-        || !query.expression.constraints.entity_requirements.is_empty()
-        || query
-            .expression
+    if scope.cues.iter().any(|cue| matches!(cue, Cue::Entity(_)))
+        || !scope.constraints.entity_requirements.is_empty()
+        || scope
             .targets
             .iter()
             .any(|target| matches!(target, QueryTarget::EntityNeighborhood { .. }))
     {
         lanes.push(EvidenceFamily::Entity);
     }
-    let has_text = query
-        .expression
+    let has_text = scope
         .cues
         .iter()
         .any(|cue| matches!(cue, Cue::Text(_) | Cue::Example(_)));
@@ -74,29 +64,21 @@ fn local_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
             lanes.push(EvidenceFamily::Dense);
         }
     }
-    if query
-        .expression
-        .cues
-        .iter()
-        .any(|cue| matches!(cue, Cue::Concept(_)))
+    if scope.cues.iter().any(|cue| matches!(cue, Cue::Concept(_)))
         && query.capabilities.text_embedding != RequirementStrength::Forbidden
     {
         lanes.push(EvidenceFamily::Dense);
     }
-    if query.expression.constraints.valid.is_some()
-        || query.expression.constraints.occurred.is_some()
-        || query.expression.constraints.observed.is_some()
-        || query.expression.constraints.formed.is_some()
-        || query.expression.constraints.recorded.is_some()
+    if scope.constraints.valid.is_some()
+        || scope.constraints.occurred.is_some()
+        || scope.constraints.observed.is_some()
+        || scope.constraints.formed.is_some()
+        || scope.constraints.recorded.is_some()
     {
         lanes.push(EvidenceFamily::Temporal);
     }
-    if query
-        .expression
-        .cues
-        .iter()
-        .any(|cue| matches!(cue, Cue::Schema(_)))
-        || query.expression.targets.iter().any(|target| {
+    if scope.cues.iter().any(|cue| matches!(cue, Cue::Schema(_)))
+        || scope.targets.iter().any(|target| {
             matches!(
                 target,
                 QueryTarget::SchemaNeighborhood { .. }
@@ -109,21 +91,20 @@ fn local_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
     {
         lanes.push(EvidenceFamily::SchemaDirect);
     }
-    if query.scopes().iter().any(|scope| {
-        scope.cues.iter().any(|cue| matches!(cue, Cue::Tag(_)))
-            || scope.targets.iter().any(|t| {
-                matches!(
-                    t,
-                    QueryTarget::Exact {
-                        reference: CognitiveRef::Tag(_)
-                    }
-                )
-            })
-    }) || query
-        .situation
-        .current_refs
-        .iter()
-        .any(|r| matches!(r, CognitiveRef::Tag(_)))
+    if scope.cues.iter().any(|cue| matches!(cue, Cue::Tag(_)))
+        || scope.targets.iter().any(|t| {
+            matches!(
+                t,
+                QueryTarget::Exact {
+                    reference: CognitiveRef::Tag(_)
+                }
+            )
+        })
+        || query
+            .situation
+            .current_refs
+            .iter()
+            .any(|r| matches!(r, CognitiveRef::Tag(_)))
     {
         lanes.push(EvidenceFamily::TagDirect);
     }
@@ -163,8 +144,8 @@ pub fn explicit_topology(query: &CognitiveQuery) -> bool {
     )
 }
 
-fn validate_hard_constraints(query: &CognitiveQuery) -> Result<()> {
-    for role in &query.expression.constraints.cognitive_roles_include {
+fn validate_hard_constraints(constraints: &QueryConstraints) -> Result<()> {
+    for role in &constraints.cognitive_roles_include {
         if !matches!(
             role.as_str(),
             "experiential" | "declarative" | "procedural_experience"
@@ -174,14 +155,14 @@ fn validate_hard_constraints(query: &CognitiveQuery) -> Result<()> {
             )));
         }
     }
-    for mode in &query.expression.constraints.formation_modes_include {
+    for mode in &constraints.formation_modes_include {
         if !matches!(mode.as_str(), "grounded" | "synthesized") {
             return Err(Error::Invalid(format!(
                 "unsupported formation mode constraint: {mode}"
             )));
         }
     }
-    for evidence_class in &query.expression.constraints.evidence_classes {
+    for evidence_class in &constraints.evidence_classes {
         if !matches!(
             evidence_class.as_str(),
             "observed" | "reported" | "derived" | "inferred" | "narrative" | "simulated"
@@ -382,10 +363,8 @@ impl CognitiveRuntimeService {
         super::historical_context::validate_view(&query, historical_authority.as_deref())?;
         let view = historical_authority.as_deref();
         super::closure::validate_query_input(&query)?;
-        for node in query.scopes() {
-            let mut scoped = query.clone();
-            scoped.expression = node.clone();
-            validate_hard_constraints(&scoped)?;
+        for scope in query.scopes() {
+            validate_hard_constraints(&scope.constraints)?;
         }
         self.require_subject(query.subject).await?;
         self.canonicalize_query_tags(&mut query, view).await?;

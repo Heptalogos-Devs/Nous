@@ -6,15 +6,16 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse, stringify } from "devalue";
+import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { lock } from "proper-lockfile";
 import writeAtomic from "write-file-atomic";
 import { z } from "zod";
 import type { ConsumerStatePolicy } from "@nous-wave/client/consumer-policy";
 import { CliError } from "./agent.js";
 import {
+  protocolData,
   protocolSchema,
   protocolSchemaByName,
-  restoreProtocolData,
 } from "@nous-wave/client/data";
 
 const reference = z.strictObject({
@@ -112,7 +113,7 @@ export function cliState(
             "INVALID_ARGUMENT",
             "Stored protocol data type is unavailable",
           );
-        return restoreProtocolData(value, schema);
+        return protocolData(fromJson(schema, value as JsonValue), schema);
       },
     });
   };
@@ -121,7 +122,7 @@ export function cliState(
       ProtocolData: (member) => {
         const schema = protocolSchema(member);
         return schema
-          ? [schema.typeName, { ...(member as object) }]
+          ? ([schema.typeName, toJson(schema, member as never)] as const)
           : undefined;
       },
     });

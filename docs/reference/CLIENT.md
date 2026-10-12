@@ -2,7 +2,7 @@
 
 Node consumers connect with `connectNousInstance({ runRoot })` from `@nous-wave/client/node`. The [Client package](../../packages/client/README.md) and canonical [public protocol](../../proto/README.md) define the typed methods. These operations use the same Core and semantic owners as CLI/MCP.
 
-The Client removes transport headers from message DTOs and decodes protobuf Value/Struct at their actual owning types. JSON payloads remain opaque, including keys named `$typeName`, `$unknown` or `subjectId`. First-party consumers use `@nous-wave/client/data` to retain and restore actual protocol schemas without placing them in user JSON.
+The Client returns canonical generated messages, including their protobuf metadata and WKT Value messages. Consumers convert Values to JSON only at an owning JSON boundary; opaque Struct payloads remain unchanged, including keys named `$typeName`, `$unknown` or `subjectId`. First-party consumers use `@nous-wave/client/data` to retain protocol schemas out of band for reference presentation and typed receipt serialization.
 
 Persist the operation ID and exact request before mutations. Same ID/same normalized input replays the original result; changed input conflicts. Read the current object epoch/head before a new revision or lifecycle change, then freeze that expected value for retries. A model proposal is not an Authority mutation until its owner commits it.
 

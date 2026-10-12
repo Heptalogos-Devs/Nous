@@ -111,28 +111,8 @@ impl RetrievalPolicy {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if !self.preference_weight.is_finite()
-            || self.preference_weight < 0.0
-            || !self.preference_cap.is_finite()
-            || self.preference_cap < 0.0
-            || self.preference_cap > 1.0
-            || !self.preference_recency_seconds.is_finite()
-            || self.preference_recency_seconds <= 0.0
-            || !self.rrf_k.is_finite()
-            || self.rrf_k <= 0.0
-            || self
-                .weights
-                .values()
-                .any(|value| !value.is_finite() || *value <= 0.0)
-            || self.effort_multipliers.contains(&0)
-            || self.lane_min == 0
-            || self.per_lane_max.iter().any(|max| *max < self.lane_min)
-            || self.topology_hops.contains(&0)
-            || self.topology_states.contains(&0)
-            || self.resource_limits.contains(&0)
-            || self.per_lane_max.contains(&0)
-            || self.validation_multiplier == 0
-            || self.validation_min == 0
+        // Registry validation enforces scalar constraints before policy resolution.
+        if self.per_lane_max.iter().any(|max| *max < self.lane_min)
             || self.validation_max < self.validation_min
         {
             return Err(Error::Invalid("invalid retrieval policy bounds".into()));

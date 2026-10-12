@@ -155,17 +155,18 @@ export class ModelInvocations {
   }
   snapshot(name: ModelRole): ModelRoleSnapshot {
     const role = this.require(name);
+    const configuration = modelRoleGraph(this.configuration, name);
     return snapshotSchema.parse({
       format: "nous.model.execution",
       implementationDigest: modelImplementations.provider,
       outputSchemaDigest: providerContractForRole(name)?.digest,
       role: name,
-      configuration: modelRoleGraph(this.configuration, name),
+      configuration,
       prompt: role.prompt,
       profileDigest: role.profileDigest,
       configDigest: canonicalDigest({
         policy: role.policy,
-        configuration: modelRoleGraph(this.configuration, name),
+        configuration,
         prompt: role.prompt && {
           id: role.prompt.id,
           digest: role.prompt.digest,
