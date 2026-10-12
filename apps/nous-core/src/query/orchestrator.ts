@@ -240,7 +240,7 @@ export class QueryOrchestrator {
         },
         options,
       );
-      if (prepared.validationTicket) executionToken = prepared.validationTicket;
+      executionToken = prepared.validationTicket ?? "";
       if (!prepared.response)
         throw new ConnectError("Kernel query response missing", Code.Internal);
       let result = prepared.response;
@@ -299,6 +299,7 @@ export class QueryOrchestrator {
           },
           options,
         );
+        executionToken = "";
         if (rerankFailed) {
           result.degradation.push({
             $typeName: "nous.wave.v1alpha1.Degradation",
@@ -319,15 +320,16 @@ export class QueryOrchestrator {
       result.boundQuery ??= prepared.response.boundQuery;
       return result;
     } finally {
-      await this.kernel.queryWorkflow
-        .releaseQuery(
-          {
-            subjectId: input.subjectId,
-            validationTicket: executionToken,
-          },
-          opportunity.cleanup(),
-        )
-        .catch(() => {});
+      if (executionToken)
+        await this.kernel.queryWorkflow
+          .releaseQuery(
+            {
+              subjectId: input.subjectId,
+              validationTicket: executionToken,
+            },
+            opportunity.cleanup(),
+          )
+          .catch(() => {});
     }
   }
 }

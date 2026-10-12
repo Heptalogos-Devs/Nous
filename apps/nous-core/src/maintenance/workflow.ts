@@ -7,10 +7,7 @@ import { maintenanceOperationId } from "./identity.js";
 import { authorityRejection } from "./rejection.js";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
 import { z } from "zod";
-import {
-  ApplyEpisodePartitionResponseSchema,
-  type MaintenanceNeed,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
+import { type MaintenanceNeed } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import {
   GenerationFailure,
   failedExecutionTelemetry,
@@ -18,15 +15,11 @@ import {
 import { type KernelClient } from "../kernel-client.js";
 import { type ModelRuntime } from "../model/runtime.js";
 
-import { JournalResponseSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/journal_pb.js";
-import { protocolReferences } from "@nous-wave/client/data";
-import type { Dependency } from "../durable-operation.js";
 import { canonicalDigest } from "../digest.js";
 
 import { reserveOperation, workflowPayload } from "../durable-operation.js";
 import {
   maintenanceDependencies,
-  resultDependencies,
   readOutcome,
   snapshotSchema,
   proposalSchema,
@@ -135,24 +128,15 @@ export async function runModelMaintenance(
         });
         await operation.saveProposal(z.encode(proposalSchema, proposed));
       }
-      let terminalDependencies: Dependency[] = [];
       if (proposed.action === "partition") {
         const request = proposed.request;
-        const result = await operation.mutate(request.operationId, () =>
+        await operation.mutate(request.operationId, () =>
           kernel.maintenance.applyEpisodePartition(request, options),
-        );
-        terminalDependencies = protocolReferences(
-          result,
-          ApplyEpisodePartitionResponseSchema,
         );
       } else if (proposed.action === "journal") {
         const request = proposed.request;
-        const result = await operation.mutate(request.operationId, () =>
+        await operation.mutate(request.operationId, () =>
           kernel.maintenance.commitJournal(request, options),
-        );
-        terminalDependencies = protocolReferences(
-          result,
-          JournalResponseSchema,
         );
       } else if (proposed.action === "concept") {
         const saved = proposed;
@@ -166,15 +150,12 @@ export async function runModelMaintenance(
           saved.progress,
           async (progress) => {
             saved.progress = [...progress];
-            await operation.saveProposal(
-              z.encode(proposalSchema, saved),
-              resultDependencies(saved.progress),
-            );
+            await operation.saveProposal(z.encode(proposalSchema, saved));
           },
 
           operation.mutate.bind(operation),
         );
-        await operation.complete(outcome, resultDependencies(outcome.actions));
+        await operation.complete(outcome);
         return outcome;
       } else if (proposed.action === "consolidation") {
         const saved = proposed;
@@ -188,15 +169,12 @@ export async function runModelMaintenance(
           saved.progress,
           async (progress) => {
             saved.progress = [...progress];
-            await operation.saveProposal(
-              z.encode(proposalSchema, saved),
-              resultDependencies(saved.progress),
-            );
+            await operation.saveProposal(z.encode(proposalSchema, saved));
           },
 
           operation.mutate.bind(operation),
         );
-        await operation.complete(outcome, resultDependencies(outcome.actions));
+        await operation.complete(outcome);
         return outcome;
       } else if (proposed.action === "withdraw")
         await operation.mutate(operationId, () =>
@@ -221,7 +199,7 @@ export async function runModelMaintenance(
             ? ("no_change" as const)
             : ("committed" as const),
       };
-      await operation.complete(outcome, terminalDependencies);
+      await operation.complete(outcome);
       return outcome;
     } catch (error) {
       if (

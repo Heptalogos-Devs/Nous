@@ -53,11 +53,7 @@ it("finishes a Resource ticket without invoking required rerank for identity-onl
   );
   expect(rerank).not.toHaveBeenCalled();
   expect(finalize).toHaveBeenCalledOnce();
-  expect(release).toHaveBeenCalledOnce();
-  expect(release).toHaveBeenCalledWith(
-    { subjectId: "subject", validationTicket: "resource-ticket" },
-    expect.anything(),
-  );
+  expect(release).not.toHaveBeenCalled();
 });
 
 it("prepares before embedding and sends one complete representation for an expression tree", async () => {
@@ -145,7 +141,7 @@ it("prepares before embedding and sends one complete representation for an expre
     expect.anything(),
   );
   expect(result.boundQuery).toBe('{"activation":true}');
-  expect(release).toHaveBeenCalledOnce();
+  expect(release).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -222,10 +218,7 @@ it.each([
         }),
         expect.anything(),
       );
-      expect(release).toHaveBeenCalledWith(
-        { subjectId: "subject", validationTicket: "activated" },
-        expect.anything(),
-      );
+      expect(release).not.toHaveBeenCalled();
     } else {
       expect(events).toEqual(["query"]);
       expect(generate).not.toHaveBeenCalled();
@@ -282,10 +275,14 @@ it.each(["optional", "required"])(
       );
       expect(execute.mock.calls[0]?.[0].conceptModelCalls).toBe(0);
     }
-    expect(release).toHaveBeenCalledWith(
-      { subjectId: "subject", validationTicket: "activated" },
-      expect.anything(),
-    );
+    if (requirement === "required") {
+      expect(release).toHaveBeenCalledWith(
+        { subjectId: "subject", validationTicket: "activated" },
+        expect.anything(),
+      );
+    } else {
+      expect(release).not.toHaveBeenCalled();
+    }
   },
 );
 

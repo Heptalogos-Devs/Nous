@@ -101,16 +101,3 @@ import type { Dependency } from "../durable-operation.js";
 export function maintenanceDependencies(plan: MaintenancePlan): Dependency[] {
   return protocolReferences(plan, MaintenancePlanSchema);
 }
-export function resultDependencies(
-  results: z.infer<typeof outcomeSchema>["actions"],
-): Dependency[] {
-  const refs: Dependency[] = [];
-  for (const result of results ?? []) {
-    if (result.resultRef) refs.push(result.resultRef);
-    if ("tagResults" in result)
-      for (const tag of result.tagResults) {
-        refs.push({ kind: "tag", value: tag.tagId });
-      }
-  }
-  return refs;
-}
