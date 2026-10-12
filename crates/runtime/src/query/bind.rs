@@ -349,10 +349,6 @@ impl CognitiveRuntimeService {
         self.bind_query_with_authority_view(query, config_snapshot, None)
             .await
     }
-    #[expect(
-        clippy::too_many_lines,
-        reason = "binding closes one Authority/config/context snapshot before planning exact reads or discovery"
-    )]
     pub async fn bind_query_with_authority_view(
         &self,
         mut query: CognitiveQuery,

@@ -180,9 +180,11 @@ export async function formObservation(
     let request = reservation.proposal?.payloadJson
       ? fromJson(
           FormMemoryRequestSchema,
-          (JSON.parse(reservation.proposal.payloadJson) as {
-            request: JsonValue;
-          }).request,
+          (
+            JSON.parse(reservation.proposal.payloadJson) as {
+              request: JsonValue;
+            }
+          ).request,
         )
       : undefined;
     if (!request) {

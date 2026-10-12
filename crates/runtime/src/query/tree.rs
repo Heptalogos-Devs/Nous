@@ -124,37 +124,35 @@ pub(super) fn combine(
     node: &CognitiveQueryExpr,
     results: &mut impl Iterator<Item = Vec<CognitiveHit>>,
 ) -> HashMap<CognitiveRef, (CognitiveHit, Vec<QueryPreference>)> {
-    let mut result = if node.operation == QueryOperation::Atom {
-        results
+    if node.operation == QueryOperation::Atom {
+        return results
             .next()
             .unwrap_or_default()
             .into_iter()
-            .map(|hit| (hit.reference.clone(), (hit, Vec::new())))
-            .collect()
-    } else {
-        let mut children = node.children.iter();
-        let mut result = children
-            .next()
-            .map(|child| combine(child, results))
-            .unwrap_or_default();
-        for child in children {
-            let incoming = combine(child, results);
-            if node.operation == QueryOperation::All {
-                result.retain(|reference, _| incoming.contains_key(reference));
-            }
-            for (reference, (hit, preferences)) in incoming {
-                if let Some((existing, matched)) = result.get_mut(&reference) {
-                    if hit.match_evidence.final_score > existing.match_evidence.final_score {
-                        *existing = hit;
-                    }
-                    matched.extend(preferences);
-                } else if node.operation == QueryOperation::Any {
-                    result.insert(reference, (hit, preferences));
+            .map(|hit| (hit.reference.clone(), (hit, node.preferences.clone())))
+            .collect();
+    }
+    let mut children = node.children.iter();
+    let mut result = children
+        .next()
+        .map(|child| combine(child, results))
+        .unwrap_or_default();
+    for child in children {
+        let incoming = combine(child, results);
+        if node.operation == QueryOperation::All {
+            result.retain(|reference, _| incoming.contains_key(reference));
+        }
+        for (reference, (hit, preferences)) in incoming {
+            if let Some((existing, matched)) = result.get_mut(&reference) {
+                if hit.match_evidence.final_score > existing.match_evidence.final_score {
+                    *existing = hit;
                 }
+                matched.extend(preferences);
+            } else if node.operation == QueryOperation::Any {
+                result.insert(reference, (hit, preferences));
             }
         }
-        result
-    };
+    }
     for (_, preferences) in result.values_mut() {
         preferences.splice(0..0, node.preferences.clone());
     }
