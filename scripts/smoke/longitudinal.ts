@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { timestampFromDate, TimestampSchema } from "@bufbuild/protobuf/wkt";
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { connectNous } from "@nous-wave/client/node";
+import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { KernelClient } from "../../apps/nous-core/src/kernel-client.js";
 import { createCore } from "../../apps/nous-core/src/server.js";
@@ -311,7 +312,7 @@ async function scenario(endpoint: string, token: string) {
         kind: "memory_revision",
         value: memory.revisionId,
       },
-    ];
+    ].map((reference) => create(CognitiveRefSchema, reference));
     await app.close();
     const restarted = await control({ command: "restart" });
     assert(restarted.endpoint);
