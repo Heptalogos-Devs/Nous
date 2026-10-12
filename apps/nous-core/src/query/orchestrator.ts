@@ -240,6 +240,7 @@ export class QueryOrchestrator {
         },
         options,
       );
+      if (prepared.validationTicket) executionToken = prepared.validationTicket;
       if (!prepared.response)
         throw new ConnectError("Kernel query response missing", Code.Internal);
       let result = prepared.response;
@@ -258,62 +259,53 @@ export class QueryOrchestrator {
           score: number;
         }[] = [];
         let rerankFailed = false;
-        try {
-          if (intent && profile && candidates.length >= 2) {
-            try {
-              const ranking = await this.models.invocations.rerank(
-                preparation.embeddingText || intent,
-                candidates.map((hit) => hit.text!),
-                candidates.length,
-                options.signal ?? undefined,
-              );
-              order = ranking.value.map((item) => {
-                const reference = candidates[item.index]!.reference;
-                if (!reference)
-                  throw new ConnectError(
-                    "Kernel candidate reference missing",
-                    Code.Internal,
-                  );
-                return { reference, score: item.relevance_score };
-              });
-            } catch (error) {
-              if (options.signal?.aborted) throw error;
-              if (rerankRequired)
+        if (intent && profile && candidates.length >= 2) {
+          try {
+            const ranking = await this.models.invocations.rerank(
+              preparation.embeddingText || intent,
+              candidates.map((hit) => hit.text!),
+              candidates.length,
+              options.signal ?? undefined,
+            );
+            order = ranking.value.map((item) => {
+              const reference = candidates[item.index]!.reference;
+              if (!reference)
                 throw new ConnectError(
-                  "Required rerank invocation unavailable",
-                  Code.FailedPrecondition,
+                  "Kernel candidate reference missing",
+                  Code.Internal,
                 );
-              rerankFailed = true;
-            }
-          }
-          result = await this.kernel.queryWorkflow.finalizeQuery(
-            {
-              subjectId: input.subjectId,
-              validationTicket: ticket,
-              order,
-              externalResults: await executeResourceActions(
-                this.resources,
-                result.resourceActions,
-                options.signal ?? undefined,
-              ),
-            },
-            options,
-          );
-          if (rerankFailed) {
-            result.degradation.push({
-              $typeName: "nous.wave.v1alpha1.Degradation",
-              code: "query_rerank_unavailable",
-              detail: "Validated baseline retained after model rerank failure",
+              return { reference, score: item.relevance_score };
             });
-            if (result.status === "complete") result.status = "degraded";
+          } catch (error) {
+            if (options.signal?.aborted) throw error;
+            if (rerankRequired)
+              throw new ConnectError(
+                "Required rerank invocation unavailable",
+                Code.FailedPrecondition,
+              );
+            rerankFailed = true;
           }
-        } finally {
-          await this.kernel.queryWorkflow
-            .releaseQuery(
-              { subjectId: input.subjectId, validationTicket: ticket },
-              opportunity.cleanup(),
-            )
-            .catch(() => {});
+        }
+        result = await this.kernel.queryWorkflow.finalizeQuery(
+          {
+            subjectId: input.subjectId,
+            validationTicket: ticket,
+            order,
+            externalResults: await executeResourceActions(
+              this.resources,
+              result.resourceActions,
+              options.signal ?? undefined,
+            ),
+          },
+          options,
+        );
+        if (rerankFailed) {
+          result.degradation.push({
+            $typeName: "nous.wave.v1alpha1.Degradation",
+            code: "query_rerank_unavailable",
+            detail: "Validated baseline retained after model rerank failure",
+          });
+          if (result.status === "complete") result.status = "degraded";
         }
       }
       if (failure) {

@@ -53,7 +53,11 @@ it("finishes a Resource ticket without invoking required rerank for identity-onl
   );
   expect(rerank).not.toHaveBeenCalled();
   expect(finalize).toHaveBeenCalledOnce();
-  expect(release).toHaveBeenCalledTimes(2);
+  expect(release).toHaveBeenCalledOnce();
+  expect(release).toHaveBeenCalledWith(
+    { subjectId: "subject", validationTicket: "resource-ticket" },
+    expect.anything(),
+  );
 });
 
 it("prepares before embedding and sends one complete representation for an expression tree", async () => {
