@@ -133,7 +133,7 @@ export async function deriveMaterial(
       role: string;
     }[],
     producerMetadata?: ModelProducerMetadata,
-    quality: Record<string, unknown> = {},
+    quality: JsonObject = {},
     preprocessingDigest?: string,
     structuredPayload?: JsonObject,
   ) => {
@@ -145,11 +145,7 @@ export async function deriveMaterial(
         inputs,
         strategy,
         structuredPayload,
-        quality: JSON.parse(
-          JSON.stringify({
-            ...quality,
-          }),
-        ) as import("@bufbuild/protobuf").JsonObject,
+        quality,
         supersedes:
           representations.length === 0 ? request.supersedes : undefined,
         producer: {
@@ -199,7 +195,7 @@ export async function deriveMaterial(
       inputAccess: ChannelAccess;
       structuredPayload?: JsonObject;
     }>,
-    quality: Record<string, unknown> = {},
+    quality: JsonObject = {},
     preprocessingDigest?: string,
     promptPath?: string,
     adapter?: string,

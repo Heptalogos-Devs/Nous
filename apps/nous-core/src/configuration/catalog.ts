@@ -226,7 +226,7 @@ function fields(
     }));
 }
 
-/** Read deployment values through the same registered paths for offline owner inspection. */
+/** Read raw deployment values through registered paths for offline owner inspection. */
 export function coreConfigurationValues(document: Record<string, unknown>) {
   return Object.fromEntries(
     owners.map((owner) => {
@@ -236,7 +236,7 @@ export function coreConfigurationValues(document: Record<string, unknown>) {
           value && typeof value === "object" && !Array.isArray(value)
             ? (value as Record<string, unknown>)[part]
             : undefined;
-      return [owner.path, owner.schema.parse(value)];
+      return [owner.path, value];
     }),
   );
 }

@@ -263,7 +263,7 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let row = sqlx::query(
-            "SELECT current_revision_id,object_epoch FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE",
+            "SELECT o.current_revision_id,o.object_epoch,r.revision_no,r.formation_kind,r.aboutness FROM cognitive_schemas o JOIN cognitive_schema_revisions r ON r.schema_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.schema_id=$2 FOR UPDATE OF o",
         )
         .bind(input.subject.0)
         .bind(input.schema_id.0)
@@ -274,13 +274,7 @@ impl MemoryService {
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(epoch, input.expected_object_epoch)?;
         let parent = CognitiveSchemaRevisionId(row.try_get("current_revision_id").map_err(db)?);
-        let revision_no: i32 = sqlx::query_scalar(
-            "SELECT revision_no+1 FROM cognitive_schema_revisions WHERE schema_revision_id=$1",
-        )
-        .bind(parent.0)
-        .fetch_one(&mut **mutation.tx())
-        .await
-        .map_err(db)?;
+        let revision_no: i32 = row.try_get::<i32, _>("revision_no").map_err(db)? + 1;
         let mut copied_links = input.content.evidence_links.clone();
         for link_id in &input.copy_link_ids {
             let link = sqlx::query("SELECT schema_revision_id,role,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM cognitive_schema_evidence_links WHERE link_id=$1 AND subject_id=$2 AND revoked_at IS NULL")
@@ -312,15 +306,8 @@ impl MemoryService {
         self.validate_basis_in_tx(mutation.tx(), input.subject, &copied_basis)
             .await?;
         let revision_id = CognitiveSchemaRevisionId::new();
-        let parent_scope = sqlx::query(
-            "SELECT formation_kind,aboutness FROM cognitive_schema_revisions WHERE schema_revision_id=$1",
-        )
-        .bind(parent.0)
-        .fetch_one(&mut **mutation.tx())
-        .await
-        .map_err(db)?;
-        let formation_kind: String = parent_scope.try_get("formation_kind").map_err(db)?;
-        let parent_aboutness: Vec<String> = parent_scope.try_get("aboutness").map_err(db)?;
+        let formation_kind: String = row.try_get("formation_kind").map_err(db)?;
+        let parent_aboutness: Vec<String> = row.try_get("aboutness").map_err(db)?;
         if input.content.formation_kind.as_str() != formation_kind
             || (!parent_aboutness.is_empty()
                 && !input

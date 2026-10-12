@@ -1,23 +1,16 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { conceptMaintenanceSchema } from "../model/schemas/concept-maintenance.js";
 import { executeConceptMaintenance } from "./concept-maintenance.js";
 import { executeConsolidation } from "./consolidation.js";
-import { consolidationSchema } from "../model/schemas/consolidation.js";
 import { maintenanceOperationId } from "./identity.js";
 import { authorityRejection } from "./rejection.js";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
-import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { z } from "zod";
 import {
-  MaintenancePlanSchema,
-  ApplyEpisodePartitionRequestSchema,
   ApplyEpisodePartitionResponseSchema,
-  CommitJournalRequestSchema,
   type MaintenanceNeed,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
-import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
   GenerationFailure,
   failedExecutionTelemetry,
@@ -65,8 +58,9 @@ export async function runModelMaintenance(
   };
   const previous = await kernel.modelWorkflow.findWorkflow(identity, options);
   if (previous.outcome) return readOutcome(previous.outcome);
-  let snapshotJson = previous.snapshot?.content?.payloadJson;
-  if (!snapshotJson) {
+  let storedSnapshot: Parameters<typeof reserveOperation>[2] =
+    previous.snapshot ?? {};
+  if (!storedSnapshot.content?.payloadJson) {
     const plan = await kernel.maintenance.planMaintenance(
       { claimed: need },
       options,
@@ -89,22 +83,23 @@ export async function runModelMaintenance(
           : need.kind === "memory_consolidate"
             ? "memory_consolidation"
             : "journal_synthesis";
-    const model =
-      plan.status === "withdraw" ? null : models.invocations.snapshot(role);
-    snapshotJson = JSON.stringify({
-      plan: toJson(MaintenancePlanSchema, plan),
-      model,
-    });
+    const snapshot = {
+      plan,
+      model:
+        plan.status === "withdraw" ? null : models.invocations.snapshot(role),
+    };
+    storedSnapshot = {
+      content: workflowPayload(
+        z.encode(snapshotSchema, snapshot),
+        maintenanceDependencies(plan),
+      ),
+    };
   }
-  const frozen = snapshotSchema.parse(JSON.parse(snapshotJson));
-  const frozenPlan = fromJson(MaintenancePlanSchema, frozen.plan as JsonValue);
   const operation = await reserveOperation(
     kernel,
     identity,
     {
-      ...(previous.snapshot ?? {
-        content: workflowPayload(frozen, maintenanceDependencies(frozenPlan)),
-      }),
+      ...storedSnapshot,
       maintenanceClaim: {
         $typeName: "nous.wave.kernel.v1alpha1.MaintenanceClaim",
         needId: need.needId,
@@ -124,7 +119,7 @@ export async function runModelMaintenance(
       const snapshot = snapshotSchema.parse(
         JSON.parse(reservation.snapshot!.content!.payloadJson),
       );
-      const plan = fromJson(MaintenancePlanSchema, snapshot.plan as JsonValue);
+      const { plan } = snapshot;
       let proposed = reservation.proposal?.payloadJson
         ? proposalSchema.parse(JSON.parse(reservation.proposal?.payloadJson))
         : undefined;
@@ -132,21 +127,17 @@ export async function runModelMaintenance(
         proposed = await buildMaintenanceProposal({
           models,
           need,
-          plan,
           snapshot,
           operationId,
           options,
           reserveModelCall,
           recordExecution: (value) => operation.recordExecution(value),
         });
-        await operation.saveProposal(proposed);
+        await operation.saveProposal(z.encode(proposalSchema, proposed));
       }
       let terminalDependencies: Dependency[] = [];
       if (proposed.action === "partition") {
-        const request = fromJson(
-          ApplyEpisodePartitionRequestSchema,
-          proposed.request as JsonValue,
-        );
+        const request = proposed.request;
         const result = await operation.mutate(request.operationId, () =>
           kernel.maintenance.applyEpisodePartition(request, options),
         );
@@ -155,10 +146,7 @@ export async function runModelMaintenance(
           ApplyEpisodePartitionResponseSchema,
         );
       } else if (proposed.action === "journal") {
-        const request = fromJson(
-          CommitJournalRequestSchema,
-          proposed.request as JsonValue,
-        );
+        const request = proposed.request;
         const result = await operation.mutate(request.operationId, () =>
           kernel.maintenance.commitJournal(request, options),
         );
@@ -171,15 +159,15 @@ export async function runModelMaintenance(
         const outcome = await executeConceptMaintenance(
           kernel,
           plan,
-          conceptMaintenanceSchema.parse(saved.proposal),
+          saved.proposal,
           operationId,
-          fromJson(ProducerSignatureSchema, saved.producer as JsonValue),
+          saved.producer,
           options,
           saved.progress,
           async (progress) => {
             saved.progress = [...progress];
             await operation.saveProposal(
-              saved,
+              z.encode(proposalSchema, saved),
               resultDependencies(saved.progress),
             );
           },
@@ -193,15 +181,15 @@ export async function runModelMaintenance(
         const outcome = await executeConsolidation(
           kernel,
           plan,
-          consolidationSchema.parse(saved.proposal),
+          saved.proposal,
           operationId,
-          fromJson(ProducerSignatureSchema, saved.producer as JsonValue),
+          saved.producer,
           options,
           saved.progress,
           async (progress) => {
             saved.progress = [...progress];
             await operation.saveProposal(
-              saved,
+              z.encode(proposalSchema, saved),
               resultDependencies(saved.progress),
             );
           },
@@ -217,7 +205,7 @@ export async function runModelMaintenance(
               operationId,
               subjectId: need.subjectId,
               journalId: proposed.journalId,
-              expectedObjectEpoch: BigInt(proposed.epoch),
+              expectedObjectEpoch: proposed.epoch,
             },
             options,
           ),

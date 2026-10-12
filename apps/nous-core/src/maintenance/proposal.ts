@@ -1,34 +1,26 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { conceptMaintenanceSchema } from "../model/schemas/concept-maintenance.js";
-
-import { consolidationSchema } from "../model/schemas/consolidation.js";
-
 import { Code, ConnectError } from "@connectrpc/connect";
 import { type ExecutionOptions } from "../execution.js";
-import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
+import { create, toJson } from "@bufbuild/protobuf";
 
 import {
   ApplyEpisodePartitionRequestSchema,
   CommitJournalRequestSchema,
+  MaintenancePlanSchema,
   type MaintenanceNeed,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
-import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 
 import { type ModelRuntime } from "../model/runtime.js";
-import { type ModelRoleSnapshot } from "../model/execution/snapshot.js";
 import { type ExecutionTelemetry } from "../model/execution/routes.js";
 import {
   partitionIndices,
   journalBasisKeys,
-  episodePartitionSchema,
-  journalSynthesisSchema,
 } from "../model/schemas/longitudinal.js";
 
 import { modelProducer } from "../model/producer.js";
 
-import { type MaintenancePlan } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import {
   type MaintenanceSnapshot,
   type MaintenanceProposal,
@@ -38,7 +30,6 @@ import {
 export async function buildMaintenanceProposal({
   models,
   need,
-  plan,
   snapshot,
   operationId,
   options,
@@ -47,13 +38,13 @@ export async function buildMaintenanceProposal({
 }: {
   models: ModelRuntime;
   need: MaintenanceNeed;
-  plan: MaintenancePlan;
   snapshot: MaintenanceSnapshot;
   operationId: string;
   options: ExecutionOptions;
   reserveModelCall: () => void;
   recordExecution: (value: ExecutionTelemetry) => Promise<void>;
 }): Promise<MaintenanceProposal> {
+  const { plan } = snapshot;
   let proposed: MaintenanceProposal;
   if (plan.status === "withdraw") {
     if (!plan.target)
@@ -64,21 +55,22 @@ export async function buildMaintenanceProposal({
     proposed = {
       action: "withdraw",
       journalId: plan.target.journalId,
-      epoch: plan.target.expectedEpoch.toString(),
+      epoch: plan.target.expectedEpoch,
     };
   } else {
+    const model = snapshot.model!;
     if (need.kind === "episode_resegment") {
       const result = await models.segmentEpisode(
-        JSON.stringify(snapshot.plan),
+        JSON.stringify(toJson(MaintenancePlanSchema, snapshot.plan)),
         options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
+        model,
         reserveModelCall,
       );
       await recordExecution(result.execution);
       let segments;
       try {
         segments = partitionIndices(
-          episodePartitionSchema.parse(result.value),
+          result.value,
           plan.members.map((member) => member.key),
         );
       } catch {
@@ -105,9 +97,7 @@ export async function buildMaintenanceProposal({
       proposed = segments
         ? {
             action: "partition",
-            request: toJson(ApplyEpisodePartitionRequestSchema, {
-              $typeName:
-                "nous.wave.kernel.v1alpha1.ApplyEpisodePartitionRequest",
+            request: create(ApplyEpisodePartitionRequestSchema, {
               operationId,
               subjectId: need.subjectId,
               expectedAuthoritySeq: plan.authoritySeq,
@@ -115,80 +105,61 @@ export async function buildMaintenanceProposal({
               orderedOccurrences: plan.members.map(
                 (member) => member.occurrenceId,
               ),
-              segments: segments.map((segment) => ({
-                $typeName:
-                  "nous.wave.kernel.v1alpha1.EpisodePartitionSegment" as const,
-                ...segment,
-              })),
+              segments,
+              producer: modelProducer(
+                result.producerMetadata,
+                "episode_segmentation_text",
+              ),
             }),
           }
         : { action: "no_change" };
-      if (proposed.action === "partition") {
-        const request = fromJson(
-          ApplyEpisodePartitionRequestSchema,
-          proposed.request as JsonValue,
-        );
-        request.producer = create(
-          ProducerSignatureSchema,
-          modelProducer(result.producerMetadata, "episode_segmentation_text"),
-        );
-        proposed.request = toJson(ApplyEpisodePartitionRequestSchema, request);
-      }
     } else if (need.kind === "concept_maintenance") {
       if (!plan.conceptCatalog || !plan.conceptModelInputJson)
         throw new ConnectError("Missing concept catalog", Code.InvalidArgument);
       const result = await models.maintainConcepts(
         plan.conceptModelInputJson,
         options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
+        model,
         reserveModelCall,
       );
       await recordExecution(result.execution);
-      const proposal = conceptMaintenanceSchema.parse(result.value);
       proposed = {
         action: "concept",
-        proposal,
-        producer: toJson(
-          ProducerSignatureSchema,
-          create(
-            ProducerSignatureSchema,
-            modelProducer(result.producerMetadata, "concept_maintenance_text"),
-          ),
+        proposal: result.value,
+        producer: modelProducer(
+          result.producerMetadata,
+          "concept_maintenance_text",
         ),
         progress: [],
       };
     } else if (need.kind === "memory_consolidate") {
       const result = await models.consolidate(
-        JSON.stringify(snapshot.plan),
+        JSON.stringify(toJson(MaintenancePlanSchema, snapshot.plan)),
         options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
+        model,
         reserveModelCall,
       );
       await recordExecution(result.execution);
       proposed = {
         action: "consolidation",
-        proposal: consolidationSchema.parse(result.value),
-        producer: toJson(
-          ProducerSignatureSchema,
-          create(
-            ProducerSignatureSchema,
-            modelProducer(result.producerMetadata, "memory_consolidation_text"),
-          ),
+        proposal: result.value,
+        producer: modelProducer(
+          result.producerMetadata,
+          "memory_consolidation_text",
         ),
         progress: [],
       };
     } else {
       const result = await models.synthesizeJournal(
-        JSON.stringify(snapshot.plan),
+        JSON.stringify(toJson(MaintenancePlanSchema, snapshot.plan)),
         options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
+        model,
         reserveModelCall,
       );
       await recordExecution(result.execution);
-      const proposal = journalSynthesisSchema.parse(result.value);
       try {
         journalBasisKeys(
-          proposal,
+          result.value,
           new Set(plan.basis.map((entry) => entry.key)),
         );
       } catch {
@@ -197,13 +168,14 @@ export async function buildMaintenanceProposal({
           Code.InvalidArgument,
         );
       }
-      if (proposal.action === "no_change" && plan.target)
+      if (result.value.action === "no_change" && plan.target)
         throw new ConnectError(
           "Journal revalidation requires a supported commit",
           Code.InvalidArgument,
         );
-      if (proposal.action === "no_change") proposed = { action: "no_change" };
-      else if (proposal.action === "withdraw") {
+      if (result.value.action === "no_change")
+        proposed = { action: "no_change" };
+      else if (result.value.action === "withdraw") {
         if (!plan.target)
           throw new ConnectError(
             "Journal withdrawal requires an existing scope",
@@ -212,7 +184,7 @@ export async function buildMaintenanceProposal({
         proposed = {
           action: "withdraw",
           journalId: plan.target.journalId,
-          epoch: plan.target.expectedEpoch.toString(),
+          epoch: plan.target.expectedEpoch,
         };
       } else {
         const basis = new Map(
@@ -220,17 +192,15 @@ export async function buildMaintenanceProposal({
         );
         proposed = {
           action: "journal",
-          request: toJson(CommitJournalRequestSchema, {
-            $typeName: "nous.wave.kernel.v1alpha1.CommitJournalRequest",
+          request: create(CommitJournalRequestSchema, {
             operationId,
             subjectId: need.subjectId,
             expectedAuthoritySeq: plan.authoritySeq,
             target: plan.target,
             sources: plan.sources,
-            title: proposal.title ?? undefined,
-            narrative: proposal.narrative,
-            points: proposal.points.map((point, ordinal) => ({
-              $typeName: "nous.wave.v1alpha1.JournalPoint" as const,
+            title: result.value.title ?? undefined,
+            narrative: result.value.narrative,
+            points: result.value.points.map((point, ordinal) => ({
               ordinal,
               role: point.role,
               text: point.text,

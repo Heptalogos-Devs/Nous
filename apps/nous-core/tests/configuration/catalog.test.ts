@@ -8,8 +8,9 @@ import {
   coreConfigurationValues,
 } from "../../src/configuration/catalog.js";
 import { modelConfigurationShape } from "../../src/model/configuration.js";
+import { parseEffectiveConfiguration } from "../../src/configuration/schema.js";
 
-it("freezes owner-normalized policies before the Kernel computes configuration identity", () => {
+it("treats omitted and explicit defaults as the same effective owner policy", () => {
   const omitted = configurationBundle({
     config_revision: CONFIG_REVISION,
     video: { max_frames: 4 },
@@ -18,8 +19,14 @@ it("freezes owner-normalized policies before the Kernel computes configuration i
     config_revision: CONFIG_REVISION,
     video: { ...modelConfigurationShape.video.parse(undefined), max_frames: 4 },
   });
-  expect(coreConfigurationValues(omitted.deployment_document)).toEqual(
-    coreConfigurationValues(explicit.deployment_document),
+  expect(
+    parseEffectiveConfiguration(
+      coreConfigurationValues(omitted.deployment_document),
+    ),
+  ).toEqual(
+    parseEffectiveConfiguration(
+      coreConfigurationValues(explicit.deployment_document),
+    ),
   );
   const paths = omitted.core_descriptors.map((descriptor) => descriptor.path);
   expect(paths).toContain("video.max_frames");

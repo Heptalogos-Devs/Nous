@@ -46,7 +46,7 @@ export type ReadyRole = {
   profileDigest: string;
   configDigest: string;
 };
-export const snapshotSchema = z.strictObject({
+const snapshotSchema = z.strictObject({
   format: z.literal("nous.model.execution"),
   implementationDigest: z.string().regex(/^[a-f0-9]{64}$/),
   outputSchemaDigest: z

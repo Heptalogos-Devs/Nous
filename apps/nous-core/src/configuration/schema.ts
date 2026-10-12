@@ -7,8 +7,9 @@ import { join, resolve } from "node:path";
 import { parse } from "smol-toml";
 import { parseEnv } from "node:util";
 import {
-  modelConfigurationSchema,
   modelExecutionSchema,
+  modelRuntimeSchema,
+  type ModelConfiguration,
 } from "../model/configuration.js";
 import type { RuntimeLocations } from "../locations.js";
 import {
@@ -98,13 +99,15 @@ export function parseEffectiveConfiguration(values: Record<string, unknown>) {
       );
     return parsed.data;
   };
-  const models = parseOwner("", modelConfigurationSchema, {
+  const models: ModelConfiguration = {
     ...parseOwner("models", modelExecutionSchema, values.models),
-    audio: coreConfigurationGroup(values, "audio"),
-    video: coreConfigurationGroup(values, "video"),
-    material_strategy: values["material.strategy"],
-    material_inputs: coreConfigurationGroup(values, "material.inputs"),
-  });
+    ...parseOwner("", modelRuntimeSchema, {
+      audio: coreConfigurationGroup(values, "audio"),
+      video: coreConfigurationGroup(values, "video"),
+      material_strategy: values["material.strategy"],
+      material_inputs: coreConfigurationGroup(values, "material.inputs"),
+    }),
+  };
   const consumers = parseOwner("consumers", consumersSchema, values.consumers);
   return {
     models,

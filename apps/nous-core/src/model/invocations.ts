@@ -3,7 +3,6 @@
 
 import {
   resolveRole,
-  snapshotSchema,
   type ReadyRole,
   type ModelRoleSnapshot,
   type ModelProducerMetadata,
@@ -30,7 +29,6 @@ import { roleNames, type ModelRole } from "./roles.js";
 import {
   type ModelConfiguration,
   type RolePolicy,
-  modelConfigurationSchema,
   modelRoleGraph,
 } from "./configuration.js";
 import { PromptRegistry, type PromptAsset } from "./prompts.js";
@@ -81,7 +79,6 @@ export class ModelInvocations {
     overridePromptRoot?: string,
   ) {
     const runtime = new ModelInvocations();
-    config = modelConfigurationSchema.parse(config);
     runtime.configuration = config;
     for (const gateway of Object.values(config.gateway_profiles))
       if (gateway.enabled)
@@ -156,7 +153,7 @@ export class ModelInvocations {
   snapshot(name: ModelRole): ModelRoleSnapshot {
     const role = this.require(name);
     const configuration = modelRoleGraph(this.configuration, name);
-    return snapshotSchema.parse({
+    return structuredClone({
       format: "nous.model.execution",
       implementationDigest: modelImplementations.provider,
       outputSchemaDigest: providerContractForRole(name)?.digest,

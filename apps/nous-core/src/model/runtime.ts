@@ -19,7 +19,7 @@ import { type ExecutionTelemetry } from "./execution/routes.js";
 import type { ModelGenerationOutput } from "./schemas/contracts.js";
 import { type ModelRole } from "./roles.js";
 import {
-  modelConfigurationSchema,
+  modelConfigurationShape,
   type ModelConfiguration,
 } from "./configuration.js";
 
@@ -36,12 +36,13 @@ export class ModelRuntime {
   constructor(
     readonly invocations = new ModelInvocations(),
     readonly materialStrategy: ModelConfiguration["material_strategy"] = "description_only",
-    readonly video = modelConfigurationSchema.parse({}).video,
+    readonly video = modelConfigurationShape.video.parse(undefined),
     readonly credentialEnvironments: readonly string[] = [],
-    readonly audio = modelConfigurationSchema.parse({}).audio,
+    readonly audio = modelConfigurationShape.audio.parse(undefined),
     readonly tempRoot?: string,
-    readonly materialInputs = modelConfigurationSchema.parse({})
-      .material_inputs,
+    readonly materialInputs = modelConfigurationShape.material_inputs.parse(
+      undefined,
+    ),
   ) {
     this.material = new MaterialInterpretation(invocations, video.prompt);
   }

@@ -5,8 +5,10 @@ use super::*;
 use chrono::{DateTime, Utc};
 use nous_core::{CognitiveRef, Result, TemporalExtent};
 use nous_memory::{CognitionDependency, EvidenceLocator, EvidenceRef, RevisionBasis};
+use nous_persistence::database_error as db;
 use prost_types::{Struct, Timestamp, Value, value::Kind};
 use serde::{Serialize, de::DeserializeOwned};
+use sqlx::Row;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
@@ -203,6 +205,30 @@ pub fn from_producer(p: p::ProducerSignature) -> Result<nous_core::ProducerSigna
         preprocessing_identity: p.preprocessing_identity,
         preprocessing_revision: p.preprocessing_revision,
         config_digest: p.config_digest,
+    })
+}
+pub fn producer_from_row(row: &sqlx::postgres::PgRow) -> Result<p::ProducerSignature> {
+    Ok(p::ProducerSignature {
+        signature_hash: row.try_get("signature_hash").map_err(db)?,
+        provider_class: row.try_get("provider_class").map_err(db)?,
+        operation: row
+            .try_get::<String, _>("operation")
+            .map_err(db)?
+            .replace('.', "_"),
+        implementation: row.try_get("implementation").map_err(db)?,
+        model_identity: row.try_get("model_identity").map_err(db)?,
+        model_revision: row.try_get("model_revision").map_err(db)?,
+        preprocessing_identity: row.try_get("preprocessing_identity").map_err(db)?,
+        preprocessing_revision: row.try_get("preprocessing_revision").map_err(db)?,
+        config_digest: row.try_get("config_digest").map_err(db)?,
+        output_schema_digest: row.try_get("output_schema_digest").map_err(db)?,
+        model_role: row.try_get("model_role").map_err(db)?,
+        model_profile: row.try_get("model_profile").map_err(db)?,
+        execution_profile: row.try_get("execution_profile").map_err(db)?,
+        inference_controls_digest: row.try_get("inference_controls_digest").map_err(db)?,
+        role_policy_digest: row.try_get("role_policy_digest").map_err(db)?,
+        prompt_id: row.try_get("prompt_id").map_err(db)?,
+        prompt_digest: row.try_get("prompt_digest").map_err(db)?,
     })
 }
 pub fn to_ref(value: CognitiveRef) -> p::CognitiveRef {

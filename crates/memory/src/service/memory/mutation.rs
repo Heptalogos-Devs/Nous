@@ -348,7 +348,7 @@ impl MemoryService {
         input: &ReviseMemoryInput,
         formed_at: DateTime<Utc>,
     ) -> Result<(MemoryRevisionId, i64)> {
-        let row = sqlx::query("SELECT current_revision_id,object_epoch,cognitive_role,purge_state FROM memory_objects WHERE subject_id=$1 AND memory_id=$2 FOR UPDATE")
+        let row = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.cognitive_role,o.purge_state,r.revision_no,ARRAY(SELECT entity_ref FROM memory_revision_aboutness a WHERE a.memory_revision_id=r.memory_revision_id) AS parent_aboutness FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.memory_id=$2 FOR UPDATE OF o")
             .bind(input.subject.0).bind(input.memory_id.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::NotFound("memory not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         fence_epoch(epoch, input.expected_object_epoch)?;
@@ -364,13 +364,7 @@ impl MemoryService {
         self.validate_basis_in_tx(tx, input.subject, &input.basis)
             .await?;
         let parent = MemoryRevisionId(row.try_get("current_revision_id").map_err(db)?);
-        let parent_aboutness = sqlx::query_scalar::<_, String>(
-            "SELECT entity_ref FROM memory_revision_aboutness WHERE memory_revision_id=$1",
-        )
-        .bind(parent.0)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(db)?;
+        let parent_aboutness: Vec<String> = row.try_get("parent_aboutness").map_err(db)?;
         if !parent_aboutness.is_empty()
             && !input.aboutness.iter().any(|entity| {
                 parent_aboutness
@@ -382,13 +376,7 @@ impl MemoryService {
                 "revision aboutness is disjoint from the existing cognitive matter; form a new Memory object".into(),
             ));
         }
-        let revision_no: i32 = sqlx::query_scalar(
-            "SELECT revision_no+1 FROM memory_revisions WHERE memory_revision_id=$1",
-        )
-        .bind(parent.0)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
+        let revision_no: i32 = row.try_get::<i32, _>("revision_no").map_err(db)? + 1;
         let revision_id = MemoryRevisionId::new();
         let role: CognitiveRole =
             parse_enum(row.try_get("cognitive_role").map_err(db)?, "cognitive role")?;

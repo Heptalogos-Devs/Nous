@@ -81,7 +81,6 @@ rpc_service! {
             ) -> std::result::Result<Response<p::ProducerSignature>, Status> {
                 let input = request.into_inner();
                 let result: nous_core::Result<_> = async {
-                    use sqlx::Row;
                     let subject = SubjectId(id(&input.subject_id)?);
                     let producer = id(&input.id)?;
                     let referenced = self.0.material.references_producer(subject, producer).await?
@@ -96,15 +95,7 @@ rpc_service! {
                         .bind(producer).fetch_optional(self.0.store.pool()).await
                         .map_err(nous_persistence::database_error)?
                         .ok_or_else(|| Error::NotFound("producer signature not found".into()))?;
-                    Ok(p::ProducerSignature {
-            model_role: r.try_get("model_role").map_err(nous_persistence::database_error)?,
-            model_profile: r.try_get("model_profile").map_err(nous_persistence::database_error)?,
-            execution_profile: r.try_get("execution_profile").map_err(nous_persistence::database_error)?,
-            inference_controls_digest: r.try_get("inference_controls_digest").map_err(nous_persistence::database_error)?,
-            role_policy_digest: r.try_get("role_policy_digest").map_err(nous_persistence::database_error)?,
-            prompt_id: r.try_get("prompt_id").map_err(nous_persistence::database_error)?,
-            prompt_digest: r.try_get("prompt_digest").map_err(nous_persistence::database_error)?,
- signature_hash: r.try_get("signature_hash").map_err(nous_persistence::database_error)?, provider_class: r.try_get("provider_class").map_err(nous_persistence::database_error)?, operation: r.try_get::<String,_>("operation").map_err(nous_persistence::database_error)?.replace('.',"_"), implementation: r.try_get("implementation").map_err(nous_persistence::database_error)?, model_identity: r.try_get("model_identity").map_err(nous_persistence::database_error)?, model_revision: r.try_get("model_revision").map_err(nous_persistence::database_error)?, output_schema_digest: r.try_get("output_schema_digest").map_err(nous_persistence::database_error)?, preprocessing_identity: r.try_get("preprocessing_identity").map_err(nous_persistence::database_error)?, preprocessing_revision: r.try_get("preprocessing_revision").map_err(nous_persistence::database_error)?, config_digest: r.try_get("config_digest").map_err(nous_persistence::database_error)? })
+                    producer_from_row(&r)
                 }.await;
                 result.map(Response::new).map_err(status)
             }

@@ -33,7 +33,7 @@ const modelExecutionShape = {
   roles: z.partialRecord(z.enum(roleNames), rolePolicySchema).default({}),
 };
 /** Resource references and protocol-dependent defaults form one atomic owning policy. */
-export const modelExecutionSchema = z
+const modelExecutionObjectSchema = z
   .strictObject(modelExecutionShape)
   .superRefine((graph, context) => {
     const issue = (path: (string | number)[], message: string) =>
@@ -144,8 +144,8 @@ export const modelExecutionSchema = z
         ];
       }),
     ),
-  }))
-  .prefault({});
+  }));
+export const modelExecutionSchema = modelExecutionObjectSchema.prefault({});
 export type ModelExecutionConfiguration = z.infer<typeof modelExecutionSchema>;
 
 export function modelRoleGraph(
@@ -162,14 +162,14 @@ export function modelRoleGraph(
   );
   const select = <T>(values: Record<string, T>, keys: Set<string>) =>
     Object.fromEntries([...keys].sort().map((key) => [key, values[key]!]));
-  return modelExecutionSchema.parse({
+  return {
     gateway_profiles: select(graph.gateway_profiles, gateways),
     model_profiles: select(graph.model_profiles, models),
     execution_profiles: select(graph.execution_profiles, executions),
     roles: policy ? { [name]: policy } : {},
-  });
+  };
 }
-export const modelConfigurationShape = {
+const modelRuntimeFields = {
   material_inputs: z
     .strictObject({
       formation_source_max_bytes: z
@@ -219,34 +219,15 @@ export const modelConfigurationShape = {
   material_strategy: z
     .enum(["description_only", "direct_structured", "describe_then_structure"])
     .default("description_only"),
+};
+export const modelRuntimeSchema = z.strictObject(modelRuntimeFields);
+export const modelConfigurationShape = {
+  ...modelRuntimeSchema.shape,
   ...modelExecutionShape,
 };
-const graphFrom = (
-  config: z.infer<
-    ReturnType<typeof z.strictObject<typeof modelConfigurationShape>>
-  >,
-) => ({
-  gateway_profiles: config.gateway_profiles,
-  model_profiles: config.model_profiles,
-  execution_profiles: config.execution_profiles,
-  roles: config.roles,
-});
-export const modelConfigurationSchema = z
-  .strictObject(modelConfigurationShape)
-  .superRefine((config, context) => {
-    const graph = modelExecutionSchema.safeParse(graphFrom(config));
-    if (!graph.success)
-      for (const issue of graph.error.issues)
-        context.addIssue({
-          code: "custom",
-          path: issue.path,
-          message: issue.message,
-        });
-  })
-  .overwrite((config) => {
-    const graph = modelExecutionSchema.safeParse(graphFrom(config));
-    return graph.success ? { ...config, ...graph.data } : config;
-  });
+export const modelConfigurationSchema = modelExecutionObjectSchema.safeExtend(
+  modelRuntimeSchema.shape,
+);
 
 /** Cross-profile graph readiness is an owner diagnostic, not a second Catalog validator. */
 export function modelRoleProblem(

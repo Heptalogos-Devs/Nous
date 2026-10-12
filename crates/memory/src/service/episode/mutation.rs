@@ -248,7 +248,7 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let row = sqlx::query("SELECT track_key,current_revision_id,object_epoch,purge_state FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE")
+        let row = sqlx::query("SELECT o.track_key,o.current_revision_id,o.object_epoch,o.purge_state,r.revision_no FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.episode_id=$2 FOR UPDATE OF o")
             .bind(input.subject.0).bind(input.episode_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
             .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
@@ -274,13 +274,7 @@ impl MemoryService {
             ensure_no_parent_cycle(mutation.tx(), input.episode_id.0, parent.0).await?;
         }
         let current: Uuid = row.try_get("current_revision_id").map_err(db)?;
-        let revision_no: i32 = sqlx::query_scalar(
-            "SELECT revision_no+1 FROM episode_revisions WHERE episode_revision_id=$1",
-        )
-        .bind(current)
-        .fetch_one(&mut **mutation.tx())
-        .await
-        .map_err(db)?;
+        let revision_no: i32 = row.try_get::<i32, _>("revision_no").map_err(db)? + 1;
         let revision_id = EpisodeRevisionId::new();
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
