@@ -5,10 +5,9 @@ mod test_support;
 
 use chrono::Utc;
 use nous_core::{
-    CognitiveQuery, CognitiveQueryExpr, CognitiveRef, Cue, EntityRef, EpistemicClass, OperationId,
-    QueryOperation, QueryTarget, ResultNeed, TemporalExtent, TextCue, UseEventId,
+    CognitiveQuery, CognitiveQueryExpr, CognitiveRef, Cue, EntityRef, OperationId, QueryOperation,
+    QueryTarget, ResultNeed, TextCue, UseEventId,
 };
-use nous_memory::{BasisRole, EvidenceLocator, EvidenceRef, FormationMode, RevisionBasis};
 use nous_runtime::{QueryPlan, UseFeedback, UseFeedbackEvent, UseKind};
 use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::query::{query, subject};
@@ -85,26 +84,22 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
         .unwrap();
     let ticket = ticket.expect("validated query snapshot should be retained");
     let first = &cohort[0];
+    let mut revision_content = form_input(
+        subject,
+        source.occurrence.occurrence_id,
+        OperationId::new(),
+        "replacement candidate",
+    );
+    revision_content.basis = first.basis.clone();
+    revision_content.aboutness = first.aboutness.clone();
     runtime
         .require_memory()
         .unwrap()
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
-            operation_id: OperationId::new(),
-            subject,
+            content: revision_content,
             memory_id: first.object.memory_id,
             expected_object_epoch: first.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "replacement candidate".into(),
-            title: None,
-            basis: first.basis.clone(),
-            aboutness: first.aboutness.clone(),
-            valid_time: TemporalExtent::Unknown,
-
-            epistemic_class: EpistemicClass::Observed,
         })
         .await
         .unwrap();
@@ -316,27 +311,15 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
     let bound = runtime.cognition.bind_query(request).await.expect("bind");
     let plan = QueryPlan::for_bound_query(&bound);
     let revision = nous_memory::ReviseMemoryInput {
-        producer: None,
-        operation_id: OperationId::new(),
-        subject,
+        content: form_input(
+            subject,
+            observation.occurrence.occurrence_id,
+            OperationId::new(),
+            "new fenced fact",
+        ),
         memory_id: memory.object.memory_id,
         expected_object_epoch: memory.object.object_epoch,
         intent: nous_memory::RevisionIntent::Correct,
-        formation_mode: FormationMode::Grounded,
-        grounding_occurrence_id: Some(observation.occurrence.occurrence_id),
-        semantic_role: "fact".into(),
-        representation_text: "new fenced fact".into(),
-        title: None,
-        basis: vec![RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: None,
-            occurrence_id: observation.occurrence.occurrence_id,
-            locator: EvidenceLocator::WholeOccurrence,
-            basis_role: BasisRole::Direct,
-        })],
-        aboutness: Vec::new(),
-        valid_time: Default::default(),
-
-        epistemic_class: EpistemicClass::Observed,
     };
     let _current = runtime
         .require_memory()

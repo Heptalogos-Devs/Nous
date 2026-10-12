@@ -170,6 +170,8 @@ export async function createEnvironment(
     try {
       result = await invoke(receipt.request);
     } catch (error) {
+      if (error instanceof NousError && error.recovery === "RETRY_OPERATION")
+        throw Object.assign(error, { receipt: id });
       if (
         (error instanceof NousError &&
           [3, 5, 6, 7, 8, 9, 10, 11, 12, 16].includes(error.code)) ||

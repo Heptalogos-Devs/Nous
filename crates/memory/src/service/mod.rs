@@ -122,23 +122,10 @@ pub struct MemoryView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviseMemoryInput {
-    #[serde(default)]
-    pub producer: Option<ProducerSignature>,
-    pub operation_id: OperationId,
-    pub subject: SubjectId,
+    pub content: ExplicitMemoryInput,
     pub memory_id: MemoryId,
     pub expected_object_epoch: i64,
     pub intent: RevisionIntent,
-    pub formation_mode: FormationMode,
-    pub grounding_occurrence_id: Option<OccurrenceId>,
-    pub semantic_role: String,
-    pub representation_text: String,
-    pub title: Option<String>,
-    pub basis: Vec<RevisionBasis>,
-    pub aboutness: Vec<EntityRef>,
-    pub valid_time: TemporalExtent,
-
-    pub epistemic_class: EpistemicClass,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

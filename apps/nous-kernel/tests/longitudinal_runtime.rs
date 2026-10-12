@@ -324,24 +324,16 @@ async fn assert_owner_timestamp_replay(
     assert_eq!(memory.revision.formed_at, at);
     assert_eq!(memory.revision.recorded_at, at);
     clock.advance_by(subject, Duration::days(1)).unwrap();
+    let mut revision_content = input.clone();
+    revision_content.operation_id = nous_core::OperationId::new();
+    revision_content.representation_text = "corrected owner-timed memory".into();
     rt.require_memory()
         .unwrap()
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
-            operation_id: nous_core::OperationId::new(),
-            subject,
+            content: revision_content,
             memory_id: memory.object.memory_id,
             expected_object_epoch: memory.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: input.formation_mode,
-            grounding_occurrence_id: input.grounding_occurrence_id,
-            semantic_role: input.semantic_role.clone(),
-            representation_text: "corrected owner-timed memory".into(),
-            title: None,
-            basis: input.basis.clone(),
-            aboutness: vec![],
-            valid_time: TemporalExtent::Unknown,
-            epistemic_class: input.epistemic_class,
         })
         .await
         .unwrap();

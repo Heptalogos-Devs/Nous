@@ -21,7 +21,7 @@ Memory (crates/memory) owns Memory/CognitiveSchema/Episode/Journal/Tag/Associati
 ## Memory object/revision
 
 - Memory object 有稳定 identity；revision 内容 immutable；head、object epoch、lifecycle 和主体 authority sequence 分离。
-- Public Memory current/exact/history 输出保留 revision 的 epistemic_class 与可选 grounding_occurrence_id，使完整来源支持修订无需猜测或丢失认识类别。类别为 observed/reported/derived/inferred/narrative/simulated，独立于 cognitive role 与 formation mode。
+- Public Memory current/exact/history 共用完整 Memory view，保留 exact revision 的 basis、aboutness、tags、epistemic_class 与可选 grounding_occurrence_id；对象 lifecycle/epoch 使用当前管理状态。类别为 observed/reported/derived/inferred/narrative/simulated，独立于 cognitive role 与 formation mode。
 - Cognitive role 与 formation mode 正交。当前 role 至少包括 `experiential`、`declarative`、`procedural_experience`；formation mode 至少包括 `grounded`、`synthesized`。
 - 同一 referent、claim family、scope 和 world-valid interval 的纠正、澄清、收窄或重新解释创建新 revision；后续新 world state、独立事件或不同有效时间形成新 object/successor。
 - Revision 提交必须检查 expected head/epoch、权限、source/provenance、lifecycle 和幂等 operation identity。head 变化不得静默覆盖。
@@ -69,4 +69,4 @@ CLI/MCP 的默认操作地址由同一个 Authority Directory 提供。Subject�
 
 Tag 是共享 embeddable semantic concept，稳定 identity 与 immutable semantic revisions 分离。Current reads 使用 current canonical Tag；as-of reads 使用截点状态，未来 revise/merge/split 不改写历史意义。normalized label/description/kind_hint 产生 versioned canonical text/digest，别名不进入 semantic representation。
 
-显式 formation Tag 在 Memory commit transaction 中校验 Subject、canonicalize active/merged identity 并去重；不依赖 concept-maintenance model。客户端使用 Concept API (`client.concepts`)。Query inferred Tags/novel hypotheses 是 ephemeral activation，创建、修订、merge、split 与 attachment/Association mutations 仍由 canonical owner API 提交；维护模型活动必须由 Host 有界 grant。
+显式 formation Tag 在 Memory 创建和修订的 commit transaction 中校验 Subject、canonicalize active/merged identity 并去重；不依赖 concept-maintenance model。客户端使用 Concept API (`client.concepts`)。Query inferred Tags/novel hypotheses 是 ephemeral activation，创建、修订、merge、split 与 attachment/Association mutations 仍由 canonical owner API 提交；维护模型活动必须由 Host 有界 grant。

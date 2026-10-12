@@ -11,12 +11,16 @@ use historical_authority::{
     query::check_historical_binding,
 };
 use nous_core::*;
+use nous_kernel::transport::KernelService;
 use nous_memory::{AssociationBasis, AssociationBasisClass, AssociationPolarity};
 use nous_memory::{CreateTagRequest, ReviseTagInput, TagContent, TagExpectation};
+use nous_protocol::nous::wave::v1alpha1 as p;
 use nous_runtime::{CognitiveRuntimeService, ManualCognitiveClock};
 use nous_subject::{CognitiveSeedInput, CreateSubject};
+use p::memory_service_server::MemoryService as MemoryServiceRpc;
 use std::sync::Arc;
 use test_support::*;
+use tonic::Request;
 #[tokio::test]
 #[expect(
     clippy::too_many_lines,
@@ -108,23 +112,19 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     clock
         .advance_by(subject, chrono::Duration::seconds(10))
         .unwrap();
+    let mut revision_content = form_input(
+        subject,
+        source.occurrence.occurrence_id,
+        OperationId::new(),
+        "rephrased authority fact",
+    );
+    revision_content.basis = basis.clone();
     let revised = owner
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
-            operation_id: OperationId::new(),
-            subject,
+            content: revision_content,
             memory_id: memory.object.memory_id,
             expected_object_epoch: memory.object.object_epoch,
             intent: nous_memory::RevisionIntent::Rephrase,
-            formation_mode: nous_memory::FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "rephrased authority fact".into(),
-            title: None,
-            basis: basis.clone(),
-            aboutness: vec![],
-            valid_time: TemporalExtent::Unknown,
-            epistemic_class: EpistemicClass::Observed,
         })
         .await
         .unwrap();
@@ -228,7 +228,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     clock
         .advance_to(subject, start + chrono::Duration::seconds(20))
         .unwrap();
-    owner
+    let suppressed = owner
         .suppress(
             subject,
             memory.object.memory_id,
@@ -237,6 +237,46 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         )
         .await
         .unwrap();
+    let service = KernelService(rt.clone());
+    let history = MemoryServiceRpc::list_memory_revisions(
+        &service,
+        Request::new(p::MemoryHistoryRequest {
+            subject_id: subject.0.to_string(),
+            memory_id: memory.object.memory_id.0.to_string(),
+            page: None,
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .items;
+    assert_eq!(
+        history
+            .iter()
+            .map(|item| item.revision_no)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(history[0].tags, vec![tag.tag_id.0.to_string()]);
+    assert_eq!(history[0].basis.len(), 1);
+    for (item, revision_id) in history.iter().zip([
+        memory.revision.memory_revision_id.0.to_string(),
+        revised.revision.memory_revision_id.0.to_string(),
+    ]) {
+        assert_eq!(item.object_epoch, suppressed.object.object_epoch);
+        assert_eq!(item.suppression_state, "suppressed");
+        let exact = MemoryServiceRpc::get_memory_revision(
+            &service,
+            Request::new(p::ObjectRequest {
+                subject_id: subject.0.to_string(),
+                id: revision_id,
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        assert_eq!(item, &exact);
+    }
     assert_eq!(
         owner
             .project_as_of(subject, before, RevisionView::Current)

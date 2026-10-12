@@ -4,12 +4,10 @@
 mod test_support;
 
 use chrono::Utc;
-use nous_core::{
-    CognitiveRef, EntityRef, EpistemicClass, OperationId, QueryTarget, TemporalExtent, UseEventId,
-};
+use nous_core::{CognitiveRef, EntityRef, OperationId, QueryTarget, UseEventId};
 use nous_memory::{
     AssociationBasis, AssociationBasisClass, AssociationPolarity, BasisRole, CreateSchemaInput,
-    EvidenceLocator, EvidenceRef, FormationMode, RevisionBasis, SchemaEvidenceLinkInput,
+    EvidenceLocator, EvidenceRef, ReviseMemoryInput, RevisionBasis, SchemaEvidenceLinkInput,
     SchemaEvidenceRole, SchemaFormationKind, SchemaScope, UseEventRef,
 };
 use nous_runtime::{UseFeedback, UseFeedbackEvent, UseKind};
@@ -33,31 +31,25 @@ async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
         .await
         .unwrap();
     let sequence = runtime.store.authority_seq(subject).await.unwrap();
+    let mut content = form_input(
+        subject,
+        source.occurrence.occurrence_id,
+        OperationId::new(),
+        "A revised source fact",
+    );
+    content.basis = vec![RevisionBasis::CognitionDependency(
+        nous_core::CognitionDependency {
+            epistemic_relation: None,
+            target_revision: CognitiveRef::MemoryRevision(original.revision.memory_revision_id),
+            basis_role: BasisRole::Direct,
+        },
+    )];
     let result = owner
-        .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
-            operation_id: OperationId::new(),
-            subject,
+        .revise_memory(ReviseMemoryInput {
+            content,
             memory_id: original.object.memory_id,
             expected_object_epoch: original.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "A revised source fact".into(),
-            title: None,
-            basis: vec![RevisionBasis::CognitionDependency(
-                nous_core::CognitionDependency {
-                    epistemic_relation: None,
-                    target_revision: CognitiveRef::MemoryRevision(
-                        original.revision.memory_revision_id,
-                    ),
-                    basis_role: BasisRole::Direct,
-                },
-            )],
-            aboutness: vec![],
-            valid_time: TemporalExtent::Unknown,
-            epistemic_class: EpistemicClass::Observed,
         })
         .await;
     assert!(
@@ -324,22 +316,10 @@ async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
         .require_memory()
         .unwrap()
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
-            operation_id: revision.operation_id,
-            subject,
+            content: revision,
             memory_id: memory.object.memory_id,
             expected_object_epoch: memory.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: revision.formation_mode,
-            grounding_occurrence_id: revision.grounding_occurrence_id,
-            semantic_role: revision.semantic_role,
-            representation_text: revision.representation_text,
-            title: revision.title,
-            basis: revision.basis,
-            aboutness: revision.aboutness,
-            valid_time: revision.valid_time,
-
-            epistemic_class: revision.epistemic_class,
         })
         .await;
     assert!(matches!(

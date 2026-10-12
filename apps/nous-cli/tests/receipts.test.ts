@@ -21,15 +21,19 @@ import {
 import { cliState } from "../src/state.js";
 import { cliErrorPayload } from "../src/agent.js";
 
-it("preserves an owner rejection and recovery when reading a terminal receipt", async () => {
+it.each([
+  [DomainErrorCode.OPERATION_ID_CONFLICT, ErrorRecovery.NEW_OPERATION],
+  [DomainErrorCode.OPERATION_IN_PROGRESS, ErrorRecovery.RETRY_OPERATION],
+  [DomainErrorCode.LEASE_LOST, ErrorRecovery.RETRY_OPERATION],
+])("preserves owner recovery for domain code %s", async (code, recovery) => {
   const root = await mkdtemp(
     join(workspacePaths.temporary, "typed-rejection-"),
   );
   const operationId = crypto.randomUUID();
   const refusal = new NousError(
     domainError("Different input reused an operation identity", 10, {
-      code: DomainErrorCode.OPERATION_ID_CONFLICT,
-      recovery: ErrorRecovery.NEW_OPERATION,
+      code,
+      recovery,
       context: { operation_id: operationId },
     }),
   );
@@ -58,24 +62,19 @@ it("preserves an owner rejection and recovery when reading a terminal receipt", 
     expect(
       await cliState(root, identity, policy).receipt(receiptId),
     ).toMatchObject({
-      status: "rejected",
-      rejection: {
-        code: 10,
-        domainCode: "OPERATION_ID_CONFLICT",
-        recovery: "NEW_OPERATION",
-        context: { operation_id: operationId },
-      },
+      status:
+        recovery === ErrorRecovery.RETRY_OPERATION ? "pending" : "rejected",
     });
     const recovered: unknown = await env
       .retry(receiptId)
       .catch((error: unknown) => error);
     expect(cliErrorPayload(recovered)).toMatchObject({
-      code: "OPERATION_ID_CONFLICT",
-      recovery: "NEW_OPERATION",
+      code: DomainErrorCode[code],
+      recovery: ErrorRecovery[recovery],
       context: { operation_id: operationId },
       details: refusal.details,
     });
-    expect(calls).toBe(1);
+    expect(calls).toBe(recovery === ErrorRecovery.RETRY_OPERATION ? 2 : 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

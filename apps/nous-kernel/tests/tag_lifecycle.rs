@@ -11,6 +11,7 @@ use nous_memory::{
 use nous_protocol::nous::wave::v1alpha1 as p;
 use nous_subject::{CognitiveSeedInput, CreateSubject};
 use p::concept_service_server::ConceptService;
+use p::memory_service_server::MemoryService as MemoryServiceRpc;
 use test_support::*;
 use tonic::Request;
 
@@ -231,6 +232,65 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             .revision
             .memory_revision_id,
         formed.revision.memory_revision_id
+    );
+    let operation_id = OperationId::new();
+    let revise = p::ReviseMemoryRequest {
+        operation_id: operation_id.0.to_string(),
+        subject_id: subject.0.to_string(),
+        memory_id: formed.object.memory_id.0.to_string(),
+        expected_object_epoch: formed.object.object_epoch,
+        input: Some(p::MemoryContent {
+            producer: None,
+            cognitive_role: "experiential".into(),
+            formation_mode: "grounded".into(),
+            grounding_occurrence_id: Some(occurrence.occurrence.occurrence_id.0.to_string()),
+            semantic_role: "fact".into(),
+            text: "Revised explicit concept formation".into(),
+            title: None,
+            basis: vec![p::RevisionBasis {
+                basis: Some(p::revision_basis::Basis::Evidence(p::EvidenceRef {
+                    occurrence_id: occurrence.occurrence.occurrence_id.0.to_string(),
+                    basis_role: "direct".into(),
+                    epistemic_relation: None,
+                    locator: Some(p::evidence_ref::Locator::WholeOccurrence(true)),
+                })),
+            }],
+            aboutness: Vec::new(),
+            tags: vec![tags[1].tag_id.0.to_string(), tags[0].tag_id.0.to_string()],
+            valid_time: Some(p::TemporalExtent { value: None }),
+            epistemic_class: "observed".into(),
+        }),
+        intent: "rephrase".into(),
+    };
+    let service = KernelService(rt.clone());
+    let revised = MemoryServiceRpc::revise_memory(&service, Request::new(revise.clone()))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(revised.tags, vec![tags[0].tag_id.0.to_string()]);
+    assert_eq!(revised.cognitive_role, "declarative");
+    let mut replay = revise.clone();
+    replay.input.as_mut().unwrap().tags = vec![
+        tags[0].tag_id.0.to_string(),
+        tags[1].tag_id.0.to_string(),
+        tags[1].tag_id.0.to_string(),
+    ];
+    assert_eq!(
+        MemoryServiceRpc::revise_memory(&service, Request::new(replay))
+            .await
+            .unwrap()
+            .into_inner()
+            .revision_id,
+        revised.revision_id
+    );
+    let mut different_tags = revise;
+    different_tags.input.as_mut().unwrap().tags.clear();
+    assert_eq!(
+        MemoryServiceRpc::revise_memory(&service, Request::new(different_tags))
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::Aborted
     );
     let mut invalid = form_input(
         subject,

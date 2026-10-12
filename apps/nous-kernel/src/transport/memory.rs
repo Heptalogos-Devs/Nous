@@ -182,10 +182,7 @@ impl KernelService {
             .memory_history(subject, memory)
             .await?;
         Ok(p::ListMemoriesResponse {
-            items: history
-                .into_iter()
-                .map(|revision| view_from_revision(subject, memory, revision))
-                .collect(),
+            items: history.into_iter().map(view).collect(),
             next_page_token: String::new(),
         })
     }
@@ -210,9 +207,7 @@ impl KernelService {
         Ok(view(
             self.require_memory()?
                 .revise_memory(ReviseMemoryInput {
-                    producer: parsed.producer,
-                    operation_id,
-                    subject,
+                    content: parsed,
                     memory_id: nous_core::MemoryId(id(&input.memory_id)?),
                     expected_object_epoch: input.expected_object_epoch,
                     intent: enum_value(&input.intent).map_err(|_| {
@@ -221,16 +216,6 @@ impl KernelService {
                                 .into(),
                         )
                     })?,
-                    formation_mode: parsed.formation_mode,
-                    grounding_occurrence_id: parsed.grounding_occurrence_id,
-                    semantic_role: parsed.semantic_role,
-                    representation_text: parsed.representation_text,
-                    title: parsed.title,
-                    basis: parsed.basis,
-                    aboutness: parsed.aboutness,
-                    valid_time: parsed.valid_time,
-
-                    epistemic_class: parsed.epistemic_class,
                 })
                 .await?,
         ))
@@ -308,44 +293,5 @@ impl KernelService {
                 input.expected_object_epoch,
             )
             .await
-    }
-}
-
-fn view_from_revision(
-    subject: SubjectId,
-    memory: nous_core::MemoryId,
-    revision: nous_memory::MemoryRevision,
-) -> p::Memory {
-    p::Memory {
-        producer_signature_id: revision.producer_signature_id.map(|id| id.to_string()),
-        memory_id: memory.0.to_string(),
-        revision_id: revision.memory_revision_id.0.to_string(),
-        subject_id: subject.0.to_string(),
-        cognitive_role: String::new(),
-        object_epoch: 0,
-        acceptance_state: String::new(),
-        integrity_state: String::new(),
-        suppression_state: String::new(),
-        purge_state: String::new(),
-        accessibility_mode: String::new(),
-        accessibility_level: String::new(),
-        semantic_role: revision.semantic_role,
-        epistemic_class: enum_name(revision.epistemic_class),
-        grounding_occurrence_id: revision.grounding_occurrence_id.map(|id| id.0.to_string()),
-        text: revision.representation_text,
-        title: revision.title,
-        basis: Vec::new(),
-        aboutness: Vec::new(),
-        tags: Vec::new(),
-        created_at: None,
-        temporal_evidence: None,
-        valid_time: Some(temporal_proto(&revision.valid_time)),
-        formed_at: Some(timestamp(revision.formed_at)),
-        recorded_at: Some(timestamp(revision.recorded_at)),
-        formation_mode: enum_name(revision.formation_mode),
-        revision_no: revision.revision_no,
-        relations: Vec::new(),
-        relations_truncated: false,
-        revision_intent: revision.revision_intent.map(enum_name),
     }
 }

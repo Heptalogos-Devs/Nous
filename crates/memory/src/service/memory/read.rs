@@ -140,16 +140,21 @@ impl MemoryService {
         &self,
         subject: SubjectId,
         memory_id: MemoryId,
-    ) -> Result<Vec<MemoryRevision>> {
-        self.memory(subject, memory_id, None).await?;
+    ) -> Result<Vec<MemoryView>> {
+        if !self
+            .store
+            .reference_in_subject(subject, &CognitiveRef::Memory(memory_id))
+            .await?
+        {
+            return Err(Error::NotFound("memory not found".into()));
+        }
         let ids = sqlx::query_scalar::<_, Uuid>("SELECT memory_revision_id FROM memory_revisions WHERE subject_id=$1 AND memory_id=$2 ORDER BY revision_no")
             .bind(subject.0).bind(memory_id.0).fetch_all(self.store.pool()).await.map_err(db)?;
         let mut result = Vec::new();
         for id in ids {
             result.push(
                 self.memory(subject, memory_id, Some(MemoryRevisionId(id)))
-                    .await?
-                    .revision,
+                    .await?,
             );
         }
         Ok(result)
