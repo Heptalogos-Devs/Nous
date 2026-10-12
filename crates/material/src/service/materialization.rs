@@ -58,7 +58,36 @@ struct Payload {
     selection: Option<serde_json::Value>,
 }
 
+/// Request-scoped resolved metadata. Payload bytes are read only when consumed.
+pub struct MaterialReadInput {
+    reference: CognitiveRef,
+    payload: Payload,
+    view_digest: Option<String>,
+}
+
 impl MaterialService {
+    /// Material owns its evidence and interpretation meaning in working context.
+    pub async fn context_source(
+        &self,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+        max_bytes: usize,
+    ) -> Result<nous_runtime::ContextSource> {
+        let material = self
+            .materialize(
+                subject,
+                MaterializeRequest {
+                    reference: reference.clone(),
+                    byte_range: None,
+                    max_bytes: (max_bytes.max(1) as u64).min(self.max_upload_bytes),
+                    resource_handle: None,
+                    resource: None,
+                },
+            )
+            .await?;
+        material_context(material, max_bytes)
+    }
+
     pub async fn materialize(
         &self,
         subject: SubjectId,
@@ -73,16 +102,19 @@ impl MaterialService {
         request: MaterializeRequest,
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<MaterializedEvidence> {
-        self.require_lineage_view(subject, &request.reference, view)?;
         if request.max_bytes == 0 || request.max_bytes > self.max_upload_bytes {
             return Err(Error::Invalid(
                 "materialization byte bound is invalid".into(),
             ));
         }
-        self.store
-            .validate_reference(subject, &request.reference)
-            .await?;
-        let payload = self.payload(subject, &request.reference).await?;
+        let input = self
+            .read_inputs(subject, std::slice::from_ref(&request.reference), view)
+            .await?
+            .remove(&request.reference)
+            .ok_or_else(|| {
+                Error::Unavailable("material has no locally available payload".into())
+            })?;
+        let payload = input.payload;
         self.materialize_payload(request, payload).await
     }
 
@@ -181,13 +213,202 @@ impl MaterialService {
         if max_bytes == 0 || max_bytes > self.max_upload_bytes {
             return Err(Error::Invalid("text projection bound is invalid".into()));
         }
-        self.require_lineage_view(subject, reference, view)?;
-        self.store.validate_reference(subject, reference).await?;
-        let payload = match self.payload(subject, reference).await {
-            Ok(payload) => payload,
-            Err(Error::Unavailable(_)) => return Ok(None),
-            Err(error) => return Err(error),
-        };
+        Ok(self
+            .text_excerpts(subject, std::slice::from_ref(reference), max_bytes, view)
+            .await?
+            .remove(reference))
+    }
+
+    /// Exact selected text, with one metadata read per bounded batch. Object reads remain bounded.
+    pub async fn text_excerpts(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        max_bytes: u64,
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<std::collections::HashMap<CognitiveRef, MaterialTextView>> {
+        if max_bytes == 0 || max_bytes > self.max_upload_bytes {
+            return Err(Error::Invalid("text projection bound is invalid".into()));
+        }
+        let inputs = self.read_inputs(subject, references, view).await?;
+        let mut result = std::collections::HashMap::new();
+        for (reference, input) in inputs {
+            if let Some(text) = self.read_text_input(input, max_bytes).await? {
+                result.insert(reference, text);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Resolve exact Material payload, producer and provenance metadata without reading object bytes.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one bounded metadata query resolves the five Material reference shapes"
+    )]
+    pub async fn read_inputs(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<std::collections::HashMap<CognitiveRef, MaterialReadInput>> {
+        if references.len() > 256 {
+            return Err(Error::Invalid(
+                "Material text lookup supports at most 256 references".into(),
+            ));
+        }
+        if references.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        self.store.require_subject(subject).await?;
+        let mut resolved = Vec::new();
+        let mut kinds = Vec::new();
+        let mut ids = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for reference in references {
+            if !seen.insert(reference) {
+                continue;
+            }
+            self.require_lineage_view(subject, reference, view)?;
+            let (kind, id) = match reference {
+                CognitiveRef::Occurrence(id) => ("occurrence", id.0),
+                CognitiveRef::Artifact(id) => ("artifact", id.0),
+                CognitiveRef::SourceRegion(id) => ("source_region", id.0),
+                CognitiveRef::DerivedRepresentation(id) => ("derived_representation", id.0),
+                CognitiveRef::DerivedRegion(id) => ("derived_region", id.0),
+                _ => {
+                    self.store.validate_reference(subject, reference).await?;
+                    continue;
+                }
+            };
+            resolved.push(reference);
+            kinds.push(kind);
+            ids.push(id);
+        }
+        if resolved.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows = sqlx::query(r#"
+WITH requested AS (SELECT kind,id,ordinality FROM unnest($2::text[],$3::uuid[]) WITH ORDINALITY AS r(kind,id,ordinality)),
+resolved AS (
+ SELECT r.*,o.occurrence_id IS NOT NULL OR a.artifact_id IS NOT NULL OR sr.source_region_id IS NOT NULL OR d.derived_representation_id IS NOT NULL OR dr.derived_region_id IS NOT NULL AS present,
+ coalesce(o.artifact_id,a.artifact_id,sr.artifact_id) AS artifact_id,
+ coalesce(d.derived_representation_id,dr.derived_representation_id) AS derived_id,
+ coalesce(sr.coordinate_kind,dr.coordinate_kind) AS coordinate_kind,coalesce(sr.coordinate,dr.coordinate) AS coordinate
+ FROM requested r
+ LEFT JOIN observation_occurrences o ON r.kind='occurrence' AND o.subject_id=$1 AND o.occurrence_id=r.id
+ LEFT JOIN artifacts a ON r.kind='artifact' AND a.subject_id=$1 AND a.artifact_id=r.id
+ LEFT JOIN source_regions sr ON r.kind='source_region' AND sr.subject_id=$1 AND sr.source_region_id=r.id
+ LEFT JOIN derived_representations d ON r.kind='derived_representation' AND d.subject_id=$1 AND d.derived_representation_id=r.id
+ LEFT JOIN derived_regions dr ON r.kind='derived_region' AND dr.subject_id=$1 AND dr.derived_region_id=r.id
+)
+SELECT r.ordinality,r.present,r.artifact_id,r.derived_id,r.coordinate_kind,r.coordinate,d.payload_text,
+ a.artifact_id AS payload_artifact_id,to_jsonb(p) AS producer,
+ a.content_hash,a.media_type,a.byte_length,
+ ARRAY(SELECT source_region_id FROM representation_source_regions($1,r.derived_id)) AS source_roots
+FROM resolved r
+LEFT JOIN derived_representations d ON d.subject_id=$1 AND d.derived_representation_id=r.derived_id
+LEFT JOIN artifacts a ON a.subject_id=$1 AND a.artifact_id=coalesce(r.artifact_id,d.payload_artifact_id)
+LEFT JOIN producer_signatures p ON p.producer_signature_id=d.producer_signature_id
+"#).bind(subject.0).bind(kinds).bind(ids).fetch_all(self.store.pool()).await.map_err(db)?;
+        let mut result = std::collections::HashMap::new();
+        for row in rows {
+            let index: i64 = row.try_get("ordinality").map_err(db)?;
+            let reference = resolved[index as usize - 1];
+            if !row.try_get::<bool, _>("present").map_err(db)? {
+                return Err(Error::NotFound("cognitive reference not found".into()));
+            }
+            let derived: Option<Uuid> = row.try_get("derived_id").map_err(db)?;
+            let roots: Vec<Uuid> = row.try_get("source_roots").map_err(db)?;
+            if derived.is_some() && roots.is_empty() {
+                return Err(Error::Invalid(
+                    "derived representation has no source roots".into(),
+                ));
+            }
+            let text: Option<String> = row.try_get("payload_text").map_err(db)?;
+            let hash: Option<String> = row.try_get("content_hash").map_err(db)?;
+            if text.is_none() && hash.is_none() {
+                continue;
+            }
+            let (media_type, length) = if let Some(text) = &text {
+                ("text/plain; charset=utf-8".to_owned(), text.len() as u64)
+            } else {
+                (
+                    row.try_get::<String, _>("media_type").map_err(db)?,
+                    row.try_get::<i64, _>("byte_length").map_err(db)? as u64,
+                )
+            };
+            let coordinate: Option<serde_json::Value> = row.try_get("coordinate").map_err(db)?;
+            let selected = if let Some(coordinate) = &coordinate {
+                match coordinate_range(
+                    &row.try_get::<String, _>("coordinate_kind").map_err(db)?,
+                    coordinate,
+                ) {
+                    Ok(range) => range,
+                    Err(Error::Unavailable(_)) => continue,
+                    Err(error) => return Err(error),
+                }
+            } else {
+                None
+            };
+            if selected.is_some_and(|range| range.end < range.start || range.end > length) {
+                return Err(Error::Invalid(
+                    "source coordinate is outside payload".into(),
+                ));
+            }
+            let mut provenance = vec![reference.clone()];
+            if let Some(derived) = derived {
+                if matches!(reference, CognitiveRef::DerivedRegion(_)) {
+                    provenance.push(CognitiveRef::DerivedRepresentation(
+                        DerivedRepresentationId(derived),
+                    ));
+                }
+                provenance.extend(
+                    roots
+                        .into_iter()
+                        .map(|id| CognitiveRef::SourceRegion(SourceRegionId(id))),
+                );
+                if text.is_none() {
+                    provenance.push(CognitiveRef::Artifact(ArtifactId(
+                        row.try_get("payload_artifact_id").map_err(db)?,
+                    )));
+                }
+            } else if !matches!(reference, CognitiveRef::Artifact(_)) {
+                provenance.push(CognitiveRef::Artifact(ArtifactId(
+                    row.try_get("artifact_id").map_err(db)?,
+                )));
+            }
+            let payload = Payload {
+                text,
+                hash,
+                media_type,
+                length,
+                selected,
+                provenance,
+                producer: row.try_get("producer").map_err(db)?,
+                selection: coordinate,
+            };
+            result.insert(
+                reference.clone(),
+                MaterialReadInput {
+                    reference: reference.clone(),
+                    payload,
+                    view_digest: view.map(|view| view.snapshot_digest.clone()),
+                },
+            );
+        }
+        Ok(result)
+    }
+
+    pub async fn read_text_input(
+        &self,
+        input: MaterialReadInput,
+        max_bytes: u64,
+    ) -> Result<Option<MaterialTextView>> {
+        if max_bytes == 0 || max_bytes > self.max_upload_bytes {
+            return Err(Error::Invalid("text projection bound is invalid".into()));
+        }
+        let reference = &input.reference;
+        let payload = input.payload;
         if !is_text_media(&payload.media_type) {
             return Ok(None);
         }
@@ -212,134 +433,8 @@ impl MaterialService {
             content_identity,
             selection: selected.byte_range,
             total_bytes: selected.total_bytes,
-            view_digest: view.map(|view| view.snapshot_digest.clone()),
+            view_digest: input.view_digest.clone(),
         }))
-    }
-
-    async fn payload(&self, subject: SubjectId, reference: &CognitiveRef) -> Result<Payload> {
-        let mut provenance = vec![reference.clone()];
-        let mut selection = None;
-        let mut selected = None;
-        let mut reference = reference.clone();
-        if let CognitiveRef::Occurrence(id) = reference {
-            let artifact: Option<Uuid> = sqlx::query_scalar("SELECT artifact_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2").bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-            reference = CognitiveRef::Artifact(ArtifactId(artifact.ok_or_else(|| {
-                Error::Unavailable("external occurrence requires its Host resolver".into())
-            })?));
-            provenance.push(reference.clone());
-        }
-        if let CognitiveRef::SourceRegion(id) = reference {
-            let row = sqlx::query("SELECT artifact_id,coordinate_kind,coordinate FROM source_regions WHERE subject_id=$1 AND source_region_id=$2").bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-            let coordinate: serde_json::Value = row.try_get("coordinate").map_err(db)?;
-            selected = coordinate_range(
-                &row.try_get::<String, _>("coordinate_kind").map_err(db)?,
-                &coordinate,
-            )?;
-            selection = Some(coordinate);
-            reference = CognitiveRef::Artifact(ArtifactId(row.try_get("artifact_id").map_err(db)?));
-            provenance.push(reference.clone());
-        }
-        if let CognitiveRef::DerivedRegion(id) = reference {
-            let row = sqlx::query("SELECT derived_representation_id,coordinate_kind,coordinate FROM derived_regions WHERE subject_id=$1 AND derived_region_id=$2").bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-            let coordinate: serde_json::Value = row.try_get("coordinate").map_err(db)?;
-            selected = coordinate_range(
-                &row.try_get::<String, _>("coordinate_kind").map_err(db)?,
-                &coordinate,
-            )?;
-            selection = Some(coordinate);
-            reference = CognitiveRef::DerivedRepresentation(DerivedRepresentationId(
-                row.try_get("derived_representation_id").map_err(db)?,
-            ));
-            provenance.push(reference.clone());
-        }
-        let mut payload = match reference {
-            CognitiveRef::Artifact(id) => {
-                let artifact = self.artifact(subject, id).await?;
-                Payload {
-                    text: None,
-                    hash: Some(artifact.content_hash),
-                    media_type: artifact.media_type,
-                    length: artifact.byte_length,
-                    selected: None,
-                    provenance,
-                    producer: None,
-                    selection,
-                }
-            }
-            CognitiveRef::DerivedRepresentation(id) => {
-                self.derived_payload(subject, id, provenance, selection)
-                    .await?
-            }
-            _ => {
-                return Err(Error::Unavailable(
-                    "reference needs its semantic owner or Host materializer".into(),
-                ));
-            }
-        };
-        if let Some(range) = selected {
-            if range.end < range.start || range.end > payload.length {
-                return Err(Error::Invalid(
-                    "source coordinate is outside payload".into(),
-                ));
-            }
-            payload.selected = Some(range);
-        }
-        Ok(payload)
-    }
-
-    async fn derived_payload(
-        &self,
-        subject: SubjectId,
-        id: DerivedRepresentationId,
-        mut provenance: Vec<CognitiveRef>,
-        selection: Option<serde_json::Value>,
-    ) -> Result<Payload> {
-        let row=sqlx::query("SELECT d.payload_text,d.payload_artifact_id,to_jsonb(p) AS producer FROM derived_representations d JOIN producer_signatures p USING(producer_signature_id) WHERE d.subject_id=$1 AND d.derived_representation_id=$2")
-            .bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-        let roots: Vec<Uuid> =
-            sqlx::query_scalar("SELECT source_region_id FROM representation_source_regions($1,$2)")
-                .bind(subject.0)
-                .bind(id.0)
-                .fetch_all(self.store.pool())
-                .await
-                .map_err(db)?;
-        if roots.is_empty() {
-            return Err(Error::Invalid(
-                "derived representation has no source roots".into(),
-            ));
-        }
-        provenance.extend(
-            roots
-                .into_iter()
-                .map(|id| CognitiveRef::SourceRegion(SourceRegionId(id))),
-        );
-        let text: Option<String> = row.try_get("payload_text").map_err(db)?;
-        let (hash, media_type, length) = if let Some(text) = &text {
-            (None, "text/plain; charset=utf-8".into(), text.len() as u64)
-        } else {
-            let artifact = self
-                .artifact(
-                    subject,
-                    ArtifactId(row.try_get("payload_artifact_id").map_err(db)?),
-                )
-                .await?;
-            provenance.push(CognitiveRef::Artifact(artifact.artifact_id));
-            (
-                Some(artifact.content_hash),
-                artifact.media_type,
-                artifact.byte_length,
-            )
-        };
-        Ok(Payload {
-            text,
-            hash,
-            media_type,
-            length,
-            selected: None,
-            provenance,
-            producer: Some(row.try_get("producer").map_err(db)?),
-            selection,
-        })
     }
 }
 
@@ -370,4 +465,59 @@ fn coordinate_range(kind: &str, coordinate: &serde_json::Value) -> Result<Option
             "coordinate materializer for '{kind}' is unavailable"
         ))),
     }
+}
+
+fn material_context(
+    material: MaterializedEvidence,
+    max_bytes: usize,
+) -> Result<nous_runtime::ContextSource> {
+    let text = if max_bytes > 0
+        && matches!(
+            nous_runtime::modality(&material.media_type),
+            Modality::Text | Modality::Structured
+        ) {
+        let end = match std::str::from_utf8(&material.bytes) {
+            Ok(_) => material.bytes.len(),
+            Err(error) => error.valid_up_to(),
+        };
+        Some(
+            String::from_utf8(material.bytes[..end].to_vec())
+                .map_err(|e| Error::Infrastructure(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let evidence = material
+        .provenance
+        .into_iter()
+        .map(|reference| EvidenceHandle {
+            epistemic_relation: None,
+            reference,
+            basis_role: "source".into(),
+        })
+        .collect::<Vec<_>>();
+    Ok(nous_runtime::ContextSource {
+        source_revision: None,
+        media_type: material.media_type,
+        text,
+        authority: if material.producer.is_some() {
+            AuthorityClass::Interpretation
+        } else {
+            AuthorityClass::Evidence
+        },
+        provenance: ProvenanceSummary {
+            source_count: evidence.len(),
+            producer_signatures: material
+                .producer
+                .and_then(|p| {
+                    p.get("signature_hash")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned)
+                })
+                .into_iter()
+                .collect(),
+            note: None,
+        },
+        evidence,
+    })
 }

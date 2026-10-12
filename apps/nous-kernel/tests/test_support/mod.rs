@@ -288,26 +288,29 @@ pub(crate) fn form_input(
     text: &str,
 ) -> ExplicitMemoryInput {
     ExplicitMemoryInput {
-        producer: None,
         operation_id,
         subject,
         cognitive_role: CognitiveRole::Declarative,
-        formation_mode: FormationMode::Grounded,
-        grounding_occurrence_id: Some(occurrence),
-        semantic_role: "fact".into(),
-        representation_text: text.into(),
-        title: None,
-        basis: vec![RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: None,
-            occurrence_id: occurrence,
-            locator: EvidenceLocator::WholeOccurrence,
-            basis_role: BasisRole::Direct,
-        })],
-        aboutness: Vec::new(),
-        tags: Vec::new(),
-        valid_time: TemporalExtent::Unknown,
 
-        epistemic_class: EpistemicClass::Observed,
+        content: nous_memory::MemoryContent {
+            producer: None,
+            formation_mode: FormationMode::Grounded,
+            grounding_occurrence_id: Some(occurrence),
+            semantic_role: "fact".into(),
+            representation_text: text.into(),
+            title: None,
+            basis: vec![RevisionBasis::Evidence(EvidenceRef {
+                epistemic_relation: None,
+                occurrence_id: occurrence,
+                locator: EvidenceLocator::WholeOccurrence,
+                basis_role: BasisRole::Direct,
+            })],
+            aboutness: Vec::new(),
+            tags: Vec::new(),
+            valid_time: TemporalExtent::Unknown,
+
+            epistemic_class: EpistemicClass::Observed,
+        },
     }
 }
 

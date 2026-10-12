@@ -27,6 +27,7 @@ pub enum ProjectionEdgeProvenance {
 
 pub struct CognitiveProjectionRows {
     pub authority_watermark: i64,
+    pub watermarks: super::ProjectionWatermarks,
     pub topology: TopologyProjectionInput,
     pub sources: Vec<crate::TextProjectionSource>,
 }
@@ -65,7 +66,8 @@ impl AuthorityStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let result = topology_snapshot_in(&mut tx, subject, memory_enabled).await?;
+        let watermark = super::watermark(&mut tx, subject, "topology", "").await?;
+        let result = topology_snapshot_in(&mut tx, subject, memory_enabled, watermark).await?;
         tx.commit().await.map_err(db)?;
         Ok(result)
     }
@@ -89,7 +91,14 @@ impl AuthorityStore {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
-        let topology = topology_snapshot_in(&mut tx, subject, memory_enabled).await?;
+        let watermarks = super::watermarks_in(&mut tx, subject).await?;
+        let topology = topology_snapshot_in(
+            &mut tx,
+            subject,
+            memory_enabled,
+            watermarks.desired("topology", ""),
+        )
+        .await?;
         let mut sources = crate::projection::text::material_sources(&mut tx, subject, None).await?;
         if memory_enabled {
             sources.extend(crate::projection::text::memory_sources(&mut tx, subject, None).await?);
@@ -102,6 +111,7 @@ impl AuthorityStore {
         tx.commit().await.map_err(db)?;
         Ok(CognitiveProjectionRows {
             authority_watermark,
+            watermarks,
             topology,
             sources,
         })
@@ -116,13 +126,8 @@ async fn topology_snapshot_in(
     tx: &mut Transaction<'_, Postgres>,
     subject: SubjectId,
     memory_enabled: bool,
+    watermark: i64,
 ) -> Result<TopologyProjectionInput> {
-    let watermark: i64 =
-        sqlx::query_scalar("SELECT authority_seq FROM subjects WHERE subject_id=$1")
-            .bind(subject.0)
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(db)?;
     let mut nodes = HashSet::new();
     let mut edges = Vec::new();
     if memory_enabled {

@@ -40,7 +40,7 @@ description segmentation 以 UTF-8 byte coordinates 建立稳定 DerivedRegion�
 
 Video MIME 本身不授予音频证据能力；direct mode 每次 attempt 根据该冻结 route 的 audio_input 能力与实际发送的媒体建立访问方式，不能借用首选 profile 的能力评价 fallback。不可执行的 route 在预算 admission 和 HTTP 前过滤；模型取得同一实际访问声明。frames mode 的音频通道由实际提供的 Transcript 决定。第二阶段从已提交 description 的 quality 取得通道，再转为 representation，不重新读取首选模型能力。
 
-语义校验与文本投影共用 Material owning implementation identity；其内容摘要及实际依赖版本进入 workflow reuse 与 ProducerSignature，修改实现不依赖手工版本常量。源码启动和 Portable build 使用同一 owning 文件摘要，Portable 将值嵌入 bundle。结构化生成合同校验在固定 routes 内完成，无效输出可按明确 fallback 继续；领域提交拒绝不发起另一轮生成。所有 route 失败仍保留成功前序 description 和 degradation。
+语义校验与文本投影由 Material 的正式结构化内容合同拥有。Workflow 保存首次采用的 model/profile/Prompt、输出 schema 和实际预处理参数，ProducerSignature 记录实际成功生产条件；不扫描 owning source 或依赖生成实现摘要，Portable 不注入另一份实现 marker。代码升级不提供隐式跨部署恢复保证。结构化生成合同校验在固定 routes 内完成，无效输出可按明确 fallback 继续；领域提交拒绝不发起另一轮生成。所有 route 失败仍保留成功前序 description 和 degradation。
 
 description segments 使用 `material.description_segment_bytes` 的稳定 UTF-8 范围，默认 2,048 bytes，并优先在换行处分段。region coordinates 保存 segmentation policy digest。Text segmentation 输入上限为 1 MiB，最多 512 个 DerivedRegion。Video frames mode 使用 FFmpeg 作有界抽帧；实验观测归 [Research](../../../research/README.md)。
 

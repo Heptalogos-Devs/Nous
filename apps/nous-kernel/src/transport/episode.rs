@@ -139,15 +139,29 @@ impl KernelService {
         &self,
         input: p::ListRequest,
     ) -> Result<p::ListEpisodesResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let scope = format!("episodes:{}:{}", subject.0, input.status);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .list_episodes(subject, &input.status, limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                items
+                    .last()
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .object
+                    .episode_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
         Ok(p::ListEpisodesResponse {
-            items: self
-                .require_memory()?
-                .list_episodes(SubjectId(id(&input.subject_id)?))
-                .await?
-                .into_iter()
-                .map(view)
-                .collect(),
-            next_page_token: String::new(),
+            items: items.into_iter().map(view).collect(),
+            next_page_token,
         })
     }
 
@@ -155,19 +169,33 @@ impl KernelService {
         &self,
         input: p::ListEpisodeRevisionsRequest,
     ) -> Result<p::ListEpisodeRevisionsResponse> {
-        let values = self
+        let subject = SubjectId(id(&input.subject_id)?);
+        let episode = EpisodeId(id(&input.episode_id)?);
+        let scope = format!("episode-history:{}:{}", subject.0, episode.0);
+        let (limit, after) = page(input.page, &scope)?;
+        let (values, more) = self
             .require_memory()?
-            .episode_history(
-                SubjectId(id(&input.subject_id)?),
-                EpisodeId(id(&input.episode_id)?),
-            )
+            .episode_history(subject, episode, limit, after)
             .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                values
+                    .last()
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .revision
+                    .episode_revision_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
         Ok(p::ListEpisodeRevisionsResponse {
             items: values
                 .into_iter()
                 .map(|value| revision(value.revision, value.members, value.basis))
                 .collect(),
-            next_page_token: String::new(),
+            next_page_token,
         })
     }
 

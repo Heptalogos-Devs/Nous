@@ -405,7 +405,7 @@ it("routes semantic Memory correction through the owner with frozen epoch and so
   const file = join(root, "correction.toml");
   await writeFile(
     file,
-    `text = "Corrected source statement"\ncognitive_role = "declarative"\nsemantic_role = "reported_fact"\nepistemic_class = "reported"\nformation_mode = "grounded"\ngrounding_occurrence_id = "occurrence:${occurrence}"\n[[basis]]\nref = "occurrence:${occurrence}"\nrole = "direct"\n`,
+    `text = "Corrected source statement"\nsemantic_role = "reported_fact"\nepistemic_class = "reported"\nformation_mode = "grounded"\ngrounding_occurrence_id = "occurrence:${occurrence}"\n[[basis]]\nref = "occurrence:${occurrence}"\nrole = "direct"\n`,
   );
   const requests: unknown[] = [];
   const get = vi.fn().mockResolvedValue({ objectEpoch: 7n });

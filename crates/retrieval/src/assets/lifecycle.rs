@@ -19,17 +19,12 @@ impl ServingService {
         &self,
         subject: SubjectId,
         family: &str,
+        space: &str,
         snapshot: &nous_configuration::ConfigSnapshot,
     ) -> Result<String> {
         let capabilities = self.projection_capabilities(subject).await?;
         let mut config = serde_json::json!({"memory_enabled":capabilities.memory});
-        if family == "topology"
-            && matches!(
-                snapshot.get(nous_runtime::COGNITIVE_PROFILE)?,
-                nous_runtime::CognitiveProfile::VcpDtsc
-                    | nous_runtime::CognitiveProfile::VcpRiverMemo
-            )
-        {
+        if family == "topology" && space.starts_with("vcp:") {
             let provider = self.embedding().ok_or_else(|| {
                 Error::Unavailable(
                     "VCP serving build requires configured embedding material".into(),
@@ -62,7 +57,7 @@ impl ServingService {
         let keys: &[&str] = match family {
             "lexical" => &["serving.lexical.enabled", "episode.synopsis"],
             "dense" => &["serving.dense.enabled", "retrieval.epa", "episode.synopsis"],
-            "topology" => &["episode.synopsis"],
+            "topology" => &[],
             _ => &[],
         };
         config["policy_digest"] = serde_json::Value::String(snapshot.digest_for(keys)?);
@@ -136,27 +131,29 @@ impl ServingService {
             ..Default::default()
         };
         let mut status = ProjectionStatus::default();
-        for (family, space) in
-            self.requested_families(need, if view.is_some() { &reusable } else { &current })
-        {
+        let watermarks = if view.is_none() {
+            self.store.projection_watermarks(subject).await?
+        } else {
+            Default::default()
+        };
+        for (family, space) in self.requested_families(
+            need,
+            if view.is_some() { &reusable } else { &current },
+            config,
+        )? {
             let key = if space.is_empty() {
                 family.to_owned()
             } else {
                 format!("{family}:{space}")
             };
-            let watermark = if view.is_some() {
-                0
-            } else if family == "topology" {
-                self.store.authority_seq(subject).await?
-            } else {
-                self.store
-                    .projection_watermark(subject, family, &space)
-                    .await?
-            };
+            let watermark = watermarks.desired(family, &space);
             let mut selected = None;
             let mut fallback = None;
             let mut checked = std::collections::HashSet::new();
-            let config_digest = self.config_digest(subject, family, config).await.ok();
+            let config_digest = self
+                .config_digest(subject, family, &space, config)
+                .await
+                .ok();
             for record in current
                 .iter()
                 .chain(reusable.iter())
@@ -233,7 +230,8 @@ impl ServingService {
         &self,
         need: ServingNeed,
         current: &[ServingRecord],
-    ) -> Vec<(&'static str, String)> {
+        config: &nous_configuration::ConfigSnapshot,
+    ) -> Result<Vec<(&'static str, String)>> {
         let mut requested = Vec::new();
         if need.concept || need.topology {
             let space = if need.concept_vectors {
@@ -252,7 +250,21 @@ impl ServingService {
             requested.push(("lexical", String::new()));
         }
         if need.topology && self.options.topology {
-            requested.push(("topology", String::new()));
+            let space = if matches!(
+                config.get(nous_runtime::COGNITIVE_PROFILE)?,
+                nous_runtime::CognitiveProfile::VcpDtsc
+                    | nous_runtime::CognitiveProfile::VcpRiverMemo
+            ) {
+                let provider = self.embedding().ok_or_else(|| {
+                    Error::Unavailable(
+                        "VCP serving build requires configured embedding material".into(),
+                    )
+                })?;
+                format!("vcp:{}", provider.space().space_hash)
+            } else {
+                String::new()
+            };
+            requested.push(("topology", space));
         }
         if need.dense && self.options.dense {
             if let Some(provider) = self.embedding() {
@@ -266,7 +278,7 @@ impl ServingService {
                 );
             }
         }
-        requested
+        Ok(requested)
     }
 
     /// Administrative operation: refresh every configured family.

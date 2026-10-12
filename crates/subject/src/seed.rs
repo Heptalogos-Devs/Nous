@@ -115,7 +115,6 @@ impl SubjectCoreService {
         input.validate()?;
         self.subject(subject).await?;
         let guard = self.objects.reference_guard(false).await?;
-        let hash = self.objects.put(input.text.as_bytes().to_vec()).await?;
         let digest = canonical_request_digest(
             "cognitive_seed.adopt",
             subject,
@@ -124,9 +123,9 @@ impl SubjectCoreService {
         let mut tx = self.store.begin().await?;
         let adoption = insert_seed(
             &self.store,
+            &self.objects,
             &mut tx,
             input,
-            hash,
             SeedAdoptionWrite {
                 subject,
                 operation_id,
@@ -207,9 +206,9 @@ pub(super) struct SeedAdoptionWrite<'a> {
 
 pub(super) async fn insert_seed(
     store: &nous_persistence::AuthorityStore,
+    objects: &nous_object_store::ObjectStore,
     tx: &mut Transaction<'_, Postgres>,
     input: CognitiveSeedInput,
-    hash: String,
     adoption: SeedAdoptionWrite<'_>,
 ) -> Result<Uuid> {
     let SeedAdoptionWrite {
@@ -238,17 +237,21 @@ pub(super) async fn insert_seed(
         }
         return row.try_get("adoption_id").map_err(db);
     }
-    let artifact = sqlx::query_scalar::<_, Uuid>("INSERT INTO artifacts(artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,'{}') ON CONFLICT(subject_id,content_hash) DO UPDATE SET content_hash=excluded.content_hash RETURNING artifact_id")
-        .bind(Uuid::now_v7())
-        .bind(subject.0)
-        .bind(&hash)
-        .bind(input.text.len() as i64)
-        .bind("application/toml")
-        .bind(format!("{}/{}", &hash[..2], hash))
-        .bind(now)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
+    let artifact = nous_material::ArtifactRegistration::new(store.clone(), objects.clone())
+        .write_in(
+            tx,
+            subject,
+            nous_material::UploadMetadata {
+                media_type: "application/toml".into(),
+                metadata: serde_json::json!({}),
+            },
+            futures::stream::iter([Ok(input.text.as_bytes().to_vec())]),
+            i64::MAX as u64,
+            now,
+        )
+        .await?;
+    let hash = artifact.content_hash;
+    let artifact = artifact.artifact_id.0;
     let seed_version = sqlx::query_scalar::<_, Uuid>("INSERT INTO cognitive_seed_versions(seed_version_id,subject_id,artifact_id,format,provenance,content_hash,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(subject_id,content_hash,format) DO UPDATE SET content_hash=excluded.content_hash RETURNING seed_version_id")
         .bind(Uuid::now_v7())
         .bind(subject.0)
@@ -283,7 +286,6 @@ pub(super) async fn insert_seed(
             subject,
             &[
                 nous_core::CognitiveRef::Subject(subject),
-                nous_core::CognitiveRef::Artifact(ArtifactId(artifact)),
                 nous_core::CognitiveRef::CognitiveSeedVersion(CognitiveSeedVersionId(seed_version)),
             ],
             "",

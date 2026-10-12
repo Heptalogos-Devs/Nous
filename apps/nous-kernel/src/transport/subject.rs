@@ -210,11 +210,21 @@ fn session_proto(view: nous_runtime::SessionView) -> p::Session {
         session_id: view.session_id.0.to_string(),
         subject_id: view.subject_id.0.to_string(),
         runtime_revision: view.runtime_revision,
-        closed: view.closed_at.is_some(),
-        resident_refs: view
+        closed_at: view.closed_at.map(timestamp),
+        opened_at: Some(timestamp(view.opened_at)),
+        last_activity_at: Some(timestamp(view.last_activity_at)),
+        last_meaningful_use_at: view.last_meaningful_use_at.map(timestamp),
+        resident: view
             .resident
             .into_iter()
-            .map(|r| to_ref(r.reference))
+            .map(|r| p::Resident {
+                reference: Some(to_ref(r.reference)),
+                entry_reason: r.entry_reason,
+                state: r.state,
+                entered_at: Some(timestamp(r.entered_at)),
+                last_meaningful_use_at: r.last_meaningful_use_at.map(timestamp),
+                hold_until: r.hold_until.map(timestamp),
+            })
             .collect(),
         active_work_context_id: view.active_work_context_id.map(|value| value.to_string()),
     }

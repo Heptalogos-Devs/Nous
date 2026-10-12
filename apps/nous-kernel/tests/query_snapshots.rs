@@ -36,7 +36,7 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
             operation,
             &format!("candidate {index}"),
         );
-        input.aboutness = vec![entity.clone()];
+        input.content.aboutness = vec![entity.clone()];
         cohort.push(
             runtime
                 .require_memory()
@@ -89,22 +89,26 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
         .require_memory()
         .unwrap()
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject,
             memory_id: first.object.memory_id,
             expected_object_epoch: first.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "replacement candidate".into(),
-            title: None,
-            basis: first.basis.clone(),
-            aboutness: first.aboutness.clone(),
-            valid_time: TemporalExtent::Unknown,
 
-            epistemic_class: EpistemicClass::Observed,
+            content: nous_memory::MemoryContent {
+                producer: None,
+                formation_mode: FormationMode::Grounded,
+                grounding_occurrence_id: Some(source.occurrence.occurrence_id),
+                semantic_role: "fact".into(),
+                representation_text: "replacement candidate".into(),
+                title: None,
+                basis: first.basis.clone(),
+                aboutness: first.aboutness.clone(),
+                valid_time: TemporalExtent::Unknown,
+
+                epistemic_class: EpistemicClass::Observed,
+                tags: Vec::new(),
+            },
         })
         .await
         .unwrap();
@@ -315,27 +319,31 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
     let bound = runtime.cognition.bind_query(request).await.expect("bind");
     let plan = QueryPlan::for_bound_query(&bound);
     let revision = nous_memory::ReviseMemoryInput {
-        producer: None,
         operation_id: OperationId::new(),
         subject,
         memory_id: memory.object.memory_id,
         expected_object_epoch: memory.object.object_epoch,
         intent: nous_memory::RevisionIntent::Correct,
-        formation_mode: FormationMode::Grounded,
-        grounding_occurrence_id: Some(observation.occurrence.occurrence_id),
-        semantic_role: "fact".into(),
-        representation_text: "new fenced fact".into(),
-        title: None,
-        basis: vec![RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: None,
-            occurrence_id: observation.occurrence.occurrence_id,
-            locator: EvidenceLocator::WholeOccurrence,
-            basis_role: BasisRole::Direct,
-        })],
-        aboutness: Vec::new(),
-        valid_time: Default::default(),
 
-        epistemic_class: EpistemicClass::Observed,
+        content: nous_memory::MemoryContent {
+            producer: None,
+            formation_mode: FormationMode::Grounded,
+            grounding_occurrence_id: Some(observation.occurrence.occurrence_id),
+            semantic_role: "fact".into(),
+            representation_text: "new fenced fact".into(),
+            title: None,
+            basis: vec![RevisionBasis::Evidence(EvidenceRef {
+                epistemic_relation: None,
+                occurrence_id: observation.occurrence.occurrence_id,
+                locator: EvidenceLocator::WholeOccurrence,
+                basis_role: BasisRole::Direct,
+            })],
+            aboutness: Vec::new(),
+            valid_time: Default::default(),
+
+            epistemic_class: EpistemicClass::Observed,
+            tags: Vec::new(),
+        },
     };
     let _current = runtime
         .require_memory()

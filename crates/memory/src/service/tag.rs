@@ -168,7 +168,7 @@ impl MemoryService {
         &self,
         subject: SubjectId,
         mut input: SplitTagInput,
-    ) -> Result<Vec<Tag>> {
+    ) -> Result<Vec<TagView>> {
         input.producer = input
             .producer
             .as_ref()
@@ -180,15 +180,7 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(_) => {
-                let ids: Vec<(Uuid, Uuid)> = sqlx::query_as("SELECT child_tag_id,child_revision_id FROM tag_lineage WHERE subject_id=$1 AND operation_id=$2 AND relation='split_into' ORDER BY child_index")
-                    .bind(subject.0).bind(input.operation_id.0).fetch_all(self.store.pool()).await.map_err(db)?;
-                let mut result = Vec::new();
-                for (id, revision) in ids {
-                    let mut tag = self.tag(subject, TagId(id)).await?;
-                    tag.current_revision_id = revision;
-                    result.push(tag);
-                }
-                return Ok(result);
+                return self.tag_split_views(subject, input.operation_id).await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -213,7 +205,30 @@ impl MemoryService {
                 None,
             )
             .await?;
-        Ok(children)
+        self.tag_split_views(subject, input.operation_id).await
+    }
+    async fn tag_split_views(
+        &self,
+        subject: SubjectId,
+        operation: OperationId,
+    ) -> Result<Vec<TagView>> {
+        let rows = sqlx::query("SELECT t.tag_id,r.tag_revision_id current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tag_lineage l LEFT JOIN tags t ON t.tag_id=l.child_tag_id AND t.subject_id=l.subject_id LEFT JOIN tag_revisions r ON r.tag_id=t.tag_id AND r.tag_revision_id=l.child_revision_id WHERE l.subject_id=$1 AND l.operation_id=$2 AND l.relation='split_into' ORDER BY l.child_index")
+            .bind(subject.0).bind(operation.0).fetch_all(self.store.pool()).await.map_err(db)?;
+        if rows.is_empty() {
+            return Err(Error::NotFound("Tag split results not found".into()));
+        }
+        rows.into_iter()
+            .map(|row| {
+                if row
+                    .try_get::<Option<Uuid>, _>("current_revision_id")
+                    .map_err(db)?
+                    .is_none()
+                {
+                    return Err(Error::NotFound("Tag split result not found".into()));
+                }
+                decode_tag_view(row)
+            })
+            .collect()
     }
     async fn replay_tag(
         &self,

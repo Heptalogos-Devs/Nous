@@ -454,6 +454,21 @@ pub struct AdoptCognitiveSeedRequest {
     #[prost(string, tag="4")]
     pub kind: ::prost::alloc::string::String,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Resident {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(string, tag="2")]
+    pub entry_reason: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub state: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="4")]
+    pub entered_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="5")]
+    pub last_meaningful_use_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="6")]
+    pub hold_until: ::core::option::Option<::prost_types::Timestamp>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Session {
     #[prost(string, tag="1")]
@@ -462,12 +477,18 @@ pub struct Session {
     pub subject_id: ::prost::alloc::string::String,
     #[prost(int64, tag="3")]
     pub runtime_revision: i64,
-    #[prost(bool, tag="4")]
-    pub closed: bool,
+    #[prost(message, optional, tag="4")]
+    pub closed_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, repeated, tag="5")]
-    pub resident_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    pub resident: ::prost::alloc::vec::Vec<Resident>,
     #[prost(string, optional, tag="6")]
     pub active_work_context_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="7")]
+    pub opened_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="8")]
+    pub last_activity_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="9")]
+    pub last_meaningful_use_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListSessionsResponse {
@@ -1023,8 +1044,6 @@ pub mod revision_basis {
 pub struct MemoryContent {
     #[prost(message, optional, tag="13")]
     pub producer: ::core::option::Option<ProducerSignature>,
-    #[prost(string, tag="1")]
-    pub cognitive_role: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
     pub formation_mode: ::prost::alloc::string::String,
     #[prost(string, optional, tag="3")]
@@ -1138,6 +1157,8 @@ pub struct FormMemoryRequest {
     pub subject_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag="3")]
     pub input: ::core::option::Option<MemoryContent>,
+    #[prost(string, tag="4")]
+    pub cognitive_role: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReviseMemoryRequest {
@@ -1410,6 +1431,35 @@ pub struct WorkContextResponse {
     #[prost(message, repeated, tag="2")]
     pub degradation: ::prost::alloc::vec::Vec<Degradation>,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WorkContextTextList {
+    #[prost(string, repeated, tag="1")]
+    pub values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WorkContextFields {
+    #[prost(string, optional, tag="1")]
+    pub purpose: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="2")]
+    pub unresolved_questions: ::core::option::Option<WorkContextTextList>,
+    #[prost(message, optional, tag="3")]
+    pub constraints: ::core::option::Option<::prost_types::Struct>,
+    #[prost(message, optional, tag="4")]
+    pub resume_conditions: ::core::option::Option<WorkContextTextList>,
+    #[prost(message, optional, tag="5")]
+    pub budget_summary: ::core::option::Option<::prost_types::Struct>,
+    #[prost(string, optional, tag="6")]
+    pub context_text: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WorkContextAnchors {
+    #[prost(message, repeated, tag="1")]
+    pub cognition_anchors: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(string, repeated, tag="2")]
+    pub entity_anchors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag="3")]
+    pub tag_anchors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateWorkContextRequest {
     #[prost(string, tag="1")]
@@ -1420,24 +1470,22 @@ pub struct UpdateWorkContextRequest {
     pub work_context_id: ::prost::alloc::string::String,
     #[prost(int64, tag="4")]
     pub expected_revision: i64,
-    #[prost(string, tag="5")]
-    pub purpose: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag="6")]
-    pub unresolved_questions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(message, optional, tag="7")]
-    pub constraints: ::core::option::Option<::prost_types::Struct>,
-    #[prost(string, repeated, tag="8")]
-    pub resume_conditions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(message, optional, tag="9")]
-    pub budget_summary: ::core::option::Option<::prost_types::Struct>,
-    #[prost(message, repeated, tag="10")]
-    pub cognition_anchors: ::prost::alloc::vec::Vec<CognitiveRef>,
-    #[prost(string, tag="11")]
-    pub context_text: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag="12")]
-    pub entity_anchors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag="13")]
-    pub tag_anchors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(oneof="update_work_context_request::Intent", tags="5, 6, 7, 8")]
+    pub intent: ::core::option::Option<update_work_context_request::Intent>,
+}
+/// Nested message and enum types in `UpdateWorkContextRequest`.
+pub mod update_work_context_request {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Intent {
+        #[prost(message, tag="5")]
+        Fields(super::WorkContextFields),
+        #[prost(message, tag="6")]
+        Pin(super::WorkContextAnchors),
+        #[prost(message, tag="7")]
+        Unpin(super::WorkContextAnchors),
+        #[prost(enumeration="super::WorkContextClearScope", tag="8")]
+        Clear(i32),
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WorkContextMutationRequest {
@@ -1707,6 +1755,38 @@ pub struct ListEpisodeRevisionsResponse {
     pub items: ::prost::alloc::vec::Vec<EpisodeRevision>,
     #[prost(string, tag="2")]
     pub next_page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum WorkContextClearScope {
+    Unspecified = 0,
+    Text = 1,
+    Anchors = 2,
+    All = 3,
+}
+impl WorkContextClearScope {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "WORK_CONTEXT_CLEAR_SCOPE_UNSPECIFIED",
+            Self::Text => "WORK_CONTEXT_CLEAR_SCOPE_TEXT",
+            Self::Anchors => "WORK_CONTEXT_CLEAR_SCOPE_ANCHORS",
+            Self::All => "WORK_CONTEXT_CLEAR_SCOPE_ALL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "WORK_CONTEXT_CLEAR_SCOPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "WORK_CONTEXT_CLEAR_SCOPE_TEXT" => Some(Self::Text),
+            "WORK_CONTEXT_CLEAR_SCOPE_ANCHORS" => Some(Self::Anchors),
+            "WORK_CONTEXT_CLEAR_SCOPE_ALL" => Some(Self::All),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IdentityBinding {
@@ -2192,6 +2272,12 @@ pub struct SchemaEvidenceLink {
     pub role: ::prost::alloc::string::String,
     #[prost(message, optional, tag="3")]
     pub basis: ::core::option::Option<RevisionBasis>,
+    #[prost(string, optional, tag="4")]
+    pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="5")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="6")]
+    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CognitiveSchema {
@@ -2227,6 +2313,14 @@ pub struct CognitiveSchema {
     pub formation_kind: ::prost::alloc::string::String,
     #[prost(string, optional, tag="17")]
     pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int32, tag="18")]
+    pub revision_no: i32,
+    #[prost(string, optional, tag="19")]
+    pub parent_revision_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="20")]
+    pub revision_intent: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="21")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CognitiveSchemaContent {

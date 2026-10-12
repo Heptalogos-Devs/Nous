@@ -37,6 +37,9 @@ impl MemoryService {
         limit: i64,
         after: Option<Uuid>,
     ) -> Result<(Vec<MemoryView>, bool)> {
+        if !(1..=200).contains(&limit) {
+            return Err(Error::Invalid("page limit is out of bounds".into()));
+        }
         self.store.require_subject(subject).await?;
         if !matches!(status, "" | "accepted" | "withdrawn") {
             return Err(Error::Invalid("invalid memory acceptance status".into()));
@@ -64,8 +67,15 @@ impl MemoryService {
     ) -> Result<std::collections::HashMap<Uuid, MemoryView>> {
         let policy =
             resolve_accessibility_policy(&self.configuration.snapshot_for_subject(subject)?)?;
-        self.memory_views(subject, revisions, &policy, None, true)
-            .await
+        self.memory_views(
+            subject,
+            revisions,
+            &policy,
+            None,
+            true,
+            self.cognition.now(subject),
+        )
+        .await
     }
 
     pub(in crate::service) async fn load_basis(
@@ -123,20 +133,35 @@ impl MemoryService {
         &self,
         subject: SubjectId,
         memory_id: MemoryId,
-    ) -> Result<Vec<MemoryRevision>> {
+        limit: i64,
+        after: Option<Uuid>,
+    ) -> Result<(Vec<MemoryView>, bool)> {
+        if !(1..=200).contains(&limit) {
+            return Err(Error::Invalid("page limit is out of bounds".into()));
+        }
         self.store
             .validate_reference(subject, &CognitiveRef::Memory(memory_id))
             .await?;
-        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT memory_revision_id FROM memory_revisions WHERE subject_id=$1 AND memory_id=$2 ORDER BY revision_no")
-            .bind(subject.0).bind(memory_id.0).fetch_all(self.store.pool()).await.map_err(db)?;
+        let after_no = if let Some(after) = after {
+            Some(sqlx::query_scalar::<_, i32>("SELECT revision_no FROM memory_revisions WHERE subject_id=$1 AND memory_id=$2 AND memory_revision_id=$3")
+                .bind(subject.0).bind(memory_id.0).bind(after).fetch_optional(self.store.pool()).await.map_err(db)?
+                .ok_or_else(|| Error::Invalid("invalid memory history cursor".into()))?)
+        } else {
+            None
+        };
+        let mut ids: Vec<Uuid> = sqlx::query_scalar("SELECT memory_revision_id FROM memory_revisions WHERE subject_id=$1 AND memory_id=$2 AND ($3::int IS NULL OR revision_no>$3) ORDER BY revision_no LIMIT $4")
+            .bind(subject.0).bind(memory_id.0).bind(after_no).bind(limit+1).fetch_all(self.store.pool()).await.map_err(db)?;
+        let more = ids.len() > limit as usize;
+        ids.truncate(limit as usize);
         let mut views = self.full_memory_views(subject, &ids).await?;
-        ids.into_iter()
+        let items = ids
+            .into_iter()
             .map(|id| {
                 views
                     .remove(&id)
-                    .map(|view| view.revision)
                     .ok_or_else(|| Error::NotFound("memory history changed while reading".into()))
             })
-            .collect()
+            .collect::<Result<_>>()?;
+        Ok((items, more))
     }
 }

@@ -135,17 +135,22 @@ impl ServingService {
         bound: &BoundQuery,
         generation: &VcpServingGeneration,
     ) -> Result<bool> {
-        let seq =
-            sqlx::query_scalar::<_, i64>("SELECT authority_seq FROM subjects WHERE subject_id=$1")
-                .bind(bound.source_query.subject.0)
-                .fetch_one(self.store.pool())
-                .await
-                .map_err(nous_persistence::database_error)?;
+        let desired = if bound.historical_authority.is_some() {
+            0
+        } else {
+            self.store
+                .projection_watermark(
+                    bound.source_query.subject,
+                    "topology",
+                    &format!("vcp:{}", generation.space.space_hash),
+                )
+                .await?
+        };
         let capabilities = self
             .projection_capabilities(bound.source_query.subject)
             .await?;
         Ok(
-            (bound.historical_authority.is_some() || seq == generation.authority_watermark)
+            (bound.historical_authority.is_some() || generation.authority_watermark >= desired)
                 && (capabilities.memory
                     || !generation.identities.references().iter().any(|r| {
                         matches!(

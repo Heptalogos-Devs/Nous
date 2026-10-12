@@ -104,51 +104,6 @@ impl AccessibilityPolicy {
         }
     }
 
-    pub async fn level_for_memory(
-        &self,
-        store: &AuthorityStore,
-        subject: SubjectId,
-        memory: MemoryId,
-        now: DateTime<Utc>,
-    ) -> Result<AccessibilityLevel> {
-        let row = sqlx::query("SELECT accessibility_mode,created_at FROM memory_objects WHERE subject_id=$1 AND memory_id=$2")
-            .bind(subject.0)
-            .bind(memory.0)
-            .fetch_optional(store.pool())
-            .await
-            .map_err(db)?
-            .ok_or_else(|| Error::NotFound("memory not found".into()))?;
-        let mode: AccessibilityMode = serde_json::from_value(serde_json::Value::String(
-            row.try_get::<String, _>("accessibility_mode").map_err(db)?,
-        ))
-        .map_err(|_| Error::Infrastructure("invalid accessibility mode".into()))?;
-        let created: DateTime<Utc> = row.try_get("created_at").map_err(db)?;
-        if !matches!(mode, AccessibilityMode::Auto) {
-            return Ok(match mode {
-                AccessibilityMode::Normal => AccessibilityLevel::Normal,
-                AccessibilityMode::Deep => AccessibilityLevel::Deep,
-                AccessibilityMode::Explicit => AccessibilityLevel::Explicit,
-                AccessibilityMode::Auto => unreachable!(),
-            });
-        }
-        let uses = sqlx::query("SELECT use_kind,occurred_at FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind='memory_revision' AND ref_value IN (SELECT memory_revision_id::text FROM memory_revisions WHERE memory_id=$2) AND use_kind <> 'presented'")
-            .bind(subject.0)
-            .bind(memory.0)
-            .fetch_all(store.pool())
-            .await
-            .map_err(db)?
-            .into_iter()
-            .map(|row| {
-                let kind: String = row.try_get("use_kind").map_err(db)?;
-                let at: DateTime<Utc> = row.try_get("occurred_at").map_err(db)?;
-                Ok((kind, (now - at).num_seconds().max(0) as f64 / 86400.0))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(self.level_from_activation(
-            self.activation((now - created).num_seconds().max(0) as f64 / 86400.0, &uses),
-        ))
-    }
-
     fn use_weight(&self, kind: &str) -> f64 {
         match kind {
             "referenced" => self.referenced_weight,

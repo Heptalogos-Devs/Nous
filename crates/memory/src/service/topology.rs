@@ -204,8 +204,15 @@ impl MemoryService {
                 "neighborhood requires 1..256 nodes and 1..4 depth".into(),
             ));
         }
-        self.store.require_subject(subject).await?;
-        let (root, _, _) = self.store.bind_exact_reference(subject, &root).await?;
+        let mut tx = self.store.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let (root, _, _) = self
+            .store
+            .bind_exact_reference_in(&mut tx, subject, &root)
+            .await?;
         let mut seen = std::collections::HashSet::from([root.clone()]);
         let mut frontier = vec![root.clone()];
         let mut nodes = vec![root];
@@ -217,8 +224,8 @@ impl MemoryService {
                 break;
             }
             let (kinds, refs): (Vec<_>, Vec<_>) = frontier.iter().map(reference_parts).unzip();
-            let rows = sqlx::query("WITH frontier AS (SELECT * FROM unnest($2::text[], $3::text[]) AS f(kind,ref)), active AS (SELECT association_evidence_id,from_ref_kind,to_ref_kind,CASE WHEN from_ref_kind='tag' THEN canonical_tag($1,from_ref::uuid)::text ELSE from_ref END AS from_ref,CASE WHEN to_ref_kind='tag' THEN canonical_tag($1,to_ref::uuid)::text ELSE to_ref END AS to_ref FROM association_evidence WHERE subject_id=$1 AND revoked_at IS NULL) SELECT a.* FROM active a WHERE a.from_ref IS NOT NULL AND a.to_ref IS NOT NULL AND (a.from_ref_kind<>a.to_ref_kind OR a.from_ref<>a.to_ref) AND EXISTS(SELECT 1 FROM frontier f WHERE (f.kind=a.from_ref_kind AND f.ref=a.from_ref) OR (f.kind=a.to_ref_kind AND f.ref=a.to_ref)) ORDER BY a.association_evidence_id LIMIT 257")
-                .bind(subject.0).bind(kinds).bind(refs).fetch_all(self.store.pool()).await.map_err(db)?;
+            let rows = sqlx::query("WITH frontier AS (SELECT * FROM unnest($2::text[], $3::text[]) AS f(kind,ref)), active AS (SELECT a.*,CASE WHEN from_ref_kind='tag' THEN canonical_tag($1,from_ref::uuid)::text ELSE from_ref END AS effective_from,CASE WHEN to_ref_kind='tag' THEN canonical_tag($1,to_ref::uuid)::text ELSE to_ref END AS effective_to FROM association_evidence a WHERE subject_id=$1 AND revoked_at IS NULL) SELECT a.* FROM active a WHERE a.effective_from IS NOT NULL AND a.effective_to IS NOT NULL AND (a.from_ref_kind<>a.to_ref_kind OR a.effective_from<>a.effective_to) AND EXISTS(SELECT 1 FROM frontier f WHERE (f.kind=a.from_ref_kind AND f.ref=a.effective_from) OR (f.kind=a.to_ref_kind AND f.ref=a.effective_to)) ORDER BY a.association_evidence_id LIMIT 257")
+                .bind(subject.0).bind(kinds).bind(refs).fetch_all(&mut *tx).await.map_err(db)?;
             truncated |= rows.len() > 256;
             let mut next = Vec::new();
             for row in rows.into_iter().take(256) {
@@ -228,11 +235,11 @@ impl MemoryService {
                 }
                 let from = parse_reference(
                     &row.try_get::<String, _>("from_ref_kind").map_err(db)?,
-                    &row.try_get::<String, _>("from_ref").map_err(db)?,
+                    &row.try_get::<String, _>("effective_from").map_err(db)?,
                 )?;
                 let to = parse_reference(
                     &row.try_get::<String, _>("to_ref_kind").map_err(db)?,
-                    &row.try_get::<String, _>("to_ref").map_err(db)?,
+                    &row.try_get::<String, _>("effective_to").map_err(db)?,
                 )?;
                 let added = [&from, &to]
                     .iter()
@@ -242,9 +249,8 @@ impl MemoryService {
                     truncated = true;
                     continue;
                 }
-                let mut association = self.association(subject, AssociationEvidenceId(id)).await?;
-                association.from = from.clone();
-                association.to = to.clone();
+                let association =
+                    decode_association(&row, subject, from.clone(), to.clone(), Vec::new())?;
                 for reference in [from, to]
                     .into_iter()
                     .filter(|reference| seen.insert(reference.clone()))
@@ -257,6 +263,22 @@ impl MemoryService {
             }
             frontier = next;
         }
+        let ids = associations
+            .iter()
+            .map(|edge| edge.association_evidence_id.0)
+            .collect::<Vec<_>>();
+        let mut basis = std::collections::HashMap::<Uuid, Vec<AssociationBasis>>::new();
+        for row in sqlx::query("SELECT * FROM association_evidence_basis WHERE association_evidence_id=ANY($1::uuid[]) ORDER BY association_evidence_id,basis_kind,basis_ref,basis_role")
+            .bind(ids).fetch_all(&mut *tx).await.map_err(db)? {
+            basis.entry(row.try_get("association_evidence_id").map_err(db)?).or_default()
+                .push(decode_association_basis(&row, subject)?);
+        }
+        for association in &mut associations {
+            association.basis = basis
+                .remove(&association.association_evidence_id.0)
+                .unwrap_or_default();
+        }
+        tx.commit().await.map_err(db)?;
         Ok(AssociationNeighborhood {
             nodes,
             associations,
@@ -286,64 +308,10 @@ impl MemoryService {
             &row.try_get::<String, _>("to_ref_kind").map_err(db)?,
             &row.try_get::<String, _>("to_ref").map_err(db)?,
         )?;
-        let basis=sqlx::query("SELECT basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM association_evidence_basis WHERE association_evidence_id=$1 ORDER BY basis_kind,basis_ref,basis_role").bind(id.0).fetch_all(self.store.pool()).await.map_err(db)?.into_iter().map(|row| {
-            let kind: String = row.try_get("basis_kind").map_err(db)?;
-            let basis_role = parse_enum(row.try_get("basis_role").map_err(db)?, "association basis role")?;
-            if kind == "use_event" {
-                let value = row.try_get::<String, _>("basis_ref").map_err(db)?;
-                let (consumer_ref, event_id) = parse_use_event_key(&value)?;
-                Ok(AssociationBasis::UseEvent(UseEventRef {
-                    subject_id: subject,
-                    consumer_ref,
-                    event_id: UseEventId(event_id),
-                }))
-            } else if kind == "evidence" {
-                let locator = match (
-                    row.try_get::<Option<Uuid>, _>("source_region_id").map_err(db)?,
-                    row.try_get::<Option<Uuid>, _>("derived_representation_id").map_err(db)?,
-                    row.try_get::<Option<Uuid>, _>("derived_region_id").map_err(db)?,
-                ) {
-                    (Some(value), None, None) => EvidenceLocator::SourceRegion(nous_core::SourceRegionId(value)),
-                    (None, Some(value), None) => EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(value)),
-                    (None, None, Some(value)) => EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(value)),
-                    (None, None, None) => EvidenceLocator::WholeOccurrence,
-                    _ => return Err(Error::Infrastructure("association evidence locator is invalid".into())),
-                };
-                Ok(AssociationBasis::Revision(RevisionBasis::Evidence(EvidenceRef {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
-                    occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
-                    locator,
-                    basis_role,
-                })))
-            } else {
-                Ok(AssociationBasis::Revision(RevisionBasis::CognitionDependency(CognitionDependency {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
-                    target_revision: parse_reference(&kind, &row.try_get::<String, _>("basis_ref").map_err(db)?)?,
-                    basis_role,
-                })))
-            }
-        }).collect::<Result<Vec<_>>>()?;
-        Ok(AssociationEvidence {
-            association_evidence_id: id,
-            subject_id: subject,
-            from,
-            to,
-            relation_kind: row.try_get("relation_kind").map_err(db)?,
-            polarity: parse_enum(row.try_get("polarity").map_err(db)?, "association polarity")?,
-            basis_class: parse_enum(
-                row.try_get("basis_class").map_err(db)?,
-                "association support class",
-            )?,
-            basis,
-            producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
-            valid_time: temporal_from_columns(
-                row.try_get("valid_time_kind").map_err(db)?,
-                row.try_get("valid_time_start").map_err(db)?,
-                row.try_get("valid_time_end").map_err(db)?,
-            )?,
-            created_at: row.try_get("created_at").map_err(db)?,
-            revoked_at: row.try_get("revoked_at").map_err(db)?,
-        })
+        let basis = sqlx::query("SELECT * FROM association_evidence_basis WHERE association_evidence_id=$1 ORDER BY basis_kind,basis_ref,basis_role")
+            .bind(id.0).fetch_all(self.store.pool()).await.map_err(db)?
+            .iter().map(|row| decode_association_basis(row, subject)).collect::<Result<Vec<_>>>()?;
+        decode_association(&row, subject, from, to, basis)
     }
 
     async fn validate_association_basis(
@@ -505,20 +473,6 @@ impl MemoryService {
             .await
     }
 
-    pub async fn accessibility_level(
-        &self,
-        subject: SubjectId,
-        memory: MemoryId,
-        now: DateTime<Utc>,
-    ) -> Result<AccessibilityLevel> {
-        let policy = super::resolve_accessibility_policy(
-            &self.configuration.snapshot_for_subject(subject)?,
-        )?;
-        policy
-            .level_for_memory(&self.store, subject, memory, now)
-            .await
-    }
-
     pub async fn temporal_evidence_public(
         &self,
         revision: MemoryRevisionId,
@@ -672,4 +626,104 @@ fn validate_association_input(input: &CreateAssociationRequest) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn decode_association_basis(
+    row: &sqlx::postgres::PgRow,
+    subject: SubjectId,
+) -> Result<AssociationBasis> {
+    let kind: String = row.try_get("basis_kind").map_err(db)?;
+    let basis_role = parse_enum(
+        row.try_get("basis_role").map_err(db)?,
+        "association basis role",
+    )?;
+    if kind == "use_event" {
+        let value = row.try_get::<String, _>("basis_ref").map_err(db)?;
+        let (consumer_ref, event_id) = parse_use_event_key(&value)?;
+        Ok(AssociationBasis::UseEvent(UseEventRef {
+            subject_id: subject,
+            consumer_ref,
+            event_id: UseEventId(event_id),
+        }))
+    } else if kind == "evidence" {
+        let locator = match (
+            row.try_get::<Option<Uuid>, _>("source_region_id")
+                .map_err(db)?,
+            row.try_get::<Option<Uuid>, _>("derived_representation_id")
+                .map_err(db)?,
+            row.try_get::<Option<Uuid>, _>("derived_region_id")
+                .map_err(db)?,
+        ) {
+            (Some(value), None, None) => {
+                EvidenceLocator::SourceRegion(nous_core::SourceRegionId(value))
+            }
+            (None, Some(value), None) => {
+                EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(value))
+            }
+            (None, None, Some(value)) => {
+                EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(value))
+            }
+            (None, None, None) => EvidenceLocator::WholeOccurrence,
+            _ => {
+                return Err(Error::Infrastructure(
+                    "association evidence locator is invalid".into(),
+                ));
+            }
+        };
+        Ok(AssociationBasis::Revision(RevisionBasis::Evidence(
+            EvidenceRef {
+                epistemic_relation: parse_epistemic_relation(
+                    row.try_get("epistemic_relation").map_err(db)?,
+                )?,
+                occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
+                locator,
+                basis_role,
+            },
+        )))
+    } else {
+        Ok(AssociationBasis::Revision(
+            RevisionBasis::CognitionDependency(CognitionDependency {
+                epistemic_relation: parse_epistemic_relation(
+                    row.try_get("epistemic_relation").map_err(db)?,
+                )?,
+                target_revision: parse_reference(
+                    &kind,
+                    &row.try_get::<String, _>("basis_ref").map_err(db)?,
+                )?,
+                basis_role,
+            }),
+        ))
+    }
+}
+
+fn decode_association(
+    row: &sqlx::postgres::PgRow,
+    subject: SubjectId,
+    from: CognitiveRef,
+    to: CognitiveRef,
+    basis: Vec<AssociationBasis>,
+) -> Result<AssociationEvidence> {
+    Ok(AssociationEvidence {
+        association_evidence_id: AssociationEvidenceId(
+            row.try_get("association_evidence_id").map_err(db)?,
+        ),
+        subject_id: subject,
+        from,
+        to,
+        relation_kind: row.try_get("relation_kind").map_err(db)?,
+        polarity: parse_enum(row.try_get("polarity").map_err(db)?, "association polarity")?,
+        basis_class: parse_enum(
+            row.try_get("basis_class").map_err(db)?,
+            "association support class",
+        )?,
+        basis,
+        producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
+        valid_time: temporal_from_columns(
+            row.try_get("valid_time_kind").map_err(db)?,
+            row.try_get("valid_time_start").map_err(db)?,
+            row.try_get("valid_time_end").map_err(db)?,
+        )?,
+        created_at: row.try_get("created_at").map_err(db)?,
+        revoked_at: row.try_get("revoked_at").map_err(db)?,
+    })
 }

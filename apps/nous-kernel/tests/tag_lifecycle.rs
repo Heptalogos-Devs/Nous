@@ -167,7 +167,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             OperationId::new(),
             text,
         );
-        input.tags = vec![tags[1].tag_id];
+        input.content.tags = vec![tags[1].tag_id];
         revisions.push(
             owner
                 .form_memory(input)
@@ -220,7 +220,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         OperationId::new(),
         "Explicit concept formation after merge",
     );
-    explicit.tags = vec![tags[1].tag_id, tags[0].tag_id, tags[1].tag_id];
+    explicit.content.tags = vec![tags[1].tag_id, tags[0].tag_id, tags[1].tag_id];
     let formed = owner.form_memory(explicit.clone()).await.unwrap();
     assert_eq!(formed.tags, vec![tags[0].tag_id]);
     assert_eq!(
@@ -238,7 +238,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         OperationId::new(),
         "Unknown concept",
     );
-    invalid.tags = vec![TagId::new()];
+    invalid.content.tags = vec![TagId::new()];
     assert!(owner.form_memory(invalid).await.is_err());
 
     for name in [
@@ -398,7 +398,35 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         basis: vec![basis[0].clone()],
     };
     let children = owner.split_tag(subject, split.clone()).await.unwrap();
+    assert_eq!(
+        children
+            .iter()
+            .map(|child| child.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Approval policy", "Rollout procedure"]
+    );
+    owner
+        .revise_tag(
+            subject,
+            nous_memory::ReviseTagInput {
+                operation_id: OperationId::new(),
+                target: TagExpectation {
+                    tag_id: children[0].tag_id,
+                    expected_revision_id: children[0].current_revision_id,
+                },
+                content: content("Revised approval policy"),
+                producer: None,
+            },
+        )
+        .await
+        .unwrap();
     let replay = owner.split_tag(subject, split.clone()).await.unwrap();
+    assert_eq!(
+        replay[0].current_revision_id,
+        children[0].current_revision_id
+    );
+    assert_eq!(replay[0].label, "Approval policy");
+    assert_eq!(replay[1].label, "Rollout procedure");
     assert_eq!(
         children.iter().map(|t| t.tag_id).collect::<Vec<_>>(),
         replay.iter().map(|t| t.tag_id).collect::<Vec<_>>()

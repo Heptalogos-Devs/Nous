@@ -62,16 +62,9 @@ pub(super) fn view(input: MemoryView) -> p::Memory {
     }
 }
 
-fn memory_input(
-    subject: SubjectId,
-    operation_id: OperationId,
-    content: p::MemoryContent,
-) -> Result<ExplicitMemoryInput> {
-    Ok(ExplicitMemoryInput {
+fn memory_content(content: p::MemoryContent) -> Result<nous_memory::MemoryContent> {
+    Ok(nous_memory::MemoryContent {
         producer: content.producer.map(from_producer).transpose()?,
-        operation_id,
-        subject,
-        cognitive_role: enum_value(&content.cognitive_role)?,
         formation_mode: enum_value(&content.formation_mode)?,
         grounding_occurrence_id: content
             .grounding_occurrence_id
@@ -185,16 +178,28 @@ impl KernelService {
     ) -> Result<p::ListMemoriesResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
         let memory = nous_core::MemoryId(id(&input.memory_id)?);
-        let history = self
+        let scope = format!("memory-history:{}:{}", subject.0, memory.0);
+        let (limit, after) = page(input.page, &scope)?;
+        let (history, more) = self
             .require_memory()?
-            .memory_history(subject, memory)
+            .memory_history(subject, memory, limit, after)
             .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                history
+                    .last()
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .revision
+                    .memory_revision_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
         Ok(p::ListMemoriesResponse {
-            items: history
-                .into_iter()
-                .map(|revision| view_from_revision(subject, memory, revision))
-                .collect(),
-            next_page_token: String::new(),
+            items: history.into_iter().map(view).collect(),
+            next_page_token,
         })
     }
     pub(super) async fn form_memory(&self, input: p::FormMemoryRequest) -> Result<p::Memory> {
@@ -202,11 +207,12 @@ impl KernelService {
         let content = required(input.input, "input")?;
         Ok(view(
             self.require_memory()?
-                .form_memory(memory_input(
+                .form_memory(ExplicitMemoryInput {
                     subject,
-                    OperationId(id(&input.operation_id)?),
-                    content,
-                )?)
+                    operation_id: OperationId(id(&input.operation_id)?),
+                    cognitive_role: enum_value(&input.cognitive_role)?,
+                    content: memory_content(content)?,
+                })
                 .await?,
         ))
     }
@@ -214,11 +220,9 @@ impl KernelService {
         let subject = SubjectId(id(&input.subject_id)?);
         let content = required(input.input, "input")?;
         let operation_id = OperationId(id(&input.operation_id)?);
-        let parsed = memory_input(subject, operation_id, content)?;
         Ok(view(
             self.require_memory()?
                 .revise_memory(ReviseMemoryInput {
-                    producer: parsed.producer,
                     operation_id,
                     subject,
                     memory_id: nous_core::MemoryId(id(&input.memory_id)?),
@@ -229,16 +233,8 @@ impl KernelService {
                                 .into(),
                         )
                     })?,
-                    formation_mode: parsed.formation_mode,
-                    grounding_occurrence_id: parsed.grounding_occurrence_id,
-                    semantic_role: parsed.semantic_role,
-                    representation_text: parsed.representation_text,
-                    title: parsed.title,
-                    basis: parsed.basis,
-                    aboutness: parsed.aboutness,
-                    valid_time: parsed.valid_time,
 
-                    epistemic_class: parsed.epistemic_class,
+                    content: memory_content(content)?,
                 })
                 .await?,
         ))
@@ -297,43 +293,5 @@ impl KernelService {
                 input.expected_object_epoch,
             )
             .await
-    }
-}
-
-fn view_from_revision(
-    subject: SubjectId,
-    memory: nous_core::MemoryId,
-    revision: nous_memory::MemoryRevision,
-) -> p::Memory {
-    p::Memory {
-        producer_signature_id: revision.producer_signature_id.map(|id| id.to_string()),
-        memory_id: memory.0.to_string(),
-        revision_id: revision.memory_revision_id.0.to_string(),
-        subject_id: subject.0.to_string(),
-        cognitive_role: String::new(),
-        object_epoch: 0,
-        acceptance_state: String::new(),
-        integrity_state: String::new(),
-        suppression_state: String::new(),
-        accessibility_mode: String::new(),
-        accessibility_level: String::new(),
-        semantic_role: revision.semantic_role,
-        epistemic_class: enum_name(revision.epistemic_class),
-        grounding_occurrence_id: revision.grounding_occurrence_id.map(|id| id.0.to_string()),
-        text: revision.representation_text,
-        title: revision.title,
-        basis: Vec::new(),
-        aboutness: Vec::new(),
-        tags: Vec::new(),
-        created_at: None,
-        temporal_evidence: None,
-        valid_time: Some(temporal_proto(&revision.valid_time)),
-        formed_at: Some(timestamp(revision.formed_at)),
-        recorded_at: Some(timestamp(revision.recorded_at)),
-        formation_mode: enum_name(revision.formation_mode),
-        revision_no: revision.revision_no,
-        relations: Vec::new(),
-        relations_truncated: false,
-        revision_intent: revision.revision_intent.map(enum_name),
     }
 }

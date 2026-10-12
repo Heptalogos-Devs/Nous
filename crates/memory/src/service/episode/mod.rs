@@ -448,60 +448,6 @@ async fn insert_episode_support(
     Ok(())
 }
 
-async fn load_members(pool: &sqlx::PgPool, revision: Uuid) -> Result<Vec<EpisodeMember>> {
-    sqlx::query("SELECT ordinal,ref_kind,ref_value,role FROM episode_revision_members WHERE episode_revision_id=$1 ORDER BY ordinal").bind(revision).fetch_all(pool).await.map_err(db)?.into_iter().map(|row| Ok(EpisodeMember { ordinal: row.try_get("ordinal").map_err(db)?, reference: parse_reference(&row.try_get::<String,_>("ref_kind").map_err(db)?, &row.try_get::<String,_>("ref_value").map_err(db)?)?, role: row.try_get("role").map_err(db)? })).collect()
-}
-
-async fn load_basis(pool: &sqlx::PgPool, revision: Uuid) -> Result<Vec<RevisionBasis>> {
-    let rows = sqlx::query("SELECT basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM episode_revision_basis WHERE episode_revision_id=$1 ORDER BY basis_no").bind(revision).fetch_all(pool).await.map_err(db)?;
-    rows.into_iter()
-        .map(|row| {
-            let role = parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")?;
-            let kind: String = row.try_get("basis_kind").map_err(db)?;
-            if kind == "evidence" {
-                let locator = if let Some(value) = row
-                    .try_get::<Option<Uuid>, _>("source_region_id")
-                    .map_err(db)?
-                {
-                    EvidenceLocator::SourceRegion(SourceRegionId(value))
-                } else if let Some(value) = row
-                    .try_get::<Option<Uuid>, _>("derived_representation_id")
-                    .map_err(db)?
-                {
-                    EvidenceLocator::DerivedRepresentation(DerivedRepresentationId(value))
-                } else if let Some(value) = row
-                    .try_get::<Option<Uuid>, _>("derived_region_id")
-                    .map_err(db)?
-                {
-                    EvidenceLocator::DerivedRegion(DerivedRegionId(value))
-                } else {
-                    EvidenceLocator::WholeOccurrence
-                };
-                return Ok(RevisionBasis::Evidence(EvidenceRef {
-                    epistemic_relation: parse_epistemic_relation(
-                        row.try_get("epistemic_relation").map_err(db)?,
-                    )?,
-                    occurrence_id: OccurrenceId(
-                        row.try_get::<Uuid, _>("occurrence_id").map_err(db)?,
-                    ),
-                    locator,
-                    basis_role: role,
-                }));
-            }
-            Ok(RevisionBasis::CognitionDependency(CognitionDependency {
-                epistemic_relation: parse_epistemic_relation(
-                    row.try_get("epistemic_relation").map_err(db)?,
-                )?,
-                target_revision: parse_reference(
-                    &kind,
-                    &row.try_get::<String, _>("basis_ref").map_err(db)?,
-                )?,
-                basis_role: role,
-            }))
-        })
-        .collect()
-}
-
 fn known_overlap(left: &TemporalExtent, right: &TemporalExtent) -> bool {
     match (left, right) {
         (TemporalExtent::Instant { at: left }, TemporalExtent::Instant { at: right }) => {

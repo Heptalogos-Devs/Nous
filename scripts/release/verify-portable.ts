@@ -246,8 +246,8 @@ try {
   const memory = await client.memory.formMemory({
     subjectId,
     operationId: crypto.randomUUID(),
+    cognitiveRole: "declarative",
     input: {
-      cognitiveRole: "declarative",
       formationMode: "grounded",
       groundingOccurrenceId: occurrenceId,
       semanticRole: "fact",

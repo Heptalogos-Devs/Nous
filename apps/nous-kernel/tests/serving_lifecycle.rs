@@ -10,7 +10,7 @@ use test_support::{database, form_input, observation, open_runtime_with_serving}
 #[tokio::test]
 async fn serving_reuse_checks_effective_policy_identity() {
     let (root, url, _postgres) = database().await;
-    let runtime = open_runtime_with_serving(&url, &root, true, false, false).await;
+    let runtime = open_runtime_with_serving(&url, &root, true, false, true).await;
     let subject = subject(&runtime).await;
     observation(&runtime, subject, "Retain this original material").await;
     let need = ServingNeed {
@@ -54,6 +54,7 @@ async fn serving_reuse_checks_effective_policy_identity() {
             .config_digest(
                 subject,
                 "lexical",
+                "",
                 &runtime.configuration.snapshot_for_subject(subject).unwrap()
             )
             .await
@@ -88,6 +89,115 @@ async fn serving_reuse_checks_effective_policy_identity() {
         .await
         .unwrap();
     assert!(report.reclaimed.contains(&original.generation_id));
+
+    assert_native_projection_boundaries(&runtime, subject).await;
+}
+
+async fn assert_native_projection_boundaries(
+    runtime: &nous_kernel::NousRuntime,
+    subject: nous_core::SubjectId,
+) {
+    // Native structure follows its own inputs, rather than every Subject write.
+    let topology_need = ServingNeed {
+        topology: true,
+        ..Default::default()
+    };
+    runtime
+        .serving
+        .prepare(subject, topology_need)
+        .await
+        .unwrap();
+    let topology = runtime
+        .store
+        .serving_current(subject)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|record| record.family == "topology" && record.space.is_empty())
+        .unwrap();
+    let source = observation(runtime, subject, "Text alone changes no native graph node").await;
+    assert!(runtime.store.authority_seq(subject).await.unwrap() > topology.authority_watermark);
+    let families = runtime.serving.family_status(subject).await.unwrap();
+    let native = families
+        .iter()
+        .find(|family| family.name == "topology" && family.space_signature.is_empty())
+        .unwrap();
+    assert_eq!(native.state, nous_runtime::LaneStatus::Ready);
+    assert_eq!(native.desired_authority_seq, topology.authority_watermark);
+    assert!(
+        runtime
+            .store
+            .promote_generation(topology.generation_id)
+            .await
+            .unwrap()
+    );
+    let reused = runtime
+        .serving
+        .prepare(subject, topology_need)
+        .await
+        .unwrap();
+    assert!(!reused.rebuilt.contains(&"topology".to_owned()));
+    assert_eq!(reused.generations["topology"], topology.generation_id);
+
+    let memory = runtime
+        .require_memory()
+        .unwrap()
+        .form_memory(form_input(
+            subject,
+            source.occurrence.occurrence_id,
+            OperationId::new(),
+            "Recall relevant cognition with a real native graph node",
+        ))
+        .await
+        .unwrap();
+    let families = runtime.serving.family_status(subject).await.unwrap();
+    let native = families
+        .iter()
+        .find(|family| family.name == "topology" && family.space_signature.is_empty())
+        .unwrap();
+    assert_eq!(native.state, nous_runtime::LaneStatus::Stale);
+    assert!(
+        !runtime
+            .store
+            .promote_generation(topology.generation_id)
+            .await
+            .unwrap()
+    );
+    let updated = runtime
+        .serving
+        .prepare(subject, topology_need)
+        .await
+        .unwrap();
+    assert!(updated.rebuilt.contains(&"topology".to_owned()));
+    assert_ne!(updated.generations["topology"], topology.generation_id);
+    let reference = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
+    assert!(
+        runtime
+            .store
+            .topology_projection_input(subject, true)
+            .await
+            .unwrap()
+            .nodes
+            .contains(&reference)
+    );
+    assert!(
+        runtime
+            .query(query(subject))
+            .await
+            .unwrap()
+            .results
+            .iter()
+            .any(|hit| hit.reference == reference)
+    );
+    let families = runtime.serving.family_status(subject).await.unwrap();
+    assert_eq!(
+        families
+            .iter()
+            .find(|family| family.name == "topology" && family.space_signature.is_empty())
+            .unwrap()
+            .state,
+        nous_runtime::LaneStatus::Ready
+    );
 }
 
 #[tokio::test]

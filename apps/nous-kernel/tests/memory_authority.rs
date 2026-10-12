@@ -35,29 +35,34 @@ async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
     let sequence = runtime.store.authority_seq(subject).await.unwrap();
     let result = owner
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject,
             memory_id: original.object.memory_id,
             expected_object_epoch: original.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "A revised source fact".into(),
-            title: None,
-            basis: vec![RevisionBasis::CognitionDependency(
-                nous_core::CognitionDependency {
-                    epistemic_relation: None,
-                    target_revision: CognitiveRef::MemoryRevision(
-                        original.revision.memory_revision_id,
-                    ),
-                    basis_role: BasisRole::Direct,
-                },
-            )],
-            aboutness: vec![],
-            valid_time: TemporalExtent::Unknown,
-            epistemic_class: EpistemicClass::Observed,
+
+            content: nous_memory::MemoryContent {
+                producer: None,
+                formation_mode: FormationMode::Grounded,
+                grounding_occurrence_id: Some(source.occurrence.occurrence_id),
+                semantic_role: "fact".into(),
+                representation_text: "A revised source fact".into(),
+                title: None,
+                basis: vec![
+                    original.basis[0].clone(),
+                    RevisionBasis::CognitionDependency(nous_core::CognitionDependency {
+                        epistemic_relation: None,
+                        target_revision: CognitiveRef::MemoryRevision(
+                            original.revision.memory_revision_id,
+                        ),
+                        basis_role: BasisRole::Direct,
+                    }),
+                ],
+                aboutness: vec![],
+                valid_time: TemporalExtent::Unknown,
+                epistemic_class: EpistemicClass::Observed,
+                tags: Vec::new(),
+            },
         })
         .await;
     assert!(
@@ -306,7 +311,7 @@ async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
         OperationId::new(),
         "Alice identity matter",
     );
-    input.aboutness = vec![alice.clone()];
+    input.content.aboutness = vec![alice.clone()];
     let memory = runtime
         .require_memory()
         .unwrap()
@@ -319,27 +324,31 @@ async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
         OperationId::new(),
         "Bob disjoint matter",
     );
-    revision.aboutness = vec![bob.clone()];
+    revision.content.aboutness = vec![bob.clone()];
     let rejected = runtime
         .require_memory()
         .unwrap()
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
             operation_id: revision.operation_id,
             subject,
             memory_id: memory.object.memory_id,
             expected_object_epoch: memory.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: revision.formation_mode,
-            grounding_occurrence_id: revision.grounding_occurrence_id,
-            semantic_role: revision.semantic_role,
-            representation_text: revision.representation_text,
-            title: revision.title,
-            basis: revision.basis,
-            aboutness: revision.aboutness,
-            valid_time: revision.valid_time,
 
-            epistemic_class: revision.epistemic_class,
+            content: nous_memory::MemoryContent {
+                producer: None,
+                formation_mode: revision.content.formation_mode,
+                grounding_occurrence_id: revision.content.grounding_occurrence_id,
+                semantic_role: revision.content.semantic_role,
+                representation_text: revision.content.representation_text,
+                title: revision.content.title,
+                basis: revision.content.basis,
+                aboutness: revision.content.aboutness,
+                valid_time: revision.content.valid_time,
+
+                epistemic_class: revision.content.epistemic_class,
+                tags: Vec::new(),
+            },
         })
         .await;
     assert!(matches!(
@@ -365,7 +374,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
         OperationId::new(),
         "association memory",
     );
-    input.aboutness = vec![entity.clone()];
+    input.content.aboutness = vec![entity.clone()];
     let memory = runtime
         .require_memory()
         .unwrap()

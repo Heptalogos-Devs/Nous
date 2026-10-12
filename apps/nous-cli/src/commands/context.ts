@@ -4,10 +4,14 @@ import { create } from "@bufbuild/protobuf";
 import {
   CognitiveRefSchema,
   CreateWorkContextRequestSchema,
+  WorkContextFieldsSchema,
+  WorkContextAnchorsSchema,
+  WorkContextClearScope,
+  type UpdateWorkContextRequest,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { content, page } from "../content.js";
 import type { CliEnvironment } from "../runtime.js";
-import { CliError } from "../agent.js";
+import { boundedInteger, CliError } from "../agent.js";
 export async function contextCommands(
   env: CliEnvironment,
   action?: string,
@@ -19,8 +23,6 @@ export async function contextCommands(
   async function text() {
     let value = values.text;
     if (values.file) value = await env.readText(values.file);
-    if (value !== undefined && Buffer.byteLength(value) > 65536)
-      throw new CliError("INVALID_ARGUMENT", "Context text exceeds 64 KiB");
     return value;
   }
   if (action === "list")
@@ -68,12 +70,17 @@ export async function contextCommands(
   const id = argument
     ? (await resolveReference(argument, "work_context")).value
     : required(state.workContextId, "WorkContext");
-  const result = await client.runtime.getWorkContext({
-    subjectId,
-    workContextId: id,
-  });
-  const current = result.workContext;
-  if (!current) throw new CliError("NOT_FOUND", "WorkContext not found");
+  const expected = values["expected-revision"];
+  const current =
+    expected === undefined || action === "show" || action === "select"
+      ? (await client.runtime.getWorkContext({ subjectId, workContextId: id }))
+          .workContext
+      : undefined;
+  if (
+    (action === "show" || action === "select" || expected === undefined) &&
+    !current
+  )
+    throw new CliError("NOT_FOUND", "WorkContext not found");
   if (action === "select") {
     await save({ ...state, workContextId: id });
     return current;
@@ -82,58 +89,31 @@ export async function contextCommands(
   const mutation = {
     subjectId,
     workContextId: id,
-    expectedRevision: current.revision,
+    expectedRevision:
+      expected === undefined
+        ? current!.revision
+        : BigInt(
+            boundedInteger(
+              expected,
+              1,
+              Number.MAX_SAFE_INTEGER,
+              "--expected-revision",
+            ),
+          ),
     operationId,
   };
   if (action === "pause") return client.runtime.pauseWorkContext(mutation);
   if (action === "resume") return client.runtime.resumeWorkContext(mutation);
   if (action === "end") return client.runtime.endWorkContext(mutation);
-  const patch = {
-    ...mutation,
-    purpose: current.purpose,
-    contextText: current.contextText,
-    cognitionAnchors: [...current.cognitionAnchors],
-    entityAnchors: [...current.entityAnchors],
-    tagAnchors: [...current.tagAnchors],
-    unresolvedQuestions: current.unresolvedQuestions,
-    constraints: current.constraints,
-    resumeConditions: current.resumeConditions,
-    budgetSummary: current.budgetSummary,
-  };
+  let intent: UpdateWorkContextRequest["intent"];
   if (action === "set") {
-    const file = values["request-file"]
-      ? ((await env.requestPayload(values["request-file"])) as Record<
-          string,
-          unknown
-        >)
-      : undefined;
-    const structured = file
-      ? await content(env, CreateWorkContextRequestSchema, file)
-      : undefined;
-    const supplied = (snake: string, camel: string) =>
-      file && (Object.hasOwn(file, snake) || Object.hasOwn(file, camel));
-    if (structured) {
-      if (supplied("unresolved_questions", "unresolvedQuestions"))
-        patch.unresolvedQuestions = structured.unresolvedQuestions;
-      if (supplied("constraints", "constraints"))
-        patch.constraints = structured.constraints;
-      if (supplied("resume_conditions", "resumeConditions"))
-        patch.resumeConditions = structured.resumeConditions;
-      if (supplied("budget_summary", "budgetSummary"))
-        patch.budgetSummary = structured.budgetSummary;
-      if (supplied("purpose", "purpose")) patch.purpose = structured.purpose;
-    }
-    const nextText =
-      structured && supplied("context_text", "contextText")
-        ? structured.contextText
-        : await text();
-    if (nextText === undefined && !values.purpose && !structured)
-      throw new CliError(
-        "INVALID_ARGUMENT",
-        "Provide --text, --file, --purpose or --request-file",
-      );
-    if (nextText !== undefined) patch.contextText = nextText;
-    if (values.purpose) patch.purpose = values.purpose;
+    const fields = values["request-file"]
+      ? await content(env, WorkContextFieldsSchema)
+      : create(WorkContextFieldsSchema);
+    const nextText = await text();
+    if (nextText !== undefined) fields.contextText = nextText;
+    if (values.purpose !== undefined) fields.purpose = values.purpose;
+    intent = { case: "fields", value: fields };
   } else if (action === "clear") {
     const scope = values.scope ?? "all";
     if (!["text", "anchors", "all"].includes(scope))
@@ -141,12 +121,15 @@ export async function contextCommands(
         "INVALID_ARGUMENT",
         "--scope must be text, anchors or all",
       );
-    if (scope !== "anchors") patch.contextText = "";
-    if (scope !== "text") {
-      patch.cognitionAnchors = [];
-      patch.entityAnchors = [];
-      patch.tagAnchors = [];
-    }
+    intent = {
+      case: "clear",
+      value:
+        scope === "text"
+          ? WorkContextClearScope.TEXT
+          : scope === "anchors"
+            ? WorkContextClearScope.ANCHORS
+            : WorkContextClearScope.ALL,
+    };
   } else if (action === "pin" || action === "unpin") {
     const entries = [
       ...(values.cognition
@@ -162,12 +145,12 @@ export async function contextCommands(
         "INVALID_ARGUMENT",
         "Provide --cognition, --entity or --tag",
       );
+    const anchors = create(WorkContextAnchorsSchema);
     for (const entry of entries) {
       const ref = await resolveReference(entry.text, entry.kind);
       if (ref.kind === "entity" || ref.kind === "tag") {
         const key = ref.kind === "entity" ? "entityAnchors" : "tagAnchors";
-        patch[key] = patch[key].filter((value) => value !== ref.value);
-        if (action === "pin") patch[key].push(ref.value);
+        anchors[key].push(ref.value);
       } else if (
         [
           "memory_revision",
@@ -177,17 +160,14 @@ export async function contextCommands(
           "occurrence",
         ].includes(ref.kind)
       ) {
-        patch.cognitionAnchors = patch.cognitionAnchors.filter(
-          (value) => value.kind !== ref.kind || value.value !== ref.value,
-        );
-        if (action === "pin")
-          patch.cognitionAnchors.push(create(CognitiveRefSchema, ref));
+        anchors.cognitionAnchors.push(create(CognitiveRefSchema, ref));
       } else
         throw new CliError(
           "REFERENCE_TYPE_MISMATCH",
           "Pin exact cognition revisions, occurrences, Entities or Tags",
         );
     }
+    intent = { case: action, value: anchors };
   } else throw new CliError("INVALID_ARGUMENT", "Unknown context command");
-  return client.runtime.updateWorkContext(patch);
+  return client.runtime.updateWorkContext({ ...mutation, intent });
 }

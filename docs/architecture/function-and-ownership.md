@@ -2,7 +2,7 @@
 
 [返回文档目录](../INDEX.md)
 
-本文记录全库整改目标和当前功能入口、数据流与责任归属。公共场景用受控 provider 验证模型线路；用户给定 Ark Gateway 的真实文本形成、向量提交与查询也已通过隔离实例验证，模型 Rerank 暂不启用。模型输出与检索质量仍由实际研究评估，连通验证不能替代质量结论。长期认知语义仍由 Architecture-Vault 的 Target Design 和已接受决定拥有。
+本文记录全库整改目标和当前功能入口、数据流与责任归属，具体能力和已删除流程以下表为准。地图不是全库完成的证明：公开返回结构、分页、完整操作和批量读取必须由实际路径分别核实，不以某个 owner 已有批量方法推断其所有消费者都已迁移。公共场景用受控 provider 验证模型线路；用户给定 Ark Gateway 的真实文本形成、向量提交与查询也已通过隔离实例验证，模型 Rerank 暂不启用。模型输出与检索质量仍由实际研究评估，连通验证不能替代质量结论。长期认知语义仍由 Architecture-Vault 的 Target Design 和已接受决定拥有。
 
 ## 整改目标
 
@@ -20,7 +20,7 @@
 
 ## 系统数据流
 
-~~~mermaid
+```mermaid
 flowchart TD
   U[用户 / Agent] --> CLI[官方 CLI / stdio MCP]
   CLI --> Client[官方 TypeScript Client]
@@ -36,7 +36,7 @@ flowchart TD
   Owners --> Kernel
   Kernel --> Core
   Core --> Client
-~~~
+```
 
 模型和外部资源执行在 Authority 事务之外。模型输出是提案；所属 owner 决定持久提交。Serving 可重建，返回前由 owner 核验来源、生命周期、主体和精确修订。
 
@@ -44,55 +44,70 @@ flowchart TD
 
 入口列说明当前完整执行路径；最后一列记录已拆除的多余步骤与仍存在的功能边界。没有独立公开操作的能力直接标明，不用局部测试替代系统可用性。
 
-| 任务 | 官方入口与实际路径 | 数据与责任归属 | 简化后的流程与功能边界 |
-| --- | --- | --- | --- |
-| 开发启动、状态、停止 | dev / launcher serve → Core → private Kernel → PostgreSQL → discovery → Client status | Launcher/Core 拥有进程；RuntimeLocations 拥有路径；Kernel 组合 owner | dev 与包共用启动；一个 JSON bootstrap；普通 serve 使用已安装 runtime；监督 Kernel 退出，收尾完整执行，最后释放实例锁 |
-| 配置与模型接入 | config describe/get/set/clear/check → Core normalizer → Configuration owner → active/desired snapshot → 模型角色 | Schema 属于参数 owner；Configuration 拥有覆盖顺序、快照和作用域 | 入库时规范化，读快照不重复解析；删除人为 config revision；未配置角色直接报告 NOT_CONFIGURED；凭据在 SecretRoot |
-| Subject、Seed | subject create/use/list、seed/adopt-seed → Subject → seed Artifact | Subject 拥有身份、capability 和 adoption；ObjectStore 保存不可变 Seed | owner 提供完整批量 view，Seed 接通 CLI；主体删除/分支尚未实现 |
-| Session | session open/show/list/close → Runtime Session → 返回选中会话 | Runtime 拥有会话、revision 和 foreground WorkContext；CLI 只保存选择 | 直接返回 owner SessionView，不在 transport 重读或查询 foreground；列表支持分页 |
-| 观察和材料上传 | observe text/file → Client streaming upload / RecordObservation → Material → Runtime admission | Material 拥有 Artifact、Occurrence、SourceRegion、mentions、来源 lineage；Runtime 拥有实际接触 | read/list/producer/derived graph 由 Material 提供完整 view，共享解码与批量读取 |
-| 材料读取与来源核对 | read/show/trace → Material read/materialize → 文本范围或二进制元数据；read --output → Client download | Material 拥有选择、范围和 lineage；ObjectStore 拥有流式字节 | preview 有界；Artifact 全量流式写入新文件，失败删除部分输出，不受 preview 上限约束 |
-| 派生与媒体 | derive → Core role/routes/预处理 → Material commit → representation/regions | Core 拥有 provider、FFmpeg；Material 拥有 immutable DAG 和 ProducerSignature | 保留三策略、图像、音频直接/转写、视频直接/frames；已有 outcome 直接返回，缓存 proposal 再提交，不为 direct replay 下载原字节 |
-| Memory 形成、修订与生命周期 | form、memory form/revise/history/lifecycle → Memory | Memory 拥有对象、不可变 revision、basis、aboutness、依赖和生命周期 | 全部管理操作接 CLI，真正分页；共享批量 hydration；purge 一次事务提交，删除 checkpoint 与中间状态 |
-| CognitiveSchema | schema create/revise/evidence/split/merge/lifecycle、maintenance consolidation → Memory Schema | Schema 能力拥有适用范围、边界、支持链和 lineage | 现有公共操作全部接 CLI；独立 list/history 尚缺；保持独立语义模型 |
-| Tag 与 Association | tag create/revise/merge/split/attach、association create/revoke/neighborhood → Memory concepts | Tag 拥有语义资产和 canonical identity；Association 拥有 typed endpoints/basis/polarity | SQL 与完整 read/search 属于 owner；修订历史和独立 Association read/list 尚缺 |
-| WorkContext 与 ResidentSet | context create/list/set/pin/unpin/clear/foreground/pause/resume/end → Runtime | Runtime 拥有任务文本、exact anchors、revision、生命周期和接纳 | 正式文本、问题、约束、resume 与 budget 字段接 CLI；保留真实 expected revision，transport 不访问 Runtime 表 |
-| Episode 与 Journal | episode create/revise/history/link/lifecycle、journal reads/lifecycle；maintenance 自动组织 | Memory 拥有 exact organization、成员/来源、修订与 lifecycle；Runtime 拥有实际 experience | 现有 Client 操作全部接 CLI；四家族共用 Runtime exact-ref 清理，领域规则分别拥有 |
-| 有意义使用与维护 | use → Runtime receipt/feedback → MaintenanceNeed；maintenance grant → Core → owner actions | Runtime 拥有使用事件和待做事项；Core 拥有有限 host 预算；Memory 拥有提交 | grant 按 Subject 串行，选择 pending need，完成核对 trigger revision；没有数据库运行租约/token；保留调用与时间预算 |
-| Query 与历史切面 | query/prepare/inspect → NousQL → Runtime preparation/context → lanes/fusion/rerank → owner final validation → result:N | Runtime 拥有意图、时间切面、prepared context；Retrieval 拥有投影；各 owner 拥有 materialization | 一个显式 embedding，复用 binding 与打开的 family；stale exact binding 被拒绝；仅显式 refresh/maintenance 扫描回收资产 |
-| Hybrid、native、VCP | 同一 prepared query → 显式配置的检索 profile → lexical/dense/shared concept/topology | Retrieval mechanisms/reference/vcp 拥有数值算法；owner 提供可重建输入 | 四类 profile、数值 reference、真实 read pin/grace 保留；死的 shadow policy/rank、旧 family 兼容与源码哈希升级核对删除，制品结构、参数、向量空间和实际内容校验保留 |
-| 外部 Resource | resource put/get/list/remove/materialize；query Resource continuation → adapter → Material Observation | 宿主 adapter 拥有外部访问；Runtime 拥有单次 query ticket；Material 拥有已接触来源 | Registry 接 CLI；stock Core 无 provider adapter，只能管理描述符并明确报告未接入；提供 adapter 的宿主可查询和接纳，初次复用 version/access，恢复未接纳 proposal 才重查 |
-| Context projection | projection build/managed → Core steward → Runtime exact source refs | Core 拥有有界表达；Runtime 拥有 context/使用接纳 | 现有能力接 CLI；需要 operator consumer policy 和 projection_steward；不能用缓存充当 cognition Authority |
-| Windows Portable 与多布局 | build/runtime pack/notices → assemble → installed launcher → verify/restart/relocate | Release 拥有 payload；RuntimePack 拥有 acquisition/inventory；Locations 拥有共置/分离 roots | 只加载目标平台 catalog，不重复 acquisition 已完成的校验；保留显式 release verify；Linux source-less 尚未交付 |
-| 研究和本地数据维护 | research gateway/media/longitudinal/contracts/trace；clean:local → data/temp、data/cache | Research 拥有真实语料、数值 oracle、模型观察；开发工具拥有本地生成路径 | 真实研究保留；跨系统显式清理，受控停止临时 PostgreSQL；longitudinal 公共场景运行一次；删长度 gate 与重复脚手架 |
+| 任务                        | 官方入口与实际路径                                                                                                     | 数据与责任归属                                                                                                | 简化后的流程与功能边界                                                                                                                                                                                                     |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 开发启动、状态、停止        | dev / launcher serve → Core → private Kernel → PostgreSQL → discovery → Client status                                  | Launcher/Core 拥有进程；RuntimeLocations 拥有路径；Kernel 组合 owner                                          | dev 与包共用启动；一个 JSON bootstrap；普通 serve 使用已安装 runtime；监督 Kernel 退出，收尾完整执行，最后释放实例锁                                                                                                       |
+| 配置与模型接入              | config describe/get/set/clear/check → Core normalizer → Configuration owner → active/desired snapshot → 模型角色       | Schema 属于参数 owner；Configuration 拥有覆盖顺序、快照和作用域                                               | 入库时规范化，读快照不重复解析；删除人为 config revision；未配置角色直接报告 NOT_CONFIGURED；凭据在 SecretRoot                                                                                                             |
+| Subject、Seed               | subject create/use/list、seed/adopt-seed → Subject → Material Artifact admission                                       | Subject 拥有身份、capability 和 adoption；Material 拥有登记、去重和完整元数据，ObjectStore 拥有不可变存储布局 | Seed、上传和 Observation 共用同一 Artifact 登记，可加入采用事务；主体删除/分支尚未实现                                                                                                                                     |
+| Session                     | session open/show/list/close → Runtime Session → 返回选中会话                                                          | Runtime 拥有会话、revision、活动时间、Resident 状态与 foreground WorkContext；CLI 只保存选择                  | 正式返回完整 Session/Resident metadata，以 closed_at 表达关闭；列表分页和 resident 批量读取，不在 transport 重读 foreground                                                                                                |
+| 观察和材料上传              | observe text/file → Client streaming upload / RecordObservation → Material → Runtime admission                         | Material 拥有 Artifact、Occurrence、SourceRegion、mentions、来源 lineage；Runtime 拥有实际接触                | read/list/producer/derived graph 由 Material 提供完整 view，共享解码与批量读取                                                                                                                                             |
+| 材料读取与来源核对          | read/show/trace → Material read/materialize → 文本范围或二进制元数据；read --output → Client download                  | Material 拥有选择、范围和 lineage；ObjectStore 拥有流式字节                                                   | preview 有界；Artifact 全量流式写入新文件，失败删除部分输出，不受 preview 上限约束                                                                                                                                         |
+| 派生与媒体                  | derive → Core role/routes/预处理 → Material commit → representation/regions                                            | Core 拥有 provider、FFmpeg；Material 拥有 immutable DAG 和 ProducerSignature                                  | 保留三策略、图像、音频直接/转写、视频直接/frames；已有 outcome 直接返回，缓存 proposal 再提交，不为 direct replay 下载原字节                                                                                               |
+| Memory 形成、修订与生命周期 | form、memory form/revise/history/lifecycle → Memory                                                                    | Memory 拥有对象、不可变 revision、正式可写 content、basis、aboutness、tags、依赖和生命周期                    | 创建/修订使用同一内容，role 只由创建设置；历史返回完整 view，按 revision_no 分页；规范化、digest 与写入消费同一内容，purge 一次事务提交                                                                                    |
+| CognitiveSchema             | schema create/revise/evidence/split/merge/lifecycle、maintenance consolidation → Memory Schema                         | Schema 能力拥有适用范围、边界、支持链和 lineage                                                               | 现有公共操作全部接 CLI；独立 list/history 尚缺；保持独立语义模型                                                                                                                                                           |
+| Tag 与 Association          | tag create/revise/merge/split/attach、association create/revoke/neighborhood → Memory concepts                         | Tag 拥有语义资产和 canonical identity；Association 拥有 typed endpoints/basis/polarity                        | SQL 与完整 read/search 属于 owner；修订历史和独立 Association read/list 尚缺                                                                                                                                               |
+| WorkContext 与 ResidentSet  | context create/list/set/pin/unpin/clear/foreground/pause/resume/end → Runtime                                          | Runtime 拥有任务文本、exact anchors、revision、生命周期和完整内容修改                                         | fields/pin/unpin/clear 是 typed owner 意图；锁内核验 expected revision、应用意图，未提供保持、空值清空；CLI 不回填整对象或改数组，列表真正分页                                                                             |
+| Episode 与 Journal          | episode create/revise/history/link/lifecycle、journal reads/lifecycle；maintenance 自动组织                            | Memory 拥有 exact organization、成员/来源、修订与 lifecycle；Runtime 拥有实际 experience                      | exact/list/history 共享完整批量读取；对象按稳定 ID 分页、修订按 revision_no 分页且游标验证所属对象；四家族共用 Runtime exact-ref 清理                                                                                      |
+| 有意义使用与维护            | use → Runtime receipt/feedback → MaintenanceNeed；maintenance grant → Core → owner actions                             | Runtime 拥有使用事件和待做事项；Core 拥有有限 host 预算；Memory 拥有提交                                      | grant 按 Subject 串行，选择 pending need，完成核对 trigger revision；没有数据库运行租约/token；保留调用与时间预算                                                                                                          |
+| Query 与历史切面            | query/prepare/inspect → NousQL → Runtime preparation/context → lanes/fusion/rerank → owner final validation → result:N | Runtime 拥有意图、时间切面、prepared context；Retrieval 拥有投影；各 owner 拥有 materialization               | 一个显式 embedding，复用 binding 与打开的 family；stale exact binding 被拒绝；仅显式 refresh/maintenance 扫描回收资产                                                                                                      |
+| Hybrid、native、VCP         | 同一 prepared query → 显式配置的检索 profile → lexical/dense/shared concept/topology                                   | Retrieval mechanisms/reference/vcp 拥有数值算法；owner 提供可重建输入                                         | 四类 profile、数值 reference、真实 read pin/grace 保留；死的 shadow policy/rank、旧 family 兼容与源码哈希升级核对删除，制品结构、参数、向量空间和实际内容校验保留                                                          |
+| 外部 Resource               | resource put/get/list/remove/materialize；query Resource continuation → adapter → Material Observation                 | Runtime 拥有 Registry 的完整读写、过滤与有界分页，宿主 adapter 拥有外部访问；Material 拥有已接触来源          | 单对象和 query bounded descriptors 直接由 owner 读取，不全量拉取再筛；描述符与目录名称同事务写入。stock Core 无 provider adapter，明确报告未接入；初次接纳复用 version/access，恢复未接纳 proposal 才重查                  |
+| Context projection          | projection build/managed → Core steward → owner contribution → Runtime exact refs                                      | Memory 拥有生命周期、accessibility 和 basis 解释；Runtime 拥有接纳；Material 拥有自身 context source          | 公共 contribution 读取 Memory 正文，Schema/Episode/Journal 保留 eligible refs；Runtime resolver 的材料正文由 Material 解释。Memory 使用 policy/time 的一次完整 view，拒绝原因明确；需要配置 consumer 与 projection_steward |
+| Windows Portable 与多布局   | build/runtime pack/notices → assemble → installed launcher → verify/restart/relocate                                   | Release 拥有 payload；RuntimePack 拥有 acquisition/inventory；Locations 拥有共置/分离 roots                   | 只加载目标平台 catalog，不重复 acquisition 已完成的校验；保留显式 release verify；Linux source-less 尚未交付                                                                                                               |
+| 研究和本地数据维护          | research gateway/media/longitudinal/contracts/trace；clean:local → data/temp、data/cache                               | Research 拥有真实语料、数值 oracle、模型观察；开发工具拥有本地生成路径                                        | 真实研究保留；跨系统显式清理，受控停止临时 PostgreSQL；longitudinal 公共场景运行一次；删长度 gate 与重复脚手架                                                                                                             |
 
 Self、Social、Motivation 和 Heptalogos integration 是长期方向，当前未实现。本轮保持既有功能边界，不用占位 API 表示完成。
 
+## 当前完整路径中仍有的成本与缺口
+
+下表来自再次逐项追踪源码，说明已经贯通的入口中仍需整改的流程。前文列出能力不代表所有内部消费者已经统一；这些问题按完整路径处理，不作为封闭的问题清单。
+
+| 路径 | 当前数据流和问题 | 应拥有完整操作的模块与可取消流程 |
+| --- | --- | --- |
+| Projection / Managed Context | Kernel 和未使用的 Runtime working_set 各有一套构造；Session 完整读取重复，先消耗正文预算再由 Core 选择；非 Memory 只有引用，closed Session 未拒绝；空 optional 集合仍调用 steward | Core 选择并冻结 consumer/budget，Runtime 返回一次真实 Session/context 输入，各语义 owner 读取选中来源；保留一条正式投影，删除未使用算法、薄中间返回和重复 Session fence |
+| Cognition mutation / planning | Episode 创建/修订双内容和字段摘要抄写，partition 又逐 revision 读；Tag mutation 返回薄对象再读；concept focus/source/context 多次读取，basis-only provenance 却载入完整对象 | Memory 子能力拥有正式 content、完整 mutation 结果、批量 partition view 和一次 focus projection；共享 exact support 读取，保留不同用途的循环与语义规则 |
+| Serving / algorithms | 每类历史 family 重建完整 text/concept/graph 输入；native build 也读全部 Material 正文/来源；current/history native 输入规则分叉；候选资产双列表去重，Dense 构造未被生产消费的 EPA basis 链 | 按真实 family 输入一次投影；current/history 使用同一 native 语义，VCP 保留实际文本/向量；删除未消费的 Dense EPA 持久流程和空机制接口，保留研究算法及数值测试，不能以 diagnostics 代替接通 |
+| Material / source lineage / media | 来源根逐 ref 校验查询；Memory concept source 绕 Material SQL 并忽略 locator；分段和 derived inputs 重复 parent/归属查询；Core 拆 source→artifact→坐标→unary/stream；CAS orphan cleanup 未接入口 | Material 拥有批量来源、精确有界内容和 selected stream，ObjectStore 拥有物理布局/清理；删除第二写路径、无用 resource 字段及纯转发，接通已有清理能力而非删 API 冒充完成 |
+| Runtime residency / Query | ReportUse 与 Observation 各实现 Resident mutation，前者可绕过容量规则；WorkContext page 仍逐对象读取；旧 Session/Use/WorkingSet/WorkCycle 类型没有消费者；ticket fallback 可让 Resource action 未执行 | Runtime 统一接纳、限额和批量 view，保留实际 expected revision 与 Host roundtrip ticket；删除死类型/测试专用生产入口，容量失败清楚表达，不能伪装完成 |
+| Core models / Resource / embedding | provider 结构结果再次 Zod.parse；derive target 只是与 strategy 交叉核对；Resource 手写平行 DTO 造成 null 转换；provider 已批量但 embedding 逐项 commit | 使用现有正式结构和唯一策略，owner 完整 batch 提交；保留来源/独立根校验、paid proposal、已成功阶段及明确配置的 routes，不新增通用执行框架 |
+| CLI / maintenance / tests | Subject 默认创建忽略 operation-id；list 未传正式 status；local Context selection 当作 Session foreground；重复开发入口；测试仍需按真实公共行为审查 | CLI 只编译实际输入，删除派生状态和薄入口；清理重复脚手架，保留独特算法、并发和 Authority 场景，不增验收矩阵 |
+
 ## 模型能力
 
-| 能力 | Role | 输出提交 owner |
-| --- | --- | --- |
-| 形成与上下文表达 | memory_formation、projection_steward | Memory、Runtime |
-| 纵向组织与认知演化 | episode_segmentation、journal_synthesis、memory_consolidation、concept_maintenance | Memory 的 Episode、Journal、Memory/Schema、Tag/Association |
-| 材料理解与结构化 | material_description、material_structuring、material_direct_structuring、speech_transcription | Material |
-| 查询模型工作 | query_embedding、query_concept_enrichment、query_rerank | 查询临时结果或可重建 Serving，不写为认知事实 |
+| 能力               | Role                                                                                          | 输出提交 owner                                             |
+| ------------------ | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 形成与上下文表达   | memory_formation、projection_steward                                                          | Memory、Runtime                                            |
+| 纵向组织与认知演化 | episode_segmentation、journal_synthesis、memory_consolidation、concept_maintenance            | Memory 的 Episode、Journal、Memory/Schema、Tag/Association |
+| 材料理解与结构化   | material_description、material_structuring、material_direct_structuring、speech_transcription | Material                                                   |
+| 查询模型工作       | query_embedding、query_concept_enrichment、query_rerank                                       | 查询临时结果或可重建 Serving，不写为认知事实               |
 
 ModelRole、ExecutionProfile、ModelProfile 和 Gateway 分别表达工作、调用控制、模型资源与连接。保留明确配置的有限 route fallback 和实际成功 ProducerSignature；删除重复解析和另一套流程租约。未配置或缺少凭据时状态必须直接说明。
 
 ## 内部能力与数据合同
 
-| 内部能力 | 单一责任 owner | 调用方获得的操作 | 已移除的泄漏或重复 |
-| --- | --- | --- | --- |
-| 身份和正式 DTO | canonical Proto、core typed IDs/refs；Identity Directory 解析地址 | exact typed ref、明确歧义候选、公开 DTO | Client 的平行 Data/WeakMap 结构、重复 schema 恢复、CLI 再次查已装饰的地址 |
-| 领域读取、列表和修改 | Subject / Material / Memory / Runtime 的能力子模块 | 完整 view/page/mutation result，数据处理在 owner 内 | Kernel transport SQL、ID 列表再逐项读取、调用方重建内部字段 |
-| 事务与幂等 | Persistence 提供同一事务和 receipt；语义 owner 提供规则 | Owner mutation，原请求重放同一结果 | 无需求的多阶段数据库 checkpoint、临时 owner 状态；不删除真实并发和同 ID 不同输入冲突 |
-| 模型操作保存 | Core 序列化同一 operation；Persistence 保存 snapshot/proposal/outcome | 读取或执行同一正式 operation，已有提案直接提交 | child lease/token/busy/release、父任务数据库租约、逐项 progress、重复 prepare/reserve、任意位置完美恢复链 |
-| 来源和 purge | Material 拥有来源；Memory 各能力拥有 cognition；Runtime 拥有 runtime 清理 | 在 owner 事务内清除 exact refs 并留下无正文回执 | 四家族重复写 Runtime 表、嵌套逐事件循环、调用方推断 JSON 引用 |
-| 配置 | 参数 owner 提供类型/默认值/校验；Configuration 保存解析结果 | 已规范化的 immutable typed snapshot 与清楚 apply mode | 每次读取再 normalize、重复 protobuf/JSON/domain 包装；不增加第二套配置服务 |
-| Serving 资产 | Retrieval assets 拥有 build/open/install/reclaim | 准备后直接返回当前请求打开的 family assets | 发布后重查 DB/reopen/重建 snapshot、每次查询全目录扫回收；保留历史身份、read lease 和 purge fences |
-| 文件和进程 | ObjectStore、RuntimePack、Locations、Core lifecycle | 流式字节、已安装 runtime、统一 serve/stop | 普通启动重复摘要检查、dev 另起一套启动、首个收尾错误阻断其他资源关闭 |
-| CLI 消费者状态 | CLI 只保存选择、exact query results 和原 mutation 请求 | 同一命令的固定输入、官方 owner 返回结果 | 本地 terminal outcome Authority、多层 protobuf→Data→恢复→显示转换；不再解释领域状态 |
-| 测试与生成数据 | 公共功能场景；owner 独特脆弱逻辑；workspacePaths | 单次真实公共路径检查，显式清理本地临时/缓存 | 重叠脚手架测试、重复运行、过时目录扫描；不删数值 oracle、真实语料和独特并发/解析风险 |
+| 内部能力                | 单一责任 owner                                                                       | 调用方获得的操作                                                                                                                        | 已移除的泄漏或重复                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 身份和正式 DTO          | canonical Proto、core typed IDs/refs；Identity Directory 解析地址                    | exact typed ref、明确歧义候选、公开 DTO                                                                                                 | Client 的平行 Data/WeakMap 结构、重复 schema 恢复、CLI 再次查已装饰的地址                                        |
+| 领域读取、列表和修改    | Subject / Material / Memory / Runtime 的能力子模块                                   | Memory/Episode/Journal 的完整 read/history/page，Session/WorkContext/Resource 的正式视图和有界列表；Schema/Tag split 的完整 child views | 上述路径删除 ID 列表再逐项读取和 transport 重建字段；未声明的历史/list API 不用占位包装补齐                      |
+| 事务与幂等              | Persistence 提供同一事务和 receipt；语义 owner 提供规则                              | Owner mutation，原请求重放同一结果                                                                                                      | 无需求的多阶段数据库 checkpoint、临时 owner 状态；不删除真实并发和同 ID 不同输入冲突                             |
+| 模型操作保存            | Core 序列化同一 operation；Persistence 保存 snapshot/proposal/outcome                | 读取或执行同一正式 operation，已有提案直接提交                                                                                          | child lease/token/busy/release、父任务数据库租约、逐项 progress、重复 prepare/reserve、任意位置完美恢复链        |
+| 来源和 purge            | Material 拥有来源；Memory 各能力拥有 cognition；Runtime 拥有 runtime 清理            | 同次 synthesized 操作复用首次 provenance summary；在 owner 事务内清除 exact refs 并留下无正文回执                                       | 重复遍历 synthesized provenance、四家族重复 Runtime 清理、调用方推断 JSON 引用；真实循环和事务内直接引用检查保留 |
+| 配置                    | 参数 owner 提供类型/默认值/校验；Configuration 保存解析结果                          | 已规范化的 immutable typed snapshot 与清楚 apply mode                                                                                   | 每次读取再 normalize、重复 protobuf/JSON/domain 包装；不增加第二套配置服务                                       |
+| Serving 资产            | Retrieval assets 拥有 build/open/install/reclaim；Persistence 统一实际依赖 watermark | 准备后直接返回当前请求打开的 family assets，状态/准备/发布同源 freshness                                                                | 发布后重查 DB/reopen/重建 snapshot、每次查询全目录扫回收；保留历史身份、Arc reader 和 purge fences               |
+| 文件和进程              | ObjectStore、RuntimePack、Locations、Core lifecycle                                  | 流式字节、已安装 runtime、统一 serve/stop                                                                                               | 普通启动重复摘要检查、dev 另起一套启动、首个收尾错误阻断其他资源关闭                                             |
+| CLI 消费者状态          | CLI 只保存选择、exact query results 和原 mutation 请求                               | 同一命令的固定输入、官方 owner 返回结果                                                                                                 | 本地 terminal outcome Authority、多层 protobuf→Data→恢复→显示转换；不再解释领域状态                              |
+| Material 批量正文与片段 | Material 拥有请求内已解析引用/metadata 与有界字节；Retrieval 消费选中正文            | 最多 256 refs 一批 metadata，同引用和已有正文复用，fragment 按剩余预算读取                                                              | selection 后逐项重新验证/加载 metadata、再次解析 UUID、旁路单项 payload SQL；不新增持久缓存或调度框架            |
+| 测试与生成数据          | 公共功能场景；owner 独特脆弱逻辑；workspacePaths                                     | 单次真实公共路径检查，显式清理本地临时/缓存                                                                                             | 重叠脚手架测试、重复运行、过时目录扫描；不删数值 oracle、真实语料和独特并发/解析风险                             |
 
 ## 完整路径验证
 

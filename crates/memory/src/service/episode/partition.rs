@@ -100,7 +100,7 @@ impl MemoryService {
                 producer_id,
             )
             .await?;
-        let sequence = mutation.invalidate(ProjectionInvalidation::text()).await?;
+        let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
         let source_objects: Vec<Uuid> = sources.iter().map(|row| row.get("episode_id")).collect();
         self.invalidate_object_dependents_in(
             mutation.tx(),

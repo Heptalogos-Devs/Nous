@@ -48,16 +48,16 @@ impl CognitiveRuntimeService {
             return Err(Error::Invalid("invalid resource readiness".into()));
         }
         let mut tx = self.store.begin().await?;
-        sqlx::query("INSERT INTO resources(subject_id,resource_ref,display_label,authority_class,coverage,query_dimensions,modalities,freshness_policy,access_cost_class,readiness,updated_at,adapter_kind,provider_profile,provider_locator) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(subject_id,resource_ref) DO UPDATE SET display_label=excluded.display_label,authority_class=excluded.authority_class,coverage=excluded.coverage,query_dimensions=excluded.query_dimensions,modalities=excluded.modalities,freshness_policy=excluded.freshness_policy,access_cost_class=excluded.access_cost_class,readiness=excluded.readiness,updated_at=excluded.updated_at,adapter_kind=excluded.adapter_kind,provider_profile=excluded.provider_profile,provider_locator=excluded.provider_locator")
-            .bind(subject.0).bind(input.resource_ref.as_str()).bind(input.display_label).bind(input.authority_class).bind(input.coverage).bind(input.query_dimensions).bind(input.modalities).bind(input.freshness_policy).bind(input.access_cost_class).bind(input.readiness).bind(self.now(subject)).bind(input.adapter_kind).bind(input.provider_profile).bind(input.provider_locator).execute(&mut *tx).await.map_err(db)?;
-        let row=sqlx::query("SELECT resource_ref,display_label,authority_class,coverage,query_dimensions,modalities,freshness_policy,access_cost_class,readiness,updated_at,adapter_kind,provider_profile,provider_locator FROM resources WHERE subject_id=$1 AND resource_ref=$2").bind(subject.0).bind(input.resource_ref.as_str()).fetch_one(&mut *tx).await.map_err(db)?;
+        let row = sqlx::query("INSERT INTO resources(subject_id,resource_ref,display_label,authority_class,coverage,query_dimensions,modalities,freshness_policy,access_cost_class,readiness,updated_at,adapter_kind,provider_profile,provider_locator) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(subject_id,resource_ref) DO UPDATE SET display_label=excluded.display_label,authority_class=excluded.authority_class,coverage=excluded.coverage,query_dimensions=excluded.query_dimensions,modalities=excluded.modalities,freshness_policy=excluded.freshness_policy,access_cost_class=excluded.access_cost_class,readiness=excluded.readiness,updated_at=excluded.updated_at,adapter_kind=excluded.adapter_kind,provider_profile=excluded.provider_profile,provider_locator=excluded.provider_locator RETURNING *")
+            .bind(subject.0).bind(input.resource_ref.as_str()).bind(input.display_label).bind(input.authority_class).bind(input.coverage).bind(input.query_dimensions).bind(input.modalities).bind(input.freshness_policy).bind(input.access_cost_class).bind(input.readiness).bind(self.now(subject)).bind(input.adapter_kind).bind(input.provider_profile).bind(input.provider_locator).fetch_one(&mut *tx).await.map_err(db)?;
         let descriptor = decode_resource(subject, row)?;
         self.store
-            .ensure_identity_addresses_in(
+            .bind_identity_in(
                 &mut tx,
                 subject,
-                &[CognitiveRef::Resource(input.resource_ref.clone())],
-                descriptor.display_label.as_deref().unwrap_or_default(),
+                CognitiveRef::Resource(input.resource_ref.clone()),
+                descriptor.display_label.clone().unwrap_or_default(),
+                Vec::new(),
             )
             .await?;
         nous_persistence::AuthorityStore::invalidate_in(
@@ -101,7 +101,65 @@ impl CognitiveRuntimeService {
     }
 
     pub async fn list_resources(&self, subject: SubjectId) -> Result<Vec<ResourceView>> {
-        let rows=sqlx::query("SELECT resource_ref,display_label,authority_class,coverage,query_dimensions,modalities,freshness_policy,access_cost_class,readiness,updated_at,adapter_kind,provider_profile,provider_locator FROM resources WHERE subject_id=$1 ORDER BY resource_ref").bind(subject.0).fetch_all(self.store.pool()).await.map_err(db)?;
+        self.resource_views(subject, None, "", None, None).await
+    }
+
+    pub async fn resource(
+        &self,
+        subject: SubjectId,
+        resource: &ResourceRef,
+    ) -> Result<ResourceView> {
+        self.resource_views(
+            subject,
+            Some(std::slice::from_ref(resource)),
+            "",
+            Some(1),
+            None,
+        )
+        .await?
+        .pop()
+        .ok_or_else(|| Error::NotFound("resource not found".into()))
+    }
+
+    pub async fn resource_page(
+        &self,
+        subject: SubjectId,
+        readiness: &str,
+        limit: i64,
+        after: Option<&str>,
+    ) -> Result<(Vec<ResourceView>, bool)> {
+        if !(1..=200).contains(&limit) {
+            return Err(Error::Invalid(
+                "resource page limit is out of bounds".into(),
+            ));
+        }
+        if !matches!(readiness, "" | "ready" | "degraded" | "unavailable") {
+            return Err(Error::Invalid("invalid resource readiness".into()));
+        }
+        if let Some(after) = after {
+            ResourceRef::new(after)?;
+        }
+        let mut items = self
+            .resource_views(subject, None, readiness, Some(limit + 1), after)
+            .await?;
+        let more = items.len() > limit as usize;
+        items.truncate(limit as usize);
+        Ok((items, more))
+    }
+
+    pub(crate) async fn resource_views(
+        &self,
+        subject: SubjectId,
+        references: Option<&[ResourceRef]>,
+        readiness: &str,
+        limit: Option<i64>,
+        after: Option<&str>,
+    ) -> Result<Vec<ResourceView>> {
+        self.require_subject(subject).await?;
+        let references = references.map(|refs| refs.iter().map(|r| r.as_str()).collect::<Vec<_>>());
+        let rows = sqlx::query("SELECT resource_ref,display_label,authority_class,coverage,query_dimensions,modalities,freshness_policy,access_cost_class,readiness,updated_at,adapter_kind,provider_profile,provider_locator FROM resources WHERE subject_id=$1 AND ($2::text[] IS NULL OR resource_ref=ANY($2)) AND ($3='' OR readiness=$3) AND ($4::text IS NULL OR resource_ref>$4) ORDER BY resource_ref LIMIT $5")
+            .bind(subject.0).bind(references).bind(readiness).bind(after).bind(limit)
+            .fetch_all(self.store.pool()).await.map_err(db)?;
         rows.into_iter()
             .map(|row| {
                 Ok(ResourceView {
@@ -124,11 +182,19 @@ impl CognitiveRuntimeService {
             .cues
             .iter()
             .filter_map(|cue| match cue {
-                Cue::Resource(r) => Some(r.resource.as_str()),
+                Cue::Resource(r) => Some(r.resource.clone()),
                 _ => None,
             })
-            .collect::<HashSet<_>>();
-        let resources = self.list_resources(query.subject).await?;
+            .collect::<Vec<_>>();
+        let resources = self
+            .resource_views(
+                query.subject,
+                (!requested.is_empty()).then_some(requested.as_slice()),
+                "",
+                Some(plan.resource_limit as i64),
+                None,
+            )
+            .await?;
         let query_text = query
             .expression
             .cues
@@ -141,10 +207,6 @@ impl CognitiveRuntimeService {
             .join(" ");
         let actions = resources
             .into_iter()
-            .filter(|r| {
-                requested.is_empty() || requested.contains(r.descriptor.resource_ref.as_str())
-            })
-            .take(plan.resource_limit)
             .map(|r| {
                 Ok(ResourceActionSuggestion {
                     action_id: uuid::Uuid::new_v4(),

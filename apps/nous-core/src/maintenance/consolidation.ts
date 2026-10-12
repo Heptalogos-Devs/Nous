@@ -105,7 +105,6 @@ export async function executeConsolidation(
   ) =>
     create(MemoryContentSchema, {
       producer,
-      cognitiveRole: content.cognitiveRole,
       formationMode: content.formationMode,
       groundingOccurrenceId:
         content.groundingMemberKey === null
@@ -172,6 +171,7 @@ export async function executeConsolidation(
             {
               operationId: id,
               subjectId: plan.subjectId,
+              cognitiveRole: action.content.cognitiveRole,
               input: memory(action.content),
             },
             options,

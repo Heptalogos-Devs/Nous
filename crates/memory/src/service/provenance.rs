@@ -283,16 +283,9 @@ impl MemoryService {
             .roots)
     }
 
-    pub(crate) async fn validate_formation_semantics(
-        &self,
-        subject: SubjectId,
-        mode: FormationMode,
-        basis: &[RevisionBasis],
+    pub(in crate::service) fn validate_synthesized_summary(
+        summary: &ProvenanceSummary,
     ) -> Result<()> {
-        if !matches!(mode, FormationMode::Synthesized) {
-            return Ok(());
-        }
-        let summary = self.provenance_summary(subject, basis).await?;
         if summary.normalized_inputs.len() < 2 {
             return Err(Error::Invalid(
                 "synthesized formation needs at least two normalized inputs".into(),

@@ -305,6 +305,10 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one public projection scenario covers policy, budget and distinct lifecycle refusals"
+)]
 async fn projection_materializes_supported_memory_within_the_text_budget() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
@@ -321,6 +325,55 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         ))
         .await
         .expect("formed memory");
+    let owner = runtime.require_memory().unwrap();
+    let reference = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
+    let policy = nous_memory::resolve_accessibility_policy(
+        &runtime.configuration.snapshot_for_subject(subject).unwrap(),
+    )
+    .unwrap();
+    let aged = owner
+        .context_projection(
+            subject,
+            &reference,
+            &policy,
+            runtime.cognition.now(subject) + Duration::days(36_500),
+            nous_core::CognitiveEffort::Normal,
+            false,
+            8,
+        )
+        .await
+        .unwrap_err();
+    assert!(aged.to_string().contains("accessibility"));
+    let explicit = owner
+        .context_projection(
+            subject,
+            &reference,
+            &policy,
+            runtime.cognition.now(subject) + Duration::days(36_500),
+            nous_core::CognitiveEffort::Normal,
+            true,
+            8,
+        )
+        .await
+        .unwrap();
+    assert_eq!(explicit.text.as_deref(), Some("Grounded"));
+    let permissive_policy = nous_memory::AccessibilityPolicy {
+        normal_threshold: -100.0,
+        deep_threshold: -101.0,
+        ..policy
+    };
+    owner
+        .context_projection(
+            subject,
+            &reference,
+            &permissive_policy,
+            runtime.cognition.now(subject) + Duration::days(36_500),
+            nous_core::CognitiveEffort::Normal,
+            false,
+            8,
+        )
+        .await
+        .expect("caller policy controls accessibility");
     let session = runtime
         .cognition
         .open_session(subject, serde_json::json!({}))
@@ -361,13 +414,15 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         )
         .await
         .unwrap();
+    let suppressed = service
+        .build_contribution_batch(request.clone())
+        .await
+        .unwrap();
+    assert!(suppressed.segments.is_empty());
     assert!(
-        service
-            .build_contribution_batch(request.clone())
-            .await
-            .unwrap()
-            .segments
-            .is_empty()
+        suppressed.degradation[0]
+            .detail
+            .contains("Memory is suppressed")
     );
     owner
         .mutate_memory_lifecycle(
@@ -379,8 +434,60 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         )
         .await
         .unwrap();
+    sqlx::query(
+        "UPDATE memory_objects SET integrity_state='revalidation_required' WHERE memory_id=$1",
+    )
+    .bind(memory.object.memory_id.0)
+    .execute(service.0.store.pool())
+    .await
+    .unwrap();
+    let invalidated = service
+        .build_contribution_batch(request.clone())
+        .await
+        .unwrap();
+    assert!(invalidated.segments.is_empty());
+    assert!(
+        invalidated.degradation[0]
+            .detail
+            .contains("Memory requires revalidation")
+    );
+    sqlx::query("UPDATE memory_objects SET integrity_state='valid' WHERE memory_id=$1")
+        .bind(memory.object.memory_id.0)
+        .execute(service.0.store.pool())
+        .await
+        .unwrap();
     owner
-        .purge_memory(subject, memory.object.memory_id, OperationId::new(), 3)
+        .mutate_memory_lifecycle(
+            subject,
+            memory.object.memory_id,
+            OperationId::new(),
+            3,
+            nous_memory::LifecycleAction::Withdraw,
+        )
+        .await
+        .unwrap();
+    let withdrawn = service
+        .build_contribution_batch(request.clone())
+        .await
+        .unwrap();
+    assert!(withdrawn.segments.is_empty());
+    assert!(
+        withdrawn.degradation[0]
+            .detail
+            .contains("Memory is withdrawn")
+    );
+    owner
+        .mutate_memory_lifecycle(
+            subject,
+            memory.object.memory_id,
+            OperationId::new(),
+            4,
+            nous_memory::LifecycleAction::Reaccept,
+        )
+        .await
+        .unwrap();
+    owner
+        .purge_memory(subject, memory.object.memory_id, OperationId::new(), 5)
         .await
         .unwrap();
     let purged = service.build_contribution_batch(request).await.unwrap();

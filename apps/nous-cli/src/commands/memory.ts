@@ -16,6 +16,10 @@ export async function memoryCommands(
     return client.memory.formMemory({
       subjectId,
       operationId: operationId(env),
+      cognitiveRole: env.required(
+        values.kind,
+        "--kind experiential|declarative|procedural_experience",
+      ),
       input: await content(env, MemoryContentSchema),
     });
   if (action === "revision")

@@ -8,7 +8,7 @@ impl MemoryService {
         &self,
         subject: SubjectId,
         basis: &[RevisionBasis],
-    ) -> Result<()> {
+    ) -> Result<super::super::provenance::ProvenanceSummary> {
         for basis in basis {
             match basis {
                 RevisionBasis::Evidence(evidence) => {
@@ -41,8 +41,7 @@ impl MemoryService {
         // mutation starts.  This is also the deterministic cycle check; a
         // model or caller cannot bypass it by presenting a syntactically
         // valid direct edge.
-        self.provenance_summary(subject, basis).await?;
-        Ok(())
+        self.provenance_summary(subject, basis).await
     }
 
     pub(in crate::service) async fn validate_evidence(

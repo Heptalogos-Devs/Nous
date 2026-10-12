@@ -339,6 +339,8 @@ export const commandInventory = {
         "[WorkContext lexical reference]",
         "--purpose <purpose>",
         "--text <task context> | --file <path|->",
+        "--request-file <WorkContext fields TOML>",
+        "--expected-revision <revision> (optional; otherwise reads current revision)",
         "--cognition <exact-ref|result:N> --entity <real-ref> --tag <real-ref>",
         "clear --scope text|anchors|all",
         "foreground --clear",

@@ -1,6 +1,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { boot, stop, prepare, type Boot } from "./support.js";
 import type { NousClient } from "@nous-wave/client";
 import { create } from "@bufbuild/protobuf";
@@ -14,6 +16,7 @@ import {
   FormMemoryRequestSchema,
   InlineTextSchema,
   MemoryContentSchema,
+  ReviseMemoryRequestSchema,
   MemoryMutationRequestSchema,
   ObservationInputSchema,
   QueryExprSchema,
@@ -25,6 +28,7 @@ import {
   TemporalExtentSchema,
   UseEventSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { CreateTagRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { rm } from "node:fs/promises";
 import { workspaceTemp } from "../workspace.js";
 
@@ -127,12 +131,12 @@ async function main() {
         },
       }),
     );
-    const formed = await client.memory.formMemory(
+    let formed = await client.memory.formMemory(
       create(FormMemoryRequestSchema, {
         operationId: formOperationId,
         subjectId,
+        cognitiveRole: "declarative",
         input: create(MemoryContentSchema, {
-          cognitiveRole: "declarative",
           formationMode: "grounded",
           groundingOccurrenceId: observed.occurrenceId,
           semanticRole: "fact",
@@ -209,6 +213,75 @@ async function main() {
       )
     )
       throw new Error("Session B observed Session A residency");
+
+    const original = formed;
+    const tags = await Promise.all(
+      ["attendance", "calibration"].map((label) =>
+        client.concepts.createTag(
+          create(CreateTagRequestSchema, {
+            subjectId,
+            operationId: randomUUID(),
+            tag: { label },
+          }),
+        ),
+      ),
+    );
+    const revisionRequest = create(ReviseMemoryRequestSchema, {
+      subjectId,
+      memoryId: formed.memoryId,
+      operationId: randomUUID(),
+      expectedObjectEpoch: formed.objectEpoch,
+      intent: "rephrase",
+      input: {
+        formationMode: formed.formationMode,
+        groundingOccurrenceId: formed.groundingOccurrenceId,
+        semanticRole: formed.semanticRole,
+        text: "Alice is present at calibration",
+        title: "Attendance",
+        basis: formed.basis,
+        aboutness: formed.aboutness,
+        tags: [tags[1]!.tagId, tags[0]!.tagId, tags[1]!.tagId],
+        validTime: formed.validTime,
+        epistemicClass: formed.epistemicClass,
+      },
+    });
+    formed = await client.memory.reviseMemory(revisionRequest);
+    assert.deepEqual(
+      [...formed.tags].sort(),
+      tags.map((tag) => tag.tagId).sort(),
+    );
+    revisionRequest.input!.tags = tags.map((tag) => tag.tagId);
+    assert.equal(
+      (await client.memory.reviseMemory(revisionRequest)).revisionId,
+      formed.revisionId,
+    );
+    revisionRequest.input!.tags = [tags[0]!.tagId];
+    await assert.rejects(client.memory.reviseMemory(revisionRequest));
+    const historyFirst = await client.memory.listMemoryRevisions({
+      subjectId,
+      memoryId: formed.memoryId,
+      page: { pageSize: 1 },
+    });
+    assert.equal(historyFirst.items.length, 1);
+    assert(historyFirst.nextPageToken);
+    assert.equal(historyFirst.items[0]!.revisionId, original.revisionId);
+    assert.deepEqual(historyFirst.items[0]!.basis, original.basis);
+    assert.equal(historyFirst.items[0]!.cognitiveRole, original.cognitiveRole);
+    assert.equal(historyFirst.items[0]!.objectEpoch, formed.objectEpoch);
+    assert(
+      historyFirst.items[0]!.temporalEvidence &&
+        historyFirst.items[0]!.createdAt,
+    );
+    const historyLast = await client.memory.listMemoryRevisions({
+      subjectId,
+      memoryId: formed.memoryId,
+      page: { pageSize: 1, pageToken: historyFirst.nextPageToken },
+    });
+    assert.equal(historyLast.items.length, 1);
+    assert.equal(historyLast.items[0]!.revisionId, formed.revisionId);
+    assert.deepEqual(historyLast.items[0]!.tags, formed.tags);
+    assert.deepEqual(historyLast.items[0]!.basis, formed.basis);
+    assert.equal(historyLast.nextPageToken, "");
 
     await stop(booted);
     booted = await boot(configPath);

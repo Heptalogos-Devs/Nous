@@ -35,20 +35,33 @@ impl CognitiveRuntimeService {
         self.work_context_from_row(row, connection).await
     }
 
-    pub async fn list_work_contexts(&self, subject: SubjectId) -> Result<Vec<WorkContextView>> {
+    pub async fn list_work_contexts(
+        &self,
+        subject: SubjectId,
+        limit: i64,
+        after: Option<Uuid>,
+    ) -> Result<(Vec<WorkContextView>, bool)> {
+        if !(1..=200).contains(&limit) {
+            return Err(Error::Invalid(
+                "WorkContext page size is out of bounds".into(),
+            ));
+        }
         self.store.require_subject(subject).await?;
         let ids = sqlx::query_scalar::<_, Uuid>(
-            "SELECT work_context_id FROM work_contexts WHERE subject_id=$1 ORDER BY created_at,work_context_id",
+            "SELECT work_context_id FROM work_contexts WHERE subject_id=$1 AND ($2::uuid IS NULL OR work_context_id>$2) ORDER BY work_context_id LIMIT $3",
         )
         .bind(subject.0)
+        .bind(after)
+        .bind(limit + 1)
         .fetch_all(self.store.pool())
         .await
         .map_err(db)?;
-        let mut result = Vec::with_capacity(ids.len());
-        for id in ids {
+        let more = ids.len() > limit as usize;
+        let mut result = Vec::with_capacity((limit as usize).min(ids.len()));
+        for id in ids.into_iter().take(limit as usize) {
             result.push(self.work_context(subject, id).await?);
         }
-        Ok(result)
+        Ok((result, more))
     }
     pub async fn active_work_context_refs(
         &self,
@@ -73,7 +86,7 @@ impl CognitiveRuntimeService {
             .collect()
     }
 
-    async fn work_context_from_row(
+    pub(super) async fn work_context_from_row(
         &self,
         row: sqlx::postgres::PgRow,
         executor: &mut sqlx::PgConnection,

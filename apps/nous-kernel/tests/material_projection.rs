@@ -108,8 +108,8 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         OperationId::new(),
         "A joint material fact",
     );
-    input.epistemic_class = EpistemicClass::Derived;
-    input.basis = vec![RevisionBasis::Evidence(evidence.clone())];
+    input.content.epistemic_class = EpistemicClass::Derived;
+    input.content.basis = vec![RevisionBasis::Evidence(evidence.clone())];
     let memory = owner.form_memory(input).await.unwrap();
     let memory_ref = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
     let target = owner

@@ -2154,8 +2154,10 @@ name = "nous-subject"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "futures",
  "nous-configuration",
  "nous-core",
+ "nous-material",
  "nous-object-store",
  "nous-persistence",
  "nous-runtime",

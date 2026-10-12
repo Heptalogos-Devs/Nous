@@ -1,6 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+use super::artifact::decode_artifact;
 use super::*;
 use nous_persistence::database_error as db;
 
@@ -69,13 +70,13 @@ impl MaterialService {
             None
         };
         let artifact = self
-            .material_to_artifact(input.subject, &input.material, now)
+            .material_to_artifact(&mut tx, input.subject, &input.material, now)
             .await?;
         if let Some(artifact) = &artifact {
             artifact.validate()?;
         }
         let occurrence_id = OccurrenceId::new();
-        let mut occurrence = ObservationOccurrence {
+        let occurrence = ObservationOccurrence {
             occurrence_id,
             subject_id: input.subject,
             artifact_id: artifact.as_ref().map(|artifact| artifact.artifact_id),
@@ -102,24 +103,6 @@ impl MaterialService {
         if let Some(object) = &occurrence.external_object_ref {
             ObjectRef::new(object.as_str())?;
         }
-        let artifact = if let Some(mut artifact) = artifact {
-            let existing = sqlx::query("SELECT artifact_id,byte_length,storage_key,created_at,metadata FROM artifacts WHERE subject_id=$1 AND content_hash=$2")
-                .bind(input.subject.0).bind(&artifact.content_hash).fetch_optional(&mut *tx).await.map_err(db)?;
-            if let Some(row) = existing {
-                artifact.artifact_id = ArtifactId(row.try_get("artifact_id").map_err(db)?);
-                artifact.byte_length = row.try_get::<i64, _>("byte_length").map_err(db)? as u64;
-                artifact.storage_key = row.try_get("storage_key").map_err(db)?;
-                artifact.created_at = row.try_get("created_at").map_err(db)?;
-                artifact.metadata = row.try_get("metadata").map_err(db)?;
-            } else {
-                sqlx::query("INSERT INTO artifacts(artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
-                    .bind(artifact.artifact_id.0).bind(artifact.subject_id.0).bind(&artifact.content_hash).bind(artifact.byte_length as i64).bind(&artifact.media_type).bind(&artifact.storage_key).bind(artifact.created_at).bind(&artifact.metadata).execute(&mut *tx).await.map_err(db)?;
-            }
-            Some(artifact)
-        } else {
-            None
-        };
-        occurrence.artifact_id = artifact.as_ref().map(|artifact| artifact.artifact_id);
         let (occurred_kind, occurred_start, occurred_end) =
             temporal_columns(&occurrence.occurred_time);
         sqlx::query("INSERT INTO observation_occurrences(occurrence_id,subject_id,artifact_id,source_class,external_object_ref,occurred_time_kind,occurred_time_start,occurred_time_end,observed_at,conversation_ref,actor_entity_ref,context,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
@@ -301,68 +284,39 @@ impl MaterialService {
 
     async fn material_to_artifact(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         material: &ObservationMaterial,
         now: DateTime<Utc>,
     ) -> Result<Option<Artifact>> {
-        match material {
+        let (bytes, media_type) = match material {
             ObservationMaterial::InlineText { text, media_type } => {
-                let bytes = text.as_bytes().to_vec();
-                self.bytes_to_artifact(subject, bytes, media_type, serde_json::json!({}), now)
-                    .await
+                (text.as_bytes().to_vec(), media_type.as_str())
             }
-            ObservationMaterial::StructuredJson { value } => {
-                let bytes =
-                    serde_json::to_vec(value).map_err(|error| Error::Invalid(error.to_string()))?;
-                self.bytes_to_artifact(
-                    subject,
-                    bytes,
-                    "application/json",
-                    serde_json::json!({}),
-                    now,
-                )
-                .await
-            }
+            ObservationMaterial::StructuredJson { value } => (
+                serde_json::to_vec(value).map_err(|error| Error::Invalid(error.to_string()))?,
+                "application/json",
+            ),
             ObservationMaterial::ArtifactRef { artifact_id } => {
-                let artifact = self.artifact(subject, *artifact_id).await?;
-                Ok(Some(artifact))
+                return self.artifact(subject, *artifact_id).await.map(Some);
             }
             ObservationMaterial::ExternalObjectRef { .. }
-            | ObservationMaterial::ResourceAvailability { .. } => Ok(None),
-        }
-    }
-
-    async fn bytes_to_artifact(
-        &self,
-        subject: SubjectId,
-        bytes: Vec<u8>,
-        media_type: &str,
-        metadata: serde_json::Value,
-        now: DateTime<Utc>,
-    ) -> Result<Option<Artifact>> {
-        if bytes.len() as u64 > self.max_upload_bytes {
-            return Err(Error::Invalid(
-                "material exceeds configured byte bound".into(),
-            ));
-        }
-        let (hash, size) = self
-            .objects
-            .put_chunks(
-                futures::stream::iter([Ok::<Vec<u8>, Error>(bytes)]),
-                self.max_upload_bytes,
-            )
-            .await?;
-        let artifact = Artifact {
-            artifact_id: ArtifactId::new(),
-            subject_id: subject,
-            content_hash: hash.clone(),
-            byte_length: size,
-            media_type: media_type.to_owned(),
-            storage_key: hash,
-            created_at: now,
-            metadata,
+            | ObservationMaterial::ResourceAvailability { .. } => return Ok(None),
         };
-        Ok(Some(artifact))
+        ArtifactRegistration::new(self.store.clone(), self.objects.clone())
+            .write_in(
+                tx,
+                subject,
+                UploadMetadata {
+                    media_type: media_type.into(),
+                    metadata: serde_json::json!({}),
+                },
+                futures::stream::iter([Ok(bytes)]),
+                self.max_upload_bytes,
+                now,
+            )
+            .await
+            .map(Some)
     }
 
     pub async fn upload_stream<S>(
@@ -376,38 +330,18 @@ impl MaterialService {
     {
         self.store.require_subject(subject).await?;
         let guard = self.objects.reference_guard(false).await?;
-        let (hash, size) = self
-            .objects
-            .put_chunks(chunks, self.max_upload_bytes)
-            .await?;
-        let now = self.cognition.now(subject);
-        if !self.store.subject_exists(subject).await? {
-            drop(guard);
-            return Err(Error::NotFound("subject not found".into()));
-        }
-        let proposed_artifact_id = ArtifactId::new();
         let mut tx = self.store.begin().await?;
-        sqlx::query("INSERT INTO artifacts(artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(subject_id,content_hash) DO NOTHING")
-            .bind(proposed_artifact_id.0).bind(subject.0).bind(&hash).bind(size as i64).bind(&metadata.media_type).bind(&hash).bind(now).bind(&metadata.metadata)
-            .execute(&mut *tx).await.map_err(db)?;
-        let artifact_id = sqlx::query_scalar::<_, Uuid>(
-            "SELECT artifact_id FROM artifacts WHERE subject_id=$1 AND content_hash=$2",
-        )
-        .bind(subject.0)
-        .bind(&hash)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
-        self.store
-            .ensure_identity_addresses_in(
+        let artifact = ArtifactRegistration::new(self.store.clone(), self.objects.clone())
+            .write_in(
                 &mut tx,
                 subject,
-                &[CognitiveRef::Artifact(ArtifactId(artifact_id))],
-                "",
+                metadata,
+                chunks,
+                self.max_upload_bytes,
+                self.cognition.now(subject),
             )
             .await?;
         tx.commit().await.map_err(db)?;
-        let artifact = self.artifact(subject, ArtifactId(artifact_id)).await?;
         drop(guard);
         Ok(artifact)
     }
@@ -453,17 +387,4 @@ impl MaterialService {
         let selected = (start != 0 || end != artifact.byte_length).then_some(start..end);
         self.objects.stream(&artifact.content_hash, selected).await
     }
-}
-
-fn decode_artifact(row: sqlx::postgres::PgRow) -> Result<Artifact> {
-    Ok(Artifact {
-        artifact_id: ArtifactId(row.try_get("artifact_id").map_err(db)?),
-        subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),
-        content_hash: row.try_get("content_hash").map_err(db)?,
-        byte_length: row.try_get::<i64, _>("byte_length").map_err(db)? as u64,
-        media_type: row.try_get("media_type").map_err(db)?,
-        storage_key: row.try_get("storage_key").map_err(db)?,
-        created_at: row.try_get("created_at").map_err(db)?,
-        metadata: row.try_get("metadata").map_err(db)?,
-    })
 }

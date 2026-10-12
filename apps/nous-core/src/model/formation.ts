@@ -268,8 +268,8 @@ async function formObservationOnce(
       const request = create(FormMemoryRequestSchema, {
         operationId: r.operationId,
         subjectId: r.subjectId,
+        cognitiveRole: "declarative",
         input: {
-          cognitiveRole: "declarative",
           formationMode: "grounded",
           groundingOccurrenceId: r.occurrenceId,
           semanticRole: result.semanticRole,

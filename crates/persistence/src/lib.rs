@@ -36,7 +36,7 @@ pub use projection::text::{TextProjectionFragment, TextProjectionInput, TextProj
 pub use projection::topology::{
     CognitiveProjectionRows, ProjectionEdgeProvenance, TopologyEdgeSource, TopologyProjectionInput,
 };
-pub use projection::{DenseInvalidation, ProjectionInvalidation};
+pub use projection::{DenseInvalidation, ProjectionInvalidation, ProjectionWatermarks};
 pub use serving::{ServingRecord, ServingView};
 
 use nous_core::{Error, OperationId, Result, SubjectId};

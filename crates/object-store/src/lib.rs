@@ -49,7 +49,7 @@ impl ObjectStore {
             match entry {
                 Ok(entry) => {
                     let hash = entry.path().rsplit('/').next().unwrap_or("");
-                    if Self::key(hash).is_ok() {
+                    if Self::storage_key(hash).is_ok() {
                         Some(Ok(hash.to_string()))
                     } else {
                         None
@@ -72,7 +72,8 @@ impl ObjectStore {
         Ok(Self { operator, root })
     }
 
-    fn key(hash: &str) -> Result<String> {
+    /// Canonical physical layout for a validated content digest.
+    pub fn storage_key(hash: &str) -> Result<String> {
         if hash.len() != 64
             || !hash
                 .bytes()
@@ -86,7 +87,7 @@ impl ObjectStore {
     pub async fn put(&self, bytes: Vec<u8>) -> Result<String> {
         let hash = blake3::hash(&bytes).to_hex().to_string();
         self.operator
-            .write(&Self::key(&hash)?, bytes)
+            .write(&Self::storage_key(&hash)?, bytes)
             .await
             .map_err(storage_error)?;
         Ok(hash)
@@ -141,7 +142,7 @@ impl ObjectStore {
         drop(file);
 
         let hash = hasher.finalize().to_hex().to_string();
-        let key = Self::key(&hash)?;
+        let key = Self::storage_key(&hash)?;
         let target = self.root.join(&key);
         if let Some(parent) = target.parent() {
             tokio::fs::create_dir_all(parent)
@@ -170,7 +171,7 @@ impl ObjectStore {
     pub async fn get(&self, hash: &str) -> Result<Vec<u8>> {
         let bytes = self
             .operator
-            .read(&Self::key(hash)?)
+            .read(&Self::storage_key(hash)?)
             .await
             .map_err(storage_error)?
             .to_vec();
@@ -190,7 +191,7 @@ impl ObjectStore {
             return Ok(Vec::new());
         }
         self.operator
-            .read_with(&Self::key(hash)?)
+            .read_with(&Self::storage_key(hash)?)
             .range(start..end)
             .await
             .map(|value| value.to_vec())
@@ -222,7 +223,7 @@ impl ObjectStore {
         hash: &str,
         range: Option<std::ops::Range<u64>>,
     ) -> Result<impl Stream<Item = Result<Vec<u8>>> + Send + use<>> {
-        let mut file = tokio::fs::File::open(self.root.join(Self::key(hash)?))
+        let mut file = tokio::fs::File::open(self.root.join(Self::storage_key(hash)?))
             .await
             .map_err(|e| Error::Infrastructure(e.to_string()))?;
         let remaining = if let Some(range) = &range {
@@ -283,7 +284,7 @@ impl ObjectStore {
     /// The canonical owner must first establish that no retained reference exists.
     pub async fn delete_unreferenced(&self, hash: &str) -> Result<()> {
         self.operator
-            .delete(&Self::key(hash)?)
+            .delete(&Self::storage_key(hash)?)
             .await
             .map_err(storage_error)
     }

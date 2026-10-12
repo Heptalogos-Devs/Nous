@@ -72,7 +72,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         OperationId::new(),
         "Alice plans the Nous Wave release",
     );
-    input.aboutness = vec![entity.clone()];
+    input.content.aboutness = vec![entity.clone()];
     let memory = runtime
         .require_memory()
         .unwrap()
@@ -295,15 +295,11 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             subject,
             work_context_id: context.work_context_id,
             expected_revision: context.revision,
-            purpose: "Nous Wave release stabilization".into(),
-            unresolved_questions: context.unresolved_questions,
-            constraints: context.constraints,
-            resume_conditions: context.resume_conditions,
-            budget_summary: context.budget_summary,
-            context_text: String::new(),
-            entity_anchors: vec![],
-            tag_anchors: vec![],
-            cognition_anchors: context.cognition_anchors,
+            intent: nous_runtime::WorkContextIntent::Fields(nous_runtime::WorkContextFields {
+                purpose: Some("Nous Wave release stabilization".into()),
+                context_text: Some(String::new()),
+                ..Default::default()
+            }),
         })
         .await
         .unwrap();

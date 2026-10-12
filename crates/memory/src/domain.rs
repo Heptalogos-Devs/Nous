@@ -276,27 +276,26 @@ pub struct AssociationNeighborhood {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExplicitMemoryInput {
-    #[serde(default)]
+pub struct MemoryContent {
     pub producer: Option<nous_core::ProducerSignature>,
-    pub operation_id: OperationId,
-    #[serde(default)]
-    pub subject: SubjectId,
-    pub cognitive_role: CognitiveRole,
     pub formation_mode: FormationMode,
     pub grounding_occurrence_id: Option<OccurrenceId>,
     pub semantic_role: String,
     pub representation_text: String,
     pub title: Option<String>,
-    #[serde(default)]
     pub basis: Vec<RevisionBasis>,
-    #[serde(default)]
     pub aboutness: Vec<EntityRef>,
-    #[serde(default)]
     pub tags: Vec<TagId>,
     pub valid_time: TemporalExtent,
-
     pub epistemic_class: EpistemicClass,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplicitMemoryInput {
+    pub operation_id: OperationId,
+    pub subject: SubjectId,
+    pub cognitive_role: CognitiveRole,
+    pub content: MemoryContent,
 }
 
 impl ExplicitMemoryInput {
@@ -304,6 +303,12 @@ impl ExplicitMemoryInput {
         if self.operation_id.0.is_nil() {
             return Err(Error::Invalid("operation_id is required".into()));
         }
+        self.content.validate()
+    }
+}
+
+impl MemoryContent {
+    pub fn validate(&self) -> Result<()> {
         validate_content(&self.semantic_role, &self.representation_text)?;
         self.valid_time.validate()?;
         if self.basis.is_empty() {
@@ -381,46 +386,6 @@ fn validate_basis(
         }
     }
     Ok(())
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryFormationProposal {
-    #[serde(default)]
-    pub producer: Option<nous_core::ProducerSignature>,
-    pub operation_id: OperationId,
-    pub cognitive_role: CognitiveRole,
-    pub formation_mode: FormationMode,
-    pub grounding_occurrence_id: Option<OccurrenceId>,
-    pub semantic_role: String,
-    pub representation_text: String,
-    pub title: Option<String>,
-    pub basis: Vec<RevisionBasis>,
-    pub aboutness: Vec<EntityRef>,
-    pub valid_time: TemporalExtent,
-
-    pub epistemic_class: EpistemicClass,
-}
-
-impl MemoryFormationProposal {
-    pub fn into_input(self, subject: SubjectId) -> ExplicitMemoryInput {
-        ExplicitMemoryInput {
-            producer: self.producer,
-            operation_id: self.operation_id,
-            subject,
-            cognitive_role: self.cognitive_role,
-            formation_mode: self.formation_mode,
-            grounding_occurrence_id: self.grounding_occurrence_id,
-            semantic_role: self.semantic_role,
-            representation_text: self.representation_text,
-            title: self.title,
-            basis: self.basis,
-            aboutness: self.aboutness,
-            tags: Vec::new(),
-            valid_time: self.valid_time,
-
-            epistemic_class: self.epistemic_class,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -603,45 +568,51 @@ mod tests {
     fn grounded_formation_binds_its_declared_occurrence() {
         let occurrence = OccurrenceId::new();
         let mut input = ExplicitMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject: SubjectId::new(),
             cognitive_role: CognitiveRole::Declarative,
-            formation_mode: FormationMode::Grounded,
-            grounding_occurrence_id: Some(occurrence),
-            semantic_role: "fact".into(),
-            representation_text: "bounded fact".into(),
-            title: None,
-            basis: vec![evidence(occurrence)],
-            aboutness: Vec::new(),
-            tags: Vec::new(),
-            valid_time: TemporalExtent::Unknown,
 
-            epistemic_class: EpistemicClass::Reported,
+            content: crate::MemoryContent {
+                producer: None,
+                formation_mode: FormationMode::Grounded,
+                grounding_occurrence_id: Some(occurrence),
+                semantic_role: "fact".into(),
+                representation_text: "bounded fact".into(),
+                title: None,
+                basis: vec![evidence(occurrence)],
+                aboutness: Vec::new(),
+                tags: Vec::new(),
+                valid_time: TemporalExtent::Unknown,
+
+                epistemic_class: EpistemicClass::Reported,
+            },
         };
         assert!(input.validate().is_ok());
-        input.grounding_occurrence_id = Some(OccurrenceId::new());
+        input.content.grounding_occurrence_id = Some(OccurrenceId::new());
         assert!(input.validate().is_err());
     }
 
     #[test]
     fn synthesized_requires_two_inputs() {
         let input = ExplicitMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject: SubjectId::new(),
             cognitive_role: CognitiveRole::Declarative,
-            formation_mode: FormationMode::Synthesized,
-            grounding_occurrence_id: None,
-            semantic_role: "fact".into(),
-            representation_text: "bounded fact".into(),
-            title: None,
-            basis: vec![evidence(OccurrenceId::new())],
-            aboutness: Vec::new(),
-            tags: Vec::new(),
-            valid_time: TemporalExtent::Unknown,
 
-            epistemic_class: EpistemicClass::Inferred,
+            content: crate::MemoryContent {
+                producer: None,
+                formation_mode: FormationMode::Synthesized,
+                grounding_occurrence_id: None,
+                semantic_role: "fact".into(),
+                representation_text: "bounded fact".into(),
+                title: None,
+                basis: vec![evidence(OccurrenceId::new())],
+                aboutness: Vec::new(),
+                tags: Vec::new(),
+                valid_time: TemporalExtent::Unknown,
+
+                epistemic_class: EpistemicClass::Inferred,
+            },
         };
         assert!(input.validate().is_err());
     }

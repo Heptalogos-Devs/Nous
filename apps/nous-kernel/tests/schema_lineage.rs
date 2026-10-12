@@ -103,6 +103,22 @@ async fn assert_split(
             .collect::<Vec<_>>()
     );
     assert_eq!(split.len(), 2);
+    assert_eq!(
+        split[0].revision.structural_claim,
+        children[0].content.structural_claim
+    );
+    assert_eq!(
+        split[1].revision.structural_claim,
+        children[1].content.structural_claim
+    );
+    assert_eq!(
+        replay[0].revision.structural_claim,
+        children[0].content.structural_claim
+    );
+    assert_eq!(
+        replay[1].revision.structural_claim,
+        children[1].content.structural_claim
+    );
     for child in &split {
         assert!(child.revision.producer_signature_id.is_some());
         assert_eq!(child.evidence_links.len(), source.evidence_links.len());

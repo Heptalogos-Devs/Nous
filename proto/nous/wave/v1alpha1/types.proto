@@ -21,7 +21,8 @@ message CreateSubjectRequest { optional string subject_id = 1 [(reference_kind) 
 message ListSubjectsResponse { repeated Subject items = 1; string next_page_token = 2; }
 message CognitiveSeedVersion { CognitiveSeed seed = 1; string seed_version_id = 2 [(reference_kind) = "cognitive_seed_version"]; string subject_id = 3 [(reference_kind) = "subject"]; string artifact_id = 4 [(reference_kind) = "artifact"]; string format = 5; string content_hash = 6; google.protobuf.Timestamp created_at = 7; string adoption_id = 8; string adoption_kind = 9; string operation_id = 10; }
 message AdoptCognitiveSeedRequest { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; CognitiveSeed seed = 3; string kind = 4; }
-message Session { string session_id = 1 [(reference_kind) = "session"]; string subject_id = 2 [(reference_kind) = "subject"]; int64 runtime_revision = 3; bool closed = 4; repeated CognitiveRef resident_refs = 5; optional string active_work_context_id = 6 [(reference_kind) = "work_context"]; }
+message Resident { CognitiveRef reference = 1; string entry_reason = 2; string state = 3; google.protobuf.Timestamp entered_at = 4; google.protobuf.Timestamp last_meaningful_use_at = 5; google.protobuf.Timestamp hold_until = 6; }
+message Session { string session_id = 1 [(reference_kind) = "session"]; string subject_id = 2 [(reference_kind) = "subject"]; int64 runtime_revision = 3; google.protobuf.Timestamp closed_at = 4; repeated Resident resident = 5; optional string active_work_context_id = 6 [(reference_kind) = "work_context"]; google.protobuf.Timestamp opened_at = 7; google.protobuf.Timestamp last_activity_at = 8; google.protobuf.Timestamp last_meaningful_use_at = 9; }
 message ListSessionsResponse { repeated Session items = 1; string next_page_token = 2; }
 
 message EntityMention { string surface = 1; optional string entity_ref = 2 [(reference_kind) = "entity"]; optional string semantic_role = 3; }
@@ -133,7 +134,6 @@ message SeedBasisRef { CognitiveRef seed_version = 1; string semantic_path = 2; 
 message RevisionBasis { oneof basis { EvidenceRef evidence = 1; CognitionDependency cognition_dependency = 2; SeedBasisRef seed = 3; } }
 message MemoryContent {
   ProducerSignature producer = 13;
-  string cognitive_role = 1;
   string formation_mode = 2;
   optional string grounding_occurrence_id = 3 [(reference_kind) = "occurrence"];
   string semantic_role = 4;
@@ -179,7 +179,7 @@ message Memory {
 message TemporalEvidence { repeated TemporalExtent occurred = 1; optional google.protobuf.Timestamp observed_at = 2; }
 message RevisionRelation { string from_revision_id = 1 [(reference_kind) = "memory_revision"]; string to_revision_id = 2 [(reference_kind) = "memory_revision"]; string relation = 3; }
 message ListMemoriesResponse { repeated Memory items = 1; string next_page_token = 2; }
-message FormMemoryRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; MemoryContent input = 3; }
+message FormMemoryRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; MemoryContent input = 3; string cognitive_role = 4; }
 message ReviseMemoryRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string memory_id = 3 [(reference_kind) = "memory"]; int64 expected_object_epoch = 4; MemoryContent input = 5; string intent = 6; }
 message SetAccessibilityRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string memory_id = 3 [(reference_kind) = "memory"]; int64 expected_object_epoch = 4; string mode = 5; }
 message LinkRevisionsRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string from_revision_id = 3 [(reference_kind) = "memory_revision"]; string to_revision_id = 4 [(reference_kind) = "memory_revision"]; string relation = 5; }
@@ -230,20 +230,37 @@ message GetWorkContextRequest { string subject_id = 1 [(reference_kind) = "subje
 message ListWorkContextsRequest { string subject_id = 1 [(reference_kind) = "subject"]; Page page = 2; }
 message ListWorkContextsResponse { repeated WorkContext items = 1; string next_page_token = 2; }
 message WorkContextResponse { WorkContext work_context = 1; repeated Degradation degradation = 2; }
+message WorkContextTextList { repeated string values = 1; }
+message WorkContextFields {
+  optional string purpose = 1;
+  WorkContextTextList unresolved_questions = 2;
+  google.protobuf.Struct constraints = 3;
+  WorkContextTextList resume_conditions = 4;
+  google.protobuf.Struct budget_summary = 5;
+  optional string context_text = 6;
+}
+message WorkContextAnchors {
+  repeated CognitiveRef cognition_anchors = 1;
+  repeated string entity_anchors = 2 [(reference_kind) = "entity"];
+  repeated string tag_anchors = 3 [(reference_kind) = "tag"];
+}
+enum WorkContextClearScope {
+  WORK_CONTEXT_CLEAR_SCOPE_UNSPECIFIED = 0;
+  WORK_CONTEXT_CLEAR_SCOPE_TEXT = 1;
+  WORK_CONTEXT_CLEAR_SCOPE_ANCHORS = 2;
+  WORK_CONTEXT_CLEAR_SCOPE_ALL = 3;
+}
 message UpdateWorkContextRequest {
   string operation_id = 1;
   string subject_id = 2 [(reference_kind) = "subject"];
   string work_context_id = 3 [(reference_kind) = "work_context"];
   int64 expected_revision = 4;
-  string purpose = 5;
-  repeated string unresolved_questions = 6;
-  google.protobuf.Struct constraints = 7;
-  repeated string resume_conditions = 8;
-  google.protobuf.Struct budget_summary = 9;
-  repeated CognitiveRef cognition_anchors = 10;
-  string context_text = 11;
-  repeated string entity_anchors = 12 [(reference_kind) = "entity"];
-  repeated string tag_anchors = 13 [(reference_kind) = "tag"];
+  oneof intent {
+    WorkContextFields fields = 5;
+    WorkContextAnchors pin = 6;
+    WorkContextAnchors unpin = 7;
+    WorkContextClearScope clear = 8;
+  }
 }
 message WorkContextMutationRequest {
   string operation_id = 1;

@@ -75,7 +75,7 @@ impl MemoryService {
             },
         )
         .await?;
-        let sequence = mutation.invalidate(ProjectionInvalidation::text()).await?;
+        let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
         self.enqueue_concept_in(
             mutation.tx(),
             input.subject,

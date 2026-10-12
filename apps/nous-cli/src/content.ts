@@ -20,7 +20,7 @@ export const page = (env: CliEnvironment) => ({
   pageSize: boundedInteger(
     env.values["page-size"] ?? "50",
     1,
-    256,
+    200,
     "--page-size",
   ),
   pageToken: env.values["page-token"],

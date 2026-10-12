@@ -244,6 +244,9 @@ async function scenario(endpoint: string, token: string) {
       },
     });
     const session = await client.runtime.openSession({ subjectId });
+    assert(session.openedAt);
+    assert(session.lastActivityAt);
+    assert.equal(session.closedAt, undefined);
     const observationIds: string[] = [];
     for (const text of [
       "Calibration plan confirmed.",
@@ -417,6 +420,21 @@ async function scenario(endpoint: string, token: string) {
     };
     assert.equal((await client.runtime.reportUse(use)).acceptedCount, 3);
     assert.equal((await client.runtime.reportUse(use)).duplicateCount, 3);
+    const usedSession = await client.runtime.getSession({
+      subjectId,
+      id: session.sessionId,
+    });
+    assert(usedSession.lastMeaningfulUseAt);
+    assert(
+      usedSession.resident.some(
+        (resident) =>
+          resident.reference?.value === refs[0]?.value &&
+          resident.state === "resident" &&
+          resident.entryReason &&
+          resident.enteredAt &&
+          resident.lastMeaningfulUseAt,
+      ),
+    );
     const before = { ...calls };
     await maintain();
     assert.deepEqual(calls, before);
@@ -466,6 +484,11 @@ async function scenario(endpoint: string, token: string) {
         observationIds[0],
       );
     assert(schema.formedAt);
+    assert(schema.createdAt);
+    assert.equal(schema.revisionNo, 1);
+    assert.equal(schema.parentRevisionId, undefined);
+    assert.equal(schema.revisionIntent, undefined);
+    assert(schema.evidenceLinks[0]?.createdAt);
     const exactSchema = {
       subjectId,
       expression: {
@@ -549,6 +572,88 @@ async function scenario(endpoint: string, token: string) {
       nousql: `Calibration $return(schema) $time(formed,at="${toJson(TimestampSchema, create(TimestampSchema, schema.formedAt))}")`,
     });
     assert.equal(nousqlPoint.hits.length, 1);
+    const originalEpisode = episode.currentRevision!;
+    const revisedEpisode = await client.memory.reviseEpisode({
+      subjectId,
+      episodeId: episode.episodeId,
+      operationId: randomUUID(),
+      expectedObjectEpoch: episode.objectEpoch,
+      intent: "reinterpret",
+      title: "Calibration sequence clarified",
+      experienceTime: originalEpisode.experienceTime,
+      boundaryExplanation: originalEpisode.boundaryExplanation,
+      members: originalEpisode.members,
+      basis: originalEpisode.basis,
+    });
+    assert(revisedEpisode.episode?.currentRevision);
+    const firstHistory = await client.memory.listEpisodeRevisions({
+      subjectId,
+      episodeId: episode.episodeId,
+      page: { pageSize: 1 },
+    });
+    assert.equal(firstHistory.items.length, 1);
+    assert(firstHistory.nextPageToken);
+    const history = [...firstHistory.items];
+    let historyToken = firstHistory.nextPageToken;
+    while (historyToken) {
+      const page = await client.memory.listEpisodeRevisions({
+        subjectId,
+        episodeId: episode.episodeId,
+        page: { pageSize: 1, pageToken: historyToken },
+      });
+      assert.equal(page.items.length, 1);
+      assert(
+        history.length < revisedEpisode.episode.currentRevision.revisionNo,
+      );
+      history.push(...page.items);
+      historyToken = page.nextPageToken;
+    }
+    assert.deepEqual(
+      history.map((item) => item.revisionNo),
+      Array.from({ length: history.length }, (_, index) => index + 1),
+    );
+    assert.equal(
+      history.at(-1)!.episodeRevisionId,
+      revisedEpisode.episode.currentRevision.episodeRevisionId,
+    );
+    const prior = history.find(
+      (item) => item.episodeRevisionId === originalEpisode.episodeRevisionId,
+    )!;
+    assert.deepEqual(prior.members, originalEpisode.members);
+    assert.deepEqual(prior.basis, originalEpisode.basis);
+    const extraEpisode = await client.memory.createEpisode({
+      subjectId,
+      operationId: randomUUID(),
+      trackKey: "pagination-smoke",
+      title: "Alternate calibration track",
+      experienceTime: originalEpisode.experienceTime,
+      boundaryExplanation: originalEpisode.boundaryExplanation,
+      members: originalEpisode.members,
+      basis: originalEpisode.basis,
+    });
+    assert(extraEpisode.episode);
+    const firstPage = await client.memory.listEpisodes({
+      subjectId,
+      status: "accepted",
+      page: { pageSize: 1 },
+    });
+    assert.equal(firstPage.items.length, 1);
+    assert(firstPage.nextPageToken);
+    const lastPage = await client.memory.listEpisodes({
+      subjectId,
+      status: "accepted",
+      page: { pageSize: 1, pageToken: firstPage.nextPageToken },
+    });
+    assert.equal(lastPage.items.length, 1);
+    assert.equal(lastPage.nextPageToken, "");
+    assert.deepEqual(
+      [firstPage.items[0]!.episodeId, lastPage.items[0]!.episodeId].sort(),
+      [episode.episodeId, extraEpisode.episode.episodeId].sort(),
+    );
+    for (const item of [...firstPage.items, ...lastPage.items]) {
+      assert(item.currentRevision?.members.length);
+      assert(item.currentRevision?.basis.length);
+    }
     console.error("Longitudinal smoke passed");
   } finally {
     await app.close();

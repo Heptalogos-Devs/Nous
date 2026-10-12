@@ -8,7 +8,8 @@ mod concept_query {
     pub(super) mod model;
 }
 use concept_query::{
-    configuration::check_activation_configuration, historical::check_historical_profiles,
+    configuration::{check_activation_configuration, check_topology_asset_dependencies},
+    historical::check_historical_profiles,
     model::check_model_catalog_activity,
 };
 use nous_core::*;
@@ -162,7 +163,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         OperationId::new(),
         "Reader lease retirement safely frees generation assets",
     );
-    input.tags = vec![tag.tag_id];
+    input.content.tags = vec![tag.tag_id];
     let memory = owner.form_memory(input).await.unwrap();
     let revision = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
     let text = Cue::Text(TextCue {
@@ -461,5 +462,6 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     );
     check_model_catalog_activity(&rt, subject, tag.tag_id, &probe).await;
     check_historical_profiles(&rt, subject, tag.tag_id, &revision, historical_cut).await;
+    check_topology_asset_dependencies(&rt, subject).await;
     Box::pin(check_activation_configuration(&rt, subject)).await;
 }

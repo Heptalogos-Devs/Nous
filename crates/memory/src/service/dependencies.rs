@@ -169,12 +169,13 @@ ORDER BY kind,object_id")
             }
         }
         if affects_memory || affects_journal {
-            let families = if affects_memory {
-                ProjectionInvalidation::all()
-            } else {
-                ProjectionInvalidation::text()
-            };
-            AuthorityStore::mark_projection_families_in(tx, subject, sequence, families).await?;
+            AuthorityStore::mark_projection_families_in(
+                tx,
+                subject,
+                sequence,
+                ProjectionInvalidation::all(),
+            )
+            .await?;
         }
         Ok(())
     }

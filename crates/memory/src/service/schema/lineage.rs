@@ -119,11 +119,7 @@ impl MemoryService {
         if revisions.is_empty() {
             return Err(Error::NotFound("schema split results were purged".into()));
         }
-        let mut views = Vec::with_capacity(revisions.len());
-        for revision in revisions {
-            views.push(self.schema_revision(subject, *revision).await?);
-        }
-        Ok(views)
+        self.schema_revision_views(subject, revisions).await
     }
 
     #[expect(

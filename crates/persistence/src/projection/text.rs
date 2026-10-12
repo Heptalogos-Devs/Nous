@@ -31,27 +31,9 @@ pub struct TextProjectionInput {
     pub sources: Vec<TextProjectionSource>,
 }
 
-pub(crate) async fn watermark(
-    tx: &mut Transaction<'_, Postgres>,
-    subject: SubjectId,
-    family: &str,
-    space: &str,
-) -> Result<i64> {
-    sqlx::query_scalar("SELECT COALESCE(max(desired_authority_seq),0) FROM projection_watermarks WHERE subject_id=$1 AND family=$2 AND (space_signature=$3 OR space_signature='*')")
-        .bind(subject.0).bind(family).bind(space).fetch_one(&mut **tx).await.map_err(db)
-}
+use super::watermark;
 
 impl AuthorityStore {
-    pub async fn projection_watermark(
-        &self,
-        subject: SubjectId,
-        family: &str,
-        space: &str,
-    ) -> Result<i64> {
-        let mut tx = self.begin().await?;
-        watermark(&mut tx, subject, family, space).await
-    }
-
     pub async fn text_projection_input(
         &self,
         subject: SubjectId,

@@ -81,6 +81,7 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
         .await
         .unwrap()
         .episodes;
+    let original_topology_watermark = episode_topology_watermark(&rt, subject, &original).await;
     let memory = rt.require_memory().unwrap();
     let split_request = partition_request(
         &rt,
@@ -95,6 +96,7 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
         .await
         .unwrap();
     assert_eq!(split.len(), 2);
+    assert!(episode_topology_watermark(&rt, subject, &split).await > original_topology_watermark);
     assert!(
         split
             .iter()
@@ -125,12 +127,7 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
             .iter()
             .any(|relation| relation.relation == "split_from")
     }));
-    let replay = memory.apply_episode_partition(split_request).await.unwrap();
-    assert_eq!(
-        replay[0].revision.episode_revision_id,
-        split[0].revision.episode_revision_id
-    );
-    assert_partition_rollback(&rt, subject, &split, &occurrences).await;
+    assert_partition_replay_and_rollback(&rt, subject, split_request, &split, &occurrences).await;
     let repartition_request = partition_request(
         &rt,
         subject,
@@ -171,12 +168,29 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
     assert_partition_revision(&rt, subject, &merged, &occurrences).await;
 }
 
-async fn assert_partition_rollback(
+async fn assert_partition_replay_and_rollback(
     rt: &NousRuntime,
     subject: nous_core::SubjectId,
+    replay_request: EpisodePartitionInput,
     sources: &[EpisodeView],
     occurrences: &[nous_core::OccurrenceId],
 ) {
+    let replay = rt
+        .require_memory()
+        .unwrap()
+        .apply_episode_partition(replay_request)
+        .await
+        .unwrap();
+    assert_eq!(
+        replay
+            .iter()
+            .map(|episode| episode.revision.episode_revision_id)
+            .collect::<Vec<_>>(),
+        sources
+            .iter()
+            .map(|episode| episode.revision.episode_revision_id)
+            .collect::<Vec<_>>()
+    );
     let mut invalid =
         partition_request(rt, subject, sources, occurrences, &[vec![0, 1], vec![2, 3]]).await;
     invalid.segments[1].boundary_explanation = "x".repeat(20000);
@@ -239,9 +253,10 @@ async fn assert_partition_revision(
     );
     assert_eq!(
         memory
-            .episode_history(subject, revised[0].object.episode_id)
+            .episode_history(subject, revised[0].object.episode_id, 100, None)
             .await
             .unwrap()
+            .0
             .len(),
         2
     );
@@ -408,4 +423,33 @@ fn test_timestamp(at: chrono::DateTime<Utc>) -> prost_types::Timestamp {
         seconds: at.timestamp(),
         nanos: at.timestamp_subsec_nanos() as i32,
     }
+}
+
+async fn episode_topology_watermark(
+    rt: &NousRuntime,
+    subject: nous_core::SubjectId,
+    episodes: &[EpisodeView],
+) -> i64 {
+    let graph = rt
+        .store
+        .topology_projection_input(subject, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        graph.watermark,
+        rt.store.authority_seq(subject).await.unwrap()
+    );
+    let revisions = graph
+        .nodes
+        .into_iter()
+        .filter(|reference| matches!(reference, nous_core::CognitiveRef::EpisodeRevision(_)))
+        .collect::<std::collections::HashSet<_>>();
+    let expected = episodes
+        .iter()
+        .map(|episode| {
+            nous_core::CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id)
+        })
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(revisions, expected);
+    graph.watermark
 }

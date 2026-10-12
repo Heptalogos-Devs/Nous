@@ -24,16 +24,6 @@ pub enum WorkContextState {
     Ended,
 }
 
-impl WorkContextState {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Paused => "paused",
-            Self::Ended => "ended",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkContextView {
     pub work_context_id: Uuid,
@@ -80,15 +70,39 @@ pub struct UpdateWorkContextInput {
     pub subject: SubjectId,
     pub work_context_id: Uuid,
     pub expected_revision: i64,
-    pub purpose: String,
-    pub unresolved_questions: Vec<String>,
-    pub constraints: serde_json::Value,
-    pub resume_conditions: Vec<String>,
-    pub budget_summary: serde_json::Value,
+    pub intent: WorkContextIntent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WorkContextIntent {
+    Fields(WorkContextFields),
+    Pin(WorkContextAnchors),
+    Unpin(WorkContextAnchors),
+    Clear(WorkContextClearScope),
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkContextFields {
+    pub purpose: Option<String>,
+    pub unresolved_questions: Option<Vec<String>>,
+    pub constraints: Option<serde_json::Value>,
+    pub resume_conditions: Option<Vec<String>>,
+    pub budget_summary: Option<serde_json::Value>,
+    pub context_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkContextAnchors {
     pub cognition_anchors: Vec<CognitiveRef>,
-    pub context_text: String,
     pub entity_anchors: Vec<EntityRef>,
     pub tag_anchors: Vec<TagId>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum WorkContextClearScope {
+    Text,
+    Anchors,
+    All,
 }
 
 fn parse_state(value: String) -> Result<WorkContextState> {

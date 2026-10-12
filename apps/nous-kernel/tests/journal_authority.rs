@@ -53,6 +53,18 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
         producer: None,
     };
     let journal = memory.commit_journal(input.clone()).await.unwrap();
+    let graph = rt
+        .store
+        .topology_projection_input(subject, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        graph.watermark,
+        rt.store.authority_seq(subject).await.unwrap()
+    );
+    assert!(graph.nodes.contains(&CognitiveRef::JournalRevision(
+        journal.revision.journal_revision_id
+    )));
     let mut recall = test_support::query::query(subject);
     recall.expression.targets = vec![nous_core::QueryTarget::Exact {
         reference: CognitiveRef::JournalRevision(journal.revision.journal_revision_id),
@@ -144,6 +156,29 @@ async fn assert_journal_revalidation(
         intent: "revalidate".into(),
     });
     let revised = memory.commit_journal(input.clone()).await.unwrap();
+    let graph = rt
+        .store
+        .topology_projection_input(subject, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        graph.watermark,
+        rt.store.authority_seq(subject).await.unwrap()
+    );
+    assert!(
+        graph
+            .nodes
+            .contains(&nous_core::CognitiveRef::JournalRevision(
+                revised.revision.journal_revision_id
+            ))
+    );
+    assert!(
+        !graph
+            .nodes
+            .contains(&nous_core::CognitiveRef::JournalRevision(
+                invalidated.revision.journal_revision_id
+            ))
+    );
     assert_eq!(revised.object.journal_id, invalidated.object.journal_id);
     assert_ne!(
         revised.revision.journal_revision_id,
@@ -155,7 +190,7 @@ async fn assert_journal_revalidation(
     ));
     assert_eq!(
         memory
-            .journal_history(subject, revised.object.journal_id)
+            .journal_page(subject, Some(revised.object.journal_id), 100, None, "")
             .await
             .unwrap()
             .len(),
@@ -242,9 +277,9 @@ async fn create_journal_dependents(
     use nous_memory::FormationMode;
     let journal_ref = CognitiveRef::JournalRevision(journal.revision.journal_revision_id);
     let mut content = consolidation_memory(episode);
-    content.formation_mode = FormationMode::Synthesized;
-    content.grounding_occurrence_id = None;
-    content.basis = [
+    content.content.formation_mode = FormationMode::Synthesized;
+    content.content.grounding_occurrence_id = None;
+    content.content.basis = [
         journal_ref.clone(),
         CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id),
     ]

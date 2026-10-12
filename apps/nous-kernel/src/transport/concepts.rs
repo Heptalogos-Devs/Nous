@@ -103,17 +103,7 @@ impl KernelService {
                 },
             )
             .await?;
-        let mut children = Vec::new();
-        for result in results {
-            children.push(
-                self.read_tag_revision(
-                    SubjectId(id(&input.subject_id)?),
-                    result.tag_id,
-                    result.current_revision_id,
-                )
-                .await?,
-            );
-        }
+        let children = results.into_iter().map(tag_view).collect();
         Ok(p::SplitTagResponse { children })
     }
     async fn read_tag_revision(

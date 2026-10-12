@@ -193,12 +193,7 @@ impl MemoryService {
         id: Uuid,
         reason: &str,
     ) -> Result<()> {
-        let families = if kind == "journal" {
-            ProjectionInvalidation::text()
-        } else {
-            ProjectionInvalidation::all()
-        };
-        let sequence = mutation.invalidate(families).await?;
+        let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
         if kind == "journal" {
             self.wake_journal_revalidation_in(mutation.tx(), subject, JournalId(id), sequence)
                 .await?;

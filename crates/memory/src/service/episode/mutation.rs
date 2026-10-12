@@ -88,7 +88,7 @@ impl MemoryService {
         )
         .await?;
 
-        let authority_seq = mutation.invalidate(ProjectionInvalidation::text()).await?;
+        let authority_seq = mutation.invalidate(ProjectionInvalidation::all()).await?;
         self.enqueue_concept_in(
             mutation.tx(),
             input.subject,

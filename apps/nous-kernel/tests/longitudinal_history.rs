@@ -28,7 +28,7 @@ async fn historical_schema_episode_journal_use_past_heads_and_history_documents(
     let episode = historical_episode_text(&rt, subject, &episode, "archival past episode").await;
     let owner = rt.require_memory().unwrap();
     let mut memory_input = consolidation_memory(&episode);
-    memory_input.representation_text = "archival past memory".into();
+    memory_input.content.representation_text = "archival past memory".into();
     let memory = owner.form_memory(memory_input).await.unwrap();
     let mut schema_input = consolidation_schema(&episode);
     schema_input.content.structural_claim = "archival past schema".into();

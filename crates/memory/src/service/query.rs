@@ -100,6 +100,7 @@ impl CognitiveContributor for MemoryService {
                 &accessibility_policy,
                 bound.historical_authority.as_deref(),
                 false,
+                self.cognition.now(subject),
             )
             .await?;
         let mut drops = BTreeMap::new();

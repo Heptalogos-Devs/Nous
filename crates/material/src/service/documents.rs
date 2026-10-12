@@ -18,16 +18,13 @@ impl MaterialService {
             ));
         }
         let selected = self.document_selection(subject, references, view).await?;
-        let mut result = std::collections::HashMap::new();
-        for reference in references {
-            if selected.contains(reference)
-                && !result.contains_key(reference)
-                && let Some(text) = self.text_view(subject, reference, view).await?
-            {
-                result.insert(reference.clone(), text);
-            }
-        }
-        Ok(result)
+        let references: Vec<_> = references
+            .iter()
+            .filter(|reference| selected.contains(*reference))
+            .cloned()
+            .collect();
+        self.text_excerpts(subject, &references, self.max_upload_bytes, view)
+            .await
     }
 
     pub(super) async fn document_selection(
@@ -83,10 +80,20 @@ UNION ALL SELECT 'derived_region',r.derived_region_id FROM derived_regions r JOI
             .cloned()
             .collect();
         for row in rows {
-            selected.insert(parse_reference(
-                &row.try_get::<String, _>("kind").map_err(db)?,
-                &row.try_get::<Uuid, _>("id").map_err(db)?.to_string(),
-            )?);
+            let id: Uuid = row.try_get("id").map_err(db)?;
+            selected.insert(
+                match row.try_get::<String, _>("kind").map_err(db)?.as_str() {
+                    "derived_representation" => {
+                        CognitiveRef::DerivedRepresentation(DerivedRepresentationId(id))
+                    }
+                    "derived_region" => CognitiveRef::DerivedRegion(DerivedRegionId(id)),
+                    _ => {
+                        return Err(Error::Infrastructure(
+                            "unexpected Material selection kind".into(),
+                        ));
+                    }
+                },
+            );
         }
         Ok(selected)
     }

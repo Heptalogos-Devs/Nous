@@ -13,6 +13,7 @@ pub struct OwnedTopologyProjection {
 /// SQL supplies rows; semantic owners supply their view-aware source meaning.
 pub struct CognitiveProjectionInput {
     pub authority_watermark: i64,
+    pub watermarks: nous_persistence::ProjectionWatermarks,
     pub topology: OwnedTopologyProjection,
     pub sources: Vec<nous_persistence::TextProjectionSource>,
     pub evidence_roots: HashMap<CognitiveRef, HashSet<String>>,
@@ -44,20 +45,25 @@ impl ServingService {
         budget: nous_persistence::EpisodeTextBudget,
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<CognitiveProjectionInput> {
-        let (authority_watermark, sources, topology) = match view {
+        let (authority_watermark, watermarks, sources, topology) = match view {
             Some(view) => {
                 if view.subject != subject {
                     return Err(Error::Invalid("projection view subject mismatch".into()));
                 }
                 let rows = self.store.historical_projection_input(view, budget).await?;
-                (0, rows.sources, rows.topology)
+                (0, Default::default(), rows.sources, rows.topology)
             }
             None => {
                 let rows = self
                     .store
                     .cognitive_projection_rows(subject, memory_enabled, budget)
                     .await?;
-                (rows.authority_watermark, rows.sources, rows.topology)
+                (
+                    rows.authority_watermark,
+                    rows.watermarks,
+                    rows.sources,
+                    rows.topology,
+                )
             }
         };
         let references: HashSet<_> = sources
@@ -141,6 +147,7 @@ impl ServingService {
             .collect();
         Ok(CognitiveProjectionInput {
             authority_watermark,
+            watermarks,
             sources,
             topology: OwnedTopologyProjection {
                 nodes: topology.nodes,
@@ -174,6 +181,40 @@ impl ServingService {
                     .await?,
             );
         }
+        let fragment_refs: Vec<_> = sources
+            .iter()
+            .filter(|source| {
+                if nous_runtime::CognitiveContributor::owns(&self.material, &source.reference) {
+                    selected.contains_key(&source.reference)
+                } else {
+                    source.text.is_some()
+                }
+            })
+            .flat_map(|source| {
+                source
+                    .member_fragments
+                    .iter()
+                    .map(|fragment| fragment.reference.clone())
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let mut fragments = HashMap::new();
+        let mut fragment_text = HashMap::new();
+        let mut unresolved = Vec::new();
+        for reference in fragment_refs {
+            if let Some(input) = selected.get(&reference) {
+                let end = input
+                    .text
+                    .floor_char_boundary(budget.fragment_max_bytes.min(input.text.len()));
+                fragment_text.insert(reference, Some(input.text[..end].to_owned()));
+            } else {
+                unresolved.push(reference);
+            }
+        }
+        for batch in unresolved.chunks(256) {
+            fragments.extend(self.material.read_inputs(subject, batch, view).await?);
+        }
         let mut documents = Vec::new();
         for source in sources {
             let mut text =
@@ -189,27 +230,28 @@ impl ServingService {
                 };
             let mut member_bytes = 0;
             for fragment in source.member_fragments {
-                let member = self
-                    .material
-                    .text_excerpt(
-                        subject,
-                        &fragment.reference,
-                        budget.fragment_max_bytes as u64,
-                        view,
-                    )
-                    .await?
-                    .map(|view| view.text);
-                let Some(mut member) = member else {
+                if !fragment_text.contains_key(&fragment.reference) {
+                    let member = match fragments.remove(&fragment.reference) {
+                        Some(input) => self
+                            .material
+                            .read_text_input(input, budget.fragment_max_bytes as u64)
+                            .await?
+                            .map(|view| view.text),
+                        None => None,
+                    };
+                    fragment_text.insert(fragment.reference.clone(), member);
+                }
+                let Some(Some(member)) = fragment_text.get(&fragment.reference) else {
                     continue;
                 };
                 let remaining = budget.total_max_bytes.saturating_sub(member_bytes + 1);
                 if remaining == 0 {
                     break;
                 }
-                member.truncate(member.floor_char_boundary(remaining.min(member.len())));
-                member_bytes += member.len() + 1;
+                let end = member.floor_char_boundary(remaining.min(member.len()));
+                member_bytes += end + 1;
                 text.push('\n');
-                text.push_str(&member);
+                text.push_str(&member[..end]);
             }
             documents.push(LexicalDocument {
                 serving_doc_id: documents.len() as u64,

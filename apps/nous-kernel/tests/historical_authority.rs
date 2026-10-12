@@ -70,8 +70,8 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         OperationId::new(),
         "original authority fact",
     );
-    input.tags = vec![tag.tag_id];
-    let basis = input.basis.clone();
+    input.content.tags = vec![tag.tag_id];
+    let basis = input.content.basis.clone();
     let memory = owner.form_memory(input).await.unwrap();
     let old = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
     let exact_boundary = owner
@@ -106,21 +106,25 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .unwrap();
     let revised = owner
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject,
             memory_id: memory.object.memory_id,
             expected_object_epoch: memory.object.object_epoch,
             intent: nous_memory::RevisionIntent::Rephrase,
-            formation_mode: nous_memory::FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "rephrased authority fact".into(),
-            title: None,
-            basis: basis.clone(),
-            aboutness: vec![],
-            valid_time: TemporalExtent::Unknown,
-            epistemic_class: EpistemicClass::Observed,
+
+            content: nous_memory::MemoryContent {
+                producer: None,
+                formation_mode: nous_memory::FormationMode::Grounded,
+                grounding_occurrence_id: Some(source.occurrence.occurrence_id),
+                semantic_role: "fact".into(),
+                representation_text: "rephrased authority fact".into(),
+                title: None,
+                basis: basis.clone(),
+                aboutness: vec![],
+                valid_time: TemporalExtent::Unknown,
+                epistemic_class: EpistemicClass::Observed,
+                tags: Vec::new(),
+            },
         })
         .await
         .unwrap();

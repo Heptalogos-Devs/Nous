@@ -559,6 +559,47 @@ try {
       providerProfile: "unconfigured",
     },
   });
+  assert.deepEqual(
+    await client.resourceRegistry.getResource({
+      subjectId,
+      id: resourceDescriptor.resourceRef,
+    }),
+    resourceDescriptor,
+  );
+  const firstResourcePage = await client.resourceRegistry.listResources({
+    subjectId,
+    status: "ready",
+    page: { pageSize: 1 },
+  });
+  assert.equal(firstResourcePage.items[0]?.resourceRef, "resource:smoke");
+  assert(firstResourcePage.nextPageToken);
+  const secondResourcePage = await client.resourceRegistry.listResources({
+    subjectId,
+    status: "ready",
+    page: { pageSize: 1, pageToken: firstResourcePage.nextPageToken },
+  });
+  assert.equal(
+    secondResourcePage.items[0]?.resourceRef,
+    "resource:unavailable_fixture",
+  );
+  assert.equal(secondResourcePage.nextPageToken, "");
+  assert.equal(
+    (
+      await client.resourceRegistry.listResources({
+        subjectId,
+        status: "unavailable",
+      })
+    ).items.length,
+    0,
+  );
+  await assert.rejects(
+    client.resourceRegistry.listResources({
+      subjectId,
+      status: "unavailable",
+      page: { pageToken: firstResourcePage.nextPageToken },
+    }),
+    /page token belongs to another request/,
+  );
   const unavailableResource = await client.cognition.query({
     subjectId: subjectId,
     nousql: "external chunk $return(resource) $limit(2)",
@@ -574,6 +615,7 @@ try {
   const memory = await client.memory.formMemory({
     subjectId,
     operationId: crypto.randomUUID(),
+    cognitiveRole: "declarative",
     input: {
       producer: {
         providerClass: "deterministic-local-smoke",
@@ -583,7 +625,6 @@ try {
         preprocessingRevision: "1",
         configDigest: "local-wiring-v1",
       },
-      cognitiveRole: "declarative",
       formationMode: "grounded",
       groundingOccurrenceId: occurrenceId,
       semanticRole: "fact",

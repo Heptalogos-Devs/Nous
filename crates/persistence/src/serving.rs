@@ -121,18 +121,16 @@ impl AuthorityStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let desired: i64 = sqlx::query_scalar("SELECT COALESCE(max(desired_authority_seq),0) FROM projection_watermarks WHERE subject_id=$1 AND family=$2 AND (space_signature=$3 OR space_signature='*')")
-            .bind(record.subject.0).bind(&record.family).bind(&record.space).fetch_one(&mut *tx).await.map_err(db)?;
-        let desired = if record.family == "topology" {
-            sqlx::query_scalar::<_, i64>("SELECT authority_seq FROM subjects WHERE subject_id=$1")
-                .bind(record.subject.0)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?
-                .max(desired)
-        } else {
-            desired
-        };
+        // Authority invalidation updates this row before its family watermarks.
+        // Hold it stable until publication completes under the family lock.
+        sqlx::query("SELECT subject_id FROM subjects WHERE subject_id=$1 FOR SHARE")
+            .bind(record.subject.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let desired =
+            crate::projection::watermark(&mut tx, record.subject, &record.family, &record.space)
+                .await?;
         if record.authority_watermark < desired {
             return Ok(false);
         }
@@ -177,20 +175,18 @@ impl AuthorityStore {
             tx.commit().await.map_err(db)?;
             return Ok(current);
         }
-        let desired: i64 = sqlx::query_scalar("SELECT COALESCE(max(desired_authority_seq),0) FROM projection_watermarks WHERE subject_id=$1 AND family=$2 AND (space_signature=$3 OR space_signature='*')")
-            .bind(record.subject.0).bind(&record.family).bind(&record.space).fetch_one(&mut *tx).await.map_err(db)?;
+        // Authority invalidation updates this row before its family watermarks.
+        // Hold it stable until publication completes under the family lock.
+        sqlx::query("SELECT subject_id FROM subjects WHERE subject_id=$1 FOR SHARE")
+            .bind(record.subject.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let desired =
+            crate::projection::watermark(&mut tx, record.subject, &record.family, &record.space)
+                .await?;
         sqlx::query("INSERT INTO serving_generations(generation_id,subject_id,family,space_signature,authority_watermark,config_digest,artifact_hash,state,built_at,published_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,'ready',$8,$9,$10)")
             .bind(record.generation_id.0).bind(record.subject.0).bind(&record.family).bind(&record.space).bind(record.authority_watermark).bind(&record.config_digest).bind(&record.artifact_hash).bind(record.built_at).bind(Utc::now()).bind(&record.metadata).execute(&mut *tx).await.map_err(db)?;
-        let desired = if record.family == "topology" {
-            sqlx::query_scalar::<_, i64>("SELECT authority_seq FROM subjects WHERE subject_id=$1")
-                .bind(record.subject.0)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?
-                .max(desired)
-        } else {
-            desired
-        };
         if record.authority_watermark >= desired {
             sqlx::query("INSERT INTO serving_current(subject_id,family,space_signature,generation_id) VALUES($1,$2,$3,$4) ON CONFLICT(subject_id,family,space_signature) DO UPDATE SET generation_id=excluded.generation_id").bind(record.subject.0).bind(&record.family).bind(&record.space).bind(record.generation_id.0).execute(&mut *tx).await.map_err(db)?;
             if let Some(current) = current {

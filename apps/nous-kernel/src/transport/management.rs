@@ -50,7 +50,7 @@ impl KernelService {
                     adapter_kind: r.adapter_kind,
                     provider_profile: r.provider_profile,
                     provider_locator: r.provider_locator,
-                    display_label: Some(r.display_label.clone()),
+                    display_label: Some(r.display_label),
                     authority_class: r.authority_class,
                     coverage: object(r.coverage),
                     query_dimensions: serde_json::json!(r.query_dimensions),
@@ -61,15 +61,6 @@ impl KernelService {
                 },
             )
             .await?;
-        self.0
-            .store
-            .bind_identity(
-                subject,
-                nous_core::CognitiveRef::Resource(ResourceRef::new(r.resource_ref)?),
-                r.display_label,
-                vec![],
-            )
-            .await?;
         Ok(resource(result.descriptor))
     }
     pub(super) async fn get_resource(
@@ -77,73 +68,44 @@ impl KernelService {
         input: p::ObjectRequest,
     ) -> Result<p::ResourceDescriptor> {
         let subject = SubjectId(id(&input.subject_id)?);
-        self.0.store.require_subject(subject).await?;
-        self.0
-            .cognition
-            .list_resources(subject)
-            .await?
-            .into_iter()
-            .find(|r| r.descriptor.resource_ref.as_str() == input.id)
-            .map(|r| resource(r.descriptor))
-            .ok_or_else(|| Error::NotFound("resource not found".into()))
+        Ok(resource(
+            self.0
+                .cognition
+                .resource(subject, &ResourceRef::new(input.id)?)
+                .await?
+                .descriptor,
+        ))
     }
     pub(super) async fn list_resources(
         &self,
         input: p::ListRequest,
     ) -> Result<p::ListResourcesResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
-        self.0.store.require_subject(subject).await?;
-        let scope = format!("resources:{}:{}", input.subject_id, input.status);
-        let page = input.page.unwrap_or_default();
-        if page.page_size > 200 {
-            return Err(Error::Invalid("page_size exceeds 200".into()));
-        }
-        let limit = if page.page_size == 0 {
-            50
-        } else {
-            page.page_size as usize
-        };
-        let last = if page.page_token.is_empty() {
-            String::new()
-        } else {
-            let (digest, last) = page
-                .page_token
-                .split_once('.')
-                .ok_or_else(|| Error::Invalid("invalid page token".into()))?;
-            if digest != blake3::hash(scope.as_bytes()).to_hex().as_str() {
-                return Err(Error::Invalid("page token scope mismatch".into()));
-            }
-            last.to_owned()
-        };
-        let mut items: Vec<_> = self
+        let scope = format!("resources:{}:{}", subject.0, input.status);
+        let (limit, last) = page_cursor(input.page, &scope)?;
+        let (items, more) = self
             .0
             .cognition
-            .list_resources(subject)
-            .await?
-            .into_iter()
-            .filter(|r| {
-                r.descriptor.resource_ref.as_str() > last.as_str()
-                    && (input.status.is_empty() || r.descriptor.readiness == input.status)
-            })
-            .take(limit + 1)
-            .map(|r| resource(r.descriptor))
-            .collect();
-        let more = items.len() > limit;
-        items.truncate(limit);
+            .resource_page(subject, &input.status, limit, last.as_deref())
+            .await?;
         let next_page_token = if more {
-            format!(
-                "{}.{}",
-                blake3::hash(scope.as_bytes()).to_hex(),
+            next_token(
+                &scope,
                 items
                     .last()
                     .ok_or_else(|| Error::Internal("page continuation has no last item".into()))?
+                    .descriptor
                     .resource_ref
+                    .as_str(),
             )
         } else {
             String::new()
         };
         Ok(p::ListResourcesResponse {
-            items,
+            items: items
+                .into_iter()
+                .map(|view| resource(view.descriptor))
+                .collect(),
             next_page_token,
         })
     }

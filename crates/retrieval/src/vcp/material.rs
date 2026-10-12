@@ -118,7 +118,9 @@ impl ServingService {
                 ),
         );
         Ok(VcpProjectionMaterial {
-            authority_watermark: input.authority_watermark,
+            authority_watermark: input
+                .watermarks
+                .desired("topology", &format!("vcp:{}", space.space_hash)),
             space,
             producer,
             identities,

@@ -3,6 +3,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+mod artifact;
+pub use artifact::ArtifactRegistration;
 mod derivation;
 mod documents;
 mod historical;
@@ -17,7 +19,9 @@ mod segmentation;
 mod structured;
 pub use segmentation::DescriptionSegment;
 mod types;
-pub use materialization::{ByteRange, MaterialTextView, MaterializeRequest, MaterializedEvidence};
+pub use materialization::{
+    ByteRange, MaterialReadInput, MaterialTextView, MaterializeRequest, MaterializedEvidence,
+};
 pub use types::*;
 
 use crate::*;

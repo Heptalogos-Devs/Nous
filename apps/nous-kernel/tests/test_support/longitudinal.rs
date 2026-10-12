@@ -125,25 +125,28 @@ pub(crate) fn consolidation_memory(episode: &EpisodeView) -> nous_memory::Explic
         panic!("expected occurrence")
     };
     nous_memory::ExplicitMemoryInput {
-        producer: Some(consolidation_producer()),
         operation_id: nous_core::OperationId::new(),
         subject: episode.object.subject_id,
-        tags: Vec::new(),
         cognitive_role: nous_memory::CognitiveRole::Declarative,
-        formation_mode: nous_memory::FormationMode::Grounded,
-        grounding_occurrence_id: Some(occurrence),
-        semantic_role: "statement".into(),
-        representation_text: "A reusable observed fact.".into(),
-        title: None,
-        basis: vec![nous_core::RevisionBasis::Evidence(nous_core::EvidenceRef {
-            epistemic_relation: None,
-            occurrence_id: occurrence,
-            locator: nous_core::EvidenceLocator::WholeOccurrence,
-            basis_role: nous_core::BasisRole::Direct,
-        })],
-        aboutness: vec![],
-        valid_time: TemporalExtent::Unknown,
-        epistemic_class: nous_core::EpistemicClass::Derived,
+
+        content: nous_memory::MemoryContent {
+            producer: Some(consolidation_producer()),
+            tags: Vec::new(),
+            formation_mode: nous_memory::FormationMode::Grounded,
+            grounding_occurrence_id: Some(occurrence),
+            semantic_role: "statement".into(),
+            representation_text: "A reusable observed fact.".into(),
+            title: None,
+            basis: vec![nous_core::RevisionBasis::Evidence(nous_core::EvidenceRef {
+                epistemic_relation: None,
+                occurrence_id: occurrence,
+                locator: nous_core::EvidenceLocator::WholeOccurrence,
+                basis_role: nous_core::BasisRole::Direct,
+            })],
+            aboutness: vec![],
+            valid_time: TemporalExtent::Unknown,
+            epistemic_class: nous_core::EpistemicClass::Derived,
+        },
     }
 }
 

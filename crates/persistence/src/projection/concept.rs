@@ -25,8 +25,7 @@ impl AuthorityStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let watermark =
-            crate::projection::text::watermark(&mut tx, subject, "concept", "*").await?;
+        let watermark = crate::projection::watermark(&mut tx, subject, "concept", "*").await?;
         let rows = sqlx::query("SELECT t.tag_id,r.tag_revision_id,r.label,r.description,r.kind_hint FROM tags t JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status='active' ORDER BY t.tag_id")
             .bind(subject.0).fetch_all(&mut *tx).await.map_err(db)?;
         let mut tags = Vec::new();

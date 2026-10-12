@@ -90,10 +90,6 @@ impl SubjectCoreService {
             .unwrap_or(subject_default_capabilities(&snapshot)?);
         let capabilities = capabilities.require_process(process)?;
         let guard = self.objects.reference_guard(false).await?;
-        let hash = self
-            .objects
-            .put(input.cognitive_seed.text.as_bytes().to_vec())
-            .await?;
         let mut tx = self.store.begin().await?;
         sqlx::query("INSERT INTO subjects(subject_id,created_at,metadata) VALUES($1,$2,$3)")
             .bind(subject.0)
@@ -110,9 +106,9 @@ impl SubjectCoreService {
             .map_err(nous_persistence::database_error)?;
         seed::insert_seed(
             &self.store,
+            &self.objects,
             &mut tx,
             input.cognitive_seed,
-            hash,
             seed::SeedAdoptionWrite {
                 subject,
                 operation_id: input.operation_id,

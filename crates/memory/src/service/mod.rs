@@ -6,6 +6,8 @@
 mod accessibility;
 mod accretion;
 mod batch;
+mod context;
+pub use context::MemoryContextProjection;
 mod concept_maintenance;
 mod consolidation_context;
 mod dependencies;
@@ -39,7 +41,6 @@ use nous_persistence::{
     AuthorityStore, MutationEnvelope, MutationStart, OwnerLock, ProjectionInvalidation,
     database_error as db,
 };
-pub use nous_runtime::{ResidentView, ResourceUpsert, ResourceView, SessionView};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sqlx::Row;
 pub use state::LifecycleAction;
@@ -125,23 +126,12 @@ pub struct MemoryView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviseMemoryInput {
-    #[serde(default)]
-    pub producer: Option<ProducerSignature>,
     pub operation_id: OperationId,
     pub subject: SubjectId,
     pub memory_id: MemoryId,
     pub expected_object_epoch: i64,
     pub intent: RevisionIntent,
-    pub formation_mode: FormationMode,
-    pub grounding_occurrence_id: Option<OccurrenceId>,
-    pub semantic_role: String,
-    pub representation_text: String,
-    pub title: Option<String>,
-    pub basis: Vec<RevisionBasis>,
-    pub aboutness: Vec<EntityRef>,
-    pub valid_time: TemporalExtent,
-
-    pub epistemic_class: EpistemicClass,
+    pub content: MemoryContent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

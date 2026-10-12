@@ -3,6 +3,7 @@
 
 import { boot, stop, prepare, type Boot } from "./support.js";
 import { create } from "@bufbuild/protobuf";
+import { NousError } from "@nous-wave/client";
 import { TimestampSchema } from "@bufbuild/protobuf/wkt";
 import {
   CognitiveRefSchema,
@@ -27,6 +28,7 @@ import {
   TemporalExtentSchema,
   UpdateWorkContextRequestSchema,
   WorkContextMutationRequestSchema,
+  WorkContextClearScope,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { rm } from "node:fs/promises";
 import { workspaceTemp } from "../workspace.js";
@@ -107,8 +109,8 @@ async function main() {
       create(FormMemoryRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009904",
         subjectId,
+        cognitiveRole: "declarative",
         input: create(MemoryContentSchema, {
-          cognitiveRole: "declarative",
           formationMode: "grounded",
           groundingOccurrenceId: observed.occurrenceId,
           semanticRole: "fact",
@@ -135,6 +137,130 @@ async function main() {
     );
     const contextId = context.workContext?.workContextId;
     if (!contextId) throw new Error("WorkContext identity missing");
+    const createdRevision = context.workContext!.revision;
+    context = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: contextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: createdRevision,
+      intent: {
+        case: "fields",
+        value: {
+          contextText: "continuity background",
+          constraints: { mode: "bounded" },
+          unresolvedQuestions: { values: ["next step"] },
+        },
+      },
+    });
+    if (
+      context.workContext?.purpose !== "continue the runtime task" ||
+      context.workContext.contextText !== "continuity background"
+    )
+      throw new Error("WorkContext fields did not preserve omitted purpose");
+    let staleRejected = false;
+    try {
+      await client.runtime.updateWorkContext({
+        subjectId,
+        workContextId: contextId,
+        operationId: crypto.randomUUID(),
+        expectedRevision: createdRevision,
+        intent: { case: "fields", value: { purpose: "stale update" } },
+      });
+    } catch (error) {
+      staleRejected =
+        error instanceof NousError && error.domainCode === "STALE_REVISION";
+    }
+    if (!staleRejected)
+      throw new Error("WorkContext accepted a stale mutation");
+    context = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: contextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: context.workContext!.revision,
+      intent: {
+        case: "fields",
+        value: {
+          contextText: "",
+          unresolvedQuestions: { values: [] },
+          constraints: {},
+        },
+      },
+    });
+    if (
+      context.workContext?.contextText !== "" ||
+      context.workContext.unresolvedQuestions.length ||
+      Object.keys(context.workContext.constraints ?? {}).length
+    )
+      throw new Error("WorkContext did not apply explicit empty fields");
+    context = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: contextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: context.workContext!.revision,
+      intent: {
+        case: "unpin",
+        value: {
+          cognitionAnchors: [
+            { kind: "memory_revision", value: memory.revisionId },
+          ],
+        },
+      },
+    });
+    if (context.workContext?.cognitionAnchors.length)
+      throw new Error("WorkContext unpin failed");
+    context = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: contextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: context.workContext!.revision,
+      intent: {
+        case: "pin",
+        value: {
+          cognitionAnchors: [
+            { kind: "memory_revision", value: memory.revisionId },
+          ],
+        },
+      },
+    });
+    if (context.workContext?.cognitionAnchors.length !== 1)
+      throw new Error("WorkContext pin failed");
+    const disposable = await client.runtime.createWorkContext({
+      subjectId,
+      operationId: crypto.randomUUID(),
+      purpose: "clear and pagination",
+      contextText: "to clear",
+      cognitionAnchors: [{ kind: "memory_revision", value: memory.revisionId }],
+    });
+    const cleared = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: disposable.workContext!.workContextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: disposable.workContext!.revision,
+      intent: { case: "clear", value: WorkContextClearScope.ALL },
+    });
+    if (
+      cleared.workContext?.contextText !== "" ||
+      cleared.workContext.cognitionAnchors.length ||
+      cleared.workContext.purpose !== "clear and pagination"
+    )
+      throw new Error("WorkContext clear did not preserve purpose");
+    const firstContexts = await client.runtime.listWorkContexts({
+      subjectId,
+      page: { pageSize: 1 },
+    });
+    if (firstContexts.items.length !== 1 || !firstContexts.nextPageToken)
+      throw new Error("WorkContext pagination did not emit cursor");
+    const nextContexts = await client.runtime.listWorkContexts({
+      subjectId,
+      page: { pageSize: 1, pageToken: firstContexts.nextPageToken },
+    });
+    if (
+      nextContexts.items.length !== 1 ||
+      nextContexts.items[0]!.workContextId ===
+        firstContexts.items[0]!.workContextId ||
+      nextContexts.nextPageToken
+    )
+      throw new Error("WorkContext pagination repeated or lost a context");
     const foregroundRequest = create(SetActiveWorkContextRequestSchema, {
       operationId: "00000000-0000-0000-0000-000000009906",
       subjectId,
@@ -276,17 +402,17 @@ async function main() {
         subjectId,
         workContextId: contextId,
         expectedRevision: context.workContext?.revision,
-        purpose: "continue the runtime task with an Episode",
-        cognitionAnchors: [
-          create(CognitiveRefSchema, {
-            kind: "memory_revision",
-            value: memory.revisionId,
-          }),
-          create(CognitiveRefSchema, {
-            kind: "episode_revision",
-            value: currentRevision,
-          }),
-        ],
+        intent: {
+          case: "pin",
+          value: {
+            cognitionAnchors: [
+              create(CognitiveRefSchema, {
+                kind: "episode_revision",
+                value: currentRevision,
+              }),
+            ],
+          },
+        },
       }),
     );
     const episodeRuntimeQuery = await current.client.cognition.query(

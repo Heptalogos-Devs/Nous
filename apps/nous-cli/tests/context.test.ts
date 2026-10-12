@@ -69,10 +69,10 @@ it("recovers an unknown context mutation using the exact saved identity and expe
     expect(updates[1]).toEqual(updates[0]);
     expect(updates[1]).toMatchObject({
       expectedRevision: 1n,
-      purpose: "Review deployment",
-      contextText: "new task",
-      unresolvedQuestions: ["Approval?"],
+      intent: { case: "fields", value: { contextText: "new task" } },
     });
+    expect(updates[1]).not.toHaveProperty("purpose");
+    expect(updates[1]).not.toHaveProperty("unresolvedQuestions");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -286,8 +286,8 @@ it("reads a returned closed Session reference without selecting or opening a Ses
     sessionId,
     subjectId: "subject",
     runtimeRevision: 2n,
-    closed: true,
-    residentRefs: [],
+    closedAt: { seconds: 1n, nanos: 0 },
+    resident: [],
   });
   const open = vi.fn();
   const close = vi.fn();
@@ -324,7 +324,7 @@ it("reads a returned closed Session reference without selecting or opening a Ses
       connect,
     );
     expect(result).toMatchObject({
-      data: { closed: true, runtimeRevision: 2n },
+      data: { closedAt: { seconds: 1n, nanos: 0 }, runtimeRevision: 2n },
     });
     expect(read).toHaveBeenCalledWith({ subjectId: "subject", id: sessionId });
     expect(open).not.toHaveBeenCalled();

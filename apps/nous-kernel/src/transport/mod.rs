@@ -129,9 +129,7 @@ impl KernelService {
             }
             if matches!(
                 reference,
-                nous_core::CognitiveRef::Memory(_)
-                    | nous_core::CognitiveRef::MemoryRevision(_)
-                    | nous_core::CognitiveRef::CognitiveSchema(_)
+                nous_core::CognitiveRef::CognitiveSchema(_)
                     | nous_core::CognitiveRef::CognitiveSchemaRevision(_)
                     | nous_core::CognitiveRef::Episode(_)
                     | nous_core::CognitiveRef::EpisodeRevision(_)
@@ -182,10 +180,10 @@ impl KernelService {
                         .map(|revision| revision.0.to_string());
                     segment.authority = "subject_cognition".into();
                 }
-                Err(_) => {
+                Err(error) => {
                     degradation.push(p::Degradation {
                         code: "projection_source_unavailable".into(),
-                        detail: reference.to_string(),
+                        detail: format!("{reference}: {error}"),
                     });
                     continue;
                 }

@@ -128,7 +128,6 @@ Memory correction 示例：
 
 ```toml
 text = "核对原始来源后的完整修正内容"
-cognitive_role = "declarative"
 semantic_role = "reported_fact"
 epistemic_class = "reported"
 formation_mode = "grounded"
@@ -138,12 +137,12 @@ ref = "<obs:引用>"
 role = "direct"
 ```
 
-`nous memory revise <Memory对象引用> --kind correct --request-file correction.toml` 读取当前 epoch 后冻结语义输入；`memory form --request-file content.toml` 显式形成源支持 cognition，无需 provider。`memory history <Memory对象引用> --page-size 50 --page-token <token>` 续接分页。`revision` 参数是精确修订，`get/history/lifecycle` 参数是稳定对象。生命周期恢复与修正可以读取 suppressed/withdrawn 对象；purge 由 owner 的不可逆语义处理。
+`nous memory revise <Memory对象引用> --kind correct --request-file correction.toml` 读取当前 epoch 后冻结语义输入；`memory form --kind declarative --request-file content.toml` 显式形成源支持 cognition，无需 provider。创建时的 `--kind` 指定对象级 cognitive role，修订不会修改该角色；两者使用相同内容文件。`memory history <Memory对象引用> --page-size 50 --page-token <token>` 续接分页。`revision` 参数是精确修订，`get/history/lifecycle` 参数是稳定对象。生命周期恢复与修正可以读取 suppressed/withdrawn 对象；purge 由 owner 的不可逆语义处理。
 
 Schema content 使用 title、structural_claim、applicability_scope、boundary_definition、formation_kind、evidence_links。`schema evidence` 文件是一项 `SchemaEvidenceLink`；split 文件用 `[[children]]`；merge 文件含 `sources=["<Schema引用>",...]` 与 `[merged]` 完整内容。`memory link`/`episode link` 文件含 from、to、relation，from/to 是 exact revision。复杂内容字段由 generated owner schema 校验，不提供 raw RPC 输入入口。
 
 `resource put --request-file resource.toml` 文件使用 ResourceDescriptor 字段；get/list/remove 使用 Registry。`resource materialize --request-file reference.toml` 使用真实 stable external reference。`projection build|managed --consumer <operator已配置consumer> [--request-file context.toml]` 需要选中 Session；文件可包含 query、situation_refs、known_cursor，后者用于 managed delta/snapshot，`--max-items`/`--max-bytes` 明确预算。
 
-`subject seed` 与 `subject adopt-seed --kind import --request-file seed.toml` 管理真实种子版本；`identity rebind --request-file mention.toml` 管理 mention_id/entity_ref/binding_state/reason。`subject create --request-file subject.toml` 可显式设置 capabilities 与 cognitive_seed。`session list`、`context list` 使用 `--page-size`/`--page-token`。`context create/set --request-file` 可设置 purpose/context_text/unresolved_questions/constraints/resume_conditions/budget_summary，set 保留未提供的 anchor 集合。
+`subject seed` 与 `subject adopt-seed --kind import --request-file seed.toml` 管理真实种子版本；`identity rebind --request-file mention.toml` 管理 mention_id/entity_ref/binding_state/reason。`subject create --request-file subject.toml` 可显式设置 capabilities 与 cognitive_seed。`session list`、`context list` 使用 `--page-size`/`--page-token`，公开 Page 上限为 200。`context create/set --request-file` 可设置 purpose/context_text/unresolved_questions/constraints/resume_conditions/budget_summary。创建的 questions/resume 是数组；set 的两个列表使用 `{ values = [...] }` 表达字段存在，空数组、空文本和空对象明确清空，未提供字段保持原值。`set/pin/unpin/clear --expected-revision` 可指定所见修订；省略时只读取当前 revision，内容修改由 Runtime 在锁内完成。
 
 `material limits/artifacts/occurrences/representations/producer` 提供 admission 上限、Artifact 分页、实际 Observation 反查、派生表示列表与 producer 读取。occurrences 接受 Artifact，representations 可用 Artifact/SourceRegion 和 `--kind` 过滤。

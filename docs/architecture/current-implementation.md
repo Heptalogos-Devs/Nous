@@ -12,17 +12,17 @@ Kernel 组合 Subject、Configuration、Material、Memory、Runtime、Persistenc
 
 ## Rust owners
 
-| Owner | 当前责任 |
-| --- | --- |
-| `crates/core` | typed IDs、exact references、query DTO、时间与共享语义错误 |
-| `crates/protocol` | 从 `proto/` 生成的 Rust wire bindings |
-| `crates/configuration` | Rust/Core unified Catalog、JSON Schema validation、overrides、immutable snapshots、digest 与 capability provisioning |
-| `crates/persistence` | PostgreSQL transaction/pool、fresh schema、MutationEnvelope、receipts、projection watermarks |
-| `crates/subject` | Subject identity、Memory capability、Cognitive Seed version/adoption |
-| `crates/material` | Artifact、ObservationOccurrence、SourceRegion、DerivedRepresentation、DerivedRegion 与 materialization |
-| `crates/memory` | Memory、CognitiveSchema、Episode、Journal、Tag、AssociationEvidence、provenance 与 lifecycle |
-| `crates/runtime` | Session、ResidentSet、WorkContext、UseEvent、QueryPlan、lane/result contracts 与 fixed fusion |
-| `crates/retrieval` | lexical/dense/concept Serving、current/historical immutable generations、共享向量与显式 associative diffusion |
+| Owner                  | 当前责任                                                                                                                                              |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/core`          | typed IDs、exact references、query DTO、时间与共享语义错误                                                                                            |
+| `crates/protocol`      | 从 `proto/` 生成的 Rust wire bindings                                                                                                                 |
+| `crates/configuration` | Rust/Core unified Catalog、JSON Schema validation、overrides、immutable snapshots、digest 与 capability provisioning                                  |
+| `crates/persistence`   | PostgreSQL transaction/pool、fresh schema、MutationEnvelope、receipts、projection watermarks                                                          |
+| `crates/subject`       | Subject identity、Memory capability、Cognitive Seed version/adoption；Artifact admission 调用 Material owner                                          |
+| `crates/material`      | 共享 Artifact CAS admission、ObservationOccurrence、SourceRegion、DerivedRepresentation、DerivedRegion、批量 selected text 与 context materialization |
+| `crates/memory`        | Memory、CognitiveSchema、Episode、Journal、Tag、AssociationEvidence、provenance 与 lifecycle                                                          |
+| `crates/runtime`       | Session、ResidentSet、WorkContext、UseEvent、QueryPlan、lane/result contracts 与 fixed fusion                                                         |
+| `crates/retrieval`     | lexical/dense/concept Serving、current/historical immutable generations、共享向量与显式 associative diffusion                                         |
 
 ## Transport 与 mutation
 
@@ -74,7 +74,9 @@ Research 只使用 official public Client/CLI。小型 runner 不启动额外 Ru
 
 ## Temporal 与 Semantic Concept 查询
 
-根 ResultProjection 默认四类 cognition，Evidence/Resource 显式选择。TemporalFrame 捕获 Subject CognitiveClock、as-of AuthorityView 与 current/history RevisionView；相对窗口、名称解析、Query Representation 与 activation 共用该截点。Memory/Material 提供 historical owner projection，Persistence 读取既有 canonical chronology/immutable rows；Serving 在 candidate generation 前按 selected state 构建历史资产，不发布到 serving_current。Lease、grace 和回收与 current 资产共用；最终物化仍执行当前权限/purge fence。
+根 ResultProjection 默认四类 cognition，Evidence/Resource 显式选择。TemporalFrame 捕获 Subject CognitiveClock、as-of AuthorityView 与 current/history RevisionView；相对窗口、名称解析、Query Representation 与 activation 共用该截点。Memory/Material 提供 historical owner projection，Persistence 读取既有 canonical chronology/immutable rows；Serving 在 candidate generation 前按 selected state 构建历史资产，不发布到 serving_current。Reader、grace 和显式回收与 current 资产共用；最终物化仍执行当前权限/purge fence。
+
+Serving freshness 由 Persistence 的单一 family/space desired watermark 计算。Native topology 的空 space 依赖真实图结构；VCP 使用 `vcp:<embedding space hash>`，同时依赖 lexical、所用 dense/concept space 和 topology。状态、prepare、build stamp、promotion 与 publication 使用同一规则，text-only 变化不会使 native graph 失效；Episode/Journal 组织和生命周期变化必须推进 topology。Publication 在既有 family 锁和 Subject 行锁内核对 watermark 并安装 current，不用另外一套恢复状态。
 
 ConceptService/client.concepts 承载 Tag/Association Authority；Identity facade 路由 Entity rebinding 到 Material owner。Tag canonical semantic text/digest、embedding 与 attachment postings 是共享资产。QueryActivation 分离 durable Tag 和 ephemeral inferred/novel concepts；TagDirect 不依赖 graph 或 embedding，扩散仅由 `$explore` 明确开启。Bare text lexical+dense 不要求概念模型。
 

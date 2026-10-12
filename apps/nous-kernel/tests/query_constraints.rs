@@ -29,7 +29,7 @@ async fn entity_lane_uses_aboutness_and_multi_value_include() {
         OperationId::new(),
         "declarative about Alice",
     );
-    first.aboutness = vec![alice.clone()];
+    first.content.aboutness = vec![alice.clone()];
     first.cognitive_role = CognitiveRole::Declarative;
     let mut second = form_input(
         subject,
@@ -37,7 +37,7 @@ async fn entity_lane_uses_aboutness_and_multi_value_include() {
         OperationId::new(),
         "experiential about Alice",
     );
-    second.aboutness = vec![alice.clone()];
+    second.content.aboutness = vec![alice.clone()];
     second.cognitive_role = CognitiveRole::Experiential;
     let first = runtime
         .require_memory()

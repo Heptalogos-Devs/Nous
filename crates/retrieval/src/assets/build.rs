@@ -65,7 +65,7 @@ impl ServingService {
         std::fs::rename(staging.path(), &target).map_err(io)?;
         // Open the final physical artifact once before publishing its pointer.
         let artifact = self.readback(&target, family, id)?;
-        let config_digest = self.config_digest(subject, family, snapshot).await?;
+        let config_digest = self.config_digest(subject, family, space, snapshot).await?;
         let record = ServingRecord {
             generation_id: id,
             subject,
@@ -231,7 +231,7 @@ impl ServingService {
         })
         .await
         .map_err(|e| Error::Infrastructure(e.to_string()))??;
-        Ok(input.authority_watermark)
+        Ok(input.watermarks.desired("topology", ""))
     }
 
     pub(crate) async fn embed_document(
