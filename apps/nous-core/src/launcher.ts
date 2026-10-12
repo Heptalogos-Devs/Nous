@@ -135,8 +135,7 @@ async function main() {
   nodeArgs.push(
     "--run-root",
     locations.run,
-    "--instance-root",
-    locations.instance,
+    ...(command === "mcp" ? [] : ["--instance-root", locations.instance]),
     ...(command === "mcp"
       ? [
           ...forwarded.slice(0, commandOffset),

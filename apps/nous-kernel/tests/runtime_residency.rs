@@ -422,7 +422,8 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
             8,
         )
         .await
-        .unwrap_err();
+        .err()
+        .expect("unrequested old memory must require explicit recall");
     assert!(aged.to_string().contains("accessibility"));
     let explicit = owner
         .context_projection(

@@ -4,7 +4,8 @@
 use crate::*;
 
 pub struct ContextSource {
-    pub source_revision: Option<CognitiveRef>,
+    pub reference: CognitiveRef,
+    pub source_revision: Option<String>,
     pub text: Option<String>,
     pub authority: AuthorityClass,
     pub evidence: Vec<EvidenceHandle>,
@@ -38,7 +39,6 @@ pub struct ProjectionRequest {
 }
 
 pub struct ProjectionSegment {
-    pub reference: CognitiveRef,
     pub semantic_role: &'static str,
     pub stability: &'static str,
     pub source: ContextSource,
@@ -64,6 +64,7 @@ impl CognitiveRuntimeService {
         if let CognitiveRef::Resource(resource) = reference {
             let descriptor = self.resource(subject, resource).await?.descriptor;
             return Ok(crate::ContextSource {
+                reference: reference.clone(),
                 source_revision: None,
                 text: (max_bytes > 0).then(|| {
                     crate::projection::bounded_text(
@@ -77,10 +78,28 @@ impl CognitiveRuntimeService {
                 evidence: Vec::new(),
             });
         }
+        if let CognitiveRef::WorkContext(id) = reference {
+            let context = self.work_context(subject, id.0).await?;
+            if context.state != WorkContextState::Open {
+                return Err(Error::Unavailable("WorkContext is no longer open".into()));
+            }
+            return Ok(work_context_source(&context, max_bytes));
+        }
         self.store.validate_reference(subject, reference).await?;
+        let text = if max_bytes > 0 && matches!(reference, CognitiveRef::Entity(_)) {
+            self.store
+                .query_descriptors(subject, std::slice::from_ref(reference))
+                .await?
+                .into_iter()
+                .find(|descriptor| descriptor.reference == *reference)
+                .map(|descriptor| bounded_text(descriptor.text, max_bytes))
+        } else {
+            None
+        };
         Ok(crate::ContextSource {
+            reference: reference.clone(),
             source_revision: None,
-            text: None,
+            text,
             authority: AuthorityClass::ExternalCurrentAuthority,
             evidence: Vec::new(),
         })
@@ -122,6 +141,7 @@ impl CognitiveRuntimeService {
         }
         let now = self.now(input.subject);
         let configuration = self.configuration.snapshot_for_subject(input.subject)?;
+        let mut foreground = None;
         let mut references = session
             .resident
             .into_iter()
@@ -139,11 +159,28 @@ impl CognitiveRuntimeService {
             references.extend(
                 context
                     .cognition_anchors
-                    .into_iter()
-                    .chain(context.entity_anchors.into_iter().map(CognitiveRef::Entity))
-                    .chain(context.tag_anchors.into_iter().map(CognitiveRef::Tag))
+                    .iter()
+                    .cloned()
+                    .chain(
+                        context
+                            .entity_anchors
+                            .iter()
+                            .cloned()
+                            .map(CognitiveRef::Entity),
+                    )
+                    .chain(context.tag_anchors.iter().copied().map(CognitiveRef::Tag))
                     .map(|reference| (reference, "runtime_work_context", "checkpoint", true)),
             );
+            references.insert(
+                0,
+                (
+                    CognitiveRef::WorkContext(WorkContextId(id)),
+                    "runtime_work_context",
+                    "checkpoint",
+                    true,
+                ),
+            );
+            foreground = Some(context);
         }
         tx.commit()
             .await
@@ -162,7 +199,8 @@ impl CognitiveRuntimeService {
             | CognitiveRef::Episode(_)
             | CognitiveRef::EpisodeRevision(_)
             | CognitiveRef::Journal(_)
-            | CognitiveRef::JournalRevision(_) => input.memory,
+            | CognitiveRef::JournalRevision(_)
+            | CognitiveRef::Tag(_) => input.memory,
             CognitiveRef::Resource(_) => input.resource,
             _ => input.runtime,
         };
@@ -176,7 +214,6 @@ impl CognitiveRuntimeService {
             .collect::<HashSet<_>>();
         let mut seen = HashSet::new();
         references.retain(|(reference, ..)| seen.insert(reference.clone()));
-        references.truncate(input.max_items);
         let mut remaining = if input.materialize {
             input.max_text_bytes
         } else {
@@ -186,27 +223,38 @@ impl CognitiveRuntimeService {
         let mut emitted = HashSet::new();
         let mut degradation = Vec::new();
         for (reference, role, stability, _) in references {
+            if segments.len() >= input.max_items {
+                break;
+            }
+            if emitted.contains(&reference) {
+                continue;
+            }
             let explicit = explicit_refs.contains(&reference);
-            match resolver
-                .context_source(
-                    input.subject,
-                    &reference,
-                    remaining,
-                    explicit,
-                    now,
-                    &configuration,
-                )
-                .await
-            {
+            let source = if let Some(context) = foreground.as_ref().filter(|context| {
+                reference == CognitiveRef::WorkContext(WorkContextId(context.work_context_id))
+            }) {
+                Ok(work_context_source(context, remaining))
+            } else {
+                resolver
+                    .context_source(
+                        input.subject,
+                        &reference,
+                        remaining,
+                        explicit,
+                        now,
+                        &configuration,
+                    )
+                    .await
+            };
+            match source {
                 Ok(source) => {
-                    let reference = source.source_revision.clone().unwrap_or(reference);
+                    let reference = source.reference.clone();
                     if !emitted.insert(reference.clone()) {
                         continue;
                     }
                     remaining =
                         remaining.saturating_sub(source.text.as_ref().map_or(0, String::len));
                     segments.push(ProjectionSegment {
-                        reference,
                         semantic_role: role,
                         stability,
                         source,
@@ -226,19 +274,20 @@ impl CognitiveRuntimeService {
             }
         }
         let current: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2 AND runtime_revision=$3 AND closed_at IS NULL AND active_work_context_id IS NOT DISTINCT FROM $4)",
+            "SELECT EXISTS(SELECT 1 FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2 AND runtime_revision=$3 AND closed_at IS NULL AND active_work_context_id IS NOT DISTINCT FROM $4 AND ($4::uuid IS NULL OR EXISTS(SELECT 1 FROM work_contexts WHERE subject_id=$1 AND work_context_id=$4 AND revision=$5 AND state='open')))",
         )
         .bind(input.subject.0)
         .bind(input.session.0)
         .bind(session.runtime_revision)
         .bind(session.active_work_context_id)
+        .bind(foreground.as_ref().map(|context| context.revision))
         .fetch_one(self.store.pool())
         .await
         .map_err(nous_persistence::database_error)?;
         if !current {
             return Err(DomainError::new(
                 DomainErrorCode::StaleContext,
-                "Session changed during projection",
+                "Session or foreground WorkContext changed during projection",
             )
             .with_context("session_id", input.session.0)
             .with_context("expected_revision", session.runtime_revision)
@@ -257,10 +306,16 @@ impl CognitiveRuntimeService {
 }
 
 pub(crate) fn bounded_text(mut text: String, max_bytes: usize) -> String {
-    let mut end = text.len().min(max_bytes);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text.truncate(end);
+    text.truncate(text.floor_char_boundary(max_bytes));
     text
+}
+
+fn work_context_source(context: &WorkContextView, max_bytes: usize) -> ContextSource {
+    ContextSource {
+        reference: CognitiveRef::WorkContext(WorkContextId(context.work_context_id)),
+        source_revision: Some(context.revision.to_string()),
+        text: (max_bytes > 0).then(|| bounded_text(context.task_text(), max_bytes)),
+        authority: AuthorityClass::ExternalCurrentAuthority,
+        evidence: Vec::new(),
+    }
 }

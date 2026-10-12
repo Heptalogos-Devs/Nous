@@ -183,13 +183,7 @@ fn longitudinal_hit(
         row.get::<String, _>("text"),
         rendering.text
     );
-    if text.len() > 65536 {
-        let mut end = 65536;
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        text.truncate(end);
-    }
+    text.truncate(text.floor_char_boundary(65536));
     CognitiveHit {
         authority_epoch: Some(row.get("object_epoch")),
         preference_refs: vec![],
@@ -399,12 +393,8 @@ fn append_rendering(output: &mut String, text: &str, maximum: usize) {
     if remaining == 0 {
         return;
     }
-    let mut end = text.len().min(remaining);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
     output.push('\n');
-    output.push_str(&text[..end]);
+    output.push_str(&text[..text.floor_char_boundary(remaining)]);
 }
 
 #[derive(Default)]

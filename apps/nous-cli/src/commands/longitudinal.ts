@@ -3,7 +3,7 @@
 import { EpisodeContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { lifecycle, revisionLink } from "../cognition-owner.js";
 import { CliError } from "../agent.js";
-import { content, operationId, page, target } from "../content.js";
+import { content, objectEpoch, operationId, page, target } from "../content.js";
 import type { CliEnvironment } from "../runtime.js";
 export async function episodeCommands(
   env: CliEnvironment,
@@ -40,13 +40,21 @@ export async function episodeCommands(
       episodeId,
       page: page(env),
     });
-  const current = await client.memory.getEpisode({ subjectId, id: episodeId });
-  if (action === "get") return current;
-  if (!current.episode) throw new CliError("NOT_FOUND", "Episode not found");
+  if (action === "get")
+    return client.memory.getEpisode({ subjectId, id: episodeId });
+  let expectedObjectEpoch = objectEpoch(env.values["expected-object-epoch"]);
+  if (expectedObjectEpoch === undefined) {
+    const current = await client.memory.getEpisode({
+      subjectId,
+      id: episodeId,
+    });
+    if (!current.episode) throw new CliError("NOT_FOUND", "Episode not found");
+    expectedObjectEpoch = current.episode.objectEpoch;
+  }
   const mutation = {
     subjectId,
     episodeId,
-    expectedObjectEpoch: current.episode.objectEpoch,
+    expectedObjectEpoch,
     operationId: operationId(env),
   };
   if (action === "revise")
@@ -87,13 +95,21 @@ export async function journalCommands(
       journalId,
       page: page(env),
     });
-  const current = await client.memory.getJournal({ subjectId, id: journalId });
-  if (action === "get") return current;
-  if (!current.journal) throw new CliError("NOT_FOUND", "Journal not found");
+  if (action === "get")
+    return client.memory.getJournal({ subjectId, id: journalId });
+  let expectedObjectEpoch = objectEpoch(env.values["expected-object-epoch"]);
+  if (expectedObjectEpoch === undefined) {
+    const current = await client.memory.getJournal({
+      subjectId,
+      id: journalId,
+    });
+    if (!current.journal) throw new CliError("NOT_FOUND", "Journal not found");
+    expectedObjectEpoch = current.journal.objectEpoch;
+  }
   const mutation = {
     subjectId,
     journalId,
-    expectedObjectEpoch: current.journal.objectEpoch,
+    expectedObjectEpoch,
     operationId: operationId(env),
   };
   return lifecycle(action, mutation, {

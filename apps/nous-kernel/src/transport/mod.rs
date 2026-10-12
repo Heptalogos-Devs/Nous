@@ -116,7 +116,7 @@ impl KernelService {
                     segment_id: uuid::Uuid::now_v7().to_string(),
                     text: segment.source.text.unwrap_or_default(),
                     semantic_role: segment.semantic_role.into(),
-                    source_refs: vec![to_ref(segment.reference)],
+                    source_refs: vec![to_ref(segment.source.reference)],
                     evidence: segment
                         .source
                         .evidence
@@ -131,10 +131,7 @@ impl KernelService {
                         .collect(),
                     authority: enum_name(segment.source.authority),
                     stability: segment.stability.into(),
-                    source_revision: segment
-                        .source
-                        .source_revision
-                        .map(|reference| nous_core::reference_parts(&reference).1),
+                    source_revision: segment.source.source_revision,
                 })
                 .collect(),
             degradation: view

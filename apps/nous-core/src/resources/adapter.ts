@@ -18,27 +18,16 @@ export type StableExternalRef = MessageInitShape<
 export type ResourceRecord = MessageInitShape<
   typeof ExternalResourceRecordSchema
 > & { reference: StableExternalRef };
-type VersionCheck = {
-  status: ResourceRecord["versionStatus"];
-  checkedAt: string;
-};
-type AccessCheck = {
-  status: ResourceRecord["accessStatus"];
-  checkedAt: string;
-};
-type ResourceMaterial = {
-  reference: StableExternalRef;
-  content: string;
-  mediaType: string;
-  version: VersionCheck;
-  access: AccessCheck;
-};
+type ResourceMaterial = Pick<
+  ResourceRecord,
+  "content" | "versionStatus" | "accessStatus"
+> & { content: string; mediaType: string };
 export interface ExternalResourceAdapter {
   readonly profileDigest: string;
   describe(
     binding: ResourceBinding,
     signal?: AbortSignal,
-  ): Promise<{ resourceIds: string[]; accessible: boolean }>;
+  ): Promise<{ accessible: boolean }>;
   search(
     binding: ResourceBinding,
     question: string,
@@ -52,17 +41,16 @@ export interface ExternalResourceAdapter {
   checkVersion(
     reference: StableExternalRef,
     signal?: AbortSignal,
-  ): Promise<VersionCheck>;
+  ): Promise<ResourceRecord["versionStatus"]>;
   checkAccess(
     reference: StableExternalRef,
     signal?: AbortSignal,
-  ): Promise<AccessCheck>;
+  ): Promise<ResourceRecord["accessStatus"]>;
 }
 export class ResourceProviderError extends Error {
   constructor(
     readonly status: "unavailable" | "denied" | "stale" | "failed",
     message: string,
-    readonly missing = false,
   ) {
     super(message);
   }

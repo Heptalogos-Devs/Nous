@@ -29,7 +29,9 @@ import {
   UseEventSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { CreateTagRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
+import { runCli } from "../../apps/nous-cli/src/commands/index.js";
+import { NousError } from "@nous-wave/client";
 import { workspaceTemp } from "../workspace.js";
 
 const subjectId = "00000000-0000-0000-0000-000000009801";
@@ -226,6 +228,74 @@ async function main() {
         ),
       ),
     );
+    const cliFlags = [
+      "--run-root",
+      `${root}/run`,
+      "--instance-root",
+      `${root}/instance`,
+      "--subject",
+      subjectId,
+    ];
+    const tagRevisionFile = `${root}/revise-tag.toml`;
+    await writeFile(
+      tagRevisionFile,
+      `[target]\ntag_id = "tag:${tags[0]!.tagId}"\nexpected_revision_id = "${tags[0]!.currentRevisionId}"\n[content]\nlabel = "Attendance planning"\n`,
+    );
+    const revisedTag = (await runCli([
+      "tag",
+      "revise",
+      "--request-file",
+      tagRevisionFile,
+      ...cliFlags,
+    ])) as { data: { revisionId: string } };
+    if (revisedTag.data.revisionId === tags[0]!.revisionId)
+      throw new Error("CLI Tag revision did not advance head");
+    let staleTagHead = false;
+    try {
+      await runCli([
+        "tag",
+        "revise",
+        "--request-file",
+        tagRevisionFile,
+        ...cliFlags,
+      ]);
+    } catch (error) {
+      staleTagHead =
+        error instanceof NousError && error.domainCode === "STALE_REVISION";
+    }
+    if (!staleTagHead)
+      throw new Error("CLI replaced an observed stale Tag head");
+    const associationFile = `${root}/association.toml`;
+    await writeFile(
+      associationFile,
+      `[association]\nfrom = "memory_revision:${formed.revisionId}"\nto = "tag:${tags[0]!.tagId}"\nrelation_kind = "related_to"\npolarity = "positive"\nbasis_class = "host_explicit"\n[[association.basis]]\n[association.basis.revision.evidence]\noccurrence_id = "occurrence:${observed.occurrenceId}"\nwhole_occurrence = true\nbasis_role = "direct"\n`,
+    );
+    const associated = (await runCli([
+      "association",
+      "create",
+      "--request-file",
+      associationFile,
+      ...cliFlags,
+    ])) as { data: { associationId: string } };
+    if (!associated.data.associationId)
+      throw new Error("CLI formal Association request did not commit");
+    const attachmentFile = `${root}/attachment.toml`;
+    await writeFile(
+      attachmentFile,
+      `[[basis]]\n[basis.revision.evidence]\noccurrence_id = "occurrence:${observed.occurrenceId}"\nwhole_occurrence = true\nbasis_role = "direct"\n`,
+    );
+    const attached = (await runCli([
+      "tag",
+      "attach",
+      `memory_revision:${formed.revisionId}`,
+      "--tag",
+      `tag:${tags[1]!.tagId}`,
+      "--request-file",
+      attachmentFile,
+      ...cliFlags,
+    ])) as { data: { associationId: string } };
+    if (!attached.data.associationId)
+      throw new Error("CLI formal attachment basis did not commit");
     const revisionRequest = create(ReviseMemoryRequestSchema, {
       subjectId,
       memoryId: formed.memoryId,

@@ -96,6 +96,7 @@ impl MaterialService {
             })
             .collect();
         Ok(nous_runtime::ContextSource {
+            reference: reference.clone(),
             source_revision: None,
             text,
             authority: if producer.is_some() {

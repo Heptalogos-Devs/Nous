@@ -121,6 +121,7 @@ export const commandInventory = {
         "--request-file <Memory content TOML> for form/revise",
         "list --status accepted|withdrawn (optional)",
         "--kind <revision intent or accessibility mode>",
+        "--expected-object-epoch <observed epoch> skips mutation pre-read; omitted reads current epoch",
         "--page-size <n> --page-token <token>",
       ],
       description:
@@ -131,8 +132,9 @@ export const commandInventory = {
         "schema create|get|revision|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge",
       parameters: [
         "[Schema reference]",
-        "--request-file <Schema content/evidence/children/merge TOML>",
+        "--request-file <Schema content/evidence/children or MergeCognitiveSchemasRequest TOML>",
         "--kind <revision intent>",
+        "--expected-object-epoch <observed epoch> skips mutation pre-read; omitted reads current epoch",
       ],
       description: "Supported transferable pattern and evidence management.",
     },
@@ -144,6 +146,7 @@ export const commandInventory = {
         "--request-file <Episode content TOML>",
         "create --kind <segmentation track>",
         "--kind resegment|reinterpret",
+        "--expected-object-epoch <observed epoch> skips mutation pre-read; omitted reads current epoch",
         "list --status accepted|withdrawn (optional)",
       ],
     },
@@ -152,6 +155,7 @@ export const commandInventory = {
         "journal get|list|revision|history|suppress|restore|withdraw|reaccept|purge",
       parameters: [
         "[Journal reference]",
+        "--expected-object-epoch <observed epoch> skips mutation pre-read; omitted reads current epoch",
         "list --status accepted|withdrawn (optional)",
         "--page-size <n> --page-token <token>",
       ],
@@ -211,8 +215,8 @@ export const commandInventory = {
         "search <text>",
         "resolve <name>",
         "create --name <label> [--description <text>]",
-        "revise|merge|split --request-file <semantic TOML>",
-        "attach <exact-revision> --tag <ref> --association-file <basis TOML>",
+        "revise|merge|split --request-file <formal Request TOML; targets include expected_revision_id>",
+        "attach <exact-revision> --tag <ref> --request-file <Association TOML>",
       ],
       example: "nous tag resolve deploy",
     },
@@ -230,10 +234,10 @@ export const commandInventory = {
       command: "association create",
       parameters: [
         "--operation-id <stable operation identity> (optional; generated)",
-        "--association-file <semantic TOML>",
+        "--request-file <CreateAssociationRequest TOML>",
       ],
       description:
-        "CLI-owned semantic Association TOML; requires nonempty revision/use-event basis",
+        "Formal Association request with nonempty revision/use-event basis",
     },
     {
       command: "association revoke",

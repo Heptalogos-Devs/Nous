@@ -46,8 +46,6 @@ async function formObservationOnce(
   r: FormationRequest,
   options: ExecutionOptions,
 ) {
-  const calls = executionOptions(kernel.execution.opportunity, options);
-  options = calls;
   if (
     !z.string().uuid().safeParse(r.operationId).success ||
     r.operationId === "00000000-0000-0000-0000-000000000000"

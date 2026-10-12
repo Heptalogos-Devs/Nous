@@ -3,16 +3,13 @@
 
 use super::*;
 
-/// Memory-owned context content after current lifecycle and accessibility checks.
-#[derive(Debug)]
-pub struct MemoryContextProjection {
-    pub source_revision: CognitiveRef,
-    pub authority: AuthorityClass,
-    pub text: Option<String>,
-    pub evidence: Vec<EvidenceHandle>,
-}
+use nous_runtime::ContextSource;
 
 impl MemoryService {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one owner operation resolves canonical or exact sources and applies lifecycle and accessibility"
+    )]
     pub async fn context_projection(
         &self,
         subject: SubjectId,
@@ -22,12 +19,28 @@ impl MemoryService {
         effort: CognitiveEffort,
         explicit: bool,
         max_bytes: usize,
-    ) -> Result<MemoryContextProjection> {
+    ) -> Result<ContextSource> {
         if !matches!(
             reference,
             CognitiveRef::Memory(_) | CognitiveRef::MemoryRevision(_)
         ) {
             let (source, text, basis, states) = match reference {
+                CognitiveRef::Tag(id) => {
+                    let tag = self.canonical_tag_view(subject, *id).await?;
+                    let representation = tag_semantic_representation(
+                        &tag.label,
+                        tag.description.as_deref(),
+                        tag.kind_hint.as_deref(),
+                    )?;
+                    let mut source = project_context(
+                        CognitiveRef::Tag(tag.tag_id),
+                        representation.text,
+                        Vec::new(),
+                        max_bytes,
+                    );
+                    source.source_revision = Some(tag.revision_id.to_string());
+                    return Ok(source);
+                }
                 CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_) => {
                     let view = match reference {
                         CognitiveRef::CognitiveSchema(id) => self.schema(subject, *id).await?,
@@ -133,10 +146,7 @@ impl MemoryService {
     }
 }
 
-fn journal_context_projection(
-    view: JournalView,
-    max_bytes: usize,
-) -> Result<MemoryContextProjection> {
+fn journal_context_projection(view: JournalView, max_bytes: usize) -> Result<ContextSource> {
     let source = CognitiveRef::JournalRevision(view.revision.journal_revision_id);
     require_context_states(
         &source,
@@ -188,11 +198,11 @@ fn require_context_states(
 }
 
 fn project_context(
-    source_revision: CognitiveRef,
+    reference: CognitiveRef,
     mut text: String,
     basis: Vec<RevisionBasis>,
     max_bytes: usize,
-) -> MemoryContextProjection {
+) -> ContextSource {
     let evidence = basis
         .into_iter()
         .map(|basis| match basis {
@@ -214,15 +224,18 @@ fn project_context(
         })
         .collect();
     let text = (max_bytes > 0).then(|| {
-        let mut end = text.len().min(max_bytes);
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        text.truncate(end);
+        text.truncate(text.floor_char_boundary(max_bytes));
         text
     });
-    MemoryContextProjection {
-        source_revision,
+    ContextSource {
+        source_revision: match &reference {
+            CognitiveRef::MemoryRevision(id) => Some(id.0.to_string()),
+            CognitiveRef::CognitiveSchemaRevision(id) => Some(id.0.to_string()),
+            CognitiveRef::EpisodeRevision(id) => Some(id.0.to_string()),
+            CognitiveRef::JournalRevision(id) => Some(id.0.to_string()),
+            _ => None,
+        },
+        reference,
         authority: AuthorityClass::SubjectCognition,
         text,
         evidence,

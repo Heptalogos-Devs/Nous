@@ -110,30 +110,9 @@ impl ServingService {
                         .filter(|r| r.semantic.digest == tag.semantic.digest)
                         .and_then(|r| Some((r.vector.clone()?, r.vector_producer.clone()?)))
                 });
-            let (vector, vector_producer) = if let Some((vector, producer)) = reused {
-                (Some(vector), Some(producer))
-            } else if let Some(provider) = provider {
-                let output = provider
-                    .embed(TextEmbeddingRequest {
-                        subject,
-                        text: tag.semantic.text.clone(),
-                        query: false,
-                    })
-                    .await?;
-                if !output.space.compatible_with(&provider.space())
-                    || !provider
-                        .producers()
-                        .iter()
-                        .any(|producer| producer.signature_hash == output.producer.signature_hash)
-                {
-                    return Err(Error::Conflict(
-                        "concept embedding space/producer mismatch".into(),
-                    ));
-                }
-                (Some(output.vector), Some(output.producer))
-            } else {
-                (None, None)
-            };
+            let (vector, vector_producer) = reused
+                .map(|(vector, producer)| (Some(vector), Some(producer)))
+                .unwrap_or_default();
             records.push(ConceptRecord {
                 tag: tag.tag,
                 revision: tag.revision,
@@ -142,6 +121,41 @@ impl ServingService {
                 vector_producer,
                 attachments: tag.attachments,
             });
+        }
+        if let Some(provider) = provider {
+            let allowed = provider
+                .producers()
+                .into_iter()
+                .map(|producer| producer.signature_hash)
+                .collect::<std::collections::HashSet<_>>();
+            let missing = records
+                .iter()
+                .enumerate()
+                .filter_map(|(index, record)| record.vector.is_none().then_some(index))
+                .collect::<Vec<_>>();
+            for chunk in missing.chunks(256) {
+                let texts = chunk
+                    .iter()
+                    .map(|index| records[*index].semantic.text.clone())
+                    .collect::<Vec<_>>();
+                let outputs = provider.embed_batch(subject, &texts).await?;
+                if outputs.len() != chunk.len()
+                    || outputs.iter().any(|output| {
+                        !output
+                            .space
+                            .compatible_with(space.as_ref().expect("vector concept space"))
+                            || !allowed.contains(&output.producer.signature_hash)
+                    })
+                {
+                    return Err(Error::Conflict(
+                        "concept embedding batch length/space/producer mismatch".into(),
+                    ));
+                }
+                for (index, output) in chunk.iter().zip(outputs) {
+                    records[*index].vector = Some(output.vector);
+                    records[*index].vector_producer = Some(output.producer);
+                }
+            }
         }
         let generation = ConceptGeneration {
             generation_id: id,

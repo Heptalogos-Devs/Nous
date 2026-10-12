@@ -25,19 +25,13 @@ test("a saved external proposal is revalidated before admission while an accepte
       ...binding,
       adapter: {
         profileDigest: "profile",
-        describe: async () => ({ resourceIds: [], accessible: true }),
+        describe: async () => ({ accessible: true }),
         search: async () => [],
         materialize: async () => {
           throw new Error("A saved proposal must not fetch its contents again");
         },
-        checkVersion: async () => ({
-          status: changed ? "stale" : "current",
-          checkedAt: new Date().toISOString(),
-        }),
-        checkAccess: async () => ({
-          status: revoked ? "denied" : "allowed",
-          checkedAt: new Date().toISOString(),
-        }),
+        checkVersion: async () => (changed ? "stale" : "current"),
+        checkAccess: async () => (revoked ? "denied" : "allowed"),
       },
     },
   ]);

@@ -46,8 +46,6 @@ async function materializeResourceOnce(
   request: MaterializeResourceRequest,
   options: ExecutionOptions,
 ) {
-  const calls = executionOptions(kernel.execution.opportunity, options);
-  options = calls;
   if (
     !request.reference ||
     !request.observedAt ||
@@ -57,15 +55,16 @@ async function materializeResourceOnce(
       "Selected resource materialization requires reference, stable operation ID and observed time",
       Code.InvalidArgument,
     );
-  const exactReference = request.reference;
-  const reference = exactReference;
+  const reference = request.reference;
+  const referenceJson = toJson(StableExternalRefSchema, reference);
+  const referenceDigest = canonicalDigest(referenceJson);
   const identity = {
     subjectId: request.subjectId,
     owner: "material",
     operationKey: `resource:${request.operationId}`,
     semanticDigest: canonicalDigest({
       subject: request.subjectId,
-      reference: toJson(StableExternalRefSchema, exactReference),
+      reference: referenceJson,
       observedAt: {
         seconds: request.observedAt.seconds.toString(),
         nanos: request.observedAt.nanos,
@@ -118,12 +117,10 @@ async function materializeResourceOnce(
           Code.FailedPrecondition,
         );
       let proposal = record.proposal?.payloadJson
-        ? z
-            .strictObject({
-              content: z.string(),
-              mediaType: z.string().max(128),
-            })
-            .parse(JSON.parse(record.proposal?.payloadJson))
+        ? (JSON.parse(record.proposal.payloadJson) as {
+            content: string;
+            mediaType: string;
+          })
         : undefined;
       let version;
       let access;
@@ -132,8 +129,8 @@ async function materializeResourceOnce(
           reference,
           options.signal ?? undefined,
         );
-        version = material.version;
-        access = material.access;
+        version = material.versionStatus;
+        access = material.accessStatus;
         proposal = { content: material.content, mediaType: material.mediaType };
       } else {
         [version, access] = await Promise.all([
@@ -141,7 +138,7 @@ async function materializeResourceOnce(
           adapter.checkAccess(reference, options.signal ?? undefined),
         ]);
       }
-      if (version.status !== "current" || access.status !== "allowed")
+      if (version !== "current" || access !== "allowed")
         throw new ConnectError(
           "Resource version or access no longer permits admission",
           Code.FailedPrecondition,
@@ -161,9 +158,9 @@ async function materializeResourceOnce(
           requestId: request.operationId,
           sourceClass: "resource",
           observedAt: request.observedAt,
-          externalObjectRef: `object:resource-entry:${canonicalDigest(toJson(StableExternalRefSchema, exactReference))}`,
+          externalObjectRef: `object:resource-entry:${referenceDigest}`,
           context: {
-            external_resource: toJson(StableExternalRefSchema, exactReference),
+            external_resource: referenceJson,
           },
           material: {
             case: "inlineText",

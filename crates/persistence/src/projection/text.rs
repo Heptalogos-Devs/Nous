@@ -294,13 +294,7 @@ pub(crate) async fn longitudinal_sources(
     Ok(sources)
 }
 pub(crate) fn truncate_text(text: &mut String, limit: usize) {
-    if text.len() > limit {
-        let mut end = limit;
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        text.truncate(end);
-    }
+    text.truncate(text.floor_char_boundary(limit));
 }
 
 fn selected_ids(references: Option<&[CognitiveRef]>, kind: &str) -> Option<Vec<Uuid>> {

@@ -59,8 +59,8 @@ export async function executeResourceActions(
             adapter.checkVersion(record.reference, signal),
             adapter.checkAccess(record.reference, signal),
           ]);
-          record.versionStatus = version.status;
-          record.accessStatus = access.status;
+          record.versionStatus = version;
+          record.accessStatus = access;
         }
       }
       results.push(

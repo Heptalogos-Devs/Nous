@@ -173,13 +173,18 @@ describe("projection authority boundaries", () => {
   it("rejects invented model refs and preserves deterministic source selection", async () => {
     const model = new ModelRuntime();
     vi.spyOn(model.invocations, "profile").mockReturnValue({} as never);
-    vi.spyOn(model.invocations, "generate").mockResolvedValue({
+    const generate = vi.spyOn(model.invocations, "generate").mockResolvedValue({
       value: { selectedIds: ["invented"] },
     } as never);
-    const result = await new ProjectionPlanner(
-      new Map([["test", policy]]),
-      model,
-    ).build(
+    const planner = new ProjectionPlanner(new Map([["test", policy]]), model);
+    const refsOnly = await planner.build(
+      projection(segment("a")),
+      { maxItems: 5, maxTextBytes: 20 },
+      { ...policy, materialize: false },
+    );
+    expect(refsOnly.segments[0]?.text).toBe("");
+    expect(generate).not.toHaveBeenCalled();
+    const result = await planner.build(
       projection(segment("a")),
       { maxItems: 5, maxTextBytes: 20 },
       policy,
@@ -205,5 +210,11 @@ describe("projection authority boundaries", () => {
     );
     expect(result.segments[0]?.text).toBe("中");
     expect(result.segments).toHaveLength(1);
+    const replacement = await planner.build(
+      projection(segment("a", "�X")),
+      { maxItems: 1, maxTextBytes: 3 },
+      required,
+    );
+    expect(replacement.segments[0]?.text).toBe("�");
   });
 });

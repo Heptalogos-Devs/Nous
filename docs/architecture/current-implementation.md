@@ -70,7 +70,7 @@ Query addressing/preparation、automatic concept maintenance、derived Accretion
 
 Concept planner 围绕 focus 的 aboutness、来源、一跳关系和 bounded Tag candidates；不生成 Subject 全量 cognition catalog。proposal 不是超级事务，Core 保留每项 committed/no_change/invalid/stale/dependency outcome。Natural Tag merge/split、Episode partition 与 Journal mutation 继续由真实 owner 维护自身原子性。Accretion 按需提供来源、成员、recurrence、时间跨度、关联、使用和反证等 derived signals，review hints 在调用点计算。
 
-Context projection 由 Runtime 统一捕获 Session 与 foreground、选择 consumer 允许的来源并分配预算。Memory/Schema/Episode/Journal、Material 与 Resource 各自提供实际正文和证据，Core 只执行 steward；空 optional 集合不调用模型。Observation 与 ReportUse 共用 Resident 接纳规则，完整列表批量读取。
+Context projection 由 Runtime 统一捕获 Session 与 foreground、选择 consumer 允许的来源并分配预算。Runtime 直接使用捕获的 WorkContext 任务文本、约束、恢复条件和预算摘要，并从已有目录读取 Entity 名称与别名；未绑定的 Entity 仅提供引用。Memory/Schema/Episode/Journal/Tag、Material 与 Resource 各自提供实际内容和证据。各 owner 共用 `ContextSource`，已解析引用与真实内容修订标记分别表达；WorkContext 使用整数 revision，Tag 使用选中 revision UUID。Core 只执行 steward；空 optional 集合不调用模型。Observation 与 ReportUse 共用 Resident 接纳规则，完整列表批量读取。
 
 Research 只使用 official public Client/CLI。小型 runner 不启动额外 Runtime、不管理 Serving installer/embedding store，输出在 ignored data。VCP reference/adapters 与有效 asset reuse/reclamation 保留；完整数值矩阵保存在 ignored Research results，CI 使用 compact discriminating goldens。
 

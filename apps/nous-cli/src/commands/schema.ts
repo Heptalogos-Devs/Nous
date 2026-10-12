@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   CognitiveSchemaContentSchema,
+  MergeCognitiveSchemasRequestSchema,
   SchemaEvidenceLinkSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { lifecycle } from "../cognition-owner.js";
 import { CliError } from "../agent.js";
-import { content, operationId, target } from "../content.js";
+import { content, objectEpoch, operationId, target } from "../content.js";
 import type { CliEnvironment } from "../runtime.js";
 export async function schemaCommands(
   env: CliEnvironment,
@@ -26,41 +27,32 @@ export async function schemaCommands(
       id: await target(env, ref, "cognitive_schema_revision"),
     });
   if (action === "merge") {
-    const file = (await env.requestPayload(env.values["request-file"])) as {
-      sources?: string[];
-      merged?: unknown;
-    };
-    if (!Array.isArray(file.sources) || file.sources.length < 2)
-      throw new CliError(
-        "INVALID_ARGUMENT",
-        "Schema merge requires sources and merged content",
+    const request = await content(env, MergeCognitiveSchemasRequestSchema);
+    if (!request.expectedObjectEpochs.length)
+      request.expectedObjectEpochs = await Promise.all(
+        request.schemaIds.map(
+          async (schemaId) =>
+            (await client.concepts.getCognitiveSchema({ subjectId, schemaId }))
+              .objectEpoch,
+        ),
       );
-    const schemaIds = await Promise.all(
-      file.sources.map((value) => target(env, value, "cognitive_schema")),
-    );
-    const current = await Promise.all(
-      schemaIds.map((schemaId) =>
-        client.concepts.getCognitiveSchema({ subjectId, schemaId }),
-      ),
-    );
     return client.concepts.mergeCognitiveSchemas({
+      ...request,
       subjectId,
       operationId: operationId(env),
-      schemaIds,
-      expectedObjectEpochs: current.map((value) => value.objectEpoch),
-      merged: await content(env, CognitiveSchemaContentSchema, file.merged),
     });
   }
   const schemaId = await target(env, ref, "cognitive_schema");
-  const current = await client.concepts.getCognitiveSchema({
-    subjectId,
-    schemaId,
-  });
-  if (action === "get") return current;
+  if (action === "get")
+    return client.concepts.getCognitiveSchema({ subjectId, schemaId });
+  const expectedObjectEpoch =
+    objectEpoch(env.values["expected-object-epoch"]) ??
+    (await client.concepts.getCognitiveSchema({ subjectId, schemaId }))
+      .objectEpoch;
   const mutation = {
     subjectId,
     schemaId,
-    expectedObjectEpoch: current.objectEpoch,
+    expectedObjectEpoch,
     operationId: operationId(env),
   };
   if (action === "revise")

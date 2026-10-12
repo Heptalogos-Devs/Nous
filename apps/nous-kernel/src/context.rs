@@ -26,9 +26,10 @@ impl ContextResolver for NousRuntime {
                 | CognitiveRef::EpisodeRevision(_)
                 | CognitiveRef::Journal(_)
                 | CognitiveRef::JournalRevision(_)
+                | CognitiveRef::Tag(_)
         ) {
             let policy = nous_memory::resolve_accessibility_policy(configuration)?;
-            let memory = self
+            return self
                 .require_memory()?
                 .context_projection(
                     subject,
@@ -39,13 +40,7 @@ impl ContextResolver for NousRuntime {
                     explicit,
                     max_bytes,
                 )
-                .await?;
-            return Ok(ContextSource {
-                source_revision: Some(memory.source_revision),
-                text: memory.text,
-                authority: memory.authority,
-                evidence: memory.evidence,
-            });
+                .await;
         }
         if !matches!(
             reference,

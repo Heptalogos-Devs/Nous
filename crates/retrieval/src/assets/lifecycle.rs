@@ -84,25 +84,12 @@ impl ServingService {
     /// Prepare only the serving families required by one semantic query.
     pub async fn prepare(&self, subject: SubjectId, need: ServingNeed) -> Result<ProjectionStatus> {
         let snapshot = self.configuration.snapshot_for_subject(subject)?;
-        self.prepare_with_snapshot(subject, need, &snapshot).await
-    }
-
-    pub async fn prepare_with_snapshot(
-        &self,
-        subject: SubjectId,
-        need: ServingNeed,
-        snapshot: &nous_configuration::ConfigSnapshot,
-    ) -> Result<ProjectionStatus> {
         let _reader = self.read_gate.clone().read_owned().await;
-        Ok(self.prepare_assets(subject, need, snapshot, None).await?.0)
+        Ok(self.prepare_assets(subject, need, &snapshot, None).await?.0)
     }
 
     /// Resolve and open each required family once, assembling the request view
     /// directly. Only current assets are published to the process cache.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one family catalog selection and publication operation"
-    )]
     pub(crate) async fn prepare_assets(
         &self,
         subject: SubjectId,
@@ -127,9 +114,14 @@ impl ServingService {
         } else {
             Default::default()
         };
-        for (family, space) in
-            self.requested_families(need, &candidates, config, &watermarks, capabilities)?
-        {
+        let mut requested = std::collections::VecDeque::from(self.requested_families(
+            need,
+            &candidates,
+            config,
+            &watermarks,
+            capabilities,
+        )?);
+        while let Some((family, space)) = requested.pop_front() {
             let key = if space.is_empty() {
                 family.to_owned()
             } else {
@@ -145,7 +137,9 @@ impl ServingService {
                 .iter()
                 .filter(|(record, _)| record.family == family && record.space == space)
             {
-                if config_digest.as_deref() != Some(record.config_digest.as_str()) {
+                if (!is_current && record.authority_watermark < watermark)
+                    || config_digest.as_deref() != Some(record.config_digest.as_str())
+                {
                     continue;
                 }
                 let artifact = if view.is_none() {
@@ -205,22 +199,11 @@ impl ServingService {
                     }),
                 }
             }
-            // Direct postings and the model catalog remain available if vector
-            // material is missing. Build a raw asset only on this real fallback.
+            // Raw Concept uses the same catalog and publication path when
+            // vector material is unavailable, preserving Direct and the catalog.
             if selected.is_none() && family == "concept" && !space.is_empty() {
-                fallback = None;
-                selected = self
-                    .build_family_in_view(
-                        subject,
-                        ("concept", ""),
-                        config,
-                        view,
-                        &serving,
-                        capabilities,
-                        &mut text_documents,
-                    )
-                    .await
-                    .ok();
+                requested.push_front(("concept", String::new()));
+                continue;
             }
             if let Some((record, artifact)) = selected.or(fallback) {
                 let actual_key = if record.space.is_empty() {

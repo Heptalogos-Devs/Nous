@@ -26,6 +26,7 @@ function family(segment: Segment): "memory" | "runtime" | "resource" {
       "episode_revision",
       "journal",
       "journal_revision",
+      "tag",
     ].includes(kind)
     ? "memory"
     : kind === "resource"
@@ -70,7 +71,7 @@ export class ProjectionPlanner {
     );
     let refined = optional;
     const degradation = [...batch.degradation];
-    if (optional.length) {
+    if (policy.materialize && optional.some((source) => source.text)) {
       if (!this.models.invocations.profile("projection_steward")) {
         degradation.push(
           create(DegradationSchema, {
@@ -177,11 +178,11 @@ function budget(
   for (const source of segments) {
     if (result.length >= items) break;
     let text = materialize ? source.text : "";
-    while (Buffer.byteLength(text) > maxBytes - bytes) {
-      const encoded = Buffer.from(text).subarray(0, maxBytes - bytes);
-      text = new TextDecoder("utf-8", { fatal: false })
-        .decode(encoded)
-        .replace(/\uFFFD$/u, "");
+    if (Buffer.byteLength(text) > maxBytes - bytes) {
+      const encoded = Buffer.from(text);
+      let end = maxBytes - bytes;
+      while ((encoded[end]! & 0xc0) === 0x80) end--;
+      text = encoded.toString("utf-8", 0, end);
     }
     if (source.text && materialize && !text) continue;
     bytes += Buffer.byteLength(text);

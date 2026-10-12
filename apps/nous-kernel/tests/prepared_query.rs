@@ -114,9 +114,9 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             subject,
             purpose: "Nous Wave release preparation".into(),
             unresolved_questions: vec!["Alice's pending release tasks".into()],
-            constraints: serde_json::json!({}),
-            resume_conditions: vec![],
-            budget_summary: serde_json::json!({}),
+            constraints: serde_json::json!({"review_rule":"Do not deploy without Alice approval"}),
+            resume_conditions: vec!["Continue when Alice has reviewed the release".into()],
+            budget_summary: serde_json::json!({"task_effort":"One release review remains"}),
             context_text: "TASK CONTEXT ".repeat(150),
             entity_anchors: vec![entity.clone()],
             tag_anchors: vec![pinned_tag],
@@ -166,6 +166,74 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
     );
     assert_eq!(projection.segments.len(), 1);
     assert!(!projection.segments[0].text.is_empty());
+    let service = nous_kernel::transport::KernelService(runtime.clone());
+    let foreground_request = nous_protocol::public::ProjectionRequest {
+        subject_id: subject.0.to_string(),
+        session_id: session.session_id.0.to_string(),
+        consumer_id: "default".into(),
+        max_items: 1,
+        max_text_bytes: 96,
+        memory_requirement: "OPTIONAL".into(),
+        runtime_requirement: "REQUIRED".into(),
+        resource_requirement: "FORBIDDEN".into(),
+        materialize: true,
+        ..Default::default()
+    };
+    let foreground = service
+        .build_contribution_batch(foreground_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(foreground.segments.len(), 1);
+    assert_eq!(foreground.segments[0].source_refs[0].kind, "work_context");
+    assert_eq!(
+        foreground.segments[0].source_refs[0].value,
+        context.work_context_id.to_string()
+    );
+    assert!(
+        foreground.segments[0]
+            .text
+            .contains("Nous Wave release preparation")
+    );
+    assert!(
+        foreground.segments[0]
+            .text
+            .contains("Alice's pending release tasks")
+    );
+    assert!(foreground.segments[0].text.contains("TASK CONTEXT"));
+    assert!(foreground.segments[0].text.len() <= 96);
+    assert_eq!(
+        foreground.segments[0].authority,
+        "external_current_authority"
+    );
+    let mut entity_request = foreground_request;
+    entity_request.max_items = 2;
+    entity_request.max_text_bytes = 4096;
+    let with_entity = service
+        .build_contribution_batch(entity_request)
+        .await
+        .unwrap();
+    assert!(
+        with_entity.segments[0]
+            .text
+            .contains("Do not deploy without Alice approval")
+    );
+    assert!(
+        with_entity.segments[0]
+            .text
+            .contains("One release review remains")
+    );
+    assert!(
+        with_entity.segments[0]
+            .text
+            .contains("Continue when Alice has reviewed the release")
+    );
+    let entity_source = with_entity
+        .segments
+        .iter()
+        .find(|segment| segment.source_refs[0].kind == "entity")
+        .unwrap();
+    assert_eq!(entity_source.text, "Alice (A)");
+    assert_eq!(entity_source.authority, "external_current_authority");
     let mut request = query(subject);
     request.session = Some(session.session_id);
     request
@@ -180,6 +248,24 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             .contains("Nous Wave release preparation")
     );
     assert!(first.representation.text.contains("Alice (A)"));
+    assert!(
+        first
+            .representation
+            .text
+            .contains("Do not deploy without Alice approval")
+    );
+    assert!(
+        first
+            .representation
+            .text
+            .contains("One release review remains")
+    );
+    assert!(
+        first
+            .representation
+            .text
+            .contains("Continue when Alice has reviewed the release")
+    );
     assert!(
         first
             .representation

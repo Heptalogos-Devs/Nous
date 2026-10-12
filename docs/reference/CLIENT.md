@@ -54,7 +54,7 @@ Session state is isolated; WorkContexts belong to Subject and can continue acros
 
 `identity.getIdentityAddresses({ targets: [{ subjectId, canonical: { kind, value } }] })` reads existing directory addresses in one batch, preserving target order. It never allocates an address, adds Subject visibility or changes display names/aliases. Up to 2048 targets are accepted; each result reports `BOUND`, `UNKNOWN_REFERENCE` or `REFERENCE_TOMBSTONED` with a LexicalRef only when visible and live. Merged Tag lookup uses its current canonical address. Explicit `identity.bindIdentity` remains the operation for assigning a name or alias.
 
-Context projection 由 Runtime 读取真实 Session foreground，拒绝关闭的 Session。各 cognition owner 提供实际正文与 basis，材料由 Material 解释；consumer 的 family policy 与预算先限制选中来源，Core steward 再表达。
+Context projection 由 Runtime 读取真实 Session foreground，拒绝关闭的 Session，并提供 WorkContext 的 purpose、问题、任务正文及非空的 constraints、恢复条件和预算摘要；这些任务描述不自动修改执行策略或触发恢复。Memory 提供四类 cognition 的正文与 basis，以及 active canonical Tag 的名称、描述、kind；consumer 的 `memory` policy 同时约束这些 Tag。Entity 使用已绑定的目录名称与别名，未绑定时仅提供引用。材料由 Material 解释；仅引用的投影不调用 Steward。family policy 与预算先限制选中来源，Core steward 再表达。`sourceRefs` 表达实际解析后的来源，`sourceRevision` 表达真实内容修订标记，不用对象 ID 冒充修订。
 
 `cognition.buildProjection/buildManagedContext` require a `consumerId` with an operator-configured policy. A valid Subject or Session does not grant access to an unknown consumer. `config` can list/get/describe/set current policy/configuration within its advertised scope; model and resource profile changes require Core restart. Managed-context cursor reuse must preserve consumer identity, policy, source revisions and lifecycle.
 
@@ -70,7 +70,9 @@ Explicit maintenance grants accept 1..900000 elapsed milliseconds. Client deadli
 
 官方命令与 MCP 共用同一个 command core。`memory` 支持形成、当前/精确修订读取、历史、源支持修正、accessibility、revision link 与 lifecycle；`schema` 支持形成、evidence、修订、split/merge 与 lifecycle；`episode` 和 `journal` 支持当前/精确读取、分页历史与各自 lifecycle。`resource put/get/list/remove/materialize` 使用真实 Registry 与 Material owner。`projection build/managed` 使用已配置 consumer 的真实投影/上下文合同，不是 WorkContext 文本更新。
 
-复杂内容通过 `--request-file` 语义 TOML 输入，采用 owner 声明的 snake_case 或 camelCase 字段；引用字段接受 canonical、LexicalRef 或唯一名称，`CognitiveRef` 可直接用字符串。`[[basis]] ref="obs:..." role="direct"` 表达证据。Memory/Schema content 文件不包含 operation/Subject/epoch；命令固定本次 Subject、生成或使用 `--operation-id`，并读取 owner 当前 epoch 后冻结。Episode 创建/修订文件使用其内容字段，命令覆盖 Subject/operation/epoch。`--kind` 指定修订 intent 或 accessibility mode；pagination 使用 `--page-size` 和 `--page-token`。
+复杂内容通过 `--request-file` 语义 TOML 输入，采用 owner 声明的 snake_case 或 camelCase 字段；引用字段接受 canonical、LexicalRef 或唯一名称，`CognitiveRef` 可直接用字符串。RevisionBasis 使用正式 oneof：`[[basis]]` 下的 `[basis.evidence]` 提供 `occurrence_id="obs:..."`、`whole_occurrence=true`、`basis_role="direct"`；cognition_dependency 的 target_revision 也支持 CognitiveRef 字符串。Memory/Schema content 文件不包含 operation/Subject/epoch；命令固定本次 Subject、生成或使用 `--operation-id`，并固定 expected epoch；显式 `--expected-object-epoch` 直接送 owner，未提供时读取当前对象取得 epoch。Episode 创建/修订文件使用其内容字段，命令覆盖 Subject/operation/epoch。`--kind` 指定修订 intent 或 accessibility mode；pagination 使用 `--page-size` 和 `--page-token`。Schema merge 文件直接使用正式 `schema_ids`、`expected_object_epochs` 与 `merged`；提供 epochs 时不先读取各源对象。
+
+Tag revise/merge/split 的 CLI request-file 直接使用对应正式请求，target/survivor/retired/parent 均提供 TagRevisionTarget 的 tag_id 与已观察 expected_revision_id；不预读新 head。Association create 使用 CreateAssociationRequest，attach 使用 Association 的正式 basis 后固定 attachment 操作字段；统一 `--request-file`，没有独立 basis DSL。
 
 `subject seed/adopt-seed` 读取或采用种子，采用文件包含 `text`、`format` 和所需 provenance；`identity rebind --request-file` 明确修改 source mention interpretation。`context create/set --request-file` 可以输入 unresolved_questions、constraints、resume_conditions、budget_summary；set 列表字段采用 `{ values = [...] }` 表达未提供与清空的区别。Session 与 Context list 支持真正的有界分页。
 

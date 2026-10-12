@@ -24,6 +24,7 @@ use test_support::*;
 #[derive(Default)]
 struct Probe {
     calls: Mutex<Vec<(bool, String)>>,
+    material_unavailable: std::sync::atomic::AtomicBool,
 }
 #[async_trait::async_trait]
 impl TextEmbeddingProvider for Probe {
@@ -64,6 +65,15 @@ impl TextEmbeddingProvider for Probe {
         }
     }
     async fn embed(&self, request: TextEmbeddingRequest) -> Result<QuerySemanticEmbedding> {
+        if !request.query
+            && self
+                .material_unavailable
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(Error::Unavailable(
+                "document embedding material unavailable".into(),
+            ));
+        }
         let vector = if request.text.contains("orthogonal policy probe") {
             vec![0.0, 1.0]
         } else {
@@ -221,6 +231,33 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .iter()
             .all(|(_, text)| !text.starts_with("Concept:"))
     );
+    let raw_id = current_concepts(&rt, subject).await[0].generation_id;
+    probe
+        .material_unavailable
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let fallback = rt
+        .serving
+        .prepare(
+            subject,
+            ServingNeed {
+                concept: true,
+                concept_vectors: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(fallback.generations.get("concept"), Some(&raw_id));
+    assert!(fallback.rebuilt.is_empty());
+    assert!(
+        fallback
+            .degradation
+            .iter()
+            .any(|d| d.code == "concept_projection_unavailable")
+    );
+    probe
+        .material_unavailable
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     rt.configuration
         .set_subject_override(
             OperationId::new(),

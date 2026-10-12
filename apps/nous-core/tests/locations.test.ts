@@ -15,11 +15,7 @@ import { expect, it } from "vitest";
 import { claimInstance } from "../src/discovery.js";
 import { resolveLocations } from "../src/locations.js";
 import { initializeConfiguration } from "../src/configuration/file.js";
-import {
-  parseConfiguration,
-  parseEffectiveConfiguration,
-  loadConfig,
-} from "../src/configuration/schema.js";
+import { parseConfiguration, loadConfig } from "../src/configuration/schema.js";
 import { checkConfiguration } from "../src/configuration/check.js";
 
 it("resolves split roots relative to the locator while installation and instance remain independent", async () => {
@@ -126,39 +122,6 @@ it("checks current configuration examples and explicit references offline", asyn
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
-
-it("retains Kernel-resolved execution profiles in the effective model configuration", () => {
-  const effective = parseEffectiveConfiguration({
-    models: {
-      gateway_profiles: {
-        local: {
-          base_url: "http://127.0.0.1:3000/v1",
-          credential_env: "TOKEN",
-        },
-      },
-      model_profiles: {
-        local: {
-          gateway: "local",
-          protocol: "openai-chat",
-          model: "local",
-          capabilities: ["text", "structured_output"],
-          reasoning_levels: ["high"],
-        },
-      },
-      execution_profiles: {
-        precise: { model: "local", reasoning: "high", max_output_tokens: 256 },
-      },
-      roles: {
-        memory_formation: { routes: ["precise"], requirement: "required" },
-      },
-    },
-  });
-  expect(effective.models.execution_profiles.precise).toMatchObject({
-    model: "local",
-    reasoning: "high",
-    max_output_tokens: 256,
-  });
 });
 
 it("releases a failed identity claim and atomically publishes split-root discovery", async () => {

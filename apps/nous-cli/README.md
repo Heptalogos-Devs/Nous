@@ -47,38 +47,49 @@ Client 直接返回 canonical generated Protobuf，CLI 只在呈现边界读取 
 
 修改前保存 operation identity、规范输入、时间戳和 expected revision。响应失败返回 `retry <id>`；重试读取冻结原请求，不重新读取新的 revision、重新解析引用或生成 operation ID。Observe、formation、config override、Memory/Schema/Episode/Journal、Tag/Association、WorkContext 和 UseEvent 使用各 owner 的幂等身份。成功响应后删除本地原请求；结果与拒绝语义只由 owner 决定，本地不缓存终态。`retry forget <id>` 删除不再需要的重试输入，不撤销已提交操作。Session lifecycle、Identity bind 和 derivation 的领域合同单独决定重试行为。
 
-复杂 Tag/Association 文件为语义 TOML，上限 64 KiB；没有 Client DTO JSON 输入模式。例如：
+Tag 修订、合并和拆分文件直接采用正式 Request 字段，不读取或替换已观察的 Tag head：
 
 ```toml
 # revise-tag.toml
- target = "<返回的 Tag 词汇引用>"
- label = "新的概念名称"
- description = "概念语义"
+[target]
+tag_id = "<返回的 Tag 词汇引用>"
+expected_revision_id = "<已观察的 current_revision_id>"
+[content]
+label = "新的概念名称"
+description = "概念语义"
 ```
 
 ```toml
 # merge-tags.toml
-survivor = "<保留的 Tag 词汇引用>"
-retired = ["<合并的 Tag 词汇引用>"]
+[survivor]
+tag_id = "<保留的 Tag 词汇引用>"
+expected_revision_id = "<已观察的 head UUID>"
+[[retired]]
+tag_id = "<合并的 Tag 词汇引用>"
+expected_revision_id = "<已观察的 head UUID>"
 [[basis]]
-ref = "<返回的 memrev:词汇引用>"
-role = "direct"
+[basis.cognition_dependency]
+target_revision = "<返回的 memrev:词汇引用>"
+basis_role = "direct"
 epistemic_relation = "corroborates"
 ```
 
 ```toml
-# association.toml
+# association.toml — CreateAssociationRequest
+[association]
 from = "<返回的 memrev:词汇引用>"
 to = "<返回的 Tag 词汇引用>"
-relation = "tag_attachment"
+relation_kind = "tag_attachment"
 polarity = "positive"
 basis_class = "host_explicit"
-[[basis]]
-ref = "<返回的 obs:词汇引用>"
-role = "contextual"
+[[association.basis]]
+[association.basis.revision.evidence]
+occurrence_id = "<返回的 obs:词汇引用>"
+whole_occurrence = true
+basis_role = "contextual"
 ```
 
-`tag revise|merge|split --request-file <file>` 解析目标 Tag 当前修订后冻结请求；split 使用 `parent`、`[[children]]` 的 label/description/kind_hint 与 `[[basis]]`。`association create --association-file <file>` 读取 from/to/relation/polarity/basis_class/basis。`tag attach <exact cognition> --tag <tag> --association-file <file>` 的文件只有 basis，CLI 固定 exact cognition→Tag attachment。Basis role 为 direct/interpretation/contextual，epistemic_relation 独立表达 supports/contradicts/corroborates/weakens/corrects/counterexample/inferred_from；Association 也可用 `[[basis]]` 内的 `use_event={consumer="...",event="UUID"}`。Authority 验证 Subject、exact references、catalog 与 lifecycle。
+`tag revise|merge|split --request-file` 分别使用 ReviseTagRequest、MergeTagsRequest、SplitTagRequest；split 的 parent 也是带 expected_revision_id 的 TagRevisionTarget，children 使用 TagContent。`association create --request-file` 使用 CreateAssociationRequest。`tag attach <exact cognition> --tag <tag> --request-file` 使用 Association 字段解析 basis，再固定 exact cognition→Tag、positive、tag_attachment、host_explicit。AssociationBasis 使用 revision（正式 RevisionBasis）或 use_event（subject_id、consumer_ref、event_id）。引用字段保留 canonical、LexicalRef、唯一名称和 CognitiveRef 字符串解析；Authority 验证实际 Subject、refs、catalog、lifecycle和并发 fence。
 
 `help` 与 `help nousql` 不连接 daemon。[NousQL Agent 手册](../../docs/agent/NOUSQL.md) 提供 Unicode 意图、可选语法岛、五轴时间、history/asof、direct/explore 与 projection 的可执行示例。`query prepare|inspect` 不调用 provider，输出冻结 representation、context snapshot 和能力降级；普通 query 使用同一 preparation 协议执行。
 
@@ -133,8 +144,10 @@ epistemic_class = "reported"
 formation_mode = "grounded"
 grounding_occurrence_id = "<obs:引用>"
 [[basis]]
-ref = "<obs:引用>"
-role = "direct"
+[basis.evidence]
+occurrence_id = "<obs:引用>"
+whole_occurrence = true
+basis_role = "direct"
 ```
 
 `nous memory revise <Memory对象引用> --kind correct --request-file correction.toml` 读取当前 epoch 后冻结语义输入；`memory form --kind declarative --request-file content.toml` 显式形成源支持 cognition，无需 provider。创建时的 `--kind` 指定对象级 cognitive role，修订不会修改该角色；两者使用相同内容文件。`memory history <Memory对象引用> --page-size 50 --page-token <token>` 续接分页。`revision` 参数是精确修订，`get/history/lifecycle` 参数是稳定对象。生命周期恢复与修正可以读取 suppressed/withdrawn 对象；purge 由 owner 的不可逆语义处理。
@@ -152,3 +165,5 @@ Schema content 使用 title、structural_claim、applicability_scope、boundary_
 `episode create --kind <segmentation track> --request-file episode.toml` 与 `episode revise --kind resegment|reinterpret --request-file episode.toml` 共用纯 EpisodeContent 文件，track 只在创建指定；修订不再次提供操作 envelope。
 
 `tag create --request-file tag.toml` 使用与修订/拆分相同的 TagContent 字段；创建默认 host-explicit origin。`material clean` 清理整个 BlobRoot 的无引用对象与残留 staging，不要求选中 Subject；登记中的内容和所有 Subject 引用的材料由 Material owner 保护。
+
+Memory、Schema、Episode、Journal 的修订和 lifecycle 可用 `--expected-object-epoch <已观察epoch>` 直接发送 owner 并发 fence，省略时仍读取当前对象获取 epoch。`schema merge --request-file` 使用正式 MergeCognitiveSchemasRequest 字段 `schema_ids`、`expected_object_epochs`、`merged`；提供对应 epochs 不读取完整 sources，省略 epochs 时读取当前 sources。

@@ -11,6 +11,7 @@ use nous_memory::{
 use nous_protocol::nous::wave::v1alpha1 as p;
 use nous_subject::{CognitiveSeedInput, CreateSubject};
 use p::concept_service_server::ConceptService;
+use p::runtime_service_server::RuntimeService;
 use test_support::*;
 use tonic::Request;
 
@@ -85,6 +86,90 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .unwrap();
     let old_lexical = old_binding[0].lexical_ref.clone();
     let service = KernelService(rt.clone());
+    let session = RuntimeService::open_session(
+        &service,
+        Request::new(p::SubjectRequest {
+            subject_id: subject.0.to_string(),
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner();
+    let context = RuntimeService::create_work_context(
+        &service,
+        Request::new(p::CreateWorkContextRequest {
+            operation_id: OperationId::new().0.to_string(),
+            subject_id: subject.0.to_string(),
+            purpose: "Review release concepts".into(),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .work_context
+    .unwrap();
+    RuntimeService::update_work_context(
+        &service,
+        Request::new(p::UpdateWorkContextRequest {
+            operation_id: OperationId::new().0.to_string(),
+            subject_id: subject.0.to_string(),
+            work_context_id: context.work_context_id.clone(),
+            expected_revision: context.revision,
+            intent: Some(p::update_work_context_request::Intent::Pin(
+                p::WorkContextAnchors {
+                    tag_anchors: vec![tags[0].tag_id.0.to_string(), tags[1].tag_id.0.to_string()],
+                    ..Default::default()
+                },
+            )),
+        }),
+    )
+    .await
+    .unwrap();
+    RuntimeService::set_active_work_context(
+        &service,
+        Request::new(p::SetActiveWorkContextRequest {
+            operation_id: OperationId::new().0.to_string(),
+            subject_id: subject.0.to_string(),
+            session_id: session.session_id.clone(),
+            expected_runtime_revision: session.runtime_revision,
+            work_context_id: Some(context.work_context_id.clone()),
+        }),
+    )
+    .await
+    .unwrap();
+    let projection_request = p::ProjectionRequest {
+        subject_id: subject.0.to_string(),
+        session_id: session.session_id,
+        active_work_context_id: Some(context.work_context_id),
+        consumer_id: "default".into(),
+        max_items: 8,
+        max_text_bytes: 4096,
+        memory_requirement: "REQUIRED".into(),
+        runtime_requirement: "OPTIONAL".into(),
+        resource_requirement: "FORBIDDEN".into(),
+        materialize: true,
+        ..Default::default()
+    };
+    let original_projection = service
+        .build_contribution_batch(projection_request.clone())
+        .await
+        .unwrap();
+    let original_tag = original_projection
+        .segments
+        .iter()
+        .find(|segment| {
+            segment.source_refs.iter().any(|reference| {
+                reference.kind == "tag" && reference.value == tags[0].tag_id.0.to_string()
+            })
+        })
+        .unwrap();
+    assert_eq!(original_tag.text, "Concept:\nDeployment approval");
+    assert_eq!(original_tag.authority, "subject_cognition");
+    assert_eq!(
+        original_tag.source_revision,
+        Some(tags[0].revision_id.to_string())
+    );
     let revise = p::ReviseTagRequest {
         producer: None,
         operation_id: OperationId::new().0.to_string(),
@@ -107,6 +192,28 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         revised.current_revision_id,
         tags[0].current_revision_id.to_string()
     );
+    let revised_projection = service
+        .build_contribution_batch(projection_request.clone())
+        .await
+        .unwrap();
+    let revised_tag = revised_projection
+        .segments
+        .iter()
+        .find(|segment| {
+            segment.source_refs.iter().any(|reference| {
+                reference.kind == "tag" && reference.value == tags[0].tag_id.0.to_string()
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        revised_tag.text,
+        "Concept:\nRelease approval\n\nDescription:\nApproval before rollout\n\nKind:\nprocedure"
+    );
+    assert_eq!(
+        revised_tag.source_revision.as_deref(),
+        Some(revised.revision_id.as_str())
+    );
+    assert_ne!(revised_tag.source_revision, original_tag.source_revision);
     let replay = ConceptService::revise_tag(&service, Request::new(revise.clone()))
         .await
         .unwrap()
@@ -216,6 +323,62 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     };
     owner.merge_tags(subject, merge.clone()).await.unwrap();
     owner.merge_tags(subject, merge).await.unwrap();
+    let merged_projection = service
+        .build_contribution_batch(projection_request.clone())
+        .await
+        .unwrap();
+    let projected_tags: Vec<_> = merged_projection
+        .segments
+        .iter()
+        .filter(|segment| {
+            segment
+                .source_refs
+                .iter()
+                .any(|reference| reference.kind == "tag")
+        })
+        .collect();
+    assert_eq!(projected_tags.len(), 1);
+    assert_eq!(
+        projected_tags[0].source_refs[0].value,
+        tags[0].tag_id.0.to_string()
+    );
+    assert_eq!(
+        projected_tags[0].source_revision,
+        Some(tags[0].current_revision_id.to_string())
+    );
+    assert!(
+        projected_tags[0]
+            .text
+            .contains("Approval before a controlled rollout")
+    );
+    let bounded = service
+        .build_contribution_batch(p::ProjectionRequest {
+            max_text_bytes: 12,
+            ..projection_request.clone()
+        })
+        .await
+        .unwrap();
+    assert!(
+        bounded
+            .segments
+            .iter()
+            .map(|segment| segment.text.len())
+            .sum::<usize>()
+            <= 12
+    );
+    let forbidden = service
+        .build_contribution_batch(p::ProjectionRequest {
+            memory_requirement: "FORBIDDEN".into(),
+            ..projection_request
+        })
+        .await
+        .unwrap();
+    assert!(!forbidden.segments.iter().any(|segment| {
+        segment
+            .source_refs
+            .iter()
+            .any(|reference| reference.kind == "tag")
+    }));
     let (merged, _) = owner
         .tag_views(subject, "", "merged", 50, None)
         .await

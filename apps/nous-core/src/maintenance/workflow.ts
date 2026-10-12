@@ -69,8 +69,6 @@ async function runModelMaintenanceOnce(
   options: ExecutionOptions,
   reserveModelCall: () => void,
 ) {
-  const calls = executionOptions(kernel.execution.opportunity, options);
-  options = calls;
   const operationId = maintenanceOperationId(need);
   const identity = {
     subjectId: need.subjectId,

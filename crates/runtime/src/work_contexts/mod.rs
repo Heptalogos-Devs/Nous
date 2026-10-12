@@ -44,6 +44,30 @@ pub struct WorkContextView {
     pub tag_anchors: Vec<TagId>,
 }
 
+impl WorkContextView {
+    pub(crate) fn task_text(&self) -> String {
+        let mut text = format!(
+            "{}\n{}\n{}",
+            self.purpose,
+            self.unresolved_questions.join("\n"),
+            self.context_text
+        );
+        for (label, value) in [
+            ("Constraints", &self.constraints),
+            ("Task budget summary", &self.budget_summary),
+        ] {
+            if !value.is_null() && value.as_object().is_none_or(|object| !object.is_empty()) {
+                text.push_str(&format!("\n{label}: {value}"));
+            }
+        }
+        if !self.resume_conditions.is_empty() {
+            text.push_str("\nResume conditions:\n");
+            text.push_str(&self.resume_conditions.join("\n"));
+        }
+        text
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWorkContextInput {
     pub operation_id: OperationId,

@@ -22,10 +22,7 @@ fn ranges(text: &str, segment_bytes: usize) -> Result<Vec<(usize, usize)>> {
     let mut result = vec![];
     let mut start = 0;
     while start < text.len() {
-        let mut end = (start + segment_bytes).min(text.len());
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
+        let mut end = text.floor_char_boundary(start + segment_bytes);
         if let Some(newline) = text[start..end].find('\n') {
             end = start + newline + 1;
         }

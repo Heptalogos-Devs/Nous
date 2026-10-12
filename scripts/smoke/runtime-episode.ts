@@ -361,6 +361,38 @@ async function main() {
       withdrawnMemories.data.items.length
     )
       throw new Error("CLI Memory list did not apply status");
+    const fencedMemory = (await runCli([
+      "memory",
+      "accessibility",
+      `memory:${memory.memoryId}`,
+      "--kind",
+      "normal",
+      "--expected-object-epoch",
+      String(memory.objectEpoch),
+      ...cliFlags,
+    ])) as { data: { objectEpoch: bigint } };
+    if (fencedMemory.data.objectEpoch <= memory.objectEpoch)
+      throw new Error("CLI mutation did not advance the object epoch");
+    let staleObjectEpoch = false;
+    try {
+      await runCli([
+        "memory",
+        "accessibility",
+        `memory:${memory.memoryId}`,
+        "--kind",
+        "auto",
+        "--expected-object-epoch",
+        String(memory.objectEpoch),
+        ...cliFlags,
+      ]);
+    } catch (error) {
+      staleObjectEpoch =
+        error instanceof NousError && error.domainCode === "STALE_REVISION";
+    }
+    if (!staleObjectEpoch)
+      throw new Error(
+        "CLI replaced the caller's stale object epoch with current state",
+      );
     const closedSessions = (await runCli([
       "session",
       "list",

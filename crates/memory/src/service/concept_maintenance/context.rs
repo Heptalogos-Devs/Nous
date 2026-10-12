@@ -208,11 +208,7 @@ impl MemoryService {
                 break;
             }
             let mut text = selected.map(|selected| selected.text).unwrap_or_default();
-            let mut end = text.len().min(remaining);
-            while !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            text.truncate(end);
+            text.truncate(text.floor_char_boundary(remaining));
             remaining -= text.len();
             result.insert(key.clone(), serde_json::json!({"text":text,"occurredTime":occurrence.occurred_time,"sourceClass":occurrence.source_class,"observedAt":occurrence.observed_at}));
         }

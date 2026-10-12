@@ -308,16 +308,7 @@ pub fn build_query_representation(
         .join("\n");
     builder.section("Current objects", &objects, 512 * limits.max_context_items);
     if let Some(context) = &context {
-        builder.section(
-            "Current work",
-            &format!(
-                "{}\n{}\n{}",
-                context.purpose,
-                context.unresolved_questions.join("\n"),
-                context.context_text
-            ),
-            limits.total_chars,
-        );
+        builder.section("Current work", &context.task_text(), limits.total_chars);
     }
     if let Some(consumer) = &query.situation.consumer {
         builder.section("Consumer/task", consumer, 256);

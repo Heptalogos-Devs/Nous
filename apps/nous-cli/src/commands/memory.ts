@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { MemoryContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { lifecycle, revisionLink } from "../cognition-owner.js";
-import { content, operationId, page, target } from "../content.js";
+import { content, objectEpoch, operationId, page, target } from "../content.js";
 import type { CliEnvironment } from "../runtime.js";
 export async function memoryCommands(
   env: CliEnvironment,
@@ -47,9 +47,9 @@ export async function memoryCommands(
   const mutation = {
     subjectId,
     memoryId,
-    expectedObjectEpoch: (
-      await client.memory.getMemory({ subjectId, id: memoryId })
-    ).objectEpoch,
+    expectedObjectEpoch:
+      objectEpoch(values["expected-object-epoch"]) ??
+      (await client.memory.getMemory({ subjectId, id: memoryId })).objectEpoch,
     operationId: operationId(env),
   };
   if (action === "revise")

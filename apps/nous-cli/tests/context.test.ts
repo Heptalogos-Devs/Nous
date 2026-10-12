@@ -178,7 +178,7 @@ it("freezes semantic TOML targets and input before a recoverable mutation", asyn
   try {
     await writeFile(
       path,
-      `target = "tag:${tagId}"\nlabel = "Release planning"\n`,
+      `[target]\ntag_id = "tag:${tagId}"\nexpected_revision_id = "original-revision"\n[content]\nlabel = "Release planning"\n`,
     );
     let receipt = "";
     try {
@@ -192,10 +192,10 @@ it("freezes semantic TOML targets and input before a recoverable mutation", asyn
     expect(receipt).toBeTruthy();
     await writeFile(
       path,
-      'target = "tag:changed"\nlabel = "Changed after admission"\n',
+      '[target]\ntag_id = "tag:changed"\nexpected_revision_id = "changed-revision"\n[content]\nlabel = "Changed after admission"\n',
     );
     await runCli(["retry", receipt, ...flags], connect);
-    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).not.toHaveBeenCalled();
     expect(revise.mock.calls[1]).toEqual(revise.mock.calls[0]);
     expect(revise.mock.calls[0]?.[0]).toMatchObject({
       target: { tagId, expectedRevisionId: "original-revision" },

@@ -6,10 +6,9 @@
 mod accessibility;
 mod accretion;
 mod batch;
-mod context;
-pub use context::MemoryContextProjection;
 mod concept_maintenance;
 mod consolidation_context;
+mod context;
 mod dependencies;
 mod episode;
 mod historical;
