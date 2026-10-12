@@ -1,11 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    assets::build::{DenseManifest, implementation},
-    assets::files::*,
-    *,
-};
+use crate::{assets::build::DenseManifest, assets::files::*, *};
 use sqlx::Row;
 use std::path::Path;
 
@@ -66,32 +62,7 @@ impl ServingService {
         let keys: &[&str] = match family {
             "lexical" => &["serving.lexical.enabled", "episode.synopsis"],
             "dense" => &["serving.dense.enabled", "retrieval.epa", "episode.synopsis"],
-            "topology" => &[
-                "topology.wave.hub_beta",
-                "topology.wave.hub_penalty_min",
-                "topology.wave.hub_penalty_max",
-                "topology.wave.outbound_budget",
-                "topology.wave.max_hops",
-                "topology.wave.max_states",
-                "topology.wave.max_neighbors_per_node",
-                "topology.wave.minimum_state_energy",
-                "topology.wave.immediate_return_multiplier",
-                "topology.wave.initial_budget_steps",
-                "topology.wave.normal_edge_cost",
-                "topology.wave.fir_gamma",
-                "topology.wave.quality.host_explicit",
-                "topology.wave.quality.source_evidence",
-                "topology.wave.quality.cognitive_derivation",
-                "topology.wave.quality.derived_structure",
-                "topology.wave.quality.meaningful_use",
-                "topology.wave.seed_weights.exact_target",
-                "topology.wave.seed_weights.runtime_situation",
-                "topology.wave.seed_weights.relation_cue",
-                "topology.wave.seed_weights.entity_cue",
-                "topology.wave.seed_weights.tag_cue",
-                "topology.wave.seed_weights.lexical_promoted",
-                "topology.wave.seed_weights.dense_promoted",
-            ],
+            "topology" => &["episode.synopsis"],
             _ => &[],
         };
         config["policy_digest"] = serde_json::Value::String(snapshot.digest_for(keys)?);
@@ -129,94 +100,133 @@ impl ServingService {
         snapshot: &nous_configuration::ConfigSnapshot,
     ) -> Result<ProjectionStatus> {
         let _reader = self.read_gate.clone().read_owned().await;
+        Ok(self.prepare_assets(subject, need, snapshot, None).await?.0)
+    }
+
+    /// Resolve and open each required family once, assembling the request view
+    /// directly. Only current assets are published to the process cache.
+    pub(crate) async fn prepare_assets(
+        &self,
+        subject: SubjectId,
+        need: ServingNeed,
+        config: &nous_configuration::ConfigSnapshot,
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<(ProjectionStatus, ServingSnapshot)> {
         self.store.require_subject(subject).await?;
-        let current = self.store.serving_current(subject).await?;
-        let reusable = self.store.serving_reusable(subject).await?;
-        let requested = self.requested_families(need, &current);
-        let mut result = ProjectionStatus::default();
-        for (family, space) in requested {
+        let current = if view.is_none() {
+            self.store.serving_current(subject).await?
+        } else {
+            Vec::new()
+        };
+        let reusable = match view {
+            Some(view) => {
+                self.store
+                    .historical_serving_reusable(subject, &view.snapshot_digest)
+                    .await?
+            }
+            None => self.store.serving_reusable(subject).await?,
+        };
+        let current_ids = current
+            .iter()
+            .map(|record| record.generation_id)
+            .collect::<std::collections::HashSet<_>>();
+        let cached = self.publisher.snapshot_for(subject);
+        let mut serving = ServingSnapshot {
+            view_digest: view.map(|view| view.snapshot_digest.clone()),
+            ..Default::default()
+        };
+        let mut status = ProjectionStatus::default();
+        for (family, space) in
+            self.requested_families(need, if view.is_some() { &reusable } else { &current })
+        {
             let key = if space.is_empty() {
-                family.to_string()
+                family.to_owned()
             } else {
                 format!("{family}:{space}")
             };
-            let existing = current
-                .iter()
-                .find(|record| record.family == family && record.space == space);
-            let watermark = if family == "topology" {
-                sqlx::query_scalar::<_, i64>(
-                    "SELECT authority_seq FROM subjects WHERE subject_id=$1",
-                )
-                .bind(subject.0)
-                .fetch_one(self.store.pool())
-                .await
-                .map_err(nous_persistence::database_error)?
+            let watermark = if view.is_some() {
+                0
+            } else if family == "topology" {
+                self.store.authority_seq(subject).await?
             } else {
                 self.store
                     .projection_watermark(subject, family, &space)
                     .await?
             };
-            let mut compatible = None;
-            if let Some(record) = existing
-                && self.compatible(record, snapshot).await
+            let mut selected = None;
+            let mut fallback = None;
+            let mut checked = std::collections::HashSet::new();
+            let config_digest = self.config_digest(subject, family, config).await.ok();
+            for record in current
+                .iter()
+                .chain(reusable.iter())
+                .filter(|record| record.family == family && record.space == space)
             {
-                compatible = Some(record);
-            }
-            if compatible.is_none_or(|record| record.authority_watermark < watermark)
-                && let Some(record) = self
-                    .reuse_artifact(&reusable, family, &space, watermark, snapshot)
-                    .await?
-            {
-                compatible = Some(record);
-                result.reopened.push(key.clone());
-            }
-
-            if let Some(record) = compatible
-                .filter(|record| record.authority_watermark >= watermark && self.loaded(record))
-            {
-                result.generations.insert(key, record.generation_id);
-                continue;
-            }
-            let outcome = if let Some(record) =
-                compatible.filter(|record| record.authority_watermark >= watermark)
-            {
-                match self.open_record(record) {
-                    Ok(artifact) => {
-                        self.publish_snapshot(record, artifact);
-                        result.reopened.push(key.clone());
-                        Ok(record.clone())
-                    }
+                if !checked.insert(record.generation_id)
+                    || config_digest.as_deref() != Some(record.config_digest.as_str())
+                {
+                    continue;
+                }
+                let artifact = if view.is_none() {
+                    cached
+                        .artifact(record.generation_id)
+                        .map(Ok)
+                        .unwrap_or_else(|| self.open_record(record))
+                } else {
+                    self.open_record(record)
+                };
+                let artifact = match artifact {
+                    Ok(artifact) => artifact,
                     Err(_) => {
-                        // Publication must not deduplicate a replacement against missing/corrupt current bytes.
                         self.store.fail_serving_generation(record).await?;
-                        self.build_and_open(subject, family, &space, snapshot).await
+                        continue;
                     }
+                };
+                if record.authority_watermark < watermark {
+                    // A stale current projection remains an explicit degraded
+                    // fallback if rebuilding fails; never use it for history.
+                    fallback = current_ids
+                        .contains(&record.generation_id)
+                        .then(|| (record.clone(), artifact));
+                    continue;
                 }
-            } else {
-                self.build_and_open(subject, family, &space, snapshot).await
-            };
-            if outcome.is_ok() && !result.reopened.contains(&key) {
-                result.rebuilt.push(key.clone());
+                let loaded = view.is_none() && cached.contains_generation(record.generation_id);
+                if view.is_none()
+                    && !current_ids.contains(&record.generation_id)
+                    && !self.store.promote_generation(record.generation_id).await?
+                {
+                    continue;
+                }
+                if !loaded {
+                    status.reopened.push(key.clone());
+                }
+                selected = Some((record.clone(), artifact));
+                break;
             }
-            match outcome {
-                Ok(record) => {
-                    result.generations.insert(key, record.generation_id);
-                }
-                Err(error) => {
-                    if let Some(record) = compatible
-                        && let Ok(artifact) = self.open_record(record)
-                    {
-                        self.publish_snapshot(record, artifact);
-                        result.generations.insert(key.clone(), record.generation_id);
+            if selected.is_none() {
+                match self
+                    .build_family_in_view(subject, family, &space, config, view, &serving)
+                    .await
+                {
+                    Ok(asset) => {
+                        status.rebuilt.push(key.clone());
+                        selected = Some(asset);
                     }
-                    result.degradation.push(Degradation {
+                    Err(error) => status.degradation.push(Degradation {
                         code: format!("{family}_projection_unavailable"),
                         detail: Some(error.to_string()),
-                    });
+                    }),
                 }
             }
+            if let Some((record, artifact)) = selected.or(fallback) {
+                if view.is_none() && !cached.contains_generation(record.generation_id) {
+                    self.publish_snapshot(&record, artifact.clone());
+                }
+                serving.install(artifact);
+                status.generations.insert(key, record.generation_id);
+            }
         }
-        Ok(result)
+        Ok((status, serving))
     }
 
     pub(crate) fn requested_families(
@@ -259,122 +269,38 @@ impl ServingService {
         requested
     }
 
-    async fn reuse_artifact<'a>(
-        &self,
-        records: &'a [ServingRecord],
-        family: &str,
-        space: &str,
-        watermark: i64,
-        snapshot: &nous_configuration::ConfigSnapshot,
-    ) -> Result<Option<&'a ServingRecord>> {
-        for record in records {
-            if record.family != family
-                || record.space != space
-                || record.authority_watermark < watermark
-                || !self.compatible(record, snapshot).await
-            {
-                continue;
-            }
-            let artifact = match self.open_record(record) {
-                Ok(artifact) => artifact,
-                Err(_) => {
-                    self.store.fail_serving_generation(record).await?;
-                    continue;
-                }
-            };
-            if !self.store.promote_generation(record.generation_id).await? {
-                continue;
-            }
-            self.publish_snapshot(record, artifact);
-            return Ok(Some(record));
-        }
-        Ok(None)
-    }
-
     /// Administrative operation: refresh every configured family.
     pub async fn refresh(&self, subject: SubjectId) -> Result<ProjectionStatus> {
-        self.prepare(
+        let status = self
+            .prepare(
+                subject,
+                ServingNeed {
+                    lexical: self.options.lexical,
+                    dense: self.options.dense,
+                    topology: self.options.topology,
+                    concept: true,
+                    concept_vectors: self.embedding().is_some(),
+                },
+            )
+            .await?;
+        let config = self.configuration.snapshot_for_subject(subject)?;
+        self.reclaim_retired(
             subject,
-            ServingNeed {
-                lexical: self.options.lexical,
-                dense: self.options.dense,
-                topology: self.options.topology,
-                concept: true,
-                concept_vectors: self.embedding().is_some(),
-            },
+            std::time::Duration::from_secs(config.get(RETIRED_GRACE_SECONDS)?),
         )
-        .await
-    }
-
-    async fn build_and_open(
-        &self,
-        subject: SubjectId,
-        family: &str,
-        space: &str,
-        snapshot: &nous_configuration::ConfigSnapshot,
-    ) -> Result<ServingRecord> {
-        let record = self.build_family(subject, family, space, snapshot).await?;
-        let artifact = self.open_record(&record)?;
-        self.publish_snapshot(&record, artifact);
-        Ok(record)
-    }
-
-    pub(crate) async fn compatible(
-        &self,
-        record: &ServingRecord,
-        snapshot: &nous_configuration::ConfigSnapshot,
-    ) -> bool {
-        let identity = record.implementation_id == implementation(&record.family)
-            && record.implementation_revision == env!("NOUS_SERVING_IMPLEMENTATION_DIGEST");
-        identity
-            && self
-                .config_digest(record.subject, &record.family, snapshot)
-                .await
-                .ok()
-                .as_deref()
-                == Some(record.config_digest.as_str())
-    }
-
-    fn loaded(&self, record: &ServingRecord) -> bool {
-        let snapshot = self.publisher.snapshot_for(record.subject);
-        let Ok(family) = super::family::AssetFamily::parse(&record.family) else {
-            return false;
-        };
-        match family {
-            super::family::AssetFamily::Lexical => snapshot
-                .lexical
-                .as_ref()
-                .is_some_and(|index| index.generation_id == record.generation_id),
-            super::family::AssetFamily::Topology => {
-                snapshot
-                    .topology
-                    .as_ref()
-                    .is_some_and(|graph| graph.generation_id == record.generation_id)
-                    || snapshot
-                        .vcp
-                        .as_ref()
-                        .is_some_and(|assets| assets.generation_id == record.generation_id)
-            }
-            super::family::AssetFamily::Dense => snapshot
-                .dense
-                .iter()
-                .any(|index| index.generation_id == record.generation_id),
-            super::family::AssetFamily::Concept => snapshot
-                .concept
-                .iter()
-                .any(|generation| generation.generation_id == record.generation_id),
-        }
+        .await?;
+        Ok(status)
     }
 
     pub(crate) fn open_record(&self, record: &ServingRecord) -> Result<OpenArtifact> {
-        let path = Path::new(&record.artifact_location);
-        let sums = checksums(path)?;
+        let path = self.artifact_directory(record.generation_id);
+        let sums = checksums(&path)?;
         if digest(&sums)? != record.artifact_hash {
             return Err(Error::Infrastructure(
                 "serving generation checksum mismatch".into(),
             ));
         }
-        self.readback(path, &record.family, record.generation_id)
+        self.readback(&path, &record.family, record.generation_id)
     }
 
     pub(crate) fn readback(

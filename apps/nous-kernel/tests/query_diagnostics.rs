@@ -50,7 +50,7 @@ async fn query_reports_validation_budget_exhaustion() {
     let runtime = open_runtime(&url, &root).await;
     let subject = subject(&runtime).await;
     let mut tx = runtime.store.begin().await.expect("fixture transaction");
-    sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,accessibility_mode,created_at) SELECT md5('budget-memory-'||n)::uuid,$1,'declarative',md5('budget-rev-'||n)::uuid,1,'accepted','valid','suppressed','normal','auto',now() FROM generate_series(1,40) AS values(n)")
+    sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,accessibility_mode,created_at) SELECT md5('budget-memory-'||n)::uuid,$1,'declarative',md5('budget-rev-'||n)::uuid,1,'accepted','valid','suppressed','auto',now() FROM generate_series(1,40) AS values(n)")
         .bind(subject.0)
         .execute(&mut *tx)
         .await
@@ -64,7 +64,7 @@ async fn query_reports_validation_budget_exhaustion() {
         .execute(&mut *tx)
         .await
         .expect("budget aboutness");
-    sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,accessibility_mode,created_at) SELECT md5('budget-temporal-memory-'||n)::uuid,$1,'declarative',md5('budget-temporal-rev-'||n)::uuid,1,'accepted','valid','normal','normal','auto',now() FROM generate_series(1,40) AS values(n)")
+    sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,accessibility_mode,created_at) SELECT md5('budget-temporal-memory-'||n)::uuid,$1,'declarative',md5('budget-temporal-rev-'||n)::uuid,1,'accepted','valid','normal','auto',now() FROM generate_series(1,40) AS values(n)")
         .bind(subject.0)
         .execute(&mut *tx)
         .await

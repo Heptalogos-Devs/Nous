@@ -9,7 +9,6 @@ import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { CognitiveRef } from "../../v1alpha1/types_pb.js";
 import { file_nous_wave_v1alpha1_types } from "../../v1alpha1/types_pb.js";
-import { file_nous_wave_v1alpha1_presentation } from "../../v1alpha1/presentation_pb.js";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
@@ -18,39 +17,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file nous/wave/kernel/v1alpha1/workflow_envelope.proto.
  */
 export const file_nous_wave_kernel_v1alpha1_workflow_envelope: GenFile = /*@__PURE__*/
-  fileDesc("CjFub3VzL3dhdmUva2VybmVsL3YxYWxwaGExL3dvcmtmbG93X2VudmVsb3BlLnByb3RvEhlub3VzLndhdmUua2VybmVsLnYxYWxwaGExImUKDVdvcmtmbG93TGVhc2USHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSDQoFb3duZXIYAiABKAkSFQoNb3BlcmF0aW9uX2tleRgDIAEoCRINCgV0b2tlbhgEIAEoCSJvCg9Xb3JrZmxvd1BheWxvYWQSFAoMcGF5bG9hZF9qc29uGAEgASgJEjYKDGRlcGVuZGVuY2llcxgCIAMoCzIgLm5vdXMud2F2ZS52MWFscGhhMS5Db2duaXRpdmVSZWYSDgoGcHVyZ2VkGAMgASgIInEKEE1haW50ZW5hbmNlQ2xhaW0SDwoHbmVlZF9pZBgBIAEoCRITCgtsZWFzZV90b2tlbhgCIAEoCRIdChV0cmlnZ2VyX2F1dGhvcml0eV9zZXEYAyABKAMSGAoQdHJpZ2dlcl9yZXZpc2lvbhgEIAEoBCLQAQoQV29ya2Zsb3dTbmFwc2hvdBI7Cgdjb250ZW50GAEgASgLMioubm91cy53YXZlLmtlcm5lbC52MWFscGhhMS5Xb3JrZmxvd1BheWxvYWQSNwoTY29nbml0aXZlX2Zvcm1lZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASRgoRbWFpbnRlbmFuY2VfY2xhaW0YAyABKAsyKy5ub3VzLndhdmUua2VybmVsLnYxYWxwaGExLk1haW50ZW5hbmNlQ2xhaW0ilgEKDkV4ZWN1dGlvblVzYWdlEhkKDGlucHV0X3Rva2VucxgBIAEoAUgAiAEBEhoKDW91dHB1dF90b2tlbnMYAiABKAFIAYgBARIZCgx0b3RhbF90b2tlbnMYAyABKAFIAogBAUIPCg1faW5wdXRfdG9rZW5zQhAKDl9vdXRwdXRfdG9rZW5zQg8KDV90b3RhbF90b2tlbnMi0AEKEEV4ZWN1dGlvbkF0dGVtcHQSGQoRZXhlY3V0aW9uX3Byb2ZpbGUYASABKAkSFQoNbW9kZWxfcHJvZmlsZRgCIAEoCRIOCgZzdGF0dXMYAyABKAkSGgoNZmFpbHVyZV9jbGFzcxgEIAEoCUgAiAEBEhIKCmxhdGVuY3lfbXMYBSABKA0SOAoFdXNhZ2UYBiABKAsyKS5ub3VzLndhdmUua2VybmVsLnYxYWxwaGExLkV4ZWN1dGlvblVzYWdlQhAKDl9mYWlsdXJlX2NsYXNzIrkBChJFeGVjdXRpb25UZWxlbWV0cnkSPQoIYXR0ZW1wdHMYASADKAsyKy5ub3VzLndhdmUua2VybmVsLnYxYWxwaGExLkV4ZWN1dGlvbkF0dGVtcHQSKQocc3VjY2Vzc2Z1bF9leGVjdXRpb25fcHJvZmlsZRgCIAEoCUgAiAEBEhgKEG9taXR0ZWRfYXR0ZW1wdHMYAyABKA1CHwodX3N1Y2Nlc3NmdWxfZXhlY3V0aW9uX3Byb2ZpbGViBnByb3RvMw", [file_nous_wave_v1alpha1_types, file_nous_wave_v1alpha1_presentation, file_google_protobuf_timestamp]);
-
-/**
- * @generated from message nous.wave.kernel.v1alpha1.WorkflowLease
- */
-export type WorkflowLease = Message<"nous.wave.kernel.v1alpha1.WorkflowLease"> & {
-  /**
-   * @generated from field: string subject_id = 1;
-   */
-  subjectId: string;
-
-  /**
-   * @generated from field: string owner = 2;
-   */
-  owner: string;
-
-  /**
-   * @generated from field: string operation_key = 3;
-   */
-  operationKey: string;
-
-  /**
-   * @generated from field: string token = 4;
-   */
-  token: string;
-};
-
-/**
- * Describes the message nous.wave.kernel.v1alpha1.WorkflowLease.
- * Use `create(WorkflowLeaseSchema)` to create a new message.
- */
-export const WorkflowLeaseSchema: GenMessage<WorkflowLease> = /*@__PURE__*/
-  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 0);
+  fileDesc("CjFub3VzL3dhdmUva2VybmVsL3YxYWxwaGExL3dvcmtmbG93X2VudmVsb3BlLnByb3RvEhlub3VzLndhdmUua2VybmVsLnYxYWxwaGExIm8KD1dvcmtmbG93UGF5bG9hZBIUCgxwYXlsb2FkX2pzb24YASABKAkSNgoMZGVwZW5kZW5jaWVzGAIgAygLMiAubm91cy53YXZlLnYxYWxwaGExLkNvZ25pdGl2ZVJlZhIOCgZwdXJnZWQYAyABKAgiXgoSTWFpbnRlbmFuY2VUcmlnZ2VyEg8KB25lZWRfaWQYASABKAkSHQoVdHJpZ2dlcl9hdXRob3JpdHlfc2VxGAMgASgDEhgKEHRyaWdnZXJfcmV2aXNpb24YBCABKAQi1AEKEFdvcmtmbG93U25hcHNob3QSOwoHY29udGVudBgBIAEoCzIqLm5vdXMud2F2ZS5rZXJuZWwudjFhbHBoYTEuV29ya2Zsb3dQYXlsb2FkEjcKE2NvZ25pdGl2ZV9mb3JtZWRfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEkoKE21haW50ZW5hbmNlX3RyaWdnZXIYAyABKAsyLS5ub3VzLndhdmUua2VybmVsLnYxYWxwaGExLk1haW50ZW5hbmNlVHJpZ2dlciKWAQoORXhlY3V0aW9uVXNhZ2USGQoMaW5wdXRfdG9rZW5zGAEgASgBSACIAQESGgoNb3V0cHV0X3Rva2VucxgCIAEoAUgBiAEBEhkKDHRvdGFsX3Rva2VucxgDIAEoAUgCiAEBQg8KDV9pbnB1dF90b2tlbnNCEAoOX291dHB1dF90b2tlbnNCDwoNX3RvdGFsX3Rva2VucyLQAQoQRXhlY3V0aW9uQXR0ZW1wdBIZChFleGVjdXRpb25fcHJvZmlsZRgBIAEoCRIVCg1tb2RlbF9wcm9maWxlGAIgASgJEg4KBnN0YXR1cxgDIAEoCRIaCg1mYWlsdXJlX2NsYXNzGAQgASgJSACIAQESEgoKbGF0ZW5jeV9tcxgFIAEoDRI4CgV1c2FnZRgGIAEoCzIpLm5vdXMud2F2ZS5rZXJuZWwudjFhbHBoYTEuRXhlY3V0aW9uVXNhZ2VCEAoOX2ZhaWx1cmVfY2xhc3MiuQEKEkV4ZWN1dGlvblRlbGVtZXRyeRI9CghhdHRlbXB0cxgBIAMoCzIrLm5vdXMud2F2ZS5rZXJuZWwudjFhbHBoYTEuRXhlY3V0aW9uQXR0ZW1wdBIpChxzdWNjZXNzZnVsX2V4ZWN1dGlvbl9wcm9maWxlGAIgASgJSACIAQESGAoQb21pdHRlZF9hdHRlbXB0cxgDIAEoDUIfCh1fc3VjY2Vzc2Z1bF9leGVjdXRpb25fcHJvZmlsZWIGcHJvdG8z", [file_nous_wave_v1alpha1_types, file_google_protobuf_timestamp]);
 
 /**
  * Only the semantic owner interprets payload_json. Dependencies are explicit;
@@ -80,21 +47,16 @@ export type WorkflowPayload = Message<"nous.wave.kernel.v1alpha1.WorkflowPayload
  * Use `create(WorkflowPayloadSchema)` to create a new message.
  */
 export const WorkflowPayloadSchema: GenMessage<WorkflowPayload> = /*@__PURE__*/
-  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 1);
+  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 0);
 
 /**
- * @generated from message nous.wave.kernel.v1alpha1.MaintenanceClaim
+ * @generated from message nous.wave.kernel.v1alpha1.MaintenanceTrigger
  */
-export type MaintenanceClaim = Message<"nous.wave.kernel.v1alpha1.MaintenanceClaim"> & {
+export type MaintenanceTrigger = Message<"nous.wave.kernel.v1alpha1.MaintenanceTrigger"> & {
   /**
    * @generated from field: string need_id = 1;
    */
   needId: string;
-
-  /**
-   * @generated from field: string lease_token = 2;
-   */
-  leaseToken: string;
 
   /**
    * @generated from field: int64 trigger_authority_seq = 3;
@@ -108,11 +70,11 @@ export type MaintenanceClaim = Message<"nous.wave.kernel.v1alpha1.MaintenanceCla
 };
 
 /**
- * Describes the message nous.wave.kernel.v1alpha1.MaintenanceClaim.
- * Use `create(MaintenanceClaimSchema)` to create a new message.
+ * Describes the message nous.wave.kernel.v1alpha1.MaintenanceTrigger.
+ * Use `create(MaintenanceTriggerSchema)` to create a new message.
  */
-export const MaintenanceClaimSchema: GenMessage<MaintenanceClaim> = /*@__PURE__*/
-  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 2);
+export const MaintenanceTriggerSchema: GenMessage<MaintenanceTrigger> = /*@__PURE__*/
+  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 1);
 
 /**
  * @generated from message nous.wave.kernel.v1alpha1.WorkflowSnapshot
@@ -129,9 +91,9 @@ export type WorkflowSnapshot = Message<"nous.wave.kernel.v1alpha1.WorkflowSnapsh
   cognitiveFormedAt?: Timestamp | undefined;
 
   /**
-   * @generated from field: nous.wave.kernel.v1alpha1.MaintenanceClaim maintenance_claim = 3;
+   * @generated from field: nous.wave.kernel.v1alpha1.MaintenanceTrigger maintenance_trigger = 3;
    */
-  maintenanceClaim?: MaintenanceClaim | undefined;
+  maintenanceTrigger?: MaintenanceTrigger | undefined;
 };
 
 /**
@@ -139,7 +101,7 @@ export type WorkflowSnapshot = Message<"nous.wave.kernel.v1alpha1.WorkflowSnapsh
  * Use `create(WorkflowSnapshotSchema)` to create a new message.
  */
 export const WorkflowSnapshotSchema: GenMessage<WorkflowSnapshot> = /*@__PURE__*/
-  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 3);
+  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 2);
 
 /**
  * Absent usage is unknown, including for attempts with an unknown outcome.
@@ -168,7 +130,7 @@ export type ExecutionUsage = Message<"nous.wave.kernel.v1alpha1.ExecutionUsage">
  * Use `create(ExecutionUsageSchema)` to create a new message.
  */
 export const ExecutionUsageSchema: GenMessage<ExecutionUsage> = /*@__PURE__*/
-  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 4);
+  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 3);
 
 /**
  * @generated from message nous.wave.kernel.v1alpha1.ExecutionAttempt
@@ -210,7 +172,7 @@ export type ExecutionAttempt = Message<"nous.wave.kernel.v1alpha1.ExecutionAttem
  * Use `create(ExecutionAttemptSchema)` to create a new message.
  */
 export const ExecutionAttemptSchema: GenMessage<ExecutionAttempt> = /*@__PURE__*/
-  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 5);
+  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 4);
 
 /**
  * @generated from message nous.wave.kernel.v1alpha1.ExecutionTelemetry
@@ -237,5 +199,5 @@ export type ExecutionTelemetry = Message<"nous.wave.kernel.v1alpha1.ExecutionTel
  * Use `create(ExecutionTelemetrySchema)` to create a new message.
  */
 export const ExecutionTelemetrySchema: GenMessage<ExecutionTelemetry> = /*@__PURE__*/
-  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 6);
+  messageDesc(file_nous_wave_kernel_v1alpha1_workflow_envelope, 5);
 

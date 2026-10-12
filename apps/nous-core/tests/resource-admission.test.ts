@@ -44,18 +44,16 @@ test("a saved external proposal is revalidated before admission while an accepte
   let outcome: WorkflowPayload | undefined;
   const kernel = {
     modelWorkflow: {
-      reserveWorkflow: async () => ({
-        lease: { token: "lease" },
+      startOperation: async () => ({
         proposal: workflowPayload({
           content: "saved material",
           mediaType: "text/plain",
         }),
         outcome,
       }),
-      saveWorkflow: async (value: { outcome?: WorkflowPayload }) => {
+      saveOperation: async (value: { outcome?: WorkflowPayload }) => {
         outcome = value.outcome;
       },
-      releaseWorkflow: async () => {},
     },
     resourceRegistry: { getResource: async () => binding },
     runtime: {

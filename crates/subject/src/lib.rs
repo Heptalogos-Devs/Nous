@@ -23,9 +23,9 @@ pub use seed::{
 
 #[derive(Clone)]
 pub struct SubjectCoreService {
-    pub store: AuthorityStore,
-    pub objects: ObjectStore,
-    pub configuration: ConfigurationService,
+    pub(crate) store: AuthorityStore,
+    pub(crate) objects: ObjectStore,
+    pub(crate) configuration: ConfigurationService,
     pub(crate) clock: std::sync::Arc<dyn nous_runtime::CognitiveClock>,
 }
 
@@ -138,25 +138,50 @@ impl SubjectCoreService {
             .bind(subject.0).fetch_optional(self.store.pool()).await
             .map_err(nous_persistence::database_error)?
             .ok_or_else(|| Error::NotFound("subject not found".into()))?;
-        Ok(SubjectView {
-            subject_id: subject,
-            created_at: row
-                .try_get("created_at")
-                .map_err(nous_persistence::database_error)?,
-            authority_seq: row
-                .try_get("authority_seq")
-                .map_err(nous_persistence::database_error)?,
-            status: row
-                .try_get("status")
-                .map_err(nous_persistence::database_error)?,
-            metadata: row
-                .try_get("metadata")
-                .map_err(nous_persistence::database_error)?,
-            capabilities: SubjectCapabilities {
-                memory: row
-                    .try_get("memory")
-                    .map_err(nous_persistence::database_error)?,
-            },
-        })
+        decode_subject(row)
     }
+
+    pub async fn subjects(
+        &self,
+        status: &str,
+        limit: i64,
+        after: Option<uuid::Uuid>,
+    ) -> Result<(Vec<SubjectView>, bool)> {
+        let mut rows = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE ($1::uuid IS NULL OR s.subject_id>$1) AND ($2='' OR s.status=$2) ORDER BY s.subject_id LIMIT $3")
+            .bind(after).bind(status).bind(limit+1).fetch_all(self.store.pool()).await.map_err(nous_persistence::database_error)?;
+        let more = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        Ok((
+            rows.into_iter()
+                .map(decode_subject)
+                .collect::<Result<_>>()?,
+            more,
+        ))
+    }
+}
+
+fn decode_subject(row: sqlx::postgres::PgRow) -> Result<SubjectView> {
+    Ok(SubjectView {
+        subject_id: SubjectId(
+            row.try_get("subject_id")
+                .map_err(nous_persistence::database_error)?,
+        ),
+        created_at: row
+            .try_get("created_at")
+            .map_err(nous_persistence::database_error)?,
+        authority_seq: row
+            .try_get("authority_seq")
+            .map_err(nous_persistence::database_error)?,
+        status: row
+            .try_get("status")
+            .map_err(nous_persistence::database_error)?,
+        metadata: row
+            .try_get("metadata")
+            .map_err(nous_persistence::database_error)?,
+        capabilities: SubjectCapabilities {
+            memory: row
+                .try_get("memory")
+                .map_err(nous_persistence::database_error)?,
+        },
+    })
 }

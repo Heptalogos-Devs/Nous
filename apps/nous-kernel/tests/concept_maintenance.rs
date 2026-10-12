@@ -34,9 +34,9 @@ fn producer() -> ProducerSignature {
         config_digest: "b".repeat(64),
     }
 }
-async fn claim(rt: &NousRuntime, subject: SubjectId) -> MaintenanceNeed {
+async fn select_need(rt: &NousRuntime, subject: SubjectId) -> MaintenanceNeed {
     rt.cognition
-        .lease_maintenance(subject, &["concept_maintenance".into()], 1, 120, None)
+        .select_maintenance(subject, &["concept_maintenance".into()], 1, None)
         .await
         .unwrap()
         .pop()
@@ -143,7 +143,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             view.revision.memory_revision_id,
         ));
     }
-    let first = claim(&rt, subject).await;
+    let first = select_need(&rt, subject).await;
     catalog::assert_wire_catalog(&rt, subject, &revisions, &first).await;
     let initial = owner
         .plan_concepts(subject, revisions[0].clone())
@@ -258,7 +258,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         .acknowledge_maintenance(&first, MaintenanceDisposition::Satisfied)
         .await
         .unwrap();
-    let second = claim(&rt, subject).await;
+    let second = select_need(&rt, subject).await;
     rt.cognition
         .acknowledge_maintenance(&second, MaintenanceDisposition::Satisfied)
         .await
@@ -274,7 +274,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             .unwrap();
     assert_eq!(historical_tags, 0);
     episode_relations(&rt, subject, &revisions).await;
-    let episode_need = claim(&rt, subject).await;
+    let episode_need = select_need(&rt, subject).await;
     rt.cognition
         .acknowledge_maintenance(&episode_need, MaintenanceDisposition::Satisfied)
         .await
@@ -369,7 +369,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
     assert_eq!(truth, "observed");
     let queued:i64=sqlx::query_scalar("SELECT count(*) FROM maintenance_needs WHERE subject_id=$1 AND kind='concept_maintenance' AND state='pending'").bind(subject.0).fetch_one(rt.store.pool()).await.unwrap();
     assert_eq!(queued, 1);
-    let review = claim(&rt, subject).await;
+    let review = select_need(&rt, subject).await;
     rt.cognition
         .acknowledge_maintenance(&review, MaintenanceDisposition::Satisfied)
         .await

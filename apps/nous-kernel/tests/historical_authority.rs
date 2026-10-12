@@ -13,7 +13,7 @@ use historical_authority::{
 use nous_core::*;
 use nous_memory::{AssociationBasis, AssociationBasisClass, AssociationPolarity};
 use nous_memory::{CreateTagRequest, ReviseTagInput, TagContent, TagExpectation};
-use nous_runtime::{CognitiveRuntimeService, ManualCognitiveClock};
+use nous_runtime::ManualCognitiveClock;
 use nous_subject::{CognitiveSeedInput, CreateSubject};
 use std::sync::Arc;
 use test_support::*;
@@ -24,7 +24,14 @@ use test_support::*;
 )]
 async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     let (root, url, _pg) = database().await;
-    let mut rt = open_runtime_with_serving(&url, &root, true, false, true).await;
+    let start = chrono::Utc::now();
+    let clock = Arc::new(ManualCognitiveClock::new(start));
+    let rt = nous_kernel::NousRuntime::open_with_clock(
+        runtime_options(&url, &root, true, false, true),
+        clock.clone(),
+    )
+    .await
+    .unwrap();
     let subject = rt
         .subjects
         .create_subject(CreateSubject {
@@ -41,17 +48,6 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .await
         .unwrap()
         .subject_id;
-    let start = chrono::Utc::now();
-    let clock = Arc::new(ManualCognitiveClock::new(start));
-    rt.cognition = CognitiveRuntimeService::with_clock(
-        rt.store.clone(),
-        rt.cognition.resident_limit,
-        rt.configuration.clone(),
-        clock.clone(),
-    )
-    .unwrap();
-    rt.memory.as_mut().unwrap().cognition = rt.cognition.clone();
-    rt.material.cognition = rt.cognition.clone();
     let source = observation(&rt, subject, "original authority fact").await;
     let owner = rt.require_memory().unwrap();
     let tag = owner
@@ -229,11 +225,12 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .advance_to(subject, start + chrono::Duration::seconds(20))
         .unwrap();
     owner
-        .suppress(
+        .mutate_memory_lifecycle(
             subject,
             memory.object.memory_id,
             OperationId::new(),
             revised.object.object_epoch,
+            nous_memory::LifecycleAction::Suppress,
         )
         .await
         .unwrap();

@@ -15,10 +15,10 @@ pub(crate) async fn append(
     edges: &mut Vec<TopologyEdgeSource>,
 ) -> Result<()> {
     let rows = sqlx::query(r#"
-SELECT 'memory_revision' kind,current_revision_id::text value FROM memory_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
-UNION ALL SELECT 'episode_revision',current_revision_id::text FROM episode_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
-UNION ALL SELECT 'journal_revision',current_revision_id::text FROM journal_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
-UNION ALL SELECT 'cognitive_schema_revision',current_revision_id::text FROM cognitive_schemas WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal' AND purge_state='normal'
+SELECT 'memory_revision' kind,current_revision_id::text value FROM memory_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal'
+UNION ALL SELECT 'episode_revision',current_revision_id::text FROM episode_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal'
+UNION ALL SELECT 'journal_revision',current_revision_id::text FROM journal_objects WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal'
+UNION ALL SELECT 'cognitive_schema_revision',current_revision_id::text FROM cognitive_schemas WHERE subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal'
 "#).bind(subject.0).fetch_all(&mut **tx).await.map_err(db)?;
     let live = rows
         .into_iter()

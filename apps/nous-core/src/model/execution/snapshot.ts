@@ -1,18 +1,16 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { z } from "zod";
 import { canonicalDigest } from "../../digest.js";
-import { roleNames, type ModelRole } from "../roles.js";
+import { type ModelRole } from "../roles.js";
 import {
-  modelExecutionSchema,
+  type ModelExecutionConfiguration,
   modelRoleProblem,
   type RolePolicy,
 } from "../configuration.js";
 import { type ModelProfile, type ExecutionProfile } from "../profiles.js";
 import { type PromptAsset } from "../prompts.js";
 import { modelRoleIdentity } from "../identity.js";
-import { modelImplementations } from "../implementation.js";
 import { providerContractForRole } from "../schemas/contracts.js";
 
 export type ModelProducerMetadata = {
@@ -46,26 +44,12 @@ export type ReadyRole = {
   profileDigest: string;
   configDigest: string;
 };
-export const snapshotSchema = z.strictObject({
-  format: z.literal("nous.model.execution"),
-  implementationDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  outputSchemaDigest: z
-    .string()
-    .regex(/^[a-f0-9]{64}$/)
-    .optional(),
-  configuration: modelExecutionSchema,
-  role: z.enum(roleNames),
-  prompt: z
-    .strictObject({
-      id: z.string().max(1024),
-      digest: z.string().regex(/^[a-f0-9]{64}$/),
-      text: z.string().max(131072),
-    })
-    .optional(),
-  profileDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  configDigest: z.string().regex(/^[a-f0-9]{64}$/),
-});
-export type ModelRoleSnapshot = z.infer<typeof snapshotSchema>;
+export type ModelRoleSnapshot = {
+  configuration: ModelExecutionConfiguration;
+  role: ModelRole;
+  prompt?: PromptAsset;
+  configDigest: string;
+};
 
 /** One binding owner for startup admission and frozen execution recovery. */
 export function resolveRole(
@@ -113,22 +97,10 @@ export function resolveRole(
 }
 
 export function hydrateRole(
-  input: ModelRoleSnapshot,
+  snapshot: ModelRoleSnapshot,
   executionName: string,
   credentialOrigins: ReadonlySet<string>,
 ): ReadyRole {
-  const snapshot = snapshotSchema.parse(input);
-  if (snapshot.implementationDigest !== modelImplementations.provider)
-    throw new Error("Reserved model implementation unavailable");
-  if (
-    snapshot.outputSchemaDigest !==
-    providerContractForRole(snapshot.role)?.digest
-  )
-    throw new Error("Reserved model output contract unavailable");
-  if (
-    !snapshot.configuration.roles[snapshot.role]?.routes.includes(executionName)
-  )
-    throw new Error("Reserved execution route is absent");
   const role = resolveRole(
     snapshot.configuration,
     snapshot.role,

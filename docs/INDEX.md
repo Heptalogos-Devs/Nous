@@ -6,6 +6,7 @@
 
 - [文档说明](README.md)
 - [架构入口](architecture/README.md) / [实现总览](architecture/current-implementation.md)
+- [功能、数据流与内部能力地图](architecture/function-and-ownership.md)
 - [状态入口](current-state/README.md) / [当前状态](current-state/CURRENT_STATE.md)
 - [产品合同路由](specs/INDEX.md)
 

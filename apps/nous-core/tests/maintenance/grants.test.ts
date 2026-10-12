@@ -19,10 +19,10 @@ import {
 import { subject, need, fixture } from "./support.js";
 
 describe("bounded maintenance grants", () => {
-  it("does not lease model work without executable roles or model budget", async () => {
+  it("does not select model work without executable roles or model budget", async () => {
     const state = fixture();
     let attempts = 0;
-    const claim = vi.fn(async (input: { allowedKinds: string[] }) => {
+    const select = vi.fn(async (input: { allowedKinds: string[] }) => {
       if (!input.allowedKinds.includes(need.kind)) return { needs: [] };
       attempts++;
       return { needs: [need] };
@@ -32,9 +32,8 @@ describe("bounded maintenance grants", () => {
         enabled: true,
         maxOperations: 4,
         experienceBatchSize: 256,
-        workerLeaseSeconds: 120,
       })),
-      claimMaintenance: claim,
+      selectMaintenance: select,
       finishMaintenance: vi.fn(),
     });
     const input = {
@@ -44,8 +43,7 @@ describe("bounded maintenance grants", () => {
       maxModelCalls: 1,
       maxElapsedMs: 1000,
     };
-    for (let tick = 0; tick < 10; tick++)
-      await grantMaintenance(state.kernel, state.models, input);
+    await grantMaintenance(state.kernel, state.models, input);
     expect(attempts).toBe(0);
     vi.spyOn(state.models.invocations, "capabilities", "get").mockReturnValue([
       { name: "model.journal_synthesis", state: "READY", detail: "Configured" },
@@ -57,57 +55,15 @@ describe("bounded maintenance grants", () => {
     expect(attempts).toBe(0);
     expect(state.synthesize).not.toHaveBeenCalled();
   });
-  it("retains lease ownership while acknowledging an expired opportunity", async () => {
-    const state = fixture();
-    const claim = vi.fn(async () => ({ needs: [need] }));
-    const finish = vi.fn(async () => ({}));
-    Object.assign(state.kernel.maintenance, {
-      getMaintenancePolicy: vi.fn(async () => ({
-        enabled: true,
-        maxOperations: 1,
-        experienceBatchSize: 256,
-        workerLeaseSeconds: 120,
-        retryInitialSeconds: 1,
-        retryMaxSeconds: 5,
-        retryMaxAttempts: 4,
-      })),
-      claimMaintenance: claim,
-      finishMaintenance: finish,
-    });
-    state.synthesize.mockRejectedValue(
-      new ConnectError("Opportunity expired", Code.DeadlineExceeded),
-    );
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const result = await grantMaintenance(state.kernel, state.models, {
-        $typeName: "nous.wave.v1alpha1.MaintenanceGrantRequest",
-        subjectId: subject,
-        maxOperations: 1,
-        maxModelCalls: 1,
-        maxElapsedMs: 120000,
-      });
-      expect(claim).toHaveBeenCalledWith(
-        expect.objectContaining({ leaseSeconds: 136 }),
-        expect.anything(),
-      );
-      expect(finish).toHaveBeenCalledWith(
-        expect.objectContaining({ disposition: "retry" }),
-        expect.objectContaining({ timeoutMs: 5000 }),
-      );
-      expect(result.results[0]?.status).toBe("retry");
-    } finally {
-      log.mockRestore();
-    }
-  });
   it("defers unfinished work when the granted opportunity actually expires", async () => {
     const state = fixture();
-    const originalSave = state.kernel.modelWorkflow.saveWorkflow;
+    const originalSave = state.kernel.modelWorkflow.saveOperation;
     const save = vi.fn(async (...args: Parameters<typeof originalSave>) => {
       expect(args[1]?.signal?.aborted).toBe(false);
       await new Promise((resolve) => setTimeout(resolve, 10));
       return originalSave(...args);
     });
-    state.kernel.modelWorkflow.saveWorkflow = save;
+    state.kernel.modelWorkflow.saveOperation = save;
     const finish = vi.fn(
       async (_input: { nextDue?: { seconds: bigint } }) => ({}),
     );
@@ -116,10 +72,9 @@ describe("bounded maintenance grants", () => {
         enabled: true,
         maxOperations: 1,
         experienceBatchSize: 256,
-        workerLeaseSeconds: 120,
         retryMaxAttempts: 4,
       })),
-      claimMaintenance: vi.fn(async () => ({ needs: [need] })),
+      selectMaintenance: vi.fn(async () => ({ needs: [need] })),
       finishMaintenance: finish,
     });
     state.synthesize.mockImplementation(
@@ -198,12 +153,11 @@ describe("bounded maintenance grants", () => {
         enabled: true,
         maxOperations: 4,
         experienceBatchSize: 256,
-        workerLeaseSeconds: 120,
         retryInitialSeconds: 2,
         retryMaxSeconds: 5,
         retryMaxAttempts: 4,
       })),
-      claimMaintenance: vi.fn(async () => ({
+      selectMaintenance: vi.fn(async () => ({
         needs: [{ ...need, retryCount }],
       })),
       finishMaintenance: finish,
@@ -247,12 +201,11 @@ describe("bounded maintenance grants", () => {
           enabled: true,
           maxOperations: 4,
           experienceBatchSize: 7,
-          workerLeaseSeconds: 120,
           maxModelCalls: 4,
           maxElapsedMs: 60000,
           pollIntervalSeconds: 30,
         })),
-        claimMaintenance: vi.fn(async (input: { subjectId: string }) => ({
+        selectMaintenance: vi.fn(async (input: { subjectId: string }) => ({
           needs: [
             { ...need, subjectId: input.subjectId, kind: "episode_segment" },
           ],
@@ -295,18 +248,17 @@ describe("bounded maintenance grants", () => {
       new ConnectError("owner invariant", Code.Internal),
     );
     const finish = vi.fn(async () => ({}));
-    const claim = vi.fn(async () => ({ needs: [need] }));
+    const select = vi.fn(async () => ({ needs: [need] }));
     Object.assign(state.kernel.maintenance, {
       getMaintenancePolicy: vi.fn(async () => ({
         enabled: true,
         maxOperations: 4,
         experienceBatchSize: 256,
-        workerLeaseSeconds: 120,
         retryInitialSeconds: 1,
         retryMaxSeconds: 5,
         retryMaxAttempts: 4,
       })),
-      claimMaintenance: claim,
+      selectMaintenance: select,
       finishMaintenance: finish,
     });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -319,7 +271,7 @@ describe("bounded maintenance grants", () => {
         maxElapsedMs: 1000,
       });
       expect(result.results[0]?.status).toBe("internal_failure");
-      expect(claim).toHaveBeenCalledTimes(1);
+      expect(select).toHaveBeenCalledTimes(1);
       expect(finish).toHaveBeenCalledWith(
         expect.objectContaining({
           disposition: "blocked",

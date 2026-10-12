@@ -48,31 +48,34 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         insert_source_region(&rt, subject, artifact, cobalt_start, body.len() as u64).await;
     let representation = rt
         .material
-        .persist_derived_representation(DerivedRepresentation {
-            derived_representation_id: DerivedRepresentationId::new(),
-            subject_id: subject,
-            inputs: sources
-                .iter()
-                .enumerate()
-                .map(|(ordinal, source)| DerivationInput {
-                    ordinal: ordinal as u32,
-                    reference: CognitiveRef::SourceRegion(
-                        source.source_region.as_ref().unwrap().source_region_id,
-                    ),
-                    role: "source".into(),
-                })
-                .collect(),
-            strategy: "deterministic-test".into(),
-            representation_kind: RepresentationKind::ExtractedText,
-            producer: consolidation_producer(),
-            revision: 1,
-            payload_text: Some(body.into()),
-            payload_json: None,
-            payload_artifact_id: None,
-            quality: serde_json::json!({}),
-            created_at: clock.now(subject),
-            supersedes: None,
-        })
+        .persist_derived_representation(
+            DerivedRepresentation {
+                derived_representation_id: DerivedRepresentationId::new(),
+                subject_id: subject,
+                inputs: sources
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, source)| DerivationInput {
+                        ordinal: ordinal as u32,
+                        reference: CognitiveRef::SourceRegion(
+                            source.source_region.as_ref().unwrap().source_region_id,
+                        ),
+                        role: "source".into(),
+                    })
+                    .collect(),
+                strategy: "deterministic-test".into(),
+                representation_kind: RepresentationKind::ExtractedText,
+                producer: consolidation_producer(),
+                revision: 1,
+                payload_text: Some(body.into()),
+                payload_json: None,
+                payload_artifact_id: None,
+                quality: serde_json::json!({}),
+                created_at: clock.now(subject),
+                supersedes: None,
+            },
+            None,
+        )
         .await
         .unwrap();
     let derived_amber = derived_region(

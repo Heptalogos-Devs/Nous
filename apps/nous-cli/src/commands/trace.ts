@@ -4,8 +4,8 @@
 import { CliError } from "../agent.js";
 import type { NousClient } from "@nous-wave/client";
 import type { CliEnvironment } from "../runtime.js";
-import { restoreProtocolData, clientDataSchemas } from "@nous-wave/client/data";
-const { CognitiveRefSchema } = clientDataSchemas;
+import { create } from "@bufbuild/protobuf";
+import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 
 export async function traceCommands(
   env: CliEnvironment,
@@ -16,19 +16,20 @@ export async function traceCommands(
   const reference = await resolveReference(refText);
   const input = { subjectId, id: reference.value };
   let cognition: unknown;
-  let bases: Awaited<ReturnType<NousClient["memory"]["revision"]>>["basis"] =
-    [];
+  let bases: Awaited<
+    ReturnType<NousClient["memory"]["getMemoryRevision"]>
+  >["basis"] = [];
   let producerSignatureId: string | undefined;
   switch (reference.kind) {
     case "memory_revision": {
-      const value = await client.memory.revision(input);
+      const value = await client.memory.getMemoryRevision(input);
       cognition = value;
       bases = value.basis;
       producerSignatureId = value.producerSignatureId;
       break;
     }
     case "cognitive_schema_revision": {
-      const value = await client.concepts.getSchemaRevision(input);
+      const value = await client.concepts.getCognitiveSchemaRevision(input);
       cognition = value;
       bases = value.evidenceLinks.flatMap((link) =>
         link.basis ? [link.basis] : [],
@@ -68,23 +69,23 @@ export async function traceCommands(
     if (visited.size >= 512) throw new Error("Trace material budget exceeded");
     visited.add(key);
     if (materialRef.kind === "derived_representation") {
-      const representation = await client.material.representation({
+      const representation = await client.material.getDerivedRepresentation({
         subjectId,
         id: materialRef.value,
       });
       derivations.push({
-        reference: restoreProtocolData({ ...materialRef }, CognitiveRefSchema),
+        reference: create(CognitiveRefSchema, materialRef),
         representation,
       });
       for (const ancestor of representation.inputs)
         if (ancestor.reference) await traceMaterial(ancestor.reference);
     } else if (materialRef.kind === "derived_region") {
-      const region = await client.material.derivedRegion({
+      const region = await client.material.getDerivedRegion({
         subjectId,
         id: materialRef.value,
       });
       derivations.push({
-        reference: restoreProtocolData({ ...materialRef }, CognitiveRefSchema),
+        reference: create(CognitiveRefSchema, materialRef),
         region,
       });
       await traceMaterial({
@@ -92,7 +93,7 @@ export async function traceCommands(
         value: region.representationId,
       });
     } else if (materialRef.kind === "source_region") {
-      const region = await client.material.sourceRegion({
+      const region = await client.material.getSourceRegion({
         subjectId,
         id: materialRef.value,
       });
@@ -101,7 +102,7 @@ export async function traceCommands(
         id: region.artifactId,
       });
       derivations.push({
-        reference: restoreProtocolData({ ...materialRef }, CognitiveRefSchema),
+        reference: create(CognitiveRefSchema, materialRef),
         region,
         artifact,
       });
@@ -110,7 +111,7 @@ export async function traceCommands(
   for (const basis of bases) {
     if (basis.basis.case !== "evidence") continue;
     const evidence = basis.basis.value;
-    const occurrence = await client.material.occurrence({
+    const occurrence = await client.material.getOccurrence({
       subjectId,
       id: evidence.occurrenceId,
     });
@@ -122,7 +123,7 @@ export async function traceCommands(
       : undefined;
     const representation =
       evidence.locator.case === "derivedRepresentationId"
-        ? await client.material.representation({
+        ? await client.material.getDerivedRepresentation({
             subjectId,
             id: evidence.locator.value,
           })
@@ -145,13 +146,13 @@ export async function traceCommands(
     sources.push({ evidence, occurrence, artifact, representation });
   }
   const producer = producerSignatureId
-    ? await client.material.producer({
+    ? await client.material.getProducer({
         subjectId,
         id: producerSignatureId,
       })
     : undefined;
   return {
-    reference: restoreProtocolData({ ...reference }, CognitiveRefSchema),
+    reference: create(CognitiveRefSchema, reference),
     cognition,
     producer,
     sources,

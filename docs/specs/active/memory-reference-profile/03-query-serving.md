@@ -60,7 +60,7 @@ Episode/Journal 使用 current lifecycle 与适用的 hard constraints，不参�
 
 ## Serving
 
-物理 Serving family 只有 lexical、dense、topology 与 concept；Exact lane 直接使用 frozen exact bindings / owner SQL，不建立 postings 资产。旧的非当前 family generation 由 Serving 回收流程退出 current，保留原有 reader、research pin 与 grace 保护。
+物理 Serving family 只有 lexical、dense、topology 与 concept；Exact lane 直接使用 frozen exact bindings / owner SQL，不建立 postings 资产。Generation 回收在显式 Serving refresh / maintenance refresh 执行；reader、research pin 与 grace 保护实际 current/history 资产，query 不扫描整个 Serving 目录。
 
 每类 projection 使用 immutable generation，绑定 authority watermark、producer/build identity、configuration digest、artifact checksum 和 vector-space identity。Authority 提交只使 generation 失效；重建生成新的 generation id，但语义结果必须仍指向同一 Authority identity/revision。watermark race 不得发布过期快照为 current。
 
@@ -95,7 +95,7 @@ Representation 顺序固定：Intent、Temporal orientation、Entities、Concept
 
 `retrieval.query.representation` 是 typed Developer/SubjectOverrideAllowed/Live policy：配置只有 `total_chars=8192` 与 `max_context_items=16`；durable context_text 上限 64 KiB，total_chars 默认 8192、可配置到 32768；Current work 不再固定 1024 上限，必需 intent 超界拒绝而不截断。预算按 Intent → 显式时间/selector/semantic cue → WorkContext Entity/Tag → Current work purpose/questions/text → pinned cognition → ResidentSet/旁路背景分配，随后按固定 section 顺序渲染。同一 descriptor 取其最高输入优先级；截断同时报告 section 和受影响的输入来源类别。`sha256` 对实际 representation text 计算。
 
-Core 查询先取得一次冻结 BoundQuery 的 bounded preparation token，再为完整 representation 生成最多一份 embedding，Kernel 直接消费该 token，保持 ConfigSnapshot 与 context 一致。Runtime 的 QueryReservation 将不可变 BoundQuery 与 infrastructure QueryLease 分开；Core 从同一执行机会传入剩余 lease，激活后的 preparation 和 execution/validation ticket 继承该原始截止时间，不重新开始计时，也不另读一个 Query lease 默认值。Tickets 共用 query slots，single-use、Subject-bound，并在 failure/finalize/release/expiry 清理；最终 validation 在使用和反馈发布前仍须有效。Dense、EPA/VCP sensing 与 expression leaves 共享 request embedding（包括 provider failure），lexical leaf 仍使用该 leaf intent；All/Any 的集合语义保持不变。Rerank 接收同一完整 representation 和原 validated candidates。
+Core 查询先取得一次冻结 BoundQuery 的 bounded preparation token，再为完整 representation 生成最多一份 embedding，Kernel 直接消费该 token，保持 ConfigSnapshot 与 context 一致。Runtime 的 QueryReservation 将不可变 BoundQuery 与 infrastructure QueryLease 分开；Core 从同一执行机会传入剩余 lease，激活后的 preparation 和 execution/validation ticket 继承该原始截止时间，不重新开始计时，也不另读一个 Query lease 默认值。Tickets 共用 query slots，single-use、Subject-bound，并在 failure/finalize/release/expiry 清理；最终 validation 在使用和反馈发布前仍须有效。Dense、EPA/VCP sensing 与 expression leaves 显式共享同一 typed request embedding；受控 provider fallback 在 request 内复用成功或失败结果，lexical leaf 仍使用该 leaf intent；All/Any 的集合语义保持不变。Rerank 接收同一完整 representation 和原 validated candidates。
 
 Core 的意图编译、prepared Query、embedding/concept/rerank/Resource 调用与 projection 共用 `core_execution.opportunity` work clock；最后 release 使用其有界 cleanup。官方 Client 的 Query、recall、prepareQuery、projection 与 managedContext 从 active Configuration 派生响应等待，较短 caller deadline/signal 保留。单个 provider timeout 与候选/算法预算各自保持 owning contract，不能重置该外层机会。
 
@@ -119,3 +119,7 @@ Material owner validates and materializes Artifact/Occurrence/SourceRegion/Deriv
 Host query concept role 只能选择 bounded catalog key 或提出 ephemeral hypotheses；模型不能构造 Tag identity/写 Authority。Required/optional/forbidden 分别沿既有能力合同处理。Historical embedding discovery/commit 使用同一 prepared token 的 frozen Owner view，复用 existing material cache；query embedding 不因 lane/profile 再生成。
 
 Runtime 保存有界 query feedback record：prepared/activation digest、bounded signals、实际返回的 exact revision refs、expiry，默认七天；不保存检索正文。ReportUse 的 query_id 必须同 Subject、未过期且属于 returned membership。稳定 duplicate 可在 record expiry 后重试，accepted UseEvent 不随 feedback 清理删除。Presented 不触发概念 review；refutation 不是 positive reinforcement。Maintenance planner 消费 bounded signals，但只有 Host grant 才可调用模型和提交 canonical Concept mutations。
+
+Serving cache 不承担跨 build 的隐式升级或迁移。资产身份由当前 Authority view/watermark、实际 policy、vector space 与 artifact content checksum 表达；打开时执行真实格式/数值 validation。代码或依赖升级需要显式清理可重建 Serving cache；不扫描源码生成版本 marker。每类 durable generation identity 同时用于 diagnostics 与 read pin，不另分配 process-local generation counter。
+
+Generation 文件位置由当前 ServingRoot + generation UUID 派生，不把绝对 operator 路径写入持久 catalog。显式 reclamation 在 current、research pin、grace 与 live read 检查后删除物理 cache 与对应 catalog row，不保留无 consumer 的 reclaimed tombstone。跨中断不提供独立 cache repair protocol；残留 owner staging/UUID 目录可由下次显式 cleanup 清理，认知 Authority 不受影响。

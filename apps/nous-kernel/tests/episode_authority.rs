@@ -110,11 +110,12 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
     );
     assert!(
         memory
-            .reaccept_episode(
+            .mutate_episode_lifecycle(
                 subject,
                 withdrawn.object.episode_id,
                 nous_core::OperationId::new(),
-                withdrawn.object.object_epoch
+                withdrawn.object.object_epoch,
+                nous_memory::LifecycleAction::Reaccept
             )
             .await
             .is_err()
@@ -331,7 +332,7 @@ async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
     let kinds = vec!["episode_resegment".into()];
     let needs = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 8, 60, None)
+        .select_maintenance(subject, &kinds, 8, None)
         .await
         .unwrap();
     let need = needs
@@ -340,15 +341,16 @@ async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
         .unwrap();
     let plan = service
         .plan_maintenance(tonic::Request::new(k::PlanMaintenanceRequest {
-            claimed: Some(k::MaintenanceNeed {
+            selected: Some(k::MaintenanceNeed {
                 need_id: need.need_id.to_string(),
                 subject_id: subject.0.to_string(),
                 kind: need.kind.clone(),
                 scope_kind: need.scope_kind.clone(),
                 scope_ref: need.scope_ref.clone(),
                 trigger_authority_seq: need.trigger_authority_seq,
+                trigger_revision: need.trigger_revision,
+                state: need.state.clone(),
                 due_at: Some(test_timestamp(need.due_at)),
-                lease_token: need.lease_token.map(|id| id.to_string()),
                 created_at: Some(test_timestamp(need.created_at)),
                 updated_at: Some(test_timestamp(need.updated_at)),
                 ..Default::default()

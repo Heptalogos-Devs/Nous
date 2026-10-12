@@ -119,119 +119,25 @@ describe("maintenance fixed workflow retry", () => {
       ).status,
     ).toBe("rejected_invalid");
     expect(invalid.commit).not.toHaveBeenCalled();
-    for (const code of [
-      DomainErrorCode.OPERATION_ID_CONFLICT,
-      DomainErrorCode.LEASE_LOST,
-    ]) {
-      const conflict = fixture();
-      const error = domainError(
-        "Different owner failure with the same transport category",
-        Code.Aborted,
-        {
-          code,
-          recovery:
-            code === DomainErrorCode.LEASE_LOST
-              ? ErrorRecovery.RETRY_OPERATION
-              : ErrorRecovery.NEW_OPERATION,
-        },
-      );
-      conflict.commit.mockRejectedValueOnce(error);
-      await expect(
-        runModelMaintenance(
-          conflict.kernel,
-          conflict.models,
-          need,
-          {},
-          () => {},
-        ),
-      ).rejects.toBe(error);
-      expect(conflict.refresh).not.toHaveBeenCalled();
-      expect(
-        vi
-          .mocked(conflict.kernel.modelWorkflow.saveWorkflow)
-          .mock.calls.some(([input]) => input.outcome !== undefined),
-      ).toBe(false);
-    }
-  });
-
-  it("executes consolidation through the typed owner and replays a no-change outcome", async () => {
-    const state = fixture();
-    const consolidationNeed = {
-      ...need,
-      kind: "memory_consolidate",
-      scopeKind: "episode_revision",
-      scopeRef: revision,
-    };
-    const consolidationPlan = create(MaintenancePlanSchema, {
-      ...plan,
-      consolidationSource: create(ExpectedCognitionSchema, {
-        reference: { kind: "episode_revision", value: revision },
-        expectedEpoch: 1n,
-      }),
-      maxConsolidationActions: 8,
-    });
-    state.getPlan.mockResolvedValue(consolidationPlan);
-    const model = vi.spyOn(state.models, "consolidate").mockImplementation(
-      admitStub({
-        value: {
-          actions: [
-            {
-              action: "skip",
-              reason: "The source adds no reusable cognition.",
-            },
-          ],
-        },
-        execution: {
-          attempts: [
-            {
-              executionProfile: "stub",
-              modelProfile: "stub",
-              status: "succeeded" as const,
-              latencyMs: 0,
-            },
-          ],
-          successfulExecutionProfile: "stub",
-        },
-        producerMetadata: {
-          modelRole: "journal_synthesis" as const,
-          modelProfile: "stub",
-          executionProfile: "stub",
-          inferenceControlsDigest: "e".repeat(64),
-          rolePolicyDigest: "f".repeat(64),
-          implementation: "semantic-stub",
-          protocol: "openai-chat",
-          model: "stub",
-          profileDigest: "a".repeat(64),
-          promptId: "program/memory/consolidation.md",
-          promptDigest: "b".repeat(64),
-          outputSchemaDigest: "c".repeat(64),
-          configDigest: "d".repeat(64),
-        },
-      }),
+    const conflict = fixture();
+    const error = domainError(
+      "Different owner failure with the same transport category",
+      Code.Aborted,
+      {
+        code: DomainErrorCode.OPERATION_ID_CONFLICT,
+        recovery: ErrorRecovery.NEW_OPERATION,
+      },
     );
+    conflict.commit.mockRejectedValueOnce(error);
+    await expect(
+      runModelMaintenance(conflict.kernel, conflict.models, need, {}, () => {}),
+    ).rejects.toBe(error);
+    expect(conflict.refresh).not.toHaveBeenCalled();
     expect(
-      (
-        await runModelMaintenance(
-          state.kernel,
-          state.models,
-          consolidationNeed,
-          {},
-          () => {},
-        )
-      ).status,
-    ).toBe("no_change");
-    expect(
-      (
-        await runModelMaintenance(
-          state.kernel,
-          state.models,
-          consolidationNeed,
-          {},
-          () => {},
-        )
-      ).status,
-    ).toBe("no_change");
-    expect(model).toHaveBeenCalledTimes(1);
+      vi
+        .mocked(conflict.kernel.modelWorkflow.saveOperation)
+        .mock.calls.some(([input]) => input.outcome !== undefined),
+    ).toBe(false);
   });
 });
 
@@ -259,7 +165,7 @@ it("routes concepts through bounded input and replays the saved outcome without 
     }),
   );
   const generate = vi
-    .spyOn(state.models, "maintainConcepts")
+    .spyOn(state.models.invocations, "generate")
     .mockImplementation(
       admitStub({
         value: { actions: [{ action: "no_change" }] },
@@ -312,7 +218,8 @@ it("routes concepts through bounded input and replays the saved outcome without 
     ).status,
   ).toBe("no_change");
   expect(generate).toHaveBeenCalledTimes(1);
-  expect(generate.mock.calls[0]?.[0]).toBe(modelInput);
+  expect(generate.mock.calls[0]?.[0]).toBe("concept_maintenance");
+  expect(generate.mock.calls[0]?.[1].content).toBe(modelInput);
   expect(reserveCall).toHaveBeenCalledTimes(1);
   expect(state.synthesize).not.toHaveBeenCalled();
 });
@@ -342,31 +249,33 @@ it("replays a committed consolidation action after a lost response without anoth
     }),
   );
   const metadata = (await state.synthesize("fixture")).producerMetadata;
-  const model = vi.spyOn(state.models, "consolidate").mockImplementation(
-    admitStub({
-      value: consolidationSchema.parse({
-        actions: [
-          { action: "create_memory", content: item },
-          {
-            action: "create_memory",
-            content: { ...item, basisKeys: ["invented"] },
-          },
-        ],
+  const model = vi
+    .spyOn(state.models.invocations, "generate")
+    .mockImplementation(
+      admitStub({
+        value: consolidationSchema.parse({
+          actions: [
+            { action: "create_memory", content: item },
+            {
+              action: "create_memory",
+              content: { ...item, basisKeys: ["invented"] },
+            },
+          ],
+        }),
+        execution: {
+          attempts: [
+            {
+              executionProfile: "stub",
+              modelProfile: "stub",
+              status: "succeeded" as const,
+              latencyMs: 0,
+            },
+          ],
+          successfulExecutionProfile: "stub",
+        },
+        producerMetadata: metadata,
       }),
-      execution: {
-        attempts: [
-          {
-            executionProfile: "stub",
-            modelProfile: "stub",
-            status: "succeeded" as const,
-            latencyMs: 0,
-          },
-        ],
-        successfulExecutionProfile: "stub",
-      },
-      producerMetadata: metadata,
-    }),
-  );
+    );
   const receipts = new Map<string, { revisionId: string }>();
   let lost = true;
   const form = vi.fn(async (request: { operationId: string }) => {

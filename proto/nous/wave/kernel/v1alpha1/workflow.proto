@@ -21,7 +21,7 @@ service KernelMaintenanceService {
   rpc RefreshMaintenance(RefreshMaintenanceRequest) returns (google.protobuf.Empty);
   rpc PlanMaintenance(PlanMaintenanceRequest) returns (MaintenancePlan);
   rpc GetMaintenancePolicy(nous.wave.v1alpha1.SubjectRequest) returns (MaintenancePolicy);
-  rpc ClaimMaintenance(ClaimMaintenanceRequest) returns (ClaimMaintenanceResponse);
+  rpc SelectMaintenance(SelectMaintenanceRequest) returns (SelectMaintenanceResponse);
   rpc FinishMaintenance(FinishMaintenanceRequest) returns (google.protobuf.Empty);
   rpc OrganizeExperience(OrganizeExperienceRequest) returns (OrganizeExperienceResponse);
   rpc ApplyEpisodePartition(ApplyEpisodePartitionRequest) returns (ApplyEpisodePartitionResponse);

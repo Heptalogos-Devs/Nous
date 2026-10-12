@@ -1,6 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { page } from "../content.js";
 import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 
@@ -10,6 +11,8 @@ export async function sessionCommands(
   reference?: string,
 ) {
   const { client, state, subjectId, save, required } = env;
+  if (action === "list")
+    return client.runtime.listSessions({ subjectId, page: page(env) });
   if (reference !== undefined && action !== "show")
     throw new CliError(
       "INVALID_ARGUMENT",
@@ -25,16 +28,16 @@ export async function sessionCommands(
               "session",
             )
           ).value;
-    return client.cognition.getSession({ subjectId, id });
+    return client.runtime.getSession({ subjectId, id });
   }
   if (action === "open") {
-    const session = await client.cognition.openSession({ subjectId });
+    const session = await client.runtime.openSession({ subjectId });
     await save({ ...state, sessionId: session.sessionId });
     return session;
   }
   const id = required(state.sessionId, "Selected Session (run session open)");
   if (action === "close") {
-    const session = await client.cognition.closeSession({ subjectId, id });
+    const session = await client.runtime.closeSession({ subjectId, id });
     await save({ ...state, sessionId: undefined });
     return session;
   }

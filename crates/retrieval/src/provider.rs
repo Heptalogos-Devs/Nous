@@ -11,12 +11,7 @@ pub struct TextEmbeddingRequest {
     pub query: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TextEmbeddingOutput {
-    pub vector: Vec<f32>,
-    pub space: EmbeddingSpaceSignature,
-    pub producer: ProducerSignature,
-}
+use nous_runtime::QuerySemanticEmbedding;
 
 #[async_trait::async_trait]
 pub trait TextEmbeddingProvider: Send + Sync {
@@ -25,13 +20,13 @@ pub trait TextEmbeddingProvider: Send + Sync {
     fn producers(&self) -> Vec<ProducerSignature> {
         vec![self.producer()]
     }
-    async fn embed(&self, request: TextEmbeddingRequest) -> Result<TextEmbeddingOutput>;
+    async fn embed(&self, request: TextEmbeddingRequest) -> Result<QuerySemanticEmbedding>;
 }
 
 pub(crate) struct RequestEmbedding {
     inner: std::sync::Arc<dyn TextEmbeddingProvider>,
     text: String,
-    output: tokio::sync::OnceCell<TextEmbeddingOutput>,
+    output: tokio::sync::OnceCell<std::result::Result<QuerySemanticEmbedding, String>>,
 }
 impl RequestEmbedding {
     pub(crate) fn new(inner: std::sync::Arc<dyn TextEmbeddingProvider>, text: String) -> Self {
@@ -53,26 +48,21 @@ impl TextEmbeddingProvider for RequestEmbedding {
     fn producers(&self) -> Vec<ProducerSignature> {
         self.inner.producers()
     }
-    async fn embed(&self, request: TextEmbeddingRequest) -> Result<TextEmbeddingOutput> {
+    async fn embed(&self, request: TextEmbeddingRequest) -> Result<QuerySemanticEmbedding> {
         if !request.query || request.text != self.text {
             return Err(Error::Invalid(
                 "embedding disagrees with immutable query representation".into(),
             ));
         }
         self.output
-            .get_or_try_init(|| async {
-                for producer in self.producers() {
-                    if let Some(output) = crate::material::query_material_output(
-                        &request.text,
-                        &self.space(),
-                        &producer,
-                    ) {
-                        return Ok(output);
-                    }
-                }
-                self.inner.embed(request).await
+            .get_or_init(|| async {
+                self.inner
+                    .embed(request)
+                    .await
+                    .map_err(|error| error.to_string())
             })
             .await
-            .cloned()
+            .clone()
+            .map_err(Error::Unavailable)
     }
 }

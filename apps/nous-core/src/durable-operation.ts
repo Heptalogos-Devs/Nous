@@ -2,20 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
-import { Code } from "@connectrpc/connect";
-import {
-  domainError,
-  DomainErrorCode,
-  ErrorRecovery,
-} from "@nous-wave/client/errors";
 import {
   WorkflowPayloadSchema,
   ExecutionTelemetrySchema,
   type WorkflowSnapshot,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import type {
-  FindWorkflowRequest,
-  WorkflowReservation,
+  OperationIdentity,
+  OperationRecord,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import type { CognitiveRef } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { KernelClient } from "./kernel-client.js";
@@ -23,11 +17,7 @@ import { executionOptions, type ExecutionOptions } from "./execution.js";
 import { failedExecutionTelemetry } from "./model/execution/routes.js";
 
 export type Dependency = Pick<CognitiveRef, "kind" | "value">;
-export type MutationExecutor = <T>(
-  operationId: string,
-  commit: () => Promise<T>,
-) => Promise<T>;
-type Identity = Omit<FindWorkflowRequest, "$typeName">;
+type Identity = Omit<OperationIdentity, "$typeName">;
 type Telemetry = MessageInitShape<typeof ExecutionTelemetrySchema>;
 
 export function workflowPayload(
@@ -40,48 +30,35 @@ export function workflowPayload(
   });
 }
 
-/** Lease mechanics are shared. Domain code owns replay, commit and rejection meaning. */
-export async function reserveOperation(
+/** Records retain paid proposals and exact outcomes; Core serializes each operation. */
+export async function startOperation(
   kernel: KernelClient,
   identity: Identity,
   snapshot: Omit<WorkflowSnapshot, "$typeName">,
   options: ExecutionOptions,
 ) {
   const calls = executionOptions(kernel.execution.opportunity, options);
-  const record = await kernel.modelWorkflow.reserveWorkflow(
+  const record = await kernel.modelWorkflow.startOperation(
     {
-      ...identity,
+      identity,
       snapshot,
-      leaseSeconds: calls.opportunity.leaseSeconds,
     },
     calls,
   );
-  return new DurableOperation(kernel, record, calls);
+  return new DurableOperation(kernel, identity, record, calls);
 }
 
 class DurableOperation {
   constructor(
     private readonly kernel: KernelClient,
-    readonly record: WorkflowReservation,
+    readonly identity: Identity,
+    readonly record: OperationRecord,
     private readonly calls: ReturnType<typeof executionOptions>,
   ) {}
-  private get lease() {
-    return { lease: this.record.lease! };
-  }
-  async mutate<T>(operationId: string, commit: () => Promise<T>): Promise<T> {
-    await this.kernel.modelWorkflow.saveWorkflow(
-      {
-        ...this.lease,
-        mutationOperations: [operationId],
-      },
-      this.calls,
-    );
-    return commit();
-  }
   async recordExecution(execution: Telemetry) {
-    await this.kernel.modelWorkflow.saveWorkflow(
+    await this.kernel.modelWorkflow.saveOperation(
       {
-        ...this.lease,
+        identity: this.identity,
         executionTelemetry: execution,
       },
       this.calls.opportunity.cleanup(),
@@ -91,45 +68,76 @@ class DurableOperation {
     value: unknown,
     dependencies: Dependency[] = [],
     execution?: Telemetry,
+    mutationOperations: string[] = [],
   ) {
-    await this.kernel.modelWorkflow.saveWorkflow(
+    await this.kernel.modelWorkflow.saveOperation(
       {
-        ...this.lease,
+        identity: this.identity,
         proposal: workflowPayload(value, dependencies),
         executionTelemetry: execution,
+        mutationOperations,
       },
-      this.calls,
+      this.calls.opportunity.cleanup(),
     );
   }
   async complete(value: unknown, dependencies: Dependency[] = []) {
-    await this.kernel.modelWorkflow.saveWorkflow(
+    await this.kernel.modelWorkflow.saveOperation(
       {
-        ...this.lease,
+        identity: this.identity,
         outcome: workflowPayload(value, dependencies),
       },
       this.calls.opportunity.cleanup(),
     );
   }
   async run<T>(work: () => Promise<T>): Promise<T> {
-    if (this.record.busy || !this.record.lease)
-      throw domainError(
-        "Workflow is busy; retry the same operation",
-        Code.Aborted,
-        {
-          code: DomainErrorCode.OPERATION_IN_PROGRESS,
-          recovery: ErrorRecovery.RETRY_OPERATION,
-        },
-      );
     try {
       return await work();
     } catch (error) {
       const execution = failedExecutionTelemetry(error);
       if (execution) await this.recordExecution(execution);
       throw error;
-    } finally {
-      await this.kernel.modelWorkflow
-        .releaseWorkflow(this.lease, this.calls.opportunity.cleanup())
-        .catch(() => {});
     }
+  }
+}
+
+const operationQueues = new WeakMap<KernelClient, Map<string, Promise<void>>>();
+
+/** One host owns the Kernel; concurrent callers wait and then replay durable results. */
+export async function serializeOperation<T>(
+  kernel: KernelClient,
+  key: string,
+  signal: AbortSignal | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
+  let queue = operationQueues.get(kernel);
+  if (!queue)
+    operationQueues.set(kernel, (queue = new Map<string, Promise<void>>()));
+  const previous = queue.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  queue.set(key, tail);
+  let abort: (() => void) | undefined;
+  try {
+    if (signal?.aborted) throw signal.reason;
+    if (signal) {
+      await Promise.race([
+        previous,
+        new Promise<never>((_, reject) => {
+          abort = () => reject(signal.reason);
+          signal.addEventListener("abort", abort, { once: true });
+        }),
+      ]);
+    } else await previous;
+    if (signal?.aborted) throw signal.reason;
+    return await work();
+  } finally {
+    if (abort) signal?.removeEventListener("abort", abort);
+    release();
+    void tail.then(() => {
+      if (queue.get(key) === tail) queue.delete(key);
+    });
   }
 }

@@ -81,27 +81,27 @@ impl MemoryService {
             let rows = sqlx::query(r"
 SELECT 'memory_revision' AS kind,o.memory_id AS object_id,o.current_revision_id AS revision
 FROM memory_objects o JOIN memory_revision_dependencies d ON d.memory_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.target_ref_kind=$2 AND d.target_ref=$3
+WHERE o.subject_id=$1 AND d.target_ref_kind=$2 AND d.target_ref=$3
 UNION
 SELECT 'cognitive_schema_revision',o.schema_id,o.current_revision_id
 FROM cognitive_schemas o JOIN cognitive_schema_evidence_links d ON d.schema_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.basis_kind=$2 AND d.basis_ref=$3 AND d.revoked_at IS NULL
+WHERE o.subject_id=$1 AND d.basis_kind=$2 AND d.basis_ref=$3 AND d.revoked_at IS NULL
 UNION
 SELECT 'episode_revision',o.episode_id,o.current_revision_id
 FROM episode_objects o JOIN episode_revision_basis d ON d.episode_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.basis_kind=$2 AND d.basis_ref=$3
+WHERE o.subject_id=$1 AND d.basis_kind=$2 AND d.basis_ref=$3
 UNION
 SELECT 'episode_revision',o.episode_id,o.current_revision_id
 FROM episode_objects o JOIN episode_revision_members d ON d.episode_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.ref_kind=$2 AND d.ref_value=$3
+WHERE o.subject_id=$1 AND d.ref_kind=$2 AND d.ref_value=$3
 UNION
 SELECT 'journal_revision',o.journal_id,o.current_revision_id
 FROM journal_objects o JOIN journal_revision_sources d ON d.journal_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.ref_kind=$2 AND d.ref_value=$3
+WHERE o.subject_id=$1 AND d.ref_kind=$2 AND d.ref_value=$3
 UNION
 SELECT 'journal_revision',o.journal_id,o.current_revision_id
 FROM journal_objects o JOIN journal_point_basis d ON d.journal_revision_id=o.current_revision_id
-WHERE o.subject_id=$1 AND o.purge_state='normal' AND d.basis->>'kind'='cognition_dependency'
+WHERE o.subject_id=$1 AND d.basis->>'kind'='cognition_dependency'
     AND d.basis#>>'{value,target_revision,kind}'=$2 AND d.basis#>>'{value,target_revision,id}'=$3
 ORDER BY kind,object_id")
                 .bind(subject.0).bind(&kind).bind(source.to_string()).fetch_all(&mut **tx).await.map_err(db)?;

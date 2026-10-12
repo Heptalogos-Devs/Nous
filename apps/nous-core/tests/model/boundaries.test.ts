@@ -376,21 +376,6 @@ describe("model protocol and provenance boundaries", () => {
       };
       const routed = await ModelInvocations.create(config);
       const frozen = routed.snapshot("memory_formation");
-      const staleContract = { ...frozen, outputSchemaDigest: "0".repeat(64) };
-      const beforeContractCheck = requests.length;
-      await expect(
-        routed.generate(
-          "memory_formation",
-          { content: "evidence" },
-          {
-            snapshot: staleContract,
-            beforeAttempt: () => {
-              throw new Error("contract check must precede admission");
-            },
-          },
-        ),
-      ).rejects.toThrow("all_execution_routes_failed:route_unavailable");
-      expect(requests.length).toBe(beforeContractCheck);
       config.model_profiles.backup.model = "changed-after-reservation";
       let admitted = 0;
       const start = requests.length;

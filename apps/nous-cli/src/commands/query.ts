@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { CliError, boundedInteger } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
-import { writeFile } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+import { open, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { restoreProtocolData, clientDataSchemas } from "@nous-wave/client/data";
-const { CognitiveRefSchema, WorkContextSchema, SessionSchema } =
-  clientDataSchemas;
 const cognitionKinds = new Set([
   "memory_revision",
   "cognitive_schema_revision",
@@ -41,101 +39,10 @@ export async function queryCommands(
   };
   if (preparing) {
     const response = await client.cognition.prepareQuery(request);
-    if (values.raw)
-      return {
-        ...response,
-        boundQuery: JSON.parse(response.boundQuery) as unknown,
-      };
-    const bound = JSON.parse(response.boundQuery) as {
-      representation?: { sha256?: string; truncation_flags?: string[] };
-      context_snapshot?: {
-        digest?: string;
-        work_context?: {
-          work_context_id: string;
-          revision: number;
-          purpose: string;
-          cognition_anchors: { kind: string; id: string }[];
-          entity_anchors: string[];
-          tag_anchors: string[];
-        };
-        session?: {
-          session_id: string;
-          runtime_revision: number;
-          resident: unknown[];
-        };
-        history_exclusions?: unknown[];
-      };
-      result_projection?: unknown;
-      temporal_frame?: unknown;
-      query_activation?: {
-        degradation?: unknown;
-        explicit_tags?: unknown[];
-        inferred_tags?: unknown[];
-        model_calls?: number;
-      };
-    };
+    const { $typeName: _type, $unknown: _unknown, ...inspection } = response;
     return {
-      intent: nousql,
-      representation: {
-        sha256: bound.representation?.sha256,
-        chars: Array.from(response.embeddingText).length,
-        truncationFlags: bound.representation?.truncation_flags ?? [],
-      },
-      context: {
-        digest: bound.context_snapshot?.digest,
-        workContext:
-          bound.context_snapshot?.work_context &&
-          restoreProtocolData(
-            {
-              workContextId:
-                bound.context_snapshot.work_context.work_context_id,
-              revision: bound.context_snapshot.work_context.revision,
-              purpose: bound.context_snapshot.work_context.purpose,
-              cognitionAnchors:
-                bound.context_snapshot.work_context.cognition_anchors.map(
-                  (reference) =>
-                    restoreProtocolData(
-                      { kind: reference.kind, value: reference.id },
-                      CognitiveRefSchema,
-                    ),
-                ),
-              entityAnchors: bound.context_snapshot.work_context.entity_anchors,
-              tagAnchors: bound.context_snapshot.work_context.tag_anchors,
-            },
-            WorkContextSchema,
-          ),
-        session:
-          bound.context_snapshot?.session &&
-          restoreProtocolData(
-            {
-              sessionId: bound.context_snapshot.session.session_id,
-              runtimeRevision: bound.context_snapshot.session.runtime_revision,
-              residentCount: bound.context_snapshot.session.resident.length,
-            },
-            SessionSchema,
-          ),
-        historyExclusions: bound.context_snapshot?.history_exclusions,
-      },
-      activation: {
-        queryAndContextTags: bound.query_activation?.explicit_tags?.map(
-          (value) =>
-            restoreProtocolData({ kind: "tag", value }, CognitiveRefSchema),
-        ),
-        inferredTags: bound.query_activation?.inferred_tags?.map((value) =>
-          restoreProtocolData({ kind: "tag", value }, CognitiveRefSchema),
-        ),
-        modelCalls: bound.query_activation?.model_calls,
-      },
-      projection: bound.result_projection,
-      temporalFrame: bound.temporal_frame,
-      capabilities: {
-        textEmbedding: response.textEmbeddingRequirement,
-        rerank: response.rerankRequirement,
-        conceptEnrichment: response.conceptEnrichmentRequirement,
-        conceptEnrichmentMode: response.conceptEnrichmentMode,
-      },
-      embeddingRequired: response.embeddingRequired,
-      degradation: bound.query_activation?.degradation,
+      ...inspection,
+      boundQuery: JSON.parse(response.boundQuery) as unknown,
     };
   }
   // A failed new query must not leave result:N pointing at an unrelated old answer.
@@ -212,18 +119,18 @@ export async function showCommands(env: CliEnvironment, reference?: string) {
   const input = { subjectId, id: ref.value };
   switch (ref.kind) {
     case "memory_revision":
-      return client.memory.revision(input);
+      return client.memory.getMemoryRevision(input);
     case "cognitive_schema_revision":
-      return client.concepts.getSchemaRevision(input);
+      return client.concepts.getCognitiveSchemaRevision(input);
     case "episode_revision":
       return client.memory.getEpisodeRevision(input);
     case "journal_revision":
       return client.memory.getJournalRevision(input);
     case "occurrence":
-      return client.material.occurrence(input);
+      return client.material.getOccurrence(input);
     case "artifact": {
       const artifact = await client.material.getArtifact(input);
-      const observations = await client.material.occurrences({
+      const observations = await client.material.listOccurrences({
         subjectId,
         artifactId: artifact.artifactId,
         limit: 20,
@@ -231,8 +138,8 @@ export async function showCommands(env: CliEnvironment, reference?: string) {
       return { ...artifact, observations };
     }
     case "source_region": {
-      const region = await client.material.sourceRegion(input);
-      const observations = await client.material.occurrences({
+      const region = await client.material.getSourceRegion(input);
+      const observations = await client.material.listOccurrences({
         subjectId,
         artifactId: region.artifactId,
         limit: 20,
@@ -240,11 +147,11 @@ export async function showCommands(env: CliEnvironment, reference?: string) {
       return { ...region, observations };
     }
     case "derived_representation":
-      return client.material.representation(input);
+      return client.material.getDerivedRepresentation(input);
     case "derived_region":
-      return client.material.derivedRegion(input);
+      return client.material.getDerivedRegion(input);
     case "resource":
-      return client.resources.get(input);
+      return client.resourceRegistry.getResource(input);
     default:
       throw new CliError(
         "REFERENCE_TYPE_MISMATCH",
@@ -270,7 +177,36 @@ export async function readCommands(env: CliEnvironment, reference?: string) {
       "REFERENCE_TYPE_MISMATCH",
       "read requires a Material reference; show reads cognition revisions",
     );
-  const material = await env.client.material.materialize({
+  if (ref.kind === "artifact" && env.values.output) {
+    const artifact = await env.client.material.getArtifact({
+      subjectId: env.subjectId,
+      id: ref.value,
+    });
+    const outputPath = resolve(env.values.output);
+    const file = await open(outputPath, "wx");
+    let failed = false;
+    try {
+      const source = await env.client.artifacts.download(
+        env.subjectId,
+        ref.value,
+      );
+      await pipeline(source.content, file.createWriteStream());
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      await file.close();
+      if (failed) await unlink(outputPath);
+    }
+    return {
+      reference: ref,
+      mediaType: artifact.mediaType,
+      totalBytes: artifact.byteLength,
+      outputPath,
+      partial: false,
+    };
+  }
+  const material = await env.client.material.materializeEvidence({
     subjectId: env.subjectId,
     reference: ref,
     maxBytes: BigInt(

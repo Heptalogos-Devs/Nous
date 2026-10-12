@@ -3,7 +3,7 @@
 
 use super::*;
 use nous_core::Result;
-use nous_retrieval::{QueryEmbedding, TextEmbeddingOutput};
+use nous_runtime::QuerySemanticEmbedding;
 
 impl KernelService {
     pub(super) fn embedding_config(&self) -> Result<k::EmbeddingConfig> {
@@ -29,13 +29,18 @@ impl KernelService {
         &self,
         bound: &nous_runtime::BoundQuery,
         inputs: Vec<k::QueryEmbedding>,
-    ) -> Result<Vec<QueryEmbedding>> {
+    ) -> Result<Option<QuerySemanticEmbedding>> {
+        if bound.activation.frozen && !inputs.is_empty() {
+            return Err(Error::Invalid(
+                "frozen query activation cannot replace its embedding".into(),
+            ));
+        }
         if inputs.len() > 1 {
             return Err(Error::Invalid(
                 "one prepared query accepts at most one embedding".into(),
             ));
         }
-        let mut materials = vec![];
+        let mut prepared = None;
         for material in inputs {
             let provider = self
                 .0
@@ -61,16 +66,13 @@ impl KernelService {
                     "query embedding is incompatible with selected space/producer".into(),
                 ));
             }
-            materials.push(QueryEmbedding {
-                text: material.text,
-                output: TextEmbeddingOutput {
-                    vector: material.vector,
-                    space,
-                    producer,
-                },
+            prepared = Some(QuerySemanticEmbedding {
+                vector: material.vector,
+                space,
+                producer,
             });
         }
-        Ok(materials)
+        Ok(prepared)
     }
     pub(super) async fn activate_query_with_material(
         &self,
@@ -94,22 +96,18 @@ impl KernelService {
                 "query concept model activity is not permitted".into(),
             ));
         }
-        let materials = self.query_materials(bound, input.embeddings)?;
+        bound.activation.embedding = self.query_materials(bound, input.embeddings)?;
+
         let plan = nous_runtime::QueryPlan::for_bound_query(bound);
         use nous_runtime::SharedLaneProvider;
-        let (projection, view, activation) =
-            nous_retrieval::with_query_material(materials, async {
-                let (projection, view) = self.0.serving.prepare_query(bound, &plan).await?;
-                let activation = view.activate(bound).await?;
-                Ok::<_, Error>((projection, view, activation))
-            })
-            .await?;
+        let (projection, view) = self.0.serving.prepare_query(bound, &plan).await?;
+        let activation = view.activate(bound).await?;
         bound.activation = activation;
         bound.activation.degradation.extend(projection.degradation);
         bound.activation.frozen = true;
         bound.activation_view = Some(view);
         let catalog = bound.activation.concept_catalog.iter().map(|candidate| serde_json::json!({"key":candidate.key,"semantic_text":candidate.semantic_text,"strength":candidate.strength})).collect::<Vec<_>>();
-        let model_input = serde_json::json!({"query_representation":bound.representation,"existing_tags":catalog,"temporal_frame":bound.source_query.temporal_frame}).to_string();
+        let model_input = serde_json::json!({"query_representation":bound.representation.as_ref(),"existing_tags":catalog,"temporal_frame":bound.source_query.temporal_frame}).to_string();
         let token = self.0.cognition.retain_prepared_query(reservation)?;
         Ok(k::QueryActivationResponse {
             preparation_token: token.to_string(),
@@ -172,20 +170,19 @@ impl KernelService {
             id(&input.preparation_token)?,
         )?;
         let (mut bound, lease) = reservation.into_parts();
-        let materials = self.query_materials(&bound, input.embeddings)?;
+        if let Some(embedding) = self.query_materials(&bound, input.embeddings)? {
+            bound.activation.embedding = Some(embedding);
+        }
         self.apply_query_concept_output(
             &mut bound,
             input.concept_output,
             input.concept_failure,
             input.concept_model_calls,
         )?;
-        nous_retrieval::with_query_material(
-            materials,
-            self.query(
-                bound,
-                lease,
-                input.validated_candidate_limit.map(|limit| limit as usize),
-            ),
+        self.query(
+            bound,
+            lease,
+            input.validated_candidate_limit.map(|limit| limit as usize),
         )
         .await
     }

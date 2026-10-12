@@ -4,7 +4,7 @@
 
 ## Owners
 
-Runtime (crates/runtime) owns QueryExpr binding, QueryPlan, lane budgets and fusion. Retrieval (crates/retrieval) supplies exact candidates. Core owns query embedding, model rerank and External Resource host actions. Memory performs final Authority validation.
+Runtime (crates/runtime) owns QueryExpr binding, QueryPlan, lane budgets and fusion. Retrieval (crates/retrieval) supplies exact candidates. Core owns query embedding, model rerank and External Resource host actions. Memory and Material validate/materialize their own Authority; Runtime validates its generic references.
 
 ## Binding 与预算
 
@@ -32,4 +32,10 @@ Normalized RRF baseline 位于 [0,1]。每个满足的 soft cue 增加 signed 0.
 
 Lexical relevance 只来自 Lexical Serving hit。Query embedding 使用 preparation 固定的完整 Query Representation，包含 normalized temporal orientation 与当前 context；无 context TextCue 仍使用相同 representation preparation；按 exact text/space/producer digest 最多缓存 128 vectors。Required embedding 失败拒绝 operation；optional 的 lexical fallback 返回显式 degradation。
 
-Topology 默认关闭，只能显式请求实验 lane，标识为 `experimental-node-potential-v1`。当前实现使用 weighted PCA/EPA、residual decomposition、bounded propagation 与 node-potential；完整 VCP topology 尚未实现。
+Cognitive profiles 是固定 registry：`baseline-rrf`、默认 `nous-node-potential-v1`、`vcp-dtsc-v9.2.1-adapter-v1` 和 `vcp-rivermemo-v3.1-adapter-v1`。Native 使用 weighted PCA/EPA、residual decomposition、bounded propagation 与 node-potential；VCP adapters 使用冻结 reference 数值合同。所有 profiles 共用同一 prepared representation、activation、Tag vectors 和 direct postings；profile selection 不改写 query intent/context。
+
+Serving current/history 通过同一 family resolver 获取 record 与 opened artifact，直接组成 request snapshot；current publication 不成为 request view 的中转站。Historical identity 使用 owner-projected effective-state digest，历史 generation 不发布为 current。Request view 持有 generation read lease，retired artifact 的 grace/research pin 保护与显式 reclamation 分离；query 不扫描整个 Serving 文件目录。
+
+Host embedding 在 query RPC admission 校验 exact representation text、space、producer、dimension 和 finite vectors，然后作为同一 typed semantic embedding 显式保存在 operation activation。Concept matching、dense 与 cognitive lanes 消费该 material，不通过 task-local channel 找回输入。受控本地 provider 仍可作为测试/研究实现，并在单个 request 内共享一次 embedding 调用。
+
+Preparation 的 reference binding table 复用同一 requested reference 在 exact/context/structural roles 的绑定，但保留 role origins 和 mutable epoch。Final Authority validation 是新鲜检查，不复用 preparation cache。Generic mutable exact refs 变化时丢弃候选；drop diagnostic 不替代 rejection。

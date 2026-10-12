@@ -3,7 +3,6 @@
 
 import {
   resolveRole,
-  snapshotSchema,
   type ReadyRole,
   type ModelRoleSnapshot,
   type ModelProducerMetadata,
@@ -29,13 +28,11 @@ import { fileURLToPath } from "node:url";
 import { roleNames, type ModelRole } from "./roles.js";
 import {
   type ModelConfiguration,
-  type RolePolicy,
   modelConfigurationSchema,
   modelRoleGraph,
 } from "./configuration.js";
 import { PromptRegistry, type PromptAsset } from "./prompts.js";
 import { invocationConfigDigest } from "./identity.js";
-import { modelImplementations } from "./implementation.js";
 import {
   generationInput,
   type InputModalities,
@@ -60,14 +57,9 @@ type GenerationOptions<R extends ModelRole> = {
 
 export class ModelInvocations {
   private prompts?: PromptRegistry;
-  private promptPaths: Partial<Record<ModelRole, string>> = {};
   private readonly active = new Map<ModelRole, ReadyRole[]>();
   private configuration!: ModelConfiguration;
   private readonly credentialOrigins = new Set<string>();
-  private readonly requirements = new Map<
-    ModelRole,
-    RolePolicy["requirement"]
-  >();
   private readonly states = new Map<
     ModelRole,
     { state: string; detail: string }
@@ -92,7 +84,6 @@ export class ModelInvocations {
     runtime.prompts = prompts;
     for (const name of roleNames) {
       const policy = config.roles[name];
-      runtime.requirements.set(name, policy?.requirement ?? "optional");
       if (!policy) {
         runtime.states.set(name, {
           state: "NOT_CONFIGURED",
@@ -100,7 +91,6 @@ export class ModelInvocations {
         });
         continue;
       }
-      if (policy.prompt) runtime.promptPaths[name] = policy.prompt;
       const routes: ReadyRole[] = [];
       let problem = "Execution route unavailable";
       let prompt: PromptAsset | undefined;
@@ -118,17 +108,6 @@ export class ModelInvocations {
               ? error.message
               : "Execution route unavailable";
         }
-      }
-      if (name === "query_embedding" && routes.length > 1) {
-        const signature = (route: ReadyRole) =>
-          canonicalDigest({
-            model: route.profile.model,
-            embedding: route.profile.embedding,
-          });
-        if (routes.some((route) => signature(route) !== signature(routes[0]!)))
-          throw new Error(
-            "Embedding routes require the identical full embedding space signature",
-          );
       }
       runtime.active.set(name, routes);
       runtime.states.set(name, {
@@ -151,18 +130,14 @@ export class ModelInvocations {
     return this.active.get(role)?.[0]?.profile;
   }
   requirement(role: ModelRole) {
-    return this.requirements.get(role) ?? "optional";
+    return this.configuration?.roles[role]?.requirement ?? "optional";
   }
   snapshot(name: ModelRole): ModelRoleSnapshot {
     const role = this.require(name);
-    return snapshotSchema.parse({
-      format: "nous.model.execution",
-      implementationDigest: modelImplementations.provider,
-      outputSchemaDigest: providerContractForRole(name)?.digest,
+    return {
       role: name,
       configuration: modelRoleGraph(this.configuration, name),
       prompt: role.prompt,
-      profileDigest: role.profileDigest,
       configDigest: canonicalDigest({
         policy: role.policy,
         configuration: modelRoleGraph(this.configuration, name),
@@ -172,7 +147,7 @@ export class ModelInvocations {
         },
         outputSchemaDigest: providerContractForRole(name)?.digest,
       }),
-    });
+    };
   }
   async snapshotPrompt(
     name: ModelRole,
@@ -227,7 +202,7 @@ export class ModelInvocations {
   }
   private metadata(role: ReadyRole, adapter: string): ModelProducerMetadata {
     return {
-      implementation: `${adapter}:${modelImplementations.provider}`,
+      implementation: adapter,
       protocol: role.profile.protocol,
       model: role.profile.model,
       modelRevision: role.profile.model_revision,
@@ -261,7 +236,7 @@ export class ModelInvocations {
       const prompt = await this.prompts?.load(
         selected,
         typeof promptRole === "string"
-          ? this.promptPaths[selected]
+          ? this.configuration.roles[selected]?.prompt
           : promptRole.path,
       );
       if (!prompt) throw new Error("Strategy prompt unavailable");

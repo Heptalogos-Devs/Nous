@@ -76,11 +76,12 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
     invalid.points[0].basis = vec![basis];
     assert!(memory.commit_journal(invalid).await.is_err());
     memory
-        .suppress_episode(
+        .mutate_episode_lifecycle(
             subject,
             episode.object.episode_id,
             OperationId::new(),
             episode.object.object_epoch,
+            nous_memory::LifecycleAction::Suppress,
         )
         .await
         .unwrap();
@@ -124,11 +125,12 @@ async fn assert_journal_revalidation(
     let subject = input.subject;
     let memory = rt.require_memory().unwrap();
     let restored = memory
-        .restore_episode(
+        .mutate_episode_lifecycle(
             subject,
             episode.object.episode_id,
             nous_core::OperationId::new(),
             episode.object.object_epoch + 1,
+            nous_memory::LifecycleAction::Restore,
         )
         .await
         .unwrap();

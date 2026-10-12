@@ -37,7 +37,7 @@ export async function associationCommands(
     const text = required(argument, "Reference");
     const kind = values.kind ?? "";
     const root = await resolveReference(text, kind);
-    return client.concepts.neighborhood({
+    return client.concepts.getNeighborhood({
       subjectId,
       root,
       maxNodes: boundedInteger(values["max-nodes"], 1, 256, "--max-nodes"),
@@ -48,7 +48,7 @@ export async function associationCommands(
     const input = associationInput.parse(
       await requestPayload(values["association-file"]),
     );
-    return client.concepts.associate({
+    return client.concepts.createAssociation({
       subjectId,
       operationId: values["operation-id"] ?? crypto.randomUUID(),
       association: {

@@ -8,33 +8,39 @@ import { FormMemoryRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/
 import { type FormationRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "./runtime.js";
-import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import {
+  startOperation,
+  serializeOperation,
+  workflowPayload,
+} from "../durable-operation.js";
 import type { WorkflowPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import { type ModelRoleSnapshot } from "./execution/snapshot.js";
 import { canonicalDigest } from "../digest.js";
 import { z } from "zod";
 import { modelProducer } from "./producer.js";
 
-const snapshotSchema = z.strictObject({
-  model: z.unknown(),
-  sourceMaxBytes: z.number().int().positive(),
-  representationId: z.string().optional(),
-  candidates: z
-    .array(
-      z.strictObject({
-        key: z.string(),
-        surface: z.string(),
-        entityRef: z.string(),
-      }),
-    )
-    .max(128),
-});
-const proposalSchema = z.strictObject({
-  request: z.unknown(),
-});
-const outcomeSchema = z.strictObject({ revisionId: z.string() });
-
+type FormationSnapshot = {
+  model: ModelRoleSnapshot;
+  sourceMaxBytes: number;
+  representationId?: string;
+  candidates: { key: string; surface: string; entityRef: string }[];
+};
 export async function formObservation(
+  kernel: KernelClient,
+  models: ModelRuntime,
+  r: FormationRequest,
+  options: ExecutionOptions,
+) {
+  const calls = executionOptions(kernel.execution.opportunity, options);
+  return serializeOperation(
+    kernel,
+    `memory:${r.subjectId.toLowerCase()}:${r.operationId.toLowerCase()}`,
+    calls.signal,
+    () => formObservationOnce(kernel, models, r, calls),
+  );
+}
+
+async function formObservationOnce(
   kernel: KernelClient,
   models: ModelRuntime,
   r: FormationRequest,
@@ -95,7 +101,7 @@ export async function formObservation(
   const replay = async (saved: WorkflowPayload) => {
     if (saved.purged)
       throw new ConnectError("Formation outcome was purged", Code.NotFound);
-    const outcome = outcomeSchema.parse(JSON.parse(saved.payloadJson));
+    const outcome = JSON.parse(saved.payloadJson) as { revisionId: string };
     const memory = await kernel.memory.getMemoryRevision(
       { subjectId: r.subjectId, id: outcome.revisionId },
       options,
@@ -105,10 +111,11 @@ export async function formObservation(
       degradation: [],
     };
   };
-  const previous = await kernel.modelWorkflow.findWorkflow(identity, options);
+  const previous = await kernel.modelWorkflow.readOperation(identity, options);
   if (previous.outcome) return replay(previous.outcome);
-  let snapshotText = previous.snapshot?.content?.payloadJson;
-  if (!snapshotText) {
+  let snapshot: Parameters<typeof startOperation>[2] | undefined =
+    previous.snapshot;
+  if (!snapshot) {
     const model = models.invocations.snapshot("memory_formation");
     const occurrence = await kernel.material.getOccurrence(
       { subjectId: r.subjectId, id: r.occurrenceId },
@@ -154,48 +161,45 @@ export async function formObservation(
             entityRef: candidate.entityRef,
           }))
         : [];
-    snapshotText = JSON.stringify({
-      model,
-      representationId,
-      candidates,
-      sourceMaxBytes: models.materialInputs.formation_source_max_bytes,
-    });
+    snapshot = {
+      content: workflowPayload(
+        {
+          model,
+          representationId,
+          candidates,
+          sourceMaxBytes: models.materialInputs.formation_source_max_bytes,
+        },
+        [
+          { kind: "occurrence", value: r.occurrenceId },
+          ...(representationId
+            ? [{ kind: "derived_representation", value: representationId }]
+            : []),
+          ...r.explicitTags.map((value) => ({ kind: "tag", value })),
+        ],
+      ),
+    };
   }
-  const frozen = snapshotSchema.parse(JSON.parse(snapshotText));
-  const operation = await reserveOperation(
-    kernel,
-    identity,
-    previous.snapshot ?? {
-      content: workflowPayload(frozen, [
-        { kind: "occurrence", value: r.occurrenceId },
-        ...(frozen.representationId
-          ? [{ kind: "derived_representation", value: frozen.representationId }]
-          : []),
-        ...r.explicitTags.map((value) => ({ kind: "tag", value })),
-      ]),
-    },
-    options,
-  );
-  const reservation = operation.record;
-  if (reservation.outcome) return replay(reservation.outcome);
+  const operation = await startOperation(kernel, identity, snapshot, options);
+  const record = operation.record;
+  if (record.outcome) return replay(record.outcome);
   return operation.run(async () => {
-    let proposed = reservation.proposal?.payloadJson
-      ? proposalSchema.parse(JSON.parse(reservation.proposal?.payloadJson))
+    let proposed = record.proposal?.payloadJson
+      ? (JSON.parse(record.proposal.payloadJson) as { request: JsonValue })
       : undefined;
     if (!proposed) {
-      const snapshot = snapshotSchema.parse(
-        JSON.parse(reservation.snapshot!.content!.payloadJson),
-      );
+      const frozenSnapshot = JSON.parse(
+        record.snapshot!.content!.payloadJson,
+      ) as FormationSnapshot;
       const source = await kernel.material.materializeEvidence(
         {
           subjectId: r.subjectId,
-          reference: snapshot.representationId
+          reference: frozenSnapshot.representationId
             ? {
                 kind: "derived_representation",
-                value: snapshot.representationId,
+                value: frozenSnapshot.representationId,
               }
             : { kind: "occurrence", value: r.occurrenceId },
-          maxBytes: BigInt(snapshot.sourceMaxBytes),
+          maxBytes: BigInt(frozenSnapshot.sourceMaxBytes),
         },
         options,
       );
@@ -213,22 +217,34 @@ export async function formObservation(
       const text = new TextDecoder("utf-8", { fatal: true }).decode(
         source.content,
       );
-      const result = await models.form(
-        JSON.stringify({
-          evidenceText: text,
-          resolvedEntityCandidates: snapshot.candidates,
-          aboutnessMode: mode,
-        }),
-        options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
+      const generated = await models.invocations.generate(
+        "memory_formation",
+        {
+          content: JSON.stringify({
+            evidenceText: text,
+            resolvedEntityCandidates: frozenSnapshot.candidates,
+            aboutnessMode: mode,
+          }),
+        },
+        {
+          signal: options.signal ?? undefined,
+          snapshot: frozenSnapshot.model,
+        },
       );
+      const result = {
+        ...generated.value,
+        producerMetadata: generated.producerMetadata,
+        execution: generated.execution,
+      };
       await operation.recordExecution(result.execution);
       if (
         new Set(result.selectedEntityKeys).size !==
           result.selectedEntityKeys.length ||
         result.selectedEntityKeys.some(
           (key) =>
-            !snapshot.candidates.some((candidate) => candidate.key === key),
+            !frozenSnapshot.candidates.some(
+              (candidate) => candidate.key === key,
+            ),
         )
       )
         throw new ConnectError(
@@ -242,7 +258,7 @@ export async function formObservation(
             ? []
             : [
                 ...new Set(
-                  snapshot.candidates
+                  frozenSnapshot.candidates
                     .filter((candidate) =>
                       result.selectedEntityKeys.includes(candidate.key),
                     )
@@ -273,10 +289,10 @@ export async function formObservation(
                 value: {
                   occurrenceId: r.occurrenceId,
                   basisRole: "interpretation",
-                  locator: snapshot.representationId
+                  locator: frozenSnapshot.representationId
                     ? {
                         case: "derivedRepresentationId",
-                        value: snapshot.representationId,
+                        value: frozenSnapshot.representationId,
                       }
                     : { case: "wholeOccurrence", value: true },
                 },
@@ -294,9 +310,7 @@ export async function formObservation(
       FormMemoryRequestSchema,
       proposed.request as JsonValue,
     );
-    const memory = await operation.mutate(request.operationId, () =>
-      kernel.memory.formMemory(request, options),
-    );
+    const memory = await kernel.memory.formMemory(request, options);
     await operation.complete({ revisionId: memory.revisionId }, [
       { kind: "memory", value: memory.memoryId },
       { kind: "memory_revision", value: memory.revisionId },

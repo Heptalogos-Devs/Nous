@@ -1,6 +1,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { RebindEntityRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
+import { content } from "../content.js";
 import { CliError, uniqueReference } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 
@@ -9,8 +11,13 @@ export async function identityCommands(
   action: string | undefined,
 ) {
   const { client, values, subjectId, required } = env;
+  if (action === "rebind")
+    return client.identity.rebindEntity({
+      ...(await content(env, RebindEntityRequestSchema)),
+      subjectId,
+    });
   if (action === "resolve") {
-    const result = await client.identity.resolve({
+    const result = await client.identity.resolveIdentity({
       subjectId,
       kind: values.kind ?? "",
       locator: values["lexical-ref"]
@@ -24,7 +31,7 @@ export async function identityCommands(
     return result;
   }
   if (action === "bind")
-    return client.identity.bind({
+    return client.identity.bindIdentity({
       subjectId,
       canonical: await env.resolveReference(
         required(values.canonical, "--canonical"),

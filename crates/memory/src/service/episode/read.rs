@@ -10,7 +10,7 @@ impl MemoryService {
         episode: EpisodeId,
         revision: Option<EpisodeRevisionId>,
     ) -> Result<EpisodeView> {
-        let row = sqlx::query("SELECT o.episode_id,o.subject_id,o.track_key,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,o.created_at,r.episode_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end,r.boundary_explanation,r.formed_at,r.recorded_at,r.producer_signature_id FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id AND r.episode_revision_id=COALESCE($3,o.current_revision_id) WHERE o.subject_id=$1 AND o.episode_id=$2")
+        let row = sqlx::query("SELECT o.episode_id,o.subject_id,o.track_key,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.created_at,r.episode_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end,r.boundary_explanation,r.formed_at,r.recorded_at,r.producer_signature_id FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id AND r.episode_revision_id=COALESCE($3,o.current_revision_id) WHERE o.subject_id=$1 AND o.episode_id=$2")
             .bind(subject.0).bind(episode.0).bind(revision.map(|value| value.0))
             .fetch_optional(self.store.pool()).await.map_err(db)?
             .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
@@ -46,7 +46,6 @@ impl MemoryService {
                     row.try_get("suppression_state").map_err(db)?,
                     "suppression state",
                 )?,
-                purge_state: parse_enum(row.try_get("purge_state").map_err(db)?, "purge state")?,
                 created_at: row.try_get("created_at").map_err(db)?,
             },
             revision: EpisodeRevision {

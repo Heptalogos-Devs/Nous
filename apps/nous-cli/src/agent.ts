@@ -103,6 +103,72 @@ export const commandInventory = {
   },
   commands: [
     {
+      command: "material limits|artifacts|occurrences|representations|producer",
+      parameters: [
+        "occurrences <Artifact reference>",
+        "representations [Artifact or SourceRegion reference] [--kind <kind>]",
+        "producer <signature identity>",
+        "--page-size <n> --page-token <token> for artifacts",
+      ],
+    },
+    {
+      command:
+        "memory form|get|list|revision|history|revise|accessibility|link|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[Memory reference]",
+        "--request-file <Memory content TOML> for form/revise",
+        "--kind <revision intent or accessibility mode>",
+        "--page-size <n> --page-token <token>",
+      ],
+      description:
+        "Source-backed cognition management; mutations freeze the current object epoch and stable operation identity.",
+    },
+    {
+      command:
+        "schema create|get|revision|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[Schema reference]",
+        "--request-file <Schema content/evidence/children/merge TOML>",
+        "--kind <revision intent>",
+      ],
+      description: "Supported transferable pattern and evidence management.",
+    },
+    {
+      command:
+        "episode create|get|list|revision|history|revise|link|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[Episode reference]",
+        "--request-file <Episode content TOML>",
+        "--kind resegment|reinterpret",
+      ],
+    },
+    {
+      command:
+        "journal get|list|revision|history|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[Journal reference]",
+        "--page-size <n> --page-token <token>",
+      ],
+    },
+    {
+      command: "resource put|get|list|remove|materialize",
+      parameters: [
+        "[Resource reference]",
+        "--request-file <Resource descriptor or stable external reference TOML>",
+      ],
+    },
+    {
+      command: "projection build|managed",
+      parameters: [
+        "--consumer <operator-configured consumer>",
+        "--max-items <n> --max-bytes <n>",
+        "--request-file <query/situation_refs/known_cursor TOML> (optional)",
+      ],
+      description:
+        "Generate actual consumer projection or synchronize managed context; requires selected Session.",
+    },
+
+    {
       command: "read",
       parameters: [
         "<obs:|art:|src:|repr:|region: lexical reference> | result:N",
@@ -213,9 +279,12 @@ export const commandInventory = {
         "--advanced|--developer",
       ],
     },
-    { command: "subject create|list|use", parameters: ["[id]"] },
     {
-      command: "session open|close",
+      command: "subject create|list|use|seed|adopt-seed",
+      parameters: ["[id]"],
+    },
+    {
+      command: "session open|list|close",
       purpose: "Open a new Session or close the selected Session",
     },
     {
@@ -259,9 +328,9 @@ export const commandInventory = {
     },
     {
       command: "retry",
-      parameters: ["<saved-receipt-id>"],
+      parameters: ["<saved-request-id> | forget <saved-request-id>"],
       description:
-        "Replay original frozen operation inputs; preserve the consumer state root.",
+        "Replay original frozen inputs through the semantic owner; forget discards only local retry inputs.",
     },
     {
       command:

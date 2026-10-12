@@ -3,7 +3,11 @@
 
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import {
+  startOperation,
+  serializeOperation,
+  workflowPayload,
+} from "../durable-operation.js";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
 import { z } from "zod";
 import {
@@ -20,6 +24,23 @@ import type { ResourceRegistry } from "./registry.js";
 import { ResourceProviderError } from "./adapter.js";
 
 export async function materializeResource(
+  kernel: KernelClient,
+  registry: ResourceRegistry,
+  request: MaterializeResourceRequest,
+  options: ExecutionOptions,
+) {
+  request.subjectId = request.subjectId.toLowerCase();
+  request.operationId = request.operationId.toLowerCase();
+  const calls = executionOptions(kernel.execution.opportunity, options);
+  return serializeOperation(
+    kernel,
+    `material:${request.subjectId}:resource:${request.operationId}`,
+    calls.signal,
+    () => materializeResourceOnce(kernel, registry, request, calls),
+  );
+}
+
+async function materializeResourceOnce(
   kernel: KernelClient,
   registry: ResourceRegistry,
   request: MaterializeResourceRequest,
@@ -54,7 +75,7 @@ export async function materializeResource(
       },
     }),
   };
-  const operation = await reserveOperation(
+  const operation = await startOperation(
     kernel,
     identity,
     {
@@ -64,13 +85,13 @@ export async function materializeResource(
     },
     options,
   );
-  const reservation = operation.record;
-  if (reservation.outcome) {
-    if (reservation.outcome.purged)
+  const record = operation.record;
+  if (record.outcome) {
+    if (record.outcome.purged)
       throw new ConnectError("Resource outcome was purged", Code.NotFound);
     return fromJson(
       ResourceMaterializationSchema,
-      JSON.parse(reservation.outcome.payloadJson) as JsonValue,
+      JSON.parse(record.outcome.payloadJson) as JsonValue,
     );
   }
   return operation.run(async () => {
@@ -99,31 +120,44 @@ export async function materializeResource(
           "Resource provider identity has changed",
           Code.FailedPrecondition,
         );
-      let proposal = reservation.proposal?.payloadJson
+      let proposal = record.proposal?.payloadJson
         ? z
             .strictObject({
-              content: z.string().max(1048576),
+              content: z.string(),
               mediaType: z.string().max(128),
             })
-            .parse(JSON.parse(reservation.proposal?.payloadJson))
+            .parse(JSON.parse(record.proposal?.payloadJson))
         : undefined;
+      let version;
+      let access;
       if (!proposal) {
         const material = await adapter.materialize(
           reference,
           options.signal ?? undefined,
         );
+        version = material.version;
+        access = material.access;
         proposal = { content: material.content, mediaType: material.mediaType };
-        await operation.saveProposal(proposal);
+      } else {
+        [version, access] = await Promise.all([
+          adapter.checkVersion(reference, options.signal ?? undefined),
+          adapter.checkAccess(reference, options.signal ?? undefined),
+        ]);
       }
-      const [version, access] = await Promise.all([
-        adapter.checkVersion(reference, options.signal ?? undefined),
-        adapter.checkAccess(reference, options.signal ?? undefined),
-      ]);
       if (version.status !== "current" || access.status !== "allowed")
         throw new ConnectError(
           "Resource version or access no longer permits admission",
           Code.FailedPrecondition,
         );
+      if (Buffer.byteLength(proposal.content, "utf8") > 1048576)
+        throw new ConnectError(
+          "Selected Resource material exceeds 1 MiB UTF-8",
+          Code.ResourceExhausted,
+        );
+      if (!record.proposal)
+        await operation.saveProposal(proposal, [], undefined, [
+          request.operationId,
+        ]);
       const observation = await kernel.runtime.recordObservation(
         create(ObservationInputSchema, {
           subjectId: request.subjectId,

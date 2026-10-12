@@ -23,26 +23,20 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 let id = receipt.result_ref;
-                if receipt.state == "committed" {
-                    return self
-                        .schema_at(
-                            input.subject,
-                            CognitiveSchemaId(
-                                id.ok_or_else(|| {
-                                    Error::Infrastructure("schema receipt missing result".into())
-                                })?
-                                .parse()
-                                .map_err(|_| {
-                                    Error::Infrastructure("invalid schema receipt".into())
-                                })?,
-                            ),
-                            receipt.result_revision.map(CognitiveSchemaRevisionId),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "schema operation is already in progress".into(),
-                ));
+
+                return self
+                    .schema_at(
+                        input.subject,
+                        CognitiveSchemaId(
+                            id.ok_or_else(|| {
+                                Error::Infrastructure("schema receipt missing result".into())
+                            })?
+                            .parse()
+                            .map_err(|_| Error::Infrastructure("invalid schema receipt".into()))?,
+                        ),
+                        receipt.result_revision.map(CognitiveSchemaRevisionId),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -166,13 +160,8 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "add_schema_evidence", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self.schema(subject, schema_id).await;
-                }
-                return Err(Error::Unavailable(
-                    "schema evidence operation is already in progress".into(),
-                ));
+            MutationStart::Replay(_) => {
+                return self.schema(subject, schema_id).await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -247,18 +236,13 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self
-                        .schema_at(
-                            input.subject,
-                            input.schema_id,
-                            receipt.result_revision.map(CognitiveSchemaRevisionId),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "schema revision operation is already in progress".into(),
-                ));
+                return self
+                    .schema_at(
+                        input.subject,
+                        input.schema_id,
+                        receipt.result_revision.map(CognitiveSchemaRevisionId),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };

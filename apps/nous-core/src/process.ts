@@ -92,7 +92,14 @@ export async function startKernel(
   });
   child.stdin.write(`${token}\n`);
   const stop = async () => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
+    if (
+      child.pid === undefined ||
+      child.exitCode !== null ||
+      child.signalCode !== null
+    ) {
+      lines.close();
+      return;
+    }
     const exited = once(child, "exit");
     child.stdin.end();
     const timer = setTimeout(() => child.kill(), shutdownTimeoutMs);

@@ -5,7 +5,6 @@ use super::*;
 use nous_core::{EntityRef, OperationId, Result, SubjectId};
 use nous_memory::ExplicitMemoryInput;
 use nous_memory::{MemoryView, ReviseMemoryInput};
-use nous_persistence::database_error as db;
 
 pub(super) fn view(input: MemoryView) -> p::Memory {
     let object = input.object;
@@ -20,7 +19,6 @@ pub(super) fn view(input: MemoryView) -> p::Memory {
         acceptance_state: enum_name(object.acceptance_state),
         integrity_state: enum_name(object.integrity_state),
         suppression_state: enum_name(object.suppression_state),
-        purge_state: enum_name(object.purge_state),
         accessibility_mode: enum_name(object.accessibility_mode),
         accessibility_level: enum_name(input.accessibility_level),
         semantic_role: revision.semantic_role,
@@ -149,18 +147,28 @@ impl KernelService {
         input: p::ListRequest,
     ) -> Result<p::ListMemoriesResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
-        let ids=sqlx::query_scalar::<_,uuid::Uuid>("SELECT memory_id FROM memory_objects WHERE subject_id=$1 AND ($2='' OR acceptance_state=$2) ORDER BY memory_id LIMIT 257").bind(subject.0).bind(&input.status).fetch_all(self.0.store.pool()).await.map_err(db)?;
-        let mut items = Vec::new();
-        for value in ids.into_iter().take(256) {
-            items.push(view(
-                self.require_memory()?
-                    .memory(subject, nous_core::MemoryId(value), None)
-                    .await?,
-            ));
-        }
+        let scope = format!("memories:{}:{}", input.subject_id, input.status);
+        let (limit, last) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .memories(subject, &input.status, limit, last)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                items
+                    .last()
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .object
+                    .memory_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
         Ok(p::ListMemoriesResponse {
-            items,
-            next_page_token: String::new(),
+            items: items.into_iter().map(view).collect(),
+            next_page_token,
         })
     }
     pub(super) async fn get_memory_revision(&self, input: p::ObjectRequest) -> Result<p::Memory> {
@@ -235,69 +243,50 @@ impl KernelService {
                 .await?,
         ))
     }
+    async fn memory_lifecycle(
+        &self,
+        input: p::MemoryMutationRequest,
+        action: nous_memory::LifecycleAction,
+    ) -> Result<p::Memory> {
+        Ok(view(
+            self.require_memory()?
+                .mutate_memory_lifecycle(
+                    SubjectId(id(&input.subject_id)?),
+                    nous_core::MemoryId(id(&input.memory_id)?),
+                    OperationId(id(&input.operation_id)?),
+                    input.expected_object_epoch,
+                    action,
+                )
+                .await?,
+        ))
+    }
     pub(super) async fn suppress_memory(
         &self,
         input: p::MemoryMutationRequest,
     ) -> Result<p::Memory> {
-        let subject = SubjectId(id(&input.subject_id)?);
-        Ok(view(
-            self.require_memory()?
-                .suppress(
-                    subject,
-                    nous_core::MemoryId(id(&input.memory_id)?),
-                    OperationId(id(&input.operation_id)?),
-                    input.expected_object_epoch,
-                )
-                .await?,
-        ))
+        self.memory_lifecycle(input, nous_memory::LifecycleAction::Suppress)
+            .await
     }
     pub(super) async fn restore_memory(
         &self,
         input: p::MemoryMutationRequest,
     ) -> Result<p::Memory> {
-        let subject = SubjectId(id(&input.subject_id)?);
-        Ok(view(
-            self.require_memory()?
-                .restore(
-                    subject,
-                    nous_core::MemoryId(id(&input.memory_id)?),
-                    OperationId(id(&input.operation_id)?),
-                    input.expected_object_epoch,
-                )
-                .await?,
-        ))
+        self.memory_lifecycle(input, nous_memory::LifecycleAction::Restore)
+            .await
     }
     pub(super) async fn withdraw_memory(
         &self,
         input: p::MemoryMutationRequest,
     ) -> Result<p::Memory> {
-        let subject = SubjectId(id(&input.subject_id)?);
-        Ok(view(
-            self.require_memory()?
-                .withdraw(
-                    subject,
-                    nous_core::MemoryId(id(&input.memory_id)?),
-                    OperationId(id(&input.operation_id)?),
-                    input.expected_object_epoch,
-                )
-                .await?,
-        ))
+        self.memory_lifecycle(input, nous_memory::LifecycleAction::Withdraw)
+            .await
     }
     pub(super) async fn reaccept_memory(
         &self,
         input: p::MemoryMutationRequest,
     ) -> Result<p::Memory> {
-        let subject = SubjectId(id(&input.subject_id)?);
-        Ok(view(
-            self.require_memory()?
-                .reaccept(
-                    subject,
-                    nous_core::MemoryId(id(&input.memory_id)?),
-                    OperationId(id(&input.operation_id)?),
-                    input.expected_object_epoch,
-                )
-                .await?,
-        ))
+        self.memory_lifecycle(input, nous_memory::LifecycleAction::Reaccept)
+            .await
     }
     pub(super) async fn purge_memory(&self, input: p::MemoryMutationRequest) -> Result<()> {
         self.require_memory()?
@@ -326,7 +315,6 @@ fn view_from_revision(
         acceptance_state: String::new(),
         integrity_state: String::new(),
         suppression_state: String::new(),
-        purge_state: String::new(),
         accessibility_mode: String::new(),
         accessibility_level: String::new(),
         semantic_role: revision.semantic_role,

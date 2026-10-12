@@ -22,13 +22,13 @@ impl MemoryService {
         self.schema_at(subject, CognitiveSchemaId(schema_id), Some(revision))
             .await
     }
-    pub(super) async fn schema_at(
+    pub(in crate::service) async fn schema_at(
         &self,
         subject: SubjectId,
         schema_id: CognitiveSchemaId,
         revision: Option<CognitiveSchemaRevisionId>,
     ) -> Result<SchemaView> {
-        let row = sqlx::query("SELECT s.schema_id,s.subject_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.purge_state,s.created_at,r.schema_revision_id,r.schema_id AS revision_schema_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.structural_claim,r.applicability_description,r.aboutness,r.tags,r.boundary_definition,r.formation_kind,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id AND r.schema_revision_id=COALESCE($3,s.current_revision_id) WHERE s.subject_id=$1 AND s.schema_id=$2")
+        let row = sqlx::query("SELECT s.schema_id,s.subject_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.created_at,r.schema_revision_id,r.schema_id AS revision_schema_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.structural_claim,r.applicability_description,r.aboutness,r.tags,r.boundary_definition,r.formation_kind,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id AND r.schema_revision_id=COALESCE($3,s.current_revision_id) WHERE s.subject_id=$1 AND s.schema_id=$2")
             .bind(subject.0).bind(schema_id.0).bind(revision.map(|id| id.0)).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(||Error::NotFound("CognitiveSchema not found".into()))?;
         let revision_id = CognitiveSchemaRevisionId(row.try_get("schema_revision_id").map_err(db)?);
         let revision = CognitiveSchemaRevision {
@@ -93,10 +93,6 @@ impl MemoryService {
                 suppression_state: parse_enum(
                     row.try_get("suppression_state").map_err(db)?,
                     "schema suppression state",
-                )?,
-                purge_state: parse_enum(
-                    row.try_get("purge_state").map_err(db)?,
-                    "schema purge state",
                 )?,
                 created_at: row.try_get("created_at").map_err(db)?,
             },

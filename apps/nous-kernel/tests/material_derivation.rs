@@ -46,33 +46,51 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     );
     let (origins, truncated) = runtime
         .material
-        .occurrence_ids_for_artifact(subject, artifact, 1)
+        .occurrences_for_artifact(subject, artifact, 1)
         .await
         .unwrap();
     assert_eq!(origins.len(), 1);
     assert!(truncated);
     let (origins, truncated) = runtime
         .material
-        .occurrence_ids_for_artifact(subject, artifact, 20)
+        .occurrences_for_artifact(subject, artifact, 20)
         .await
         .unwrap();
     assert_eq!(origins.len(), 2);
-    assert!(origins.contains(&observed.occurrence.occurrence_id));
-    assert!(origins.contains(&repeated.occurrence.occurrence_id));
+    assert!(
+        origins
+            .iter()
+            .any(|item| item.occurrence_id == observed.occurrence.occurrence_id)
+    );
+    assert!(
+        origins
+            .iter()
+            .any(|item| item.occurrence_id == repeated.occurrence.occurrence_id)
+    );
     assert!(!truncated);
     assert!(
         runtime
             .material
-            .occurrence_ids_for_artifact(nous_core::SubjectId::new(), artifact, 20)
+            .occurrences_for_artifact(nous_core::SubjectId::new(), artifact, 20)
             .await
             .is_err()
     );
     assert!(
         runtime
             .material
-            .occurrence_ids_for_artifact(subject, artifact, 0)
+            .occurrences_for_artifact(subject, artifact, 0)
             .await
             .is_err()
+    );
+    let read_occurrence = runtime
+        .material
+        .occurrence(subject, observed.occurrence.occurrence_id)
+        .await
+        .unwrap();
+    assert_eq!(read_occurrence.artifact_id, Some(artifact));
+    assert_eq!(
+        read_occurrence.source_class,
+        observed.occurrence.source_class
     );
     let source = observed.source_region.unwrap().source_region_id;
     let make = |input: CognitiveRef, kind| {
@@ -120,16 +138,40 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     };
     let description = runtime
         .material
-        .persist_derived_representation(make(
-            CognitiveRef::SourceRegion(source),
-            RepresentationKind::Summary,
-        ))
+        .persist_derived_representation(
+            make(
+                CognitiveRef::SourceRegion(source),
+                RepresentationKind::Summary,
+            ),
+            None,
+        )
         .await
         .unwrap();
     assert_ne!(
         description.producer.signature_hash,
         "untrusted supplied hash"
     );
+    let exact = runtime
+        .material
+        .derived_representation(subject, description.derived_representation_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        exact.inputs[0].reference,
+        CognitiveRef::SourceRegion(source)
+    );
+    assert_eq!(
+        exact.producer.signature_hash,
+        description.producer.signature_hash
+    );
+    let (listed, truncated) = runtime
+        .material
+        .derived_representations(subject, Some(source.0), None, Some("summary".into()), 20)
+        .await
+        .unwrap();
+    assert!(!truncated);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].inputs[0].reference, exact.inputs[0].reference);
     let segments = runtime
         .material
         .segment_description(subject, description.derived_representation_id)
@@ -159,7 +201,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     let expected_payload = structured_input.payload_json.clone();
     let structured = runtime
         .material
-        .persist_derived_representation(structured_input)
+        .persist_derived_representation(structured_input, None)
         .await
         .unwrap();
     let saved_payload: Option<serde_json::Value> = sqlx::query_scalar(
@@ -177,7 +219,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     changed_schema.producer.output_schema_digest = Some("b".repeat(64));
     let changed_schema = runtime
         .material
-        .persist_derived_representation(changed_schema)
+        .persist_derived_representation(changed_schema, None)
         .await
         .unwrap();
     assert_ne!(
@@ -221,7 +263,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     assert!(
         runtime
             .material
-            .persist_derived_representation(forged_support)
+            .persist_derived_representation(forged_support, None)
             .await
             .is_err()
     );
@@ -233,7 +275,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     assert!(
         runtime
             .material
-            .persist_derived_representation(forged_summary)
+            .persist_derived_representation(forged_summary, None)
             .await
             .is_err()
     );
@@ -248,7 +290,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     });
     let combined = runtime
         .material
-        .persist_derived_representation(combined)
+        .persist_derived_representation(combined, None)
         .await
         .unwrap();
     assert_eq!(
@@ -270,7 +312,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     retry.payload_text = Some("different stochastic retry output".into());
     let retried = runtime
         .material
-        .persist_derived_representation(retry)
+        .persist_derived_representation(retry, None)
         .await
         .unwrap();
     assert_eq!(
@@ -290,7 +332,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     assert!(
         runtime
             .material
-            .persist_derived_representation(duplicate)
+            .persist_derived_representation(duplicate, None)
             .await
             .is_err()
     );
@@ -303,7 +345,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     assert!(
         runtime
             .material
-            .persist_derived_representation(cycle)
+            .persist_derived_representation(cycle, None)
             .await
             .is_err()
     );
@@ -316,7 +358,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     assert!(
         runtime
             .material
-            .persist_derived_representation(invalid)
+            .persist_derived_representation(invalid, None)
             .await
             .is_err()
     );

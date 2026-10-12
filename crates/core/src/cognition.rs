@@ -63,13 +63,6 @@ pub enum SuppressionState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PurgeState {
-    Normal,
-    Purging,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvidenceLocator {
     WholeOccurrence,
     SourceRegion(SourceRegionId),

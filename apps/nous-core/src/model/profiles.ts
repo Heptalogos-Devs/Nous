@@ -97,3 +97,21 @@ export const executionProfileSchema = z.strictObject({
 });
 export type ModelProfile = z.infer<typeof modelSchema>;
 export type ExecutionProfile = z.infer<typeof executionProfileSchema>;
+
+/** Vector-space meaning excludes transport batching and execution controls. */
+export function embeddingSpaceParameters(profile: ModelProfile) {
+  const embedding = profile.embedding;
+  if (!embedding) return undefined;
+  return {
+    space_hash: "",
+    model_identity: profile.model,
+    weights_revision: embedding.weights_revision,
+    task: embedding.task,
+    input_representation: embedding.input_representation,
+    preprocessing_identity: embedding.preprocessing_identity,
+    preprocessing_revision: embedding.preprocessing_revision,
+    dimension: embedding.dimension,
+    normalization: embedding.normalization,
+    output_semantics: embedding.output_semantics,
+  };
+}

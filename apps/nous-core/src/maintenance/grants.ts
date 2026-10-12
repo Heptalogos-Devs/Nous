@@ -16,6 +16,8 @@ import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "../model/runtime.js";
 import { canonicalDigest } from "../digest.js";
 import { GenerationFailure } from "../model/execution/routes.js";
+import { serializeOperation } from "../durable-operation.js";
+import { authorityRejection } from "./rejection.js";
 import { runModelMaintenance } from "./workflow.js";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { executionOptions } from "../execution.js";
@@ -94,6 +96,33 @@ export async function grantMaintenance(
       "Invalid maintenance opportunity envelope",
       Code.InvalidArgument,
     );
+  const calls = executionOptions(
+    kernel.execution.opportunity,
+    options,
+    input.maxElapsedMs,
+  );
+  return serializeOperation(
+    kernel,
+    `maintenance:${input.subjectId.toLowerCase()}`,
+    calls.signal,
+    () =>
+      grantMaintenanceOnce(
+        kernel,
+        models,
+        input,
+        calls,
+        options.signal ?? undefined,
+      ),
+  );
+}
+
+async function grantMaintenanceOnce(
+  kernel: KernelClient,
+  models: ModelRuntime,
+  input: MaintenanceGrantRequest,
+  options: import("../execution.js").ExecutionOptions,
+  callerSignal?: AbortSignal,
+) {
   const started = performance.now();
   const calls = executionOptions(
     kernel.execution.opportunity,
@@ -115,32 +144,27 @@ export async function grantMaintenance(
       elapsedMs: Math.round(performance.now() - started),
     };
   const limit = Math.min(input.maxOperations, policy.maxOperations);
+  const kinds = allowedKinds(models, input.maxModelCalls);
+  const readyRoles = new Set(
+    models.invocations.capabilities
+      .filter((capability) => capability.state === "READY")
+      .map((capability) => capability.name),
+  );
+  const modelExecutionDigest = canonicalDigest(
+    Object.fromEntries(
+      [...new Set(Object.values(roles))]
+        .filter((role) => readyRoles.has(`model.${role}`))
+        .map((role) => [role, models.invocations.snapshot(role).configDigest]),
+    ),
+  );
   for (let index = 0; index < limit && !signal.aborted; index++) {
-    const needs = await kernel.maintenance.claimMaintenance(
+    const needs = await kernel.maintenance.selectMaintenance(
       {
         subjectId: input.subjectId,
-        allowedKinds: allowedKinds(models, input.maxModelCalls - modelCalls),
-        modelExecutionDigest: canonicalDigest(
-          Object.fromEntries(
-            Object.values(roles)
-              .filter((role) =>
-                models.invocations.capabilities.some(
-                  (capability) =>
-                    capability.name === `model.${role}` &&
-                    capability.state === "READY",
-                ),
-              )
-              .map((role) => [
-                role,
-                models.invocations.snapshot(role).configDigest,
-              ]),
-          ),
-        ),
+        allowedKinds:
+          modelCalls < input.maxModelCalls ? kinds : ["episode_segment"],
+        modelExecutionDigest,
         limit: 1,
-        leaseSeconds: Math.max(
-          policy.workerLeaseSeconds,
-          opportunity.leaseSeconds,
-        ),
       },
       calls,
     );
@@ -190,9 +214,12 @@ export async function grantMaintenance(
         // Host opportunity exhaustion leaves the durable need available to the next grant.
         status = "deferred";
         nextDue = timestampFromDate(new Date());
-        problemCode = options.signal?.aborted
+        problemCode = callerSignal?.aborted
           ? "opportunity_canceled"
           : "opportunity_budget_exhausted";
+      } else if (authorityRejection(error) === "stale") {
+        status = "obsolete";
+        problemCode = "maintenance_trigger_changed";
       } else if (
         error instanceof ConnectError &&
         error.code === Code.InvalidArgument
@@ -233,7 +260,7 @@ export async function grantMaintenance(
     try {
       await kernel.maintenance.finishMaintenance(
         {
-          claimed: need,
+          selected: need,
           disposition:
             status === "deferred"
               ? "pending"
@@ -258,7 +285,7 @@ export async function grantMaintenance(
         "acknowledge",
         need.kind,
         problemClass(error),
-        "lease_recovery",
+        "pending_work",
       );
       throw error;
     }

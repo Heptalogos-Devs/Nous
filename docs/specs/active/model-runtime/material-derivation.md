@@ -12,7 +12,7 @@ Artifact、ObservationOccurrence、SourceRegion、DerivedRepresentation 与 Deri
 
 DerivedRepresentation 保存 ordered exact inputs、strategy、representation kind、ProducerSignature、revision、payload 与 quality。Inputs 可引用 SourceRegion、DerivedRepresentation 或 DerivedRegion，必须属于同一 Subject，不得重复、自引用或形成 cycle。已提交 input set 不可修改。Supersedes 表示显式 refinement lineage，不属于 derivation inputs。
 
-成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。
+成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。Core 对相同 source region 的派生执行串行处理；已保存的 paid proposal/outcome 不重新读取媒体。原始 bytes 按需要加载，frames mode 仍先取得实际 FFmpeg/frame identity，再查找对应 paid stage。
 
 ## Selected text 与 Serving
 

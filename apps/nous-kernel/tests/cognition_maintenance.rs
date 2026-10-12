@@ -148,11 +148,10 @@ async fn assert_consolidation_context(
         .unwrap();
     let service = nous_kernel::transport::KernelService(rt.clone());
     let claim = service
-        .claim_maintenance(tonic::Request::new(k::ClaimMaintenanceRequest {
+        .select_maintenance(tonic::Request::new(k::SelectMaintenanceRequest {
             subject_id: subject.0.to_string(),
             allowed_kinds: vec!["memory_consolidate".into()],
             limit: 1,
-            lease_seconds: 60,
             model_execution_digest: None,
         }))
         .await
@@ -161,7 +160,7 @@ async fn assert_consolidation_context(
     let need = claim.needs[0].clone();
     let plan = service
         .plan_maintenance(tonic::Request::new(k::PlanMaintenanceRequest {
-            claimed: Some(need.clone()),
+            selected: Some(need.clone()),
         }))
         .await
         .unwrap()
@@ -226,7 +225,7 @@ async fn assert_consolidation_context(
     assert_consolidation_policy(rt, subject, &service, &need).await;
     service
         .finish_maintenance(tonic::Request::new(k::FinishMaintenanceRequest {
-            claimed: Some(need),
+            selected: Some(need),
             disposition: "satisfied".into(),
             retry_delay_seconds: 0,
             ..Default::default()
@@ -265,7 +264,7 @@ async fn assert_consolidation_policy(
         .unwrap();
     let bounded = service
         .plan_maintenance(tonic::Request::new(k::PlanMaintenanceRequest {
-            claimed: Some(need.clone()),
+            selected: Some(need.clone()),
         }))
         .await
         .unwrap()
@@ -371,26 +370,25 @@ async fn assert_manual_consolidation_plans(
     };
     clock.advance_by(subject, Duration::seconds(300)).unwrap();
     let service = nous_kernel::transport::KernelService(rt.clone());
-    let claims = service
-        .claim_maintenance(tonic::Request::new(k::ClaimMaintenanceRequest {
+    let selection = service
+        .select_maintenance(tonic::Request::new(k::SelectMaintenanceRequest {
             subject_id: subject.0.to_string(),
             allowed_kinds: vec!["memory_consolidate".into()],
             limit: 8,
-            lease_seconds: 60,
             model_execution_digest: None,
         }))
         .await
         .unwrap()
         .into_inner();
     for episode in [&first, &second] {
-        let claimed = claims
+        let selected = selection
             .needs
             .iter()
             .find(|need| need.scope_ref == episode.revision.episode_revision_id.0.to_string())
             .unwrap();
         let plan = service
             .plan_maintenance(tonic::Request::new(k::PlanMaintenanceRequest {
-                claimed: Some(claimed.clone()),
+                selected: Some(selected.clone()),
             }))
             .await
             .unwrap()

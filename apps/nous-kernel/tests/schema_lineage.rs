@@ -102,43 +102,6 @@ async fn assert_split(
             .map(|child| child.revision.schema_revision_id)
             .collect::<Vec<_>>()
     );
-    // An old committed split had no result list. Its single lineage batch is recoverable.
-    sqlx::query(
-        "UPDATE mutation_receipts SET result_ref=$3 WHERE subject_id=$1 AND operation_id=$2",
-    )
-    .bind(subject.0)
-    .bind(operation.0)
-    .bind(source.schema.schema_id.0.to_string())
-    .execute(rt.store.pool())
-    .await
-    .unwrap();
-    sqlx::raw_sql("ALTER TABLE model_workflow_operations DROP COLUMN dependencies; ALTER TABLE model_workflow_operations DROP COLUMN mutation_operations;").execute(rt.store.pool()).await.unwrap();
-    sqlx::raw_sql(include_str!(
-        "../../../crates/persistence/migrations/0005_workflow_envelope.sql"
-    ))
-    .execute(rt.store.pool())
-    .await
-    .unwrap();
-    let recovered = owner
-        .split_schemas(
-            subject,
-            source.schema.schema_id,
-            operation,
-            source.schema.object_epoch,
-            children,
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        recovered
-            .iter()
-            .map(|child| child.revision.schema_revision_id)
-            .collect::<std::collections::BTreeSet<_>>(),
-        split
-            .iter()
-            .map(|child| child.revision.schema_revision_id)
-            .collect::<std::collections::BTreeSet<_>>()
-    );
     assert_eq!(split.len(), 2);
     for child in &split {
         assert!(child.revision.producer_signature_id.is_some());

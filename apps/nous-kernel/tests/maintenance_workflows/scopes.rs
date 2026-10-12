@@ -119,7 +119,7 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
     let kinds = vec!["journal_revalidate".into()];
     let claim = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, None)
+        .select_maintenance(subject, &kinds, 1, None)
         .await
         .unwrap()
         .remove(0);
@@ -135,7 +135,7 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
     clock.advance_by(subject, Duration::days(30)).unwrap();
     assert!(
         rt.cognition
-            .lease_maintenance(subject, &kinds, 1, 60, None)
+            .select_maintenance(subject, &kinds, 1, None)
             .await
             .unwrap()
             .is_empty()
@@ -161,7 +161,7 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
         .unwrap();
     let claim = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, None)
+        .select_maintenance(subject, &kinds, 1, None)
         .await
         .unwrap()
         .remove(0);
@@ -202,24 +202,25 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
     clock.advance_by(subject, Duration::days(30)).unwrap();
     assert!(
         rt.cognition
-            .lease_maintenance(subject, &kinds, 1, 60, None)
+            .select_maintenance(subject, &kinds, 1, None)
             .await
             .unwrap()
             .is_empty()
     );
     // A relevant source lifecycle event wakes the blocked revalidation obligation.
     memory
-        .suppress_episode(
+        .mutate_episode_lifecycle(
             subject,
             episodes[0].object.episode_id,
             OperationId::new(),
             episodes[0].object.object_epoch,
+            nous_memory::LifecycleAction::Suppress,
         )
         .await
         .unwrap();
     let claim = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, None)
+        .select_maintenance(subject, &kinds, 1, None)
         .await
         .unwrap()
         .remove(0);
@@ -251,7 +252,7 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
     let kinds = vec!["episode_resegment".into()];
     let claims = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 8, 60, None)
+        .select_maintenance(subject, &kinds, 8, None)
         .await
         .unwrap();
     let claim = claims
@@ -285,7 +286,7 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
     clock.advance_by(subject, Duration::days(30)).unwrap();
     assert!(
         rt.cognition
-            .lease_maintenance(subject, &kinds, 1, 60, None)
+            .select_maintenance(subject, &kinds, 1, None)
             .await
             .unwrap()
             .is_empty()
@@ -302,7 +303,7 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
         .unwrap();
     let resumed = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, None)
+        .select_maintenance(subject, &kinds, 1, None)
         .await
         .unwrap()
         .remove(0);

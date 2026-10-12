@@ -3,8 +3,7 @@
 mod test_support;
 use nous_core::*;
 use nous_runtime::{
-    CognitiveRuntimeService, ManualCognitiveClock, QUERY_FEEDBACK_RETENTION, UseFeedback,
-    UseFeedbackEvent, UseKind,
+    ManualCognitiveClock, QUERY_FEEDBACK_RETENTION, UseFeedback, UseFeedbackEvent, UseKind,
 };
 use nous_subject::{CognitiveSeedInput, CreateSubject};
 use sqlx::Row;
@@ -93,7 +92,14 @@ fn feedback(
 )]
 async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     let (root, url, _pg) = database().await;
-    let mut rt = open_runtime(&url, &root).await;
+    let now = chrono::Utc::now();
+    let clock = Arc::new(ManualCognitiveClock::new(now));
+    let rt = nous_kernel::NousRuntime::open_with_clock(
+        runtime_options(&url, &root, false, false, false),
+        clock.clone(),
+    )
+    .await
+    .unwrap();
     let subject_a = subject(&rt).await;
     let subject_b = subject(&rt).await;
     let a = memory(
@@ -120,15 +126,6 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
         )
         .await
         .unwrap();
-    let now = chrono::Utc::now();
-    let clock = Arc::new(ManualCognitiveClock::new(now));
-    rt.cognition = CognitiveRuntimeService::with_clock(
-        rt.store.clone(),
-        rt.cognition.resident_limit,
-        rt.configuration.clone(),
-        clock.clone(),
-    )
-    .unwrap();
     let sequence = rt.store.authority_seq(subject_a).await.unwrap();
     let mut intent = query(subject_a, a.clone());
     intent
@@ -147,13 +144,11 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     let event = feedback(subject_a, a.clone(), result.bound.query_id, now);
     assert_eq!(rt.cognition.use_feedback(event.clone()).await.unwrap().0, 1);
     assert_eq!(rt.cognition.use_feedback(event.clone()).await.unwrap().1, 1);
-    let mut reopened = open_runtime(&url, &root).await;
-    reopened.cognition = CognitiveRuntimeService::with_clock(
-        reopened.store.clone(),
-        reopened.cognition.resident_limit,
-        reopened.configuration.clone(),
+    let reopened = nous_kernel::NousRuntime::open_with_clock(
+        runtime_options(&url, &root, false, false, false),
         clock.clone(),
     )
+    .await
     .unwrap();
     assert_eq!(
         reopened

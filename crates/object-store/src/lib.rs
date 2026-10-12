@@ -4,7 +4,7 @@
 use futures::{Stream, StreamExt};
 use nous_core::{Error, Result};
 use opendal::{Operator, services::Fs};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Clone)]
 pub struct ObjectStore {
@@ -216,25 +216,47 @@ impl ObjectStore {
         Ok(Some(text.to_owned()))
     }
 
-    /// Read CAS bytes in bounded chunks and verify integrity at end of stream.
+    /// Raw byte ranges never impose text boundaries; full reads verify CAS integrity at EOF.
     pub async fn stream(
         &self,
         hash: &str,
+        range: Option<std::ops::Range<u64>>,
     ) -> Result<impl Stream<Item = Result<Vec<u8>>> + Send + use<>> {
-        let file = tokio::fs::File::open(self.root.join(Self::key(hash)?))
+        let mut file = tokio::fs::File::open(self.root.join(Self::key(hash)?))
             .await
             .map_err(|e| Error::Infrastructure(e.to_string()))?;
-        let expected = hash.to_owned();
+        let remaining = if let Some(range) = &range {
+            if range.end < range.start {
+                return Err(Error::Invalid("invalid byte range".into()));
+            }
+            file.seek(std::io::SeekFrom::Start(range.start))
+                .await
+                .map_err(|e| Error::Infrastructure(e.to_string()))?;
+            Some(range.end - range.start)
+        } else {
+            None
+        };
+        let expected = range.is_none().then(|| hash.to_owned());
         Ok(futures::stream::try_unfold(
-            (file, blake3::Hasher::new(), expected),
-            |(mut file, mut hasher, expected)| async move {
-                let mut chunk = vec![0; 1024 * 1024];
+            (file, blake3::Hasher::new(), expected, remaining),
+            |(mut file, mut hasher, expected, remaining)| async move {
+                if remaining == Some(0) {
+                    return Ok(None);
+                }
+                let mut chunk = vec![0; remaining.unwrap_or(262_144).min(262_144) as usize];
                 let size = file
                     .read(&mut chunk)
                     .await
                     .map_err(|e| Error::Infrastructure(e.to_string()))?;
                 if size == 0 {
-                    if hasher.finalize().to_hex().as_str() != expected {
+                    if remaining.is_some() {
+                        return Err(Error::Infrastructure(
+                            "artifact is shorter than requested range".into(),
+                        ));
+                    }
+                    if let Some(expected) = expected
+                        && hasher.finalize().to_hex().as_str() != expected
+                    {
                         return Err(Error::Infrastructure(
                             "artifact content hash mismatch".into(),
                         ));
@@ -242,8 +264,18 @@ impl ObjectStore {
                     return Ok(None);
                 }
                 chunk.truncate(size);
-                hasher.update(&chunk);
-                Ok(Some((chunk, (file, hasher, expected))))
+                if expected.is_some() {
+                    hasher.update(&chunk);
+                }
+                Ok(Some((
+                    chunk,
+                    (
+                        file,
+                        hasher,
+                        expected,
+                        remaining.map(|left| left - size as u64),
+                    ),
+                )))
             },
         ))
     }

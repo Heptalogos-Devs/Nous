@@ -20,12 +20,11 @@ pub struct WorkflowPayload {
 pub struct WorkflowSnapshot {
     pub content: WorkflowPayload,
     pub cognitive_formed_at: Option<DateTime<Utc>>,
-    pub maintenance_claim: Option<MaintenanceClaim>,
+    pub maintenance_trigger: Option<MaintenanceTrigger>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MaintenanceClaim {
+pub struct MaintenanceTrigger {
     pub need_id: Uuid,
-    pub lease_token: Uuid,
     pub trigger_authority_seq: i64,
     pub trigger_revision: u64,
 }

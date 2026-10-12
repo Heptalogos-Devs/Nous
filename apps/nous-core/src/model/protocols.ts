@@ -418,7 +418,7 @@ export async function rerankProvider(
     });
     if (!response.ok || !response.body) {
       await response.body?.cancel();
-      throw new Error("Rerank gateway failure");
+      throw new ProviderFailure(`gateway_http_${response.status}`);
     }
     const bytes = await getStreamAsArrayBuffer(response.body, {
       maxBuffer: 1048576,
@@ -431,10 +431,16 @@ export async function rerankProvider(
       value: result.results,
       adapter: "rerank-v1",
     };
-  } catch {
+  } catch (error) {
     if (signal?.aborted) throw signal.reason;
-    throw new Error(
-      "Rerank invocation failed or response violated candidate mapping",
+    if (error instanceof ProviderFailure) throw error;
+    const failure = safeProviderFailure(error);
+    throw new ProviderFailure(
+      failure,
+      undefined,
+      ["validation_or_transport", "timeout_or_cancellation"].includes(failure)
+        ? "unknown"
+        : "failed",
     );
   }
 }

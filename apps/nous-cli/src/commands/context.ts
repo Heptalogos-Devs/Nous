@@ -1,5 +1,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { create } from "@bufbuild/protobuf";
+import {
+  CognitiveRefSchema,
+  CreateWorkContextRequestSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { content, page } from "../content.js";
 import type { CliEnvironment } from "../runtime.js";
 import { CliError } from "../agent.js";
 export async function contextCommands(
@@ -18,28 +24,36 @@ export async function contextCommands(
     return value;
   }
   if (action === "list")
-    return client.cognition.listWorkContexts({
+    return client.runtime.listWorkContexts({
       subjectId,
-      page: { pageSize: 50 },
+      page: page(env),
     });
   if (action === "create") {
-    const result = await client.cognition.createWorkContext({
-      subjectId,
-      operationId,
-      purpose: required(values.purpose ?? values.text, "--purpose"),
-      contextText: await text(),
-    });
+    const result = await client.runtime.createWorkContext(
+      env.values["request-file"]
+        ? {
+            ...(await content(env, CreateWorkContextRequestSchema)),
+            subjectId,
+            operationId,
+          }
+        : {
+            subjectId,
+            operationId,
+            purpose: required(values.purpose ?? values.text, "--purpose"),
+            contextText: await text(),
+          },
+    );
     if (result.workContext)
       await save({ ...state, workContextId: result.workContext.workContextId });
     return result.workContext;
   }
   if (action === "foreground") {
     const sessionId = required(state.sessionId, "Selected Session");
-    const session = await client.cognition.getSession({
+    const session = await client.runtime.getSession({
       subjectId,
       id: sessionId,
     });
-    return client.cognition.setActiveWorkContext({
+    return client.runtime.setActiveWorkContext({
       subjectId,
       sessionId,
       expectedRuntimeRevision: session.runtimeRevision,
@@ -54,7 +68,7 @@ export async function contextCommands(
   const id = argument
     ? (await resolveReference(argument, "work_context")).value
     : required(state.workContextId, "WorkContext");
-  const result = await client.cognition.getWorkContext({
+  const result = await client.runtime.getWorkContext({
     subjectId,
     workContextId: id,
   });
@@ -71,9 +85,9 @@ export async function contextCommands(
     expectedRevision: current.revision,
     operationId,
   };
-  if (action === "pause") return client.cognition.pauseWorkContext(mutation);
-  if (action === "resume") return client.cognition.resumeWorkContext(mutation);
-  if (action === "end") return client.cognition.endWorkContext(mutation);
+  if (action === "pause") return client.runtime.pauseWorkContext(mutation);
+  if (action === "resume") return client.runtime.resumeWorkContext(mutation);
+  if (action === "end") return client.runtime.endWorkContext(mutation);
   const patch = {
     ...mutation,
     purpose: current.purpose,
@@ -87,11 +101,36 @@ export async function contextCommands(
     budgetSummary: current.budgetSummary,
   };
   if (action === "set") {
-    const nextText = await text();
-    if (nextText === undefined && !values.purpose)
+    const file = values["request-file"]
+      ? ((await env.requestPayload(values["request-file"])) as Record<
+          string,
+          unknown
+        >)
+      : undefined;
+    const structured = file
+      ? await content(env, CreateWorkContextRequestSchema, file)
+      : undefined;
+    const supplied = (snake: string, camel: string) =>
+      file && (Object.hasOwn(file, snake) || Object.hasOwn(file, camel));
+    if (structured) {
+      if (supplied("unresolved_questions", "unresolvedQuestions"))
+        patch.unresolvedQuestions = structured.unresolvedQuestions;
+      if (supplied("constraints", "constraints"))
+        patch.constraints = structured.constraints;
+      if (supplied("resume_conditions", "resumeConditions"))
+        patch.resumeConditions = structured.resumeConditions;
+      if (supplied("budget_summary", "budgetSummary"))
+        patch.budgetSummary = structured.budgetSummary;
+      if (supplied("purpose", "purpose")) patch.purpose = structured.purpose;
+    }
+    const nextText =
+      structured && supplied("context_text", "contextText")
+        ? structured.contextText
+        : await text();
+    if (nextText === undefined && !values.purpose && !structured)
       throw new CliError(
         "INVALID_ARGUMENT",
-        "Provide --text, --file or --purpose",
+        "Provide --text, --file, --purpose or --request-file",
       );
     if (nextText !== undefined) patch.contextText = nextText;
     if (values.purpose) patch.purpose = values.purpose;
@@ -141,7 +180,8 @@ export async function contextCommands(
         patch.cognitionAnchors = patch.cognitionAnchors.filter(
           (value) => value.kind !== ref.kind || value.value !== ref.value,
         );
-        if (action === "pin") patch.cognitionAnchors.push(ref);
+        if (action === "pin")
+          patch.cognitionAnchors.push(create(CognitiveRefSchema, ref));
       } else
         throw new CliError(
           "REFERENCE_TYPE_MISMATCH",
@@ -149,5 +189,5 @@ export async function contextCommands(
         );
     }
   } else throw new CliError("INVALID_ARGUMENT", "Unknown context command");
-  return client.cognition.updateWorkContext(patch);
+  return client.runtime.updateWorkContext(patch);
 }

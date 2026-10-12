@@ -242,26 +242,19 @@ impl CognitiveRuntimeService {
         contributors: CognitiveContributors<'_>,
     ) -> Result<CognitiveQueryResult> {
         let (execution, lease) = self.take_query(subject, ticket)?;
-        if order.len() > 64 || order.iter().any(|(_, score)| !score.is_finite()) {
-            return Err(Error::Invalid(
-                "rerank mapping exceeds bounds or has a nonfinite score".into(),
-            ));
-        }
         let pool: HashSet<_> = execution
             .result
             .results
             .iter()
             .map(|hit| hit.reference.clone())
             .collect();
-        let requested: HashSet<_> = order
+        validate_rerank_order(&order, &pool)?;
+        let originals = execution
+            .result
+            .results
             .iter()
-            .map(|(reference, _)| reference.clone())
-            .collect();
-        if requested.len() != order.len() || !requested.is_subset(&pool) {
-            return Err(Error::Invalid(
-                "rerank mapping contains duplicate or unknown candidates".into(),
-            ));
-        }
+            .map(|hit| (hit.reference.clone(), hit))
+            .collect::<HashMap<_, _>>();
         let leaf_count = execution
             .bound
             .source_query
@@ -271,6 +264,7 @@ impl CognitiveRuntimeService {
             .count();
         let mut outputs = vec![Vec::new(); leaf_count];
         for leaf in &execution.leaves {
+            let validation_bound = leaf.validation_bound(&execution.bound);
             let mut fresh = HashMap::new();
             for owner in [contributors.memory, contributors.material]
                 .into_iter()
@@ -282,8 +276,11 @@ impl CognitiveRuntimeService {
                     .filter(|hit| owner.owns(&hit.reference))
                     .map(|hit| hit.reference.clone())
                     .collect::<Vec<_>>();
+                if references.is_empty() {
+                    continue;
+                }
                 let (hits, _) = owner
-                    .validate_and_materialize(subject, &references, &leaf.bound)
+                    .validate_and_materialize(subject, &references, &validation_bound)
                     .await?;
                 fresh.extend(hits.into_iter().map(|hit| (hit.reference.clone(), hit)));
             }
@@ -298,21 +295,17 @@ impl CognitiveRuntimeService {
                 {
                     same_stamp(fresh.get(&hit.reference), hit)
                 } else {
-                    self.generic_still_valid(subject, &leaf.bound, &hit.reference)
+                    self.generic_rejection(&validation_bound, &hit.reference)
                         .await?
+                        .is_none()
                 };
                 if !valid {
                     continue;
                 }
-                let Some(original) = execution
-                    .result
-                    .results
-                    .iter()
-                    .find(|original| original.reference == hit.reference)
-                else {
+                let Some(original) = originals.get(&hit.reference) else {
                     continue;
                 };
-                outputs[leaf.ordinal].push(original.clone());
+                outputs[leaf.ordinal].push((*original).clone());
             }
         }
         let valid = super::tree::combine(
@@ -360,17 +353,19 @@ impl CognitiveRuntimeService {
             .await?;
         Ok(result)
     }
-    async fn generic_still_valid(
+    /// Generic Runtime/host references use the same bound contract at initial
+    /// and post-model validation. Rebinding only checks identity; it never
+    /// replaces a mutable exact target captured during preparation.
+    pub(super) async fn generic_rejection(
         &self,
-        subject: SubjectId,
         bound: &super::BoundQuery,
         reference: &CognitiveRef,
-    ) -> Result<bool> {
+    ) -> Result<Option<&'static str>> {
+        let subject = bound.source_query.subject;
         if let Some(binding) = bound
             .exact_bindings
             .iter()
-            .find(|binding| binding.bound_ref == *reference)
-            && binding.mutable_object
+            .find(|binding| binding.bound_ref == *reference && binding.mutable_object)
         {
             match self
                 .store
@@ -379,18 +374,46 @@ impl CognitiveRuntimeService {
             {
                 Ok((current, epoch, _))
                     if current == binding.bound_ref && epoch == binding.bound_object_epoch => {}
-                Ok(_) | Err(Error::NotFound(_)) | Err(Error::Invalid(_)) => return Ok(false),
+                Ok(_) | Err(Error::NotFound(_)) | Err(Error::Invalid(_)) => {
+                    return Ok(Some("stale_exact_binding"));
+                }
                 Err(error) => return Err(error),
             }
         }
         match self.store.validate_reference(subject, reference).await {
-            Ok(()) => Ok(super::orchestrate::generic_constraints_match(
-                &bound.source_query.expression.constraints,
-            )),
-            Err(Error::NotFound(_)) | Err(Error::Invalid(_)) => Ok(false),
+            Ok(())
+                if super::orchestrate::generic_constraints_match(
+                    &bound.source_query.expression.constraints,
+                ) =>
+            {
+                Ok(None)
+            }
+            Ok(()) => Ok(Some("constraint_ineligible")),
+            Err(Error::NotFound(_)) | Err(Error::Invalid(_)) => Ok(Some("authority_ineligible")),
             Err(error) => Err(error),
         }
     }
+}
+
+fn validate_rerank_order(
+    order: &[(CognitiveRef, f64)],
+    pool: &HashSet<CognitiveRef>,
+) -> Result<()> {
+    if order.len() > 64 || order.iter().any(|(_, score)| !score.is_finite()) {
+        return Err(Error::Invalid(
+            "rerank mapping exceeds bounds or has a nonfinite score".into(),
+        ));
+    }
+    let requested: HashSet<_> = order
+        .iter()
+        .map(|(reference, _)| reference.clone())
+        .collect();
+    if requested.len() != order.len() || !requested.is_subset(pool) {
+        return Err(Error::Invalid(
+            "rerank mapping contains duplicate or unknown candidates".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn same_stamp(current: Option<&CognitiveHit>, old: &super::types::CandidateStamp) -> bool {

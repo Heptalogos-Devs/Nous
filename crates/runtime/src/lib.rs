@@ -3,7 +3,9 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+mod planning;
 mod policy;
+pub use planning::{ExperienceMetadata, UseSummary};
 pub use policy::execution::QUERY_SLOTS;
 mod clock;
 mod experience;
@@ -32,10 +34,9 @@ pub use query::{
     ConceptActivationPolicy, ConceptEnrichment, DEFAULT_RESULT_LIMIT, LaneCandidate, LaneOutput,
     LaneStatus, NovelConceptHypothesis, QUERY_REPRESENTATION, QueryActivation, QueryActivationView,
     QueryConceptCandidate, QueryConceptOutput, QueryConceptSelection, QueryContextSnapshot,
-    QueryExecution, QueryLease, QueryPlan, QueryReadLease, QueryRepresentation,
-    QueryRepresentationLimits, QueryReservation, QuerySemanticEmbedding, SharedLaneProvider,
-    TagActivation, TopologyWorkSummary, WorkCycle, build_query_representation,
-    register_retrieval_configuration,
+    QueryExecution, QueryLease, QueryPlan, QueryRepresentation, QueryRepresentationLimits,
+    QueryReservation, QuerySemanticEmbedding, SharedLaneProvider, TagActivation,
+    TopologyWorkSummary, WorkCycle, build_query_representation, register_retrieval_configuration,
 };
 pub use segmentation::{EpisodeDraft, SegmentationProgress};
 pub use work_contexts::*;

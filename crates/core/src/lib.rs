@@ -11,7 +11,7 @@ mod time;
 pub use time::{TemporalExtent, TimeInterval, TimePredicate};
 mod workflow;
 pub use workflow::{
-    AttemptStatus, ExecutionAttempt, ExecutionTelemetry, ExecutionUsage, MaintenanceClaim,
+    AttemptStatus, ExecutionAttempt, ExecutionTelemetry, ExecutionUsage, MaintenanceTrigger,
     WorkflowPayload, WorkflowSnapshot,
 };
 mod topology;
@@ -190,7 +190,7 @@ impl EpistemicClass {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(from = "String", into = "String")]
 pub enum SourceClass {
     Message,
     Tool,
@@ -232,6 +232,12 @@ impl From<String> for SourceClass {
             "import" => Self::Import,
             _ => Self::Other(value),
         }
+    }
+}
+
+impl From<SourceClass> for String {
+    fn from(value: SourceClass) -> Self {
+        value.as_str().to_owned()
     }
 }
 

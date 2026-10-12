@@ -4,8 +4,6 @@
 import { webSource } from "@nous-wave/client";
 import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
-import { restoreProtocolData, clientDataSchemas } from "@nous-wave/client/data";
-const { AcceptedObservationSchema, ArtifactSchema } = clientDataSchemas;
 
 export async function observeCommands(
   env: CliEnvironment,
@@ -25,7 +23,7 @@ export async function observeCommands(
     admit: true,
   };
   if (action === "text")
-    return client.cognition.observe({
+    return client.runtime.recordObservation({
       ...input,
       material: {
         case: "inlineText",
@@ -40,17 +38,11 @@ export async function observeCommands(
     const artifact = await client.artifacts.uploadFile(subjectId, path, {
       mediaType: mediaType(path),
     });
-    const observation = await client.cognition.observe({
+    const observation = await client.runtime.recordObservation({
       ...input,
       material: { case: "artifactId", value: artifact.artifactId },
     });
-    return restoreProtocolData(
-      {
-        artifact: restoreProtocolData(artifact, ArtifactSchema),
-        ...observation,
-      },
-      AcceptedObservationSchema,
-    );
+    return { artifact, ...observation };
   }
 
   throw new CliError("INVALID_ARGUMENT", "Unknown observe command");

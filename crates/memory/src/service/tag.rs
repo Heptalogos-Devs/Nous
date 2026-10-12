@@ -179,10 +179,7 @@ impl MemoryService {
             .start_mutation(subject, input.operation_id, "split_tag", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable("tag operation in progress".into()));
-                }
+            MutationStart::Replay(_) => {
                 let ids: Vec<(Uuid, Uuid)> = sqlx::query_as("SELECT child_tag_id,child_revision_id FROM tag_lineage WHERE subject_id=$1 AND operation_id=$2 AND relation='split_into' ORDER BY child_index")
                     .bind(subject.0).bind(input.operation_id.0).fetch_all(self.store.pool()).await.map_err(db)?;
                 let mut result = Vec::new();
@@ -223,9 +220,6 @@ impl MemoryService {
         subject: SubjectId,
         receipt: nous_persistence::MutationReceipt,
     ) -> Result<Tag> {
-        if receipt.state != "committed" {
-            return Err(Error::Unavailable("tag operation in progress".into()));
-        }
         let id = receipt
             .result_ref
             .ok_or_else(|| Error::Infrastructure("tag receipt missing result".into()))?
@@ -474,4 +468,72 @@ fn canonical_concept_producer(producer: &ProducerSignature) -> Result<ProducerSi
         return Err(Error::Invalid("concept producer operation mismatch".into()));
     }
     AuthorityStore::canonical_producer(producer)
+}
+
+#[derive(Debug, Clone)]
+pub struct TagView {
+    pub tag_id: TagId,
+    pub current_revision_id: Uuid,
+    pub status: String,
+    pub canonical_tag_id: Option<TagId>,
+    pub label: String,
+    pub description: Option<String>,
+    pub kind_hint: Option<String>,
+    pub origin: String,
+}
+
+impl MemoryService {
+    pub async fn tag_view(
+        &self,
+        subject: SubjectId,
+        tag: TagId,
+        revision: Option<Uuid>,
+    ) -> Result<TagView> {
+        let row = sqlx::query("SELECT t.tag_id,r.tag_revision_id current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_id=t.tag_id AND r.tag_revision_id=COALESCE($3,t.current_revision_id) WHERE t.subject_id=$1 AND t.tag_id=$2")
+            .bind(subject.0).bind(tag.0).bind(revision).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(|| Error::NotFound("Tag not found".into()))?;
+        decode_tag_view(row)
+    }
+
+    pub async fn tag_views(
+        &self,
+        subject: SubjectId,
+        text: &str,
+        status: &str,
+        limit: i64,
+        after: Option<Uuid>,
+    ) -> Result<(Vec<TagView>, bool)> {
+        self.store.require_subject(subject).await?;
+        let status = if status.is_empty() { "active" } else { status };
+        if !matches!(status, "active" | "withdrawn") {
+            return Err(Error::Invalid("invalid tag status".into()));
+        }
+        if text.chars().count() > 256 {
+            return Err(Error::Invalid("tag search exceeds 256 characters".into()));
+        }
+        let mut rows = sqlx::query("SELECT t.tag_id,t.current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status=$2 AND ($3::uuid IS NULL OR t.tag_id>$3) AND ($4='' OR strpos(lower(r.label || ' ' || COALESCE(r.description,'')),lower($4))>0 OR EXISTS(SELECT 1 FROM lexical_bindings b JOIN lexical_visibility v ON v.lexical_ref=b.lexical_ref WHERE v.subject_id=t.subject_id AND b.object_kind='tag' AND canonical_tag(t.subject_id,CASE WHEN b.object_kind='tag' THEN b.canonical_ref::uuid END)=t.tag_id AND b.tombstoned_at IS NULL AND (strpos(lower(v.display_name),lower($4))>0 OR EXISTS(SELECT 1 FROM unnest(v.aliases) alias WHERE strpos(lower(alias),lower($4))>0)))) ORDER BY t.tag_id LIMIT $5")
+            .bind(subject.0).bind(status).bind(after).bind(text).bind(limit+1).fetch_all(self.store.pool()).await.map_err(db)?;
+        let more = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        Ok((
+            rows.into_iter()
+                .map(decode_tag_view)
+                .collect::<Result<_>>()?,
+            more,
+        ))
+    }
+}
+fn decode_tag_view(row: sqlx::postgres::PgRow) -> Result<TagView> {
+    Ok(TagView {
+        tag_id: TagId(row.try_get("tag_id").map_err(db)?),
+        current_revision_id: row.try_get("current_revision_id").map_err(db)?,
+        status: row.try_get("status").map_err(db)?,
+        canonical_tag_id: row
+            .try_get::<Option<Uuid>, _>("canonical_tag_id")
+            .map_err(db)?
+            .map(TagId),
+        label: row.try_get("label").map_err(db)?,
+        description: row.try_get("description").map_err(db)?,
+        kind_hint: row.try_get("kind_hint").map_err(db)?,
+        origin: row.try_get("origin").map_err(db)?,
+    })
 }

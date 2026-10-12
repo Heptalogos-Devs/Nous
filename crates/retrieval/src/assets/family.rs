@@ -28,12 +28,4 @@ impl AssetFamily {
             .find(|family| family.as_str() == value)
             .ok_or_else(|| Error::Invalid("unknown physical Serving family".into()))
     }
-    pub fn implementation(self) -> &'static str {
-        match self {
-            Self::Lexical => "tantivy",
-            Self::Dense => "usearch",
-            Self::Topology => "cognitive-profile-assets",
-            Self::Concept => "shared-semantic-concepts",
-        }
-    }
 }

@@ -37,7 +37,15 @@ impl MaterialService {
     pub async fn persist_derived_representation(
         &self,
         mut representation: DerivedRepresentation,
+        operation: Option<&nous_persistence::WorkflowIdentity>,
     ) -> Result<DerivedRepresentation> {
+        if operation.is_some_and(|identity| {
+            identity.subject != representation.subject_id || identity.owner != "material"
+        }) {
+            return Err(Error::Invalid(
+                "derivation operation belongs to another owner or Subject".into(),
+            ));
+        }
         representation.validate()?;
         representation.producer = AuthorityStore::canonical_producer(&representation.producer)?;
         let (input_digest, key) = derivation_identity(&representation)?;
@@ -47,50 +55,8 @@ impl MaterialService {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        // All inputs must already exist. Together with immutable edges and a new
-        // representation identity, this admits no backwards edge or DAG cycle.
-        for input in &representation.inputs {
-            let (query, id) = match input.reference {
-                CognitiveRef::SourceRegion(id) => (
-                    "SELECT subject_id FROM source_regions WHERE source_region_id=$1 FOR SHARE",
-                    id.0,
-                ),
-                CognitiveRef::DerivedRepresentation(id) => (
-                    "SELECT subject_id FROM derived_representations WHERE derived_representation_id=$1 FOR SHARE",
-                    id.0,
-                ),
-                CognitiveRef::DerivedRegion(id) => (
-                    "SELECT subject_id FROM derived_regions WHERE derived_region_id=$1 FOR SHARE",
-                    id.0,
-                ),
-                _ => return Err(Error::Invalid("invalid derivation input kind".into())),
-            };
-            let owner: Option<Uuid> = sqlx::query_scalar(query)
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
-            if owner != Some(representation.subject_id.0) {
-                return Err(Error::Invalid(
-                    "derivation input is missing or outside Subject".into(),
-                ));
-            }
-        }
-        self.validate_field_basis(&mut tx, &representation).await?;
-        if let Some(artifact) = representation.payload_artifact_id {
-            let owner: Option<Uuid> = sqlx::query_scalar(
-                "SELECT subject_id FROM artifacts WHERE artifact_id=$1 FOR SHARE",
-            )
-            .bind(artifact.0)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
-            if owner != Some(representation.subject_id.0) {
-                return Err(Error::Invalid(
-                    "derived payload artifact is outside Subject".into(),
-                ));
-            }
-        }
+        self.validate_derivation_inputs_in(&mut tx, &representation)
+            .await?;
         representation.revision = if let Some(previous) = representation.supersedes {
             let revision: Option<i32> = sqlx::query_scalar("SELECT revision FROM derived_representations WHERE subject_id=$1 AND derived_representation_id=$2 FOR SHARE").bind(representation.subject_id.0).bind(previous.0).fetch_optional(&mut *tx).await.map_err(db)?;
             revision
@@ -120,6 +86,14 @@ impl MaterialService {
             representation.quality = row.try_get("quality").map_err(db)?;
             representation.created_at = row.try_get("created_at").map_err(db)?;
             representation.revision = row.try_get("revision").map_err(db)?;
+            if let Some(identity) = operation {
+                AuthorityStore::publish_material_result_in(
+                    &mut tx,
+                    identity,
+                    CognitiveRef::DerivedRepresentation(representation.derived_representation_id),
+                )
+                .await?;
+            }
             tx.commit().await.map_err(db)?;
             return Ok(representation);
         }
@@ -155,9 +129,69 @@ impl MaterialService {
                 "",
             )
             .await?;
+        if let Some(identity) = operation {
+            AuthorityStore::publish_material_result_in(
+                &mut tx,
+                identity,
+                CognitiveRef::DerivedRepresentation(representation.derived_representation_id),
+            )
+            .await?;
+        }
         tx.commit().await.map_err(db)?;
         Ok(representation)
     }
+    async fn validate_derivation_inputs_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        representation: &DerivedRepresentation,
+    ) -> Result<()> {
+        // All inputs must already exist. Together with immutable edges and a new
+        // representation identity, this admits no backwards edge or DAG cycle.
+        for input in &representation.inputs {
+            let (query, id) = match input.reference {
+                CognitiveRef::SourceRegion(id) => (
+                    "SELECT subject_id FROM source_regions WHERE source_region_id=$1 FOR SHARE",
+                    id.0,
+                ),
+                CognitiveRef::DerivedRepresentation(id) => (
+                    "SELECT subject_id FROM derived_representations WHERE derived_representation_id=$1 FOR SHARE",
+                    id.0,
+                ),
+                CognitiveRef::DerivedRegion(id) => (
+                    "SELECT subject_id FROM derived_regions WHERE derived_region_id=$1 FOR SHARE",
+                    id.0,
+                ),
+                _ => return Err(Error::Invalid("invalid derivation input kind".into())),
+            };
+            let owner: Option<Uuid> = sqlx::query_scalar(query)
+                .bind(id)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(db)?;
+            if owner != Some(representation.subject_id.0) {
+                return Err(Error::Invalid(
+                    "derivation input is missing or outside Subject".into(),
+                ));
+            }
+        }
+        self.validate_field_basis(tx, representation).await?;
+        if let Some(artifact) = representation.payload_artifact_id {
+            let owner: Option<Uuid> = sqlx::query_scalar(
+                "SELECT subject_id FROM artifacts WHERE artifact_id=$1 FOR SHARE",
+            )
+            .bind(artifact.0)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db)?;
+            if owner != Some(representation.subject_id.0) {
+                return Err(Error::Invalid(
+                    "derived payload artifact is outside Subject".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub async fn persist_derived_region(&self, mut region: DerivedRegion) -> Result<DerivedRegion> {
         region.validate()?;
         let mut tx = self.store.begin().await?;

@@ -26,7 +26,7 @@ it("recovers an unknown context mutation using the exact saved identity and expe
   const updates: unknown[] = [];
   let lost = true;
   const client = {
-    cognition: {
+    runtime: {
       getWorkContext: async () => ({ workContext: context }),
       updateWorkContext: async (request: unknown) => {
         updates.push(request);
@@ -101,7 +101,7 @@ it("retains exact query result revisions for continuation and rejects another Su
         ],
       }),
     },
-    memory: { revision: read },
+    memory: { getMemoryRevision: read },
   } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   const connect = vi.fn().mockResolvedValue(client);
   const flags = [
@@ -213,13 +213,16 @@ it("renders Evidence/Resource and mixed hits while preserving each owner continu
   const reportUse = vi.fn();
   const query = vi.fn();
   const connect = vi.fn().mockResolvedValue({
-    cognition: { query, reportUse },
+    cognition: { query },
+    runtime: { reportUse },
     material: {
-      sourceRegion,
-      occurrences: vi.fn().mockResolvedValue({ items: [], truncated: false }),
+      getSourceRegion: sourceRegion,
+      listOccurrences: vi
+        .fn()
+        .mockResolvedValue({ items: [], truncated: false }),
     },
-    memory: { revision: readRevision },
-    resources: { get: getResource },
+    memory: { getMemoryRevision: readRevision },
+    resourceRegistry: { getResource: getResource },
   });
   const flags = [
     "--run-root",
@@ -289,9 +292,9 @@ it("reads a returned closed Session reference without selecting or opening a Ses
   const open = vi.fn();
   const close = vi.fn();
   const client = {
-    cognition: { getSession: read, openSession: open, closeSession: close },
+    runtime: { getSession: read, openSession: open, closeSession: close },
     identity: {
-      resolve: vi
+      resolveIdentity: vi
         .fn()
         .mockImplementation(
           async (request: { locator: { value: string }; kind: string }) => ({

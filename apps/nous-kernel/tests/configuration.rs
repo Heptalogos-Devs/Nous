@@ -64,7 +64,12 @@ async fn missing_serving_cache_rebuilds_without_changing_authority() {
         .unwrap();
     assert_ne!(before.generation_id, after.generation_id);
     assert_eq!(before.authority_watermark, after.authority_watermark);
-    assert!(std::path::Path::new(&after.artifact_location).exists());
+    assert!(
+        runtime
+            .serving
+            .artifact_directory(after.generation_id)
+            .exists()
+    );
     let evidence = runtime
         .materialize(
             subject,

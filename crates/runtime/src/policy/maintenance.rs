@@ -8,7 +8,6 @@ pub const CONCEPT_USE_REVIEW_INTERVAL: ConfigKey<u64> =
 pub const MAINTENANCE_ENABLED: ConfigKey<bool> = ConfigKey::new("maintenance.enabled");
 pub const POLL_INTERVAL: ConfigKey<u64> = ConfigKey::new("maintenance.poll_interval_seconds");
 pub const MAX_OPERATIONS: ConfigKey<u64> = ConfigKey::new("maintenance.max_operations_per_grant");
-pub const WORKER_LEASE: ConfigKey<u64> = ConfigKey::new("maintenance.worker_lease_seconds");
 
 pub const TERMINAL_RETENTION: ConfigKey<u64> =
     ConfigKey::new("maintenance.terminal_retention_seconds");
@@ -65,17 +64,6 @@ pub fn register_maintenance_configuration(registry: &mut ConfigRegistryBuilder) 
         "cognitive-runtime",
         "Standalone maintenance opportunity interval in infrastructure seconds.",
         30,
-        ConfigExposure::Developer,
-        ConfigScopePolicy::SystemOnly,
-        ConfigApplyMode::Live,
-        ConfigSemanticEffect::Operational,
-        interval,
-    )?;
-    registry.register(
-        WORKER_LEASE,
-        "cognitive-runtime",
-        "Worker lease expiry in infrastructure seconds.",
-        120,
         ConfigExposure::Developer,
         ConfigScopePolicy::SystemOnly,
         ConfigApplyMode::Live,
@@ -140,7 +128,6 @@ pub fn register_maintenance_configuration(registry: &mut ConfigRegistryBuilder) 
         },
     )?;
     registry.bounds(POLL_INTERVAL, 1, 3600, Some("seconds"))?;
-    registry.bounds(WORKER_LEASE, 1, 3600, Some("seconds"))?;
     registry.bounds(MAX_OPERATIONS, 1, 32, Some("items"))?;
     registry.bounds(EPISODE_MAX_NEIGHBORS, 1, 8, Some("items"))?;
     registry.bounds(EPISODE_NEIGHBOR_SPAN, 1, 86400, Some("cognitive_seconds"))?;

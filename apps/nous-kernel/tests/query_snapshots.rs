@@ -112,19 +112,20 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
     runtime
         .require_memory()
         .unwrap()
-        .suppress(
+        .mutate_memory_lifecycle(
             subject,
             second.object.memory_id,
             OperationId::new(),
             second.object.object_epoch,
+            nous_memory::LifecycleAction::Suppress,
         )
         .await
         .unwrap();
     let third = &cohort[2];
     let key = operations[2].0.to_string();
-    let reservation = runtime
+    runtime
         .store
-        .reserve_model_workflow(
+        .start_model_operation(
             subject,
             "memory",
             &key,
@@ -137,15 +138,13 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
                 },
                 ..Default::default()
             },
-            360,
         )
         .await
         .unwrap();
-    let lease = reservation.lease.as_ref().unwrap().token;
     runtime
         .store
-        .save_model_workflow(
-            &test_support::workflow_lease(subject, "memory", &key, lease),
+        .save_model_operation(
+            &test_support::workflow_identity(subject, "memory", &key, "semantic input"),
             Some(&test_support::workflow_payload(
                 serde_json::json!({"text":"private-cognitive-marker"}),
             )),
@@ -187,8 +186,8 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
     assert!(
         runtime
             .store
-            .save_model_workflow(
-                &test_support::workflow_lease(subject, "memory", &key, lease),
+            .save_model_operation(
+                &test_support::workflow_identity(subject, "memory", &key, "semantic input"),
                 Some(&test_support::workflow_payload(
                     serde_json::json!({"text":"resurrect"})
                 )),

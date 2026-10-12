@@ -37,7 +37,6 @@ message Journal {
   string acceptance_state = 5;
   string integrity_state = 6;
   string suppression_state = 7;
-  string purge_state = 8;
   google.protobuf.Timestamp created_at = 9;
   JournalRevision current_revision = 10;
 }

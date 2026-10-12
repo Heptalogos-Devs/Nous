@@ -1,12 +1,10 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MutationExecutor } from "../durable-operation.js";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
 import { authorityRejection } from "./rejection.js";
-import { z } from "zod";
 import type { MaintenancePlan } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { CognitiveSchemaContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import {
@@ -19,20 +17,7 @@ import type { ConsolidationProposal } from "../model/schemas/consolidation.js";
 import { maintenanceActionOperationId } from "./identity.js";
 
 type Action = ConsolidationProposal["actions"][number];
-export const consolidationResultSchema = z.strictObject({
-  index: z.number().int().min(0),
-  status: z.enum([
-    "committed",
-    "no_change",
-    "rejected_invalid",
-    "skipped_dependency",
-    "stale",
-  ]),
-  resultRef: z.strictObject({ kind: z.string(), value: z.string() }).nullable(),
-});
-export type ConsolidationActionResult = z.infer<
-  typeof consolidationResultSchema
->;
+import type { MaintenanceActionResult } from "./records.js";
 function invalid(message: string): never {
   throw new ConnectError(message, Code.InvalidArgument);
 }
@@ -65,9 +50,6 @@ export async function executeConsolidation(
   operationId: string,
   producer: ProducerSignature,
   options: CallOptions,
-  progress: ConsolidationActionResult[],
-  saveProgress: (results: ConsolidationActionResult[]) => Promise<void>,
-  mutate: MutationExecutor,
 ) {
   if (
     !plan.consolidationSource ||
@@ -84,7 +66,7 @@ export async function executeConsolidation(
   const members = new Map(
     plan.members.map((entry) => [entry.key, entry.occurrenceId]),
   );
-  const results = [...progress];
+  const results: MaintenanceActionResult[] = [];
   const selectedBasis = (keys: string[], eligible?: string[]) => {
     if (
       new Set(keys).size !== keys.length ||
@@ -173,10 +155,10 @@ export async function executeConsolidation(
       invalid("Memory relations require Memory action endpoints");
     return results[value.index]?.resultRef ?? null;
   };
-  for (let index = results.length; index < proposal.actions.length; index++) {
+  for (let index = 0; index < proposal.actions.length; index++) {
     const action = proposal.actions[index]!;
     const id = maintenanceActionOperationId(operationId, index, action.action);
-    let result: ConsolidationActionResult = {
+    let result: MaintenanceActionResult = {
       index,
       status: "no_change",
       resultRef: null,
@@ -186,15 +168,13 @@ export async function executeConsolidation(
         case "skip":
           break;
         case "create_memory": {
-          const value = await mutate(id, () =>
-            kernel.memory.formMemory(
-              {
-                operationId: id,
-                subjectId: plan.subjectId,
-                input: memory(action.content),
-              },
-              options,
-            ),
+          const value = await kernel.memory.formMemory(
+            {
+              operationId: id,
+              subjectId: plan.subjectId,
+              input: memory(action.content),
+            },
+            options,
           );
           result = {
             index,
@@ -207,18 +187,16 @@ export async function executeConsolidation(
           const candidate = target(action.targetKey, "memory_revision");
           if (candidate.cognitiveRole !== action.content.cognitiveRole)
             invalid("Memory revision cannot change cognitive role");
-          const value = await mutate(id, () =>
-            kernel.memory.reviseMemory(
-              {
-                operationId: id,
-                subjectId: plan.subjectId,
-                memoryId: candidate.target!.objectId,
-                expectedObjectEpoch: candidate.target!.expectedEpoch,
-                intent: action.intent,
-                input: memory(action.content, candidate.eligibleBasisKeys),
-              },
-              options,
-            ),
+          const value = await kernel.memory.reviseMemory(
+            {
+              operationId: id,
+              subjectId: plan.subjectId,
+              memoryId: candidate.target!.objectId,
+              expectedObjectEpoch: candidate.target!.expectedEpoch,
+              intent: action.intent,
+              input: memory(action.content, candidate.eligibleBasisKeys),
+            },
+            options,
           );
           result = {
             index,
@@ -229,15 +207,13 @@ export async function executeConsolidation(
         }
         case "create_schema": {
           const content = schema(action.content);
-          const value = await mutate(id, () =>
-            kernel.concepts.createCognitiveSchema(
-              {
-                operationId: id,
-                subjectId: plan.subjectId,
-                schema: content,
-              },
-              options,
-            ),
+          const value = await kernel.concepts.createCognitiveSchema(
+            {
+              operationId: id,
+              subjectId: plan.subjectId,
+              schema: content,
+            },
+            options,
           );
           result = {
             index,
@@ -256,19 +232,17 @@ export async function executeConsolidation(
           );
           if (candidate.formationMode !== action.content.formationKind)
             invalid("Schema revision cannot change formation kind");
-          const value = await mutate(id, () =>
-            kernel.concepts.reviseCognitiveSchema(
-              {
-                operationId: id,
-                subjectId: plan.subjectId,
-                schemaId: candidate.target!.objectId,
-                expectedObjectEpoch: candidate.target!.expectedEpoch,
-                intent: action.intent,
-                schema: schema(action.content, candidate.eligibleBasisKeys),
-                copyLinkIds: [],
-              },
-              options,
-            ),
+          const value = await kernel.concepts.reviseCognitiveSchema(
+            {
+              operationId: id,
+              subjectId: plan.subjectId,
+              schemaId: candidate.target!.objectId,
+              expectedObjectEpoch: candidate.target!.expectedEpoch,
+              intent: action.intent,
+              schema: schema(action.content, candidate.eligibleBasisKeys),
+              copyLinkIds: [],
+            },
+            options,
           );
           result = {
             index,
@@ -287,17 +261,15 @@ export async function executeConsolidation(
             result.status = "skipped_dependency";
             break;
           }
-          await mutate(id, () =>
-            kernel.memory.linkRevisions(
-              {
-                operationId: id,
-                subjectId: plan.subjectId,
-                fromRevisionId: from.value,
-                toRevisionId: to.value,
-                relation: action.relation,
-              },
-              options,
-            ),
+          await kernel.memory.linkRevisions(
+            {
+              operationId: id,
+              subjectId: plan.subjectId,
+              fromRevisionId: from.value,
+              toRevisionId: to.value,
+              relation: action.relation,
+            },
+            options,
           );
           result = {
             index,
@@ -313,7 +285,6 @@ export async function executeConsolidation(
       result.status = rejection;
     }
     results.push(result);
-    await saveProgress(results);
   }
   const committed = results.some((result) => result.status === "committed");
   const failed = results.some((result) =>

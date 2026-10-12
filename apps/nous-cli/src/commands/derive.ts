@@ -18,6 +18,13 @@ export async function deriveCommands(
     ).value,
     strategy: values.strategy,
     target: values.target,
-    supersedes: values.supersedes,
+    supersedes: values.supersedes
+      ? (
+          await env.resolveReference(
+            values.supersedes,
+            "derived_representation",
+          )
+        ).value
+      : undefined,
   });
 }

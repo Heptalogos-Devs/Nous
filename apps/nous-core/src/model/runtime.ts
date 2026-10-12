@@ -12,24 +12,9 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { ModelInvocations } from "./invocations.js";
 import {
-  type ModelRoleSnapshot,
-  type ModelProducerMetadata,
-} from "./execution/snapshot.js";
-import { type ExecutionTelemetry } from "./execution/routes.js";
-import type { ModelGenerationOutput } from "./schemas/contracts.js";
-import { type ModelRole } from "./roles.js";
-import {
   modelConfigurationSchema,
   type ModelConfiguration,
 } from "./configuration.js";
-
-import { formationSchema } from "./schemas/formation.js";
-import { projectionStewardSchema as proposalSchema } from "./schemas/projection.js";
-type SemanticGeneration<R extends ModelRole> = {
-  value: ModelGenerationOutput<R>;
-  producerMetadata: ModelProducerMetadata;
-  execution: ExecutionTelemetry;
-};
 
 export class ModelRuntime {
   readonly material: MaterialInterpretation;
@@ -68,70 +53,6 @@ export class ModelRuntime {
       config.material_inputs,
     );
   }
-  get embeddingModel() {
-    return this.invocations.profile("query_embedding")?.model;
-  }
-  async segmentEpisode(
-    input: string,
-    signal?: AbortSignal,
-    snapshot?: ModelRoleSnapshot,
-    beforeAttempt?: () => void,
-  ): Promise<SemanticGeneration<"episode_segmentation">> {
-    return this.invocations.generate(
-      "episode_segmentation",
-      { content: input },
-      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
-    );
-  }
-  async synthesizeJournal(
-    input: string,
-    signal?: AbortSignal,
-    snapshot?: ModelRoleSnapshot,
-    beforeAttempt?: () => void,
-  ): Promise<SemanticGeneration<"journal_synthesis">> {
-    return this.invocations.generate(
-      "journal_synthesis",
-      { content: input },
-      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
-    );
-  }
-  async maintainConcepts(
-    input: string,
-    signal?: AbortSignal,
-    snapshot?: ModelRoleSnapshot,
-    beforeAttempt?: () => void,
-  ): Promise<SemanticGeneration<"concept_maintenance">> {
-    return this.invocations.generate(
-      "concept_maintenance",
-      { content: input },
-      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
-    );
-  }
-  async consolidate(
-    input: string,
-    signal?: AbortSignal,
-    snapshot?: ModelRoleSnapshot,
-    beforeAttempt?: () => void,
-  ): Promise<SemanticGeneration<"memory_consolidation">> {
-    return this.invocations.generate(
-      "memory_consolidation",
-      { content: input },
-      { signal: signal, snapshot: snapshot, beforeAttempt: beforeAttempt },
-    );
-  }
-  async form(text: string, signal?: AbortSignal, snapshot?: ModelRoleSnapshot) {
-    const result = await this.invocations.generate(
-      "memory_formation",
-      { content: text },
-      { signal: signal, snapshot: snapshot },
-    );
-    return {
-      ...formationSchema.parse(result.value),
-      producerMetadata: result.producerMetadata,
-      execution: result.execution,
-    };
-  }
-
   async refine(
     segments: Segment[],
     signal?: AbortSignal,
@@ -147,23 +68,21 @@ export class ModelRuntime {
         ],
       };
     try {
-      const output = proposalSchema.parse(
-        (
-          await this.invocations.generate(
-            "projection_steward",
-            {
-              content: JSON.stringify(
-                segments.map((s) => ({
-                  id: s.segmentId,
-                  role: s.semanticRole,
-                  text: s.text,
-                })),
-              ),
-            },
-            { signal: signal },
-          )
-        ).value,
-      );
+      const output = (
+        await this.invocations.generate(
+          "projection_steward",
+          {
+            content: JSON.stringify(
+              segments.map((s) => ({
+                id: s.segmentId,
+                role: s.semanticRole,
+                text: s.text,
+              })),
+            ),
+          },
+          { signal: signal },
+        )
+      ).value;
       const ids = new Set(segments.map((s) => s.segmentId));
       if (
         new Set(output.selectedIds).size !== output.selectedIds.length ||

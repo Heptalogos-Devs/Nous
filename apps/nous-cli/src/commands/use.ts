@@ -57,7 +57,7 @@ export async function useCommands(
       "RESULT_SUBJECT_MISMATCH",
       "No query is saved for this Subject",
     );
-  return client.cognition.reportUse({
+  return client.runtime.reportUse({
     subjectId,
     sessionId: state.sessionId,
     consumerRef: values.consumer,

@@ -5,10 +5,10 @@ use super::*;
 use sqlx::Row;
 const CURRENT_FOCUS: &str = r#"
 WITH current AS (
- SELECT 'memory_revision'::text kind,o.current_revision_id id,o.object_epoch epoch FROM memory_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'cognitive_schema_revision',o.current_revision_id,o.object_epoch FROM cognitive_schemas o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'episode_revision',o.current_revision_id,o.object_epoch FROM episode_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'journal_revision',o.current_revision_id,o.object_epoch FROM journal_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
+ SELECT 'memory_revision'::text kind,o.current_revision_id id,o.object_epoch epoch FROM memory_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+ UNION ALL SELECT 'cognitive_schema_revision',o.current_revision_id,o.object_epoch FROM cognitive_schemas o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+ UNION ALL SELECT 'episode_revision',o.current_revision_id,o.object_epoch FROM episode_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+ UNION ALL SELECT 'journal_revision',o.current_revision_id,o.object_epoch FROM journal_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
 ) SELECT epoch FROM current WHERE kind=$2 AND id=$3
 "#;
 impl MemoryService {
@@ -301,7 +301,7 @@ impl MemoryService {
         if entities.is_empty() {
             return Ok(Vec::new());
         }
-        let rows:Vec<Uuid>=sqlx::query_scalar("SELECT r.memory_revision_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND r.memory_revision_id::text<>$2 AND EXISTS(SELECT 1 FROM memory_revision_aboutness a WHERE a.memory_revision_id=r.memory_revision_id AND a.entity_ref=ANY($3::text[])) ORDER BY ts_rank_cd(to_tsvector('simple',r.representation_text),to_tsquery('simple',replace(plainto_tsquery('simple',$4)::text,' & ',' | '))) DESC,r.recorded_at DESC,r.memory_revision_id LIMIT 8")
+        let rows:Vec<Uuid>=sqlx::query_scalar("SELECT r.memory_revision_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND r.memory_revision_id::text<>$2 AND EXISTS(SELECT 1 FROM memory_revision_aboutness a WHERE a.memory_revision_id=r.memory_revision_id AND a.entity_ref=ANY($3::text[])) ORDER BY ts_rank_cd(to_tsvector('simple',r.representation_text),to_tsquery('simple',replace(plainto_tsquery('simple',$4)::text,' & ',' | '))) DESC,r.recorded_at DESC,r.memory_revision_id LIMIT 8")
             .bind(subject.0).bind(reference_parts(focus).1).bind(entities.iter().map(|entity|entity.as_str()).collect::<Vec<_>>()).bind(text).fetch_all(self.store.pool()).await.map_err(db)?;
         Ok(rows
             .into_iter()

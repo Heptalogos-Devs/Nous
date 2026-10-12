@@ -11,7 +11,7 @@ pub use mutations::{
 };
 mod model_workflow;
 pub use model_workflow::{
-    WORKFLOW_VALUE_MAX_BYTES, WorkflowLease, WorkflowOwner, WorkflowReservation,
+    WORKFLOW_VALUE_MAX_BYTES, WorkflowIdentity, WorkflowOwner, WorkflowRecord,
 };
 mod episode_text;
 pub use episode_text::EpisodeTextBudget;
@@ -142,6 +142,11 @@ pub fn database_error(error: sqlx::Error) -> Error {
         sqlx::Error::Database(e) if e.is_check_violation() || e.is_foreign_key_violation() => {
             Error::Invalid(error.to_string())
         }
+        sqlx::Error::Database(e) => Error::Infrastructure(format!(
+            "database SQLSTATE {}: {}",
+            e.code().as_deref().unwrap_or("unknown"),
+            e.message()
+        )),
         _ => Error::Infrastructure(error.to_string()),
     }
 }

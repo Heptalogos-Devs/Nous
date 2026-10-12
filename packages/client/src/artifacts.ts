@@ -23,16 +23,7 @@ export function artifactUploads(
   token: string,
   limits: (options: RequestOptions) => Promise<{ maxUploadBytes: bigint }>,
 ) {
-  async function upload(
-    subjectId: string,
-    source: AsyncIterable<Uint8Array>,
-    length: number,
-    options: ArtifactUploadOptions,
-  ): Promise<UploadedArtifact> {
-    if (!Number.isSafeInteger(length) || length < 0)
-      throw new Error("Artifact byte length is invalid");
-    if (!/^[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+$/.test(options.mediaType))
-      throw new Error("Invalid artifact media type");
+  function endpoint() {
     const url = new URL(baseUrl);
     if (
       url.username ||
@@ -48,6 +39,19 @@ export function artifactUploads(
       throw new Error(
         "Artifact endpoint must be credential-free HTTPS or literal loopback HTTP",
       );
+    return url;
+  }
+  async function upload(
+    subjectId: string,
+    source: AsyncIterable<Uint8Array>,
+    length: number,
+    options: ArtifactUploadOptions,
+  ): Promise<UploadedArtifact> {
+    if (!Number.isSafeInteger(length) || length < 0)
+      throw new Error("Artifact byte length is invalid");
+    if (!/^[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+$/.test(options.mediaType))
+      throw new Error("Invalid artifact media type");
+    const url = endpoint();
     const { maxUploadBytes } = await limits(options);
     if (maxUploadBytes < 1n || BigInt(length) > maxUploadBytes)
       throw new Error(
@@ -141,6 +145,34 @@ export function artifactUploads(
     }
   }
   return {
+    async download(
+      subjectId: string,
+      artifactId: string,
+      options: RequestOptions = {},
+    ) {
+      const url = endpoint();
+      url.pathname = `${url.pathname.replace(/\/$/, "")}/artifacts/${encodeURIComponent(subjectId)}/${encodeURIComponent(artifactId)}`;
+      const timeout = AbortSignal.timeout(options.timeoutMs ?? 300_000);
+      const signal = options.signal
+        ? AbortSignal.any([timeout, options.signal])
+        : timeout;
+      const response = await fetch(url, {
+        headers: { authorization: `Bearer ${token}` },
+        redirect: "error",
+        signal,
+      });
+      if (!response.ok || !response.body) {
+        await response.body?.cancel();
+        throw new Error(`Artifact download failed (HTTP ${response.status})`);
+      }
+      return {
+        mediaType:
+          response.headers.get("content-type") ?? "application/octet-stream",
+        content: Readable.fromWeb(
+          response.body as import("node:stream/web").ReadableStream<Uint8Array>,
+        ),
+      };
+    },
     async uploadFile(
       subjectId: string,
       path: string,

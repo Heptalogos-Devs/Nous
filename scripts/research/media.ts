@@ -126,7 +126,7 @@ const save = async () => {
   await writeFile(statePath, json(state));
 };
 if (!state.subjectId) {
-  const subject = await client.subjects.create(
+  const subject = await client.subjects.createSubject(
     {
       operationId: state.createId,
       capabilities: { memory: true },
@@ -167,7 +167,7 @@ for (const unit of units) {
     await save();
   }
   if (!receipt.occurrenceId) {
-    const observed = await client.cognition.observe(
+    const observed = await client.runtime.recordObservation(
       {
         subjectId,
         requestId: receipt.requestId,
@@ -251,20 +251,20 @@ for (const unit of units) {
           throw new Error("Provenance trace bound exhausted");
         visited.add(key);
         if (reference.kind === "derived_representation") {
-          const representation = await client.material.representation(
+          const representation = await client.material.getDerivedRepresentation(
             { subjectId, id: reference.value },
             options,
           );
           for (const input of representation.inputs)
             if (input.reference) await trace(input.reference);
         } else if (reference.kind === "source_region") {
-          const region = await client.material.sourceRegion(
+          const region = await client.material.getSourceRegion(
             { subjectId, id: reference.value },
             options,
           );
           roots.add(region.artifactId);
         } else if (reference.kind === "derived_region") {
-          const region = await client.material.derivedRegion(
+          const region = await client.material.getDerivedRegion(
             { subjectId, id: reference.value },
             options,
           );

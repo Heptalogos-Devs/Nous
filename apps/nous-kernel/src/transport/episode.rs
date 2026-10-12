@@ -58,7 +58,6 @@ pub(super) fn view(value: nous_memory::EpisodeView) -> p::Episode {
         acceptance_state: enum_name(value.object.acceptance_state),
         integrity_state: enum_name(value.object.integrity_state),
         suppression_state: enum_name(value.object.suppression_state),
-        purge_state: enum_name(value.object.purge_state),
         created_at: Some(timestamp(value.object.created_at)),
         current_revision: current.then(|| revision(value.revision, value.members, value.basis)),
     }
@@ -223,34 +222,21 @@ impl KernelService {
     async fn episode_lifecycle(
         &self,
         input: p::EpisodeMutationRequest,
-        operation: &str,
+        action: nous_memory::LifecycleAction,
     ) -> Result<p::EpisodeResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
         let episode = EpisodeId(id(&input.episode_id)?);
         let operation_id = OperationId(id(&input.operation_id)?);
-        let value = match operation {
-            "suppress" => {
-                self.require_memory()?
-                    .suppress_episode(subject, episode, operation_id, input.expected_object_epoch)
-                    .await?
-            }
-            "restore" => {
-                self.require_memory()?
-                    .restore_episode(subject, episode, operation_id, input.expected_object_epoch)
-                    .await?
-            }
-            "withdraw" => {
-                self.require_memory()?
-                    .withdraw_episode(subject, episode, operation_id, input.expected_object_epoch)
-                    .await?
-            }
-            "reaccept" => {
-                self.require_memory()?
-                    .reaccept_episode(subject, episode, operation_id, input.expected_object_epoch)
-                    .await?
-            }
-            _ => return Err(Error::Invalid("unknown Episode lifecycle operation".into())),
-        };
+        let value = self
+            .require_memory()?
+            .mutate_episode_lifecycle(
+                subject,
+                episode,
+                operation_id,
+                input.expected_object_epoch,
+                action,
+            )
+            .await?;
         Ok(response(value))
     }
 
@@ -258,25 +244,29 @@ impl KernelService {
         &self,
         input: p::EpisodeMutationRequest,
     ) -> Result<p::EpisodeResponse> {
-        self.episode_lifecycle(input, "suppress").await
+        self.episode_lifecycle(input, nous_memory::LifecycleAction::Suppress)
+            .await
     }
     pub(super) async fn restore_episode(
         &self,
         input: p::EpisodeMutationRequest,
     ) -> Result<p::EpisodeResponse> {
-        self.episode_lifecycle(input, "restore").await
+        self.episode_lifecycle(input, nous_memory::LifecycleAction::Restore)
+            .await
     }
     pub(super) async fn withdraw_episode(
         &self,
         input: p::EpisodeMutationRequest,
     ) -> Result<p::EpisodeResponse> {
-        self.episode_lifecycle(input, "withdraw").await
+        self.episode_lifecycle(input, nous_memory::LifecycleAction::Withdraw)
+            .await
     }
     pub(super) async fn reaccept_episode(
         &self,
         input: p::EpisodeMutationRequest,
     ) -> Result<p::EpisodeResponse> {
-        self.episode_lifecycle(input, "reaccept").await
+        self.episode_lifecycle(input, nous_memory::LifecycleAction::Reaccept)
+            .await
     }
 
     pub(super) async fn purge_episode(&self, input: p::EpisodeMutationRequest) -> Result<()> {

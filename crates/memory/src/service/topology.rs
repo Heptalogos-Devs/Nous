@@ -27,27 +27,21 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 let id = receipt.result_ref;
-                if receipt.state == "committed" {
-                    return self
-                        .association(
-                            subject,
-                            AssociationEvidenceId(
-                                id.ok_or_else(|| {
-                                    Error::Infrastructure(
-                                        "association receipt missing result".into(),
-                                    )
-                                })?
-                                .parse()
-                                .map_err(|_| {
-                                    Error::Infrastructure("invalid association receipt".into())
-                                })?,
-                            ),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "association operation is already in progress".into(),
-                ));
+
+                return self
+                    .association(
+                        subject,
+                        AssociationEvidenceId(
+                            id.ok_or_else(|| {
+                                Error::Infrastructure("association receipt missing result".into())
+                            })?
+                            .parse()
+                            .map_err(|_| {
+                                Error::Infrastructure("invalid association receipt".into())
+                            })?,
+                        ),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -140,7 +134,7 @@ impl MemoryService {
         query.push(revision_table).push(" r JOIN ").push(object_table)
             .push(" o USING(").push(object_column).push(") WHERE o.subject_id=")
             .push_bind(subject.0).push(" AND r.").push(revision_column).push("=")
-            .push_bind(id).push(" AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' FOR SHARE OF o");
+            .push_bind(id).push(" AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FOR SHARE OF o");
         let current: Option<Uuid> = query
             .build_query_scalar()
             .fetch_optional(&mut **tx)
@@ -488,13 +482,8 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "revoke_association", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::Unavailable(
-                    "association revoke operation is already in progress".into(),
-                ));
+            MutationStart::Replay(_) => {
+                return Ok(());
             }
             MutationStart::Active(mutation) => mutation,
         };

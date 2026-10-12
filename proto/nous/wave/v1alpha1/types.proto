@@ -155,7 +155,6 @@ message Memory {
   string acceptance_state = 6;
   string integrity_state = 7;
   string suppression_state = 8;
-  string purge_state = 9;
   string accessibility_mode = 10;
   string accessibility_level = 11;
   string semantic_role = 12;
@@ -292,7 +291,6 @@ message Episode {
   string acceptance_state = 6;
   string integrity_state = 7;
   string suppression_state = 8;
-  string purge_state = 9;
   google.protobuf.Timestamp created_at = 10;
   EpisodeRevision current_revision = 11;
 }

@@ -13,18 +13,19 @@ impl MemoryService {
         clippy::too_many_lines,
         reason = "one owner-level batch materializer keeps all candidate projections consistent"
     )]
-    pub(crate) async fn memories_for_query(
+    pub(crate) async fn memory_views(
         &self,
         subject: SubjectId,
         revisions: &[Uuid],
         accessibility_policy: &AccessibilityPolicy,
         view: Option<&HistoricalAuthoritySnapshot>,
+        full_details: bool,
     ) -> Result<HashMap<Uuid, MemoryView>> {
         if revisions.is_empty() {
             return Ok(HashMap::new());
         }
         let now = view.map_or_else(|| self.cognition.now(subject), |view| view.as_of);
-        let rows = sqlx::query("SELECT o.memory_id,o.subject_id,o.cognitive_role,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.purge_state,o.accessibility_mode,o.created_at,r.memory_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.formation_mode,r.grounding_occurrence_id,r.semantic_role,r.title,r.representation_text,r.epistemic_class,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM memory_objects o JOIN memory_revisions r ON r.memory_id=o.memory_id WHERE o.subject_id=$1 AND r.memory_revision_id=ANY($2::uuid[])")
+        let rows = sqlx::query("SELECT o.memory_id,o.subject_id,o.cognitive_role,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.accessibility_mode,o.created_at,r.memory_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.formation_mode,r.grounding_occurrence_id,r.semantic_role,r.title,r.representation_text,r.epistemic_class,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM memory_objects o JOIN memory_revisions r ON r.memory_id=o.memory_id WHERE o.subject_id=$1 AND r.memory_revision_id=ANY($2::uuid[])")
         .bind(subject.0)
         .bind(revisions)
         .fetch_all(self.store.pool())
@@ -123,7 +124,7 @@ impl MemoryService {
                 row.try_get("occurred_time_start").map_err(db)?,
                 row.try_get("occurred_time_end").map_err(db)?,
             )?);
-            if entry.observed_at.is_none() {
+            if full_details || entry.observed_at.is_none() {
                 entry.observed_at = row.try_get("observed_at").map_err(db)?;
             }
         }
@@ -192,11 +193,25 @@ impl MemoryService {
             accessibility.insert(memory, level);
         }
 
+        let mut tags = HashMap::<Uuid, Vec<TagId>>::new();
+        let mut relations = HashMap::<Uuid, Vec<MemoryRevisionRelation>>::new();
+        if full_details {
+            for row in sqlx::query("SELECT memory_revision_id,tag_id FROM memory_revision_tags WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,tag_id").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+                tags.entry(row.try_get("memory_revision_id").map_err(db)?).or_default().push(TagId(row.try_get("tag_id").map_err(db)?));
+            }
+            for row in sqlx::query("SELECT refs.id,r.* FROM unnest($1::uuid[]) refs(id) JOIN LATERAL (SELECT * FROM memory_revision_relations WHERE from_revision_id=refs.id OR to_revision_id=refs.id ORDER BY created_at,from_revision_id,to_revision_id LIMIT 257) r ON true ORDER BY refs.id,r.created_at,r.from_revision_id,r.to_revision_id")
+                .bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+                relations.entry(row.try_get("id").map_err(db)?).or_default().push(MemoryRevisionRelation { from_revision_id: MemoryRevisionId(row.try_get("from_revision_id").map_err(db)?), to_revision_id: MemoryRevisionId(row.try_get("to_revision_id").map_err(db)?), relation: parse_enum(row.try_get("relation").map_err(db)?, "memory relation")?, created_at: row.try_get("created_at").map_err(db)? });
+            }
+        }
         let mut result = HashMap::new();
         for row in rows {
             let memory_id = MemoryId(row.try_get("memory_id").map_err(db)?);
             let revision_id = MemoryRevisionId(row.try_get("memory_revision_id").map_err(db)?);
             let (object, revision) = memory::decode_memory_row(&row, subject)?;
+            let mut revision_relations = relations.remove(&revision_id.0).unwrap_or_default();
+            let relations_truncated = revision_relations.len() > 256;
+            revision_relations.truncate(256);
             result.insert(
                 revision_id.0,
                 MemoryView {
@@ -204,9 +219,9 @@ impl MemoryService {
                     revision,
                     basis: basis.remove(&revision_id.0).unwrap_or_default(),
                     aboutness: aboutness.remove(&revision_id.0).unwrap_or_default(),
-                    tags: Vec::new(),
-                    relations: Vec::new(),
-                    relations_truncated: false,
+                    tags: tags.remove(&revision_id.0).unwrap_or_default(),
+                    relations: revision_relations,
+                    relations_truncated,
                     accessibility_level: accessibility
                         .get(&memory_id.0)
                         .copied()

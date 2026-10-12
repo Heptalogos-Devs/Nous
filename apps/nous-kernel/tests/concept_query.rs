@@ -14,9 +14,8 @@ use concept_query::{
 use nous_core::*;
 use nous_kernel::{NousRuntime, RuntimeOptions};
 use nous_memory::{CreateTagRequest, ReviseTagInput, TagContent, TagExpectation};
-use nous_retrieval::{
-    ServingOptions, TextEmbeddingOutput, TextEmbeddingProvider, TextEmbeddingRequest,
-};
+use nous_retrieval::{ServingOptions, TextEmbeddingProvider, TextEmbeddingRequest};
+use nous_runtime::QuerySemanticEmbedding;
 use nous_runtime::{COGNITIVE_PROFILE, CONCEPT_ENRICHMENT};
 use nous_subject::{CognitiveSeedInput, CreateSubject};
 use std::sync::{Arc, Mutex};
@@ -63,7 +62,7 @@ impl TextEmbeddingProvider for Probe {
             config_digest: "test".into(),
         }
     }
-    async fn embed(&self, request: TextEmbeddingRequest) -> Result<TextEmbeddingOutput> {
+    async fn embed(&self, request: TextEmbeddingRequest) -> Result<QuerySemanticEmbedding> {
         let vector = if request.text.contains("orthogonal policy probe") {
             vec![0.0, 1.0]
         } else {
@@ -73,7 +72,7 @@ impl TextEmbeddingProvider for Probe {
             .lock()
             .unwrap()
             .push((request.query, request.text));
-        Ok(TextEmbeddingOutput {
+        Ok(QuerySemanticEmbedding {
             vector,
             space: self.space(),
             producer: self.producer(),
@@ -193,13 +192,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .enabled_lanes
             .contains(&EvidenceFamily::TopologyWave)
     );
-    assert!(
-        rt.serving
-            .publisher
-            .snapshot_for(subject)
-            .concept
-            .is_empty()
-    );
+    assert!(rt.serving.current_snapshot(subject).concept.is_empty());
     let mut direct = query(subject, vec![Cue::Tag(TagCue { tag: tag.tag_id })]);
     direct.capabilities.text_embedding = RequirementStrength::Forbidden;
     let direct = rt.execute_query(direct, None).await.unwrap();
@@ -323,7 +316,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
                 .enabled_lanes
                 .contains(&EvidenceFamily::TopologyWave)
         );
-        let snapshot = rt.serving.publisher.snapshot_for(subject);
+        let snapshot = rt.serving.current_snapshot(subject);
         let concept = snapshot
             .concept
             .iter()
@@ -348,7 +341,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .count(),
         1
     );
-    let old_snapshot = rt.serving.publisher.snapshot_for(subject);
+    let old_snapshot = rt.serving.current_snapshot(subject);
     let historical_cut = rt.cognition.now(subject);
     let revised = owner
         .revise_tag(
@@ -380,7 +373,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         updated.bound.activation.concept_generation,
         Some(concept_id)
     );
-    let snapshot = rt.serving.publisher.snapshot_for(subject);
+    let snapshot = rt.serving.current_snapshot(subject);
     let concept = snapshot
         .concept
         .iter()

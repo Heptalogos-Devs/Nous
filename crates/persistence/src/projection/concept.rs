@@ -48,10 +48,10 @@ impl AuthorityStore {
         }
         let rows = sqlx::query(r#"
 WITH eligible AS (
- SELECT 'memory_revision'::text kind,r.memory_revision_id::text value FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'cognitive_schema_revision',r.schema_revision_id::text FROM cognitive_schemas o JOIN cognitive_schema_revisions r ON r.schema_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'episode_revision',r.episode_revision_id::text FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'journal_revision',r.journal_revision_id::text FROM journal_objects o JOIN journal_revisions r ON r.journal_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
+ SELECT 'memory_revision'::text kind,r.memory_revision_id::text value FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+ UNION ALL SELECT 'cognitive_schema_revision',r.schema_revision_id::text FROM cognitive_schemas o JOIN cognitive_schema_revisions r ON r.schema_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+ UNION ALL SELECT 'episode_revision',r.episode_revision_id::text FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+ UNION ALL SELECT 'journal_revision',r.journal_revision_id::text FROM journal_objects o JOIN journal_revisions r ON r.journal_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
 ), attachments AS (
  SELECT canonical_tag($1,t.tag_id) tag_id,e.kind,e.value FROM memory_revision_tags t JOIN eligible e ON e.kind='memory_revision' AND e.value=t.memory_revision_id::text
  UNION ALL SELECT canonical_tag($1,tag_id),e.kind,e.value FROM cognitive_schema_revisions r JOIN eligible e ON e.kind='cognitive_schema_revision' AND e.value=r.schema_revision_id::text CROSS JOIN LATERAL unnest(r.tags) tag_id

@@ -154,51 +154,43 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .await
         .unwrap();
     let kinds = vec![request.kind.clone()];
-    let claimed = rt
+    let selected = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, None)
+        .select_maintenance(subject, &kinds, 1, None)
         .await
         .unwrap()
         .remove(0);
-    let workflow = rt
-        .store
-        .reserve_model_workflow(
+    rt.store
+        .start_model_operation(
             subject,
             "memory",
             "maintenance-test",
             "input",
             &nous_core::WorkflowSnapshot {
-                maintenance_claim: Some(nous_core::MaintenanceClaim {
+                maintenance_trigger: Some(nous_core::MaintenanceTrigger {
                     need_id,
-                    lease_token: claimed.lease_token.unwrap(),
-                    trigger_authority_seq: claimed.trigger_authority_seq,
-                    trigger_revision: claimed.trigger_revision,
+                    trigger_authority_seq: selected.trigger_authority_seq,
+                    trigger_revision: selected.trigger_revision,
                 }),
                 ..Default::default()
             },
-            360,
         )
         .await
         .unwrap();
-    let explicit = rt
-        .store
-        .reserve_model_workflow(
+    rt.store
+        .start_model_operation(
             subject,
             "memory",
             "explicit-test",
             "input",
             &nous_core::WorkflowSnapshot::default(),
-            360,
         )
         .await
         .unwrap();
-    for (key, token) in [
-        ("maintenance-test", workflow.lease.as_ref().unwrap().token),
-        ("explicit-test", explicit.lease.as_ref().unwrap().token),
-    ] {
+    for key in ["maintenance-test", "explicit-test"] {
         rt.store
-            .save_model_workflow(
-                &test_support::workflow_lease(subject, "memory", key, token),
+            .save_model_operation(
+                &test_support::workflow_identity(subject, "memory", key, "input"),
                 None,
                 Some(&test_support::workflow_payload(
                     serde_json::json!({"status":"no_change"}),
@@ -210,14 +202,10 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
             .unwrap();
     }
     rt.cognition
-        .acknowledge_maintenance(&claimed, MaintenanceDisposition::Satisfied)
+        .acknowledge_maintenance(&selected, MaintenanceDisposition::Satisfied)
         .await
         .unwrap();
     clock.advance_by(subject, Duration::days(100)).unwrap();
-    rt.cognition
-        .acknowledge_maintenance(&claimed, MaintenanceDisposition::Satisfied)
-        .await
-        .unwrap();
     let keys: Vec<String> = sqlx::query_scalar(
         "SELECT operation_key FROM model_workflow_operations WHERE subject_id=$1",
     )
@@ -242,13 +230,13 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         })
         .await
         .unwrap();
-    let claimed = rt
+    let selected = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, None)
+        .select_maintenance(subject, &kinds, 1, None)
         .await
         .unwrap()
         .remove(0);
-    assert_eq!(claimed.need_id, pending);
+    assert_eq!(selected.need_id, pending);
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM maintenance_needs WHERE need_id=$1")
         .bind(need_id)
         .fetch_one(rt.store.pool())
@@ -257,18 +245,7 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
     assert_eq!(count, 0);
     rt.cognition
         .acknowledge_maintenance(
-            &claimed,
-            MaintenanceDisposition::Retry {
-                delay_seconds: 30,
-                problem_code: "provider_unavailable".into(),
-            },
-        )
-        .await
-        .unwrap();
-    clock.advance_by(subject, Duration::days(100)).unwrap();
-    rt.cognition
-        .acknowledge_maintenance(
-            &claimed,
+            &selected,
             MaintenanceDisposition::Retry {
                 delay_seconds: 30,
                 problem_code: "provider_unavailable".into(),
@@ -278,7 +255,7 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .unwrap();
     assert!(
         rt.cognition
-            .lease_maintenance(subject, &kinds, 1, 60, None)
+            .select_maintenance(subject, &kinds, 1, None)
             .await
             .unwrap()
             .is_empty()
@@ -286,39 +263,26 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
     sqlx::query("UPDATE maintenance_needs SET retry_not_before=clock_timestamp()-interval '1 second' WHERE need_id=$1").bind(pending).execute(rt.store.pool()).await.unwrap();
     let retry = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, None)
+        .select_maintenance(subject, &kinds, 1, None)
         .await
         .unwrap()
         .remove(0);
     assert_eq!(retry.retry_count, 1);
-    assert_eq!(retry.attempt_count, 2);
-    let abandoned = rt
-        .store
-        .reserve_model_workflow(
+    rt.store
+        .start_model_operation(
             subject,
             "memory",
             "superseded-test",
             "input",
             &nous_core::WorkflowSnapshot {
-                maintenance_claim: Some(nous_core::MaintenanceClaim {
+                maintenance_trigger: Some(nous_core::MaintenanceTrigger {
                     need_id: pending,
-                    lease_token: retry.lease_token.unwrap(),
                     trigger_authority_seq: retry.trigger_authority_seq,
                     trigger_revision: retry.trigger_revision,
                 }),
                 ..Default::default()
             },
-            360,
         )
-        .await
-        .unwrap();
-    rt.store
-        .release_model_workflow(&test_support::workflow_lease(
-            subject,
-            "memory",
-            "superseded-test",
-            abandoned.lease.as_ref().unwrap().token,
-        ))
         .await
         .unwrap();
     rt.cognition
@@ -347,7 +311,7 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
     let replacement_digest = "b".repeat(64);
     let blocked = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, Some(&original_digest))
+        .select_maintenance(subject, &kinds, 1, Some(&original_digest))
         .await
         .unwrap()
         .remove(0);
@@ -362,14 +326,14 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .unwrap();
     assert!(
         rt.cognition
-            .lease_maintenance(subject, &kinds, 1, 60, Some(&original_digest))
+            .select_maintenance(subject, &kinds, 1, Some(&original_digest))
             .await
             .unwrap()
             .is_empty()
     );
     let reactivated = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, Some(&replacement_digest))
+        .select_maintenance(subject, &kinds, 1, Some(&replacement_digest))
         .await
         .unwrap()
         .remove(0);

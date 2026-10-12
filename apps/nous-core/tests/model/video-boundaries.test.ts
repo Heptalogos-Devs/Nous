@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessageInitShape } from "@bufbuild/protobuf";
-import { ReserveWorkflowRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import { StartOperationRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
 import { expect, it, vi } from "vitest";
 import { dirname, join } from "node:path";
@@ -156,14 +156,12 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       },
     },
     modelWorkflow: {
-      reserveWorkflow: async (
-        input: MessageInitShape<typeof ReserveWorkflowRequestSchema>,
+      startOperation: async (
+        input: MessageInitShape<typeof StartOperationRequestSchema>,
       ) => ({
-        lease: { token: "lease" },
         snapshot: input.snapshot,
       }),
-      saveWorkflow: async () => ({}),
-      releaseWorkflow: async () => ({}),
+      saveOperation: async () => ({}),
     },
     materialWorkflow: {
       commitInterpretation: async (input: { kind: string; text: string }) => {
@@ -275,13 +273,17 @@ it("frames without a transcript cannot acquire audio evidence in either structur
 });
 
 it("rejects invalid derivation choices before reading or interpreting source", async () => {
-  const kernel = {} as Parameters<typeof deriveMaterial>[0];
+  const kernel = {
+    execution: coreExecutionSchema.parse(undefined),
+  } as Parameters<typeof deriveMaterial>[0];
   const models = { materialStrategy: "description_only" } as Parameters<
     typeof deriveMaterial
   >[1];
-  const request = { strategy: "frames" } as Parameters<
-    typeof deriveMaterial
-  >[2];
+  const request = {
+    subjectId: "10000000-0000-4000-8000-000000000001",
+    sourceRegionId: "30000000-0000-4000-8000-000000000001",
+    strategy: "frames",
+  } as Parameters<typeof deriveMaterial>[2];
   const invalid = deriveMaterial(kernel, models, request, {});
   await expect(invalid).rejects.toMatchObject({ code: 3 });
   await expect(invalid).rejects.toThrow("config describe video");

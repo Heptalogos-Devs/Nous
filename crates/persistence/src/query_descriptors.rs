@@ -31,23 +31,23 @@ catalog AS (
  UNION ALL
  SELECT r.kind,r.value,left(COALESCE(t.title||': ','')||t.structural_claim||' Scope: '||t.applicability_description||' Boundary: '||t.boundary_definition,2048)
  FROM requested r JOIN cognitive_schemas o ON r.kind='cognitive_schema' AND o.schema_id::text=r.value JOIN cognitive_schema_revisions t ON t.schema_revision_id=o.current_revision_id
- WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
+ WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
  UNION ALL
  SELECT r.kind,r.value,left(COALESCE(t.title||': ','')||t.representation_text,2048)
  FROM requested r JOIN memory_revisions t ON r.kind='memory_revision' AND t.memory_revision_id::text=r.value JOIN memory_objects o USING(memory_id)
- WHERE t.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
+ WHERE t.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
  UNION ALL
  SELECT r.kind,r.value,left(COALESCE(t.title||': ','')||t.structural_claim||' Scope: '||t.applicability_description||' Boundary: '||t.boundary_definition,2048)
  FROM requested r JOIN cognitive_schema_revisions t ON r.kind='cognitive_schema_revision' AND t.schema_revision_id::text=r.value JOIN cognitive_schemas o USING(schema_id)
- WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
+ WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
  UNION ALL
  SELECT r.kind,r.value,left(COALESCE(t.title||': ','')||t.boundary_explanation,2048)
  FROM requested r JOIN episode_revisions t ON r.kind='episode_revision' AND t.episode_revision_id::text=r.value JOIN episode_objects o USING(episode_id)
- WHERE t.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
+ WHERE t.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
  UNION ALL
  SELECT r.kind,r.value,left(COALESCE(t.title||': ','')||t.narrative,2048)
  FROM requested r JOIN journal_revisions t ON r.kind='journal_revision' AND t.journal_revision_id::text=r.value JOIN journal_objects o USING(journal_id)
- WHERE t.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
+ WHERE t.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
  UNION ALL
  SELECT r.kind,r.value,left(d.payload_text,2048)
  FROM requested r JOIN derived_representations d ON r.kind='derived_representation' AND d.derived_representation_id::text=r.value WHERE d.subject_id=$1 AND d.payload_text IS NOT NULL

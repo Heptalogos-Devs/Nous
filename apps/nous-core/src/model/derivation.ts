@@ -1,7 +1,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import {
+  startOperation,
+  serializeOperation,
+  workflowPayload,
+} from "../durable-operation.js";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
 import type { DeriveMaterialRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
@@ -20,7 +24,6 @@ import { sampleVideo } from "./video.js";
 import { canonicalDigest } from "../digest.js";
 import {
   materialInterpretationSchemaDigest,
-  materialInterpretationIdentity,
   type StructuredMaterialContext,
 } from "./schemas/material-interpretation.js";
 import type { JsonObject } from "@bufbuild/protobuf";
@@ -31,6 +34,24 @@ import {
 } from "./input.js";
 
 export async function deriveMaterial(
+  kernel: KernelClient,
+  models: ModelRuntime,
+  request: DeriveMaterialRequest,
+  options: ExecutionOptions,
+) {
+  request.subjectId = request.subjectId.toLowerCase();
+  request.sourceRegionId = request.sourceRegionId.toLowerCase();
+  if (request.supersedes) request.supersedes = request.supersedes.toLowerCase();
+  const calls = executionOptions(kernel.execution.opportunity, options);
+  return serializeOperation(
+    kernel,
+    `derivation:${request.subjectId}:${request.sourceRegionId}`,
+    calls.signal,
+    () => deriveMaterialOnce(kernel, models, request, calls),
+  );
+}
+
+async function deriveMaterialOnce(
   kernel: KernelClient,
   models: ModelRuntime,
   request: DeriveMaterialRequest,
@@ -76,53 +97,57 @@ export async function deriveMaterial(
   const maxSourceBytes = isAudio
     ? models.audio.max_source_bytes
     : models.video.max_source_bytes;
-  let source;
-  if ((isVideo || isAudio) && region.coordinateKind === "whole_artifact") {
-    if (artifact.byteLength > BigInt(maxSourceBytes))
-      return {
-        representations: [],
-        degradation: [
-          {
-            code: "media_source_too_large",
-            detail: "Media exceeds configured input byte bound",
-          },
-        ],
+  let source:
+    { content: Uint8Array; mediaType: string; partial: boolean } | undefined;
+  let sourceFailure: string | undefined;
+  const loadSource = async () => {
+    if (source) return source;
+    if ((isVideo || isAudio) && region.coordinateKind === "whole_artifact") {
+      if (artifact.byteLength > BigInt(maxSourceBytes)) {
+        sourceFailure = "media_source_too_large";
+        throw new ConnectError(
+          "Media exceeds configured input byte bound",
+          Code.ResourceExhausted,
+        );
+      }
+      const chunks: Uint8Array[] = [];
+      let length = 0;
+      for await (const chunk of kernel.artifacts.downloadArtifact(
+        { subjectId: request.subjectId, artifactId: region.artifactId },
+        options,
+      )) {
+        length += chunk.content.length;
+        if (length > maxSourceBytes)
+          throw new ConnectError(
+            "Media stream exceeds configured byte bound",
+            Code.ResourceExhausted,
+          );
+        chunks.push(chunk.content);
+      }
+      source = {
+        content: Buffer.concat(chunks),
+        mediaType: artifact.mediaType,
+        partial: false,
       };
-    const chunks: Uint8Array[] = [];
-    let length = 0;
-    for await (const chunk of kernel.artifacts.downloadArtifact(
-      { subjectId: request.subjectId, artifactId: region.artifactId },
-      options,
-    )) {
-      length += chunk.content.length;
-      if (length > maxSourceBytes)
-        throw new Error("Media stream exceeds configured byte bound");
-      chunks.push(chunk.content);
-    }
-    source = {
-      content: Buffer.concat(chunks),
-      mediaType: artifact.mediaType,
-      partial: false,
-    };
-  } else
-    source = await kernel.material.materializeEvidence(
-      {
-        subjectId: request.subjectId,
-        reference: { kind: "source_region", value: request.sourceRegionId },
-        maxBytes: BigInt(models.materialInputs.derivation_source_max_bytes),
-      },
-      options,
-    );
-  if (source.partial)
-    return {
-      representations: [],
-      degradation: [
+    } else {
+      source = await kernel.material.materializeEvidence(
         {
-          code: "derivation_source_too_large",
-          detail: "Select a bounded source region",
+          subjectId: request.subjectId,
+          reference: { kind: "source_region", value: request.sourceRegionId },
+          maxBytes: BigInt(models.materialInputs.derivation_source_max_bytes),
         },
-      ],
-    };
+        options,
+      );
+    }
+    if (source.partial) {
+      sourceFailure = "derivation_source_too_large";
+      throw new ConnectError(
+        "Select a bounded source region",
+        Code.ResourceExhausted,
+      );
+    }
+    return source;
+  };
   const representations: DerivedRepresentation[] = [];
   const commit = async (
     text: string,
@@ -136,6 +161,12 @@ export async function deriveMaterial(
     quality: Record<string, unknown> = {},
     preprocessingDigest?: string,
     structuredPayload?: JsonObject,
+    operationIdentity?:
+      | import("@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js").OperationIdentity
+      | Omit<
+          import("@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js").OperationIdentity,
+          "$typeName"
+        >,
   ) => {
     const representation = await kernel.materialWorkflow.commitInterpretation(
       {
@@ -145,11 +176,8 @@ export async function deriveMaterial(
         inputs,
         strategy,
         structuredPayload,
-        quality: JSON.parse(
-          JSON.stringify({
-            ...quality,
-          }),
-        ) as import("@bufbuild/protobuf").JsonObject,
+        operationIdentity,
+        quality: quality as JsonObject,
         supersedes:
           representations.length === 0 ? request.supersedes : undefined,
         producer: {
@@ -176,9 +204,6 @@ export async function deriveMaterial(
               ? canonicalDigest({
                   role: producerMetadata?.configDigest,
                   preprocessing: preprocessingDigest,
-                  interpretation: structuredPayload
-                    ? materialInterpretationIdentity
-                    : undefined,
                 })
               : (producerMetadata?.configDigest ?? "utf8-fatal-v1"),
         },
@@ -221,7 +246,6 @@ export async function deriveMaterial(
         kind === "structured_interpretation"
           ? materialInterpretationSchemaDigest
           : undefined,
-      interpretation: materialInterpretationIdentity,
     });
     const identity = {
       subjectId: request.subjectId,
@@ -229,7 +253,7 @@ export async function deriveMaterial(
       operationKey: key,
       semanticDigest: key,
     };
-    const operation = await reserveOperation(
+    const operation = await startOperation(
       kernel,
       identity,
       {
@@ -240,13 +264,13 @@ export async function deriveMaterial(
       },
       options,
     );
-    const reservation = operation.record;
-    if (reservation.outcome) {
-      if (reservation.outcome.purged)
+    const record = operation.record;
+    if (record.outcome) {
+      if (record.outcome.purged)
         throw new ConnectError("Derivation outcome was purged", Code.NotFound);
       const outcome = z
         .strictObject({ representationId: z.string().uuid() })
-        .parse(JSON.parse(reservation.outcome.payloadJson));
+        .parse(JSON.parse(record.outcome.payloadJson));
       const representation = await kernel.material.getDerivedRepresentation(
         { subjectId: request.subjectId, id: outcome.representationId },
         options,
@@ -255,8 +279,8 @@ export async function deriveMaterial(
       return representation;
     }
     return operation.run(async () => {
-      let proposal = reservation.proposal?.payloadJson
-        ? (JSON.parse(reservation.proposal?.payloadJson) as {
+      let proposal = record.proposal?.payloadJson
+        ? (JSON.parse(record.proposal?.payloadJson) as {
             text: string;
             producerMetadata: ModelProducerMetadata;
             execution: ExecutionTelemetry;
@@ -267,7 +291,7 @@ export async function deriveMaterial(
       if (!proposal) {
         proposal = await invoke(
           JSON.parse(
-            reservation.snapshot!.content!.payloadJson,
+            record.snapshot!.content!.payloadJson,
           ) as ModelRoleSnapshot,
         );
         const { execution, ...saved } = proposal;
@@ -284,6 +308,7 @@ export async function deriveMaterial(
         },
         preprocessingDigest,
         proposal.structuredPayload,
+        operation.identity,
       );
       await operation.complete(
         { representationId: representation.representationId },
@@ -304,7 +329,7 @@ export async function deriveMaterial(
       role: "source",
     },
   ];
-  const mime = source.mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
+  const mime = artifact.mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
   const textual = mime.startsWith("text/") || mime === "application/json";
   const directContext: StructuredMaterialContext = {
     access: {
@@ -359,7 +384,6 @@ export async function deriveMaterial(
       {},
       canonicalDigest({
         segmentation: "description-utf8-lines-v1",
-        interpretation: materialInterpretationIdentity,
       }),
     );
   };
@@ -407,9 +431,9 @@ export async function deriveMaterial(
         strategy === "direct_structured"
           ? "material_direct_structuring"
           : "material_description",
-        (snapshot) =>
+        async (snapshot) =>
           models.material.describeMedia(
-            source.content,
+            (await loadSource()).content,
             mime,
             strategy === "direct_structured",
             signal,
@@ -418,7 +442,6 @@ export async function deriveMaterial(
           ),
         {
           input_mode: "direct",
-          source_bytes: source.content.length,
           modality: mime.startsWith("video/") ? "video" : "audio",
         },
         canonicalDigest({ input_mode: "direct", media_type: mime }),
@@ -439,7 +462,7 @@ export async function deriveMaterial(
       if (!models.tempRoot)
         throw new Error("Resolved TempRoot is required for video sampling");
       const samples = await sampleVideo(
-        source.content,
+        (await loadSource()).content,
         models.video,
         models.tempRoot,
         models.credentialEnvironments,
@@ -555,11 +578,13 @@ export async function deriveMaterial(
         "structured_interpretation",
         inputs,
         textual ? "material_structuring" : "material_direct_structuring",
-        (snapshot) =>
+        async (snapshot) =>
           models.material.structure(
             textual
-              ? new TextDecoder("utf-8", { fatal: true }).decode(source.content)
-              : { bytes: source.content, mediaType: mime },
+              ? new TextDecoder("utf-8", { fatal: true }).decode(
+                  (await loadSource()).content,
+                )
+              : { bytes: (await loadSource()).content, mediaType: mime },
             signal,
             snapshot,
             directContext,
@@ -573,7 +598,9 @@ export async function deriveMaterial(
     }
     const description = textual
       ? await commit(
-          new TextDecoder("utf-8", { fatal: true }).decode(source.content),
+          new TextDecoder("utf-8", { fatal: true }).decode(
+            (await loadSource()).content,
+          ),
           "extracted_text",
           inputs,
           undefined,
@@ -586,7 +613,7 @@ export async function deriveMaterial(
             "speech_transcription",
             async (snapshot) => {
               const result = await models.invocations.transcription(
-                source.content,
+                (await loadSource()).content,
                 signal,
                 snapshot,
               );
@@ -606,8 +633,13 @@ export async function deriveMaterial(
             "image_description",
             inputs,
             "material_description",
-            (snapshot) =>
-              models.material.interpret(source.content, mime, signal, snapshot),
+            async (snapshot) =>
+              models.material.interpret(
+                (await loadSource()).content,
+                mime,
+                signal,
+                snapshot,
+              ),
           );
     if (strategy === "describe_then_structure") {
       await structureDescription(description);
@@ -624,9 +656,11 @@ export async function deriveMaterial(
       selectedRepresentationId: representations[0]?.representationId,
       degradation: [
         {
-          code: representations.length
-            ? "material_structuring_failed"
-            : "material_derivation_failed",
+          code:
+            sourceFailure ??
+            (representations.length
+              ? "material_structuring_failed"
+              : "material_derivation_failed"),
           detail:
             error instanceof Error ? error.message : "Derivation unavailable",
         },

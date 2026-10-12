@@ -2,38 +2,40 @@
 
 [返回当前产品合同](../../INDEX.md)
 
-## Owner
+## Owner 与边界
 
-`apps/nous-cli` is the first-party reference consumer. It uses the public `@nous-wave/client` package and its Node entry point; consumer behavior is documented in the [CLI README](../../../../apps/nous-cli/README.md).
+`apps/nous-cli` 是第一方 consumer，通过 public `@nous-wave/client` 调用 Core。[CLI README](../../../../apps/nous-cli/README.md) 定义可执行命令。Terminal 与官方 stdio MCP 调用同一个 in-process command core；MCP 提供 help、argv 与 NousQL query，stdin/stdout 仅用于协议，不接受文件 `-`。MCP 显式提供私有 state root 与稳定 consumer identity。consumer 是不超过 512 UTF-8 字节的非空、不含空白的 opaque ID；配置、projection、CLI selection 与 UseEvent 使用同一原值，默认 ID 为 default。
 
-## Boundary
+Core discovery 由 RunRoot 提供。consumer InstanceRoot 保存 Subject/Session/WorkContext selection、exact result:N 索引与冻结原请求，不拥有 Nous Wave Authority。state 按稳定 Core instanceId 与 consumer 隔离。每次调用只读取一次 selection 与 active consumer_state policy；原子写与跨进程锁仅覆盖短事务，RPC/provider 等待不占锁。独立 selection 字段可合并，冲突 Subject/query scope 或同字段更新返回 STATE_UNSAVED，保留实际业务结果和可继续使用的 exact references。
 
-The consumer connects through Core discovery in RunRoot. It stores the selected Subject, Session and WorkContext under InstanceRoot; these selections are local consumer state, not Nous Wave Authority.
+## Canonical DTO 与呈现
 
-Parallel Agents share Core RunRoot and use independent consumer InstanceRoots. The stdio MCP entry belongs to this same consumer and requires an explicit private state root and stable consumer identity. It exposes help, argv command execution and NousQL query through the official MCP SDK. Terminal and MCP call the same in-process command core and public Client; Terminal alone writes human stdout/stderr and supplies stdin content. MCP stdin remains protocol-only; file `-` input is rejected there.
+Client 方法直接来自 generated service，不维护别名表：runtime 与 cognition、resourceRegistry 与 resources 分别保留各自 owner。配置 Value 由调用者在 JSON 输入边界显式编码。
 
-Consumer state is keyed by stable Core instanceId and consumer identity. Each command freezes its selection, context and input once. Maintained atomic-write and cross-process lock libraries protect only short local state transactions; RPC and provider execution remain concurrent. Selection patches merge independent fields and reject conflicting fields or changed Subject/query context. A successful business operation with a failed selection save returns its result and `STATE_UNSAVED`; the returned exact references remain usable. The `consumer_state` Catalog policy defines receipt capacity, file budget and lock timing and is frozen from active configuration at command start.
+Client 直接返回 generated Protobuf message，不建立 Data DTO、WeakMap schema 或恢复层。generated `$typeName` 与 descriptor 定义消息字段；配置 Value 在显式配置值边界解码，文本/JSON 在单一呈现边界使用 protocol messages helper。Proto `reference_kind` 标注决定哪些字段可呈现为地址，renderer 只读去重批量 Identity 地址，不分配、改名或增加 visibility。query 已返回的 lexicalRef 直接沿用。freeform Struct/Value 正文在所属字段保持不透明，合法 `$typeName`、`$unknown`、引用同名字段与完整 UUID 均保留。
 
-Current selection and operation records each carry one format identifier and use a codec that preserves BigInt separately from arbitrary JSON payload keys. The current consumer does not load superseded records. Unknown old requests and their operation associations must be preserved before obsolete state cleanup. Within a current receipt, the frozen request cannot be replaced and a terminal outcome cannot regress to pending or another terminal outcome.
+native JSON 由 Buf toJson 负责：oneof 为实际字段，Timestamp 为 ISO，bytes 为 base64，int64 为十进制字符串。renderer 不按用户对象的 kind/value、case/value、seconds/nanos 形状猜测协议类型。
 
-Material references returned by observation/query/trace are accepted as exact canonical references. `show` reads metadata; `read` materializes bounded source/derived text through Material Authority, preserving actual range, total bytes, partial output and evidence. Binary sources direct the caller to derivation instead of rendering raw bytes as text.
+默认语义文本；`--json` 返回版本化 envelope；`--raw --developer` 查看 canonical Client 响应。完整 owner 字段不会由重复手写 summary 列表隐藏。业务成功但地址呈现失败，输出 canonical result 与 PRESENTATION_UNAVAILABLE；selection 保存失败输出 STATE_UNSAVED。
 
-`session show [reference-or-name]` reads explicit Session metadata, including closed Sessions, without selecting or reopening Runtime activity. With no argument it reads the consumer-selected Session. Close clears local Session selection but preserves the closed identity for this read. Open and close do not accept a reference argument.
+## 请求恢复
 
-Consumer operations use public Client APIs for Subject and Session lifecycle, Observation, Material derivation, Memory formation, embedding preparation, query, trace, UseEvent and WorkContext. File upload streams Artifact content through the authenticated Core endpoint.
+幂等 mutation 在 RPC 前保存完整冻结原请求，包括实际 operation/event identity、expected epoch/revision、时间戳和已解析 canonical references。原请求 identity 不允许被不同输入替换；codec 区分 BigInt 与用户 JSON 字符串。
 
-The consumer uses citty 0.2.2 command families, Zod-validated semantic TOML inputs, default semantic text and opt-in versioned JSON. Raw Client DTO diagnostics require --raw --developer. Durable local state saves exact result:N references and operation receipts before RPC; retry replays frozen operation inputs and expected revisions. Context set/pin/unpin/clear/pause/resume/select/foreground use public WorkContext APIs. The consumer is built against the public Client surface. Provenance trace follows public Material and exact Memory/Schema/Episode/Journal revision reads from a revision through its producer and exact evidence references to the source Artifact.
+semantic owner 是唯一结果与拒绝 Authority。consumer 不缓存 complete/rejected，不依据 transport 数字码建立终态。成功响应后删除本地原请求；删除失败只附 REQUEST_UNSAVED notice，不改变业务结果。响应失败保留原请求并返回 retry ID，`retry <id>` 将相同原输入再次发送给 owner，不重新读当前 revision、生成 identity 或重新解析名称。Subject creation 重试不要求先选择新 Subject；其他 Subject-bound 重试校验 scope。重试只恢复业务请求，不补做独立的 local selection 更新。
 
-明确拒绝的 RPC 保存 `rejected` 回执，与成功 `complete` 一样可回收；只有结果未知的 `pending` 保留原 request/operation identity 供恢复。`retry` 读回成功回执中的结果而不重复业务调用，已拒绝回执返回 `OPERATION_REJECTED`。Subject 创建的恢复不要求预先选中该新 Subject；其他 Subject-bound 操作继续校验所属 Subject。
+`retry forget <id>` 只删除本地原请求，不撤销 Authority 操作。保存请求容量耗尽时先恢复或明确丢弃原请求；没有第二套终态回收规则。Session lifecycle、Identity binding、derivation、upload 的实际幂等合同由各 owner 决定，不声称全部调用都可用同一方式恢复。
 
-正文、title、摘要和操作消息逐字保留，包括完整 UUID 或 `memory:<UUID>`。引用呈现按 typed reference 字段转换。业务已成功而地址呈现失败时，输出原 canonical result 并附 `PRESENTATION_UNAVAILABLE` notice；本地完成回执写入失败则附 `RECEIPT_UNSAVED`，保持真实已知结果。Authority 已明确拒绝而本地拒绝终态写入失败时，也保留原错误 code/message 并附 receipt 与 `RECEIPT_UNSAVED`，不把已知拒绝改成保存错误或未知业务结果。
+## 可用能力
 
-引用字段由 canonical Proto 的 `reference_kind` 标注，Official Client 保留对应 schema，renderer 只读取 Identity 的去重批量地址结果。各创建 owner 在 Authority 事务内分配对象/revision 地址；普通显示不分配、不改名、不增加 visibility。Protobuf JSON Value/Struct 的内容保持不透明，合法 `$typeName`、`$unknown` 和引用同名字段均保留。现行 consumer codec 将实际协议 schema 作为 devalue 类型记录保存，完成回执重放恢复 schema；用户 JSON 不通过字符串或字段名猜测获得引用类型。
+consumer 公开 Subject/seed、Session、Observation/Material、模型形成/derivation/embedding、NousQL、UseEvent、WorkContext、Resource Registry/materialization、Memory/Schema/Episode/Journal 的实际管理与 lifecycle、projection/managed context。复杂输入采用 owner 内容的语义 TOML，generated schema 校验 declared fields，引用统一绑定一次后冻结；不是动态 raw RPC 执行入口。
+
+Memory/Schema/Episode/Journal 的 get/history/lifecycle 使用稳定对象，revision/trace/use 使用 immutable exact revision。修正与生命周期 command 读取当前 owner epoch，再保存冻结 mutation。WorkContext 保持正式 full replacement 合同，set/pin/unpin 在读取的 expected revision 上更新；structured fields 与分页可显式使用。projection 与 managedContext 使用 operator-configured consumer policy，不与 WorkContext 文本更新混淆。
+
+Material `show` 读取 metadata，`read` 通过 Material Authority 返回 bounded source/derived preview，包括真实范围、总量、partial 与 evidence。Artifact `read --output` 通过认证 Core download 流导出完整字节，使用新文件，不受 preview 上限限制；失败删除本次部分输出。上传使用 authenticated streaming endpoint。
 
 ## 机器错误与恢复
 
-领域 owner 在错误发生处指定稳定业务码与必要的身份、revision 上下文；Kernel/Core 将其作为 [ErrorDetail](../../../../proto/nous/wave/v1alpha1/errors.proto) typed detail 传输。Connect/gRPC code 表示通用类别，message 只供显示。Official Client 的 `NousError.code` 保留 transport code，`domainCode/recovery/context` 暴露已解码的业务语义，`details/candidates` 保留附加信息。CLI JSON 输出使用该语义，不解析 message 中的 JSON 或错误标识；没有业务 detail 的 Aborted 仍显示 `ABORTED`。
+领域 owner 在发生处提供稳定业务码与必要上下文，Kernel/Core 使用 [ErrorDetail](../../../../proto/nous/wave/v1alpha1/errors.proto) 传输。Client NousError.code 保留 transport 类别，domainCode/recovery/context 暴露 typed detail，details/candidates 保留附加信息。message 只供显示，不解析其中的 JSON 或业务标识。
 
-拒绝终态回执保留已有 typed code、恢复建议、上下文与附加 detail；`retry` 读取该拒绝，不重新发起 RPC。现存回执缺少这些可选信息时，保留原 transport code/message，不从旧文案补猜业务语义。
-
-`STALE_CONTEXT` 与 `STALE_REVISION` 要求刷新状态，`OPERATION_ID_CONFLICT` 要求为不同语义输入使用新操作 ID，`OPERATION_IN_PROGRESS` 与 `LEASE_LOST` 要求恢复同一冻结操作。Recovery 是供调用者判断的建议，不授权自动重试或 mutation。Maintenance 将 owner 的 refresh/rediscover 指示及 supplied catalog 中对象已不存在的拒绝判为 stale；失去租约保留可重试工作，操作身份冲突暴露失败。未知 detail/enum 保留原信息，调用者不得猜测其业务含义。
+STALE_CONTEXT/STALE_REVISION 要求刷新状态；OPERATION_ID_CONFLICT 要求为不同输入使用新 identity。recovery 是调用者建议，不授权额外 mutation。未知 detail/enum 保留原信息，不猜测业务含义。

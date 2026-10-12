@@ -51,14 +51,14 @@ impl TextEmbeddingProvider for EmbeddingProbe {
             config_digest: "probe".into(),
         }
     }
-    async fn embed(&self, request: TextEmbeddingRequest) -> Result<TextEmbeddingOutput> {
+    async fn embed(&self, request: TextEmbeddingRequest) -> Result<QuerySemanticEmbedding> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         assert!(request.query);
         assert_eq!(request.text, "query");
         if self.fail {
             return Err(Error::Unavailable("probe failure".into()));
         }
-        Ok(TextEmbeddingOutput {
+        Ok(QuerySemanticEmbedding {
             vector: vec![1.0, 0.0],
             space: self.space(),
             producer: self.producer(),
@@ -200,10 +200,11 @@ async fn forbidden_and_missing_generation_do_not_call_embedding() {
 
 #[tokio::test]
 async fn provider_failure_remains_unavailable_lane_for_runtime_requirement_policy() {
-    let provider = EmbeddingProbe {
+    let provider = Arc::new(EmbeddingProbe {
         calls: AtomicUsize::new(0),
         fail: true,
-    };
+    });
+    let request_provider = crate::provider::RequestEmbedding::new(provider.clone(), "query".into());
     let (snapshot, _) = snapshot(&provider);
     let query = query();
     let plan = QueryPlan::for_query(&query);
@@ -213,11 +214,23 @@ async fn provider_failure_remains_unavailable_lane_for_runtime_requirement_polic
         &[EvidenceFamily::Dense],
         &plan,
         "query",
-        Some(&provider),
+        Some(&request_provider),
         None,
     )
     .await
     .expect("lane failure");
+    let repeated = prepare_signals(
+        &snapshot,
+        &query,
+        &[EvidenceFamily::Dense],
+        &plan,
+        "query",
+        Some(&request_provider),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(repeated.dense().unwrap().status, LaneStatus::Unavailable);
     assert!(signals.embedding().is_none());
     let dense = signals.dense().expect("dense");
     assert_eq!(dense.status, LaneStatus::Unavailable);
@@ -344,32 +357,46 @@ async fn concurrent_leaf_requests_share_one_embedding_provider_invocation() {
 }
 
 #[tokio::test]
-async fn host_embedding_recovers_reader_after_preparation_without_material() {
-    let provider = Arc::new(EmbeddingProbe {
+async fn supplied_embedding_recovers_failed_provider_without_another_call() {
+    let provider = EmbeddingProbe {
         calls: AtomicUsize::new(0),
         fail: true,
-    });
-    let shared = crate::provider::RequestEmbedding::new(provider.clone(), "query".into());
-    let request = TextEmbeddingRequest {
-        subject: SubjectId::new(),
-        text: "query".into(),
-        query: true,
     };
-    assert!(shared.embed(request.clone()).await.is_err());
-    let supplied = TextEmbeddingOutput {
+    let (snapshot, reference) = snapshot(&provider);
+    let query = query();
+    let plan = QueryPlan::for_query(&query);
+    let failed = prepare_signals(
+        &snapshot,
+        &query,
+        &[EvidenceFamily::Dense],
+        &plan,
+        "query",
+        Some(&provider),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(failed.dense().unwrap().status, LaneStatus::Unavailable);
+    let supplied = QuerySemanticEmbedding {
         vector: vec![1.0, 0.0],
         space: provider.space(),
         producer: provider.producer(),
     };
-    let result = crate::material::with_query_material(
-        vec![crate::material::QueryEmbedding {
-            text: "query".into(),
-            output: supplied.clone(),
-        }],
-        shared.embed(request),
+    let recovered = prepare_signals(
+        &snapshot,
+        &query,
+        &[EvidenceFamily::Dense],
+        &plan,
+        "query",
+        Some(&provider),
+        Some(&supplied),
     )
     .await
-    .expect("execution receives Host material after preparation");
-    assert_eq!(result.vector, supplied.vector);
+    .unwrap();
+    assert_eq!(recovered.dense().unwrap().status, LaneStatus::Ready);
+    assert_eq!(
+        recovered.dense().unwrap().candidates[0].reference,
+        reference
+    );
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 }

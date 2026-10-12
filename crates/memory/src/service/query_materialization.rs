@@ -12,9 +12,6 @@ pub(super) fn final_state_filter(
     exact: bool,
     historical: bool,
 ) -> bool {
-    if !matches!(state.purge_state, PurgeState::Normal) {
-        return false;
-    }
     if !historical
         && (!matches!(state.acceptance_state, AcceptanceState::Accepted)
             || !matches!(state.integrity_state, IntegrityState::Valid)
@@ -106,7 +103,6 @@ pub(super) fn hard_filter(
         || (matches!(view.object.acceptance_state, AcceptanceState::Accepted)
             && matches!(view.object.integrity_state, IntegrityState::Valid)
             && matches!(view.object.suppression_state, SuppressionState::Normal)))
-        && matches!(view.object.purge_state, PurgeState::Normal)
         && accessibility_eligible(view.accessibility_level, query.effort, exact || historical)
         && query.expression.constraints.matches_common(QueryFacts {
             authority: AuthorityClass::SubjectCognition,
@@ -168,8 +164,6 @@ pub(super) fn lifecycle_drop_reason(state: &FinalMemoryState) -> String {
         "revalidation_required".into()
     } else if !matches!(state.suppression_state, SuppressionState::Normal) {
         "suppressed".into()
-    } else if !matches!(state.purge_state, PurgeState::Normal) {
-        "purging".into()
     } else {
         "accessibility".into()
     }
@@ -187,9 +181,6 @@ pub(super) fn apply_historical_header(
     )) else {
         return Ok(Some("outside_historical_view"));
     };
-    if view.object.purge_state != PurgeState::Normal {
-        return Ok(Some("purged"));
-    }
     view.object = serde_json::from_value(state.state.clone())
         .map_err(|e| Error::Infrastructure(format!("historical Memory header: {e}")))?;
     if view.object.acceptance_state != AcceptanceState::Accepted

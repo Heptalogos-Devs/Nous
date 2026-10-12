@@ -72,7 +72,7 @@ async function main() {
   try {
     current = await boot(configPath);
     const client = current.client;
-    await client.subjects.create(
+    await client.subjects.createSubject(
       create(CreateSubjectRequestSchema, {
         subjectId,
         operationId: "00000000-0000-0000-0000-000000009902",
@@ -83,10 +83,10 @@ async function main() {
         capabilities: create(SubjectCapabilitiesSchema, { memory: true }),
       }),
     );
-    const sessionA = await client.cognition.openSession(
+    const sessionA = await client.runtime.openSession(
       create(SubjectRequestSchema, { subjectId }),
     );
-    const observed = await client.cognition.observe(
+    const observed = await client.runtime.recordObservation(
       create(ObservationInputSchema, {
         subjectId,
         sessionId: sessionA.sessionId,
@@ -103,7 +103,7 @@ async function main() {
         },
       }),
     );
-    const memory = await client.memory.form(
+    const memory = await client.memory.formMemory(
       create(FormMemoryRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009904",
         subjectId,
@@ -120,7 +120,7 @@ async function main() {
         }),
       }),
     );
-    let context = await client.cognition.createWorkContext(
+    let context = await client.runtime.createWorkContext(
       create(CreateWorkContextRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009905",
         subjectId,
@@ -143,9 +143,9 @@ async function main() {
       workContextId: contextId,
     });
     const foreground =
-      await client.cognition.setActiveWorkContext(foregroundRequest);
+      await client.runtime.setActiveWorkContext(foregroundRequest);
     const foregroundReplay =
-      await client.cognition.setActiveWorkContext(foregroundRequest);
+      await client.runtime.setActiveWorkContext(foregroundRequest);
     if (foreground.runtimeRevision !== foregroundReplay.runtimeRevision)
       throw new Error("foreground replay changed Runtime revision");
     const activeQuery = await client.cognition.query(
@@ -157,7 +157,7 @@ async function main() {
       throw new Error(
         "active WorkContext did not surface exact MemoryRevision",
       );
-    context = await client.cognition.pauseWorkContext(
+    context = await client.runtime.pauseWorkContext(
       create(WorkContextMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009907",
         subjectId,
@@ -165,7 +165,7 @@ async function main() {
         expectedRevision: context.workContext?.revision,
       }),
     );
-    const pausedSession = await client.cognition.getSession({
+    const pausedSession = await client.runtime.getSession({
       subjectId,
       id: sessionA.sessionId,
     });
@@ -173,10 +173,10 @@ async function main() {
       throw new Error("pause did not clear foreground binding");
     await stop(current);
     current = await boot(configPath);
-    const sessionB = await current.client.cognition.openSession(
+    const sessionB = await current.client.runtime.openSession(
       create(SubjectRequestSchema, { subjectId }),
     );
-    context = await current.client.cognition.resumeWorkContext(
+    context = await current.client.runtime.resumeWorkContext(
       create(WorkContextMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009908",
         subjectId,
@@ -184,7 +184,7 @@ async function main() {
         expectedRevision: context.workContext?.revision,
       }),
     );
-    await current.client.cognition.setActiveWorkContext(
+    await current.client.runtime.setActiveWorkContext(
       create(SetActiveWorkContextRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009909",
         subjectId,
@@ -270,7 +270,7 @@ async function main() {
     if (!revisedEpisode || !currentRevision)
       throw new Error("current Episode revision missing");
 
-    context = await current.client.cognition.updateWorkContext(
+    context = await current.client.runtime.updateWorkContext(
       create(UpdateWorkContextRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009912",
         subjectId,
@@ -317,7 +317,7 @@ async function main() {
     )
       throw new Error("restart lost WorkContext EpisodeRevision recall");
 
-    await current.client.cognition.endWorkContext(
+    await current.client.runtime.endWorkContext(
       create(WorkContextMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009918",
         subjectId,
@@ -325,7 +325,7 @@ async function main() {
         expectedRevision: context.workContext?.revision,
       }),
     );
-    const endedSession = await current.client.cognition.getSession({
+    const endedSession = await current.client.runtime.getSession({
       subjectId,
       id: sessionB.sessionId,
     });

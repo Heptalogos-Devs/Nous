@@ -69,10 +69,6 @@ impl ConfigRegistry {
         self.descriptors.get(path).map(|entry| &entry.descriptor)
     }
 
-    pub fn validate(&self, path: &str, value: &Value) -> Result<()> {
-        self.normalize(path, value).map(|_| ())
-    }
-
     pub fn normalize(&self, path: &str, value: &Value) -> Result<Value> {
         self.descriptors
             .get(path)
@@ -307,8 +303,27 @@ impl ConfigRegistryBuilder {
     }
 
     pub fn finish(self) -> Result<ConfigRegistry> {
-        let identity = self
+        let descriptors = self
             .descriptors
+            .into_iter()
+            .map(|(path, pending)| {
+                let schema = jsonschema::draft202012::options()
+                    .should_validate_formats(true)
+                    .build(&pending.descriptor.json_schema)
+                    .map_err(|_| {
+                        Error::Invalid(format!("cannot compile configuration schema: {path}"))
+                    })?;
+                let mut entry = RegisteredDescriptor {
+                    descriptor: pending.descriptor,
+                    schema: Arc::new(schema),
+                    owner_normalizer: pending.owner_normalizer,
+                };
+                entry.descriptor.reference_default =
+                    entry.normalize(&entry.descriptor.reference_default)?;
+                Ok((path, entry))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        let identity = descriptors
             .values()
             .map(|entry| crate::identity::descriptor_identity(&entry.descriptor))
             .collect::<Vec<_>>();
@@ -319,8 +334,7 @@ impl ConfigRegistryBuilder {
         .to_string();
         let catalog_digest = blake3::hash(
             &serde_json::to_vec(
-                &self
-                    .descriptors
+                &descriptors
                     .values()
                     .map(|entry| &entry.descriptor)
                     .collect::<Vec<_>>(),
@@ -330,28 +344,7 @@ impl ConfigRegistryBuilder {
         .to_hex()
         .to_string();
         Ok(ConfigRegistry {
-            descriptors: Arc::new(
-                self.descriptors
-                    .into_iter()
-                    .map(|(path, pending)| {
-                        let schema = jsonschema::draft202012::options()
-                            .should_validate_formats(true)
-                            .build(&pending.descriptor.json_schema)
-                            .map_err(|_| {
-                                Error::Invalid(format!(
-                                    "cannot compile configuration schema: {path}"
-                                ))
-                            })?;
-                        let entry = RegisteredDescriptor {
-                            descriptor: pending.descriptor,
-                            schema: Arc::new(schema),
-                            owner_normalizer: pending.owner_normalizer,
-                        };
-                        entry.normalize(&entry.descriptor.reference_default)?;
-                        Ok((path, entry))
-                    })
-                    .collect::<Result<BTreeMap<_, _>>>()?,
-            ),
+            descriptors: Arc::new(descriptors),
             semantic_digest,
             catalog_digest,
         })

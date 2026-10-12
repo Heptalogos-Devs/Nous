@@ -4,15 +4,7 @@
 syntax = "proto3";
 package nous.wave.kernel.v1alpha1;
 import "nous/wave/v1alpha1/types.proto";
-import "nous/wave/v1alpha1/presentation.proto";
 import "google/protobuf/timestamp.proto";
-
-message WorkflowLease {
-  string subject_id = 1 [(nous.wave.v1alpha1.reference_kind) = "subject"];
-  string owner = 2;
-  string operation_key = 3;
-  string token = 4;
-}
 
 // Only the semantic owner interprets payload_json. Dependencies are explicit;
 // storage and purge never inspect the domain payload for references.
@@ -21,16 +13,15 @@ message WorkflowPayload {
   repeated nous.wave.v1alpha1.CognitiveRef dependencies = 2;
   bool purged = 3;
 }
-message MaintenanceClaim {
+message MaintenanceTrigger {
   string need_id = 1;
-  string lease_token = 2;
   int64 trigger_authority_seq = 3;
   uint64 trigger_revision = 4;
 }
 message WorkflowSnapshot {
   WorkflowPayload content = 1;
   google.protobuf.Timestamp cognitive_formed_at = 2;
-  MaintenanceClaim maintenance_claim = 3;
+  MaintenanceTrigger maintenance_trigger = 3;
 }
 // Absent usage is unknown, including for attempts with an unknown outcome.
 message ExecutionUsage {

@@ -3,9 +3,7 @@
 
 use super::*;
 use nous_core::{ResourceRef, Result, SubjectId};
-use nous_persistence::database_error as db;
 use nous_runtime::{ResourceDescriptor, ResourceUpsert};
-use sqlx::Row;
 
 fn json_strings(value: serde_json::Value) -> Vec<String> {
     value
@@ -177,46 +175,23 @@ impl KernelService {
         input: p::SubjectRequest,
     ) -> Result<p::ProjectionStatus> {
         let subject = SubjectId(id(&input.subject_id)?);
-        self.0.store.require_subject(subject).await?;
-        let snapshot = self.0.configuration.snapshot_for_subject(subject)?;
-        let rows=sqlx::query("SELECT COALESCE(w.family,c.family) AS family,COALESCE(w.space_signature,c.space_signature) AS space_signature,COALESCE(w.desired_authority_seq,0) AS desired_authority_seq,g.authority_watermark,g.generation_id,g.config_digest FROM projection_watermarks w FULL JOIN serving_current c ON c.subject_id=w.subject_id AND c.family=w.family AND c.space_signature=w.space_signature LEFT JOIN serving_generations g ON g.generation_id=c.generation_id WHERE COALESCE(w.subject_id,c.subject_id)=$1 ORDER BY family,space_signature")
-            .bind(subject.0).fetch_all(self.0.store.pool()).await.map_err(db)?;
-        let mut families = Vec::with_capacity(rows.len());
-        for row in rows {
-            let name: String = row.try_get("family").map_err(db)?;
-            let desired_authority_seq = row.try_get("desired_authority_seq").map_err(db)?;
-            let authority_watermark: Option<i64> =
-                row.try_get("authority_watermark").map_err(db)?;
-            let config_digest: Option<String> = row.try_get("config_digest").map_err(db)?;
-            let desired_config_digest = self
-                .0
-                .serving
-                .config_digest(subject, &name, &snapshot)
-                .await?;
-            let state = match authority_watermark {
-                Some(watermark)
-                    if watermark >= desired_authority_seq
-                        && config_digest.as_deref() == Some(desired_config_digest.as_str()) =>
-                {
-                    "READY"
-                }
-                Some(_) => "STALE",
-                None => "UNAVAILABLE",
-            };
-            families.push(p::ProjectionFamilyStatus {
-                name,
-                state: state.into(),
-                space_signature: row.try_get("space_signature").map_err(db)?,
-                desired_authority_seq,
-                authority_watermark,
-                generation_id: row
-                    .try_get::<Option<uuid::Uuid>, _>("generation_id")
-                    .map_err(db)?
-                    .map(|id| id.to_string()),
-                config_digest,
-                desired_config_digest,
-            });
-        }
+        let families = self
+            .0
+            .serving
+            .family_status(subject)
+            .await?
+            .into_iter()
+            .map(|family| p::ProjectionFamilyStatus {
+                name: family.name,
+                state: enum_name(family.state).to_uppercase(),
+                space_signature: family.space_signature,
+                desired_authority_seq: family.desired_authority_seq,
+                authority_watermark: family.authority_watermark,
+                generation_id: family.generation_id.map(|id| id.0.to_string()),
+                config_digest: family.config_digest,
+                desired_config_digest: family.desired_config_digest,
+            })
+            .collect();
         Ok(p::ProjectionStatus { families })
     }
 }

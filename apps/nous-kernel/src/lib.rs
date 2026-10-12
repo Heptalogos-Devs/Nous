@@ -105,10 +105,17 @@ impl NousRuntime {
         serving_options.lexical = system_snapshot.get(nous_retrieval::LEXICAL_ENABLED_KEY)?;
         serving_options.dense = system_snapshot.get(nous_retrieval::DENSE_ENABLED_KEY)?;
         serving_options.topology = system_snapshot.get(nous_retrieval::TOPOLOGY_ENABLED_KEY)?;
-        let memory = process_capabilities
-            .memory
-            .then(|| MemoryService::new(material.clone(), configuration.clone()));
+        let memory = process_capabilities.memory.then(|| {
+            MemoryService::new(
+                store.clone(),
+                objects.clone(),
+                cognition.clone(),
+                material.clone(),
+                configuration.clone(),
+            )
+        });
         let serving = ServingService::new(
+            store.clone(),
             material.clone(),
             memory.clone(),
             serving_options,
@@ -242,16 +249,6 @@ impl NousRuntime {
                 self.serving.embedding().map(|provider| provider.space());
         }
         self.cognition.expire_query_leases()?;
-        self.serving
-            .reclaim_retired(
-                bound.source_query.subject,
-                std::time::Duration::from_secs(
-                    bound
-                        .config_snapshot
-                        .get(nous_retrieval::RETIRED_GRACE_SECONDS)?,
-                ),
-            )
-            .await?;
         let plan = nous_runtime::QueryPlan::for_bound_query(&bound);
         let subject_capabilities = self
             .subjects
@@ -286,7 +283,7 @@ impl NousRuntime {
             )
             .await?;
         execution.result.generation = serving_query.generation_trace();
-        execution.read_lease = Some(serving_query);
+        execution.bound.activation_view = Some(serving_query);
         let result = &mut execution.result;
         result.degradation.extend(projection.degradation);
         if !result.degradation.is_empty() && result.status != QueryStatus::Partial {

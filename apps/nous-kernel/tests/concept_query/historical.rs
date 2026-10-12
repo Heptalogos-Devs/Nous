@@ -70,9 +70,12 @@ pub(crate) async fn check_historical_profiles(
             .iter()
             .find(|r| r.family == "concept" && !r.space.is_empty())
             .unwrap();
-        let content =
-            std::fs::read(std::path::Path::new(&concepts.artifact_location).join("concept.json"))
-                .unwrap();
+        let content = std::fs::read(
+            rt.serving
+                .artifact_directory(concepts.generation_id)
+                .join("concept.json"),
+        )
+        .unwrap();
         let generation: nous_retrieval::ConceptGeneration =
             serde_json::from_slice(&content).unwrap();
         let record = generation.record(tag).unwrap();

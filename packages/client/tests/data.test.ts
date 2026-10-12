@@ -1,12 +1,12 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { create, fromJson, type DescMessage } from "@bufbuild/protobuf";
+import { create, fromJson, toJson, type DescMessage } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import type { Transport } from "@connectrpc/connect";
 import { expect, it } from "vitest";
 import { createNousClient } from "../src/index.js";
-import { protocolSchema, restoreProtocolData } from "../src/data.js";
+import { messageData } from "@nous-wave/protocol/messages";
 
 it("keeps protocol-looking keys and reference bodies inside JSON values opaque", async () => {
   const body = {
@@ -24,18 +24,10 @@ it("keeps protocol-looking keys and reference bodies inside JSON values opaque",
     }),
   });
   const client = createNousClient({ unary } as unknown as Transport);
-  const result = await client.configuration.get({ paths: ["models"] });
-  expect(result.entries[0]?.value).toEqual(body);
-  expect(result).not.toHaveProperty("$typeName");
-  const schema = protocolSchema(result);
-  expect(schema?.typeName).toBe("nous.wave.v1alpha1.ConfigurationSnapshot");
-  expect(protocolSchema(result.entries[0]?.value)).toBeUndefined();
-  const roundtrip = structuredClone(result);
-  expect(protocolSchema(roundtrip)).toBeUndefined();
-  restoreProtocolData(roundtrip, schema!);
-  expect(protocolSchema(roundtrip.entries[0])?.typeName).toBe(
-    "nous.wave.v1alpha1.ConfigurationEntry",
-  );
-  expect(protocolSchema(roundtrip.entries[0]?.value)).toBeUndefined();
-  expect(roundtrip.entries[0]?.value).toEqual(body);
+  const result = await client.configuration.getConfiguration({
+    paths: ["models"],
+  });
+  expect(toJson(ValueSchema, result.entries[0]!.value!)).toEqual(body);
+  expect(result.$typeName).toBe("nous.wave.v1alpha1.ConfigurationSnapshot");
+  expect(messageData(result)).toMatchObject({ entries: [{ value: body }] });
 });

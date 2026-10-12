@@ -47,11 +47,6 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable(
-                        "Episode partition is in progress".into(),
-                    ));
-                }
                 let revisions: Vec<EpisodeRevisionId> =
                     serde_json::from_str(&receipt.result_ref.ok_or_else(|| {
                         Error::Infrastructure("partition receipt has no revisions".into())
@@ -179,7 +174,7 @@ impl MemoryService {
                 1
             };
             if !one_to_one {
-                sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','normal',$5)")
+                sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal',$5)")
                     .bind(episode.0).bind(input.subject.0).bind(&track).bind(revision.0).bind(recorded_at).execute(&mut **tx).await.map_err(db)?;
             }
             insert_episode_revision_with_intent(
@@ -321,7 +316,6 @@ async fn lock_sources(
             || row.get::<String, _>("acceptance_state") != "accepted"
             || row.get::<String, _>("integrity_state") != "valid"
             || row.get::<String, _>("suppression_state") != "normal"
-            || row.get::<String, _>("purge_state") != "normal"
         {
             return Err(nous_core::DomainError::new(
                 nous_core::DomainErrorCode::StaleRevision,

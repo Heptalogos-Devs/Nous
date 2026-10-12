@@ -349,13 +349,8 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "set_accessibility", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self.memory(subject, memory, None).await;
-                }
-                return Err(Error::Unavailable(
-                    "accessibility operation is already in progress".into(),
-                ));
+            MutationStart::Replay(_) => {
+                return self.memory(subject, memory, None).await;
             }
             MutationStart::Active(mutation) => mutation,
         };

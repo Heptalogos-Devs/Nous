@@ -34,25 +34,18 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    let id = receipt
-                        .result_ref
-                        .ok_or_else(|| {
-                            Error::Infrastructure("Episode receipt has no result".into())
-                        })?
-                        .parse()
-                        .map_err(|_| Error::Infrastructure("invalid Episode receipt".into()))?;
-                    return self
-                        .episode(
-                            input.subject,
-                            EpisodeId(id),
-                            receipt.result_revision.map(EpisodeRevisionId),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "create Episode operation is already in progress".into(),
-                ));
+                let id = receipt
+                    .result_ref
+                    .ok_or_else(|| Error::Infrastructure("Episode receipt has no result".into()))?
+                    .parse()
+                    .map_err(|_| Error::Infrastructure("invalid Episode receipt".into()))?;
+                return self
+                    .episode(
+                        input.subject,
+                        EpisodeId(id),
+                        receipt.result_revision.map(EpisodeRevisionId),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -76,7 +69,7 @@ impl MemoryService {
             .await?;
         let now = self.cognition.now(input.subject);
         let (time_kind, time_start, time_end) = temporal_columns(&input.experience_time);
-        sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','normal',$5)")
+        sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal',$5)")
             .bind(episode_id.0).bind(input.subject.0).bind(&input.track_key).bind(revision_id.0).bind(now)
             .execute(&mut **mutation.tx()).await.map_err(db)?;
         insert_episode_revision(
@@ -233,29 +226,21 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return self
-                        .episode(
-                            input.subject,
-                            input.episode_id,
-                            receipt.result_revision.map(EpisodeRevisionId),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "revise Episode operation is already in progress".into(),
-                ));
+                return self
+                    .episode(
+                        input.subject,
+                        input.episode_id,
+                        receipt.result_revision.map(EpisodeRevisionId),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
-        let row = sqlx::query("SELECT track_key,current_revision_id,object_epoch,purge_state FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE")
+        let row = sqlx::query("SELECT track_key,current_revision_id,object_epoch FROM episode_objects WHERE subject_id=$1 AND episode_id=$2 FOR UPDATE")
             .bind(input.subject.0).bind(input.episode_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?
             .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(epoch, input.expected_object_epoch)?;
-        if row.try_get::<String, _>("purge_state").map_err(db)? == "purging" {
-            return Err(Error::FailedPrecondition("Episode is purging".into()));
-        }
         validate_episode_refs_in_tx(&self.store, mutation.tx(), input.subject, &input.members)
             .await?;
         validate_episode_basis_in_tx(&self.store, mutation.tx(), input.subject, &input.basis)
@@ -381,13 +366,8 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "link_episode_revisions", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::Unavailable(
-                    "Episode relation operation is already in progress".into(),
-                ));
+            MutationStart::Replay(_) => {
+                return Ok(());
             }
             MutationStart::Active(mutation) => mutation,
         };

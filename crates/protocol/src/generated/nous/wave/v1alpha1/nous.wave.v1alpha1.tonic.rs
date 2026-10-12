@@ -2737,11 +2737,6 @@ pub mod system_service_server {
             request: tonic::Request<()>,
         ) -> std::result::Result<tonic::Response<super::SystemStatus>, tonic::Status>;
         ///
-        async fn get_capabilities(
-            &self,
-            request: tonic::Request<()>,
-        ) -> std::result::Result<tonic::Response<super::SystemStatus>, tonic::Status>;
-        ///
         async fn get_projection_status(
             &self,
             request: tonic::Request<super::SubjectRequest>,
@@ -2852,47 +2847,6 @@ pub mod system_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetStatusSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/nous.wave.v1alpha1.SystemService/GetCapabilities" => {
-                    #[allow(non_camel_case_types)]
-                    struct GetCapabilitiesSvc<T: SystemService>(pub Arc<T>);
-                    impl<T: SystemService> tonic::server::UnaryService<()>
-                    for GetCapabilitiesSvc<T> {
-                        type Response = super::SystemStatus;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as SystemService>::get_capabilities(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = GetCapabilitiesSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

@@ -4,11 +4,9 @@
 use super::*;
 use nous_configuration::SubjectCapabilities;
 use nous_core::{OperationId, Result, SessionId, SubjectId};
-use nous_persistence::database_error as db;
 use nous_subject::{
     CognitiveSeedInput, CognitiveSeedView, CreateSubject, SeedAdoptionKind, SubjectView,
 };
-use uuid::Uuid;
 
 fn seed(input: p::CognitiveSeed) -> CognitiveSeedInput {
     CognitiveSeedInput {
@@ -91,25 +89,21 @@ impl KernelService {
     ) -> Result<p::ListSubjectsResponse> {
         let scope = format!("subjects:{}", input.status);
         let (limit, last) = page(input.page, &scope)?;
-        let mut ids = sqlx::query_scalar::<_,Uuid>("SELECT subject_id FROM subjects WHERE ($1::uuid IS NULL OR subject_id>$1) AND ($2='' OR status=$2) ORDER BY subject_id LIMIT $3")
-            .bind(last).bind(&input.status).bind(limit+1).fetch_all(self.0.store.pool()).await.map_err(db)?;
-        let more = ids.len() > limit as usize;
-        ids.truncate(limit as usize);
+        let (items, more) = self.0.subjects.subjects(&input.status, limit, last).await?;
         let next_page_token = if more {
             next_token(
                 &scope,
-                *ids.last()
-                    .ok_or_else(|| Error::Internal("page continuation has no last item".into()))?,
+                items
+                    .last()
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .subject_id
+                    .0,
             )
         } else {
             String::new()
         };
-        let mut items = Vec::new();
-        for id in ids {
-            items.push(subject(self.0.subjects.subject(SubjectId(id)).await?));
-        }
         Ok(p::ListSubjectsResponse {
-            items,
+            items: items.into_iter().map(subject).collect(),
             next_page_token,
         })
     }
@@ -156,26 +150,7 @@ impl KernelService {
         session: SessionId,
     ) -> Result<p::Session> {
         let view = self.0.cognition.session(subject, session).await?;
-        let active_work_context_id: Option<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT active_work_context_id FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2",
-        )
-        .bind(subject.0)
-        .bind(session.0)
-        .fetch_one(self.0.store.pool())
-        .await
-        .map_err(db)?;
-        Ok(p::Session {
-            session_id: session.0.to_string(),
-            subject_id: subject.0.to_string(),
-            runtime_revision: view.runtime_revision,
-            closed: view.closed_at.is_some(),
-            resident_refs: view
-                .resident
-                .into_iter()
-                .map(|r| to_ref(r.reference))
-                .collect(),
-            active_work_context_id: active_work_context_id.map(|value| value.to_string()),
-        })
+        Ok(session_proto(view))
     }
     pub(super) async fn open_session(&self, input: p::SubjectRequest) -> Result<p::Session> {
         let subject = SubjectId(id(&input.subject_id)?);
@@ -184,7 +159,7 @@ impl KernelService {
             .cognition
             .open_session(subject, serde_json::json!({}))
             .await?;
-        self.session_view(subject, view.session_id).await
+        Ok(session_proto(view))
     }
     pub(super) async fn get_session(&self, input: p::ObjectRequest) -> Result<p::Session> {
         self.session_view(SubjectId(id(&input.subject_id)?), SessionId(id(&input.id)?))
@@ -193,40 +168,54 @@ impl KernelService {
     pub(super) async fn close_session(&self, input: p::ObjectRequest) -> Result<p::Session> {
         let subject = SubjectId(id(&input.subject_id)?);
         let session = SessionId(id(&input.id)?);
-        self.0.cognition.close_session(subject, session).await?;
-        self.session_view(subject, session).await
+        self.0
+            .cognition
+            .close_session(subject, session)
+            .await
+            .map(session_proto)
     }
     pub(super) async fn list_sessions(
         &self,
         input: p::ListRequest,
     ) -> Result<p::ListSessionsResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
-        self.0.store.require_subject(subject).await?;
-        if !matches!(input.status.as_str(), "" | "open" | "closed") {
-            return Err(Error::Invalid("invalid session status".into()));
-        }
         let scope = format!("sessions:{}:{}", input.subject_id, input.status);
         let (limit, last) = page(input.page, &scope)?;
-        let mut ids=sqlx::query_scalar::<_,Uuid>("SELECT session_id FROM cognitive_sessions WHERE subject_id=$1 AND ($2::uuid IS NULL OR session_id>$2) AND ($3='' OR ($3='open' AND closed_at IS NULL) OR ($3='closed' AND closed_at IS NOT NULL)) ORDER BY session_id LIMIT $4")
-            .bind(subject.0).bind(last).bind(input.status).bind(limit+1).fetch_all(self.0.store.pool()).await.map_err(db)?;
-        let more = ids.len() > limit as usize;
-        ids.truncate(limit as usize);
+        let (items, more) = self
+            .0
+            .cognition
+            .sessions(subject, &input.status, limit, last)
+            .await?;
         let next_page_token = if more {
             next_token(
                 &scope,
-                *ids.last()
-                    .ok_or_else(|| Error::Internal("page continuation has no last item".into()))?,
+                items
+                    .last()
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .session_id
+                    .0,
             )
         } else {
             String::new()
         };
-        let mut items = Vec::new();
-        for id in ids {
-            items.push(self.session_view(subject, SessionId(id)).await?);
-        }
         Ok(p::ListSessionsResponse {
-            items,
+            items: items.into_iter().map(session_proto).collect(),
             next_page_token,
         })
+    }
+}
+
+fn session_proto(view: nous_runtime::SessionView) -> p::Session {
+    p::Session {
+        session_id: view.session_id.0.to_string(),
+        subject_id: view.subject_id.0.to_string(),
+        runtime_revision: view.runtime_revision,
+        closed: view.closed_at.is_some(),
+        resident_refs: view
+            .resident
+            .into_iter()
+            .map(|r| to_ref(r.reference))
+            .collect(),
+        active_work_context_id: view.active_work_context_id.map(|value| value.to_string()),
     }
 }

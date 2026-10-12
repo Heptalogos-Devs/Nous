@@ -1,6 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { messageData } from "@nous-wave/protocol/messages";
 import { cliErrorPayload } from "./agent.js";
 import { renderText } from "./output.js";
 
@@ -9,10 +10,10 @@ const flag = (args: readonly string[], name: string) =>
 
 export function formatResult(value: unknown, args: readonly string[]) {
   return flag(args, "json") || flag(args, "raw")
-    ? JSON.stringify(value, (_, item: unknown) =>
+    ? JSON.stringify(messageData(value), (_, item: unknown) =>
         typeof item === "bigint" ? item.toString() : item,
       )
-    : renderText(value);
+    : renderText(messageData(value));
 }
 
 export function formatError(error: unknown, args: readonly string[]) {

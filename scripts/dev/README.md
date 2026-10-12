@@ -8,14 +8,12 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| [start.ts](start.ts) | 源码 Core/Kernel 开发实例与退出生命周期 |
+| [start.ts](start.ts) | 调用统一 launcher 的源码 serve 入口 |
 | [prepare.ts](prepare.ts) | 显式准备开发 PostgreSQL 运行包 |
 | [postgres-linux.ts](postgres-linux.ts) | Linux 开发 PostgreSQL 的依赖库准备，供 prepare 调用 |
-| [nous.ts](nous.ts) | 对开发 locator 调用源码 CLI |
+| [nous.ts](nous.ts) | 对开发 locator 调用源码 launcher |
 | [portable.ts](portable.ts) | 用实际 Portable 程序连接独立开发 locator |
-| [check-code-length.ts](check-code-length.ts) | 对 Git 管理和未忽略的新手写文件检查物理行数 |
 
-`pnpm check:length` 读取唯一配置 [.config/scripts/code-length.toml](../../.config/scripts/code-length.toml)，检查生产源码、测试文件、测试 helper、开发/研究/构建脚本；Rust 内联测试也计入所属源码。生成 bindings 只按配置中的两个路径排除，测试目录没有豁免。当前达到 TypeScript 600 / Rust 500 行警告，达到 800 / 700 行拒绝；warning 不升级成 error。该门禁位于 `check:fast` 的编译前，也由两平台 CI 使用。
 
 ## 开发实例
 
@@ -26,9 +24,9 @@ corepack pnpm dev
 corepack pnpm nous status
 ```
 
-`dev:prepare` 准备 PostgreSQL 18.6 runtime，不启动 Core。Windows 从 `data/runtime/packs/` 与 `data/runtime/manifest/runtimes.json` 安装已准备的 pack；其他平台使用 Kernel 的 dev-runtime 下载入口。`NOUS_WAVE_POSTGRES_RUNTIME` 可指定现有安装目录。
+`dev:prepare` 准备 PostgreSQL 18.6 runtime，不启动 Core。Windows 从 `data/runtime/packs/` 与 `data/runtime/manifest/runtimes.json` 安装已准备的 pack；其他平台使用 Kernel 的 dev-runtime 下载入口。`dev:prepare --home <实例目录>` 或 `--locator <bootstrap.toml>` 使用与 serve 相同的 RuntimeLocations。`NOUS_WAVE_POSTGRES_RUNTIME` 可显式选择 `RuntimeRoot/postgresql` 安装目录；它只作用于准备命令，不改变 serve 的目录。自定义 runtime 用同一显式 locator 的 `[paths].runtime` 指向其父目录；与 locator 冲突时准备失败。失败下载的私有 staging 会清理，已安装 runtime 和实例数据保持原样。
 
-`dev` 启动源码 Core 和 debug Kernel，生成路径 locator 并使用 `data/instances/dev/bootstrap.toml` 与 `data/config/apps/nous.toml`。配置缺失时创建最小配置，已有文件保持原样。Kernel 未构建时直接报错；终端退出时关闭子进程。
+`dev` 启动源码 Core 和 debug Kernel，生成路径 locator 并使用 `data/instances/dev/bootstrap.toml` 与 `data/config/apps/nous.toml`。配置缺失时创建最小配置，已有文件保持原样。与 `nous serve` 使用同一 Core 生命周期；配置只加载一次，Kernel 启动失败会报告具体原因。SIGINT、SIGTERM 或显式 `--stop-on-stdin-close` 关闭实例。
 
 `nous` 将参数传给源码 CLI，默认连接开发实例。用 `--home <实例目录>` 或 `--locator <bootstrap.toml>` 显式选择实例。操作示例见 [CLI README](../../apps/nous-cli/README.md)。
 
@@ -45,4 +43,4 @@ corepack pnpm dev:portable status
 
 `dev:portable` 默认使用 `data/releases/windows-x64/current/` 中的 Node 和 launcher，进而使用包内 Core/Kernel/Runtime；可用 `--bundle <解包目录>` 指定另一实际包。配置和密钥直接引用 `data/config/apps/`、`data/config/secrets/`，不复制或覆盖。生成的 locator 位于 `data/instances/portable/bootstrap.toml`，Authority/对象/身份与源码开发实例独立。无参数等同 `serve`；关闭规则由正常 launcher 承担。
 
-包尚未组装时该命令明确失败。配置字段与 `config_revision` 必须符合所选 Core package 的合同；版本不匹配时，按该 package 合同更新配置，或选择与配置匹配的 package。
+包尚未组装时该命令明确失败。配置字段必须符合所选 Core package 的合同；离线配置检查直接报告未知字段和无效引用。

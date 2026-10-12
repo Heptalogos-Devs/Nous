@@ -8,6 +8,37 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 impl CognitiveRuntimeService {
+    /// Erase Runtime references while the cognition owner holds its purge transaction.
+    pub async fn purge_cognition_refs_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        kind: &str,
+        revisions: &[String],
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO purged_use_receipts(subject_id,consumer_ref,event_id,request_digest,purged_at) SELECT subject_id,consumer_ref,event_id,request_digest,$4 FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind=$2 AND ref_value=ANY($3::text[]) ON CONFLICT DO NOTHING")
+            .bind(subject.0).bind(kind).bind(revisions).bind(self.now(subject)).execute(&mut **tx).await.map_err(db)?;
+        sqlx::query("DELETE FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind=$2 AND ref_value=ANY($3::text[])")
+            .bind(subject.0).bind(kind).bind(revisions).execute(&mut **tx).await.map_err(db)?;
+        self.forget_resident_cognition_in(tx, subject, kind, revisions)
+            .await?;
+        sqlx::query("DELETE FROM work_context_refs wr USING work_contexts w WHERE wr.work_context_id=w.work_context_id AND w.subject_id=$1 AND wr.ref_kind=$2 AND wr.ref_value=ANY($3::text[])")
+            .bind(subject.0).bind(kind).bind(revisions).execute(&mut **tx).await.map_err(db)?;
+        Ok(())
+    }
+
+    pub async fn forget_resident_cognition_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        kind: &str,
+        revisions: &[String],
+    ) -> Result<()> {
+        sqlx::query("DELETE FROM resident_refs rr USING cognitive_sessions s WHERE rr.session_id=s.session_id AND s.subject_id=$1 AND rr.ref_kind=$2 AND rr.ref_value=ANY($3::text[])")
+            .bind(subject.0).bind(kind).bind(revisions).execute(&mut **tx).await.map_err(db)?;
+        Ok(())
+    }
+
     #[expect(
         clippy::too_many_lines,
         clippy::excessive_nesting,
@@ -255,13 +286,9 @@ impl CognitiveRuntimeService {
 }
 
 fn validate_consumer_ref(value: &str) -> Result<()> {
-    if value.is_empty()
-        || value.len() > 512
-        || value.chars().any(char::is_whitespace)
-        || value.matches(':').count() < 2
-    {
+    if value.is_empty() || value.len() > 512 || value.chars().any(char::is_whitespace) {
         return Err(Error::Invalid(
-            "consumer_ref must be a namespaced opaque reference".into(),
+            "consumer_ref must be a nonempty opaque identity of at most 512 bytes without whitespace".into(),
         ));
     }
     Ok(())
@@ -292,19 +319,19 @@ async fn validate_use_target_in(
 ) -> Result<()> {
     let (query, id) = match reference {
         CognitiveRef::MemoryRevision(id) => (
-            "SELECT o.purge_state FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o",
+            "SELECT true FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o",
             id.0,
         ),
         CognitiveRef::CognitiveSchemaRevision(id) => (
-            "SELECT o.purge_state FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o",
+            "SELECT true FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o",
             id.0,
         ),
         CognitiveRef::EpisodeRevision(id) => (
-            "SELECT o.purge_state FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o",
+            "SELECT true FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o",
             id.0,
         ),
         CognitiveRef::JournalRevision(id) => (
-            "SELECT o.purge_state FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o",
+            "SELECT true FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o",
             id.0,
         ),
         _ => {
@@ -313,19 +340,13 @@ async fn validate_use_target_in(
             ));
         }
     };
-    let state: Option<String> = sqlx::query_scalar(query)
+    let exists: Option<bool> = sqlx::query_scalar(query)
         .bind(subject.0)
         .bind(id)
         .fetch_optional(&mut **tx)
         .await
         .map_err(db)?;
-    match state.as_deref() {
-        None => Err(Error::NotFound(
-            "UseEvent revision is not in Subject".into(),
-        )),
-        Some("normal") => Ok(()),
-        Some(_) => Err(Error::FailedPrecondition(
-            "UseEvent target is purging".into(),
-        )),
-    }
+    exists
+        .map(|_| ())
+        .ok_or_else(|| Error::NotFound("UseEvent revision is not in Subject".into()))
 }

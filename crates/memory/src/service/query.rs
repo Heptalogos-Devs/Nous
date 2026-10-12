@@ -19,7 +19,6 @@ pub(super) struct FinalMemoryState {
     pub(super) acceptance_state: AcceptanceState,
     pub(super) integrity_state: IntegrityState,
     pub(super) suppression_state: SuppressionState,
-    pub(super) purge_state: PurgeState,
     pub(super) accessibility_mode: AccessibilityMode,
 }
 
@@ -95,11 +94,12 @@ impl CognitiveContributor for MemoryService {
             .map(|(_, revision)| revision.0)
             .collect::<Vec<_>>();
         let views = self
-            .memories_for_query(
+            .memory_views(
                 subject,
                 &revision_ids,
                 &accessibility_policy,
                 bound.historical_authority.as_deref(),
+                false,
             )
             .await?;
         let mut drops = BTreeMap::new();
@@ -132,7 +132,6 @@ impl CognitiveContributor for MemoryService {
                 acceptance_state: view.object.acceptance_state,
                 integrity_state: view.object.integrity_state,
                 suppression_state: view.object.suppression_state,
-                purge_state: view.object.purge_state,
                 accessibility_mode: view.object.accessibility_mode,
             };
             if let Some(binding) = bound

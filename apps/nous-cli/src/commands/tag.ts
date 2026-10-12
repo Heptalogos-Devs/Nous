@@ -103,7 +103,7 @@ export async function tagCommands(
         "REFERENCE_TYPE_MISMATCH",
         "Attachment requires an exact cognition revision",
       );
-    return client.concepts.associate({
+    return client.concepts.createAssociation({
       subjectId,
       operationId,
       association: {
@@ -132,7 +132,7 @@ export async function tagCommands(
         });
   }
   if (action === "resolve") {
-    const result = await client.identity.resolve({
+    const result = await client.identity.resolveIdentity({
       subjectId,
       kind: "tag",
       locator: { case: "name", value: required(argument, "Tag name") },

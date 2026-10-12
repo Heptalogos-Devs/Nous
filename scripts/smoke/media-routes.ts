@@ -138,7 +138,7 @@ try {
     const client = current.client;
     if (!subjectId) {
       subjectId = (
-        await client.subjects.create({
+        await client.subjects.createSubject({
           operationId: randomUUID(),
           cognitiveSeed: {
             text: "schema_version = 1",
@@ -149,7 +149,7 @@ try {
       const artifact = await client.artifacts.uploadFile(subjectId, videoPath, {
         mediaType: "video/mp4",
       });
-      const observed = await client.cognition.observe({
+      const observed = await client.runtime.recordObservation({
         subjectId,
         requestId: randomUUID(),
         sourceClass: "file",
@@ -174,7 +174,7 @@ try {
     } else {
       assert.equal(result.degradation.length, 0);
       const representationId = result.selectedRepresentationId!;
-      const persisted = await client.material.representation({
+      const persisted = await client.material.getDerivedRepresentation({
         subjectId,
         id: representationId,
       });
@@ -216,7 +216,7 @@ try {
     videoPath,
     { mediaType: "video/mp4" },
   );
-  const timedSource = await current.client.cognition.observe({
+  const timedSource = await current.client.runtime.recordObservation({
     subjectId,
     requestId: randomUUID(),
     sourceClass: "file",

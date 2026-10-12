@@ -7,12 +7,12 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import {
   ConfigurationError,
-  CONFIG_REVISION,
   readConfiguration,
 } from "./configuration/schema.js";
 import { checkConfiguration } from "./configuration/check.js";
 import { resolveLocations } from "./locations.js";
 import { initializeConfiguration } from "./configuration/file.js";
+import { runCore } from "./main.js";
 import { launcherCommandOffset } from "./launcher-arguments.js";
 import {
   installRuntime,
@@ -26,6 +26,8 @@ async function main() {
   const forwarded: string[] = [];
   for (let index = 0; index < args.length; index++) {
     if (args[index] === "--development") profileArgs.push(args[index]!);
+    else if (/^--(?:home|locator)=/.test(args[index]!))
+      profileArgs.push(args[index]!);
     else if (args[index] === "--home" || args[index] === "--locator") {
       if (!args[index + 1])
         throw new Error("Missing instance location argument");
@@ -42,12 +44,18 @@ async function main() {
   });
   const installationHome = resolve(
     dirname(fileURLToPath(import.meta.url)),
-    "../..",
+    values.development ? "../../.." : "../..",
   );
   const locations = await resolveLocations({
     home: values.home,
     locator: values.locator,
     installationHome,
+    ...(values.development
+      ? {
+          programRoot: installationHome,
+          runtimeRoot: join(installationHome, "data/runtime/installed"),
+        }
+      : {}),
   });
   const commandOffset = launcherCommandOffset(forwarded);
   const [command, action, name] = forwarded.slice(commandOffset);
@@ -99,63 +107,54 @@ async function main() {
     console.log(JSON.stringify(await initializeConfiguration(locations)));
     return;
   }
-  if (command === "serve") await initializeConfiguration(locations);
+  if (command === "serve") {
+    const { values: serve } = parseArgs({
+      args: forwarded.slice(commandOffset + 1),
+      options: { "stop-on-stdin-close": { type: "boolean", default: false } },
+    });
+    await runCore({ ...values, ...serve }, undefined, locations);
+    return;
+  }
   const development = values.development;
-  if (command === "serve") await readConfiguration(locations, development);
-  const serve = command === "serve";
   const entry = development
     ? join(
         locations.program,
         "apps",
-        serve ? "nous-core" : "nous-cli",
+        "nous-cli",
         "src",
         command === "mcp" ? "mcp-main.ts" : "main.ts",
       )
     : join(
         locations.program,
-        serve ? "core" : "cli",
+        "cli",
         command === "mcp" ? "mcp-main.js" : "main.js",
       );
   const nodeArgs = development
     ? [join(locations.program, "node_modules", "tsx", "dist", "cli.mjs"), entry]
     : [entry];
-  if (serve)
-    nodeArgs.push(...profileArgs, ...forwarded.slice(commandOffset + 1));
-  else
-    nodeArgs.push(
-      "--run-root",
-      locations.run,
-      "--instance-root",
-      locations.instance,
-      ...(command === "mcp"
-        ? [
-            ...forwarded.slice(0, commandOffset),
-            ...forwarded.slice(commandOffset + 1),
-          ]
-        : forwarded),
-    );
-  if (serve && !nodeArgs.includes("--stop-on-stdin-close"))
-    nodeArgs.push("--stop-on-stdin-close");
+  nodeArgs.push(
+    "--run-root",
+    locations.run,
+    "--instance-root",
+    locations.instance,
+    ...(command === "mcp"
+      ? [
+          ...forwarded.slice(0, commandOffset),
+          ...forwarded.slice(commandOffset + 1),
+        ]
+      : forwarded),
+  );
   const child = spawn(process.execPath, nodeArgs, {
-    stdio: serve ? ["pipe", "inherit", "inherit"] : "inherit",
+    stdio: "inherit",
     windowsHide: true,
   });
   for (const signal of ["SIGINT", "SIGTERM"] as const)
-    process.once(signal, () => {
-      if (serve) child.stdin?.end();
-      else child.kill(signal);
-    });
-  if (serve && forwarded.includes("--stop-on-stdin-close")) {
-    process.stdin.once("end", () => child.stdin?.end());
-    process.stdin.resume();
-  }
+    process.once(signal, () => child.kill(signal));
   child.once("error", (error) => {
-    if (serve) process.stdin.pause();
     console.error(error.message);
     process.exitCode = 1;
   });
   child.once("exit", (code) => {
-    if (serve) process.stdin.pause();
     process.exitCode = code ?? 1;
   });
 }
@@ -164,15 +163,12 @@ main().catch((error) => {
     console.error(
       JSON.stringify({
         valid: false,
-        expected_revision: CONFIG_REVISION,
         issues: error.issues,
       }),
     );
     process.exitCode = 1;
     return;
   }
-  console.error(
-    "Nous launcher failed; check instance configuration and runtime installation",
-  );
+  console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });

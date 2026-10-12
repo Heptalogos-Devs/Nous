@@ -9,6 +9,7 @@ import { timestampFromDate, TimestampSchema } from "@bufbuild/protobuf/wkt";
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { connectNous } from "@nous-wave/client/node";
 import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
+import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { KernelClient } from "../../apps/nous-core/src/kernel-client.js";
 import { createCore } from "../../apps/nous-core/src/server.js";
 import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
@@ -33,11 +34,8 @@ function proposalModels() {
   });
   const calls = { episode: 0, journal: 0, consolidation: 0 };
   models.invocations.snapshot = (role) => ({
-    format: "nous.model.execution",
-    implementationDigest: "0".repeat(64),
     role,
     configuration: modelConfigurationSchema.parse({}),
-    profileDigest: "a".repeat(64),
     configDigest: "b".repeat(64),
   });
   const producerMetadata = {
@@ -57,7 +55,7 @@ function proposalModels() {
   };
   const plan = (input: string) =>
     fromJson(MaintenancePlanSchema, JSON.parse(input) as JsonValue);
-  models.segmentEpisode = async (input, _signal, _snapshot, beforeAttempt) => {
+  const segmentEpisode = async (input: string, beforeAttempt?: () => void) => {
     beforeAttempt?.();
     calls.episode++;
     const source = plan(input);
@@ -86,11 +84,9 @@ function proposalModels() {
       },
     };
   };
-  models.synthesizeJournal = async (
-    input,
-    _signal,
-    _snapshot,
-    beforeAttempt,
+  const synthesizeJournal = async (
+    input: string,
+    beforeAttempt?: () => void,
   ) => {
     beforeAttempt?.();
     calls.journal++;
@@ -129,7 +125,7 @@ function proposalModels() {
       },
     };
   };
-  models.consolidate = async (input, _signal, _snapshot, beforeAttempt) => {
+  const consolidate = async (input: string, beforeAttempt?: () => void) => {
     beforeAttempt?.();
     calls.consolidation++;
     const source = plan(input);
@@ -183,6 +179,20 @@ function proposalModels() {
       },
     };
   };
+  models.invocations.generate = (async (
+    role,
+    input,
+    options?: Parameters<typeof models.invocations.generate>[2],
+  ) => {
+    const content = input.content as string;
+    if (role === "episode_segmentation")
+      return segmentEpisode(content, options?.beforeAttempt);
+    if (role === "journal_synthesis")
+      return synthesizeJournal(content, options?.beforeAttempt);
+    if (role === "memory_consolidation")
+      return consolidate(content, options?.beforeAttempt);
+    throw new Error(`Unexpected smoke role ${role}`);
+  }) as typeof models.invocations.generate;
   return { models, calls };
 }
 
@@ -224,7 +234,7 @@ async function scenario(endpoint: string, token: string) {
     return result;
   };
   try {
-    await client.subjects.create({
+    await client.subjects.createSubject({
       subjectId,
       operationId: randomUUID(),
       cognitiveSeed: {
@@ -233,14 +243,14 @@ async function scenario(endpoint: string, token: string) {
         provenance: {},
       },
     });
-    const session = await client.cognition.openSession({ subjectId });
+    const session = await client.runtime.openSession({ subjectId });
     const observationIds: string[] = [];
     for (const text of [
       "Calibration plan confirmed.",
       "Calibration measurements collected.",
       "Calibration review completed.",
     ]) {
-      const observed = await client.cognition.observe({
+      const observed = await client.runtime.recordObservation({
         subjectId,
         sessionId: session.sessionId,
         sourceClass: "message",
@@ -275,7 +285,8 @@ async function scenario(endpoint: string, token: string) {
     );
     for (let pass = 0; pass < 4; pass++) {
       await advance(400);
-      await maintain();
+      if (pass === 0) await Promise.all([maintain(), maintain()]);
+      else await maintain();
     }
     const episodes = (
       await client.memory.listEpisodes({ subjectId, status: "accepted" })
@@ -284,7 +295,7 @@ async function scenario(endpoint: string, token: string) {
       await client.memory.listJournals({ subjectId, status: "accepted" })
     ).items;
     const memories = (
-      await client.memory.list({ subjectId, status: "accepted" })
+      await client.memory.listMemories({ subjectId, status: "accepted" })
     ).items;
     assert.equal(episodes.length, 1);
     assert.equal(journals.length, 1);
@@ -297,7 +308,8 @@ async function scenario(endpoint: string, token: string) {
     assert(
       journal.currentRevision?.points.every((point) => point.basis.length > 0),
     );
-    assert(calls.episode > 0 && calls.journal > 0 && calls.consolidation > 0);
+    assert.equal(calls.episode, 1);
+    assert(calls.journal > 0 && calls.consolidation > 0);
     const refs = [
       {
         kind: "episode_revision",
@@ -311,7 +323,7 @@ async function scenario(endpoint: string, token: string) {
         kind: "memory_revision",
         value: memory.revisionId,
       },
-    ];
+    ].map((ref) => create(CognitiveRefSchema, ref));
     await app.close();
     const restarted = await control({ command: "restart" });
     assert(restarted.endpoint);
@@ -342,11 +354,11 @@ async function scenario(endpoint: string, token: string) {
       refs[1]!.value,
     );
     assert.equal(
-      (await client.memory.revision({ subjectId, id: refs[2]!.value }))
+      (await client.memory.getMemoryRevision({ subjectId, id: refs[2]!.value }))
         .revisionId,
       refs[2]!.value,
     );
-    const continuation = await client.cognition.createWorkContext({
+    const continuation = await client.runtime.createWorkContext({
       operationId: randomUUID(),
       subjectId,
       purpose: "Continue calibration",
@@ -403,12 +415,12 @@ async function scenario(endpoint: string, token: string) {
         context: {},
       })),
     };
-    assert.equal((await client.cognition.reportUse(use)).acceptedCount, 3);
-    assert.equal((await client.cognition.reportUse(use)).duplicateCount, 3);
+    assert.equal((await client.runtime.reportUse(use)).acceptedCount, 3);
+    assert.equal((await client.runtime.reportUse(use)).duplicateCount, 3);
     const before = { ...calls };
     await maintain();
     assert.deepEqual(calls, before);
-    const schema = await client.concepts.createSchema({
+    const schema = await client.concepts.createCognitiveSchema({
       operationId: randomUUID(),
       subjectId,
       schema: {

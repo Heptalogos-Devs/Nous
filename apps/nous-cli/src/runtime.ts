@@ -1,7 +1,9 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { toJson } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { connectNousInstance } from "@nous-wave/client/node";
-import { NousError, type NousClient } from "@nous-wave/client";
+import { NousError } from "@nous-wave/client";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -51,6 +53,7 @@ export const stringFlags = [
   "max-depth",
   "max-batches",
   "max-bytes",
+  "max-items",
   "output",
   "scope",
   "cognition",
@@ -84,7 +87,7 @@ export async function createEnvironment(
       required(values["run-root"], "--run-root or nous launcher"),
     ),
   });
-  const policy = await original.configuration.get({
+  const policy = await original.configuration.getConfiguration({
     paths: consumerStatePaths,
   });
   const policyValue = Object.fromEntries(
@@ -95,28 +98,60 @@ export async function createEnvironment(
           "CONFIGURATION_UNAVAILABLE",
           `Core did not return the active consumer state policy: ${path}`,
         );
-      return [path.slice("consumer_state.".length), entry.value];
+      return [
+        path.slice("consumer_state.".length),
+        toJson(ValueSchema, entry.value),
+      ];
     }),
   );
   const local = cliState(
     values["instance-root"] && resolve(values["instance-root"]),
     {
       instanceId: original.instanceId,
-      consumer: values.consumer ?? "consumer:nous-cli:default",
+      consumer: values.consumer ?? "default",
     },
     consumerStatePolicySchema.parse(policyValue),
   );
   const selected = await local.selection();
   let savedBaseline = selected;
-  async function addressId(kind: string, text: string, subject: string) {
-    if (!/^[a-z]+:/.test(text)) return text;
+  async function bindReference(text: string, kind: string, subject: string) {
+    if (kind && /^[0-9a-f-]{36}$/i.test(text))
+      return { kind, value: text.toLowerCase() };
+    const canonical =
+      /^(subject|session|work_context|association|entity|resource|memory|memory_revision|cognitive_schema|cognitive_schema_revision|episode|episode_revision|journal|journal_revision|tag|occurrence|artifact|source_region|derived_representation|derived_region|external_object):(.+)$/.exec(
+        text,
+      );
+    if (
+      canonical &&
+      (["entity", "resource", "external_object"].includes(canonical[1]!) ||
+        /^[0-9a-f-]{36}$/i.test(canonical[2]!))
+    ) {
+      if (kind && kind !== canonical[1])
+        throw new CliError(
+          "REFERENCE_TYPE_MISMATCH",
+          "Reference has another kind",
+        );
+      return {
+        kind: canonical[1]!,
+        value: ["entity", "resource"].includes(canonical[1]!)
+          ? text
+          : canonical[2]!,
+      };
+    }
     return uniqueReference(
-      await original.identity.resolve({
-        subjectId: kind === "subject" ? "" : subject,
+      await original.identity.resolveIdentity({
+        subjectId:
+          kind === "subject" ? "" : required(subject, "Selected Subject"),
         kind,
-        locator: { case: "lexicalRef", value: text },
+        locator: {
+          case: /^\w+:/.test(text) ? "lexicalRef" : "name",
+          value: text,
+        },
       }),
-    ).value;
+    );
+  }
+  async function addressId(kind: string, text: string, subject: string) {
+    return (await bindReference(text, kind, subject)).value;
   }
   const selectedSubject = values.subject
     ? await addressId("subject", values.subject, "")
@@ -155,168 +190,123 @@ export async function createEnvironment(
   };
   const subjectId = state.subjectId ?? "";
   const notices: { code: string; message: string; receipt?: string }[] = [];
-  const replay: Record<string, (request: unknown) => Promise<unknown>> = {};
   async function executeReceipt(
     id: string,
     receipt: Awaited<ReturnType<typeof local.receipt>>,
-    invoke: (request: unknown) => Promise<unknown>,
   ) {
-    let result: unknown;
+    const [domain, name] = receipt.name.split(".");
+    const methods = original[
+      domain as keyof typeof original
+    ] as unknown as Record<string, (request: object) => Promise<unknown>>;
+    if (!methods?.[name!])
+      throw new CliError("INVALID_ARGUMENT", "Saved operation is unavailable");
     try {
-      result = await invoke(receipt.request);
-    } catch (error) {
-      if (
-        (error instanceof NousError &&
-          [3, 5, 6, 7, 8, 9, 10, 11, 12, 16].includes(error.code)) ||
-        error instanceof CliError
-      ) {
-        try {
-          await local.writeReceipt(id, {
-            ...receipt,
-            status: "rejected",
-            rejection: {
-              code: error.code,
-              message: error.message,
-              domainCode:
-                error instanceof NousError ? error.domainCode : error.code,
-              recovery: error.recovery,
-              context: error.context,
-              details: [...error.details],
-              candidates: [...error.candidates],
-            },
-          });
-        } catch {
-          Object.assign(error, {
-            receipt: id,
-            notices: [
-              {
-                code: "RECEIPT_UNSAVED",
-                message:
-                  "Authority definitively refused this operation; the local terminal receipt could not be saved",
-              },
-            ],
-          });
-        }
-        throw error;
-      }
-      const failure = new CliError(
-        "OUTCOME_UNKNOWN",
-        `Response unavailable; retry ${id} to reuse the saved operation`,
+      const result = await methods[name!]!(receipt.request as object);
+      await local.removeReceipt(id).catch(() =>
+        notices.push({
+          code: "REQUEST_UNSAVED",
+          message:
+            "Operation completed; saved retry request could not be removed",
+          receipt: id,
+        }),
       );
+      return result;
+    } catch (error) {
+      const failure =
+        error instanceof NousError || error instanceof CliError
+          ? error
+          : new CliError(
+              "OUTCOME_UNKNOWN",
+              `Response unavailable; retry ${id} with the saved request`,
+            );
       Object.assign(failure, { receipt: id });
       throw failure;
     }
-    try {
-      await local.writeReceipt(id, { ...receipt, status: "complete", result });
-    } catch {
-      notices.push({
-        code: "RECEIPT_UNSAVED",
-        receipt: id,
-        message:
-          "Operation returned successfully; its result is shown, but the local completion receipt could not be saved",
-      });
-    }
-    return result;
   }
-  function mutation<I extends object, O>(
-    name: string,
-    fn: ((request: I) => Promise<O>) | undefined,
-  ) {
-    replay[name] = (request) => {
-      if (!fn)
-        throw new CliError("INVALID_ARGUMENT", "Client method unavailable");
-      return fn(request as I);
-    };
-    return async (request: I) => {
-      const id = crypto.randomUUID();
-      const receipt = {
-        format: "nous.consumer.operation" as const,
-        name,
-        subjectId:
-          "subjectId" in request && typeof request.subjectId === "string"
-            ? request.subjectId
-            : undefined,
-        request,
-        status: "pending" as const,
-      };
-      await local.writeReceipt(id, receipt);
-      return (await executeReceipt(id, receipt, replay[name]!)) as O;
-    };
-  }
-  const client: NousClient & Pick<typeof original, "artifacts"> = {
-    ...original,
-    subjects: {
-      ...original.subjects,
-      create: mutation("subjects.create", original.subjects?.create),
-    },
-    configuration: {
-      ...original.configuration,
-      setSystem: mutation(
-        "configuration.setSystem",
-        original.configuration?.setSystem,
-      ),
-      setSubject: mutation(
-        "configuration.setSubject",
-        original.configuration?.setSubject,
-      ),
-      clearSystem: mutation(
-        "configuration.clearSystem",
-        original.configuration?.clearSystem,
-      ),
-      clearSubject: mutation(
-        "configuration.clearSubject",
-        original.configuration?.clearSubject,
-      ),
-    },
-    model: {
-      ...original.model,
-      formFromObservation: mutation(
-        "model.formFromObservation",
-        original.model?.formFromObservation,
-      ),
-    },
-    cognition: {
-      ...original.cognition,
-      observe: mutation("cognition.observe", original.cognition?.observe),
-      reportUse: mutation("cognition.reportUse", original.cognition?.reportUse),
-      createWorkContext: mutation(
-        "cognition.createWorkContext",
-        original.cognition?.createWorkContext,
-      ),
-      updateWorkContext: mutation(
-        "cognition.updateWorkContext",
-        original.cognition?.updateWorkContext,
-      ),
-      pauseWorkContext: mutation(
-        "cognition.pauseWorkContext",
-        original.cognition?.pauseWorkContext,
-      ),
-      resumeWorkContext: mutation(
-        "cognition.resumeWorkContext",
-        original.cognition?.resumeWorkContext,
-      ),
-      endWorkContext: mutation(
-        "cognition.endWorkContext",
-        original.cognition?.endWorkContext,
-      ),
-      setActiveWorkContext: mutation(
-        "cognition.setActiveWorkContext",
-        original.cognition?.setActiveWorkContext,
-      ),
-    },
-    concepts: {
-      ...original.concepts,
-      createTag: mutation("concepts.createTag", original.concepts?.createTag),
-      reviseTag: mutation("concepts.reviseTag", original.concepts?.reviseTag),
-      mergeTags: mutation("concepts.mergeTags", original.concepts?.mergeTags),
-      splitTag: mutation("concepts.splitTag", original.concepts?.splitTag),
-      associate: mutation("concepts.associate", original.concepts?.associate),
-      revokeAssociation: mutation(
-        "concepts.revokeAssociation",
-        original.concepts?.revokeAssociation,
-      ),
-    },
+  const retryMethods: Record<string, readonly string[]> = {
+    subjects: ["createSubject", "adoptCognitiveSeed"],
+    configuration: [
+      "setSystemOverride",
+      "setSubjectOverride",
+      "clearSystemOverride",
+      "clearSubjectOverride",
+    ],
+    model: ["formFromObservation"],
+    resources: ["materializeResource"],
+    runtime: [
+      "recordObservation",
+      "reportUse",
+      "createWorkContext",
+      "updateWorkContext",
+      "pauseWorkContext",
+      "resumeWorkContext",
+      "endWorkContext",
+      "setActiveWorkContext",
+    ],
+    concepts: [
+      "createTag",
+      "reviseTag",
+      "mergeTags",
+      "splitTag",
+      "createAssociation",
+      "revokeAssociation",
+      "createCognitiveSchema",
+      "addSchemaEvidence",
+      "reviseCognitiveSchema",
+      "splitCognitiveSchema",
+      "mergeCognitiveSchemas",
+      "suppressCognitiveSchema",
+      "restoreCognitiveSchema",
+      "withdrawCognitiveSchema",
+      "reacceptCognitiveSchema",
+      "purgeCognitiveSchema",
+    ],
+    memory: [
+      "formMemory",
+      "reviseMemory",
+      "suppressMemory",
+      "restoreMemory",
+      "withdrawMemory",
+      "reacceptMemory",
+      "purgeMemory",
+      "setAccessibility",
+      "linkRevisions",
+      "createEpisode",
+      "reviseEpisode",
+      "linkEpisodeRevisions",
+      "suppressEpisode",
+      "restoreEpisode",
+      "withdrawEpisode",
+      "reacceptEpisode",
+      "purgeEpisode",
+      "suppressJournal",
+      "restoreJournal",
+      "withdrawJournal",
+      "reacceptJournal",
+      "purgeJournal",
+    ],
   };
+  const client = { ...original };
+  for (const [domain, names] of Object.entries(retryMethods)) {
+    const source = original[
+      domain as keyof typeof original
+    ] as unknown as Record<string, (request: object) => Promise<unknown>>;
+    const wrapped = { ...source };
+    for (const name of names)
+      wrapped[name] = async (request) => {
+        const id = crypto.randomUUID();
+        const receipt = {
+          format: "nous.consumer.operation" as const,
+          name: `${domain}.${name}`,
+          subjectId:
+            "subjectId" in request ? String(request.subjectId) : undefined,
+          request,
+        };
+        await local.writeReceipt(id, receipt);
+        return executeReceipt(id, receipt);
+      };
+    Object.assign(client, { [domain]: wrapped });
+  }
   async function resolveReference(text: string, kind = "") {
     const resultNumber = /^result:(\d+)$/.exec(text);
     if (resultNumber) {
@@ -338,40 +328,7 @@ export async function createEnvironment(
         );
       return ref;
     }
-    if (kind && /^[0-9a-f-]{36}$/i.test(text))
-      return { kind, value: text.toLowerCase() };
-    const canonical =
-      /^(subject|session|work_context|association|entity|resource|memory|memory_revision|cognitive_schema|cognitive_schema_revision|episode|episode_revision|journal|journal_revision|tag|occurrence|artifact|source_region|derived_representation|derived_region|external_object):(.+)$/.exec(
-        text,
-      );
-    if (
-      canonical &&
-      (["entity", "resource", "external_object"].includes(canonical[1]!) ||
-        /^[0-9a-f-]{36}$/i.test(canonical[2]!))
-    ) {
-      if (kind && kind !== canonical[1])
-        throw new CliError(
-          "REFERENCE_TYPE_MISMATCH",
-          "Reference has another kind",
-        );
-      return {
-        kind: canonical[1]!,
-        value: ["entity", "resource"].includes(canonical[1]!)
-          ? text
-          : canonical[2]!,
-      };
-    }
-    return uniqueReference(
-      await client.identity.resolve({
-        subjectId:
-          kind === "subject" ? "" : required(subjectId, "Selected Subject"),
-        kind,
-        locator: {
-          case: /^\w+:/.test(text) ? "lexicalRef" : "name",
-          value: text,
-        },
-      }),
-    );
+    return bindReference(text, kind, subjectId);
   }
   async function readText(path: string, maximum = 65536) {
     let text = "";
@@ -421,10 +378,14 @@ export async function createEnvironment(
         });
       }
     },
+    async forget(id: string) {
+      await local.removeReceipt(id);
+      return { forgottenRequest: id };
+    },
     async retry(id: string) {
       const receipt = await local.receipt(id);
       if (
-        receipt.name !== "subjects.create" &&
+        receipt.name !== "subjects.createSubject" &&
         receipt.subjectId &&
         receipt.subjectId !== subjectId
       )
@@ -432,23 +393,7 @@ export async function createEnvironment(
           "RESULT_SUBJECT_MISMATCH",
           "Receipt belongs to another Subject",
         );
-      if (receipt.status === "complete") return receipt.result;
-      if (receipt.status === "rejected")
-        throw new CliError(
-          receipt.rejection?.domainCode ?? "OPERATION_REJECTED",
-          receipt.rejection?.message ?? "Operation was definitively rejected",
-          receipt.rejection?.details ?? [],
-          receipt.rejection?.candidates ?? [],
-          receipt.rejection?.recovery,
-          receipt.rejection?.context,
-        );
-      const invoke = replay[receipt.name];
-      if (!invoke)
-        throw new CliError(
-          "INVALID_ARGUMENT",
-          "Receipt command is unavailable",
-        );
-      return executeReceipt(id, receipt, invoke);
+      return executeReceipt(id, receipt);
     },
     mediaType(this: void, path: string) {
       const types: Record<string, string> = {

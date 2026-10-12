@@ -37,18 +37,7 @@ impl ServingService {
             - chrono::Duration::from_std(grace)
                 .map_err(|error| Error::Invalid(error.to_string()))?;
         let mut tx = self.store.begin().await?;
-        // Superseded physical families leave the active catalog once. Their
-        // artifacts retain the same reader, research pin and grace protection.
-        let supported = super::family::AssetFamily::ALL.map(super::family::AssetFamily::as_str);
-        sqlx::query("UPDATE serving_generations SET state='retired',published_at=$3 WHERE subject_id=$1 AND family<>ALL($2::text[]) AND state='ready'")
-            .bind(subject.0).bind(supported).bind(chrono::Utc::now()).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
-        sqlx::query("DELETE FROM serving_current WHERE subject_id=$1 AND family<>ALL($2::text[])")
-            .bind(subject.0)
-            .bind(supported)
-            .execute(&mut *tx)
-            .await
-            .map_err(nous_persistence::database_error)?;
-        let rows = sqlx::query("SELECT generation_id,artifact_location FROM serving_generations g WHERE subject_id=$1 AND state IN ('retired','failed') AND artifact_location<>'' AND published_at<$2 AND COALESCE(metadata->>'research_pinned','false')<>'true' AND NOT EXISTS (SELECT 1 FROM serving_current c WHERE c.generation_id=g.generation_id) FOR UPDATE")
+        let rows = sqlx::query("SELECT generation_id FROM serving_generations g WHERE subject_id=$1 AND state IN ('retired','failed') AND published_at<$2 AND COALESCE(metadata->>'research_pinned','false')<>'true' AND NOT EXISTS (SELECT 1 FROM serving_current c WHERE c.generation_id=g.generation_id) FOR UPDATE")
             .bind(subject.0).bind(cutoff).fetch_all(&mut *tx).await.map_err(nous_persistence::database_error)?;
         let mut report = ReclamationReport {
             readers_active: !readers.is_empty(),
@@ -66,39 +55,34 @@ impl ServingService {
                 report.readers_active = true;
                 continue;
             }
-            let location: String = row
-                .try_get("artifact_location")
-                .map_err(nous_persistence::database_error)?;
-            let path = PathBuf::from(location);
-            // Only generation directories owned by this Serving root may be collected.
-            if path != self.options.root.join(id.0.to_string()) {
-                continue;
-            }
+            let path = self.artifact_directory(id);
             if path.exists() {
                 report.bytes_reclaimed += directory_bytes(&path)?;
                 std::fs::remove_dir_all(&path).map_err(io)?;
             }
-            // Keep a compact audit row; remove checksums and algorithm metadata.
-            sqlx::query("UPDATE serving_generations SET state='failed',artifact_location='',metadata=jsonb_build_object('reclaimed_at',$2::text,'artifact_hash',artifact_hash) WHERE generation_id=$1")
-                .bind(id.0).bind(chrono::Utc::now().to_rfc3339()).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
+            sqlx::query("DELETE FROM serving_generations WHERE generation_id=$1")
+                .bind(id.0)
+                .execute(&mut *tx)
+                .await
+                .map_err(nous_persistence::database_error)?;
             report.reclaimed.push(id);
         }
-        let known: Vec<String> = sqlx::query_scalar(
-            "SELECT artifact_location FROM serving_generations WHERE artifact_location<>''",
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(nous_persistence::database_error)?;
+        let known =
+            sqlx::query_scalar::<_, uuid::Uuid>("SELECT generation_id FROM serving_generations")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(nous_persistence::database_error)?
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>();
         for entry in std::fs::read_dir(&self.options.root).map_err(io)? {
             let entry = entry.map_err(io)?;
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
-            let owned = name.starts_with(".staging-") || name.parse::<uuid::Uuid>().is_ok();
+            let generation = name.parse::<uuid::Uuid>().ok();
+            let owned = name.starts_with(".staging-") || generation.is_some();
             if !owned
                 || !entry.file_type().map_err(io)?.is_dir()
-                || known
-                    .iter()
-                    .any(|location| std::path::Path::new(location) == path)
+                || generation.is_some_and(|id| known.contains(&id))
                 || entry
                     .metadata()
                     .map_err(io)?

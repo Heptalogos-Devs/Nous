@@ -538,7 +538,7 @@ pub(super) fn inspect_bound_query(bound: &nous_runtime::BoundQuery) -> Result<St
     seeds.dedup();
     serde_json::to_string(&serde_json::json!({
         "prepared_query":bound.source_query, "query_id":bound.query_id,
-        "representation":bound.representation, "context_snapshot":bound.context_snapshot.as_ref(), "current_refs":bound.runtime_refs,
+        "representation":bound.representation.as_ref(), "context_snapshot":bound.context_snapshot.as_ref(), "current_refs":bound.runtime_refs,
         "query_activation":bound.activation, "concept_enrichment":bound.concept_enrichment,
         "query_concept_requirement":bound.source_query.capabilities.query_concept_enrichment,
         "historical_view":bound.historical_authority.as_ref().map(|view|serde_json::json!({"digest":view.snapshot_digest,"as_of":view.as_of,"revision_view":view.revision_view})),

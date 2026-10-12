@@ -7,7 +7,7 @@ fn branch_allocation_preserves_total_and_scopes_cannot_broaden_filters() {
     for count in 1..65 {
         assert_eq!(
             (0..count)
-                .map(|index| allocation(48, index, count))
+                .map(|index| QueryPlan::allocation(48, index, count))
                 .sum::<usize>(),
             48
         );

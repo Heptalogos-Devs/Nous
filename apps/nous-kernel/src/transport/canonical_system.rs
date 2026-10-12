@@ -20,12 +20,6 @@ rpc_service! {
                     .map_err(status)
             }
 
-            async fn get_capabilities(
-                &self,
-                _: Request<()>,
-            ) -> std::result::Result<Response<p::SystemStatus>, Status> {
-                rpc_reply(KernelService::get_status(self, ())).await
-            }
         }
     }
 }

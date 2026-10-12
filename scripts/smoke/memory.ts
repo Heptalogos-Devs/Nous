@@ -90,7 +90,7 @@ async function main() {
   try {
     booted = await boot(configPath);
     const client = booted.client;
-    const created = await client.subjects.create(
+    const created = await client.subjects.createSubject(
       create(CreateSubjectRequestSchema, {
         subjectId,
         operationId: "00000000-0000-0000-0000-000000009801",
@@ -104,13 +104,13 @@ async function main() {
     if (created.subjectId !== subjectId)
       throw new Error("Subject identity mismatch");
 
-    const sessionA = await client.cognition.openSession(
+    const sessionA = await client.runtime.openSession(
       create(SubjectRequestSchema, { subjectId }),
     );
-    const sessionB = await client.cognition.openSession(
+    const sessionB = await client.runtime.openSession(
       create(SubjectRequestSchema, { subjectId }),
     );
-    const observed = await client.cognition.observe(
+    const observed = await client.runtime.recordObservation(
       create(ObservationInputSchema, {
         subjectId,
         sessionId: sessionA.sessionId,
@@ -127,7 +127,7 @@ async function main() {
         },
       }),
     );
-    const formed = await client.memory.form(
+    const formed = await client.memory.formMemory(
       create(FormMemoryRequestSchema, {
         operationId: formOperationId,
         subjectId,
@@ -190,8 +190,8 @@ async function main() {
         }),
       ],
     });
-    const accepted = await client.cognition.reportUse(useRequest);
-    const duplicate = await client.cognition.reportUse(useRequest);
+    const accepted = await client.runtime.reportUse(useRequest);
+    const duplicate = await client.runtime.reportUse(useRequest);
     if (accepted.acceptedCount !== 1 || duplicate.duplicateCount !== 1)
       throw new Error("UseEvent retry was not idempotent");
 
@@ -212,7 +212,7 @@ async function main() {
 
     await stop(booted);
     booted = await boot(configPath);
-    const restarted = await booted.client.memory.get({
+    const restarted = await booted.client.memory.getMemory({
       subjectId,
       id: formed.memoryId,
     });
@@ -230,7 +230,7 @@ async function main() {
     )
       throw new Error("restart lost public Query recall");
 
-    const suppressed = await booted.client.memory.suppress(
+    const suppressed = await booted.client.memory.suppressMemory(
       create(MemoryMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009805",
         subjectId,
@@ -245,7 +245,7 @@ async function main() {
       )
     )
       throw new Error("suppressed Memory remained query-visible");
-    const restored = await booted.client.memory.restore(
+    const restored = await booted.client.memory.restoreMemory(
       create(MemoryMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009806",
         subjectId,
@@ -267,7 +267,7 @@ async function main() {
     )
       throw new Error("restore did not restore public recall");
 
-    await booted.client.memory.purge(
+    await booted.client.memory.purgeMemory(
       create(MemoryMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009807",
         subjectId,
@@ -275,7 +275,7 @@ async function main() {
         expectedObjectEpoch: restored.objectEpoch,
       }),
     );
-    const purgedRetry = await booted.client.cognition.reportUse(useRequest);
+    const purgedRetry = await booted.client.runtime.reportUse(useRequest);
     if (purgedRetry.duplicateCount !== 1)
       throw new Error("purged UseEvent retry lost its idempotency receipt");
     const afterPurge = await query(

@@ -11,11 +11,6 @@ import writeAtomic from "write-file-atomic";
 import { z } from "zod";
 import type { ConsumerStatePolicy } from "@nous-wave/client/consumer-policy";
 import { CliError } from "./agent.js";
-import {
-  protocolSchema,
-  protocolSchemaByName,
-  restoreProtocolData,
-} from "@nous-wave/client/data";
 
 const reference = z.strictObject({
   kind: z.string().max(64),
@@ -41,27 +36,7 @@ const receiptHeader = {
   subjectId: z.string().optional(),
   request: z.unknown(),
 };
-const receiptSchema = z.discriminatedUnion("status", [
-  z.strictObject({ ...receiptHeader, status: z.literal("pending") }),
-  z.strictObject({
-    ...receiptHeader,
-    status: z.literal("complete"),
-    result: z.unknown(),
-  }),
-  z.strictObject({
-    ...receiptHeader,
-    status: z.literal("rejected"),
-    rejection: z.strictObject({
-      code: z.union([z.string(), z.number()]),
-      message: z.string(),
-      domainCode: z.string().optional(),
-      recovery: z.string().optional(),
-      context: z.record(z.string(), z.string()).optional(),
-      details: z.array(z.unknown()).optional(),
-      candidates: z.array(z.unknown()).optional(),
-    }),
-  }),
-]);
+const receiptSchema = z.strictObject(receiptHeader);
 const emptySelection = (): Selection => ({ format: "nous.consumer.selection" });
 const selectionKeys = [
   "subjectId",
@@ -104,27 +79,11 @@ export function cliState(
         "INVALID_ARGUMENT",
         "Consumer state exceeds its configured byte budget",
       );
-    return parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes), {
-      ProtocolData: ([name, value]: [string, unknown]) => {
-        const schema = protocolSchemaByName(name);
-        if (!schema)
-          throw new CliError(
-            "INVALID_ARGUMENT",
-            "Stored protocol data type is unavailable",
-          );
-        return restoreProtocolData(value, schema);
-      },
-    });
+    return parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   };
   const write = async (path: string, value: unknown) => {
-    const text = stringify(value, {
-      ProtocolData: (member) => {
-        const schema = protocolSchema(member);
-        return schema
-          ? [schema.typeName, { ...(member as object) }]
-          : undefined;
-      },
-    });
+    const text = stringify(value);
+
     if (Buffer.byteLength(text) > policy.file_max_bytes)
       throw new CliError(
         "RESOURCE_EXHAUSTED",
@@ -208,6 +167,9 @@ export function cliState(
         await write(selectionPath(), merged);
       });
     },
+    async removeReceipt(id: string) {
+      await transaction(() => unlink(receiptPath(id)));
+    },
     async receipt(id: string) {
       return receiptSchema.parse(await read(receiptPath(id)));
     },
@@ -231,36 +193,15 @@ export function cliState(
               "STATE_CONFLICT",
               "Receipt identity already belongs to another frozen request",
             );
-          if (previous.status !== "pending") {
-            if (
-              receipt.status === "pending" ||
-              isDeepStrictEqual(previous, receipt)
-            )
-              return;
-            throw new CliError(
-              "STATE_CONFLICT",
-              "Receipt already has a different terminal outcome",
-            );
-          }
         }
         if (
           !files.includes(`${id}.json`) &&
           files.length >= policy.receipt_limit
-        ) {
-          let remaining = files.length;
-          for (const file of files) {
-            const old = receiptSchema.parse(await read(join(operations, file)));
-            if (old.status !== "pending") {
-              await unlink(join(operations, file));
-              if (--remaining < policy.receipt_limit) break;
-            }
-          }
-          if (remaining >= policy.receipt_limit)
-            throw new CliError(
-              "RESOURCE_EXHAUSTED",
-              "Unresolved operation receipts reached the configured limit; recover them before another mutation",
-            );
-        }
+        )
+          throw new CliError(
+            "RESOURCE_EXHAUSTED",
+            "Saved requests reached the configured limit; retry unresolved operations before another mutation",
+          );
         await write(path, receipt);
       });
     },

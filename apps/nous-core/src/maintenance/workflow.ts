@@ -1,14 +1,15 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { conceptMaintenanceSchema } from "../model/schemas/concept-maintenance.js";
 import { executeConceptMaintenance } from "./concept-maintenance.js";
 import { executeConsolidation } from "./consolidation.js";
-import { consolidationSchema } from "../model/schemas/consolidation.js";
-import { maintenanceOperationId } from "./identity.js";
+import {
+  maintenanceOperationId,
+  maintenanceActionOperationId,
+} from "./identity.js";
 import { authorityRejection } from "./rejection.js";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
-import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
+import { fromJson, toJson } from "@bufbuild/protobuf";
 import { z } from "zod";
 import {
   MaintenancePlanSchema,
@@ -26,21 +27,42 @@ import { type KernelClient } from "../kernel-client.js";
 import { type ModelRuntime } from "../model/runtime.js";
 
 import { JournalResponseSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/journal_pb.js";
-import { protocolReferences } from "@nous-wave/client/data";
+import { protocolReferences } from "@nous-wave/protocol/messages";
 import type { Dependency } from "../durable-operation.js";
 import { canonicalDigest } from "../digest.js";
 
-import { reserveOperation, workflowPayload } from "../durable-operation.js";
+import {
+  startOperation,
+  serializeOperation,
+  workflowPayload,
+} from "../durable-operation.js";
 import {
   maintenanceDependencies,
   resultDependencies,
   readOutcome,
-  snapshotSchema,
-  proposalSchema,
+  type MaintenanceSnapshot,
+  type MaintenanceProposal,
 } from "./records.js";
 import { buildMaintenanceProposal } from "./proposal.js";
 
 export async function runModelMaintenance(
+  kernel: KernelClient,
+  models: ModelRuntime,
+  need: MaintenanceNeed,
+  options: ExecutionOptions,
+  reserveModelCall: () => void,
+) {
+  const calls = executionOptions(kernel.execution.opportunity, options);
+  return serializeOperation(
+    kernel,
+    `memory:${need.subjectId}:${maintenanceOperationId(need)}`,
+    calls.signal,
+    () =>
+      runModelMaintenanceOnce(kernel, models, need, calls, reserveModelCall),
+  );
+}
+
+async function runModelMaintenanceOnce(
   kernel: KernelClient,
   models: ModelRuntime,
   need: MaintenanceNeed,
@@ -63,12 +85,13 @@ export async function runModelMaintenance(
       scopeRef: need.scopeRef,
     }),
   };
-  const previous = await kernel.modelWorkflow.findWorkflow(identity, options);
+  const previous = await kernel.modelWorkflow.readOperation(identity, options);
   if (previous.outcome) return readOutcome(previous.outcome);
-  let snapshotJson = previous.snapshot?.content?.payloadJson;
-  if (!snapshotJson) {
+  let snapshot: Parameters<typeof startOperation>[2] | undefined =
+    previous.snapshot;
+  if (!snapshot) {
     const plan = await kernel.maintenance.planMaintenance(
-      { claimed: need },
+      { selected: need },
       options,
     );
     if (plan.status === "obsolete") return { status: "obsolete" as const };
@@ -91,77 +114,81 @@ export async function runModelMaintenance(
             : "journal_synthesis";
     const model =
       plan.status === "withdraw" ? null : models.invocations.snapshot(role);
-    snapshotJson = JSON.stringify({
-      plan: toJson(MaintenancePlanSchema, plan),
-      model,
-    });
+    snapshot = {
+      content: workflowPayload(
+        { plan: toJson(MaintenancePlanSchema, plan), model },
+        maintenanceDependencies(plan),
+      ),
+    };
   }
-  const frozen = snapshotSchema.parse(JSON.parse(snapshotJson));
-  const frozenPlan = fromJson(MaintenancePlanSchema, frozen.plan as JsonValue);
-  const operation = await reserveOperation(
+  const operation = await startOperation(
     kernel,
     identity,
     {
-      ...(previous.snapshot ?? {
-        content: workflowPayload(frozen, maintenanceDependencies(frozenPlan)),
-      }),
-      maintenanceClaim: {
-        $typeName: "nous.wave.kernel.v1alpha1.MaintenanceClaim",
+      ...snapshot,
+      maintenanceTrigger: {
+        $typeName: "nous.wave.kernel.v1alpha1.MaintenanceTrigger",
         needId: need.needId,
-        leaseToken: need.leaseToken!,
         triggerAuthoritySeq: need.triggerAuthoritySeq,
         triggerRevision: need.triggerRevision,
       },
     },
     options,
   );
-  const reservation = operation.record;
-  if (reservation.outcome) return readOutcome(reservation.outcome);
-  if (reservation.busy || !reservation.lease)
-    return { status: "retry" as const, problemCode: "workflow_busy" };
+  const record = operation.record;
+  if (record.outcome) return readOutcome(record.outcome);
   return operation.run(async () => {
     try {
-      const snapshot = snapshotSchema.parse(
-        JSON.parse(reservation.snapshot!.content!.payloadJson),
-      );
-      const plan = fromJson(MaintenancePlanSchema, snapshot.plan as JsonValue);
-      let proposed = reservation.proposal?.payloadJson
-        ? proposalSchema.parse(JSON.parse(reservation.proposal?.payloadJson))
+      const frozenSnapshot = JSON.parse(
+        record.snapshot!.content!.payloadJson,
+      ) as MaintenanceSnapshot;
+      const plan = fromJson(MaintenancePlanSchema, frozenSnapshot.plan);
+      let proposed = record.proposal?.payloadJson
+        ? (JSON.parse(record.proposal.payloadJson) as MaintenanceProposal)
         : undefined;
       if (!proposed) {
         proposed = await buildMaintenanceProposal({
           models,
           need,
           plan,
-          snapshot,
+          snapshot: frozenSnapshot,
           operationId,
           options,
           reserveModelCall,
           recordExecution: (value) => operation.recordExecution(value),
         });
-        await operation.saveProposal(proposed);
+        const actions =
+          proposed.action === "concept"
+            ? proposed.proposal.actions
+            : proposed.action === "consolidation"
+              ? proposed.proposal.actions
+              : [];
+        await operation.saveProposal(
+          proposed,
+          [],
+          undefined,
+          actions.map((action, index) =>
+            maintenanceActionOperationId(operationId, index, action.action),
+          ),
+        );
       }
       let terminalDependencies: Dependency[] = [];
       if (proposed.action === "partition") {
         const request = fromJson(
           ApplyEpisodePartitionRequestSchema,
-          proposed.request as JsonValue,
+          proposed.request,
         );
-        const result = await operation.mutate(request.operationId, () =>
-          kernel.maintenance.applyEpisodePartition(request, options),
+        const result = await kernel.maintenance.applyEpisodePartition(
+          request,
+          options,
         );
         terminalDependencies = protocolReferences(
           result,
           ApplyEpisodePartitionResponseSchema,
         );
       } else if (proposed.action === "journal") {
-        const request = fromJson(
-          CommitJournalRequestSchema,
-          proposed.request as JsonValue,
-        );
-        const result = await operation.mutate(request.operationId, () =>
-          kernel.maintenance.commitJournal(request, options),
-        );
+        const request = fromJson(CommitJournalRequestSchema, proposed.request);
+        const result = await kernel.maintenance.commitJournal(request, options);
         terminalDependencies = protocolReferences(
           result,
           JournalResponseSchema,
@@ -171,20 +198,10 @@ export async function runModelMaintenance(
         const outcome = await executeConceptMaintenance(
           kernel,
           plan,
-          conceptMaintenanceSchema.parse(saved.proposal),
+          saved.proposal,
           operationId,
-          fromJson(ProducerSignatureSchema, saved.producer as JsonValue),
+          fromJson(ProducerSignatureSchema, saved.producer),
           options,
-          saved.progress,
-          async (progress) => {
-            saved.progress = [...progress];
-            await operation.saveProposal(
-              saved,
-              resultDependencies(saved.progress),
-            );
-          },
-
-          operation.mutate.bind(operation),
         );
         await operation.complete(outcome, resultDependencies(outcome.actions));
         return outcome;
@@ -193,40 +210,31 @@ export async function runModelMaintenance(
         const outcome = await executeConsolidation(
           kernel,
           plan,
-          consolidationSchema.parse(saved.proposal),
+          saved.proposal,
           operationId,
-          fromJson(ProducerSignatureSchema, saved.producer as JsonValue),
+          fromJson(ProducerSignatureSchema, saved.producer),
           options,
-          saved.progress,
-          async (progress) => {
-            saved.progress = [...progress];
-            await operation.saveProposal(
-              saved,
-              resultDependencies(saved.progress),
-            );
-          },
-
-          operation.mutate.bind(operation),
         );
         await operation.complete(outcome, resultDependencies(outcome.actions));
         return outcome;
       } else if (proposed.action === "withdraw")
-        await operation.mutate(operationId, () =>
-          kernel.memory.withdrawJournal(
-            {
-              operationId,
-              subjectId: need.subjectId,
-              journalId: proposed.journalId,
-              expectedObjectEpoch: BigInt(proposed.epoch),
-            },
-            options,
-          ),
+        await kernel.memory.withdrawJournal(
+          {
+            operationId,
+            subjectId: need.subjectId,
+            journalId: proposed.journalId,
+            expectedObjectEpoch: BigInt(proposed.epoch),
+          },
+          options,
         );
       if (
         (proposed.action === "partition" && need.scopeKind === "track") ||
         (proposed.action === "journal" && need.kind === "journal_review")
       )
-        await kernel.maintenance.refreshMaintenance({ claimed: need }, options);
+        await kernel.maintenance.refreshMaintenance(
+          { selected: need },
+          options,
+        );
       const outcome = {
         status:
           proposed.action === "no_change"
@@ -258,7 +266,10 @@ export async function runModelMaintenance(
         const execution = failedExecutionTelemetry(error);
         if (execution) await operation.recordExecution(execution);
         await operation.complete(outcome);
-        await kernel.maintenance.refreshMaintenance({ claimed: need }, options);
+        await kernel.maintenance.refreshMaintenance(
+          { selected: need },
+          options,
+        );
         return outcome;
       }
       throw error;

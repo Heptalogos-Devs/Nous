@@ -88,7 +88,43 @@ it("streams a file with exact multipart length and rejects header injection", as
       }),
     ).rejects.toThrow("media type");
   } finally {
-    await new Promise<void>((done) => server.close(() => done()));
+    await new Promise<void>((done) => {
+      server.close(() => done());
+      server.closeAllConnections();
+    });
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("streams complete admitted artifacts beyond the preview budget", async () => {
+  const expected = Buffer.alloc(1024 * 1024 + 7, 83);
+  const server = createServer((request, response) => {
+    expect(request.url).toBe("/artifacts/subject/artifact");
+    expect(request.headers.authorization).toBe("Bearer fixture-token");
+    response.setHeader("content-type", "application/octet-stream");
+    response.end(expected);
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing download fixture port");
+    const client = connectNous(
+      `http://127.0.0.1:${address.port}`,
+      "fixture-token",
+    );
+    const download = await client.artifacts.download("subject", "artifact");
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of download.content) {
+      if (!(chunk instanceof Uint8Array))
+        throw new Error("Invalid artifact byte stream");
+      chunks.push(chunk);
+    }
+    expect(Buffer.concat(chunks).equals(expected)).toBe(true);
+  } finally {
+    await new Promise<void>((done) => {
+      server.close(() => done());
+      server.closeAllConnections();
+    });
   }
 });

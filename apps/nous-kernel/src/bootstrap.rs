@@ -10,29 +10,21 @@ use std::path::{Path, PathBuf};
 #[serde(deny_unknown_fields)]
 struct Config {
     bootstrap: BootstrapConfig,
-    configuration_bundle: String,
+    configuration: nous_configuration::ConfigurationBootstrapBundle,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BootstrapConfig {
     database: DatabaseConfig,
-    object_store: ObjectStoreConfig,
-    serving: ServingBootstrapConfig,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ServingBootstrapConfig {
-    #[serde(default = "default_serving_root")]
-    root: String,
+    object_root: String,
+    serving_root: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DatabaseConfig {
     mode: String,
-    #[serde(default)]
     url: String,
     max_connections: u32,
     acquire_timeout_ms: u64,
@@ -43,38 +35,17 @@ struct DatabaseConfig {
     secret_dir: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ObjectStoreConfig {
-    #[serde(default = "default_backend")]
-    backend: String,
-    #[serde(default = "default_object_root")]
-    root: String,
-}
-
-fn default_backend() -> String {
-    "fs".into()
-}
-fn default_object_root() -> String {
-    "./data/objects".into()
-}
-fn default_serving_root() -> String {
-    "./data/serving".into()
-}
-
 pub async fn open(path: &Path) -> Result<(NousRuntime, Option<PostgreSQL>)> {
-    let text = tokio::fs::read_to_string(path)
+    let bytes = tokio::fs::read(path)
         .await
         .map_err(|e| Error::Invalid(e.to_string()))?;
-    let config: Config = toml::from_str(&text).map_err(|e| Error::Invalid(e.to_string()))?;
-    if config.bootstrap.object_store.backend != "fs" {
-        return Err(Error::Invalid("object store backend must be fs".into()));
-    }
+    let config: Config =
+        serde_json::from_slice(&bytes).map_err(|e| Error::Invalid(e.to_string()))?;
     let absolute = std::path::absolute(path).map_err(|e| Error::Invalid(e.to_string()))?;
     let root = absolute
         .parent()
         .ok_or_else(|| Error::Invalid("config parent required".into()))?;
-    let bundle = read_bundle(&resolve_path(root, &config.configuration_bundle)).await?;
+    let bundle = config.configuration;
     // Validate the complete catalog/document before acquiring database resources.
     nous_kernel::configuration_catalog(bundle.core_descriptors.clone())?
         .deployment_values(&bundle.deployment_document)?;
@@ -83,11 +54,11 @@ pub async fn open(path: &Path) -> Result<(NousRuntime, Option<PostgreSQL>)> {
         postgres_url,
         max_connections: config.bootstrap.database.max_connections,
         acquire_timeout_ms: config.bootstrap.database.acquire_timeout_ms,
-        object_root: resolve_path(root, &config.bootstrap.object_store.root)
+        object_root: resolve_path(root, &config.bootstrap.object_root)
             .to_string_lossy()
             .into_owned(),
         serving_options: nous_retrieval::ServingOptions {
-            root: resolve_path(root, &config.bootstrap.serving.root),
+            root: resolve_path(root, &config.bootstrap.serving_root),
             lexical: true,
             dense: true,
             topology: false,
@@ -131,11 +102,7 @@ async fn open_database(
             postgres.start().await.map_err(|error| {
                 Error::Infrastructure(format!("managed PostgreSQL start: {error}"))
             })?;
-            let database = if config.name.trim().is_empty() {
-                "nous_wave_20260908"
-            } else {
-                &config.name
-            };
+            let database = &config.name;
             if !postgres
                 .database_exists(database)
                 .await

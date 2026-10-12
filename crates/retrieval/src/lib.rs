@@ -2,6 +2,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+mod status;
+pub use status::ProjectionFamilyStatus;
 mod policy;
 pub use policy::epa::{EPA_POLICY, EpaPolicy};
 pub use policy::wave::*;
@@ -36,8 +38,8 @@ pub use vcp::observation::*;
 pub use vcp::readout::*;
 
 use nous_core::*;
-use nous_object_store::ObjectStore;
 use nous_persistence::{AuthorityStore, ServingRecord};
+use nous_runtime::QuerySemanticEmbedding;
 pub use provider::*;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
@@ -153,13 +155,12 @@ pub(crate) struct ProjectionCapabilities {
 
 #[derive(Clone)]
 pub struct ServingService {
-    pub store: AuthorityStore,
-    pub objects: ObjectStore,
-    pub material: nous_material::MaterialService,
-    pub memory: Option<nous_memory::MemoryService>,
-    pub configuration: nous_configuration::ConfigurationService,
-    pub publisher: ServingPublisher,
-    pub options: ServingOptions,
+    pub(crate) store: AuthorityStore,
+    pub(crate) material: nous_material::MaterialService,
+    pub(crate) memory: Option<nous_memory::MemoryService>,
+    pub(crate) configuration: nous_configuration::ConfigurationService,
+    pub(crate) publisher: ServingPublisher,
+    pub(crate) options: ServingOptions,
     read_gate: Arc<tokio::sync::RwLock<()>>,
     query_readers: Arc<std::sync::Mutex<Vec<std::sync::Weak<query::ServingQuery>>>>,
     embedding: Arc<std::sync::OnceLock<Arc<dyn TextEmbeddingProvider>>>,
@@ -174,6 +175,16 @@ pub struct ProjectionStatus {
 }
 
 impl ServingService {
+    /// Generation paths are local to the active ServingRoot, not durable configuration.
+    pub fn artifact_directory(&self, generation: ServingGenerationId) -> PathBuf {
+        self.options.root.join(generation.0.to_string())
+    }
+
+    /// Inspect current rebuildable assets without exposing publication authority.
+    pub fn current_snapshot(&self, subject: SubjectId) -> Arc<ServingSnapshot> {
+        self.publisher.snapshot_for(subject)
+    }
+
     pub fn embedding(&self) -> Option<&Arc<dyn TextEmbeddingProvider>> {
         self.embedding.get()
     }
@@ -187,6 +198,7 @@ impl ServingService {
     }
 
     pub fn new(
+        store: AuthorityStore,
         material: nous_material::MaterialService,
         memory: Option<nous_memory::MemoryService>,
         options: ServingOptions,
@@ -195,8 +207,7 @@ impl ServingService {
     ) -> Result<Self> {
         std::fs::create_dir_all(&options.root).map_err(assets::files::io)?;
         Ok(Self {
-            store: material.store.clone(),
-            objects: material.objects.clone(),
+            store,
             material,
             memory,
             configuration,

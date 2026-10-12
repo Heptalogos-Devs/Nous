@@ -13,7 +13,7 @@
 | `material` | Artifact/Observation/DerivedRepresentation, selected text and source lineage | `crates/material/src/lib.rs` | persistence, runtime, object-store | Changing evidence admission or materialization |
 | `memory` | Memory, CognitiveSchema, Episode, Journal, Tag, AssociationEvidence and Authority/query operations | `crates/memory/src/lib.rs` | material, persistence, runtime | Changing cognitive Authority, Episode or Memory query |
 | `runtime` | Session, ResidentSet, WorkContext, UseEvent, QueryPlan, lane contract and fixed fusion | `crates/runtime/src/lib.rs` | persistence, configuration, core | Changing Runtime or query semantics |
-| `retrieval` | Owner-fed lexical/dense/topology projections, bounded model material and generations | `crates/retrieval/src/lib.rs` | material, memory, runtime, persistence, object-store | Changing Serving mechanics or experimental lanes |
+| `retrieval` | Owner-fed lexical/dense/topology projections, bounded model material and generations | `crates/retrieval/src/lib.rs` | material, memory, runtime, persistence | Changing Serving mechanics or experimental lanes |
 
 `crates/protocol/src/generated/` is derived output. Change canonical `.proto` sources and regenerate.
 

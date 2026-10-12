@@ -92,6 +92,55 @@ impl QueryPlan {
         }
     }
 
+    pub(super) fn allocation(total: usize, index: usize, branches: usize) -> usize {
+        total / branches + usize::from(index < total % branches)
+    }
+
+    /// Leaf work consumes the operation budget; it cannot enlarge the closed
+    /// lane set or replace the profile selected for the prepared query.
+    pub(super) fn for_leaf(&self, bound: &mut BoundQuery, index: usize, count: usize) -> Self {
+        let mut local = planned_profile_lanes(&bound.source_query, self.cognitive_profile);
+        if !bound.source_query.is_exact_read()
+            && bound.concept_enrichment != super::ConceptEnrichment::Off
+        {
+            local.push(EvidenceFamily::TagDirect);
+            local.sort();
+            local.dedup();
+        }
+        let mut plan = self.clone();
+        plan.lane_budgets = self
+            .lane_budgets
+            .iter()
+            .map(|(&family, &total)| {
+                (
+                    family,
+                    if local.contains(&family) {
+                        Self::allocation(total, index, count)
+                    } else {
+                        0
+                    },
+                )
+            })
+            .collect();
+        plan.enabled_lanes = local
+            .into_iter()
+            .filter(|family| plan.lane_budget(*family) > 0)
+            .collect();
+        plan.candidate_limit = plan.lane_budgets.values().copied().max().unwrap_or(0);
+        plan.final_validation_budget = Self::allocation(self.final_validation_budget, index, count);
+        plan.topology_nodes = Self::allocation(self.topology_nodes, index, count);
+        plan.resource_limit = Self::allocation(self.resource_limit, index, count);
+        plan.expand_topology = plan.enabled_lanes.contains(&EvidenceFamily::TopologyWave);
+        if bound.source_query.is_exact_read() {
+            bound.concept_enrichment = super::ConceptEnrichment::Off;
+            plan.concept_enrichment = super::ConceptEnrichment::Off;
+            plan.sense_cues = false;
+        }
+        bound.lane_budgets = plan.lane_budgets.clone();
+        bound.enabled_lanes = plan.enabled_lanes.clone();
+        plan
+    }
+
     pub fn lane_budget(&self, family: EvidenceFamily) -> usize {
         self.lane_budgets.get(&family).copied().unwrap_or(0)
     }

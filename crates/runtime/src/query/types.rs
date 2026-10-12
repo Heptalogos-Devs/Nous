@@ -17,7 +17,7 @@ pub struct BoundQuery {
     pub activation: super::QueryActivation,
     pub activation_view: Option<std::sync::Arc<dyn QueryActivationView>>,
     pub concept_enrichment: super::ConceptEnrichment,
-    pub representation: super::QueryRepresentation,
+    pub representation: std::sync::Arc<super::QueryRepresentation>,
     pub query_id: Uuid,
     pub bound_at: chrono::DateTime<chrono::Utc>,
     pub source_query: CognitiveQuery,
@@ -29,10 +29,8 @@ pub struct BoundQuery {
     pub topology_seed_refs: Vec<(CognitiveRef, String)>,
     pub enabled_lanes: Vec<EvidenceFamily>,
     pub lane_budgets: BTreeMap<EvidenceFamily, usize>,
-    pub accessibility_policy: AccessibilityQueryPolicy,
     pub selected_embedding_space: Option<EmbeddingSpaceSignature>,
     pub topology_required: bool,
-    pub fusion_version: String,
     pub config_snapshot: nous_configuration::ConfigSnapshot,
     pub retrieval_policy: super::RetrievalPolicy,
 }
@@ -64,14 +62,7 @@ pub struct ExactBinding {
     pub mutable_object: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct AccessibilityQueryPolicy {
-    pub effort: CognitiveEffort,
-    pub exact_target_bypasses_auto_level: bool,
-}
-
-pub trait QueryReadLease: std::fmt::Debug + Send + Sync {}
-pub trait QueryActivationView: QueryReadLease {
+pub trait QueryActivationView: std::fmt::Debug + Send + Sync {
     fn provider(&self) -> &dyn super::SharedLaneProvider;
     fn generation_trace(&self) -> QueryGenerationTrace {
         QueryGenerationTrace::default()
@@ -80,7 +71,6 @@ pub trait QueryActivationView: QueryReadLease {
 
 #[derive(Debug, Clone)]
 pub struct QueryExecution {
-    pub read_lease: Option<std::sync::Arc<dyn QueryReadLease>>,
     pub result: CognitiveQueryResult,
     pub bound: BoundQuery,
     pub(super) leaves: Vec<BoundLeaf>,
@@ -88,8 +78,17 @@ pub struct QueryExecution {
 #[derive(Debug, Clone)]
 pub(super) struct BoundLeaf {
     pub ordinal: usize,
-    pub bound: BoundQuery,
+    pub expression: CognitiveQueryExpr,
+    pub exact_bindings: Vec<ExactBinding>,
     pub hits: Vec<CandidateStamp>,
+}
+impl BoundLeaf {
+    pub fn validation_bound(&self, prepared: &BoundQuery) -> BoundQuery {
+        let mut bound = prepared.clone();
+        bound.source_query.expression = self.expression.clone();
+        bound.exact_bindings = self.exact_bindings.clone();
+        bound
+    }
 }
 #[derive(Debug, Clone)]
 pub(super) struct CandidateStamp {

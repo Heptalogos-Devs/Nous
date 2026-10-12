@@ -1,6 +1,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  CognitiveSeedSchema,
+  CreateSubjectRequestSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { content, operationId, page } from "../content.js";
 import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 
@@ -10,24 +15,43 @@ export async function subjectCommands(
   argument?: string,
 ) {
   const { client, save, required } = env;
-  if (action === "list") return client.subjects.list({});
+  if (action === "list")
+    return client.subjects.listSubjects({ page: page(env) });
   if (action === "create") {
-    const subject = await client.subjects.create({
-      operationId: crypto.randomUUID(),
-      capabilities: { memory: true },
-      cognitiveSeed: {
-        text: "schema_version = 1",
-        format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
-      },
-    });
+    const subject = await client.subjects.createSubject(
+      env.values["request-file"]
+        ? {
+            ...(await content(env, CreateSubjectRequestSchema)),
+            operationId: operationId(env),
+          }
+        : {
+            operationId: crypto.randomUUID(),
+            capabilities: { memory: true },
+            cognitiveSeed: {
+              text: "schema_version = 1",
+              format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
+            },
+          },
+    );
     await save({
       format: "nous.consumer.selection",
       subjectId: subject.subjectId,
     });
     return subject;
   }
+  if (action === "seed")
+    return client.subjects.getCognitiveSeed({
+      subjectId: required(env.subjectId, "Selected Subject"),
+    });
+  if (action === "adopt-seed")
+    return client.subjects.adoptCognitiveSeed({
+      subjectId: required(env.subjectId, "Selected Subject"),
+      operationId: operationId(env),
+      kind: env.values.kind ?? "import",
+      seed: await content(env, CognitiveSeedSchema),
+    });
   if (action === "use") {
-    const subject = await client.subjects.get({
+    const subject = await client.subjects.getSubject({
       subjectId: (
         await env.resolveReference(
           required(argument, "Subject reference"),

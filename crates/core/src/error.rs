@@ -14,8 +14,6 @@ pub enum DomainErrorCode {
     StaleContext,
     StaleRevision,
     OperationIdConflict,
-    OperationInProgress,
-    LeaseLost,
     CapabilityUnavailable,
 }
 

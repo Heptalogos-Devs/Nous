@@ -7,13 +7,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { rm, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  ConfigExposure,
-  ConfigurationView,
-  configurationValue,
-} from "@nous-wave/client";
+import { ConfigExposure, ConfigurationView } from "@nous-wave/client";
 import { boot, prepare, stop, type Boot } from "./support.js";
 import { workspaceTemp } from "../workspace.js";
+import { fromJson, toJson } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { resolveLocations } from "../../apps/nous-core/src/locations.js";
 
 const root = await workspaceTemp("smoke", "configuration-");
@@ -70,43 +68,47 @@ try {
     if (args[0] !== "check") assert.equal(parsed.schemaVersion, "nous.cli.v1");
     return (args[0] === "check" ? parsed : parsed.data) as {
       valid?: boolean;
-      descriptors?: { path: string; exposure: number }[];
+      descriptors?: { path: string; exposure: string }[];
     };
   };
   assert.equal((await cli("check")).valid, true);
   const standardCli = (await cli("list", "--json")).descriptors!;
   assert(standardCli.length > 0);
-  assert(standardCli.every((d) => d.exposure === ConfigExposure.STANDARD));
+  assert(standardCli.every((d) => d.exposure === "CONFIG_EXPOSURE_STANDARD"));
   const advancedCli = (await cli("list", "--advanced", "--json")).descriptors!;
-  assert(advancedCli.some((d) => d.exposure === ConfigExposure.ADVANCED));
-  assert(advancedCli.every((d) => d.exposure !== ConfigExposure.DEVELOPER));
+  assert(advancedCli.some((d) => d.exposure === "CONFIG_EXPOSURE_ADVANCED"));
+  assert(advancedCli.every((d) => d.exposure !== "CONFIG_EXPOSURE_DEVELOPER"));
   const developerCli = (await cli("list", "--developer", "--json"))
     .descriptors!;
-  assert(developerCli.some((d) => d.exposure === ConfigExposure.DEVELOPER));
-  const standard = await client.configuration.list({});
+  assert(developerCli.some((d) => d.exposure === "CONFIG_EXPOSURE_DEVELOPER"));
+  const standard = await client.configuration.listConfigDescriptors({});
   assert(standard.descriptors.some((d) => d.path === "models"));
   assert(standard.descriptors.some((d) => d.path === "maintenance.enabled"));
   assert(
     standard.descriptors.every((d) => d.exposure === ConfigExposure.STANDARD),
   );
-  const schema = (await client.configuration.describe("runtime.resident_limit"))
-    .jsonSchema;
+  const descriptor = await client.configuration.getConfigDescriptor({
+    path: "runtime.resident_limit",
+  });
+  const schema = descriptor.jsonSchema
+    ? toJson(ValueSchema, descriptor.jsonSchema)
+    : null;
   assert(schema && typeof schema === "object" && !Array.isArray(schema));
   assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
-  const subject = await client.subjects.create({
+  const subject = await client.subjects.createSubject({
     operationId: randomUUID(),
     cognitiveSeed: {
       text: "schema_version = 1",
       format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
     },
   });
-  const subjectAddress = await client.identity.bind({
+  const subjectAddress = await client.identity.bindIdentity({
     subjectId: subject.subjectId,
     canonical: { kind: "subject", value: subject.subjectId },
     displayName: "Configuration smoke",
     aliases: ["Original label"],
   });
-  const addresses = await client.identity.addresses({
+  const addresses = await client.identity.getIdentityAddresses({
     targets: [
       {
         subjectId: subject.subjectId,
@@ -133,7 +135,7 @@ try {
       { status: "UNKNOWN_REFERENCE", lexicalRef: undefined },
     ],
   );
-  const labels = await client.identity.resolve({
+  const labels = await client.identity.resolveIdentity({
     subjectId: subject.subjectId,
     kind: "subject",
     locator: { case: "lexicalRef", value: subjectAddress.lexicalRef },
@@ -141,18 +143,21 @@ try {
   assert.equal(labels.candidates[0]?.displayName, "Configuration smoke");
   assert.deepEqual(labels.candidates[0]?.aliases, ["Original label"]);
   const entry = async (path: string, subjectId?: string, desired = false) => {
-    const result = await client.configuration.get({
+    const result = await client.configuration.getConfiguration({
       paths: [path],
       subjectId,
       view: desired ? ConfigurationView.DESIRED : ConfigurationView.ACTIVE,
     });
     const item = result.entries[0];
     assert(item);
-    return item;
+    return {
+      ...item,
+      value: item.value ? toJson(ValueSchema, item.value) : null,
+    };
   };
   const revision = async () =>
     (
-      await client.configuration.get({
+      await client.configuration.getConfiguration({
         view: ConfigurationView.DESIRED,
         paths: ["maintenance.enabled"],
       })
@@ -189,15 +194,15 @@ try {
   };
   const graphOperation = randomUUID();
   const graphRevision = (
-    await client.configuration.get({
+    await client.configuration.getConfiguration({
       view: ConfigurationView.DESIRED,
       paths: ["models"],
     })
   ).configurationRevision;
-  const sparseGraph = await client.configuration.setSystem({
+  const sparseGraph = await client.configuration.setSystemOverride({
     operationId: graphOperation,
     path: "models",
-    value: modelGraph,
+    value: fromJson(ValueSchema, modelGraph),
     expectedRevision: graphRevision,
   });
   const frozenGraph = (await entry("models", undefined, true)).value;
@@ -216,50 +221,50 @@ try {
       timeout_ms: 30000,
     },
   );
-  const explicitGraph = await client.configuration.setSystem({
+  const explicitGraph = await client.configuration.setSystemOverride({
     operationId: graphOperation,
     path: "models",
-    value: frozenGraph,
+    value: fromJson(ValueSchema, frozenGraph),
     expectedRevision: graphRevision,
   });
   assert.equal(explicitGraph.revision, sparseGraph.revision);
   assert.equal(explicitGraph.desiredDigest, sparseGraph.desiredDigest);
   await assert.rejects(
-    client.configuration.setSystem({
+    client.configuration.setSystemOverride({
       operationId: randomUUID(),
       path: "models",
-      value: modelGraph,
+      value: fromJson(ValueSchema, modelGraph),
       expectedRevision: graphRevision,
     }),
     /revision.*changed|revision.*conflict/i,
   );
   assert.deepEqual((await entry("models", undefined, true)).value, frozenGraph);
   await assert.rejects(
-    client.configuration.setSystem({
+    client.configuration.setSystemOverride({
       operationId: randomUUID(),
       expectedRevision: await revision(),
       path: "models",
-      value: {
+      value: fromJson(ValueSchema, {
         ...modelGraph,
         roles: { memory_formation: { routes: ["absent"] } },
-      },
+      }),
     }),
     /models.roles.memory_formation.routes.0/,
   );
   assert.equal(defaults, 6);
   const normalizedOperation = randomUUID();
   const videoRevision = await revision();
-  const omitted = await client.configuration.setSystem({
+  const omitted = await client.configuration.setSystemOverride({
     operationId: normalizedOperation,
     expectedRevision: videoRevision,
     path: "video.max_frames",
-    value: 4,
+    value: fromJson(ValueSchema, 4),
   });
-  const explicit = await client.configuration.setSystem({
+  const explicit = await client.configuration.setSystemOverride({
     operationId: normalizedOperation,
     expectedRevision: videoRevision,
     path: "video.max_frames",
-    value: 4,
+    value: fromJson(ValueSchema, 4),
   });
   assert.equal(omitted.desiredDigest, explicit.desiredDigest);
   assert.equal(omitted.revision, explicit.revision);
@@ -271,33 +276,39 @@ try {
   );
   assert.equal((await entry("video.ffmpeg_executable")).value, null);
   assert.equal(
-    (await client.configuration.describe("video.max_frames")).semanticEffect,
+    (
+      await client.configuration.getConfigDescriptor({
+        path: "video.max_frames",
+      })
+    ).semanticEffect,
     "authority_formation",
   );
-  await assert.rejects(client.configuration.describe("video"));
   await assert.rejects(
-    client.configuration.setSystem({
+    client.configuration.getConfigDescriptor({ path: "video" }),
+  );
+  await assert.rejects(
+    client.configuration.setSystemOverride({
       operationId: randomUUID(),
       expectedRevision: await revision(),
       path: "video.max_frames",
-      value: 17,
+      value: fromJson(ValueSchema, 17),
     }),
     /maximum|16/,
   );
   assert.equal((await entry("maintenance.enabled")).source, "deployment_file");
   const operationId = randomUUID();
   const maintenanceRevision = await revision();
-  const change = await client.configuration.setSystem({
+  const change = await client.configuration.setSystemOverride({
     operationId,
     expectedRevision: maintenanceRevision,
     path: "maintenance.enabled",
-    value: configurationValue("true"),
+    value: fromJson(ValueSchema, true),
   });
-  const replay = await client.configuration.setSystem({
+  const replay = await client.configuration.setSystemOverride({
     operationId,
     expectedRevision: maintenanceRevision,
     path: "maintenance.enabled",
-    value: configurationValue("true"),
+    value: fromJson(ValueSchema, true),
   });
   assert.equal(replay.revision, change.revision);
   assert.equal((await entry("maintenance.enabled")).value, true);
@@ -328,12 +339,12 @@ try {
     "--json",
   ];
   const cliChange = await cli(...cliArgs);
-  await client.configuration.setSubject({
+  await client.configuration.setSubjectOverride({
     operationId: randomUUID(),
     expectedRevision: await revision(),
     subjectId: subject.subjectId,
     path: "maintenance.enabled",
-    value: configurationValue("false"),
+    value: fromJson(ValueSchema, false),
   });
   assert.equal(
     (await entry("maintenance.enabled", subject.subjectId)).source,
@@ -345,11 +356,11 @@ try {
   );
   assert.deepEqual(await cli(...cliArgs), cliChange);
   const initial = (await entry("runtime.resident_limit")).value;
-  const restart = await client.configuration.setSystem({
+  const restart = await client.configuration.setSystemOverride({
     operationId: randomUUID(),
     expectedRevision: await revision(),
     path: "runtime.resident_limit",
-    value: configurationValue("512"),
+    value: fromJson(ValueSchema, 512),
   });
   assert.deepEqual(restart.effects, ["restart_required"]);
   assert.equal((await entry("runtime.resident_limit")).value, initial);
@@ -362,11 +373,11 @@ try {
     "restart_required",
   );
   await assert.rejects(
-    client.configuration.setSystem({
+    client.configuration.setSystemOverride({
       operationId: randomUUID(),
       expectedRevision: await revision(),
       path: "host.port",
-      value: configurationValue("0"),
+      value: fromJson(ValueSchema, 0),
     }),
   );
   await stop(current);
@@ -375,7 +386,7 @@ try {
   assert.equal((await entry("runtime.resident_limit")).value, 512);
   assert.equal((await entry("video.max_frames")).value, 4);
   assert.equal((await entry("video.max_frames")).source, "persisted_system");
-  await client.configuration.clearSystem({
+  await client.configuration.clearSystemOverride({
     operationId: randomUUID(),
     path: "video.max_frames",
     expectedRevision: await revision(),

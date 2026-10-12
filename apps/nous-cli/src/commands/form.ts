@@ -15,7 +15,11 @@ export async function formCommands(
     aboutnessMode:
       values["aboutness-mode"] ??
       (values.aboutness?.length ? "explicit" : undefined),
-    explicitAboutness: values.aboutness,
+    explicitAboutness: await Promise.all(
+      (values.aboutness ?? []).map(
+        async (text) => (await resolveReference(text, "entity")).value,
+      ),
+    ),
     explicitTags: await Promise.all(
       (values.tag ?? []).map(
         async (text) => (await resolveReference(text, "tag")).value,

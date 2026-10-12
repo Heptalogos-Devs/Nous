@@ -9,7 +9,6 @@ import { configurationBundle, coreConfigurationValues } from "./catalog.js";
 import { join, resolve } from "node:path";
 import { stat, mkdir, writeFile, rm } from "node:fs/promises";
 import {
-  CONFIG_REVISION,
   ConfigurationError,
   readConfiguration,
   parseEffectiveConfiguration,
@@ -42,7 +41,14 @@ export async function checkConfiguration(
     );
     for (const role of roleNames) {
       const binding = models.roles[role];
-      if (!binding) continue;
+      if (!binding) {
+        diagnostics.push({
+          role,
+          state: "NOT_CONFIGURED",
+          detail: `Configure models.roles.${role}`,
+        });
+        continue;
+      }
       for (const executionName of binding.routes) {
         const execution = models.execution_profiles[executionName];
         const profile = execution
@@ -153,7 +159,6 @@ export async function checkConfiguration(
   }
   return {
     valid: issues.length === 0,
-    config_revision: CONFIG_REVISION,
     configuration,
     issues,
     diagnostics,

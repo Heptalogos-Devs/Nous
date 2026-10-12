@@ -27,7 +27,7 @@ fn text_query(query: &nous_core::CognitiveQuery) -> String {
 /// consuming it for Runtime lanes happens after cognitive readout.
 pub struct PreparedQuerySignals {
     query_text: String,
-    embedding: Option<TextEmbeddingOutput>,
+    embedding: Option<QuerySemanticEmbedding>,
     lexical: Option<LaneOutput>,
     dense: Option<LaneOutput>,
 }
@@ -36,7 +36,7 @@ impl PreparedQuerySignals {
     pub fn query_text(&self) -> &str {
         &self.query_text
     }
-    pub fn embedding(&self) -> Option<&TextEmbeddingOutput> {
+    pub fn embedding(&self) -> Option<&QuerySemanticEmbedding> {
         self.embedding.as_ref()
     }
     pub fn lexical(&self) -> Option<&LaneOutput> {
@@ -96,7 +96,7 @@ fn prepare_dense(
     query: &nous_core::CognitiveQuery,
     query_text: &str,
     plan: &QueryPlan,
-    embedding: Option<&TextEmbeddingOutput>,
+    embedding: Option<&QuerySemanticEmbedding>,
     embedding_error: Option<String>,
     provider_available: bool,
 ) -> Result<LaneOutput> {
@@ -201,11 +201,7 @@ async fn prepare_signals(
                 })))
     {
         if let Some(material) = prepared_embedding {
-            embedding = Some(TextEmbeddingOutput {
-                vector: material.vector.clone(),
-                space: material.space.clone(),
-                producer: material.producer.clone(),
-            });
+            embedding = Some(material.clone());
         } else if let Some(provider) = provider {
             match provider
                 .embed(TextEmbeddingRequest {
@@ -242,29 +238,6 @@ async fn prepare_signals(
         lexical,
         dense,
     })
-}
-
-#[async_trait::async_trait]
-impl SharedLaneProvider for ServingService {
-    async fn activate(&self, bound: &BoundQuery) -> Result<nous_runtime::QueryActivation> {
-        crate::concept::lane::activate(
-            &self.publisher.snapshot_for(bound.source_query.subject),
-            bound,
-            self.embedding().map(|p| p.as_ref()),
-        )
-        .await
-    }
-    async fn lanes(&self, bound: &BoundQuery, plan: &QueryPlan) -> Result<Vec<LaneOutput>> {
-        let _reader = self.read_gate.clone().read_owned().await;
-        let snapshot = self.publisher.snapshot_for(bound.source_query.subject);
-        self.lanes_from_snapshot(
-            &snapshot,
-            bound,
-            plan,
-            self.embedding().map(|provider| provider.as_ref()),
-        )
-        .await
-    }
 }
 
 impl ServingService {
@@ -351,11 +324,10 @@ impl std::fmt::Debug for ServingQuery {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ServingQuery")
-            .field("generation", &self.snapshot.generation)
+            .field("generations", &self.snapshot.generation_trace())
             .finish()
     }
 }
-impl nous_runtime::QueryReadLease for ServingQuery {}
 impl nous_runtime::QueryActivationView for ServingQuery {
     fn generation_trace(&self) -> QueryGenerationTrace {
         self.snapshot.generation_trace()
@@ -395,9 +367,6 @@ impl ServingService {
         bound: &BoundQuery,
         plan: &QueryPlan,
     ) -> Result<(ProjectionStatus, Arc<ServingQuery>)> {
-        if let Some(view) = bound.historical_authority.as_deref() {
-            return self.prepare_historical_query(bound, plan, view).await;
-        }
         let lease = self.read_gate.clone().read_owned().await;
         let mut need = plan.serving_need(&bound.source_query);
         if bound.source_query.capabilities.text_embedding == RequirementStrength::Forbidden
@@ -405,29 +374,14 @@ impl ServingService {
         {
             need.topology = false;
         }
-        let status = self
-            .prepare_with_snapshot(bound.source_query.subject, need, &bound.config_snapshot)
+        let (status, snapshot) = self
+            .prepare_assets(
+                bound.source_query.subject,
+                need,
+                &bound.config_snapshot,
+                bound.historical_authority.as_deref(),
+            )
             .await?;
-        // Resolve the exact generations prepared for this request. A concurrent
-        // profile switch must not replace this query's immutable view.
-        let records = self
-            .store
-            .serving_reusable(bound.source_query.subject)
-            .await?;
-        let current = self.publisher.snapshot_for(bound.source_query.subject);
-        let mut snapshot = current.as_ref().clone();
-        for record in records.iter().filter(|record| {
-            status
-                .generations
-                .values()
-                .any(|id| *id == record.generation_id)
-        }) {
-            if current.contains_generation(record.generation_id) {
-                continue;
-            }
-            snapshot.install(self.open_record(record)?);
-        }
-        snapshot.retain_generations(status.generations.values().copied());
         let reader = self.query_reader(bound, snapshot)?;
         drop(lease);
         Ok((status, reader))

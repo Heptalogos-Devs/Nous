@@ -111,9 +111,9 @@ async function verifyAt(
   name: z.infer<typeof component>,
   manifestHash: string,
 ) {
-  let actualManifestHash: string;
+  let manifest: Buffer;
   try {
-    actualManifestHash = await hashFile(join(root, "manifest.json"));
+    manifest = await readFile(join(root, "manifest.json"));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT")
       throw new Error(
@@ -122,11 +122,9 @@ async function verifyAt(
       );
     throw error;
   }
-  if (actualManifestHash !== manifestHash)
+  if (createHash("sha256").update(manifest).digest("hex") !== manifestHash)
     throw new Error("Runtime manifest disagrees with the application catalog");
-  const pack = packSchema.parse(
-    JSON.parse(await readFile(join(root, "manifest.json"), "utf8")),
-  );
+  const pack = packSchema.parse(JSON.parse(manifest.toString("utf8")));
   if (
     pack.component !== name ||
     pack.platform !== process.platform ||
@@ -153,9 +151,8 @@ async function verifyAt(
   return pack;
 }
 
-export async function verifyRuntime(locations: RuntimeLocations, name: string) {
-  const selected = component.parse(name);
-  const catalog = catalogSchema.parse(
+async function readCatalog(locations: RuntimeLocations) {
+  return catalogSchema.parse(
     JSON.parse(
       await readFile(
         join(locations.program, "manifest", "runtimes.json"),
@@ -163,6 +160,11 @@ export async function verifyRuntime(locations: RuntimeLocations, name: string) {
       ),
     ),
   );
+}
+function selectPack(
+  catalog: z.infer<typeof catalogSchema>,
+  selected: z.infer<typeof component>,
+) {
   const entries = catalog.packs.filter(
     (pack) =>
       pack.component === selected &&
@@ -171,24 +173,41 @@ export async function verifyRuntime(locations: RuntimeLocations, name: string) {
   );
   if (entries.length !== 1)
     throw new Error("No unique runtime pack for this platform");
+  return entries[0]!;
+}
+
+export async function verifyRuntime(locations: RuntimeLocations, name: string) {
+  const selected = component.parse(name);
+  const entry = selectPack(await readCatalog(locations), selected);
   return verifyAt(
     join(locations.runtime, selected),
     selected,
-    entries[0]!.manifest_sha256,
+    entry.manifest_sha256,
   );
 }
 export async function listRuntimes(locations: RuntimeLocations) {
   return Promise.all(
     component.options.map(async (name) => {
       try {
-        const pack = await verifyRuntime(locations, name);
-        return { component: name, version: pack.version, status: "PASS" };
-      } catch {
-        return {
-          component: name,
-          status: "BLOCKED",
-          reason: "Runtime pack missing or invalid",
-        };
+        const pack = packSchema.parse(
+          JSON.parse(
+            await readFile(
+              join(locations.runtime, name, "manifest.json"),
+              "utf8",
+            ),
+          ),
+        );
+        if (
+          pack.component !== name ||
+          pack.platform !== process.platform ||
+          pack.arch !== process.arch
+        )
+          throw new Error("Runtime pack platform/component mismatch");
+        return { component: name, version: pack.version, status: "INSTALLED" };
+      } catch (error) {
+        const missing =
+          error instanceof Error && "code" in error && error.code === "ENOENT";
+        return { component: name, status: missing ? "MISSING" : "INVALID" };
       }
     }),
   );
@@ -203,23 +222,7 @@ export async function installRuntime(
   downloadTimeoutMs = hostSchema.parse(undefined).runtime_download_timeout_ms,
 ) {
   const selected = component.parse(name);
-  const catalog = catalogSchema.parse(
-    JSON.parse(
-      await readFile(
-        join(locations.program, "manifest", "runtimes.json"),
-        "utf8",
-      ),
-    ),
-  );
-  const entries = catalog.packs.filter(
-    (pack) =>
-      pack.component === selected &&
-      pack.platform === process.platform &&
-      pack.arch === process.arch,
-  );
-  if (entries.length !== 1)
-    throw new Error("No unique runtime pack for this platform");
-  const entry = entries[0]!;
+  const entry = selectPack(await readCatalog(locations), selected);
   const destination = join(locations.runtime, selected);
   if (await stat(destination).catch(() => undefined)) {
     const existing = await verifyAt(

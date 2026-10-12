@@ -3,7 +3,6 @@
 
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { protocolData as plain } from "./data.js";
 import { ResolveIdentityResponseSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
 import {
   DomainErrorCode,
@@ -55,7 +54,8 @@ export class NousError extends Error {
       ResolveIdentityResponseSchema.typeName,
     ]);
     this.details = [
-      ...[...domain, ...identity].map((value) => plain(value)),
+      ...domain,
+      ...identity,
       ...error.details.filter(
         (detail) =>
           !decodedTypes.has(
@@ -63,8 +63,6 @@ export class NousError extends Error {
           ),
       ),
     ];
-    this.candidates = identity.flatMap((detail) =>
-      detail.candidates.map((value) => plain(value)),
-    );
+    this.candidates = identity.flatMap((detail) => detail.candidates);
   }
 }

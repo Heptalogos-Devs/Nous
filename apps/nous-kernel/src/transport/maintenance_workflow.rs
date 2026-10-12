@@ -31,11 +31,15 @@ impl k::kernel_maintenance_service_server::KernelMaintenanceService for KernelSe
         ))
         .await
     }
-    async fn claim_maintenance(
+    async fn select_maintenance(
         &self,
-        request: Request<k::ClaimMaintenanceRequest>,
-    ) -> std::result::Result<Response<k::ClaimMaintenanceResponse>, Status> {
-        rpc_reply(KernelService::claim_maintenance(self, request.into_inner())).await
+        request: Request<k::SelectMaintenanceRequest>,
+    ) -> std::result::Result<Response<k::SelectMaintenanceResponse>, Status> {
+        rpc_reply(KernelService::select_maintenance(
+            self,
+            request.into_inner(),
+        ))
+        .await
     }
     async fn finish_maintenance(
         &self,

@@ -69,7 +69,7 @@ impl ConfigurationService {
         for row in system_rows {
             let key: String = row.try_get("key").map_err(db)?;
             let value: Value = row.try_get("value").map_err(db)?;
-            validate_persisted(&registry, &key, &value, false)?;
+            let value = normalize_persisted(&registry, &key, &value, false)?;
             system.insert(key, value);
         }
         let subject_rows = sqlx::query(
@@ -83,7 +83,7 @@ impl ConfigurationService {
             let subject = SubjectId(row.try_get("subject_id").map_err(db)?);
             let key: String = row.try_get("key").map_err(db)?;
             let value: Value = row.try_get("value").map_err(db)?;
-            validate_persisted(&registry, &key, &value, true)?;
+            let value = normalize_persisted(&registry, &key, &value, true)?;
             subjects.entry(subject).or_default().insert(key, value);
         }
         Ok(Self {
@@ -426,12 +426,12 @@ fn apply_mutation_to_state(
     }
 }
 
-fn validate_persisted(
+fn normalize_persisted(
     registry: &ConfigRegistry,
     key: &str,
     value: &Value,
     subject: bool,
-) -> Result<()> {
+) -> Result<Value> {
     let descriptor = registry.descriptor(key).ok_or_else(|| {
         Error::Infrastructure(format!("persisted unknown configuration key: {key}"))
     })?;
@@ -445,7 +445,7 @@ fn validate_persisted(
             "persisted deployment-only override: {key}"
         )));
     }
-    registry.validate(key, value)
+    registry.normalize(key, value)
 }
 
 fn apply_map(map: &mut BTreeMap<String, Value>, key: &str, value: Option<Value>) {

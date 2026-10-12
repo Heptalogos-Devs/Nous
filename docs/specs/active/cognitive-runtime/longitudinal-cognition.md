@@ -10,7 +10,7 @@ Runtime 持有 CognitiveClock、Experience feed、segmentation cursor/draft 与 
 
 ## 时间与经验捕获
 
-正常运行使用 SystemCognitiveClock；内部测试和研究可注入按 Subject 单调推进的 ManualCognitiveClock。HTTP/DB timeout、重试和 worker lease 使用基础设施时间。公开 RPC 不提供 clock mutation。Core 通过 private `KernelQueryService.GetCognitiveTime` 读取 Subject clock；NousQL 的相对时间窗口也使用该认知时间。
+正常运行使用 SystemCognitiveClock；内部测试和研究可注入按 Subject 单调推进的 ManualCognitiveClock。HTTP/DB timeout 和重试使用基础设施时间。公开 RPC 不提供 clock mutation。Core 通过 private `KernelQueryService.GetCognitiveTime` 读取 Subject clock；NousQL 的相对时间窗口也使用该认知时间。
 
 Observation `observed_at` 可省略，缺省使用 CognitiveClock。发生时间保留调用方提供的已知或 unknown 语义。Subject、Cognitive Seed、Material 来源、Memory、CognitiveSchema、Episode、Journal 及语义 lifecycle/UseEvent 的 timestamps 由 owner 提交分配；工作流重放保留原 formation time。Memory、CognitiveSchema、Episode、Journal 的创建和修订输入不接受 caller `formed_at`；Schema 使用 `CognitiveSchemaContent` 输入。
 
@@ -30,25 +30,27 @@ Session-bound Observation 在 Material 提交事务内写入一个 ExperienceIte
 
 `RuntimeService` 承载 canonical Session、WorkContext、Observation 和 Use 操作；Core 的 `CognitionService` 提供公开维护 grant 与查询/投影编排。Core 通过 private `KernelMaintenanceService` 调用 durable need 和 longitudinal owner commit，通过 `KernelModelWorkflowService` 管理模型执行重放状态。
 
-MaintenanceNeed 在 active scope 内合并 trigger，due time 使用 CognitiveClock。并发 claim 使用数据库 row locking；基础设施 lease 与 token fence 控制 worker，过期 lease 可重新 claim。finish 保留执行期间新增的 trigger。
+MaintenanceNeed 在 active scope 内合并 trigger，due time 使用 CognitiveClock。单一 Core 按 Subject 串行执行 Host grant；Runtime 从 pending needs 选择固定 trigger snapshot，执行期间记录仍为 pending。每次新 trigger 推进 trigger revision；ack 只对匹配 captured authority sequence/revision 的 pending need 应用 disposition，因此新工作不丢失。Core crash 后工作立即可重新选择，不需要租约过期或 takeover。
 
-公开 `GrantMaintenance` 接收 `max_operations`、`max_model_calls`、`max_elapsed_ms`。Core standalone loop 完整使用 active Subject pagination，保存跨 poll tick 的 continuation；每个 Subject 每次获得至多一个操作机会，耗尽 tick budget 后从停止处继续，列表尾部 wrap。删除、停用或失效 page token 会跳过或重新建立 cursor。Core restart 可以从稳定列表起点开始。全局 operation/model/elapsed budgets 限制每次 tick；Kernel 没有自主认知 cron，只持有 durable needs、claim、lease 与 owner semantics。
+公开 `GrantMaintenance` 接收 `max_operations`、`max_model_calls`、`max_elapsed_ms`。Core standalone loop 完整使用 active Subject pagination，保存跨 poll tick 的 continuation；每个 Subject 每次获得至多一个操作机会，耗尽 tick budget 后从停止处继续，列表尾部 wrap。删除、停用或失效 page token 会跳过或重新建立 cursor。Core restart 可以从稳定列表起点开始。全局 operation/model/elapsed budgets 限制每次 tick；Kernel 没有自主认知 cron，只持有 durable needs、trigger-fenced acknowledgement 与 owner semantics。
 
 Grant response 的 disposition 明确区分 `disabled_by_policy`、`no_eligible_work`、`processed` 与 `opportunity_exhausted`。Host 机会耗尽或取消时，尚未完成的 need 返回 pending/deferred，保存已提交 proposal 与进度，不把机会预算当成 owner invariant failure 或 provider retry exhaustion；下一次明确 grant 继续 durable work。Provider 自身超时仍按 infrastructure retry 处理。官方 Client 默认 deadline 覆盖请求机会及回应余量，显式 caller deadline 优先。
 
 显式机会 elapsed 上限为 900000ms，standalone tick 可配置同一上限，默认仍 60000ms。`core_execution.opportunity` 将普通 model/resource 工作期限、取消后的 cleanup、need acknowledgement 和 response margin 分开命名；Core 与官方 Client 使用同一 typed policy。Client 从 active Configuration 读取实际 policy，按显式 grant 的 work budget 加 cleanup/ack/margin 派生响应等待；普通 formation、derivation、embedding preparation 和 selected resource materialization 使用 policy 的 work budget。显式较短 caller deadline 或 signal 仍优先。MCP 在进程内复用 Client，没有独立等待秒数；外部 Host tool timeout 应覆盖该机会。每条 model route 继续使用自己的 timeout 和调用计数，输入不适配的 route 在调用计数前跳过。
 
-Maintenance claim 的 infrastructure lease 从相同 work、cleanup 和 acknowledgement 预算派生，并至少覆盖 Runtime worker lease。Core 向 private ModelWorkflow reservation 显式传入该 lease；普通 workflow 也使用其实际执行机会，删除另一处 `model_workflow.lease_seconds` 默认值。Persistence 验证真实父 claim/token 后使 child reservation 覆盖实际父期限，不延长父授权；owner mutations 继续执行维护 claim 及内容/epoch fences。取消或 work budget 到期后，保存 attempt telemetry 和 release 共用有界 cleanup 截止时间，随后 finishMaintenance 使用独立 acknowledgement 预算；原 work signal 不会提前取消这两阶段。
+Vault 的 Maintenance Lease 表示 Host 授予的时间、资源、模型服务、网络权限和取消边界；该授权由本节的 bounded Host grant 实现，不要求持久化 worker token 或运行中租约。
 
-维护种类为 `episode_segment`、`episode_resegment`、`journal_review`、`journal_revalidate`、`memory_consolidate`。Core 根据当前可执行角色构造 claim 的 allowed kinds：resegment 需要 `episode_segmentation`，Journal review/revalidate 需要 `journal_synthesis`，consolidation 需要 `memory_consolidation`；初始 segmentation 无需模型。未就绪角色的 needs 保持 durable、无 worker lease、attempt count 不增长。角色配置按当前 Core model runtime 的 restart 生效合同处理。
+Host grant 的 work、model-call 和 operation budgets 在 Core 全部 Subject 排队与实际执行中持续生效。Private operation start 验证当前 pending MaintenanceTrigger；没有 parent/child lease、运行中状态、busy token 或 deadline。领域提交继续执行来源、内容、revision 和 epoch fences。取消后 telemetry/proposal/outcome save 使用有界 cleanup 时间，finishMaintenance 使用独立 acknowledgement 预算；取消不授权继续认知 mutation。
 
-MaintenanceNeed 状态为 `pending / leased / blocked / satisfied / obsolete`。deferred 表示时间推进或已知未来事件能够改变条件，保留带 next due 的 pending work。blocked 表示依赖、配置或输入需要实际改变，不参与普通 due-time lease。来源 revision/lifecycle、显式 maintenance refresh 或有效配置快照变化可重新激活 blocked need；retry exhaustion 还可由当前 executable model configuration digest 的变化唤醒。真实 provider/network 故障使用配置的指数退避，等待基础设施时间；连续失败达到 retry attempt 上限后 blocked。新 trigger 重置 retry 状态，每个 need 的 trigger revision 随真实 trigger 或配置唤醒推进；执行期间的新 trigger revision 保留为 pending work。
+维护种类为 `episode_segment`、`episode_resegment`、`journal_review`、`journal_revalidate`、`memory_consolidate`。Core 根据当前可执行角色构造 selection 的 allowed kinds：resegment 需要 `episode_segmentation`，Journal review/revalidate 需要 `journal_synthesis`，consolidation 需要 `memory_consolidation`；初始 segmentation 无需模型。未就绪角色的 needs 保持 pending，不执行模型。角色配置按当前 Core model runtime 的 restart 生效合同处理。
+
+MaintenanceNeed 状态为 `pending / blocked / satisfied / obsolete`。deferred 表示时间推进或已知未来事件能够改变条件，保留带 next due 的 pending work。blocked 表示依赖、配置或输入需要实际改变，不参与普通 due-time selection。来源 revision/lifecycle、显式 maintenance refresh 或有效配置快照变化可重新激活 blocked need；retry exhaustion 还可由当前 executable model configuration digest 的变化唤醒。真实 provider/network 故障使用配置的指数退避，等待基础设施时间；连续失败达到 retry attempt 上限后 blocked。新 trigger 重置 retry 状态，每个 need 的 trigger revision 随真实 trigger 或配置唤醒推进；执行期间的新 trigger revision 保留为 pending work。
 
 unexpected scheduler/runtime failures 输出 Subject、stage、已知 need kind、稳定 problem class 和 retry/blocked decision；相同 scheduler failures 按重复次数聚合。凭据、配置值和原始 model payload 不进入诊断。正常 blocked 或未配置角色无需 exception 日志。
 
-Episode/Journal/Memory/Schema revisions 是 durable cognition history；Observation/ExperienceItem 是 durable experience；EpisodeDraft、MaintenanceNeed 和 model workflow 是 temporary runtime work state。terminal need 按 `maintenance.terminal_retention_seconds` 保留短期 finish replay，再在 claim/ack 路径删除；pending、leased、blocked 不被 terminal housekeeping 删除。
+Episode/Journal/Memory/Schema revisions 是 durable cognition history；Observation/ExperienceItem 是 durable experience；EpisodeDraft、MaintenanceNeed 和 model workflow 是 temporary runtime work state。terminal need 按 `maintenance.terminal_retention_seconds` 保留短期 inspection，再在 selection/ack 路径删除；pending、blocked 不被 terminal housekeeping 删除。
 
-Core 的 `model_workflow_operations` 保存固定 model/plan snapshot、proposal 与 outcome。operation identity 由 need、trigger authority sequence 和 trigger revision 生成，proposal 在 owner commit 前持久化；重试复用已存 proposal/outcome。maintenance workflow 显式绑定 need 和 trigger；ack 成功后删除已完成的关联 workflow。新 trigger 已替代的旧 workflow 在执行 lease 释放/过期后回收。显式 Memory formation、Material workflow 和仍需 retry 的当前 workflow 保持自身合同。owner 验证 Subject、head、epoch、lifecycle、来源 catalog 和 authority sequence；变化返回 stale 并刷新维护计划。
+Core 的 `model_workflow_operations` 保存固定 model/plan snapshot、proposal 与 outcome。operation identity 由 need、trigger authority sequence 和 trigger revision 生成，proposal 在 owner commit 前持久化；重试复用已存 proposal/outcome。多 action 提案每次从头按固定顺序执行；稳定 child operation ID 使 canonical owner receipt 返回同一已提交结果，并重建本次执行所需的临时引用。Core 不持久化每项 progress、临时绑定或另一份 action receipt。后项失败不回滚已提交的独立前项，最终 outcome 一次保存。maintenance workflow 显式绑定 need 和 trigger；ack 成功后删除已完成的关联 workflow。selection/ack 路径删除新 trigger 已替代的旧 workflow。显式 Memory formation、Material workflow 和仍需 retry 的当前 workflow 保持自身合同。owner 验证 Subject、head、epoch、lifecycle、来源 catalog 和 authority sequence；变化返回 stale 并刷新维护计划。
 
 Workflow owner 是 1..64 字节的 semantic identifier，格式为 `[a-z][a-z0-9_]*`；Persistence 不枚举认知领域。private Kernel API 仅接受已实现的 `memory / material` 调用路径；Longitudinal 的 Memory-domain operations 使用 `memory`。
 
@@ -73,7 +75,7 @@ Query/Serving、WorkContext、UseEvent 和下游失效合同分别见 [Query](..
 
 ## 独立 concept maintenance
 
-`concept_maintenance` 复用 durable need、host grant、lease、retry、固定 ModelWorkflow snapshot 和模型调用/elapsed 预算。accepted/revised Memory、Episode、Journal、CognitiveSchema 在 owner mutation 同一事务排入 exact focus；meaningful use 跨过 `maintenance.concept_use_review_interval` 时产生 review，普通 presented 不触发。
+`concept_maintenance` 复用 durable need、host grant、retry、固定 ModelWorkflow snapshot 和模型调用/elapsed 预算。accepted/revised Memory、Episode、Journal、CognitiveSchema 在 owner mutation 同一事务排入 exact focus；meaningful use 跨过 `maintenance.concept_use_review_interval` 时产生 review，普通 presented 不触发。
 
 Memory planner 只围绕一个 current eligible exact cognition。局部输入包含 focus 语义、来源、aboutness Entity、已附 Tags、名称/别名匹配、既有 embedding material 的相似候选和一跳 AssociationEvidence；不拼整个 Subject cognition catalog，不调用 embedding provider。固定 snapshot 保存 typed canonical refs、TagRevisionTarget、AssociationSupport 和当前配置 digest；模型只看到 local keys 与有界描述。
 

@@ -463,25 +463,28 @@ async fn persist_media_synopsis(
     producer.implementation = "longitudinal-media-test".into();
     producer.model_revision = Some(model_revision.into());
     rt.material
-        .persist_derived_representation(nous_material::DerivedRepresentation {
-            derived_representation_id: nous_core::DerivedRepresentationId::new(),
-            subject_id: subject,
-            inputs: vec![nous_material::DerivationInput {
-                ordinal: 0,
-                reference: nous_core::CognitiveRef::SourceRegion(region),
-                role: "source".into(),
-            }],
-            strategy: "direct_multimodal".into(),
-            representation_kind: nous_core::RepresentationKind::ImageDescription,
-            producer,
-            revision: 1,
-            payload_text: Some(text.into()),
-            payload_json: None,
-            payload_artifact_id: None,
-            quality: serde_json::json!({}),
-            created_at: Utc::now(),
-            supersedes,
-        })
+        .persist_derived_representation(
+            nous_material::DerivedRepresentation {
+                derived_representation_id: nous_core::DerivedRepresentationId::new(),
+                subject_id: subject,
+                inputs: vec![nous_material::DerivationInput {
+                    ordinal: 0,
+                    reference: nous_core::CognitiveRef::SourceRegion(region),
+                    role: "source".into(),
+                }],
+                strategy: "direct_multimodal".into(),
+                representation_kind: nous_core::RepresentationKind::ImageDescription,
+                producer,
+                revision: 1,
+                payload_text: Some(text.into()),
+                payload_json: None,
+                payload_artifact_id: None,
+                quality: serde_json::json!({}),
+                created_at: Utc::now(),
+                supersedes,
+            },
+            None,
+        )
         .await
         .unwrap()
         .derived_representation_id

@@ -56,9 +56,12 @@ export async function executeResourceActions(
       );
       if (action.currentAuthority || action.materialize) {
         for (const record of records) {
-          const material = await adapter.materialize(record.reference, signal);
-          record.versionStatus = material.version.status;
-          record.accessStatus = material.access.status;
+          const [version, access] = await Promise.all([
+            adapter.checkVersion(record.reference, signal),
+            adapter.checkAccess(record.reference, signal),
+          ]);
+          record.versionStatus = version.status;
+          record.accessStatus = access.status;
         }
       }
       results.push(

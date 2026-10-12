@@ -25,7 +25,7 @@ impl VcpQueryObservation {
         generation: &VcpServingGeneration,
         bound: &BoundQuery,
         plan: &QueryPlan,
-        embedding: &TextEmbeddingOutput,
+        embedding: &QuerySemanticEmbedding,
         signals: Option<&crate::PreparedQuerySignals>,
     ) -> Result<Self> {
         if bound.source_query.capabilities.text_embedding == RequirementStrength::Forbidden {
@@ -157,7 +157,7 @@ impl VcpQueryObservation {
 
 fn pipeline_input(
     generation: &VcpServingGeneration,
-    embedding: &TextEmbeddingOutput,
+    embedding: &QuerySemanticEmbedding,
     policy: &VcpQueryPolicy,
     core_tag_ids: &[i64],
 ) -> ReferencePipelineInput {

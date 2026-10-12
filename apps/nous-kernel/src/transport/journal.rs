@@ -45,7 +45,6 @@ fn journal_proto(value: nous_memory::JournalView) -> p::Journal {
         acceptance_state: enum_name(object.acceptance_state),
         integrity_state: enum_name(object.integrity_state),
         suppression_state: enum_name(object.suppression_state),
-        purge_state: enum_name(object.purge_state),
         created_at: Some(timestamp(object.created_at)),
         current_revision: current.then(|| journal_revision_proto(value)),
     }
@@ -147,7 +146,7 @@ impl KernelService {
     async fn journal_lifecycle(
         &self,
         input: p::JournalMutationRequest,
-        action: &str,
+        action: nous_memory::LifecycleAction,
     ) -> Result<p::JournalResponse> {
         Ok(journal_response(
             self.require_memory()?
@@ -165,25 +164,29 @@ impl KernelService {
         &self,
         input: p::JournalMutationRequest,
     ) -> Result<p::JournalResponse> {
-        self.journal_lifecycle(input, "suppress").await
+        self.journal_lifecycle(input, nous_memory::LifecycleAction::Suppress)
+            .await
     }
     pub(super) async fn restore_journal(
         &self,
         input: p::JournalMutationRequest,
     ) -> Result<p::JournalResponse> {
-        self.journal_lifecycle(input, "restore").await
+        self.journal_lifecycle(input, nous_memory::LifecycleAction::Restore)
+            .await
     }
     pub(super) async fn withdraw_journal(
         &self,
         input: p::JournalMutationRequest,
     ) -> Result<p::JournalResponse> {
-        self.journal_lifecycle(input, "withdraw").await
+        self.journal_lifecycle(input, nous_memory::LifecycleAction::Withdraw)
+            .await
     }
     pub(super) async fn reaccept_journal(
         &self,
         input: p::JournalMutationRequest,
     ) -> Result<p::JournalResponse> {
-        self.journal_lifecycle(input, "reaccept").await
+        self.journal_lifecycle(input, nous_memory::LifecycleAction::Reaccept)
+            .await
     }
     pub(super) async fn purge_journal(&self, input: p::JournalMutationRequest) -> Result<()> {
         self.require_memory()?

@@ -20,6 +20,8 @@ import type {
 import type { KernelClient } from "../kernel-client.js";
 import { ModelMaterialPipeline } from "../model/material.js";
 import { ModelRuntime } from "../model/runtime.js";
+import { safeProviderFailure } from "../model/protocols.js";
+import { GenerationFailure } from "../model/execution/routes.js";
 import { canonicalDigest } from "../digest.js";
 
 import type { ResourceRegistry } from "../resources/registry.js";
@@ -41,7 +43,12 @@ export class QueryOrchestrator {
       {
         query: input,
         reserveExecution: true,
-        leaseSeconds: opportunity.leaseSeconds,
+        leaseSeconds:
+          Math.ceil(
+            (opportunity.remainingWorkMs +
+              opportunity.policy.cleanup_timeout_ms) /
+              1000,
+          ) + 1,
       },
       options,
     );
@@ -56,7 +63,7 @@ export class QueryOrchestrator {
       );
       if (texts.size) {
         try {
-          if (!this.models.embeddingModel)
+          if (!this.models.invocations.profile("query_embedding"))
             throw domainError(
               "Query embedding role unavailable",
               Code.FailedPrecondition,
@@ -139,7 +146,7 @@ export class QueryOrchestrator {
               "required"
           )
             throw new ConnectError(
-              "Required query embedding unavailable",
+              `Required query embedding unavailable: ${error instanceof GenerationFailure ? error.reason : safeProviderFailure(error)}`,
               Code.FailedPrecondition,
             );
           failure =
@@ -197,7 +204,7 @@ export class QueryOrchestrator {
               "required"
           )
             throw new ConnectError(
-              "Required query concept model unavailable",
+              `Required query concept model unavailable: ${error instanceof GenerationFailure ? error.reason : safeProviderFailure(error)}`,
               Code.FailedPrecondition,
             );
           conceptFailure =
@@ -257,7 +264,7 @@ export class QueryOrchestrator {
           reference: NonNullable<(typeof candidates)[number]["reference"]>;
           score: number;
         }[] = [];
-        let rerankFailed = false;
+        let rerankFailure: string | undefined;
         try {
           if (intent && profile && candidates.length >= 2) {
             try {
@@ -280,10 +287,13 @@ export class QueryOrchestrator {
               if (options.signal?.aborted) throw error;
               if (rerankRequired)
                 throw new ConnectError(
-                  "Required rerank invocation unavailable",
+                  `Required rerank invocation unavailable: ${error instanceof GenerationFailure ? error.reason : safeProviderFailure(error)}`,
                   Code.FailedPrecondition,
                 );
-              rerankFailed = true;
+              rerankFailure =
+                error instanceof GenerationFailure
+                  ? error.reason
+                  : safeProviderFailure(error);
             }
           }
           result = await this.kernel.queryWorkflow.finalizeQuery(
@@ -299,11 +309,11 @@ export class QueryOrchestrator {
             },
             options,
           );
-          if (rerankFailed) {
+          if (rerankFailure) {
             result.degradation.push({
               $typeName: "nous.wave.v1alpha1.Degradation",
               code: "query_rerank_unavailable",
-              detail: "Validated baseline retained after model rerank failure",
+              detail: `Validated baseline retained after model rerank failure: ${rerankFailure}`,
             });
             if (result.status === "complete") result.status = "degraded";
           }

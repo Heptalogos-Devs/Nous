@@ -11,23 +11,6 @@ pub(crate) struct DenseManifest {
 }
 
 impl ServingService {
-    pub(crate) async fn build_family(
-        &self,
-        subject: SubjectId,
-        family: &str,
-        space: &str,
-        snapshot: &nous_configuration::ConfigSnapshot,
-    ) -> Result<ServingRecord> {
-        self.build_family_in_view(
-            subject,
-            family,
-            space,
-            snapshot,
-            None,
-            &self.publisher.snapshot_for(subject),
-        )
-        .await
-    }
     pub(crate) async fn build_family_in_view(
         &self,
         subject: SubjectId,
@@ -36,7 +19,7 @@ impl ServingService {
         snapshot: &nous_configuration::ConfigSnapshot,
         view: Option<&HistoricalAuthoritySnapshot>,
         serving: &ServingSnapshot,
-    ) -> Result<ServingRecord> {
+    ) -> Result<(ServingRecord, super::lifecycle::OpenArtifact)> {
         let staging = tempfile::Builder::new()
             .prefix(".staging-")
             .tempdir_in(&self.options.root)
@@ -76,18 +59,13 @@ impl ServingService {
                 .await?
             }
         };
-        // Reopen the staged native artifact before publishing any durable pointer.
-        self.readback(staging.path(), family, id)?;
         let sums = checksums(staging.path())?;
         let hash = digest(&sums)?;
-        let target = self.options.root.join(id.0.to_string());
+        let target = self.artifact_directory(id);
         std::fs::rename(staging.path(), &target).map_err(io)?;
-        let implementation_id = implementation(family).to_owned();
+        // Open the final physical artifact once before publishing its pointer.
+        let artifact = self.readback(&target, family, id)?;
         let config_digest = self.config_digest(subject, family, snapshot).await?;
-        let implementation_revision = env!("NOUS_SERVING_IMPLEMENTATION_DIGEST");
-        let cognitive_profile = (family == "topology")
-            .then(|| topology_asset_profile(snapshot))
-            .transpose()?;
         let record = ServingRecord {
             generation_id: id,
             subject,
@@ -101,19 +79,20 @@ impl ServingService {
             }),
             space: space.into(),
             authority_watermark: watermark,
-            implementation_id: implementation_id.clone(),
-            implementation_revision: implementation_revision.to_string(),
             config_digest: config_digest.clone(),
-            artifact_location: target.to_string_lossy().into_owned(),
             artifact_hash: hash,
             built_at: chrono::Utc::now(),
-            metadata: serde_json::json!({ "checksums": sums, "cognitive_profile": cognitive_profile }),
+            metadata: serde_json::json!({}),
         };
         let published = self.store.publish_generation(record).await?;
-        if published.generation_id != id {
-            std::fs::remove_dir_all(&target).map_err(io)?;
+        if published.generation_id == id {
+            return Ok((published, artifact));
         }
-        Ok(published)
+        // Native handles must close before deleting the unselected directory.
+        drop(artifact);
+        std::fs::remove_dir_all(&target).map_err(io)?;
+        let selected = self.open_record(&published)?;
+        Ok((published, selected))
     }
 
     async fn build_text(
@@ -261,14 +240,14 @@ impl ServingService {
         document: &LexicalDocument,
         concepts: Option<&ConceptGeneration>,
         provider: &dyn TextEmbeddingProvider,
-    ) -> Result<Option<TextEmbeddingOutput>> {
+    ) -> Result<Option<QuerySemanticEmbedding>> {
         let output = if let CognitiveRef::Tag(tag) = document.reference {
             let Some(vector) = concepts.and_then(|generation| {
                 generation.semantic_vector(tag, &document.representation_text)
             }) else {
                 return Ok(None);
             };
-            TextEmbeddingOutput {
+            QuerySemanticEmbedding {
                 vector,
                 space: provider.space(),
                 producer: concepts
@@ -422,21 +401,4 @@ impl ServingService {
         .map_err(|e| Error::Infrastructure(e.to_string()))??;
         Ok(input.watermark)
     }
-}
-
-pub(crate) fn implementation(family: &str) -> &'static str {
-    super::family::AssetFamily::parse(family)
-        .map_or("unknown", super::family::AssetFamily::implementation)
-}
-
-fn topology_asset_profile(
-    snapshot: &nous_configuration::ConfigSnapshot,
-) -> Result<nous_runtime::CognitiveProfile> {
-    let selected = snapshot.get(nous_runtime::COGNITIVE_PROFILE)?;
-    Ok(match selected {
-        nous_runtime::CognitiveProfile::VcpDtsc | nous_runtime::CognitiveProfile::VcpRiverMemo => {
-            selected
-        }
-        _ => nous_runtime::CognitiveProfile::NousNodePotential,
-    })
 }

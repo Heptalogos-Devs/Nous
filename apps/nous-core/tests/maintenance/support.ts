@@ -9,8 +9,8 @@ import {
   type WorkflowPayload,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
 import {
-  ReserveWorkflowRequestSchema,
-  SaveWorkflowRequestSchema,
+  StartOperationRequestSchema,
+  SaveOperationRequestSchema,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
 
@@ -60,32 +60,36 @@ export const plan = create(MaintenancePlanSchema, {
 });
 export function admitStub<T>(value: T) {
   return async (
-    _input: string,
-    _signal?: AbortSignal,
-    _snapshot?: ModelRoleSnapshot,
-    beforeAttempt?: () => void,
+    _role: string,
+    _request: { content: unknown },
+    options: { beforeAttempt?: () => void } = {},
   ) => {
-    beforeAttempt?.();
-    return value;
+    options.beforeAttempt?.();
+    return { ...value, input: { visual: false, audio: false, text: true } };
   };
 }
 export function fixture() {
   const models = new ModelRuntime();
-  vi.spyOn(models.invocations, "snapshot").mockReturnValue(
-    {} as ModelRoleSnapshot,
+  vi.spyOn(models.invocations, "snapshot").mockImplementation(
+    (role) => ({ role }) as ModelRoleSnapshot,
   );
-  const synthesize = vi
-    .spyOn(models, "synthesizeJournal")
-    .mockImplementation(async (_input, _signal, _snapshot, beforeAttempt) => {
+  const synthesize = vi.fn(
+    async (
+      _input: string,
+      _signal?: AbortSignal,
+      _snapshot?: ModelRoleSnapshot,
+      beforeAttempt?: () => void,
+    ) => {
       beforeAttempt?.();
       return {
+        input: { visual: false, audio: false, text: true },
         value: {
-          action: "commit",
+          action: "commit" as const,
           title: null,
           narrative: "A supported decision.",
           points: [
             {
-              role: "decision",
+              role: "decision" as const,
               text: "Continue the plan.",
               basisKeys: ["source"],
             },
@@ -118,7 +122,17 @@ export function fixture() {
           configDigest: "d".repeat(64),
         },
       };
-    });
+    },
+  );
+  vi.spyOn(models.invocations, "generate").mockImplementation(
+    async (_role, request, options = {}) =>
+      synthesize(
+        request.content as string,
+        options.signal,
+        options.snapshot,
+        options.beforeAttempt,
+      ),
+  );
   let snapshot: WorkflowSnapshot | undefined;
   let proposal: WorkflowPayload | undefined;
   let outcome: WorkflowPayload | undefined;
@@ -137,28 +151,23 @@ export function fixture() {
       refreshMaintenance: refresh,
     },
     modelWorkflow: {
-      findWorkflow: vi.fn(async () => ({
-        found: !!snapshot,
+      readOperation: vi.fn(async () => ({
         snapshot,
         proposal,
         outcome,
       })),
-      reserveWorkflow: vi.fn(
-        async (
-          input: MessageInitShape<typeof ReserveWorkflowRequestSchema>,
-        ) => {
+      startOperation: vi.fn(
+        async (input: MessageInitShape<typeof StartOperationRequestSchema>) => {
           snapshot ??= create(WorkflowSnapshotSchema, input.snapshot);
           return {
             snapshot,
             proposal,
             outcome,
-            lease: { token: "lease" },
-            busy: false,
           };
         },
       ),
-      saveWorkflow: vi.fn(
-        async (input: MessageInitShape<typeof SaveWorkflowRequestSchema>) => {
+      saveOperation: vi.fn(
+        async (input: MessageInitShape<typeof SaveOperationRequestSchema>) => {
           if (input.proposal)
             proposal = create(WorkflowPayloadSchema, input.proposal);
           if (input.outcome)
@@ -166,7 +175,6 @@ export function fixture() {
           return {};
         },
       ),
-      releaseWorkflow: vi.fn(async () => ({})),
     },
   } as unknown as KernelClient;
   return { kernel, models, synthesize, commit, refresh, getPlan };

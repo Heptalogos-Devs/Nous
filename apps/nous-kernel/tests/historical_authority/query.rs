@@ -136,7 +136,7 @@ pub(super) async fn check_historical_execution(
 ) {
     let execution = rt.execute_query(query, None).await.unwrap();
     assert!(
-        execution.read_lease.is_none(),
+        execution.bound.activation_view.is_none(),
         "exact historical reads do not acquire Serving generations"
     );
     assert!(

@@ -20,20 +20,6 @@ export const executionOpportunityPaths = Object.keys(
   executionOpportunitySchema.unwrap().shape,
 ).map((name) => `core_execution.opportunity.${name}`);
 
-export function executionLeaseSeconds(
-  policy: ExecutionOpportunityPolicy,
-  remainingWorkMs: number,
-) {
-  return (
-    Math.ceil(
-      (Math.max(0, remainingWorkMs) +
-        policy.cleanup_timeout_ms +
-        policy.acknowledgement_timeout_ms) /
-        1000,
-    ) + 1
-  );
-}
-
 export function executionEnvelope(
   policy: ExecutionOpportunityPolicy,
   workMs = policy.work_timeout_ms,
@@ -44,7 +30,6 @@ export function executionEnvelope(
     policy.cleanup_timeout_ms + policy.acknowledgement_timeout_ms;
   return {
     workMs,
-    leaseSeconds: executionLeaseSeconds(policy, workMs),
     responseTimeoutMs: workMs + confirmationMs + policy.response_margin_ms,
   };
 }

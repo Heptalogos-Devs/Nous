@@ -3,7 +3,6 @@
 
 use super::*;
 
-mod lifecycle;
 mod mutation;
 mod provenance;
 mod read;
@@ -32,7 +31,6 @@ pub(super) fn decode_memory_row(
             row.try_get("suppression_state").map_err(db)?,
             "suppression state",
         )?,
-        purge_state: parse_enum(row.try_get("purge_state").map_err(db)?, "purge state")?,
         accessibility_mode: parse_enum(
             row.try_get("accessibility_mode").map_err(db)?,
             "accessibility mode",

@@ -12,6 +12,7 @@ pub use documents::text_content_identity;
 mod materialization;
 mod observation;
 mod query;
+mod read;
 mod segmentation;
 mod structured;
 pub use segmentation::DescriptionSegment;
@@ -32,9 +33,9 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct MaterialService {
-    pub store: AuthorityStore,
-    pub objects: ObjectStore,
-    pub cognition: CognitiveRuntimeService,
+    pub(crate) store: AuthorityStore,
+    pub(crate) objects: ObjectStore,
+    pub(crate) cognition: CognitiveRuntimeService,
     pub max_upload_bytes: u64,
 }
 

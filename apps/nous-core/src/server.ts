@@ -140,32 +140,35 @@ export async function createCore(settings: CoreOptions) {
     materializeResource: (r, c) =>
       materializeResource(kernel, resourceRegistry, r, options(c)),
   };
+  const systemStatus: NonNullable<
+    ServiceImpl<typeof SystemService>["getStatus"]
+  > = async (request, context) => {
+    const components: { name: string; state: string; detail?: string }[] = [
+      { name: "core", state: "READY" },
+    ];
+    try {
+      const status = await kernel.system.getStatus(request, options(context));
+      components.push({ name: "kernel", state: "READY" }, ...status.components);
+    } catch (error) {
+      if (
+        context.signal.aborted ||
+        !(error instanceof ConnectError) ||
+        (error.code !== Code.Unavailable &&
+          error.code !== Code.DeadlineExceeded)
+      )
+        throw error;
+      components.push({
+        name: "kernel",
+        state: "UNAVAILABLE",
+        detail: error.rawMessage,
+      });
+    }
+    return {
+      components: [...components, ...modelRuntime.invocations.capabilities],
+    };
+  };
   const system: ServiceImpl<typeof SystemService> = {
-    getStatus: async (r, c) => {
-      try {
-        return await kernel.system.getStatus(r, options(c));
-      } catch (error) {
-        if (c.signal.aborted) throw error;
-        return {
-          components: [
-            {
-              name: "kernel",
-              state: "UNAVAILABLE",
-              detail: "Kernel unavailable",
-            },
-          ],
-        };
-      }
-    },
-    getCapabilities: async (r, c) => {
-      const status = await kernel.system.getStatus(r, options(c));
-      return {
-        components: [
-          ...status.components,
-          ...(settings.models ?? new ModelRuntime()).invocations.capabilities,
-        ],
-      };
-    },
+    getStatus: systemStatus,
     getProjectionStatus: (r, c) =>
       kernel.system.getProjectionStatus(r, options(c)),
   };

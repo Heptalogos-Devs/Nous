@@ -9,12 +9,19 @@ import {
   modelExecutionSchema,
 } from "../model/configuration.js";
 
-export const CONFIG_REVISION = 2;
 const requirement = z.enum(["REQUIRED", "PREFERRED", "OPTIONAL", "FORBIDDEN"]);
 export const consumersSchema = z
   .array(
     z.strictObject({
-      consumer_id: z.string().min(1).max(128),
+      consumer_id: z
+        .string()
+        .min(1)
+        .max(512)
+        .regex(/^\S+$/u)
+        .refine(
+          (value) => Buffer.byteLength(value) <= 512 && !/\s/u.test(value),
+          "Consumer identity must fit 512 UTF-8 bytes without whitespace",
+        ),
       revision: z.string().min(1).default("1"),
       memory: requirement.default("PREFERRED"),
       runtime: requirement.default("OPTIONAL"),
@@ -88,20 +95,11 @@ const databaseSchema = z
   })
   .prefault({});
 export const bootstrapSchema = z.object({
-  config_revision: z.literal(CONFIG_REVISION),
   host: hostSchema,
   database: databaseSchema,
 });
 
 const owners = [
-  {
-    path: "config_revision",
-    schema: z.literal(CONFIG_REVISION),
-    default: CONFIG_REVISION,
-    owner: "core-host",
-    exposure: "developer",
-    deployment: true,
-  },
   ...Object.entries(hostFields).map(([name, schema]) => ({
     path: `host.${name}`,
     schema,

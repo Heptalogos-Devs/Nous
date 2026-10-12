@@ -38,12 +38,12 @@ message CommitInterpretationRequest {
   optional string supersedes = 11;
   google.protobuf.Struct quality = 12;
   google.protobuf.Struct structured_payload = 13;
+  OperationIdentity operation_identity = 14;
 }
 service KernelModelWorkflowService {
-  rpc FindWorkflow(FindWorkflowRequest) returns (FoundWorkflow);
-  rpc ReserveWorkflow(ReserveWorkflowRequest) returns (WorkflowReservation);
-  rpc SaveWorkflow(SaveWorkflowRequest) returns (google.protobuf.Empty);
-  rpc ReleaseWorkflow(ReleaseWorkflowRequest) returns (google.protobuf.Empty);
+  rpc ReadOperation(OperationIdentity) returns (OperationRecord);
+  rpc StartOperation(StartOperationRequest) returns (OperationRecord);
+  rpc SaveOperation(SaveOperationRequest) returns (google.protobuf.Empty);
 }
 service KernelMaterialWorkflowService {
   rpc SegmentDescription(nous.wave.v1alpha1.ObjectRequest) returns (DescriptionSegments);
@@ -55,14 +55,11 @@ service KernelMaterialWorkflowService {
 }
 message DescriptionSegment { string key = 1; string text = 2; nous.wave.v1alpha1.CognitiveRef reference = 3; }
 message DescriptionSegments { repeated DescriptionSegment segments = 1; }
-message ReserveWorkflowRequest { string subject_id = 1; string owner = 2; string operation_key = 3; string semantic_digest = 4; reserved 5 to 9; uint32 lease_seconds = 10; WorkflowSnapshot snapshot = 11; }
-message WorkflowReservation { reserved 1 to 4, 6; bool busy = 5; WorkflowSnapshot snapshot = 7; WorkflowPayload proposal = 8; WorkflowPayload outcome = 9; ExecutionTelemetry execution_telemetry = 10; WorkflowLease lease = 11; }
-message SaveWorkflowRequest { reserved 1 to 7; WorkflowPayload proposal = 8; WorkflowPayload outcome = 9; ExecutionTelemetry execution_telemetry = 10; repeated string mutation_operations = 11; WorkflowLease lease = 12; }
-message ReleaseWorkflowRequest { reserved 1 to 4; WorkflowLease lease = 5; }
+message OperationIdentity { string subject_id = 1; string owner = 2; string operation_key = 3; string semantic_digest = 4; }
+message StartOperationRequest { OperationIdentity identity = 1; WorkflowSnapshot snapshot = 2; }
+message OperationRecord { WorkflowSnapshot snapshot = 1; WorkflowPayload proposal = 2; WorkflowPayload outcome = 3; ExecutionTelemetry execution_telemetry = 4; }
+message SaveOperationRequest { OperationIdentity identity = 1; WorkflowPayload proposal = 2; WorkflowPayload outcome = 3; ExecutionTelemetry execution_telemetry = 4; repeated string mutation_operations = 5; }
 message ResolvedMentionsRequest { string subject_id = 1; string occurrence_id = 2; }
 message ResolvedMention { string key = 1; string surface = 2; string entity_ref = 3; }
 message ResolvedMentionsResponse { repeated ResolvedMention candidates = 1; }
-message FindWorkflowRequest { string subject_id = 1; string owner = 2; string operation_key = 3; string semantic_digest = 4; }
-message FoundWorkflow { bool found = 1; reserved 2 to 5; WorkflowSnapshot snapshot = 6; WorkflowPayload proposal = 7; WorkflowPayload outcome = 8; ExecutionTelemetry execution_telemetry = 9; }
-
 message QueryActivationResponse { string preparation_token = 1; string model_input = 2; }

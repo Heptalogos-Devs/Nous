@@ -4,7 +4,7 @@
 use crate::*;
 use nous_runtime::{
     ActivationSeed, ActivationSource, BoundQuery, ConceptEnrichment, LaneCandidate, LaneOutput,
-    LaneStatus, QueryActivation, QueryPlan, QuerySemanticEmbedding, TagActivation,
+    LaneStatus, QueryActivation, QueryPlan, TagActivation,
 };
 pub(crate) async fn activate(
     snapshot: &ServingSnapshot,
@@ -44,14 +44,19 @@ pub(crate) async fn activate(
         if bound.source_query.capabilities.text_embedding == RequirementStrength::Forbidden {
             Some("query embedding is forbidden".into())
         } else if let (Some(provider), Some(generation)) = (provider, generation) {
-            match provider
-                .embed(TextEmbeddingRequest {
-                    subject: bound.source_query.subject,
-                    text: bound.representation.text.clone(),
-                    query: true,
-                })
-                .await
-            {
+            let embedding = match &activation.embedding {
+                Some(embedding) => Ok(embedding.clone()),
+                None => {
+                    provider
+                        .embed(TextEmbeddingRequest {
+                            subject: bound.source_query.subject,
+                            text: bound.representation.text.clone(),
+                            query: true,
+                        })
+                        .await
+                }
+            };
+            match embedding {
                 Ok(embedding) => {
                     if !generation
                         .space
@@ -96,11 +101,7 @@ pub(crate) async fn activate(
                         activation.concept_generation = Some(generation.generation_id);
                         activation.query_embedding_digest =
                             Some(crate::assets::files::digest(&embedding)?);
-                        activation.embedding = Some(QuerySemanticEmbedding {
-                            vector: embedding.vector,
-                            space: embedding.space,
-                            producer: embedding.producer,
-                        });
+                        activation.embedding = Some(embedding);
                         None
                     }
                 }

@@ -3,7 +3,8 @@
 
 use super::*;
 use nous_core::{CognitiveSchemaId, EntityRef, OperationId, Result, SubjectId, TagId};
-use nous_memory::schema::{SchemaLifecycleAction, SchemaView};
+use nous_memory::LifecycleAction;
+use nous_memory::schema::SchemaView;
 use nous_memory::{
     CreateSchemaInput, ReviseSchemaInput, SchemaContent, SchemaEvidenceLinkInput,
     SchemaFormationKind, SchemaScope,
@@ -73,7 +74,6 @@ fn schema_view(value: SchemaView) -> p::CognitiveSchema {
         acceptance_state: enum_name(value.schema.acceptance_state),
         integrity_state: enum_name(value.schema.integrity_state),
         suppression_state: enum_name(value.schema.suppression_state),
-        purge_state: enum_name(value.schema.purge_state),
         title: revision.title.clone().unwrap_or_default(),
         structural_claim: revision.structural_claim.clone(),
         applicability_scope: Some(p::SchemaScope {
@@ -113,7 +113,7 @@ impl KernelService {
     async fn schema_lifecycle(
         &self,
         input: p::CognitiveSchemaMutationRequest,
-        action: SchemaLifecycleAction,
+        action: LifecycleAction,
     ) -> Result<p::CognitiveSchema> {
         Ok(schema_view(
             self.require_memory()?
@@ -132,28 +132,27 @@ impl KernelService {
         &self,
         input: p::CognitiveSchemaMutationRequest,
     ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Suppress)
+        self.schema_lifecycle(input, LifecycleAction::Suppress)
             .await
     }
     pub(super) async fn restore_cognitive_schema(
         &self,
         input: p::CognitiveSchemaMutationRequest,
     ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Restore)
-            .await
+        self.schema_lifecycle(input, LifecycleAction::Restore).await
     }
     pub(super) async fn withdraw_cognitive_schema(
         &self,
         input: p::CognitiveSchemaMutationRequest,
     ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Withdraw)
+        self.schema_lifecycle(input, LifecycleAction::Withdraw)
             .await
     }
     pub(super) async fn reaccept_cognitive_schema(
         &self,
         input: p::CognitiveSchemaMutationRequest,
     ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Reaccept)
+        self.schema_lifecycle(input, LifecycleAction::Reaccept)
             .await
     }
     pub(super) async fn purge_cognitive_schema(

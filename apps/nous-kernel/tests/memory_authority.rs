@@ -84,7 +84,7 @@ async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
     reason = "one temporary Schema cohort checks visibility and replay across lifecycle changes and irreversible purge without redundant database setup"
 )]
 async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
-    use nous_memory::schema::SchemaLifecycleAction as Action;
+    use nous_memory::LifecycleAction as Action;
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
     let subject = subject(&runtime).await;
@@ -139,7 +139,7 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
     let use_input = UseFeedback {
         subject,
         session_id: None,
-        consumer_ref: "consumer:test:schema-cleanup".into(),
+        consumer_ref: "default".into(),
         events: vec![UseFeedbackEvent {
             query_id: None,
             event_id: UseEventId::new(),
@@ -506,4 +506,49 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
             .any(|root| !root.starts_with("unknown-dependency:"))
     );
     assert!(!forbidden.evidence_roots.contains_key(&memory_reference));
+}
+
+#[tokio::test]
+async fn memory_pages_continue_past_the_old_256_item_cap() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = subject(&runtime).await;
+    let source = observation(&runtime, subject, "Shared admitted source").await;
+    let owner = runtime.require_memory().unwrap();
+    let mut expected = std::collections::BTreeSet::new();
+    for index in 0..257 {
+        let memory = owner
+            .form_memory(form_input(
+                subject,
+                source.occurrence.occurrence_id,
+                OperationId::new(),
+                &format!("Fact {index}"),
+            ))
+            .await
+            .unwrap();
+        expected.insert(memory.object.memory_id.0);
+    }
+    let (first, more) = owner
+        .memories(subject, "accepted", 200, None)
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 200);
+    assert!(more);
+    let (second, more) = owner
+        .memories(
+            subject,
+            "accepted",
+            200,
+            first.last().map(|memory| memory.object.memory_id.0),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 57);
+    assert!(!more);
+    let actual = first
+        .into_iter()
+        .chain(second)
+        .map(|memory| memory.object.memory_id.0)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(actual, expected);
 }

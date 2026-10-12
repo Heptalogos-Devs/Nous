@@ -44,15 +44,15 @@ Memory (crates/memory) owns Memory/CognitiveSchema/Episode/Journal/Tag/Associati
 
 ## Lifecycle、幂等和 purge
 
-普通 cognition 读取只接受 accepted/valid/normal/not-purging。Suppression、restore、revalidation 和 purge 是独立 lifecycle 操作，不创建虚假 content revision。
+普通 cognition 读取只接受 accepted/valid/normal。Suppression、restore、revalidation 和 purge 是独立 lifecycle 操作，不创建虚假 content revision。
 
 CognitiveSchema 的 suppress/restore/withdraw/reaccept/purge 由 Memory owner 执行，公开为 ConceptService 的五个 lifecycle RPC。expected object epoch 与 operation digest 固定输入；生命周期变化沿当前 exact dependency 传播，恢复来源不自动恢复 dependent validity。Schema purge 在同一事务删除全部 revisions、清除 resident/WorkContext/Association 引用、撤回其他 Schema 的来源 links、清理可恢复正文的 owner workflow，并为原 UseEvents 保存不含正文的 purge receipts；共享 admitted Material 保留。
 
 来源对象的 revision、lifecycle、support set 或 purge 变化在同一 Authority 事务中沿当前 exact dependency 传播到 Memory、CognitiveSchema、Episode、Journal。当前 dependent 标记为 `revalidation_required`；同一失效传播中，多个路径到达同一对象只增加一次 epoch。Journal 排入 `journal_revalidate`，来源恢复或重建不会将 dependent 自动改回 valid。重新提交支持经过验证的新 revision 后，该对象恢复 valid。
 
-传播记录保留精确 dependent/source revision 和当前失效原因；immutable 正文及支持引用保持原样。Memory 进入 purging 时就标记下游完整性；完成清除后，指向被清 Memory 的 Schema evidence link 撤回。Serving 的相关 family watermark 共用该事务已分配的 authority sequence，传播到 Memory/Schema 时覆盖其 projection family。
+传播记录保留精确 dependent/source revision 和当前失效原因；immutable 正文及支持引用保持原样。Memory purge 在同一事务标记下游完整性并清除内容；指向被清 Memory 的 Schema evidence link 撤回。Serving 的相关 family watermark 共用该事务已分配的 authority sequence，传播到 Memory/Schema 时覆盖其 projection family。
 
-Memory、CognitiveSchema、Episode 和 Journal 的 mutation 使用 Persistence `MutationEnvelope`：owner Subject lock 先于 operation lock，receipt 检查 canonical digest，Replay 由 owner 解码。领域验证和 SQL 写入保持在 owner；envelope 合并 owner 选定的 projection families，receipt 与 Authority 写入同事务提交。未完成事务整体回滚。Memory purge 的 purging checkpoint 与最终清除分别提交，resume 校验同一 operation identity/digest。
+Memory、CognitiveSchema、Episode 和 Journal 的 mutation 使用 Persistence `MutationEnvelope`：owner Subject lock 先于 operation lock，receipt 检查 canonical digest，Replay 由 owner 解码。领域验证和 SQL 写入保持在 owner；envelope 合并 owner 选定的 projection families，receipt 与 Authority 写入同事务提交；事务外可见 receipt 即代表已提交结果。未完成事务整体回滚。四类 cognition purge 在单次事务完成依赖失效、Runtime 引用清理、正文清除和 receipt 提交；失败整体回滚，重试校验同一 operation identity/digest。
 
 同一 operation/event identity 携带相同 canonical digest 时返回相同语义结果；相同 identity 携带不同 digest 时返回 conflict。Purge 后保留不含认知正文的幂等 receipt，不能用 receipt 恢复被清内容。
 

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-mod lifecycle;
 mod mutation;
 mod read;
 
@@ -64,7 +63,6 @@ pub struct EpisodeObject {
     pub acceptance_state: AcceptanceState,
     pub integrity_state: IntegrityState,
     pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
     pub created_at: DateTime<Utc>,
 }
 
@@ -266,7 +264,7 @@ async fn validate_parent_and_overlap(
     Ok(())
 }
 
-async fn validate_episode_reaccept_in(
+pub(in crate::service) async fn validate_episode_reaccept_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subject: SubjectId,
     episode: EpisodeId,

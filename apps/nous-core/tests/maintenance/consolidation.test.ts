@@ -8,15 +8,12 @@ import {
 } from "@nous-wave/client/errors";
 import { expect, it, vi } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { Code, ConnectError } from "@connectrpc/connect";
+import { Code } from "@connectrpc/connect";
 import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { KernelClient } from "../../src/kernel-client.js";
 import { consolidationSchema } from "../../src/model/schemas/consolidation.js";
-import {
-  executeConsolidation,
-  type ConsolidationActionResult,
-} from "../../src/maintenance/consolidation.js";
+import { executeConsolidation } from "../../src/maintenance/consolidation.js";
 const occurrence = "10000000-0000-4000-8000-000000000001";
 const revision = "20000000-0000-4000-8000-000000000001";
 const operation = "40000000-0000-4000-8000-000000000001";
@@ -93,11 +90,7 @@ function fixture() {
     memory: { formMemory: form, reviseMemory: revise, linkRevisions: link },
     concepts: { createCognitiveSchema: schema },
   } as unknown as KernelClient;
-  let progress: ConsolidationActionResult[] = [];
-  const save = vi.fn(async (results: ConsolidationActionResult[]) => {
-    progress = [...results];
-  });
-  return { kernel, form, revise, link, schema, save, progress: () => progress };
+  return { kernel, form, revise, link, schema };
 }
 it("uses canonical owner APIs and returned earlier-action refs for strong Memory relations", async () => {
   const f = fixture();
@@ -126,10 +119,6 @@ it("uses canonical owner APIs and returned earlier-action refs for strong Memory
     operation,
     create(ProducerSignatureSchema),
     {},
-    [],
-    f.save,
-
-    (_id, commit) => commit(),
   );
   expect(outcome.status).toBe("committed");
   expect(f.form.mock.calls[0]?.[0].input?.groundingOccurrenceId).toBe(
@@ -149,7 +138,6 @@ it("uses canonical owner APIs and returned earlier-action refs for strong Memory
     }),
     {},
   );
-  expect(new Set(f.progress().map((r) => r.index)).size).toBe(4);
 });
 it("preserves earlier commits, skips failed dependencies and continues independent suggestions", async () => {
   const f = fixture();
@@ -176,10 +164,6 @@ it("preserves earlier commits, skips failed dependencies and continues independe
     operation,
     create(ProducerSignatureSchema),
     {},
-    [],
-    f.save,
-
-    (_id, commit) => commit(),
   );
   expect(outcome.status).toBe("partial");
   expect(outcome.actions.map((r) => r.status)).toEqual([
@@ -191,36 +175,6 @@ it("preserves earlier commits, skips failed dependencies and continues independe
   expect(f.form).toHaveBeenCalledTimes(1);
   expect(f.link).not.toHaveBeenCalled();
   expect(f.schema).toHaveBeenCalledTimes(1);
-});
-it("resumes saved progress on transport failure with stable operation identities", async () => {
-  const f = fixture();
-  f.schema.mockRejectedValueOnce(
-    new ConnectError("lost response", Code.Unavailable),
-  );
-  const proposal = consolidationSchema.parse({
-    actions: [
-      { action: "create_memory", content },
-      { action: "create_schema", content: schemaContent },
-    ],
-  });
-  const run = () =>
-    executeConsolidation(
-      f.kernel,
-      plan,
-      proposal,
-      operation,
-      create(ProducerSignatureSchema),
-      {},
-      f.progress(),
-      f.save,
-
-      (_id, commit) => commit(),
-    );
-  await expect(run()).rejects.toThrow("lost response");
-  expect(f.progress()).toHaveLength(1);
-  expect((await run()).status).toBe("committed");
-  expect(f.form).toHaveBeenCalledTimes(1);
-  expect(f.schema.mock.calls[1]).toEqual(f.schema.mock.calls[0]);
 });
 it("makes a stale target terminal while independent creation still commits", async () => {
   const f = fixture();
@@ -254,10 +208,6 @@ it("makes a stale target terminal while independent creation still commits", asy
     operation,
     create(ProducerSignatureSchema),
     {},
-    [],
-    f.save,
-
-    (_id, commit) => commit(),
   );
   expect(outcome.actions.map((r) => r.status)).toEqual([
     "stale",

@@ -29,13 +29,12 @@ for (const path of [node, launcher]) {
       "Portable payload is missing; assemble it or select an extracted bundle with --bundle",
     );
 }
-const locator = await portableLocator(installation);
+const located = forwarded.some((arg) => /^--(?:home|locator)(?:=|$)/.test(arg));
 const child = spawn(
   node,
   [
     launcher,
-    "--locator",
-    locator,
+    ...(located ? [] : ["--locator", await portableLocator(installation)]),
     ...(forwarded.length ? forwarded : ["serve"]),
   ],
   {

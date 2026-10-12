@@ -115,7 +115,19 @@ pub(crate) async fn open_runtime_with_serving(
     dense: bool,
     topology: bool,
 ) -> NousRuntime {
-    NousRuntime::open(RuntimeOptions {
+    NousRuntime::open(runtime_options(url, root, lexical, dense, topology))
+        .await
+        .expect("open runtime")
+}
+
+pub(crate) fn runtime_options(
+    url: &str,
+    root: &TempDir,
+    lexical: bool,
+    dense: bool,
+    topology: bool,
+) -> RuntimeOptions {
+    RuntimeOptions {
         postgres_url: url.into(),
         max_connections: 4,
         acquire_timeout_ms: 15000,
@@ -141,9 +153,7 @@ pub(crate) async fn open_runtime_with_serving(
                     "topology": { "enabled": topology }
                 }
         }),
-    })
-    .await
-    .expect("open runtime")
+    }
 }
 
 pub(crate) async fn observation(
@@ -344,8 +354,8 @@ impl nous_retrieval::TextEmbeddingProvider for LongitudinalEmbedding {
     async fn embed(
         &self,
         _request: nous_retrieval::TextEmbeddingRequest,
-    ) -> nous_core::Result<nous_retrieval::TextEmbeddingOutput> {
-        Ok(nous_retrieval::TextEmbeddingOutput {
+    ) -> nous_core::Result<nous_runtime::QuerySemanticEmbedding> {
+        Ok(nous_runtime::QuerySemanticEmbedding {
             vector: vec![1.0, 0.0],
             space: self.space(),
             producer: self.producer(),
@@ -376,16 +386,16 @@ pub(crate) fn workflow_snapshot(payload: serde_json::Value) -> nous_core::Workfl
 }
 
 #[allow(dead_code)]
-pub(crate) fn workflow_lease(
+pub(crate) fn workflow_identity(
     subject: nous_core::SubjectId,
     owner: &str,
     key: &str,
-    token: uuid::Uuid,
-) -> nous_persistence::WorkflowLease {
-    nous_persistence::WorkflowLease {
+    digest: &str,
+) -> nous_persistence::WorkflowIdentity {
+    nous_persistence::WorkflowIdentity {
         subject,
-        owner: nous_persistence::WorkflowOwner::new(owner).unwrap(),
+        owner: owner.into(),
         operation_key: key.into(),
-        token,
+        semantic_digest: digest.into(),
     }
 }

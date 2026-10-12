@@ -140,7 +140,8 @@ impl CognitiveRuntimeService {
             .await?;
         let leaves = vec![super::types::BoundLeaf {
             ordinal: 0,
-            bound: bound.clone(),
+            expression: bound.source_query.expression.clone(),
+            exact_bindings: bound.exact_bindings.clone(),
             hits: result
                 .results
                 .iter()
@@ -148,7 +149,6 @@ impl CognitiveRuntimeService {
                 .collect(),
         }];
         Ok(super::QueryExecution {
-            read_lease: None,
             bound,
             leaves,
             result,
@@ -232,14 +232,6 @@ impl CognitiveRuntimeService {
         let mut readouts = HashMap::<CognitiveRef, BTreeMap<String, serde_json::Value>>::new();
         let mut lane_drops = BTreeMap::new();
         for output in &lane_outputs {
-            for diagnostic in &output.diagnostics {
-                if let Some(value) = diagnostic.strip_prefix("drop:")
-                    && let Some((reason, count)) = value.split_once('=')
-                    && let Ok(count) = count.parse::<usize>()
-                {
-                    *lane_drops.entry(reason.to_owned()).or_default() += count;
-                }
-            }
             if matches!(output.status, LaneStatus::Unavailable | LaneStatus::Stale) {
                 result.degradation.push(Degradation {
                     code: format!("{:?}_lane_unavailable", output.family).to_lowercase(),
@@ -268,7 +260,6 @@ impl CognitiveRuntimeService {
                     .or_insert_with(|| CandidateRankInput {
                         reference: candidate.reference.clone(),
                         family_ranks: HashMap::new(),
-                        family_view_ranks: HashMap::new(),
                         variants: Vec::new(),
                     });
                 entry
@@ -349,7 +340,7 @@ impl CognitiveRuntimeService {
             );
         }
         for (index, owner) in owners.iter().enumerate() {
-            if let Some(owner) = owner {
+            if let Some(owner) = owner.filter(|_| !by_owner[index].is_empty()) {
                 let (hits, drops) = owner
                     .validate_and_materialize(query.subject, &by_owner[index], &bound)
                     .await?;
@@ -359,37 +350,12 @@ impl CognitiveRuntimeService {
                 merge_counts(&mut validation_drops, drops);
             }
         }
-        for binding in &bound.exact_bindings {
-            if binding.mutable_object {
-                let owner_validates = owners
-                    .iter()
-                    .flatten()
-                    .any(|owner| owner.owns(&binding.bound_ref));
-                if owner_validates {
-                    continue;
-                }
-                let (current, epoch, _) = self
-                    .store
-                    .bind_exact_reference(query.subject, &binding.requested_ref)
-                    .await?;
-                if current != binding.bound_ref || epoch != binding.bound_object_epoch {
-                    *validation_drops
-                        .entry("stale_exact_binding".into())
-                        .or_default() += 1;
-                }
-            }
-        }
         for reference in generic {
-            self.store
-                .validate_reference(query.subject, &reference)
-                .await?;
-            let hit = reference_hit(reference.clone(), EvidenceFamily::Exact, query);
-            if !generic_constraints_match(&query.expression.constraints) {
-                *validation_drops
-                    .entry("constraint_ineligible".into())
-                    .or_default() += 1;
+            if let Some(reason) = self.generic_rejection(&bound, &reference).await? {
+                *validation_drops.entry(reason.into()).or_default() += 1;
                 continue;
             }
+            let hit = reference_hit(reference.clone(), EvidenceFamily::Exact, query);
             materialized.insert(reference, hit);
         }
         for candidate in ranked.into_iter().take(validation_bound) {

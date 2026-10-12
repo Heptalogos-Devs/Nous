@@ -241,8 +241,6 @@ pub enum DomainErrorCode {
     StaleContext = 6,
     StaleRevision = 7,
     OperationIdConflict = 8,
-    OperationInProgress = 9,
-    LeaseLost = 10,
     CapabilityUnavailable = 11,
 }
 impl DomainErrorCode {
@@ -261,8 +259,6 @@ impl DomainErrorCode {
             Self::StaleContext => "DOMAIN_ERROR_CODE_STALE_CONTEXT",
             Self::StaleRevision => "DOMAIN_ERROR_CODE_STALE_REVISION",
             Self::OperationIdConflict => "DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT",
-            Self::OperationInProgress => "DOMAIN_ERROR_CODE_OPERATION_IN_PROGRESS",
-            Self::LeaseLost => "DOMAIN_ERROR_CODE_LEASE_LOST",
             Self::CapabilityUnavailable => "DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE",
         }
     }
@@ -278,8 +274,6 @@ impl DomainErrorCode {
             "DOMAIN_ERROR_CODE_STALE_CONTEXT" => Some(Self::StaleContext),
             "DOMAIN_ERROR_CODE_STALE_REVISION" => Some(Self::StaleRevision),
             "DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT" => Some(Self::OperationIdConflict),
-            "DOMAIN_ERROR_CODE_OPERATION_IN_PROGRESS" => Some(Self::OperationInProgress),
-            "DOMAIN_ERROR_CODE_LEASE_LOST" => Some(Self::LeaseLost),
             "DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE" => Some(Self::CapabilityUnavailable),
             _ => None,
         }
@@ -295,7 +289,7 @@ pub enum ErrorRecovery {
     CorrectRequest = 3,
     RediscoverReference = 4,
     RefreshState = 5,
-    /// Resume the original frozen operation identity after obtaining a new lease.
+    /// Retry the original frozen operation identity with a new work budget.
     RetryOperation = 6,
     /// Different semantic inputs require a different operation identity.
     NewOperation = 7,
@@ -1072,8 +1066,6 @@ pub struct Memory {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="8")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="9")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(string, tag="10")]
     pub accessibility_mode: ::prost::alloc::string::String,
     #[prost(string, tag="11")]
@@ -1607,8 +1599,6 @@ pub struct Episode {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="8")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="9")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(message, optional, tag="10")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="11")]
@@ -1872,8 +1862,6 @@ pub struct Journal {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="7")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="8")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(message, optional, tag="9")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="10")]
@@ -2221,8 +2209,6 @@ pub struct CognitiveSchema {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="7")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="8")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(string, tag="9")]
     pub title: ::prost::alloc::string::String,
     #[prost(string, tag="10")]

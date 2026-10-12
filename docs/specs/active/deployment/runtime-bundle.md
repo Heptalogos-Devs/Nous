@@ -16,17 +16,21 @@ Bootstrap rejects unknown or duplicate path keys and invalid path definitions. P
 
 ## Configuration 与 lifecycle
 
+Core 将数据库、对象与 Serving 路径及 typed ConfigurationBootstrapBundle 一次写入受保护的 `RunRoot/kernel-bootstrap.json`，Kernel 从同一文件打开实例。该私有启动文件不是用户配置入口；关闭实例时删除。Configuration Service 仍是运行配置快照的权威。
+
 The portable application package contains Core, CLI/official Client, Kernel, generated protocol, Prompts, migrations and runtime manifests. User configuration, credentials, instance data and locators are created outside ProgramRoot.
 
-Configuration must declare the current `config_revision`. `nous init` and first `nous serve` create a minimal configuration with exclusive create; existing content is not overwritten. `nous config check` uses the same parser and validates local references without starting Runtime or calling a provider. Full fields are documented in [Configuration](../../../reference/CONFIGURATION.md).
+`nous init` and first `nous serve` create a minimal configuration with exclusive create; existing content is not overwritten. `nous config check` uses the same parser and validates local references without starting Runtime or calling a provider. Full fields are documented in [Configuration](../../../reference/CONFIGURATION.md).
 
 Managed-private database mode uses the installed PostgreSQL pack, a protected instance credential and the instance's fixed loopback port. External mode connects only to the configured endpoint. Cluster/version mismatch and port conflicts fail explicitly; startup does not upgrade, recreate or discard database state.
 
 The PRE_PRODUCTION database foundation is the current `0001_foundation.sql` through `0004_indexes.sql`. They declare the current owner shapes directly, including WorkContext text/anchors, Formation basis and model execution metadata. Superseded incremental schemas and payload decoders are removed. Existing cognition is preserved before a deliberate fresh-database restore; ordinary startup does not rewrite an older database's migration ledger.
 
-READY is published after database, Kernel, Core and discovery are available. Public startup output is redacted; bearer tokens are stored only in protected RunRoot. Graceful shutdown is available through stdin close, SIGINT and SIGTERM.
+Core 生命周期由 launcher 直接启动；源码开发与 portable 使用同一启动过程。数据库、Kernel、Core 和 discovery 可用后发布 READY。公开启动输出不包含 bearer token；token 仅保存在受保护的 RunRoot。实例支持 SIGINT、SIGTERM 和显式 `--stop-on-stdin-close`；Kernel 意外退出使 Core 停止并报告失败。关闭过程逐项释放资源，单项失败不跳过其他资源。
 
-Ordinary serve uses installed runtime packs and does not acquire them from the network. Runtime commands are:
+`nous status` 从 Core 的一次快照取得 Core、Kernel 与模型角色状态。Kernel transport 不可用时仍报告可用的 host 状态与实际错误；模型 READY 表示本地配置可执行，不代表 provider 调用成功或 Subject 的 Serving 已准备。Subject projection 状态单独读取。
+
+普通 serve 直接使用已安装 runtime，不下载，也不重复扫描整个 inventory。安装及显式 verify 校验完整 inventory；list 只显示安装元数据和 INSTALLED、MISSING 或 INVALID 状态，不声称完整性校验已通过。Runtime 命令为：
 
 ```text
 nous runtime list

@@ -15,6 +15,23 @@ use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::{database, observation, open_runtime};
 use uuid::Uuid;
 
+async fn admit(
+    runtime: &nous_kernel::NousRuntime,
+    subject: nous_core::SubjectId,
+    session: nous_core::SessionId,
+    admissions: Vec<ResidentAdmission>,
+) -> nous_core::Result<nous_runtime::ResidentMutationOutcome> {
+    let mut tx = runtime.store.begin().await?;
+    let result = runtime
+        .cognition
+        .admit_batch_in(&mut tx, subject, session, admissions)
+        .await?;
+    tx.commit()
+        .await
+        .map_err(nous_persistence::database_error)?;
+    Ok(result)
+}
+
 async fn subject(runtime: &nous_kernel::NousRuntime) -> nous_core::SubjectId {
     runtime
         .subjects
@@ -95,7 +112,7 @@ async fn observation_admission_is_a_single_idempotent_runtime_batch() {
 
     let retry = runtime
         .material
-        .record_observation_once(input, Some(request_id))
+        .record_observation_once(input.clone(), Some(request_id))
         .await
         .expect("idempotent observation retry");
     let after_retry = runtime
@@ -109,6 +126,52 @@ async fn observation_admission_is_a_single_idempotent_runtime_batch() {
     );
     assert_eq!(after_retry.runtime_revision, after_first.runtime_revision);
     assert_eq!(after_retry.resident.len(), after_first.resident.len());
+    let mut rejected = input.clone();
+    rejected.entities.clear();
+    rejected.material = ObservationMaterial::ResourceAvailability {
+        resource: nous_core::ResourceRef::new("resource:test:missing").unwrap(),
+    };
+    let rejected_key = Uuid::new_v4();
+    assert!(matches!(
+        runtime
+            .material
+            .record_observation_once(rejected, Some(rejected_key))
+            .await,
+        Err(nous_core::Error::FailedPrecondition(_))
+    ));
+    let occurrences: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM observation_occurrences WHERE subject_id=$1")
+            .bind(subject.0)
+            .fetch_one(runtime.store.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        occurrences, 1,
+        "failed Runtime admission must roll back Material Authority"
+    );
+    let closed = runtime
+        .cognition
+        .close_session(subject, session.session_id)
+        .await
+        .unwrap();
+    let replay = runtime
+        .material
+        .record_observation_once(input, Some(request_id))
+        .await
+        .unwrap();
+    assert_eq!(
+        replay.occurrence.occurrence_id,
+        first.occurrence.occurrence_id
+    );
+    let after_closed_replay = runtime
+        .cognition
+        .session(subject, session.session_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        after_closed_replay.runtime_revision,
+        closed.runtime_revision
+    );
 }
 
 #[tokio::test]
@@ -123,19 +186,18 @@ async fn resident_batch_is_atomic_and_invalid_persisted_refs_are_visible() {
         .await
         .expect("session");
     let foreign = observation(&runtime, subject_b, "foreign").await;
-    let result = runtime
-        .cognition
-        .admit_batch(
-            subject_a,
-            session.session_id,
-            vec![ResidentAdmission {
-                reference: CognitiveRef::Occurrence(foreign.occurrence.occurrence_id),
-                reason: "foreign".into(),
-                hold_until: None,
-                state: ResidentState::Resident,
-            }],
-        )
-        .await;
+    let result = admit(
+        &runtime,
+        subject_a,
+        session.session_id,
+        vec![ResidentAdmission {
+            reference: CognitiveRef::Occurrence(foreign.occurrence.occurrence_id),
+            reason: "foreign".into(),
+            hold_until: None,
+            state: ResidentState::Resident,
+        }],
+    )
+    .await;
     assert!(matches!(
         result,
         Err(nous_core::Error::FailedPrecondition(_))
@@ -179,25 +241,27 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
         hold_until: Some(hold),
         state: ResidentState::Resident,
     };
-    let inserted = runtime
-        .cognition
-        .admit_batch(subject, session.session_id, vec![first_admission.clone()])
-        .await
-        .expect("first admission");
+    let inserted = admit(
+        &runtime,
+        subject,
+        session.session_id,
+        vec![first_admission.clone()],
+    )
+    .await
+    .expect("first admission");
     assert!(inserted.changed);
     assert_eq!(inserted.runtime_revision, 1);
-    let no_op = runtime
-        .cognition
-        .admit_batch(
-            subject,
-            session.session_id,
-            vec![ResidentAdmission {
-                hold_until: Some(Utc::now()),
-                ..first_admission
-            }],
-        )
-        .await
-        .expect("no-op admission");
+    let no_op = admit(
+        &runtime,
+        subject,
+        session.session_id,
+        vec![ResidentAdmission {
+            hold_until: Some(Utc::now()),
+            ..first_admission
+        }],
+    )
+    .await
+    .expect("no-op admission");
     assert!(!no_op.changed);
     assert_eq!(no_op.runtime_revision, 1);
     let resident = runtime
@@ -212,22 +276,20 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
     );
 
     runtime.cognition.resident_limit = 1;
-    runtime.material.cognition.resident_limit = 1;
     let second = observation(&runtime, subject, "second").await;
-    let eviction = runtime
-        .cognition
-        .admit_batch(
-            subject,
-            session.session_id,
-            vec![ResidentAdmission {
-                reference: CognitiveRef::Occurrence(second.occurrence.occurrence_id),
-                reason: "observed".into(),
-                hold_until: None,
-                state: ResidentState::Resident,
-            }],
-        )
-        .await
-        .expect("eviction admission");
+    let eviction = admit(
+        &runtime,
+        subject,
+        session.session_id,
+        vec![ResidentAdmission {
+            reference: CognitiveRef::Occurrence(second.occurrence.occurrence_id),
+            reason: "observed".into(),
+            hold_until: None,
+            state: ResidentState::Resident,
+        }],
+    )
+    .await
+    .expect("eviction admission");
     assert_eq!(eviction.evicted_count, 1);
     assert_eq!(eviction.runtime_revision, 2);
     assert_eq!(
@@ -290,7 +352,13 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
     );
     let owner = service.0.require_memory().unwrap();
     owner
-        .suppress(subject, memory.object.memory_id, OperationId::new(), 1)
+        .mutate_memory_lifecycle(
+            subject,
+            memory.object.memory_id,
+            OperationId::new(),
+            1,
+            nous_memory::LifecycleAction::Suppress,
+        )
         .await
         .unwrap();
     assert!(
@@ -302,7 +370,13 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
             .is_empty()
     );
     owner
-        .restore(subject, memory.object.memory_id, OperationId::new(), 2)
+        .mutate_memory_lifecycle(
+            subject,
+            memory.object.memory_id,
+            OperationId::new(),
+            2,
+            nous_memory::LifecycleAction::Restore,
+        )
         .await
         .unwrap();
     owner

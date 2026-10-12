@@ -453,24 +453,17 @@ pub mod kernel_model_workflow_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with KernelModelWorkflowServiceServer.
     #[async_trait]
     pub trait KernelModelWorkflowService: std::marker::Send + std::marker::Sync + 'static {
-        async fn find_workflow(
+        async fn read_operation(
             &self,
-            request: tonic::Request<super::FindWorkflowRequest>,
-        ) -> std::result::Result<tonic::Response<super::FoundWorkflow>, tonic::Status>;
-        async fn reserve_workflow(
+            request: tonic::Request<super::OperationIdentity>,
+        ) -> std::result::Result<tonic::Response<super::OperationRecord>, tonic::Status>;
+        async fn start_operation(
             &self,
-            request: tonic::Request<super::ReserveWorkflowRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::WorkflowReservation>,
-            tonic::Status,
-        >;
-        async fn save_workflow(
+            request: tonic::Request<super::StartOperationRequest>,
+        ) -> std::result::Result<tonic::Response<super::OperationRecord>, tonic::Status>;
+        async fn save_operation(
             &self,
-            request: tonic::Request<super::SaveWorkflowRequest>,
-        ) -> std::result::Result<tonic::Response<()>, tonic::Status>;
-        async fn release_workflow(
-            &self,
-            request: tonic::Request<super::ReleaseWorkflowRequest>,
+            request: tonic::Request<super::SaveOperationRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status>;
     }
     #[derive(Debug)]
@@ -550,25 +543,25 @@ pub mod kernel_model_workflow_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/nous.wave.kernel.v1alpha1.KernelModelWorkflowService/FindWorkflow" => {
+                "/nous.wave.kernel.v1alpha1.KernelModelWorkflowService/ReadOperation" => {
                     #[allow(non_camel_case_types)]
-                    struct FindWorkflowSvc<T: KernelModelWorkflowService>(pub Arc<T>);
+                    struct ReadOperationSvc<T: KernelModelWorkflowService>(pub Arc<T>);
                     impl<
                         T: KernelModelWorkflowService,
-                    > tonic::server::UnaryService<super::FindWorkflowRequest>
-                    for FindWorkflowSvc<T> {
-                        type Response = super::FoundWorkflow;
+                    > tonic::server::UnaryService<super::OperationIdentity>
+                    for ReadOperationSvc<T> {
+                        type Response = super::OperationRecord;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::FindWorkflowRequest>,
+                            request: tonic::Request<super::OperationIdentity>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as KernelModelWorkflowService>::find_workflow(
+                                <T as KernelModelWorkflowService>::read_operation(
                                         &inner,
                                         request,
                                     )
@@ -583,7 +576,7 @@ pub mod kernel_model_workflow_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = FindWorkflowSvc(inner);
+                        let method = ReadOperationSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -599,25 +592,25 @@ pub mod kernel_model_workflow_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/nous.wave.kernel.v1alpha1.KernelModelWorkflowService/ReserveWorkflow" => {
+                "/nous.wave.kernel.v1alpha1.KernelModelWorkflowService/StartOperation" => {
                     #[allow(non_camel_case_types)]
-                    struct ReserveWorkflowSvc<T: KernelModelWorkflowService>(pub Arc<T>);
+                    struct StartOperationSvc<T: KernelModelWorkflowService>(pub Arc<T>);
                     impl<
                         T: KernelModelWorkflowService,
-                    > tonic::server::UnaryService<super::ReserveWorkflowRequest>
-                    for ReserveWorkflowSvc<T> {
-                        type Response = super::WorkflowReservation;
+                    > tonic::server::UnaryService<super::StartOperationRequest>
+                    for StartOperationSvc<T> {
+                        type Response = super::OperationRecord;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::ReserveWorkflowRequest>,
+                            request: tonic::Request<super::StartOperationRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as KernelModelWorkflowService>::reserve_workflow(
+                                <T as KernelModelWorkflowService>::start_operation(
                                         &inner,
                                         request,
                                     )
@@ -632,7 +625,7 @@ pub mod kernel_model_workflow_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = ReserveWorkflowSvc(inner);
+                        let method = StartOperationSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -648,13 +641,13 @@ pub mod kernel_model_workflow_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/nous.wave.kernel.v1alpha1.KernelModelWorkflowService/SaveWorkflow" => {
+                "/nous.wave.kernel.v1alpha1.KernelModelWorkflowService/SaveOperation" => {
                     #[allow(non_camel_case_types)]
-                    struct SaveWorkflowSvc<T: KernelModelWorkflowService>(pub Arc<T>);
+                    struct SaveOperationSvc<T: KernelModelWorkflowService>(pub Arc<T>);
                     impl<
                         T: KernelModelWorkflowService,
-                    > tonic::server::UnaryService<super::SaveWorkflowRequest>
-                    for SaveWorkflowSvc<T> {
+                    > tonic::server::UnaryService<super::SaveOperationRequest>
+                    for SaveOperationSvc<T> {
                         type Response = ();
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -662,11 +655,11 @@ pub mod kernel_model_workflow_service_server {
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::SaveWorkflowRequest>,
+                            request: tonic::Request<super::SaveOperationRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as KernelModelWorkflowService>::save_workflow(
+                                <T as KernelModelWorkflowService>::save_operation(
                                         &inner,
                                         request,
                                     )
@@ -681,56 +674,7 @@ pub mod kernel_model_workflow_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = SaveWorkflowSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/nous.wave.kernel.v1alpha1.KernelModelWorkflowService/ReleaseWorkflow" => {
-                    #[allow(non_camel_case_types)]
-                    struct ReleaseWorkflowSvc<T: KernelModelWorkflowService>(pub Arc<T>);
-                    impl<
-                        T: KernelModelWorkflowService,
-                    > tonic::server::UnaryService<super::ReleaseWorkflowRequest>
-                    for ReleaseWorkflowSvc<T> {
-                        type Response = ();
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::ReleaseWorkflowRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as KernelModelWorkflowService>::release_workflow(
-                                        &inner,
-                                        request,
-                                    )
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = ReleaseWorkflowSvc(inner);
+                        let method = SaveOperationSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -1747,11 +1691,11 @@ pub mod kernel_maintenance_service_server {
             tonic::Status,
         >;
         ///
-        async fn claim_maintenance(
+        async fn select_maintenance(
             &self,
-            request: tonic::Request<super::ClaimMaintenanceRequest>,
+            request: tonic::Request<super::SelectMaintenanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::ClaimMaintenanceResponse>,
+            tonic::Response<super::SelectMaintenanceResponse>,
             tonic::Status,
         >;
         ///
@@ -2016,25 +1960,25 @@ pub mod kernel_maintenance_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/nous.wave.kernel.v1alpha1.KernelMaintenanceService/ClaimMaintenance" => {
+                "/nous.wave.kernel.v1alpha1.KernelMaintenanceService/SelectMaintenance" => {
                     #[allow(non_camel_case_types)]
-                    struct ClaimMaintenanceSvc<T: KernelMaintenanceService>(pub Arc<T>);
+                    struct SelectMaintenanceSvc<T: KernelMaintenanceService>(pub Arc<T>);
                     impl<
                         T: KernelMaintenanceService,
-                    > tonic::server::UnaryService<super::ClaimMaintenanceRequest>
-                    for ClaimMaintenanceSvc<T> {
-                        type Response = super::ClaimMaintenanceResponse;
+                    > tonic::server::UnaryService<super::SelectMaintenanceRequest>
+                    for SelectMaintenanceSvc<T> {
+                        type Response = super::SelectMaintenanceResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::ClaimMaintenanceRequest>,
+                            request: tonic::Request<super::SelectMaintenanceRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as KernelMaintenanceService>::claim_maintenance(
+                                <T as KernelMaintenanceService>::select_maintenance(
                                         &inner,
                                         request,
                                     )
@@ -2049,7 +1993,7 @@ pub mod kernel_maintenance_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = ClaimMaintenanceSvc(inner);
+                        let method = SelectMaintenanceSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

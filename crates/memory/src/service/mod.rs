@@ -14,6 +14,7 @@ mod historical;
 mod historical_query;
 mod journal;
 mod lane;
+mod lifecycle;
 mod longitudinal_policy;
 mod longitudinal_query;
 mod maintenance_planning;
@@ -41,6 +42,7 @@ use nous_persistence::{
 pub use nous_runtime::{ResidentView, ResourceUpsert, ResourceView, SessionView};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sqlx::Row;
+pub use state::LifecycleAction;
 use state::{fence_epoch, require_transition};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -52,23 +54,24 @@ pub use accessibility::{
 };
 pub use accretion::{ACCRETION, AccretionPolicy, AccretionSignal};
 pub use concept_maintenance::*;
+pub use consolidation_context::ConsolidationMetadata;
 pub use episode::*;
 pub use journal::*;
 pub use longitudinal_policy::{
     CONSOLIDATION_CONTEXT, CONSOLIDATION_MAX_ACTIONS, ConsolidationContextPolicy, EPISODE_SYNOPSIS,
 };
-pub use maintenance_planning::MaintenanceScope;
+pub use maintenance_planning::{MaintenanceMember, MaintenanceScope};
 pub use nous_core::TopologyRelation;
 pub use nous_core::{CognitiveQuery, CognitiveQueryResult};
 pub use tag::*;
 
 #[derive(Clone)]
 pub struct MemoryService {
-    pub configuration: nous_configuration::ConfigurationService,
-    pub store: AuthorityStore,
-    pub objects: ObjectStore,
-    pub material: nous_material::MaterialService,
-    pub cognition: nous_runtime::CognitiveRuntimeService,
+    pub(crate) configuration: nous_configuration::ConfigurationService,
+    pub(crate) store: AuthorityStore,
+    pub(crate) objects: ObjectStore,
+    pub(crate) material: nous_material::MaterialService,
+    pub(crate) cognition: nous_runtime::CognitiveRuntimeService,
     capabilities: Arc<Vec<CapabilityDescriptor>>,
 }
 
@@ -232,14 +235,17 @@ impl MemoryService {
     }
 
     pub fn new(
+        store: AuthorityStore,
+        objects: ObjectStore,
+        cognition: nous_runtime::CognitiveRuntimeService,
         material: nous_material::MaterialService,
         configuration: nous_configuration::ConfigurationService,
     ) -> Self {
         Self {
             configuration,
-            store: material.store.clone(),
-            objects: material.objects.clone(),
-            cognition: material.cognition.clone(),
+            store,
+            objects,
+            cognition,
             material,
             capabilities: Arc::new(Vec::new()),
         }

@@ -16,6 +16,7 @@ check-fast:
 check: check-fast
     corepack pnpm test
     cargo test --workspace --all-features -- --test-threads=1
+    just smoke
 
 audit:
     cargo deny --config .config/deny.toml check
@@ -43,5 +44,5 @@ release-verify:
     corepack pnpm release:verify --bundle data/releases/windows-x64/current.zip --layout colocated
     corepack pnpm release:verify --bundle data/releases/windows-x64/current.zip --layout locator --relocate
 
-clean-test-temp:
-    powershell -NoProfile -File scripts/maintenance/cleanup_embedded_postgres.ps1
+clean-local:
+    corepack pnpm exec tsx scripts/maintenance/clean.ts
