@@ -9,6 +9,7 @@ export async function materialCommands(
   ref?: string,
 ) {
   const { client, subjectId } = env;
+  if (action === "clean") return client.material.clean({});
   if (action === "limits") return client.material.getLimits({});
   if (action === "artifacts")
     return client.material.listArtifacts({ subjectId, page: page(env) });

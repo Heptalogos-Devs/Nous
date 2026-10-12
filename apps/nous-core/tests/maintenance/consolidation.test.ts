@@ -85,7 +85,7 @@ function fixture() {
   );
   const revise = vi.fn(async () => ({ revisionId: "revised-revision" }));
   const link = vi.fn(async () => ({}));
-  const schema = vi.fn(async () => ({ currentRevisionId: "schema-revision" }));
+  const schema = vi.fn(async () => ({ revisionId: "schema-revision" }));
   const kernel = {
     memory: { formMemory: form, reviseMemory: revise, linkRevisions: link },
     concepts: { createCognitiveSchema: schema },

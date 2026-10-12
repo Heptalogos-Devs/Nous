@@ -16,7 +16,10 @@ export async function subjectCommands(
 ) {
   const { client, save, required } = env;
   if (action === "list")
-    return client.subjects.listSubjects({ page: page(env) });
+    return client.subjects.listSubjects({
+      status: env.values.status,
+      page: page(env),
+    });
   if (action === "create") {
     const subject = await client.subjects.createSubject(
       env.values["request-file"]
@@ -25,7 +28,7 @@ export async function subjectCommands(
             operationId: operationId(env),
           }
         : {
-            operationId: crypto.randomUUID(),
+            operationId: operationId(env),
             capabilities: { memory: true },
             cognitiveSeed: {
               text: "schema_version = 1",

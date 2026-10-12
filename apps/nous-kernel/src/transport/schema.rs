@@ -70,6 +70,7 @@ fn schema_view(value: SchemaView) -> p::CognitiveSchema {
         schema_id: value.schema.schema_id.0.to_string(),
         subject_id: value.schema.subject_id.0.to_string(),
         current_revision_id: value.schema.current_revision_id.0.to_string(),
+        revision_id: revision.schema_revision_id.0.to_string(),
         object_epoch: value.schema.object_epoch,
         created_at: Some(timestamp(value.schema.created_at)),
         revision_no: revision.revision_no,

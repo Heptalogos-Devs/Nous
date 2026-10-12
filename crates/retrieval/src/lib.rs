@@ -5,7 +5,7 @@
 mod status;
 pub use status::ProjectionFamilyStatus;
 mod policy;
-pub use policy::epa::{EPA_POLICY, EpaPolicy};
+pub use policy::epa::EpaPolicy;
 pub use policy::wave::*;
 mod mechanisms;
 pub use mechanisms::*;
@@ -15,9 +15,9 @@ pub use assets::reclamation::ReclamationReport;
 pub use concept::generation::{ConceptGeneration, ConceptRecord};
 mod embedding;
 mod material;
-pub use embedding::{EmbeddingCursor, EmbeddingNeed, EmbeddingPage};
+pub use embedding::{EmbeddingCursor, EmbeddingNeed, EmbeddingPage, EmbeddingSubmission};
 mod projection;
-pub use projection::{CognitiveProjectionInput, OwnedTopologyProjection};
+pub use projection::{OwnedTopologyProjection, VcpProjectionInput};
 mod observation;
 mod provider;
 pub mod reference;
@@ -65,7 +65,6 @@ pub const ABSOLUTE_LEXICAL_WRITER_BYTES: usize = 512 * 1024 * 1024;
 pub fn register_configuration(
     registry: &mut nous_configuration::ConfigRegistryBuilder,
 ) -> Result<()> {
-    policy::epa::register_configuration(registry)?;
     policy::vcp::register_configuration(registry)?;
     for (key, description, default) in [
         (
@@ -178,11 +177,6 @@ impl ServingService {
     /// Generation paths are local to the active ServingRoot, not durable configuration.
     pub fn artifact_directory(&self, generation: ServingGenerationId) -> PathBuf {
         self.options.root.join(generation.0.to_string())
-    }
-
-    /// Inspect current rebuildable assets without exposing publication authority.
-    pub fn current_snapshot(&self, subject: SubjectId) -> Arc<ServingSnapshot> {
-        self.publisher.snapshot_for(subject)
     }
 
     pub fn embedding(&self) -> Option<&Arc<dyn TextEmbeddingProvider>> {

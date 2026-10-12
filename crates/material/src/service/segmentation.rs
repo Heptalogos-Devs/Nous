@@ -59,7 +59,7 @@ impl MaterialService {
         for (ordinal, (start, end)) in ranges(&text, segment_bytes)?.into_iter().enumerate() {
             let slice = &text[start..end];
             let coordinate = serde_json::json!({"algorithm":"description-utf8-lines-v1","config_digest":config_digest,"ordinal":ordinal,"utf8_start":start,"utf8_end":end,"digest":blake3::hash(slice.as_bytes()).to_hex().to_string()});
-            let mut region = DerivedRegion {
+            let region = DerivedRegion {
                 derived_region_id: DerivedRegionId::new(),
                 subject_id: subject,
                 derived_representation_id: representation,
@@ -71,12 +71,23 @@ impl MaterialService {
                 parent_derived_region_id: None,
                 created_at: self.cognition.now(subject),
             };
-            region.derived_region_id = self.insert_derived_region_in_tx(&mut tx, &region).await?;
             segments.push(DescriptionSegment {
                 key: format!("D{:03}", ordinal + 1),
                 text: slice.into(),
                 region,
             });
+        }
+        let regions = self
+            .insert_derived_regions_in_tx(
+                &mut tx,
+                &segments
+                    .iter()
+                    .map(|segment| segment.region.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        for (segment, region) in segments.iter_mut().zip(regions) {
+            segment.region = region;
         }
         tx.commit().await.map_err(db)?;
         Ok(segments)

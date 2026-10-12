@@ -22,7 +22,7 @@ Kernel 组合 Subject、Configuration、Material、Memory、Runtime、Persistenc
 | `crates/material`      | 共享 Artifact CAS admission、ObservationOccurrence、SourceRegion、DerivedRepresentation、DerivedRegion、批量 selected text 与 context materialization |
 | `crates/memory`        | Memory、CognitiveSchema、Episode、Journal、Tag、AssociationEvidence、provenance 与 lifecycle                                                          |
 | `crates/runtime`       | Session、ResidentSet、WorkContext、UseEvent、QueryPlan、lane/result contracts 与 fixed fusion                                                         |
-| `crates/retrieval`     | lexical/dense/concept Serving、current/historical immutable generations、共享向量与显式 associative diffusion                                         |
+| `crates/retrieval`     | lexical/dense/concept Serving、current/historical immutable generations、批量共享向量与显式 associative diffusion                                     |
 
 ## Transport 与 mutation
 
@@ -32,11 +32,11 @@ Core 的 `CognitionService` 承载 Query、GrantMaintenance、Projection 和 Man
 
 Model resource schemas 位于 `model/profiles.ts`，role 与聚合配置各有独立 owner。`model/invocations.ts` 固定执行 routes/snapshot 并记录实际 attempts；`model/protocols.ts` 处理不依赖 Role 的 SDK/HTTP 调用。`model/input.ts` 按实际输入和候选 route 判断可执行性，`model/interpretation.ts` 构造 Material 请求并按通道解释输出；`model/derivation.ts` 持有 Source/representation workflow。每次实际媒体访问及其输出校验使用同一通道描述，quality/provenance 保存实际 adapter、模型、Prompt、输出 schema 和推理参数；不读取源码生成升级版本核对。
 
-私有 workflow services 按实际能力分组：`KernelQueryService` 负责认知时间读取及 query prepare/finalize/release；`KernelModelWorkflowService` 保存正式 operation 的 snapshot/proposal/outcome；Core 按 operation identity 串行执行，内核不维护第二套模型租约；`KernelMaterialWorkflowService` 提供 derivation/embedding 输入与提交；`KernelMaintenanceService` 提供 pending needs 的 select/plan/finish，以及天然原子的 Episode partition 与 Journal 提交。Core 按 Subject 串行运行 grant，Runtime 使用 trigger revision 防止旧完成结果清除新增工作。consolidation/concept proposal 由 Core 逐项调用 canonical Memory/Schema/Tag/Association owner API；稳定 action identity 和 owner receipt 支持已提交结果的重放，不保存逐项检查点。`KernelProjectionService` 提供 contribution batch。`KernelConfigurationService` 提供 bootstrap/snapshot，`ArtifactStreamService` 提供流式 Artifact 传输。
+私有 workflow services 按实际能力分组：`KernelQueryService` 负责认知时间读取及 query prepare/finalize/release；`KernelModelWorkflowService` 保存正式 operation 的 snapshot/proposal/outcome；Core 按 operation identity 串行执行，内核不维护第二套模型租约；`KernelMaterialWorkflowService` 提供 derivation/embedding 输入与提交；`KernelMaintenanceService` 提供 pending needs 的 select/plan/finish，以及天然原子的 Episode partition 与 Journal 提交。Core 按 Subject 串行运行 grant，Runtime 使用 trigger revision 防止旧完成结果清除新增工作。consolidation/concept proposal 由 Core 逐项调用 canonical Memory/Schema/Tag/Association owner API；稳定 action identity 和 owner receipt 支持已提交结果的重放，不保存逐项检查点。`KernelProjectionService` 提供 contribution batch。`KernelConfigurationService` 提供 bootstrap/snapshot，`ArtifactStreamService` 提供 Artifact 上传/下载及 Material owner 解析后的选区流；Core 不再自行解释 source 的物理坐标。
 
 Persistence 的 `MutationEnvelope` 持有 Subject/operation identity、可选 owner Subject lock、operation lock、canonical digest receipt、transaction 和 projection invalidation。owner 选择 invalidation families，envelope 为同一事务分配一个 Authority sequence，并在 commit 时发布合并的 watermarks 与 receipt。Replay 返回 receipt，由领域 owner 解码结果；未提交的事务回滚；四类 cognition purge 与 receipt 在同一事务提交，失败整体回滚。
 
-Memory、Episode、CognitiveSchema 和 Journal 保留独立模型、typed tables、provenance 与 head/epoch fence；所属认知能力共用 lifecycle/purge 事务和 Runtime exact-ref 清理。Episode reaccept 的组织验证、Journal source revalidation 和各家族 projection invalidation 保持具体规则。Memory crate 的内部 read、mutation、lifecycle、partition 和 provenance 按能力组织，Kernel 不构造领域 basis catalog。
+Memory、Episode、CognitiveSchema 和 Journal 保留独立模型、typed tables、provenance 与 head/epoch fence；所属认知能力共用 lifecycle/purge 事务和 Runtime exact-ref 清理。Episode reaccept 的组织验证、Journal source revalidation 和各家族 projection invalidation 保持具体规则。Memory crate 的内部 read、mutation、lifecycle、partition 和 provenance 按能力组织，Kernel 不构造领域 basis catalog。Episode 创建/修订共用正式内容；Schema/Tag 返回选中修订与当前 head，mutation 直接返回完整视图，provenance 只读取所需 exact support。
 
 Serving 校验实际配置、向量空间、Authority watermark、制品结构与内容校验和。没有源码树哈希、实现版本核对或跨构建缓存迁移；更改制品格式后显式清理可重建 cache。当前与历史代次共用 `retrieval/assets/` 中的构建、安装、替换与互斥规则。Native Wave 的配置声明与解析由 `retrieval/policy/wave.rs` 拥有，图构建由 `retrieval/mechanisms/graph.rs` 拥有；调整配置展示等级不会改变实际查询参数。
 
@@ -69,6 +69,8 @@ Windows x64 portable assembly 使用 LLVM-MinGW UCRT 生成 shipping Kernel，�
 Query addressing/preparation、automatic concept maintenance、derived Accretion 与逐项 owner mutation 的长期设计 Authority 位于 Architecture-Vault merge `2de60296bc80d790e9dd508bc6b3abd19c7d3236`。Prepared Query 的 semantic representation 由当前描述符和 exact refs 在 planning 前固定；readout profile 不改变 semantic input。Material/Memory 分别提供最终材料与时间验证，Runtime 组合 owner contributions；没有通用 persistence reference_times resolver。
 
 Concept planner 围绕 focus 的 aboutness、来源、一跳关系和 bounded Tag candidates；不生成 Subject 全量 cognition catalog。proposal 不是超级事务，Core 保留每项 committed/no_change/invalid/stale/dependency outcome。Natural Tag merge/split、Episode partition 与 Journal mutation 继续由真实 owner 维护自身原子性。Accretion 按需提供来源、成员、recurrence、时间跨度、关联、使用和反证等 derived signals，review hints 在调用点计算。
+
+Context projection 由 Runtime 统一捕获 Session 与 foreground、选择 consumer 允许的来源并分配预算。Memory/Schema/Episode/Journal、Material 与 Resource 各自提供实际正文和证据，Core 只执行 steward；空 optional 集合不调用模型。Observation 与 ReportUse 共用 Resident 接纳规则，完整列表批量读取。
 
 Research 只使用 official public Client/CLI。小型 runner 不启动额外 Runtime、不管理 Serving installer/embedding store，输出在 ignored data。VCP reference/adapters 与有效 asset reuse/reclamation 保留；完整数值矩阵保存在 ignored Research results，CI 使用 compact discriminating goldens。
 

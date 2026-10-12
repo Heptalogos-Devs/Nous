@@ -20,6 +20,7 @@ fn revision(
     value: nous_memory::EpisodeRevision,
     members: Vec<nous_memory::EpisodeMember>,
     basis: Vec<nous_memory::RevisionBasis>,
+    relations: Vec<nous_memory::EpisodeRelation>,
 ) -> p::EpisodeRevision {
     p::EpisodeRevision {
         episode_revision_id: value.episode_revision_id.0.to_string(),
@@ -44,6 +45,15 @@ fn revision(
             })
             .collect(),
         basis: basis.into_iter().map(basis_proto).collect(),
+        relations: relations
+            .into_iter()
+            .map(|relation| p::EpisodeRelation {
+                from_revision_id: relation.from_revision_id.0.to_string(),
+                to_revision_id: relation.to_revision_id.0.to_string(),
+                relation: relation.relation,
+                created_at: Some(timestamp(relation.created_at)),
+            })
+            .collect(),
     }
 }
 
@@ -59,7 +69,8 @@ pub(super) fn view(value: nous_memory::EpisodeView) -> p::Episode {
         integrity_state: enum_name(value.object.integrity_state),
         suppression_state: enum_name(value.object.suppression_state),
         created_at: Some(timestamp(value.object.created_at)),
-        current_revision: current.then(|| revision(value.revision, value.members, value.basis)),
+        current_revision: current
+            .then(|| revision(value.revision, value.members, value.basis, value.relations)),
     }
 }
 
@@ -77,6 +88,30 @@ fn parsed_parent(value: Option<String>) -> Result<Option<EpisodeRevisionId>> {
         .transpose()
 }
 
+fn episode_content(content: p::EpisodeContent) -> Result<nous_memory::EpisodeContent> {
+    Ok(nous_memory::EpisodeContent {
+        title: content.title,
+        parent_episode_revision_id: parsed_parent(content.parent_episode_revision_id)?,
+        experience_time: temporal(content.experience_time)?,
+        boundary_explanation: content.boundary_explanation,
+        producer_signature_id: content
+            .producer_signature_id
+            .as_deref()
+            .map(id)
+            .transpose()?,
+        members: content
+            .members
+            .into_iter()
+            .map(member)
+            .collect::<Result<_>>()?,
+        basis: content
+            .basis
+            .into_iter()
+            .map(basis)
+            .collect::<Result<_>>()?,
+    })
+}
+
 impl KernelService {
     pub(super) async fn create_episode(
         &self,
@@ -89,21 +124,8 @@ impl KernelService {
                 operation_id: OperationId(id(&input.operation_id)?),
                 subject,
                 track_key: input.track_key,
-                title: input.title,
-                parent_episode_revision_id: parsed_parent(input.parent_episode_revision_id)?,
-                experience_time: temporal(input.experience_time)?,
-                boundary_explanation: input.boundary_explanation,
-                producer_signature_id: input
-                    .producer_signature_id
-                    .as_deref()
-                    .map(id)
-                    .transpose()?,
-                members: input
-                    .members
-                    .into_iter()
-                    .map(member)
-                    .collect::<Result<_>>()?,
-                basis: input.basis.into_iter().map(basis).collect::<Result<_>>()?,
+
+                content: episode_content(required(input.content, "content")?)?,
             })
             .await?;
         Ok(response(value))
@@ -132,7 +154,12 @@ impl KernelService {
                 EpisodeRevisionId(id(&input.id)?),
             )
             .await?;
-        Ok(revision(value.revision, value.members, value.basis))
+        Ok(revision(
+            value.revision,
+            value.members,
+            value.basis,
+            value.relations,
+        ))
     }
 
     pub(super) async fn list_episodes(
@@ -193,7 +220,7 @@ impl KernelService {
         Ok(p::ListEpisodeRevisionsResponse {
             items: values
                 .into_iter()
-                .map(|value| revision(value.revision, value.members, value.basis))
+                .map(|value| revision(value.revision, value.members, value.basis, value.relations))
                 .collect(),
             next_page_token,
         })
@@ -212,21 +239,8 @@ impl KernelService {
                     episode_id: EpisodeId(id(&input.episode_id)?),
                     expected_object_epoch: input.expected_object_epoch,
                     intent: input.intent,
-                    title: input.title,
-                    parent_episode_revision_id: parsed_parent(input.parent_episode_revision_id)?,
-                    experience_time: temporal(input.experience_time)?,
-                    boundary_explanation: input.boundary_explanation,
-                    producer_signature_id: input
-                        .producer_signature_id
-                        .as_deref()
-                        .map(id)
-                        .transpose()?,
-                    members: input
-                        .members
-                        .into_iter()
-                        .map(member)
-                        .collect::<Result<_>>()?,
-                    basis: input.basis.into_iter().map(basis).collect::<Result<_>>()?,
+
+                    content: episode_content(required(input.content, "content")?)?,
                 })
                 .await?,
         ))

@@ -114,7 +114,7 @@ impl KernelService {
         Ok(seed_view(
             self.0
                 .subjects
-                .latest_cognitive_seed(SubjectId(id(&input.subject_id)?))
+                .cognitive_seed(SubjectId(id(&input.subject_id)?), None)
                 .await?,
         ))
     }

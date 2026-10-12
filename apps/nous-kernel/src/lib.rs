@@ -52,13 +52,6 @@ pub struct RuntimeStatus {
 }
 
 impl NousRuntime {
-    pub async fn materialize(
-        &self,
-        subject: SubjectId,
-        request: nous_material::MaterializeRequest,
-    ) -> Result<nous_material::MaterializedEvidence> {
-        self.material.materialize(subject, request).await
-    }
     pub async fn open(options: RuntimeOptions) -> Result<Self> {
         Self::open_with_clock(options, Arc::new(nous_runtime::SystemCognitiveClock)).await
     }
@@ -108,7 +101,6 @@ impl NousRuntime {
         let memory = process_capabilities.memory.then(|| {
             MemoryService::new(
                 store.clone(),
-                objects.clone(),
                 cognition.clone(),
                 material.clone(),
                 configuration.clone(),
@@ -301,7 +293,7 @@ impl NousRuntime {
     }
 
     pub async fn status(&self) -> RuntimeStatus {
-        let mut capabilities = vec![
+        let capabilities = vec![
             CapabilityStatus {
                 capability_id: "subject_core".into(),
                 status: Readiness::Ready,
@@ -325,9 +317,6 @@ impl NousRuntime {
                     .then(|| "disabled in composition".into()),
             },
         ];
-        if let Some(memory) = &self.memory {
-            capabilities.extend(memory.status().await.capabilities);
-        }
         RuntimeStatus {
             ready: self.store.check().await.is_ok(),
             capabilities,

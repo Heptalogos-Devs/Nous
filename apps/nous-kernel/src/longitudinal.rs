@@ -51,33 +51,36 @@ impl NousRuntime {
                     )),
                     subject,
                     track_key: draft.track_key,
-                    title: None,
-                    parent_episode_revision_id: None,
-                    experience_time,
-                    boundary_explanation: draft
-                        .boundary_reason
-                        .unwrap_or_else(|| "experience_boundary".into()),
-                    producer_signature_id: None,
-                    members: draft
-                        .members
-                        .iter()
-                        .map(|id| EpisodeMemberInput {
-                            reference: CognitiveRef::Occurrence(*id),
-                            role: "experience".into(),
-                        })
-                        .collect(),
-                    basis: draft
-                        .members
-                        .iter()
-                        .map(|id| {
-                            RevisionBasis::Evidence(EvidenceRef {
-                                epistemic_relation: None,
-                                occurrence_id: *id,
-                                locator: EvidenceLocator::WholeOccurrence,
-                                basis_role: BasisRole::Direct,
+
+                    content: nous_memory::EpisodeContent {
+                        title: None,
+                        parent_episode_revision_id: None,
+                        experience_time,
+                        boundary_explanation: draft
+                            .boundary_reason
+                            .unwrap_or_else(|| "experience_boundary".into()),
+                        producer_signature_id: None,
+                        members: draft
+                            .members
+                            .iter()
+                            .map(|id| EpisodeMemberInput {
+                                reference: CognitiveRef::Occurrence(*id),
+                                role: "experience".into(),
                             })
-                        })
-                        .collect(),
+                            .collect(),
+                        basis: draft
+                            .members
+                            .iter()
+                            .map(|id| {
+                                RevisionBasis::Evidence(EvidenceRef {
+                                    epistemic_relation: None,
+                                    occurrence_id: *id,
+                                    locator: EvidenceLocator::WholeOccurrence,
+                                    basis_role: BasisRole::Direct,
+                                })
+                            })
+                            .collect(),
+                    },
                 })
                 .await?;
             self.cognition

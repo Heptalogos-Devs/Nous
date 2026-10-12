@@ -63,7 +63,9 @@ impl MaterialService {
         let now = self.cognition.now(input.subject);
         let object_guard = if matches!(
             &input.material,
-            ObservationMaterial::InlineText { .. } | ObservationMaterial::StructuredJson { .. }
+            ObservationMaterial::InlineText { .. }
+                | ObservationMaterial::StructuredJson { .. }
+                | ObservationMaterial::ArtifactRef { .. }
         ) {
             Some(self.objects.reference_guard(false).await?)
         } else {
@@ -72,9 +74,6 @@ impl MaterialService {
         let artifact = self
             .material_to_artifact(&mut tx, input.subject, &input.material, now)
             .await?;
-        if let Some(artifact) = &artifact {
-            artifact.validate()?;
-        }
         let occurrence_id = OccurrenceId::new();
         let occurrence = ObservationOccurrence {
             occurrence_id,
@@ -109,13 +108,7 @@ impl MaterialService {
             .bind(occurrence.occurrence_id.0).bind(occurrence.subject_id.0).bind(occurrence.artifact_id.map(|id| id.0)).bind(occurrence.source_class.as_str()).bind(occurrence.external_object_ref.as_ref().map(ObjectRef::as_str)).bind(occurred_kind).bind(occurred_start).bind(occurred_end).bind(occurrence.observed_at).bind(&occurrence.conversation_ref).bind(occurrence.actor_entity_ref.as_ref().map(EntityRef::as_str)).bind(&occurrence.context).bind(occurrence.created_at).execute(&mut *tx).await.map_err(db)?;
         let source_region = if let Some(artifact) = &artifact {
             let coordinate = serde_json::json!({});
-            let coordinate_hash = blake3::hash(
-                serde_json::to_string(&coordinate)
-                    .unwrap_or_default()
-                    .as_bytes(),
-            )
-            .to_hex()
-            .to_string();
+            let coordinate_hash = blake3::hash(b"{}").to_hex().to_string();
             let existing = sqlx::query("SELECT source_region_id,created_at FROM source_regions WHERE subject_id=$1 AND artifact_id=$2 AND coordinate_kind='whole_artifact' AND coordinate_hash=$3")
                 .bind(input.subject.0).bind(artifact.artifact_id.0).bind(&coordinate_hash).fetch_optional(&mut *tx).await.map_err(db)?;
             let (id, region_created_at) = if let Some(row) = existing {
@@ -139,7 +132,6 @@ impl MaterialService {
                 parent_source_region_id: None,
                 created_at: region_created_at,
             };
-            region.validate()?;
             Some(region)
         } else {
             None
@@ -251,6 +243,7 @@ impl MaterialService {
     ) -> Result<()> {
         if let Some(session) = input.session.filter(|_| input.runtime.admit) {
             let mut admissions = vec![ResidentAdmission {
+                last_meaningful_use_at: None,
                 reference: CognitiveRef::Occurrence(occurrence_id),
                 reason: "observed".into(),
                 hold_until: input.runtime.hold_until,
@@ -259,6 +252,7 @@ impl MaterialService {
             for mention in &input.entities {
                 if let Some(entity) = &mention.entity_ref {
                     admissions.push(ResidentAdmission {
+                        last_meaningful_use_at: None,
                         reference: CognitiveRef::Entity(entity.clone()),
                         reason: "observed".into(),
                         hold_until: input.runtime.hold_until,
@@ -269,6 +263,7 @@ impl MaterialService {
             if let ObservationMaterial::ResourceAvailability { resource } = &input.material {
                 ResourceRef::new(resource.as_str())?;
                 admissions.push(ResidentAdmission {
+                    last_meaningful_use_at: None,
                     reference: CognitiveRef::Resource(resource.clone()),
                     reason: "resource_awareness".into(),
                     hold_until: input.runtime.hold_until,
@@ -347,7 +342,7 @@ impl MaterialService {
     }
 
     pub async fn artifact(&self, subject: SubjectId, artifact: ArtifactId) -> Result<Artifact> {
-        let row = sqlx::query("SELECT artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata FROM artifacts WHERE subject_id=$1 AND artifact_id=$2")
+        let row = sqlx::query("SELECT artifact_id,subject_id,content_hash,byte_length,media_type,created_at,metadata FROM artifacts WHERE subject_id=$1 AND artifact_id=$2")
             .bind(subject.0).bind(artifact.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(||Error::NotFound("artifact not found".into()))?;
         decode_artifact(row)
     }

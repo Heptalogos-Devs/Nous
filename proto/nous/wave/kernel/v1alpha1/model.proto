@@ -27,7 +27,9 @@ message EmbeddingCursor { string subject_id = 1; int64 content_revision = 2; str
 message EmbeddingNeedsRequest { string subject_id = 1; uint32 limit = 2; optional string preparation_token = 3; EmbeddingCursor cursor = 4; }
 message EmbeddingNeed { nous.wave.v1alpha1.CognitiveRef reference = 1; string text = 2; string digest = 3; }
 message EmbeddingNeedsResponse { EmbeddingConfig config = 1; repeated EmbeddingNeed needs = 2; EmbeddingCursor next_cursor = 3; }
-message CommitEmbeddingRequest { string subject_id = 1; nous.wave.v1alpha1.CognitiveRef reference = 2; QueryEmbedding material = 3; optional string preparation_token = 4; }
+message EmbeddingSubmission { nous.wave.v1alpha1.CognitiveRef reference = 1; QueryEmbedding material = 2; }
+message CommitEmbeddingsRequest { string subject_id = 1; optional string preparation_token = 2; repeated EmbeddingSubmission items = 3; }
+message CommitEmbeddingsResponse { uint32 committed = 1; }
 message CommitInterpretationRequest {
   string subject_id = 1;
   repeated nous.wave.v1alpha1.DerivationInput inputs = 2;
@@ -50,7 +52,7 @@ service KernelMaterialWorkflowService {
   rpc GetResolvedMentions(ResolvedMentionsRequest) returns (ResolvedMentionsResponse);
   rpc GetEmbeddingConfig(google.protobuf.Empty) returns (EmbeddingConfig);
   rpc ListEmbeddingNeeds(EmbeddingNeedsRequest) returns (EmbeddingNeedsResponse);
-  rpc CommitEmbedding(CommitEmbeddingRequest) returns (google.protobuf.Empty);
+  rpc CommitEmbeddings(CommitEmbeddingsRequest) returns (CommitEmbeddingsResponse);
   rpc CommitInterpretation(CommitInterpretationRequest) returns (nous.wave.v1alpha1.DerivedRepresentation);
 }
 message DescriptionSegment { string key = 1; string text = 2; nous.wave.v1alpha1.CognitiveRef reference = 3; }

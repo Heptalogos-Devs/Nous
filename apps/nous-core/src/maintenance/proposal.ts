@@ -1,10 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { conceptMaintenanceSchema } from "../model/schemas/concept-maintenance.js";
-
-import { consolidationSchema } from "../model/schemas/consolidation.js";
-
 import { Code, ConnectError } from "@connectrpc/connect";
 import { type ExecutionOptions } from "../execution.js";
 import { create, toJson } from "@bufbuild/protobuf";
@@ -21,9 +17,9 @@ import { type ExecutionTelemetry } from "../model/execution/routes.js";
 import {
   partitionIndices,
   journalBasisKeys,
-  episodePartitionSchema,
-  journalSynthesisSchema,
 } from "../model/schemas/longitudinal.js";
+
+import type { ModelGenerationOutput } from "../model/schemas/contracts.js";
 
 import { modelProducer } from "../model/producer.js";
 
@@ -90,7 +86,7 @@ export async function buildMaintenanceProposal({
     let segments;
     try {
       segments = partitionIndices(
-        episodePartitionSchema.parse(result.value),
+        result.value as ModelGenerationOutput<"episode_segmentation">,
         plan.members.map((member) => member.key),
       );
     } catch {
@@ -139,7 +135,8 @@ export async function buildMaintenanceProposal({
         }
       : { action: "no_change" };
   } else if (need.kind === "concept_maintenance") {
-    const proposal = conceptMaintenanceSchema.parse(result.value);
+    const proposal =
+      result.value as ModelGenerationOutput<"concept_maintenance">;
     proposed = {
       action: "concept",
       proposal,
@@ -154,7 +151,7 @@ export async function buildMaintenanceProposal({
   } else if (need.kind === "memory_consolidate") {
     proposed = {
       action: "consolidation",
-      proposal: consolidationSchema.parse(result.value),
+      proposal: result.value as ModelGenerationOutput<"memory_consolidation">,
       producer: toJson(
         ProducerSignatureSchema,
         create(
@@ -164,7 +161,7 @@ export async function buildMaintenanceProposal({
       ),
     };
   } else {
-    const proposal = journalSynthesisSchema.parse(result.value);
+    const proposal = result.value as ModelGenerationOutput<"journal_synthesis">;
     try {
       journalBasisKeys(proposal, new Set(plan.basis.map((entry) => entry.key)));
     } catch {

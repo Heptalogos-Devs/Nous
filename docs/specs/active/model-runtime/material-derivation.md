@@ -12,15 +12,15 @@ Artifact、ObservationOccurrence、SourceRegion、DerivedRepresentation 与 Deri
 
 DerivedRepresentation 保存 ordered exact inputs、strategy、representation kind、ProducerSignature、revision、payload 与 quality。Inputs 可引用 SourceRegion、DerivedRepresentation 或 DerivedRegion，必须属于同一 Subject，不得重复、自引用或形成 cycle。已提交 input set 不可修改。Supersedes 表示显式 refinement lineage，不属于 derivation inputs。
 
-成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。Core 对相同 source region 的派生执行串行处理；已保存的 paid proposal/outcome 不重新读取媒体。原始 bytes 按需要加载，frames mode 仍先取得实际 FFmpeg/frame identity，再查找对应 paid stage。
+成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。Core 对相同 source region 的派生执行串行处理；已保存的 paid proposal/outcome 不重新读取媒体。原始 bytes 按需要加载，frames mode 先取得实际 FFmpeg version 与采样策略 identity，复用已成功表示保存的输入图和 paid outcome；命中时不下载原 bytes、不重新抽帧或调用模型。
 
 ## Selected text 与 Serving
 
-Material 对 Occurrence、Artifact、SourceRegion、DerivedRepresentation 和 DerivedRegion 提供有界文本视图。视图包含 exact reference、实际读取的 UTF-8 byte selection、总 byte 数、所选文本的 BLAKE3 content identity，以及历史 Authority snapshot digest。显式坐标必须位于合法 UTF-8 边界；读取预算截断只保留完整字符。精确读取、Serving 文档与 embedding preparation 共用这一读取实现，Region 的索引正文只包含所选片段。
+Material 对 Occurrence、Artifact、SourceRegion、DerivedRepresentation 和 DerivedRegion 提供有界文本视图。视图包含 exact reference、实际读取的 UTF-8 byte selection、总 byte 数、所选文本的 BLAKE3 content identity，以及历史 Authority snapshot digest。显式坐标必须位于合法 UTF-8 边界；读取预算截断只保留完整字符。精确读取、Serving 文档与 embedding preparation 共用这一读取实现，Region 的索引正文只包含所选片段。Material 同时提供元数据头与字节流；`partial` 表示未完整读取所请求来源的选区，完整有界 Region 不因其不是整份 Artifact 而标为截断。`range_start/end` 与 `total_bytes` 保留实际 payload 坐标与大小。
 
 普通 Serving 使用有效 representation；superseded representation 仍可精确回读，并按 captured historical view 决定过去的有效文档。Material 拥有 Artifact／外部来源 lineage 与多来源派生根，Memory 组合 cognition basis；Serving 消费相同的 current/as-of provenance contribution。Meaningful Use 可以支持关联，但不会凭空成为独立事实来源。
 
-Embedding discovery 先选择至多 256 个 candidate refs，再通过共同文档合同读取正文，并批量判定兼容缓存缺口。返回的 continuation 绑定 Subject、当前内容 watermark 或历史 view digest；空 needs page 仍可能有 continuation。提交仅回读指定 exact reference，核对文本 content identity 和 view，并在 Authority fence 内发布缓存。Serving build、discovery 和 commit 使用相同正文格式。模型 batch admission 与文档候选 page 是不同预算；宿主遵守调用者的总提交上限。
+Embedding discovery 先选择至多 256 个 candidate refs，再通过共同文档合同读取正文，并批量判定兼容缓存缺口。返回的 continuation 绑定 Subject、当前内容 watermark 或历史 view digest；空 needs page 仍可能有 continuation。提交批量读取指定 exact references，核对各文本 content identity 和 view，并在 Authority fence 内发布缓存；provider batch 不拆成逐项 owner RPC/事务。Serving build、discovery 和 commit 使用相同正文格式。模型 batch admission 与文档候选 page 是不同预算；宿主遵守调用者的总提交上限。
 
 材料与 Resource 的其他读取边界见 [Cognitive IO](cognitive-io-and-resources.md)。
 

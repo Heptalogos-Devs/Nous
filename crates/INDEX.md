@@ -27,7 +27,7 @@
 | Retrieval algorithms  | `mechanisms/` 放原生索引与 Wave；`concept/` 放共享 concept generation/lane；`vcp/` 放 adapter/generation/lane/readout；`policy/` 只拥有配置 | [Retrieval](retrieval/src/lib.rs) / [数值 reference](retrieval/src/reference/mod.rs) |
 | PostgreSQL projection | `projection/` 提供 text/concept/topology 输入与 invalidation；`historical/` 提供过去 Authority binding/projection，均由语义 owner 调用      | [Persistence](persistence/src/lib.rs)                                                |
 
-Rust 私有算法 unit tests 可以使用同模块内的 `#[cfg(test)]`；独立的 query unit support 在 `retrieval/tests/unit/`，真实数据库轨迹在 Kernel `tests/`。测试和 helper 与生产源码共用长度门禁。
+Rust 私有算法 unit tests 可以使用同模块内的 `#[cfg(test)]`；独立的 query unit support 在 `retrieval/tests/unit/`，真实数据库轨迹在 Kernel `tests/`。优先复用公共功能场景，仅为独特的数值、并发和解析边界保留局部测试。
 
 - [Proquint 地址编码](persistence/src/proquint.rs)
 - [Rust 实现](README.md)

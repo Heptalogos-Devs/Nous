@@ -151,7 +151,9 @@ fn decode_schema_view(
         schema: CognitiveSchema {
             schema_id,
             subject_id: subject,
-            current_revision_id: revision_id,
+            current_revision_id: CognitiveSchemaRevisionId(
+                row.try_get("current_revision_id").map_err(db)?,
+            ),
             object_epoch: row.try_get("object_epoch").map_err(db)?,
             acceptance_state: parse_enum(
                 row.try_get("acceptance_state").map_err(db)?,
@@ -173,64 +175,15 @@ fn decode_schema_view(
 }
 
 fn decode_schema_evidence_link(row: sqlx::postgres::PgRow) -> Result<SchemaEvidenceLink> {
-    let basis = if row.try_get::<String, _>("basis_kind").map_err(db)? == "evidence" {
-        RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
-            locator: match (
-                row.try_get::<Option<Uuid>, _>("source_region_id")
-                    .map_err(db)?,
-                row.try_get::<Option<Uuid>, _>("derived_representation_id")
-                    .map_err(db)?,
-                row.try_get::<Option<Uuid>, _>("derived_region_id")
-                    .map_err(db)?,
-            ) {
-                (Some(id), None, None) => {
-                    EvidenceLocator::SourceRegion(nous_core::SourceRegionId(id))
-                }
-                (None, Some(id), None) => {
-                    EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(id))
-                }
-                (None, None, Some(id)) => {
-                    EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(id))
-                }
-                (None, None, None) => EvidenceLocator::WholeOccurrence,
-                _ => {
-                    return Err(Error::Infrastructure(
-                        "schema evidence locator is invalid".into(),
-                    ));
-                }
-            },
-            basis_role: parse_enum(
-                row.try_get("basis_role").map_err(db)?,
-                "schema evidence basis role",
-            )?,
-        })
-    } else {
-        RevisionBasis::CognitionDependency(CognitionDependency {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            target_revision: parse_reference(
-                &row.try_get::<String, _>("basis_kind").map_err(db)?,
-                &row.try_get::<String, _>("basis_ref").map_err(db)?,
-            )?,
-            basis_role: parse_enum(
-                row.try_get("basis_role").map_err(db)?,
-                "schema dependency basis role",
-            )?,
-        })
-    };
+    let content = decode_schema_link_input(&row)?;
     Ok(SchemaEvidenceLink {
         link_id: SchemaEvidenceLinkId(row.try_get("link_id").map_err(db)?),
         subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),
         schema_revision_id: CognitiveSchemaRevisionId(
             row.try_get("schema_revision_id").map_err(db)?,
         ),
-        role: parse_enum(row.try_get("role").map_err(db)?, "schema evidence role")?,
-        basis,
+        role: content.role,
+        basis: content.basis,
         producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
         created_at: row.try_get("created_at").map_err(db)?,
         revoked_at: row.try_get("revoked_at").map_err(db)?,

@@ -24,7 +24,7 @@ mod tree;
 mod types;
 pub use lane::{LaneCandidate, LaneOutput, LaneStatus, TopologyWorkSummary};
 pub use orchestrate::{CognitiveContributor, CognitiveContributors, SharedLaneProvider};
-pub use plan::{QueryPlan, WorkCycle};
+pub use plan::QueryPlan;
 pub use ranking::{
     CandidateRankInput, DEFAULT_RESULT_LIMIT, RetrievalPolicy, rank_candidates_with_policy,
     register_retrieval_configuration, resolve_retrieval_policy,

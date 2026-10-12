@@ -327,7 +327,7 @@ impl MemoryService {
                     if matches!(value, RevisionBasis::Evidence(_)) {
                         has_source_evidence = true;
                     }
-                    self.validate_basis_for_subject(subject, std::slice::from_ref(value))
+                    self.provenance_summary(subject, std::slice::from_ref(value))
                         .await?;
                 }
                 AssociationBasis::UseEvent(value) => {
@@ -471,29 +471,6 @@ impl MemoryService {
         mutation
             .commit("association", Some(&association.0.to_string()), None, None)
             .await
-    }
-
-    pub async fn temporal_evidence_public(
-        &self,
-        revision: MemoryRevisionId,
-    ) -> Result<TemporalEvidence> {
-        self.temporal_evidence(revision).await
-    }
-
-    pub async fn require_exact_revision(
-        &self,
-        subject: SubjectId,
-        reference: &CognitiveRef,
-    ) -> Result<()> {
-        if !matches!(
-            reference,
-            CognitiveRef::MemoryRevision(_) | CognitiveRef::CognitiveSchemaRevision(_)
-        ) {
-            return Err(Error::Invalid(
-                "durable cognition reference must be an exact revision".into(),
-            ));
-        }
-        self.store.validate_reference(subject, reference).await
     }
 }
 

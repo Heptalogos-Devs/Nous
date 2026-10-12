@@ -42,6 +42,32 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
         .upsert_resource(owner, descriptor.clone())
         .await
         .unwrap();
+    let session = runtime
+        .cognition
+        .open_session(owner, serde_json::json!({}))
+        .await
+        .unwrap();
+    let projection = nous_kernel::transport::KernelService(runtime.clone())
+        .build_contribution_batch(nous_protocol::public::ProjectionRequest {
+            subject_id: owner.0.to_string(),
+            session_id: session.session_id.0.to_string(),
+            consumer_id: "default".into(),
+            situation_refs: vec![nous_protocol::public::CognitiveRef {
+                kind: "resource".into(),
+                value: resource.as_str().into(),
+            }],
+            max_items: 1,
+            max_text_bytes: 256,
+            memory_requirement: "FORBIDDEN".into(),
+            runtime_requirement: "FORBIDDEN".into(),
+            resource_requirement: "REQUIRED".into(),
+            materialize: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(projection.segments[0].authority, "resource_descriptor");
+    assert_eq!(projection.segments[0].text, resource.as_str());
     let mut request = query(owner);
     request.expression.cues = vec![Cue::Text(TextCue {
         text: "external fact".into(),
@@ -51,15 +77,37 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
     assert!(request.requests_resources());
     request.result_need.limit = 1;
     let explicit = runtime.execute_query(request.clone(), None).await.unwrap();
+    let slots = runtime
+        .configuration
+        .snapshot_for_subject(owner)
+        .unwrap()
+        .get(nous_runtime::QUERY_SLOTS)
+        .unwrap();
+    let mut occupied = Vec::new();
+    for _ in 0..slots {
+        occupied.push(
+            runtime
+                .cognition
+                .retain_query(explicit.clone(), test_support::query_lease())
+                .unwrap()
+                .1,
+        );
+    }
+    assert!(matches!(
+        runtime
+            .cognition
+            .retain_query(explicit.clone(), test_support::query_lease()),
+        Err(nous_core::Error::Unavailable(_))
+    ));
+    for ticket in occupied {
+        runtime.cognition.release_query(owner, ticket).unwrap();
+    }
     let (pool, ticket) = runtime
         .cognition
         .retain_query(explicit, test_support::query_lease())
         .unwrap();
     assert_eq!(pool.resource_actions.len(), 1);
-    runtime
-        .cognition
-        .release_query(owner, ticket.unwrap())
-        .unwrap();
+    runtime.cognition.release_query(owner, ticket).unwrap();
     request.expression.constraints.current_authority = nous_core::CurrentAuthorityNeed::Required;
     for case in [
         "valid",
@@ -77,7 +125,6 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
             .cognition
             .retain_query(execution, test_support::query_lease())
             .unwrap();
-        let ticket = ticket.unwrap();
         assert_eq!(pool.resource_actions.len(), 1);
         let action = &pool.resource_actions[0];
         let record = ExternalResourceRecord {

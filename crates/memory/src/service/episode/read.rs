@@ -19,27 +19,14 @@ impl MemoryService {
         .await
     }
 
-    async fn episode_views(
+    pub(in crate::service) async fn episode_views(
         &self,
         subject: SubjectId,
         revisions: &[Uuid],
     ) -> Result<std::collections::HashMap<Uuid, EpisodeView>> {
         use std::collections::HashMap;
         let rows = sqlx::query("SELECT o.episode_id,o.subject_id,o.track_key,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.created_at,r.episode_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end,r.boundary_explanation,r.formed_at,r.recorded_at,r.producer_signature_id FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2)").bind(subject.0).bind(revisions).fetch_all(self.store.pool()).await.map_err(db)?;
-        let mut members: HashMap<Uuid, Vec<EpisodeMember>> = HashMap::new();
-        for row in sqlx::query("SELECT episode_revision_id,ordinal,ref_kind,ref_value,role FROM episode_revision_members WHERE episode_revision_id=ANY($1) ORDER BY episode_revision_id,ordinal").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
-            members.entry(row.try_get("episode_revision_id").map_err(db)?).or_default().push(EpisodeMember {
-                ordinal: row.try_get("ordinal").map_err(db)?,
-                reference: parse_reference(&row.try_get::<String,_>("ref_kind").map_err(db)?, &row.try_get::<String,_>("ref_value").map_err(db)?)?,
-                role: row.try_get("role").map_err(db)?,
-            });
-        }
-        let mut basis: HashMap<Uuid, Vec<RevisionBasis>> = HashMap::new();
-        for row in sqlx::query("SELECT episode_revision_id,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM episode_revision_basis WHERE episode_revision_id=ANY($1) ORDER BY episode_revision_id,basis_no").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
-            let revision_id: Uuid = row.try_get("episode_revision_id").map_err(db)?;
-            let value = basis_from_row(&row)?;
-            basis.entry(revision_id).or_default().push(value);
-        }
+        let (mut basis, mut members) = self.episode_supports(revisions).await?;
         let mut relations: HashMap<Uuid, Vec<EpisodeRelation>> = HashMap::new();
         for row in sqlx::query("SELECT from_revision_id,to_revision_id,relation,created_at FROM episode_revision_relations WHERE from_revision_id=ANY($1) OR to_revision_id=ANY($1) ORDER BY created_at,from_revision_id,to_revision_id").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
             let relation = EpisodeRelation {
@@ -112,6 +99,42 @@ impl MemoryService {
                 result.map(|view| (view.revision.episode_revision_id.0, view))
             })
             .collect()
+    }
+
+    async fn episode_supports(
+        &self,
+        revisions: &[Uuid],
+    ) -> Result<(
+        std::collections::HashMap<Uuid, Vec<RevisionBasis>>,
+        std::collections::HashMap<Uuid, Vec<EpisodeMember>>,
+    )> {
+        use std::collections::HashMap;
+        let mut members: HashMap<Uuid, Vec<EpisodeMember>> = HashMap::new();
+        for row in sqlx::query("SELECT episode_revision_id,ordinal,ref_kind,ref_value,role FROM episode_revision_members WHERE episode_revision_id=ANY($1) ORDER BY episode_revision_id,ordinal").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+            members.entry(row.try_get("episode_revision_id").map_err(db)?).or_default().push(EpisodeMember {
+                ordinal: row.try_get("ordinal").map_err(db)?,
+                reference: parse_reference(&row.try_get::<String,_>("ref_kind").map_err(db)?, &row.try_get::<String,_>("ref_value").map_err(db)?)?,
+                role: row.try_get("role").map_err(db)?,
+            });
+        }
+        let mut basis: HashMap<Uuid, Vec<RevisionBasis>> = HashMap::new();
+        for row in sqlx::query("SELECT episode_revision_id,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM episode_revision_basis WHERE episode_revision_id=ANY($1) ORDER BY episode_revision_id,basis_no").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+            let revision_id: Uuid = row.try_get("episode_revision_id").map_err(db)?;
+            let value = basis_from_row(&row)?;
+            basis.entry(revision_id).or_default().push(value);
+        }
+        Ok((basis, members))
+    }
+
+    pub(in crate::service) async fn episode_support(
+        &self,
+        revision: Uuid,
+    ) -> Result<(Vec<RevisionBasis>, Vec<EpisodeMember>)> {
+        let (mut basis, mut members) = self.episode_supports(&[revision]).await?;
+        Ok((
+            basis.remove(&revision).unwrap_or_default(),
+            members.remove(&revision).unwrap_or_default(),
+        ))
     }
 
     pub async fn episode_revision(

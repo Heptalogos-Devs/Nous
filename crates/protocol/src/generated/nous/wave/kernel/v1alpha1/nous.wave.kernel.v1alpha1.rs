@@ -45,6 +45,21 @@ pub struct DownloadChunk {
     #[prost(bytes="vec", tag="1")]
     pub content: ::prost::alloc::vec::Vec<u8>,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MaterializedChunk {
+    #[prost(oneof="materialized_chunk::Part", tags="1, 2")]
+    pub part: ::core::option::Option<materialized_chunk::Part>,
+}
+/// Nested message and enum types in `MaterializedChunk`.
+pub mod materialized_chunk {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Part {
+        #[prost(message, tag="1")]
+        Header(super::super::super::v1alpha1::MaterializedEvidence),
+        #[prost(bytes, tag="2")]
+        Content(::prost::alloc::vec::Vec<u8>),
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MaintenanceNeed {
     #[prost(string, tag="1")]
@@ -612,15 +627,25 @@ pub struct EmbeddingNeedsResponse {
     pub next_cursor: ::core::option::Option<EmbeddingCursor>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CommitEmbeddingRequest {
+pub struct EmbeddingSubmission {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
+    #[prost(message, optional, tag="2")]
+    pub material: ::core::option::Option<QueryEmbedding>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CommitEmbeddingsRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag="2")]
-    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
-    #[prost(message, optional, tag="3")]
-    pub material: ::core::option::Option<QueryEmbedding>,
-    #[prost(string, optional, tag="4")]
+    #[prost(string, optional, tag="2")]
     pub preparation_token: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="3")]
+    pub items: ::prost::alloc::vec::Vec<EmbeddingSubmission>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CommitEmbeddingsResponse {
+    #[prost(uint32, tag="1")]
+    pub committed: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitInterpretationRequest {

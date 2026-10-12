@@ -187,6 +187,7 @@ message MemoryMutationRequest { string operation_id = 1; string subject_id = 2 [
 message MemoryHistoryRequest { string subject_id = 1 [(reference_kind) = "subject"]; string memory_id = 2 [(reference_kind) = "memory"]; Page page = 3; }
 
 message Artifact { string artifact_id = 1 [(reference_kind) = "artifact"]; string subject_id = 2 [(reference_kind) = "subject"]; string content_hash = 3; uint64 byte_length = 4; string media_type = 5; google.protobuf.Timestamp created_at = 6; google.protobuf.Struct metadata = 7; }
+message MaterialCleanup { uint64 objects_deleted = 1; uint64 staging_deleted = 2; }
 message MaterialLimits { uint64 max_upload_bytes = 1; }
 message ProducerSignature { string signature_hash = 1; string provider_class = 2; string operation = 3; string implementation = 4; optional string model_identity = 5; optional string model_revision = 6; string preprocessing_identity = 7; string preprocessing_revision = 8; string config_digest = 9; optional string output_schema_digest = 10; optional string model_role = 11; optional string model_profile = 12; optional string execution_profile = 13; optional string inference_controls_digest = 14; optional string role_policy_digest = 15; optional string prompt_id = 16; optional string prompt_digest = 17; }
 message DerivationInput { uint32 ordinal = 1; CognitiveRef reference = 2; string role = 3; }
@@ -275,13 +276,14 @@ message SetActiveWorkContextRequest {
   int64 expected_runtime_revision = 4;
   optional string work_context_id = 5 [(reference_kind) = "work_context"];
 }
-message ProjectionRequest { string subject_id = 1 [(reference_kind) = "subject"]; string session_id = 2 [(reference_kind) = "session"]; optional string active_work_context_id = 3 [(reference_kind) = "work_context"]; string consumer_id = 4; QueryExpr query = 5; repeated CognitiveRef situation_refs = 6; uint32 max_items = 7; uint32 max_text_bytes = 8; }
+message ProjectionRequest { string subject_id = 1 [(reference_kind) = "subject"]; string session_id = 2 [(reference_kind) = "session"]; optional string active_work_context_id = 3 [(reference_kind) = "work_context"]; string consumer_id = 4; QueryExpr query = 5; repeated CognitiveRef situation_refs = 6; uint32 max_items = 7; uint32 max_text_bytes = 8; string memory_requirement = 9; string runtime_requirement = 10; string resource_requirement = 11; bool materialize = 12; }
 message ContextSegment { string segment_id = 1; string text = 2; string semantic_role = 3; repeated CognitiveRef source_refs = 4; repeated Evidence evidence = 5; string authority = 6; string stability = 7; optional string source_revision = 8; }
-message Projection { string projection_id = 1; string consumer_id = 2; int64 source_runtime_revision = 3; repeated ContextSegment segments = 4; repeated Degradation degradation = 5; }
+message Projection { string projection_id = 1; string consumer_id = 2; int64 source_runtime_revision = 3; repeated ContextSegment segments = 4; repeated Degradation degradation = 5; string subject_id = 6 [(reference_kind) = "subject"]; string session_id = 7 [(reference_kind) = "session"]; optional string active_work_context_id = 8 [(reference_kind) = "work_context"]; }
 message ContextCursor { string track_id = 1; string epoch_id = 2; uint32 revision = 3; }
 message ManagedContextRequest { ProjectionRequest projection = 1; ContextCursor known_cursor = 2; }
 message ManagedContextResponse { string kind = 1; ContextCursor cursor = 2; Projection projection = 3; }
 message EpisodeMember { int32 ordinal = 1; CognitiveRef reference = 2; string role = 3; }
+message EpisodeRelation { string from_revision_id = 1 [(reference_kind) = "episode_revision"]; string to_revision_id = 2 [(reference_kind) = "episode_revision"]; string relation = 3; google.protobuf.Timestamp created_at = 4; }
 message EpisodeRevision {
   string episode_revision_id = 1 [(reference_kind) = "episode_revision"];
   string episode_id = 2 [(reference_kind) = "episode"];
@@ -298,6 +300,7 @@ message EpisodeRevision {
   optional string producer_signature_id = 13;
   repeated EpisodeMember members = 14;
   repeated RevisionBasis basis = 15;
+  repeated EpisodeRelation relations = 16;
 }
 message Episode {
   string episode_id = 1 [(reference_kind) = "episode"];
@@ -311,17 +314,20 @@ message Episode {
   google.protobuf.Timestamp created_at = 10;
   EpisodeRevision current_revision = 11;
 }
+message EpisodeContent {
+  optional string title = 1;
+  optional string parent_episode_revision_id = 2 [(reference_kind) = "episode_revision"];
+  TemporalExtent experience_time = 3;
+  string boundary_explanation = 4;
+  optional string producer_signature_id = 5;
+  repeated EpisodeMember members = 6;
+  repeated RevisionBasis basis = 7;
+}
 message CreateEpisodeRequest {
   string operation_id = 1;
   string subject_id = 2 [(reference_kind) = "subject"];
   string track_key = 3;
-  optional string title = 4;
-  optional string parent_episode_revision_id = 5 [(reference_kind) = "episode_revision"];
-  TemporalExtent experience_time = 6;
-  string boundary_explanation = 7;
-  optional string producer_signature_id = 9;
-  repeated EpisodeMember members = 10;
-  repeated RevisionBasis basis = 11;
+  EpisodeContent content = 4;
 }
 message ReviseEpisodeRequest {
   string operation_id = 1;
@@ -329,13 +335,7 @@ message ReviseEpisodeRequest {
   string episode_id = 3 [(reference_kind) = "episode"];
   int64 expected_object_epoch = 4;
   string intent = 5;
-  optional string title = 6;
-  optional string parent_episode_revision_id = 7 [(reference_kind) = "episode_revision"];
-  TemporalExtent experience_time = 8;
-  string boundary_explanation = 9;
-  optional string producer_signature_id = 11;
-  repeated EpisodeMember members = 12;
-  repeated RevisionBasis basis = 13;
+  EpisodeContent content = 6;
 }
 message LinkEpisodeRevisionsRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string from_revision_id = 3 [(reference_kind) = "episode_revision"]; string to_revision_id = 4 [(reference_kind) = "episode_revision"]; string relation = 5; }
 message EpisodeMutationRequest { string operation_id = 1; string subject_id = 2 [(reference_kind) = "subject"]; string episode_id = 3 [(reference_kind) = "episode"]; int64 expected_object_epoch = 4; }

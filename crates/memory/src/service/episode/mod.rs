@@ -22,18 +22,22 @@ pub struct EpisodeMemberInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EpisodeInput {
-    pub operation_id: OperationId,
-    pub subject: SubjectId,
-    pub track_key: String,
+pub struct EpisodeContent {
     pub title: Option<String>,
     pub parent_episode_revision_id: Option<EpisodeRevisionId>,
     pub experience_time: TemporalExtent,
     pub boundary_explanation: String,
-
     pub producer_signature_id: Option<Uuid>,
     pub members: Vec<EpisodeMemberInput>,
     pub basis: Vec<RevisionBasis>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeInput {
+    pub operation_id: OperationId,
+    pub subject: SubjectId,
+    pub track_key: String,
+    pub content: EpisodeContent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,14 +47,7 @@ pub struct ReviseEpisodeInput {
     pub episode_id: EpisodeId,
     pub expected_object_epoch: i64,
     pub intent: String,
-    pub title: Option<String>,
-    pub parent_episode_revision_id: Option<EpisodeRevisionId>,
-    pub experience_time: TemporalExtent,
-    pub boundary_explanation: String,
-
-    pub producer_signature_id: Option<Uuid>,
-    pub members: Vec<EpisodeMemberInput>,
-    pub basis: Vec<RevisionBasis>,
+    pub content: EpisodeContent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,44 +104,46 @@ pub struct EpisodeView {
     pub relations: Vec<EpisodeRelation>,
 }
 
-fn validate_episode_input(
-    track: &str,
-    title: &Option<String>,
-    time: &TemporalExtent,
-    boundary: &str,
-    members: &[EpisodeMemberInput],
-    basis: &[RevisionBasis],
-) -> Result<()> {
+fn validate_episode_track(track: &str) -> Result<()> {
     if !track.is_empty() && (track.len() > 128 || track.chars().any(char::is_control)) {
         return Err(Error::Invalid("Episode track_key is out of bounds".into()));
     }
-    if title.as_ref().is_some_and(|value| value.len() > 8192) {
-        return Err(Error::Invalid("Episode title is out of bounds".into()));
-    }
-    time.validate()?;
-    if boundary.trim().is_empty() || boundary.len() > 16384 {
-        return Err(Error::Invalid(
-            "Episode boundary explanation is out of bounds".into(),
-        ));
-    }
-    if members.is_empty() || members.len() > 2048 {
-        return Err(Error::Invalid("Episode members are out of bounds".into()));
-    }
-    if basis.is_empty() || basis.len() > 256 {
-        return Err(Error::Invalid("Episode basis are out of bounds".into()));
-    }
-    let mut keys = BTreeSet::new();
-    for member in members {
-        if member.role.is_empty()
-            || member.role.len() > 128
-            || !keys.insert(member.reference.to_string())
-        {
+    Ok(())
+}
+
+impl EpisodeContent {
+    pub fn validate(&self) -> Result<()> {
+        if self.title.as_ref().is_some_and(|value| value.len() > 8192) {
+            return Err(Error::Invalid("Episode title is out of bounds".into()));
+        }
+        self.experience_time.validate()?;
+        if self.boundary_explanation.trim().is_empty() || self.boundary_explanation.len() > 16384 {
             return Err(Error::Invalid(
-                "Episode members must be unique and bounded".into(),
+                "Episode boundary explanation is out of bounds".into(),
             ));
         }
+        if self.members.is_empty() || self.members.len() > 2048 {
+            return Err(Error::Invalid("Episode members are out of bounds".into()));
+        }
+        if self.basis.is_empty() || self.basis.len() > 256 {
+            return Err(Error::Invalid("Episode basis are out of bounds".into()));
+        }
+        let mut keys = BTreeSet::new();
+        for member in &self.members {
+            if member.role.is_empty()
+                || member.role.len() > 128
+                || !keys.insert(member.reference.to_string())
+            {
+                return Err(Error::Invalid(
+                    "Episode members must be unique and bounded".into(),
+                ));
+            }
+        }
+        if self.basis.iter().any(|basis| matches!(basis, RevisionBasis::CognitionDependency(value) if !matches!(value.target_revision, CognitiveRef::MemoryRevision(_) | CognitiveRef::CognitiveSchemaRevision(_) | CognitiveRef::EpisodeRevision(_)))) {
+            return Err(Error::Invalid("Episode support must target a Memory, Schema, or Episode revision".into()));
+        }
+        validate_exact_basis(&self.basis)
     }
-    validate_exact_basis(basis)
 }
 
 async fn validate_episode_refs_in_tx(
@@ -170,48 +169,6 @@ async fn validate_episode_refs_in_tx(
             return Err(Error::FailedPrecondition(
                 "Episode member is outside Subject".into(),
             ));
-        }
-    }
-    Ok(())
-}
-
-async fn validate_episode_basis_in_tx(
-    store: &AuthorityStore,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    subject: SubjectId,
-    basis: &[RevisionBasis],
-) -> Result<()> {
-    for basis in basis {
-        match basis {
-            RevisionBasis::Evidence(value) => {
-                let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2)").bind(subject.0).bind(value.occurrence_id.0).fetch_one(&mut **tx).await.map_err(db)?;
-                if !exists {
-                    return Err(Error::Invalid("Episode evidence is outside Subject".into()));
-                }
-            }
-            RevisionBasis::CognitionDependency(value) => {
-                if !matches!(
-                    value.target_revision,
-                    CognitiveRef::MemoryRevision(_)
-                        | CognitiveRef::CognitiveSchemaRevision(_)
-                        | CognitiveRef::EpisodeRevision(_)
-                ) {
-                    return Err(Error::Invalid(
-                        "Episode support must target an exact revision".into(),
-                    ));
-                }
-                if !store
-                    .reference_in_subject_tx(tx, subject, &value.target_revision)
-                    .await?
-                {
-                    return Err(Error::Invalid("Episode support is outside Subject".into()));
-                }
-            }
-            RevisionBasis::Seed(_) => {
-                return Err(Error::Invalid(
-                    "Episode cannot use Cognitive Seed support".into(),
-                ));
-            }
         }
     }
     Ok(())
@@ -323,79 +280,51 @@ async fn ensure_no_parent_cycle(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Episode creation binds one immutable revision and its object identity"
-)]
+struct EpisodeRevisionWrite {
+    episode: EpisodeId,
+    revision: EpisodeRevisionId,
+    parent: Option<EpisodeRevisionId>,
+    intent: Option<String>,
+    number: i32,
+    formed_at: DateTime<Utc>,
+    recorded_at: DateTime<Utc>,
+}
+
 async fn insert_episode_revision(
     store: &AuthorityStore,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    input: &EpisodeInput,
-    episode: EpisodeId,
-    revision: EpisodeRevisionId,
-    parent_revision: Option<EpisodeRevisionId>,
-    intent: Option<String>,
-    kind: &str,
-    start: Option<DateTime<Utc>>,
-    end: Option<DateTime<Utc>>,
-    formed_at: DateTime<Utc>,
-    recorded_at: DateTime<Utc>,
+    subject: SubjectId,
+    content: &EpisodeContent,
+    write: EpisodeRevisionWrite,
 ) -> Result<()> {
-    insert_episode_revision_with_intent(
-        store,
-        tx,
-        input,
+    let EpisodeRevisionWrite {
         episode,
         revision,
-        parent_revision,
+        parent: parent_revision,
         intent,
-        1,
-        kind,
-        start,
-        end,
+        number: revision_no,
         formed_at,
         recorded_at,
-    )
-    .await
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Episode revision insertion receives the complete canonical payload"
-)]
-async fn insert_episode_revision_with_intent(
-    store: &AuthorityStore,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    input: &EpisodeInput,
-    episode: EpisodeId,
-    revision: EpisodeRevisionId,
-    parent_revision: Option<EpisodeRevisionId>,
-    intent: Option<String>,
-    revision_no: i32,
-    kind: &str,
-    start: Option<DateTime<Utc>>,
-    end: Option<DateTime<Utc>>,
-    formed_at: DateTime<Utc>,
-    recorded_at: DateTime<Utc>,
-) -> Result<()> {
+    } = write;
+    let (kind, start, end) = temporal_columns(&content.experience_time);
     sqlx::query("INSERT INTO episode_revisions(episode_revision_id,episode_id,subject_id,revision_no,parent_revision_id,revision_intent,title,parent_episode_revision_id,experience_time_kind,experience_time_start,experience_time_end,boundary_explanation,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)")
-        .bind(revision.0).bind(episode.0).bind(input.subject.0).bind(revision_no).bind(parent_revision.map(|value| value.0)).bind(intent).bind(&input.title).bind(input.parent_episode_revision_id.map(|value| value.0)).bind(kind).bind(start).bind(end).bind(&input.boundary_explanation).bind(formed_at).bind(recorded_at).bind(input.producer_signature_id).execute(&mut **tx).await.map_err(db)?;
-    for (ordinal, member) in input.members.iter().enumerate() {
+        .bind(revision.0).bind(episode.0).bind(subject.0).bind(revision_no).bind(parent_revision.map(|value| value.0)).bind(intent).bind(&content.title).bind(content.parent_episode_revision_id.map(|value| value.0)).bind(kind).bind(start).bind(end).bind(&content.boundary_explanation).bind(formed_at).bind(recorded_at).bind(content.producer_signature_id).execute(&mut **tx).await.map_err(db)?;
+    for (ordinal, member) in content.members.iter().enumerate() {
         let (kind, value) = reference_parts(&member.reference);
         sqlx::query("INSERT INTO episode_revision_members(episode_revision_id,ordinal,ref_kind,ref_value,role) VALUES($1,$2,$3,$4,$5)").bind(revision.0).bind(ordinal as i32).bind(kind).bind(value).bind(&member.role).execute(&mut **tx).await.map_err(db)?;
     }
-    for (basis_no, basis) in input.basis.iter().enumerate() {
+    for (basis_no, basis) in content.basis.iter().enumerate() {
         insert_episode_support(tx, revision, basis_no as i32, basis).await?;
     }
     store
         .ensure_identity_addresses_in(
             tx,
-            input.subject,
+            subject,
             &[
                 CognitiveRef::Episode(episode),
                 CognitiveRef::EpisodeRevision(revision),
             ],
-            input.title.as_deref().unwrap_or(""),
+            content.title.as_deref().unwrap_or(""),
         )
         .await?;
     Ok(())

@@ -48,17 +48,17 @@ async fn serving_reuse_checks_effective_policy_identity() {
         original.authority_watermark
     );
     assert_eq!(
-        replacement.config_digest,
         runtime
             .serving
-            .config_digest(
-                subject,
-                "lexical",
-                "",
-                &runtime.configuration.snapshot_for_subject(subject).unwrap()
-            )
+            .family_status(subject)
             .await
             .unwrap()
+            .into_iter()
+            .find(|family| family.name == "lexical")
+            .unwrap()
+            .config_digest
+            .as_deref(),
+        Some(replacement.config_digest.as_str())
     );
     // Retired real assets retain a research pin until explicitly released.
     runtime
@@ -174,7 +174,7 @@ async fn assert_native_projection_boundaries(
     assert!(
         runtime
             .store
-            .topology_projection_input(subject, true)
+            .topology_projection_input(subject, true, None)
             .await
             .unwrap()
             .nodes
@@ -249,7 +249,6 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
         .cognition
         .retain_query(held, test_support::query_lease())
         .unwrap();
-    let ticket = ticket.expect("held validation ticket");
     let next = runtime
         .require_memory()
         .unwrap()

@@ -71,13 +71,12 @@ async fn missing_serving_cache_rebuilds_without_changing_authority() {
             .exists()
     );
     let evidence = runtime
+        .material
         .materialize(
             subject,
             nous_material::MaterializeRequest {
                 reference: nous_core::CognitiveRef::Occurrence(observed.occurrence.occurrence_id),
                 byte_range: None,
-                resource_handle: None,
-                resource: None,
                 max_bytes: 1024,
             },
         )

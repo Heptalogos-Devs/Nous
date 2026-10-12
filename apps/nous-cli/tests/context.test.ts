@@ -64,7 +64,20 @@ it("recovers an unknown context mutation using the exact saved identity and expe
     const receipt = (failure as { receipt: string }).receipt;
     expect(typeof receipt).toBe("string");
     context.revision = 7n;
-    await runCli(["retry", receipt, ...flags], connect);
+    const recovered = await runCli(
+      ["retry", receipt, ...flags],
+      connect,
+      async () => {
+        throw new Error("directory unavailable");
+      },
+    );
+    expect(recovered).toMatchObject({
+      data: { workContext: { revision: 2n, contextText: "new task" } },
+      notices: [{ code: "PRESENTATION_UNAVAILABLE" }],
+    });
+    await expect(
+      runCli(["retry", receipt, ...flags], connect),
+    ).rejects.toMatchObject({ code: "ENOENT" });
     expect(updates).toHaveLength(2);
     expect(updates[1]).toEqual(updates[0]);
     expect(updates[1]).toMatchObject({

@@ -8,21 +8,20 @@ use std::path::Path;
 #[derive(Clone)]
 pub(crate) enum OpenArtifact {
     Lexical(Arc<LexicalGeneration>),
-    Dense(Arc<DenseGeneration>, Option<Arc<EpaBasisGeneration>>),
+    Dense(Arc<DenseGeneration>),
     Topology(Arc<WaveGraphGeneration>),
     Vcp(Arc<VcpServingGeneration>),
     Concept(Arc<ConceptGeneration>),
 }
 
 impl ServingService {
-    pub async fn config_digest(
+    pub(crate) fn config_digest(
         &self,
-        subject: SubjectId,
         family: &str,
         space: &str,
         snapshot: &nous_configuration::ConfigSnapshot,
+        capabilities: ProjectionCapabilities,
     ) -> Result<String> {
-        let capabilities = self.projection_capabilities(subject).await?;
         let mut config = serde_json::json!({"memory_enabled":capabilities.memory});
         if family == "topology" && space.starts_with("vcp:") {
             let provider = self.embedding().ok_or_else(|| {
@@ -43,7 +42,7 @@ impl ServingService {
             config["propagation"] = serde_json::to_value(resolve_wave_config(snapshot)?)
                 .map_err(|e| Error::Infrastructure(e.to_string()))?;
         }
-        if matches!(family, "dense" | "concept")
+        if (family == "dense" || (family == "concept" && !space.is_empty()))
             && let Some(provider) = self.embedding()
         {
             config["space"] = serde_json::to_value(provider.space())
@@ -56,7 +55,7 @@ impl ServingService {
         }
         let keys: &[&str] = match family {
             "lexical" => &["serving.lexical.enabled", "episode.synopsis"],
-            "dense" => &["serving.dense.enabled", "retrieval.epa", "episode.synopsis"],
+            "dense" => &["serving.dense.enabled", "episode.synopsis"],
             "topology" => &[],
             _ => &[],
         };
@@ -100,6 +99,10 @@ impl ServingService {
 
     /// Resolve and open each required family once, assembling the request view
     /// directly. Only current assets are published to the process cache.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one family catalog selection and publication operation"
+    )]
     pub(crate) async fn prepare_assets(
         &self,
         subject: SubjectId,
@@ -107,40 +110,26 @@ impl ServingService {
         config: &nous_configuration::ConfigSnapshot,
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<(ProjectionStatus, ServingSnapshot)> {
-        self.store.require_subject(subject).await?;
-        let current = if view.is_none() {
-            self.store.serving_current(subject).await?
-        } else {
-            Vec::new()
-        };
-        let reusable = match view {
-            Some(view) => {
-                self.store
-                    .historical_serving_reusable(subject, &view.snapshot_digest)
-                    .await?
-            }
-            None => self.store.serving_reusable(subject).await?,
-        };
-        let current_ids = current
-            .iter()
-            .map(|record| record.generation_id)
-            .collect::<std::collections::HashSet<_>>();
+        let capabilities = self.projection_capabilities(subject).await?;
+        let candidates = self
+            .store
+            .serving_candidates(subject, view.map(|view| view.snapshot_digest.as_str()))
+            .await?;
         let cached = self.publisher.snapshot_for(subject);
         let mut serving = ServingSnapshot {
             view_digest: view.map(|view| view.snapshot_digest.clone()),
             ..Default::default()
         };
         let mut status = ProjectionStatus::default();
+        let mut text_documents = None;
         let watermarks = if view.is_none() {
             self.store.projection_watermarks(subject).await?
         } else {
             Default::default()
         };
-        for (family, space) in self.requested_families(
-            need,
-            if view.is_some() { &reusable } else { &current },
-            config,
-        )? {
+        for (family, space) in
+            self.requested_families(need, &candidates, config, &watermarks, capabilities)?
+        {
             let key = if space.is_empty() {
                 family.to_owned()
             } else {
@@ -149,19 +138,14 @@ impl ServingService {
             let watermark = watermarks.desired(family, &space);
             let mut selected = None;
             let mut fallback = None;
-            let mut checked = std::collections::HashSet::new();
             let config_digest = self
-                .config_digest(subject, family, &space, config)
-                .await
+                .config_digest(family, &space, config, capabilities)
                 .ok();
-            for record in current
+            for (record, is_current) in candidates
                 .iter()
-                .chain(reusable.iter())
-                .filter(|record| record.family == family && record.space == space)
+                .filter(|(record, _)| record.family == family && record.space == space)
             {
-                if !checked.insert(record.generation_id)
-                    || config_digest.as_deref() != Some(record.config_digest.as_str())
-                {
+                if config_digest.as_deref() != Some(record.config_digest.as_str()) {
                     continue;
                 }
                 let artifact = if view.is_none() {
@@ -182,14 +166,12 @@ impl ServingService {
                 if record.authority_watermark < watermark {
                     // A stale current projection remains an explicit degraded
                     // fallback if rebuilding fails; never use it for history.
-                    fallback = current_ids
-                        .contains(&record.generation_id)
-                        .then(|| (record.clone(), artifact));
+                    fallback = is_current.then(|| (record.clone(), artifact));
                     continue;
                 }
                 let loaded = view.is_none() && cached.contains_generation(record.generation_id);
                 if view.is_none()
-                    && !current_ids.contains(&record.generation_id)
+                    && !is_current
                     && !self.store.promote_generation(record.generation_id).await?
                 {
                     continue;
@@ -202,7 +184,15 @@ impl ServingService {
             }
             if selected.is_none() {
                 match self
-                    .build_family_in_view(subject, family, &space, config, view, &serving)
+                    .build_family_in_view(
+                        subject,
+                        (family, &space),
+                        config,
+                        view,
+                        &serving,
+                        capabilities,
+                        &mut text_documents,
+                    )
                     .await
                 {
                     Ok(asset) => {
@@ -215,12 +205,34 @@ impl ServingService {
                     }),
                 }
             }
+            // Direct postings and the model catalog remain available if vector
+            // material is missing. Build a raw asset only on this real fallback.
+            if selected.is_none() && family == "concept" && !space.is_empty() {
+                fallback = None;
+                selected = self
+                    .build_family_in_view(
+                        subject,
+                        ("concept", ""),
+                        config,
+                        view,
+                        &serving,
+                        capabilities,
+                        &mut text_documents,
+                    )
+                    .await
+                    .ok();
+            }
             if let Some((record, artifact)) = selected.or(fallback) {
+                let actual_key = if record.space.is_empty() {
+                    record.family.clone()
+                } else {
+                    format!("{}:{}", record.family, record.space)
+                };
                 if view.is_none() && !cached.contains_generation(record.generation_id) {
                     self.publish_snapshot(&record, artifact.clone());
                 }
                 serving.install(artifact);
-                status.generations.insert(key, record.generation_id);
+                status.generations.insert(actual_key, record.generation_id);
             }
         }
         Ok((status, serving))
@@ -229,22 +241,37 @@ impl ServingService {
     pub(crate) fn requested_families(
         &self,
         need: ServingNeed,
-        current: &[ServingRecord],
+        candidates: &[(ServingRecord, bool)],
         config: &nous_configuration::ConfigSnapshot,
+        watermarks: &nous_persistence::ProjectionWatermarks,
+        capabilities: ProjectionCapabilities,
     ) -> Result<Vec<(&'static str, String)>> {
         let mut requested = Vec::new();
-        if need.concept || need.topology {
-            let space = if need.concept_vectors {
-                self.embedding()
-                    .map(|p| p.space().space_hash)
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            requested.push(("concept", String::new()));
-            if !space.is_empty() {
-                requested.push(("concept", space));
+        let vcp = need.topology
+            && self.options.topology
+            && matches!(
+                config.get(nous_runtime::COGNITIVE_PROFILE)?,
+                nous_runtime::CognitiveProfile::VcpDtsc
+                    | nous_runtime::CognitiveProfile::VcpRiverMemo
+            );
+        if need.concept || need.concept_vectors || vcp {
+            let mut space = self
+                .embedding()
+                .map(|provider| provider.space().space_hash)
+                .unwrap_or_default();
+            if !space.is_empty() && !(need.concept_vectors || vcp) {
+                let digest = self.config_digest("concept", &space, config, capabilities)?;
+                let desired = watermarks.desired("concept", &space);
+                if !candidates.iter().any(|(record, _)| {
+                    record.family == "concept"
+                        && record.space == space
+                        && record.authority_watermark >= desired
+                        && record.config_digest == digest
+                }) {
+                    space.clear();
+                }
             }
+            requested.push(("concept", space));
         }
         if need.lexical && self.options.lexical {
             requested.push(("lexical", String::new()));
@@ -271,10 +298,10 @@ impl ServingService {
                 requested.push(("dense", provider.space().space_hash));
             } else {
                 requested.extend(
-                    current
+                    candidates
                         .iter()
-                        .filter(|record| record.family == "dense")
-                        .map(|record| ("dense", record.space.clone())),
+                        .filter(|(record, current)| *current && record.family == "dense")
+                        .map(|(record, _)| ("dense", record.space.clone())),
                 );
             }
         }
@@ -362,24 +389,13 @@ impl ServingService {
             }
             super::family::AssetFamily::Dense => {
                 let manifest: DenseManifest = read_json(&path.join("records.json"))?;
-                if let Some(basis) = &manifest.basis
-                    && (basis.generation_id != id
-                        || basis.basis.embedding_space != manifest.space.space_hash)
-                {
-                    return Err(Error::Infrastructure(
-                        "cue basis generation/space mismatch".into(),
-                    ));
-                }
                 let dense = DenseGeneration::open(
                     &path.join("vectors.usearch"),
                     id,
                     manifest.space,
                     manifest.records,
                 )?;
-                Ok(OpenArtifact::Dense(
-                    Arc::new(dense),
-                    manifest.basis.map(Arc::new),
-                ))
+                Ok(OpenArtifact::Dense(Arc::new(dense)))
             }
         }
     }

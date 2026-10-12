@@ -5,7 +5,6 @@ import { create } from "@bufbuild/protobuf";
 import { ExternalResourceResultSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import {
   ExternalResourceRecordSchema,
-  StableExternalRefSchema,
   type ResourceAction,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { ResourceProviderError } from "./adapter.js";
@@ -70,13 +69,7 @@ export async function executeResourceActions(
           resourceRef: action.resourceRef,
           status: "success",
           records: records.map((record) =>
-            create(ExternalResourceRecordSchema, {
-              ...record,
-              reference: create(StableExternalRefSchema, {
-                ...record.reference,
-                entryVersion: record.reference.entryVersion ?? undefined,
-              }),
-            }),
+            create(ExternalResourceRecordSchema, record),
           ),
         }),
       );

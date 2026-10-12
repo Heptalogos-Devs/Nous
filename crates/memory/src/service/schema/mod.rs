@@ -48,10 +48,10 @@ async fn active_schema_link_inputs(
         .fetch_all(&mut **tx)
         .await
         .map_err(db)?;
-    rows.into_iter().map(decode_schema_link_input).collect()
+    rows.iter().map(decode_schema_link_input).collect()
 }
 
-fn decode_schema_link_input(row: sqlx::postgres::PgRow) -> Result<SchemaEvidenceLinkInput> {
+fn decode_schema_link_input(row: &sqlx::postgres::PgRow) -> Result<SchemaEvidenceLinkInput> {
     let basis_kind: String = row.try_get("basis_kind").map_err(db)?;
     let basis_role = parse_enum(row.try_get("basis_role").map_err(db)?, "schema basis role")?;
     let basis = if basis_kind == "evidence" {
@@ -133,7 +133,7 @@ impl MemoryService {
         for basis in &basis {
             validate_exact_basis(std::slice::from_ref(basis))?;
         }
-        let summary = self.validate_basis_for_subject(subject, &basis).await?;
+        let summary = self.provenance_summary(subject, &basis).await?;
         if content.formation_kind == SchemaFormationKind::Synthesized {
             Self::validate_synthesized_summary(&summary)?;
         }

@@ -7,25 +7,43 @@ use crate::{assets::files::*, *};
 pub(crate) struct DenseManifest {
     pub space: EmbeddingSpaceSignature,
     pub records: Vec<VectorRecord>,
-    pub basis: Option<EpaBasisGeneration>,
+}
+
+pub(super) struct TextDocuments {
+    watermarks: nous_persistence::ProjectionWatermarks,
+    documents: std::sync::Arc<Vec<LexicalDocument>>,
 }
 
 impl ServingService {
-    pub(crate) async fn build_family_in_view(
+    pub(super) async fn build_family_in_view(
         &self,
         subject: SubjectId,
-        family: &str,
-        space: &str,
+        family_space: (&str, &str),
         snapshot: &nous_configuration::ConfigSnapshot,
         view: Option<&HistoricalAuthoritySnapshot>,
         serving: &ServingSnapshot,
+        capabilities: ProjectionCapabilities,
+        text_documents: &mut Option<TextDocuments>,
     ) -> Result<(ServingRecord, super::lifecycle::OpenArtifact)> {
+        let (family, space) = family_space;
         let staging = tempfile::Builder::new()
             .prefix(".staging-")
             .tempdir_in(&self.options.root)
             .map_err(io)?;
         let id = ServingGenerationId::new();
-        let capabilities = self.projection_capabilities(subject).await?;
+        if matches!(family, "lexical" | "dense") && text_documents.is_none() {
+            let budget = snapshot.get(crate::EPISODE_SYNOPSIS)?;
+            let input = self
+                .store
+                .text_projection_input(subject, capabilities.memory, budget, view)
+                .await?;
+            *text_documents = Some(TextDocuments {
+                watermarks: input.watermarks,
+                documents: std::sync::Arc::new(
+                    self.documents(subject, input.sources, budget, view).await?,
+                ),
+            });
+        }
         let watermark = match super::family::AssetFamily::parse(family)? {
             super::family::AssetFamily::Topology => {
                 self.build_topology(
@@ -40,21 +58,29 @@ impl ServingService {
                 .await?
             }
             super::family::AssetFamily::Concept => {
-                self.build_concept(subject, id, space, staging.path(), view)
+                self.build_concept(subject, id, space, staging.path(), view, capabilities)
                     .await?
             }
             super::family::AssetFamily::Dense => {
-                self.build_dense(subject, id, space, staging.path(), snapshot, view, serving)
-                    .await?
+                self.build_dense(
+                    subject,
+                    id,
+                    space,
+                    staging.path(),
+                    serving,
+                    text_documents
+                        .as_ref()
+                        .ok_or_else(|| Error::Infrastructure("text projection missing".into()))?,
+                )
+                .await?
             }
             super::family::AssetFamily::Lexical => {
                 self.build_text(
-                    subject,
-                    family,
                     staging.path(),
-                    capabilities,
                     snapshot,
-                    view,
+                    text_documents
+                        .as_ref()
+                        .ok_or_else(|| Error::Infrastructure("text projection missing".into()))?,
                 )
                 .await?
             }
@@ -65,7 +91,7 @@ impl ServingService {
         std::fs::rename(staging.path(), &target).map_err(io)?;
         // Open the final physical artifact once before publishing its pointer.
         let artifact = self.readback(&target, family, id)?;
-        let config_digest = self.config_digest(subject, family, space, snapshot).await?;
+        let config_digest = self.config_digest(family, space, snapshot, capabilities)?;
         let record = ServingRecord {
             generation_id: id,
             subject,
@@ -97,30 +123,12 @@ impl ServingService {
 
     async fn build_text(
         &self,
-        subject: SubjectId,
-        family: &str,
         dir: &std::path::Path,
-        capabilities: ProjectionCapabilities,
         snapshot: &nous_configuration::ConfigSnapshot,
-        view: Option<&HistoricalAuthoritySnapshot>,
+        input: &TextDocuments,
     ) -> Result<i64> {
         let writer_bytes = snapshot.get(crate::LEXICAL_WRITER_BYTES)?;
-        let budget = snapshot.get(crate::EPISODE_SYNOPSIS)?;
-        let input = match view {
-            Some(view) => {
-                let input = self.store.historical_projection_input(view, budget).await?;
-                nous_persistence::TextProjectionInput {
-                    watermark: 0,
-                    sources: input.sources,
-                }
-            }
-            None => {
-                self.store
-                    .text_projection_input(subject, family, "", capabilities.memory, budget)
-                    .await?
-            }
-        };
-        let documents = self.documents(subject, input.sources, budget, view).await?;
+        let documents = input.documents.clone();
         let directory = dir.to_path_buf();
         tokio::task::spawn_blocking(move || {
             let mut lexical = LexicalGeneration::create(directory)?;
@@ -128,33 +136,9 @@ impl ServingService {
         })
         .await
         .map_err(|e| Error::Infrastructure(e.to_string()))??;
-        Ok(input.watermark)
+        Ok(input.watermarks.desired("lexical", ""))
     }
 
-    async fn text_input_in_view(
-        &self,
-        subject: SubjectId,
-        family: &str,
-        space: &str,
-        memory: bool,
-        budget: nous_persistence::EpisodeTextBudget,
-        view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<nous_persistence::TextProjectionInput> {
-        match view {
-            Some(view) => {
-                let input = self.store.historical_projection_input(view, budget).await?;
-                Ok(nous_persistence::TextProjectionInput {
-                    watermark: 0,
-                    sources: input.sources,
-                })
-            }
-            None => {
-                self.store
-                    .text_projection_input(subject, family, space, memory, budget)
-                    .await
-            }
-        }
-    }
     async fn build_topology(
         &self,
         subject: SubjectId,
@@ -171,7 +155,7 @@ impl ServingService {
             nous_runtime::CognitiveProfile::VcpDtsc | nous_runtime::CognitiveProfile::VcpRiverMemo
         ) {
             let material = self
-                .vcp_projection_material_in_view(subject, snapshot, view, serving)
+                .vcp_projection_material_in_view(subject, snapshot, view, serving, capabilities)
                 .await?;
             let watermark = material.authority_watermark;
             let policy = snapshot.get(crate::VCP_ASSETS)?;
@@ -187,37 +171,16 @@ impl ServingService {
             return Ok(watermark);
         }
         let input = self
-            .projection_input(
-                subject,
-                capabilities.memory,
-                snapshot.get(crate::EPISODE_SYNOPSIS)?,
-                view,
-            )
+            .topology_projection(subject, capabilities.memory, view)
             .await?;
-        let edges = input.topology.edges;
+        let edges = input.edges;
         let nodes = input
-            .topology
             .nodes
             .into_iter()
             .enumerate()
-            .map(|(index, reference)| {
-                let node_kind = match reference {
-                    CognitiveRef::Tag(_) => WaveNodeKind::Tag,
-                    CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_) => {
-                        WaveNodeKind::Schema
-                    }
-                    CognitiveRef::Entity(_) => WaveNodeKind::Entity,
-                    CognitiveRef::Resource(_) => WaveNodeKind::Resource,
-                    _ => WaveNodeKind::Memory,
-                };
-                WaveNode {
-                    serving_id: index as u32,
-                    reference,
-                    node_kind,
-                    embedding_key: None,
-                    posting_key: None,
-                    intrinsic_residual_gain: None,
-                }
+            .map(|(index, reference)| WaveNode {
+                serving_id: index as u32,
+                reference,
             })
             .collect();
         let path = dir.join("topology.json");
@@ -231,57 +194,76 @@ impl ServingService {
         })
         .await
         .map_err(|e| Error::Infrastructure(e.to_string()))??;
-        Ok(input.watermarks.desired("topology", ""))
+        Ok(input.watermark)
     }
 
-    pub(crate) async fn embed_document(
+    pub(crate) async fn embed_documents(
         &self,
         subject: SubjectId,
-        document: &LexicalDocument,
+        documents: &[LexicalDocument],
         concepts: Option<&ConceptGeneration>,
         provider: &dyn TextEmbeddingProvider,
-    ) -> Result<Option<QuerySemanticEmbedding>> {
-        let output = if let CognitiveRef::Tag(tag) = document.reference {
-            let Some(vector) = concepts.and_then(|generation| {
-                generation.semantic_vector(tag, &document.representation_text)
-            }) else {
-                return Ok(None);
-            };
-            QuerySemanticEmbedding {
-                vector,
-                space: provider.space(),
-                producer: concepts
-                    .and_then(|generation| generation.record(tag))
-                    .and_then(|record| record.vector_producer.clone())
-                    .ok_or_else(|| Error::Invalid("concept vector producer missing".into()))?,
+    ) -> Result<Vec<(usize, QuerySemanticEmbedding)>> {
+        let space = provider.space();
+        let producers: std::collections::HashSet<_> = provider
+            .producers()
+            .into_iter()
+            .map(|producer| producer.signature_hash)
+            .collect();
+        let texts: Vec<_> = documents
+            .iter()
+            .filter(|document| !matches!(document.reference, CognitiveRef::Tag(_)))
+            .map(|document| document.representation_text.clone())
+            .collect();
+        let mut ordinary = Vec::with_capacity(texts.len());
+        for batch in texts.chunks(256) {
+            let outputs = provider.embed_batch(subject, batch).await?;
+            if outputs.len() != batch.len() {
+                return Err(Error::Invalid(
+                    "embedding batch result count mismatch".into(),
+                ));
             }
-        } else {
-            provider
-                .embed(TextEmbeddingRequest {
-                    subject,
-                    text: document.representation_text.clone(),
-                    query: false,
-                })
-                .await?
-        };
-        if !output.space.compatible_with(&provider.space())
-            || !provider
-                .producers()
-                .iter()
-                .any(|p| p.signature_hash == output.producer.signature_hash)
-        {
-            return Err(Error::Conflict(
-                "projection embedding disagrees with configured space/producer".into(),
-            ));
+            ordinary.extend(outputs);
         }
-        if output.vector.len() != provider.space().dimension as usize
-            || output.vector.iter().any(|value| !value.is_finite())
-        {
-            return Err(Error::Invalid(
-                "projection embedding has invalid dimension or values".into(),
-            ));
+        let mut ordinary = ordinary.into_iter();
+        let mut projected = Vec::with_capacity(documents.len());
+        for (index, document) in documents.iter().enumerate() {
+            let output = if let CognitiveRef::Tag(tag) = document.reference {
+                let Some(vector) = concepts.and_then(|generation| {
+                    generation.semantic_vector(tag, &document.representation_text)
+                }) else {
+                    continue;
+                };
+                QuerySemanticEmbedding {
+                    vector,
+                    space: space.clone(),
+                    producer: concepts
+                        .and_then(|generation| generation.record(tag))
+                        .and_then(|record| record.vector_producer.clone())
+                        .ok_or_else(|| Error::Invalid("concept vector producer missing".into()))?,
+                }
+            } else {
+                ordinary
+                    .next()
+                    .ok_or_else(|| Error::Infrastructure("embedding batch result missing".into()))?
+            };
+            if !output.space.compatible_with(&space)
+                || !producers.contains(&output.producer.signature_hash)
+            {
+                return Err(Error::Conflict(
+                    "projection embedding disagrees with configured space/producer".into(),
+                ));
+            }
+            if output.vector.len() != space.dimension as usize
+                || output.vector.iter().any(|value| !value.is_finite())
+            {
+                return Err(Error::Invalid(
+                    "projection embedding has invalid dimension or values".into(),
+                ));
+            }
+            projected.push((index, output));
         }
-        Ok(Some(output))
+        Ok(projected)
     }
     async fn build_dense(
         &self,
@@ -289,13 +271,9 @@ impl ServingService {
         id: ServingGenerationId,
         space_key: &str,
         dir: &std::path::Path,
-        snapshot: &nous_configuration::ConfigSnapshot,
-        view: Option<&HistoricalAuthoritySnapshot>,
         serving: &ServingSnapshot,
+        input: &TextDocuments,
     ) -> Result<i64> {
-        let capabilities = self.projection_capabilities(subject).await?;
-        let budget = snapshot.get(crate::EPISODE_SYNOPSIS)?;
-        let epa_policy = snapshot.get(crate::EPA_POLICY)?;
         let provider = self
             .embedding()
             .ok_or_else(|| Error::Unavailable("text embedding provider is unavailable".into()))?;
@@ -305,22 +283,7 @@ impl ServingService {
                 "embedding space has no configured provider".into(),
             ));
         }
-        let input = self
-            .text_input_in_view(
-                subject,
-                "dense",
-                space_key,
-                capabilities.memory,
-                budget,
-                view,
-            )
-            .await?;
-        let source_regions: std::collections::HashMap<_, _> = input
-            .sources
-            .iter()
-            .map(|source| (source.reference.clone(), source.source_region))
-            .collect();
-        let documents = self.documents(subject, input.sources, budget, view).await?;
+        let documents = &input.documents;
         let concepts = serving.concept.iter().find(|generation| {
             generation
                 .space
@@ -332,35 +295,20 @@ impl ServingService {
                     .is_some_and(|p| p.signature_hash == provider.producer().signature_hash)
         });
         let mut vectors = Vec::new();
-        for document in documents {
-            let Some(output) = self
-                .embed_document(
-                    subject,
-                    &document,
-                    concepts.map(AsRef::as_ref),
-                    provider.as_ref(),
-                )
-                .await?
-            else {
-                continue;
-            };
-            let source_region = source_regions
-                .get(&document.reference)
-                .copied()
-                .flatten()
-                .map(CognitiveRef::SourceRegion);
+        for (index, output) in self
+            .embed_documents(
+                subject,
+                documents,
+                concepts.map(AsRef::as_ref),
+                provider.as_ref(),
+            )
+            .await?
+        {
+            let document = &documents[index];
             let record = VectorRecord {
                 serving_doc_id: document.serving_doc_id,
-                representation_kind: if matches!(document.reference, CognitiveRef::Tag(_)) {
-                    "tag"
-                } else {
-                    "text"
-                }
-                .into(),
-                reference: document.reference,
-                embedding_space: space.clone(),
+                reference: document.reference.clone(),
                 producer_signature: output.producer.signature_hash,
-                source_region,
             };
             vectors.push((record, output.vector));
         }
@@ -368,37 +316,19 @@ impl ServingService {
         tokio::task::spawn_blocking(move || {
             let mut generation = DenseGeneration::new(space.clone(), vectors.len())?;
             generation.generation_id = id;
-            let mut tag_vectors = Vec::new();
             let mut records = Vec::new();
             for (record, vector) in vectors {
-                if matches!(record.reference, CognitiveRef::Tag(_)) {
-                    tag_vectors.push((
-                        record.serving_doc_id,
-                        vector.iter().map(|v| f64::from(*v)).collect(),
-                    ));
-                }
                 generation.insert(record.clone(), &vector)?;
                 records.push(record);
             }
             generation.save(&directory.join("vectors.usearch"))?;
-            let basis =
-                build_epa_basis(&tag_vectors, &space.space_hash, &epa_policy).map(|basis| {
-                    EpaBasisGeneration {
-                        generation_id: id,
-                        basis,
-                    }
-                });
             write_json(
                 &directory.join("records.json"),
-                &DenseManifest {
-                    space,
-                    records,
-                    basis,
-                },
+                &DenseManifest { space, records },
             )
         })
         .await
         .map_err(|e| Error::Infrastructure(e.to_string()))??;
-        Ok(input.watermark)
+        Ok(input.watermarks.desired("dense", space_key))
     }
 }

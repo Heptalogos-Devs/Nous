@@ -8,7 +8,7 @@ Client 直接返回 canonical generated Protobuf message，包括 `$typeName`、
 
 configuration override 的 `value` 使用 generated `Value`，调用者用 `fromJson(ValueSchema, JSON value)` 在明确输入边界编码；`getConfigDescriptor` 接收 `{ path }` request。
 
-Persist the operation ID and exact request before mutations. Same ID/same normalized input replays the original result; changed input conflicts. Read the current object epoch/head before a new revision or lifecycle change, then freeze that expected value for retries. A model proposal is not an Authority mutation until its owner commits it.
+Persist the operation ID and exact request before mutations. 同 ID、同规范化输入不会重复修改；创建不可变内容的操作重放原修订，mutable state 与 evidence 增补返回当前对象视图。输入改变则冲突。 Read the current object epoch/head before a new revision or lifecycle change, then freeze that expected value for retries. A model proposal is not an Authority mutation until its owner commits it.
 
 ## Required vocabulary
 
@@ -24,7 +24,7 @@ Persist the operation ID and exact request before mutations. Same ID/same normal
 | `memory.setAccessibility.mode`            | `auto`, `normal`, `deep`, `explicit`; accessibility does not authorize suppression/purge bypass.                                                                         |
 | `identity.rebindEntity.bindingState`      | `bound`, `unbound`, `disputed`. Bound requires `entityRef`; unbound forbids one. Mention ID belongs to an actual source Occurrence.                                      |
 | `model.formFromObservation.aboutnessMode` | `explicit`, `select_from_resolved_mentions`, `none`. Explicit aboutness refs require explicit mode. CLI `--aboutness` chooses explicit unless the caller specifies mode. |
-| `Episode.revise.intent`                   | `resegment`, `reinterpret`; members and sources remain exact references.                                                                                                 |
+| `ReviseEpisodeRequest.intent`             | `resegment`, `reinterpret`; members and sources remain exact references.                                                                                                 |
 | `CognitiveSchemaContent.formationKind`    | `explicit_import`, `synthesized`. Explicit import needs actual evidence; synthesized needs at least two independent known source roots.                                  |
 | Schema evidence role                      | `support`, `counterexample`, `boundary_case`; formation basis role separately uses `direct`, `interpretation`, `contextual`.                                             |
 
@@ -34,9 +34,13 @@ Use `memory.getMemory({ subjectId, id: memoryId })` for current head/epoch and `
 
 `memory.suppressMemory/restoreMemory/withdrawMemory/reacceptMemory/purgeMemory` take the same mutation identity fields: `subjectId`, `memoryId`, `expectedObjectEpoch`, `operationId`. Re-read epoch for a new operation; replay uses the old frozen expected epoch. Suppression and withdrawal differ from purge; purge is irreversible. Lifecycle transitions do not create a content revision. Episode and Journal families have their corresponding typed lifecycle methods. WorkContext exact anchors are not silently rewritten when Memory head changes.
 
+Episode 创建和修订共用 `EpisodeContent`；`track` 仅在创建设置，修订另带目标、intent 和并发条件。Tag 创建和修订共用 `TagContent`，origin 属于创建操作。Schema 与 Tag 的 `revisionId` 表示返回内容所选的不可变修订，`currentRevisionId` 表示对象当前 head；延迟重放返回原内容与当前对象状态。
+
 `concepts.createCognitiveSchema/reviseCognitiveSchema/splitCognitiveSchema/mergeCognitiveSchemas/addSchemaEvidence` use the public Schema contracts, exact evidence and object epoch. A schema is a supported transferable pattern with explicit applicability and boundary, not an arbitrary list of remembered facts. `subjects.getCognitiveSeed/adoptCognitiveSeed` read/adopt versioned sources; adoption does not silently replace already committed cognition.
 
 `concepts.suppressCognitiveSchema/restoreCognitiveSchema/withdrawCognitiveSchema/reacceptCognitiveSchema/purgeCognitiveSchema` take `subjectId`, `schemaId`, `expectedObjectEpoch`, and `operationId`. They use the Memory owner's lifecycle and dependency fences, without creating a content revision. Purge clears Schema revision content and resident/context/Association references, and revokes incoming Schema evidence links. Provenance and receipt identities may remain; previously recorded UseEvents replay as duplicates through content-free purge receipts. It does not delete shared admitted Material.
+
+`material.clean({})` 对所有 Subject 的已接纳 Artifact 和正在写入的对象统一保护，删除 CAS/staging 的未引用文件并返回计数；CLI 对应 `material clean`。
 
 `material.listOccurrences({ subjectId, artifactId, limit })` returns actual observations of an admitted Artifact, newest first, with `truncated`; limit is 1..200. SourceRegions identify content coordinates, not a unique observation. Use this bounded reverse lookup to select the intended Occurrence rather than assuming a nearby retrieval hit is its origin.
 
@@ -49,6 +53,8 @@ Session state is isolated; WorkContexts belong to Subject and can continue acros
 `identity.bindIdentity/resolve` discover real canonical identities and returned LexicalRefs. Same display names may produce ambiguity; use the chosen returned candidate, never guess a vector identity. `identity.rebindEntity` changes the interpretation of a source mention without rewriting its original surface.
 
 `identity.getIdentityAddresses({ targets: [{ subjectId, canonical: { kind, value } }] })` reads existing directory addresses in one batch, preserving target order. It never allocates an address, adds Subject visibility or changes display names/aliases. Up to 2048 targets are accepted; each result reports `BOUND`, `UNKNOWN_REFERENCE` or `REFERENCE_TOMBSTONED` with a LexicalRef only when visible and live. Merged Tag lookup uses its current canonical address. Explicit `identity.bindIdentity` remains the operation for assigning a name or alias.
+
+Context projection 由 Runtime 读取真实 Session foreground，拒绝关闭的 Session。各 cognition owner 提供实际正文与 basis，材料由 Material 解释；consumer 的 family policy 与预算先限制选中来源，Core steward 再表达。
 
 `cognition.buildProjection/buildManagedContext` require a `consumerId` with an operator-configured policy. A valid Subject or Session does not grant access to an unknown consumer. `config` can list/get/describe/set current policy/configuration within its advertised scope; model and resource profile changes require Core restart. Managed-context cursor reuse must preserve consumer identity, policy, source revisions and lifecycle.
 

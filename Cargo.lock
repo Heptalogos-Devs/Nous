@@ -2057,7 +2057,6 @@ dependencies = [
  "nous-configuration",
  "nous-core",
  "nous-material",
- "nous-object-store",
  "nous-persistence",
  "nous-runtime",
  "schemars",

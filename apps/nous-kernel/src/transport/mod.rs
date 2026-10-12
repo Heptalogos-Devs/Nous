@@ -61,110 +61,64 @@ impl KernelService {
         self.0.require_memory()
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "projection coordination keeps reference origin, current owner validation and bounded materialization in one boundary"
-    )]
     pub async fn build_contribution_batch(
         &self,
         input: p::ProjectionRequest,
     ) -> nous_core::Result<p::Projection> {
-        let subject = SubjectId(id(&input.subject_id)?);
-        let session = SessionId(id(&input.session_id)?);
-        let runtime = self.0.cognition.session(subject, session).await?;
-        let mut segments = self
+        let requirement = |value: &str| -> nous_core::Result<nous_core::RequirementStrength> {
+            Ok(match value {
+                "REQUIRED" => nous_core::RequirementStrength::Required,
+                "PREFERRED" => nous_core::RequirementStrength::Preferred,
+                "OPTIONAL" => nous_core::RequirementStrength::Optional,
+                "FORBIDDEN" => nous_core::RequirementStrength::Forbidden,
+                _ => return Err(Error::Invalid("invalid contribution requirement".into())),
+            })
+        };
+        let view = self
             .0
             .cognition
-            .runtime_references(subject, session)
-            .await?
-            .into_iter()
-            .map(|(reference, source)| p::ContextSegment {
-                segment_id: uuid::Uuid::now_v7().to_string(),
-                text: String::new(),
-                semantic_role: source.into(),
-                source_refs: vec![to_ref(reference.clone())],
-                evidence: Vec::new(),
-                authority: "subject_cognition".into(),
-                stability: "checkpoint".into(),
-                source_revision: Some(reference.to_string()),
-            })
-            .collect::<Vec<_>>();
-        let situation_refs = input
-            .situation_refs
-            .into_iter()
-            .map(from_ref)
-            .collect::<nous_core::Result<Vec<_>>>()?;
-        segments.extend(
-            situation_refs
-                .into_iter()
-                .map(|reference| p::ContextSegment {
-                    segment_id: uuid::Uuid::now_v7().to_string(),
-                    text: String::new(),
-                    semantic_role: "request_situation".into(),
-                    source_refs: vec![to_ref(reference.clone())],
-                    evidence: Vec::new(),
-                    authority: "external_current_authority".into(),
-                    stability: "request".into(),
-                    source_revision: Some(reference.to_string()),
-                }),
-        );
-        let mut remaining = input.max_text_bytes as usize;
-        let mut degradation = Vec::new();
-        let mut eligible_segments = Vec::new();
-        for mut segment in segments {
-            let Some(reference) = segment.source_refs.first() else {
-                continue;
-            };
-            let reference = from_ref(reference.clone())?;
-            match self.0.store.validate_reference(subject, &reference).await {
-                Ok(()) => {}
-                Err(Error::Invalid(_) | Error::NotFound(_)) => {
-                    degradation.push(p::Degradation {
-                        code: "projection_source_unavailable".into(),
-                        detail: reference.to_string(),
-                    });
-                    continue;
-                }
-                Err(error) => return Err(error),
-            }
-            if matches!(
-                reference,
-                nous_core::CognitiveRef::CognitiveSchema(_)
-                    | nous_core::CognitiveRef::CognitiveSchemaRevision(_)
-                    | nous_core::CognitiveRef::Episode(_)
-                    | nous_core::CognitiveRef::EpisodeRevision(_)
-                    | nous_core::CognitiveRef::Journal(_)
-                    | nous_core::CognitiveRef::JournalRevision(_)
-            ) {
-                if !self
-                    .require_memory()?
-                    .contextual_cognition_eligible(subject, &reference)
-                    .await?
-                {
-                    degradation.push(p::Degradation {
-                        code: "projection_source_unavailable".into(),
-                        detail: reference.to_string(),
-                    });
-                    continue;
-                }
-                segment.authority = "subject_cognition".into();
-            }
-            if !matches!(
-                reference,
-                nous_core::CognitiveRef::Memory(_) | nous_core::CognitiveRef::MemoryRevision(_)
-            ) {
-                eligible_segments.push(segment);
-                continue;
-            }
-            match nous_runtime::ContextResolver::context_source(
-                &self.0, subject, &reference, remaining, true,
+            .projection(
+                nous_runtime::ProjectionRequest {
+                    subject: SubjectId(id(&input.subject_id)?),
+                    session: SessionId(id(&input.session_id)?),
+                    active_work_context: input
+                        .active_work_context_id
+                        .as_deref()
+                        .map(id)
+                        .transpose()?,
+                    consumer_id: input.consumer_id,
+                    situation_refs: input
+                        .situation_refs
+                        .into_iter()
+                        .map(from_ref)
+                        .collect::<nous_core::Result<_>>()?,
+                    max_items: input.max_items as usize,
+                    max_text_bytes: input.max_text_bytes as usize,
+                    materialize: input.materialize,
+                    memory: requirement(&input.memory_requirement)?,
+                    runtime: requirement(&input.runtime_requirement)?,
+                    resource: requirement(&input.resource_requirement)?,
+                },
+                &self.0,
             )
-            .await
-            {
-                Ok(source) => {
-                    segment.text = source.text.unwrap_or_default();
-                    remaining = remaining.saturating_sub(segment.text.len());
-                    segment.evidence = source
+            .await?;
+        Ok(p::Projection {
+            projection_id: uuid::Uuid::now_v7().to_string(),
+            consumer_id: view.consumer_id,
+            source_runtime_revision: view.runtime_revision,
+            subject_id: view.subject.0.to_string(),
+            session_id: view.session.0.to_string(),
+            active_work_context_id: view.active_work_context.map(|id| id.to_string()),
+            segments: view
+                .segments
+                .into_iter()
+                .map(|segment| p::ContextSegment {
+                    segment_id: uuid::Uuid::now_v7().to_string(),
+                    text: segment.source.text.unwrap_or_default(),
+                    semantic_role: segment.semantic_role.into(),
+                    source_refs: vec![to_ref(segment.reference)],
+                    evidence: segment
+                        .source
                         .evidence
                         .into_iter()
                         .map(|evidence| p::Evidence {
@@ -174,28 +128,23 @@ impl KernelService {
                             reference: Some(to_ref(evidence.reference)),
                             basis_role: evidence.basis_role,
                         })
-                        .collect();
-                    segment.source_revision = source
+                        .collect(),
+                    authority: enum_name(segment.source.authority),
+                    stability: segment.stability.into(),
+                    source_revision: segment
+                        .source
                         .source_revision
-                        .map(|revision| revision.0.to_string());
-                    segment.authority = "subject_cognition".into();
-                }
-                Err(error) => {
-                    degradation.push(p::Degradation {
-                        code: "projection_source_unavailable".into(),
-                        detail: format!("{reference}: {error}"),
-                    });
-                    continue;
-                }
-            }
-            eligible_segments.push(segment);
-        }
-        Ok(p::Projection {
-            projection_id: uuid::Uuid::now_v7().to_string(),
-            consumer_id: input.consumer_id,
-            source_runtime_revision: runtime.runtime_revision,
-            segments: eligible_segments,
-            degradation,
+                        .map(|reference| nous_core::reference_parts(&reference).1),
+                })
+                .collect(),
+            degradation: view
+                .degradation
+                .into_iter()
+                .map(|value| p::Degradation {
+                    code: value.code,
+                    detail: value.detail.unwrap_or_default(),
+                })
+                .collect(),
         })
     }
 }

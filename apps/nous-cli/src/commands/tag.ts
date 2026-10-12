@@ -13,6 +13,8 @@ import {
   associationBasis,
 } from "../mutation-input.js";
 import type { CliEnvironment } from "../runtime.js";
+import { TagContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
+import { content } from "../content.js";
 
 export async function tagCommands(
   env: CliEnvironment,
@@ -32,12 +34,13 @@ export async function tagCommands(
     return client.concepts.createTag({
       subjectId,
       operationId,
-      tag: {
-        label: required(values.name, "--name"),
-        description: values.description,
-        kindHint: values["kind-hint"],
-        origin: "host_explicit",
-      },
+      content: values["request-file"]
+        ? await content(env, TagContentSchema)
+        : {
+            label: required(values.name, "--name"),
+            description: values.description,
+            kindHint: values["kind-hint"],
+          },
     });
   if (action === "revise") {
     const input = reviseInput.parse(
@@ -124,7 +127,7 @@ export async function tagCommands(
       pageSize: boundedInteger(values["page-size"], 1, 200, "--page-size"),
     };
     return action === "list"
-      ? client.concepts.listTags({ subjectId, page })
+      ? client.concepts.listTags({ subjectId, status: values.status, page })
       : client.concepts.searchTags({
           subjectId,
           text: required(argument, "Search text"),

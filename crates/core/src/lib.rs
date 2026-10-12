@@ -320,7 +320,7 @@ impl RepresentationKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementStrength {
     Required,
@@ -328,47 +328,6 @@ pub enum RequirementStrength {
     #[default]
     Optional,
     Forbidden,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilityReadiness {
-    Ready,
-    Degraded,
-    Unavailable,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityLimits {
-    pub max_input_bytes: Option<u64>,
-    pub max_output_bytes: Option<u64>,
-    pub timeout_ms: Option<u64>,
-}
-
-impl Default for CapabilityLimits {
-    fn default() -> Self {
-        Self {
-            max_input_bytes: None,
-            max_output_bytes: None,
-            timeout_ms: Some(30_000),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityDescriptor {
-    pub operation: CapabilityOperation,
-    pub input_modalities: Vec<Modality>,
-    pub output_kind: RepresentationKind,
-    pub producer: ProducerSignature,
-    pub limits: CapabilityLimits,
-    pub readiness: CapabilityReadiness,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityRequirement {
-    pub operation: CapabilityOperation,
-    pub strength: RequirementStrength,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -438,31 +397,9 @@ pub struct EvidenceHandle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProvenanceSummary {
-    pub source_count: usize,
-    pub producer_signatures: Vec<String>,
-    pub note: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterializationHandle {
     pub reference: CognitiveRef,
     pub level: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextContribution {
-    pub source_revision: Option<MemoryRevisionId>,
-    pub reference: CognitiveRef,
-    pub semantic_role: String,
-    pub text: Option<String>,
-    pub authority: AuthorityClass,
-    pub freshness: FreshnessDescriptor,
-    pub evidence: Vec<EvidenceHandle>,
-    pub provenance: ProvenanceSummary,
-    pub priority: f32,
-    pub estimated_tokens: Option<u32>,
-    pub materialization: Option<MaterializationHandle>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

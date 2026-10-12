@@ -7,11 +7,7 @@ impl MemoryService {
     pub async fn create_schema(&self, mut input: CreateSchemaInput) -> Result<SchemaView> {
         input.content.producer = canonical_schema_producer(input.content.producer.as_ref())?;
         self.store.require_subject(input.subject).await?;
-        let digest = operation_digest(
-            "create_cognitive_schema",
-            input.subject,
-            &serde_json::json!({"title":input.content.title,"structural_claim":input.content.structural_claim,"scope":input.content.applicability_scope,"boundary_definition":input.content.boundary_definition,"formation_kind":input.content.formation_kind,"evidence_links":input.content.evidence_links,"producer":input.content.producer}),
-        )?;
+        let digest = operation_digest("create_cognitive_schema", input.subject, &input.content)?;
         let mut mutation = match self
             .start_mutation(
                 input.subject,
@@ -149,8 +145,6 @@ impl MemoryService {
         link: SchemaEvidenceLinkInput,
     ) -> Result<SchemaView> {
         self.store.require_subject(subject).await?;
-        self.validate_basis_for_subject(subject, std::slice::from_ref(&link.basis))
-            .await?;
         let digest = operation_digest(
             "add_schema_evidence",
             subject,
@@ -165,6 +159,8 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
+        self.provenance_summary(subject, std::slice::from_ref(&link.basis))
+            .await?;
         let row=sqlx::query("SELECT current_revision_id,object_epoch FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("CognitiveSchema not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(epoch, expected_object_epoch)?;
@@ -212,19 +208,7 @@ impl MemoryService {
         let digest = operation_digest(
             "revise_cognitive_schema",
             input.subject,
-            &serde_json::json!({
-                "schema_id": input.schema_id,
-                "expected_object_epoch": input.expected_object_epoch,
-                "intent": input.intent,
-                "title": input.content.title,
-                "structural_claim": input.content.structural_claim,
-                "applicability_scope": input.content.applicability_scope,
-                "boundary_definition": input.content.boundary_definition,
-                "copy_link_ids": input.copy_link_ids,
-                "evidence_links": input.content.evidence_links,
-                "producer": input.content.producer,
-                "formation_kind": input.content.formation_kind,
-            }),
+            &serde_json::json!({"schema_id":input.schema_id,"expected_object_epoch":input.expected_object_epoch,"intent":input.intent,"copy_link_ids":input.copy_link_ids,"content":input.content}),
         )?;
         let mut mutation = match self
             .start_mutation(
@@ -281,7 +265,7 @@ impl MemoryService {
                     "schema copy link must belong to the current parent revision".into(),
                 ));
             }
-            copied_links.push(decode_schema_link_input(link)?);
+            copied_links.push(decode_schema_link_input(&link)?);
         }
         let copied_basis = copied_links
             .iter()
@@ -289,7 +273,7 @@ impl MemoryService {
             .collect::<Vec<_>>();
         self.validate_object_dependency_cycle(
             input.subject,
-            &format!("schema:{}", input.schema_id.0),
+            &CognitiveRef::CognitiveSchema(input.schema_id),
             &copied_basis,
         )
         .await?;

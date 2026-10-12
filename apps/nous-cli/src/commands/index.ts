@@ -131,7 +131,10 @@ export async function runCli(
           connection ? async () => connection! : connect,
           input,
         );
-        if (!["config", "status", "subject", "retry"].includes(family))
+        if (
+          !["config", "status", "subject", "retry"].includes(family) &&
+          !(family === "material" && ["limits", "clean"].includes(action ?? ""))
+        )
           env.required(
             env.subjectId,
             "Selected Subject (run subject create/use)",
@@ -281,6 +284,7 @@ export async function runCli(
         "neighborhood",
       ]),
       material: family("material", materialCommands, [
+        "clean",
         "limits",
         "artifacts",
         "occurrences",

@@ -84,10 +84,6 @@ WITH selected AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), ca
             title: row.get("title"),
             source_class: row.get("source_class"),
             member_fragments: vec![],
-            source_region: match reference {
-                CognitiveRef::SourceRegion(id) => Some(id),
-                _ => None,
-            },
             entity_refs: vec![],
             tag_ids: vec![],
             schema_ids: vec![],
@@ -155,7 +151,6 @@ fn historical_tag_sources(
             member_fragments: vec![],
             title: None,
             source_class: None,
-            source_region: None,
             entity_refs: vec![],
             tag_ids: vec![],
             schema_ids: vec![],

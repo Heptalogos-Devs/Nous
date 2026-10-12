@@ -32,11 +32,13 @@ impl CognitiveRuntimeService {
         subject: SubjectId,
         session: SessionId,
     ) -> Result<SessionView> {
-        self.require_session(subject, session).await?;
+        let mut tx = self.store.begin().await?;
+        self.lock_open_session_in(&mut tx, subject, session).await?;
         sqlx::query("UPDATE cognitive_sessions SET closed_at=$3,last_activity_at=$3,runtime_revision=runtime_revision+1 WHERE subject_id=$1 AND session_id=$2")
-            .bind(subject.0).bind(session.0).bind(self.now(subject))
-            .execute(self.store.pool()).await.map_err(db)?;
-        self.session(subject, session).await
+            .bind(subject.0).bind(session.0).bind(self.now(subject)).execute(&mut *tx).await.map_err(db)?;
+        let result = self.session_in(subject, session, &mut tx).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(result)
     }
 
     pub async fn session(&self, subject: SubjectId, session: SessionId) -> Result<SessionView> {
@@ -124,7 +126,28 @@ impl CognitiveRuntimeService {
         session: SessionId,
         admissions: Vec<ResidentAdmission>,
     ) -> Result<ResidentMutationOutcome> {
-        let merged = merge_admissions(admissions)?;
+        let current_revision = self.lock_open_session_in(tx, subject, session).await?;
+        for admission in &admissions {
+            if !self
+                .store
+                .reference_in_subject_tx(tx, subject, &admission.reference)
+                .await?
+            {
+                return Err(Error::FailedPrecondition(
+                    "resident reference is not owned by Subject".into(),
+                ));
+            }
+        }
+        self.apply_resident_batch_in(tx, subject, session, current_revision, admissions, None)
+            .await
+    }
+
+    pub(crate) async fn lock_open_session_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        session: SessionId,
+    ) -> Result<i64> {
         let session_row = sqlx::query(
             "SELECT subject_id,closed_at,runtime_revision FROM cognitive_sessions WHERE session_id=$1 FOR UPDATE",
         )
@@ -138,24 +161,25 @@ impl CognitiveRuntimeService {
         if owner != subject.0 || closed_at.is_some() {
             return Err(stale_session(session));
         }
-        let current_revision: i64 = session_row.try_get("runtime_revision").map_err(db)?;
-        for admission in &merged {
-            if !self
-                .store
-                .reference_in_subject_tx(tx, subject, &admission.reference)
-                .await?
-            {
-                return Err(Error::FailedPrecondition(
-                    "resident reference is not owned by Subject".into(),
-                ));
-            }
-        }
+        session_row.try_get("runtime_revision").map_err(db)
+    }
+
+    pub(crate) async fn apply_resident_batch_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        session: SessionId,
+        current_revision: i64,
+        admissions: Vec<ResidentAdmission>,
+        activity_at: Option<DateTime<Utc>>,
+    ) -> Result<ResidentMutationOutcome> {
+        let merged = merge_admissions(admissions)?;
         let now = self.now(subject);
         let mut changed = false;
         let mut admitted_count = 0u32;
         for admission in &merged {
             let (kind, value) = reference_parts(&admission.reference);
-            let existing = sqlx::query("SELECT state,hold_until,entry_reason FROM resident_refs WHERE session_id=$1 AND ref_kind=$2 AND ref_value=$3 FOR UPDATE")
+            let existing = sqlx::query("SELECT state,hold_until,entry_reason,last_meaningful_use_at FROM resident_refs WHERE session_id=$1 AND ref_kind=$2 AND ref_value=$3 FOR UPDATE")
                 .bind(session.0)
                 .bind(&kind)
                 .bind(&value)
@@ -167,20 +191,27 @@ impl CognitiveRuntimeService {
                 let current_hold: Option<DateTime<Utc>> = row.try_get("hold_until").map_err(db)?;
                 let next_state = stronger_state(&current_state, admission.state.as_str());
                 let next_hold = later_hold(current_hold, admission.hold_until);
-                if next_state != current_state || next_hold != current_hold {
-                    sqlx::query("UPDATE resident_refs SET state=$4,hold_until=$5 WHERE session_id=$1 AND ref_kind=$2 AND ref_value=$3")
+                let current_use: Option<DateTime<Utc>> =
+                    row.try_get("last_meaningful_use_at").map_err(db)?;
+                let next_use = later_hold(current_use, admission.last_meaningful_use_at);
+                if next_state != current_state
+                    || next_hold != current_hold
+                    || next_use != current_use
+                {
+                    sqlx::query("UPDATE resident_refs SET state=$4,hold_until=$5,last_meaningful_use_at=$6 WHERE session_id=$1 AND ref_kind=$2 AND ref_value=$3")
                         .bind(session.0)
                         .bind(&kind)
                         .bind(&value)
                         .bind(next_state)
                         .bind(next_hold)
+                        .bind(next_use)
                         .execute(&mut **tx)
                         .await
                         .map_err(db)?;
                     changed = true;
                 }
             } else {
-                sqlx::query("INSERT INTO resident_refs(session_id,ref_kind,ref_value,entered_at,entry_reason,hold_until,state,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,'{}')")
+                sqlx::query("INSERT INTO resident_refs(session_id,ref_kind,ref_value,entered_at,entry_reason,hold_until,state,metadata,last_meaningful_use_at) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',$8)")
                     .bind(session.0)
                     .bind(&kind)
                     .bind(&value)
@@ -188,6 +219,7 @@ impl CognitiveRuntimeService {
                     .bind(&admission.reason)
                     .bind(admission.hold_until)
                     .bind(admission.state.as_str())
+                    .bind(admission.last_meaningful_use_at)
                     .execute(&mut **tx)
                     .await
                     .map_err(db)?;
@@ -215,12 +247,18 @@ impl CognitiveRuntimeService {
             evicted_count = victims.len() as u32;
             changed |= evicted_count > 0;
         }
+        let last_meaningful = merged
+            .iter()
+            .filter_map(|admission| admission.last_meaningful_use_at)
+            .max();
+        changed |= activity_at.is_some();
         let runtime_revision = if changed {
             sqlx::query_scalar::<_, i64>(
-                "UPDATE cognitive_sessions SET last_activity_at=$2,runtime_revision=runtime_revision+1 WHERE session_id=$1 RETURNING runtime_revision",
+                "UPDATE cognitive_sessions SET last_activity_at=$2,last_meaningful_use_at=COALESCE(GREATEST(last_meaningful_use_at,$3),last_meaningful_use_at),runtime_revision=runtime_revision+1 WHERE session_id=$1 RETURNING runtime_revision",
             )
             .bind(session.0)
-            .bind(now)
+            .bind(activity_at.unwrap_or(now))
+            .bind(last_meaningful)
             .fetch_one(&mut **tx)
             .await
             .map_err(db)?
@@ -233,25 +271,6 @@ impl CognitiveRuntimeService {
             admitted_count,
             evicted_count,
         })
-    }
-
-    pub async fn resident_reference_strings(&self, session: SessionId) -> Result<HashSet<String>> {
-        Ok(sqlx::query(
-            "SELECT ref_kind,ref_value FROM resident_refs WHERE session_id=$1 AND state IN ('resident','provisional')",
-        )
-        .bind(session.0)
-        .fetch_all(self.store.pool())
-        .await
-        .map_err(db)?
-        .into_iter()
-        .map(|row| {
-            format!(
-                "{}:{}",
-                row.get::<String, _>("ref_kind"),
-                row.get::<String, _>("ref_value")
-            )
-        })
-        .collect())
     }
 }
 
@@ -269,6 +288,10 @@ fn merge_admissions(admissions: Vec<ResidentAdmission>) -> Result<Vec<ResidentAd
                 existing.state = ResidentState::Resident;
             }
             existing.hold_until = later_hold(existing.hold_until, admission.hold_until);
+            existing.last_meaningful_use_at = later_hold(
+                existing.last_meaningful_use_at,
+                admission.last_meaningful_use_at,
+            );
         } else {
             merged.insert(key, admission);
         }

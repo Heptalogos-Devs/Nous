@@ -453,7 +453,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
     assert_eq!(association.basis.len(), 1);
     let topology = runtime
         .serving
-        .projection_input(
+        .vcp_projection_input(
             subject,
             true,
             runtime
@@ -462,6 +462,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
                 .unwrap()
                 .get(nous_memory::EPISODE_SYNOPSIS)
                 .unwrap(),
+            "",
             None,
         )
         .await
@@ -476,7 +477,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
     };
     let cognitive = runtime
         .serving
-        .projection_input(subject, true, projection_budget, None)
+        .vcp_projection_input(subject, true, projection_budget, "", None)
         .await
         .expect("coherent cognitive projection");
     assert_eq!(cognitive.authority_watermark, topology.authority_watermark);
@@ -497,7 +498,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
     );
     let forbidden = runtime
         .serving
-        .projection_input(subject, false, projection_budget, None)
+        .vcp_projection_input(subject, false, projection_budget, "", None)
         .await
         .expect("cognitive projection without memory capability");
     assert!(

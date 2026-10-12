@@ -314,16 +314,19 @@ async fn manual_episode_sources(
             operation_id: OperationId::new(),
             subject,
             track_key: "manual".into(),
-            title: Some("Manual evidence".into()),
-            parent_episode_revision_id: None,
-            experience_time: TemporalExtent::Unknown,
-            boundary_explanation: "Unbound observation.".into(),
-            producer_signature_id: None,
-            members: vec![EpisodeMemberInput {
-                reference: CognitiveRef::Occurrence(occurrence),
-                role: "evidence".into(),
-            }],
-            basis: vec![evidence],
+
+            content: nous_memory::EpisodeContent {
+                title: Some("Manual evidence".into()),
+                parent_episode_revision_id: None,
+                experience_time: TemporalExtent::Unknown,
+                boundary_explanation: "Unbound observation.".into(),
+                producer_signature_id: None,
+                members: vec![EpisodeMemberInput {
+                    reference: CognitiveRef::Occurrence(occurrence),
+                    role: "evidence".into(),
+                }],
+                basis: vec![evidence],
+            },
         })
         .await
         .unwrap();
@@ -338,20 +341,23 @@ async fn manual_episode_sources(
             operation_id: OperationId::new(),
             subject,
             track_key: "manual".into(),
-            title: Some("Cognitive continuation".into()),
-            parent_episode_revision_id: None,
-            experience_time: TemporalExtent::Unknown,
-            boundary_explanation: "Memory member.".into(),
-            producer_signature_id: None,
-            members: vec![EpisodeMemberInput {
-                reference: reference.clone(),
-                role: "context".into(),
-            }],
-            basis: vec![RevisionBasis::CognitionDependency(CognitionDependency {
-                epistemic_relation: None,
-                target_revision: reference,
-                basis_role: BasisRole::Direct,
-            })],
+
+            content: nous_memory::EpisodeContent {
+                title: Some("Cognitive continuation".into()),
+                parent_episode_revision_id: None,
+                experience_time: TemporalExtent::Unknown,
+                boundary_explanation: "Memory member.".into(),
+                producer_signature_id: None,
+                members: vec![EpisodeMemberInput {
+                    reference: reference.clone(),
+                    role: "context".into(),
+                }],
+                basis: vec![RevisionBasis::CognitionDependency(CognitionDependency {
+                    epistemic_relation: None,
+                    target_revision: reference,
+                    basis_role: BasisRole::Direct,
+                })],
+            },
         })
         .await
         .unwrap();
@@ -462,20 +468,23 @@ async fn manual_episode_planning_and_complete_journal_revalidation() {
             episode_id: second.object.episode_id,
             expected_object_epoch: second.object.object_epoch,
             intent: "reinterpret".into(),
-            title: Some("Revised continuation".into()),
-            parent_episode_revision_id: None,
-            experience_time: second.revision.experience_time.clone(),
-            boundary_explanation: second.revision.boundary_explanation.clone(),
-            producer_signature_id: None,
-            members: second
-                .members
-                .iter()
-                .map(|member| EpisodeMemberInput {
-                    reference: member.reference.clone(),
-                    role: member.role.clone(),
-                })
-                .collect(),
-            basis: second.basis.clone(),
+
+            content: nous_memory::EpisodeContent {
+                title: Some("Revised continuation".into()),
+                parent_episode_revision_id: None,
+                experience_time: second.revision.experience_time.clone(),
+                boundary_explanation: second.revision.boundary_explanation.clone(),
+                producer_signature_id: None,
+                members: second
+                    .members
+                    .iter()
+                    .map(|member| EpisodeMemberInput {
+                        reference: member.reference.clone(),
+                        role: member.role.clone(),
+                    })
+                    .collect(),
+                basis: second.basis.clone(),
+            },
         })
         .await
         .unwrap();

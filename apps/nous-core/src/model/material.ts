@@ -39,23 +39,23 @@ export class ModelMaterialPipeline {
             needs.config.model,
             options.signal ?? undefined,
           );
-          for (const [index, need] of batch.entries()) {
-            await this.kernel.materialWorkflow.commitEmbedding(
-              {
-                subjectId,
-                preparationToken,
+          const accepted = await this.kernel.materialWorkflow.commitEmbeddings(
+            {
+              subjectId,
+              preparationToken,
+              items: batch.map((need, index) => ({
                 reference: need.reference,
                 material: {
                   text: need.text,
-                  spaceHash: needs.config.spaceHash,
+                  spaceHash: needs.config!.spaceHash,
                   producerHash: vectors.producer.signature_hash,
                   vector: vectors.value[index]!,
                 },
-              },
-              options,
-            );
-            committed++;
-          }
+              })),
+            },
+            options,
+          );
+          committed += accepted.committed;
         } catch (error) {
           if (options.signal?.aborted) throw error;
           return {

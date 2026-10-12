@@ -220,7 +220,7 @@ export async function executeConsolidation(
             status: "committed",
             resultRef: {
               kind: "cognitive_schema_revision",
-              value: value.currentRevisionId,
+              value: value.revisionId,
             },
           };
           break;
@@ -249,7 +249,7 @@ export async function executeConsolidation(
             status: "committed",
             resultRef: {
               kind: "cognitive_schema_revision",
-              value: value.currentRevisionId,
+              value: value.revisionId,
             },
           };
           break;

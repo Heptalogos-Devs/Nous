@@ -22,38 +22,15 @@ impl MemoryService {
                 basis_role: BasisRole::Direct,
             });
             allowed.insert(direct.canonical_key(), direct);
-            let basis = match reference {
-                CognitiveRef::EpisodeRevision(id) => {
-                    let episode = self.episode_revision(subject, id).await?;
-                    allowed.extend(
-                        episode
-                            .members
-                            .iter()
-                            .filter_map(member_basis)
-                            .map(|basis| (basis.canonical_key(), basis)),
-                    );
-                    episode.basis
-                }
-                CognitiveRef::JournalRevision(id) => self
-                    .journal_revision(subject, id)
-                    .await?
-                    .points
-                    .into_iter()
-                    .flat_map(|point| point.basis)
-                    .collect(),
-                CognitiveRef::MemoryRevision(id) => self.load_basis(id).await?,
-                CognitiveRef::CognitiveSchemaRevision(id) => self
-                    .schema_links(subject, id)
-                    .await?
-                    .into_iter()
-                    .map(|link| link.basis)
-                    .collect(),
-                _ => {
-                    return Err(Error::Invalid(
-                        "Consolidation dependency is not an exact cognition revision".into(),
-                    ));
-                }
-            };
+            let support = self.exact_support(subject, &reference, None).await?;
+            allowed.extend(
+                support
+                    .members
+                    .iter()
+                    .filter_map(member_basis)
+                    .map(|basis| (basis.canonical_key(), basis)),
+            );
+            let basis = support.basis;
             for basis in basis {
                 allowed.insert(basis.canonical_key(), basis.clone());
                 if let RevisionBasis::CognitionDependency(dependency) = basis {

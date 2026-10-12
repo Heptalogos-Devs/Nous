@@ -6787,6 +6787,11 @@ pub mod material_service_server {
     #[async_trait]
     pub trait MaterialService: std::marker::Send + std::marker::Sync + 'static {
         ///
+        async fn clean(
+            &self,
+            request: tonic::Request<()>,
+        ) -> std::result::Result<tonic::Response<super::MaterialCleanup>, tonic::Status>;
+        ///
         async fn list_occurrences(
             &self,
             request: tonic::Request<super::OccurrenceListRequest>,
@@ -6937,6 +6942,46 @@ pub mod material_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/nous.wave.v1alpha1.MaterialService/Clean" => {
+                    #[allow(non_camel_case_types)]
+                    struct CleanSvc<T: MaterialService>(pub Arc<T>);
+                    impl<T: MaterialService> tonic::server::UnaryService<()>
+                    for CleanSvc<T> {
+                        type Response = super::MaterialCleanup;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as MaterialService>::clean(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CleanSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/nous.wave.v1alpha1.MaterialService/ListOccurrences" => {
                     #[allow(non_camel_case_types)]
                     struct ListOccurrencesSvc<T: MaterialService>(pub Arc<T>);

@@ -117,22 +117,22 @@ async fn envelope_subject(rt: &nous_kernel::NousRuntime) -> SubjectId {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one real CAS/Authority lifecycle checks shared admission, failed transactions and instance-wide reclamation"
+)]
 async fn seed_adoption_shares_artifact_registration_and_rolls_back_on_failure() {
     use nous_material::{ObservationMaterial, UploadMetadata};
     use nous_subject::{COGNITIVE_SEED_FORMAT, CognitiveSeedInput, SeedAdoptionKind};
     let (root, url, _postgres) = test_support::database().await;
     let rt = test_support::open_runtime(&url, &root).await;
     let subject = envelope_subject(&rt).await;
-    let original = rt.subjects.latest_cognitive_seed(subject).await.unwrap();
+    let original = rt.subjects.cognitive_seed(subject, None).await.unwrap();
     let artifact = rt
         .material
         .artifact(subject, original.version.artifact_id)
         .await
         .unwrap();
-    assert_eq!(
-        artifact.storage_key,
-        nous_object_store::ObjectStore::storage_key(&artifact.content_hash).unwrap()
-    );
     let uploaded = rt
         .material
         .upload_stream(
@@ -152,7 +152,6 @@ async fn seed_adoption_shares_artifact_registration_and_rolls_back_on_failure() 
     assert_eq!(uploaded.media_type, artifact.media_type);
     assert_eq!(observed_artifact.media_type, artifact.media_type);
     assert_eq!(uploaded.metadata, artifact.metadata);
-    assert_eq!(observed_artifact.storage_key, artifact.storage_key);
     let operation = OperationId::new();
     let seed = CognitiveSeedInput {
         text: original.text.clone(),
@@ -176,6 +175,19 @@ async fn seed_adoption_shares_artifact_registration_and_rolls_back_on_failure() 
     );
     assert_eq!(imported.adoption.adoption_id, replay.adoption.adoption_id);
     assert_ne!(original.adoption.adoption_id, imported.adoption.adoption_id);
+    let other = envelope_subject(&rt).await;
+    let retained = rt
+        .material
+        .upload_stream(
+            other,
+            UploadMetadata {
+                media_type: "text/plain".into(),
+                metadata: serde_json::json!({}),
+            },
+            futures::stream::iter([Ok(b"retained in another Subject".to_vec())]),
+        )
+        .await
+        .unwrap();
     let before = rt.store.authority_seq(subject).await.unwrap();
     // Reject the final adoption insert after CAS, Artifact and version work have run.
     sqlx::raw_sql("CREATE FUNCTION reject_seed_adoption() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test adoption failure'; END $$; CREATE TRIGGER reject_seed_adoption BEFORE INSERT ON subject_seed_adoptions FOR EACH ROW EXECUTE FUNCTION reject_seed_adoption();")
@@ -203,7 +215,7 @@ async fn seed_adoption_shares_artifact_registration_and_rolls_back_on_failure() 
     assert_eq!(rt.store.authority_seq(subject).await.unwrap(), before);
     assert_eq!(
         rt.subjects
-            .cognitive_seed(subject, imported.adoption.adoption_id)
+            .cognitive_seed(subject, Some(imported.adoption.adoption_id))
             .await
             .unwrap()
             .text,
@@ -230,4 +242,30 @@ async fn seed_adoption_shares_artifact_registration_and_rolls_back_on_failure() 
     .await
     .unwrap();
     assert_eq!(count, 0);
+    let abandoned = root
+        .path()
+        .join("objects")
+        .join(format!(".staging-{}", uuid::Uuid::now_v7()));
+    tokio::fs::write(&abandoned, b"abandoned upload")
+        .await
+        .unwrap();
+    assert_eq!(rt.material.clean().await.unwrap(), (1, 1));
+    assert!(!abandoned.exists());
+    assert_eq!(rt.material.clean().await.unwrap(), (0, 0));
+    let stream = rt
+        .material
+        .artifact_stream(other, retained.artifact_id, None, None)
+        .await
+        .unwrap();
+    use futures::TryStreamExt;
+    let chunks = stream.try_collect::<Vec<_>>().await.unwrap();
+    assert_eq!(chunks.concat(), b"retained in another Subject");
+    assert_eq!(
+        rt.subjects
+            .cognitive_seed(subject, Some(imported.adoption.adoption_id))
+            .await
+            .unwrap()
+            .text,
+        original.text
+    );
 }

@@ -15,7 +15,6 @@ CREATE TABLE artifacts (
     content_hash text NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
     byte_length bigint NOT NULL CHECK (byte_length >= 0),
     media_type text NOT NULL,
-    storage_key text NOT NULL,
     created_at timestamptz NOT NULL,
     metadata jsonb NOT NULL DEFAULT '{}',
     UNIQUE(subject_id, content_hash)

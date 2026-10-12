@@ -26,16 +26,12 @@ fn text_query(query: &nous_core::CognitiveQuery) -> String {
 /// Signals prepared once for one bound leaf. Consumers only borrow this value;
 /// consuming it for Runtime lanes happens after cognitive readout.
 pub struct PreparedQuerySignals {
-    query_text: String,
     embedding: Option<QuerySemanticEmbedding>,
     lexical: Option<LaneOutput>,
     dense: Option<LaneOutput>,
 }
 
 impl PreparedQuerySignals {
-    pub fn query_text(&self) -> &str {
-        &self.query_text
-    }
     pub fn embedding(&self) -> Option<&QuerySemanticEmbedding> {
         self.embedding.as_ref()
     }
@@ -233,7 +229,6 @@ async fn prepare_signals(
         .transpose()?;
 
     Ok(PreparedQuerySignals {
-        query_text,
         embedding,
         lexical,
         dense,
@@ -309,10 +304,6 @@ fn domain_dense_matches(
         .collect::<roaring::RoaringBitmap>();
     generation.search_filtered(vector, limit, &allowed)
 }
-
-#[cfg(test)]
-#[path = "../tests/unit/query_signals.rs"]
-mod tests;
 
 /// Request-scoped immutable Serving view, retained through final validation.
 pub struct ServingQuery {

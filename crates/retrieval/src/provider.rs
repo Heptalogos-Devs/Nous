@@ -21,6 +21,24 @@ pub trait TextEmbeddingProvider: Send + Sync {
         vec![self.producer()]
     }
     async fn embed(&self, request: TextEmbeddingRequest) -> Result<QuerySemanticEmbedding>;
+    async fn embed_batch(
+        &self,
+        subject: SubjectId,
+        texts: &[String],
+    ) -> Result<Vec<QuerySemanticEmbedding>> {
+        let mut outputs = Vec::with_capacity(texts.len());
+        for text in texts {
+            outputs.push(
+                self.embed(TextEmbeddingRequest {
+                    subject,
+                    text: text.clone(),
+                    query: false,
+                })
+                .await?,
+            );
+        }
+        Ok(outputs)
+    }
 }
 
 pub(crate) struct RequestEmbedding {

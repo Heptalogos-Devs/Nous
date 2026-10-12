@@ -89,14 +89,25 @@ impl AuthorityStore {
         tx.commit().await.map_err(db)
     }
 
-    pub async fn serving_current(&self, subject: SubjectId) -> Result<Vec<ServingRecord>> {
-        sqlx::query("SELECT g.* FROM serving_current c JOIN serving_generations g USING(generation_id) WHERE c.subject_id=$1 AND g.state='ready' ORDER BY c.family,c.space_signature")
-            .bind(subject.0).fetch_all(self.pool()).await.map_err(db)?.into_iter().map(decode).collect()
+    /// One ordered catalog for request preparation; pointer membership is
+    /// returned with each immutable record, not rediscovered in another read.
+    pub async fn serving_candidates(
+        &self,
+        subject: SubjectId,
+        view: Option<&str>,
+    ) -> Result<Vec<(ServingRecord, bool)>> {
+        let rows = sqlx::query("SELECT g.*,c.generation_id IS NOT NULL AS current FROM serving_generations g LEFT JOIN serving_current c USING(generation_id) WHERE g.subject_id=$1 AND g.state IN ('ready','retired') AND (($2::text IS NULL AND g.view_descriptor->>'kind'='current') OR g.view_descriptor->>'snapshot_digest'=$2) ORDER BY current DESC,g.authority_watermark DESC,g.built_at DESC,g.generation_id")
+            .bind(subject.0).bind(view).fetch_all(self.pool()).await.map_err(db)?;
+        rows.into_iter()
+            .map(|row| {
+                let current = row.try_get("current").map_err(db)?;
+                Ok((decode(row)?, current))
+            })
+            .collect()
     }
 
-    /// Immutable artifacts remain reusable across readout/profile changes.
-    pub async fn serving_reusable(&self, subject: SubjectId) -> Result<Vec<ServingRecord>> {
-        sqlx::query("SELECT * FROM serving_generations WHERE subject_id=$1 AND view_descriptor->>'kind'='current' AND state IN ('ready','retired') ORDER BY authority_watermark DESC,built_at DESC,generation_id")
+    pub async fn serving_current(&self, subject: SubjectId) -> Result<Vec<ServingRecord>> {
+        sqlx::query("SELECT g.* FROM serving_current c JOIN serving_generations g USING(generation_id) WHERE c.subject_id=$1 AND g.state='ready' ORDER BY c.family,c.space_signature")
             .bind(subject.0).fetch_all(self.pool()).await.map_err(db)?.into_iter().map(decode).collect()
     }
 
@@ -208,14 +219,6 @@ impl AuthorityStore {
         }
         tx.commit().await.map_err(db)?;
         Ok(record)
-    }
-    pub async fn historical_serving_reusable(
-        &self,
-        subject: SubjectId,
-        digest: &str,
-    ) -> Result<Vec<ServingRecord>> {
-        sqlx::query("SELECT * FROM serving_generations WHERE subject_id=$1 AND view_descriptor->>'kind'='historical' AND view_descriptor->>'snapshot_digest'=$2 AND state IN ('ready','retired') ORDER BY built_at DESC,generation_id")
-            .bind(subject.0).bind(digest).fetch_all(self.pool()).await.map_err(db)?.into_iter().map(decode).collect()
     }
     async fn publish_historical_generation(&self, record: ServingRecord) -> Result<ServingRecord> {
         let mut tx = self.begin().await?;

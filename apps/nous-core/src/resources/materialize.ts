@@ -58,10 +58,7 @@ async function materializeResourceOnce(
       Code.InvalidArgument,
     );
   const exactReference = request.reference;
-  const reference = {
-    ...request.reference,
-    entryVersion: request.reference.entryVersion ?? null,
-  };
+  const reference = exactReference;
   const identity = {
     subjectId: request.subjectId,
     owner: "material",

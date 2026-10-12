@@ -7,7 +7,6 @@ import { ConfigurationSnapshotSchema } from "@nous-wave/protocol/nous/wave/v1alp
 import { consumerStatePolicySchema } from "@nous-wave/client/consumer-policy";
 import type { connectNousInstance } from "@nous-wave/client/node";
 import { runCli as execute } from "../../src/commands/index.js";
-import { createEnvironment as environment } from "../../src/runtime.js";
 
 export const identity = {
   instanceId: "11111111-1111-4111-8111-111111111111",
@@ -72,15 +71,6 @@ export function runCli(
     args,
     connect && (async (location) => consumerClient(await connect(location))),
     present,
-    input,
-  );
-}
-export function createEnvironment(
-  ...[values, connect, input]: Parameters<typeof environment>
-) {
-  return environment(
-    values,
-    connect && (async (location) => consumerClient(await connect(location))),
     input,
   );
 }

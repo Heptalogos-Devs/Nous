@@ -84,15 +84,6 @@ impl ObjectStore {
         Ok(format!("{}/{}", &hash[..2], hash))
     }
 
-    pub async fn put(&self, bytes: Vec<u8>) -> Result<String> {
-        let hash = blake3::hash(&bytes).to_hex().to_string();
-        self.operator
-            .write(&Self::storage_key(&hash)?, bytes)
-            .await
-            .map_err(storage_error)?;
-        Ok(hash)
-    }
-
     /// Stream an object into a staging file, hashing and enforcing the bound
     /// while bytes arrive. The final rename is the only point at which the
     /// canonical content-addressed path becomes visible.
@@ -198,25 +189,6 @@ impl ObjectStore {
             .map_err(storage_error)
     }
 
-    /// Keep complete UTF-8 characters when a bounded read ends inside a character.
-    pub async fn read_text_prefix(
-        &self,
-        hash: &str,
-        byte_length: u64,
-        limit: u64,
-    ) -> Result<Option<String>> {
-        let bytes = self.read_range(hash, 0, byte_length.min(limit)).await?;
-        let text = match std::str::from_utf8(&bytes) {
-            Ok(text) => text,
-            Err(error) if byte_length > limit && error.error_len().is_none() => {
-                std::str::from_utf8(&bytes[..error.valid_up_to()])
-                    .map_err(|error| Error::Invalid(error.to_string()))?
-            }
-            Err(_) => return Ok(None),
-        };
-        Ok(Some(text.to_owned()))
-    }
-
     /// Raw byte ranges never impose text boundaries; full reads verify CAS integrity at EOF.
     pub async fn stream(
         &self,
@@ -287,6 +259,44 @@ impl ObjectStore {
             .delete(&Self::storage_key(hash)?)
             .await
             .map_err(storage_error)
+    }
+
+    /// The caller holds the exclusive reference guard and supplies all retained Authority hashes.
+    pub async fn reclaim(
+        &self,
+        retained: &std::collections::HashSet<String>,
+    ) -> Result<(u64, u64)> {
+        let mut objects = 0;
+        let mut hashes = Box::pin(self.hashes().await?);
+        while let Some(hash) = hashes.next().await {
+            let hash = hash?;
+            if !retained.contains(&hash) {
+                self.delete_unreferenced(&hash).await?;
+                objects += 1;
+            }
+        }
+        let mut staging = 0;
+        let mut entries = tokio::fs::read_dir(&self.root)
+            .await
+            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|error| Error::Infrastructure(error.to_string()))?
+        {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .strip_prefix(".staging-")
+                .is_some_and(|suffix| uuid::Uuid::parse_str(suffix).is_ok())
+            {
+                tokio::fs::remove_file(entry.path())
+                    .await
+                    .map_err(|error| Error::Infrastructure(error.to_string()))?;
+                staging += 1;
+            }
+        }
+        Ok((objects, staging))
     }
 
     pub async fn check(&self) -> Result<()> {

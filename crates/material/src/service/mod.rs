@@ -19,9 +19,8 @@ mod segmentation;
 mod structured;
 pub use segmentation::DescriptionSegment;
 mod types;
-pub use materialization::{
-    ByteRange, MaterialReadInput, MaterialTextView, MaterializeRequest, MaterializedEvidence,
-};
+pub use materialization::{ByteRange, MaterialTextView, MaterializeRequest, MaterializedEvidence};
+pub use read::MaterialReadInput;
 pub use types::*;
 
 use crate::*;

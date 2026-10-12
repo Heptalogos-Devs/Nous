@@ -21,27 +21,13 @@ pub struct VcpProjectedDocument {
 }
 
 impl ServingService {
-    /// Resolve model material for a disposable VCP serving generation using
-    /// the same host-supplied provider contract as dense construction.
-    pub async fn vcp_projection_material(
-        &self,
-        subject: SubjectId,
-        snapshot: &nous_configuration::ConfigSnapshot,
-    ) -> Result<VcpProjectionMaterial> {
-        self.vcp_projection_material_in_view(
-            subject,
-            snapshot,
-            None,
-            &self.publisher.snapshot_for(subject),
-        )
-        .await
-    }
     pub(crate) async fn vcp_projection_material_in_view(
         &self,
         subject: SubjectId,
         snapshot: &nous_configuration::ConfigSnapshot,
         view: Option<&HistoricalAuthoritySnapshot>,
         serving: &ServingSnapshot,
+        capabilities: ProjectionCapabilities,
     ) -> Result<VcpProjectionMaterial> {
         let provider = self.embedding().ok_or_else(|| {
             Error::Unavailable("VCP serving build requires configured embedding material".into())
@@ -49,9 +35,14 @@ impl ServingService {
         let space = provider.space();
         let producer = provider.producer();
         let budget = snapshot.get(crate::EPISODE_SYNOPSIS)?;
-        let capabilities = self.projection_capabilities(subject).await?;
         let input = self
-            .projection_input(subject, capabilities.memory, budget, view)
+            .vcp_projection_input(
+                subject,
+                capabilities.memory,
+                budget,
+                &format!("vcp:{}", space.space_hash),
+                view,
+            )
             .await?;
         let concepts = serving.concept.iter().find(|generation| {
             generation
@@ -64,7 +55,23 @@ impl ServingService {
                     .is_some_and(|p| p.signature_hash == producer.signature_hash)
         });
         let mut documents = Vec::new();
-        for document in self.documents(subject, input.sources, budget, view).await? {
+        let source_documents = self.documents(subject, input.sources, budget, view).await?;
+        let expected = source_documents.len();
+        let embedded = self
+            .embed_documents(
+                subject,
+                &source_documents,
+                concepts.map(AsRef::as_ref),
+                provider.as_ref(),
+            )
+            .await?;
+        if embedded.len() != expected {
+            return Err(Error::Unavailable(
+                "VCP requires compatible shared concept material".into(),
+            ));
+        }
+        for (index, output) in embedded {
+            let document = &source_documents[index];
             let concept_refs = document
                 .tag_ids
                 .iter()
@@ -78,17 +85,6 @@ impl ServingService {
                         })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let output = self
-                .embed_document(
-                    subject,
-                    &document,
-                    concepts.map(AsRef::as_ref),
-                    provider.as_ref(),
-                )
-                .await?
-                .ok_or_else(|| {
-                    Error::Unavailable("VCP requires compatible shared concept material".into())
-                })?;
             let evidence_roots = input
                 .evidence_roots
                 .get(&document.reference)
@@ -98,8 +94,8 @@ impl ServingService {
                 .collect();
             documents.push(VcpProjectedDocument {
                 evidence_roots,
-                reference: document.reference,
-                representation_text: document.representation_text,
+                reference: document.reference.clone(),
+                representation_text: document.representation_text.clone(),
                 vector: output.vector,
                 concept_refs,
                 curve_order: VcpCurveOrder::StableIdentity,

@@ -122,30 +122,41 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         .await;
         result.map(Response::new).map_err(status)
     }
-    async fn commit_embedding(
+    async fn commit_embeddings(
         &self,
-        request: Request<k::CommitEmbeddingRequest>,
-    ) -> std::result::Result<Response<()>, Status> {
+        request: Request<k::CommitEmbeddingsRequest>,
+    ) -> std::result::Result<Response<k::CommitEmbeddingsResponse>, Status> {
         let input = request.into_inner();
         let result: Result<_> = async {
-            let material = required(input.material, "material")?;
             let subject = SubjectId(id(&input.subject_id)?);
             let bound =
                 self.embedding_prepared_view(subject, input.preparation_token.as_deref())?;
-            self.0
+            let items = input
+                .items
+                .into_iter()
+                .map(|item| -> Result<_> {
+                    let material = required(item.material, "material")?;
+                    Ok(nous_retrieval::EmbeddingSubmission {
+                        reference: from_ref(required(item.reference, "reference")?)?,
+                        text: material.text,
+                        space: material.space_hash,
+                        producer: material.producer_hash,
+                        vector: material.vector,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let committed = self
+                .0
                 .serving
-                .commit_embedding_in_view(
-                    SubjectId(id(&input.subject_id)?),
-                    from_ref(required(input.reference, "reference")?)?,
-                    material.text,
-                    &material.space_hash,
-                    &material.producer_hash,
-                    material.vector,
+                .commit_embeddings(
+                    subject,
+                    items,
                     bound
                         .as_ref()
-                        .and_then(|b| b.historical_authority.as_deref()),
+                        .and_then(|bound| bound.historical_authority.as_deref()),
                 )
-                .await
+                .await?;
+            Ok(k::CommitEmbeddingsResponse { committed })
         }
         .await;
         result.map(Response::new).map_err(status)

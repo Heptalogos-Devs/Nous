@@ -116,12 +116,14 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
         .create_tag(
             subject_a,
             nous_memory::CreateTagRequest {
-                operation_id: OperationId::new(),
-                label: "Zeta opaque concept".into(),
-                description: Some("No textual overlap with the focus".into()),
-                kind_hint: None,
-                origin: "host_explicit".into(),
                 producer: None,
+                operation_id: OperationId::new(),
+                content: nous_memory::TagContent {
+                    label: "Zeta opaque concept".into(),
+                    description: Some("No textual overlap with the focus".into()),
+                    kind_hint: None,
+                },
+                origin: "host_explicit".into(),
             },
         )
         .await
@@ -237,7 +239,7 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
         .cognition
         .finalize_query(
             subject_a,
-            ticket.unwrap(),
+            ticket,
             vec![(a.clone(), 1.0)],
             vec![],
             nous_runtime::CognitiveContributors {

@@ -11,7 +11,11 @@ export async function memoryCommands(
 ) {
   const { client, subjectId, values } = env;
   if (action === "list")
-    return client.memory.listMemories({ subjectId, page: page(env) });
+    return client.memory.listMemories({
+      subjectId,
+      status: env.values.status,
+      page: page(env),
+    });
   if (action === "form")
     return client.memory.formMemory({
       subjectId,

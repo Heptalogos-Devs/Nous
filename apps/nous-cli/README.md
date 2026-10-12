@@ -141,8 +141,14 @@ role = "direct"
 
 Schema content 使用 title、structural_claim、applicability_scope、boundary_definition、formation_kind、evidence_links。`schema evidence` 文件是一项 `SchemaEvidenceLink`；split 文件用 `[[children]]`；merge 文件含 `sources=["<Schema引用>",...]` 与 `[merged]` 完整内容。`memory link`/`episode link` 文件含 from、to、relation，from/to 是 exact revision。复杂内容字段由 generated owner schema 校验，不提供 raw RPC 输入入口。
 
-`resource put --request-file resource.toml` 文件使用 ResourceDescriptor 字段；get/list/remove 使用 Registry。`resource materialize --request-file reference.toml` 使用真实 stable external reference。`projection build|managed --consumer <operator已配置consumer> [--request-file context.toml]` 需要选中 Session；文件可包含 query、situation_refs、known_cursor，后者用于 managed delta/snapshot，`--max-items`/`--max-bytes` 明确预算。
+`resource put --request-file resource.toml` 文件使用 ResourceDescriptor 字段；get/list/remove 使用 Registry。`resource materialize --request-file reference.toml` 使用真实 stable external reference。`projection build|managed --consumer <operator已配置consumer> [--request-file context.toml]` 需要选中 Session，使用该 Session 的实际 foreground WorkContext，local context selection 不覆盖 foreground；文件可包含 query、situation_refs、known_cursor，后者用于 managed delta/snapshot，`--max-items`/`--max-bytes` 明确预算。
 
 `subject seed` 与 `subject adopt-seed --kind import --request-file seed.toml` 管理真实种子版本；`identity rebind --request-file mention.toml` 管理 mention_id/entity_ref/binding_state/reason。`subject create --request-file subject.toml` 可显式设置 capabilities 与 cognitive_seed。`session list`、`context list` 使用 `--page-size`/`--page-token`，公开 Page 上限为 200。`context create/set --request-file` 可设置 purpose/context_text/unresolved_questions/constraints/resume_conditions/budget_summary。创建的 questions/resume 是数组；set 的两个列表使用 `{ values = [...] }` 表达字段存在，空数组、空文本和空对象明确清空，未提供字段保持原值。`set/pin/unpin/clear --expected-revision` 可指定所见修订；省略时只读取当前 revision，内容修改由 Runtime 在锁内完成。
 
 `material limits/artifacts/occurrences/representations/producer` 提供 admission 上限、Artifact 分页、实际 Observation 反查、派生表示列表与 producer 读取。occurrences 接受 Artifact，representations 可用 Artifact/SourceRegion 和 `--kind` 过滤。
+
+列表使用 `--page-size`/`--page-token`；`memory|episode|journal list --status accepted|withdrawn`、`session list --status open|closed` 与 `resource list --status ready|degraded|unavailable` 直接使用 owner 的筛选合同，上述列表省略 `--status` 返回所有状态；`tag list --status active|withdrawn` 默认 active。`subject create --operation-id <id>` 可以保留用户指定的操作身份。
+
+`episode create --kind <segmentation track> --request-file episode.toml` 与 `episode revise --kind resegment|reinterpret --request-file episode.toml` 共用纯 EpisodeContent 文件，track 只在创建指定；修订不再次提供操作 envelope。
+
+`tag create --request-file tag.toml` 使用与修订/拆分相同的 TagContent 字段；创建默认 host-explicit origin。`material clean` 清理整个 BlobRoot 的无引用对象与残留 staging，不要求选中 Subject；登记中的内容和所有 Subject 引用的材料由 Material owner 保护。

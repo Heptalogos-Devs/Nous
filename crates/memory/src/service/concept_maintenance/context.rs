@@ -1,88 +1,19 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+use super::super::consolidation_context::member_basis;
 use super::*;
-use sqlx::Row;
-impl MemoryService {
-    pub(super) async fn concept_focus_sources(
-        &self,
-        subject: SubjectId,
-        focus: &CognitiveRef,
-    ) -> Result<(Vec<RevisionBasis>, Vec<EntityRef>)> {
-        match focus {
-            CognitiveRef::MemoryRevision(id) => {
-                let entities:Vec<String> = sqlx::query_scalar("SELECT entity_ref FROM memory_revision_aboutness WHERE memory_revision_id=$1 ORDER BY entity_ref LIMIT 8")
-                    .bind(id.0).fetch_all(self.store.pool()).await.map_err(db)?;
-                Ok((
-                    self.load_basis(*id).await?,
-                    entities
-                        .into_iter()
-                        .map(EntityRef::new)
-                        .collect::<Result<_>>()?,
-                ))
-            }
-            CognitiveRef::CognitiveSchemaRevision(id) => {
-                let entities: Vec<String> = sqlx::query_scalar(
-                    "SELECT aboutness FROM cognitive_schema_revisions WHERE schema_revision_id=$1",
-                )
-                .bind(id.0)
-                .fetch_one(self.store.pool())
-                .await
-                .map_err(db)?;
-                Ok((
-                    self.schema_links(subject, *id)
-                        .await?
-                        .into_iter()
-                        .map(|link| link.basis)
-                        .collect(),
-                    entities
-                        .into_iter()
-                        .take(8)
-                        .map(EntityRef::new)
-                        .collect::<Result<_>>()?,
-                ))
-            }
-            CognitiveRef::EpisodeRevision(id) => {
-                let episode = self.episode_revision(subject, *id).await?;
-                let mut basis = episode.basis;
-                basis.extend(episode.members.into_iter().take(8).filter_map(|member| {
-                    match member.reference {
-                        CognitiveRef::Occurrence(id) => {
-                            Some(RevisionBasis::Evidence(EvidenceRef {
-                                epistemic_relation: None,
-                                occurrence_id: id,
-                                locator: EvidenceLocator::WholeOccurrence,
-                                basis_role: BasisRole::Direct,
-                            }))
-                        }
-                        _ => None,
-                    }
-                }));
-                Ok((basis, Vec::new()))
-            }
-            CognitiveRef::JournalRevision(id) => {
-                let journal = self.journal_revision(subject, *id).await?;
-                Ok((
-                    journal
-                        .points
-                        .into_iter()
-                        .flat_map(|point| point.basis)
-                        .take(16)
-                        .collect(),
-                    Vec::new(),
-                ))
-            }
-            _ => Err(Error::Invalid(
-                "concept focus must be exact cognition".into(),
-            )),
-        }
-    }
-    pub(super) async fn concept_focus_context(
-        &self,
-        subject: SubjectId,
-        focus: &CognitiveRef,
-        basis: &BTreeMap<String, AssociationBasis>,
-    ) -> Result<serde_json::Value> {
+pub(super) struct ConceptFocus {
+    pub epoch: i64,
+    pub text: String,
+    pub basis: Vec<RevisionBasis>,
+    pub entities: Vec<EntityRef>,
+    pub owner_context: serde_json::Value,
+    pub members: Vec<EpisodeMember>,
+}
+
+impl ConceptFocus {
+    pub fn context(&self, basis: &BTreeMap<String, AssociationBasis>) -> serde_json::Value {
         let source_keys = basis
             .iter()
             .filter_map(|(key, basis)| {
@@ -93,78 +24,197 @@ impl MemoryService {
                 .then_some(key)
             })
             .collect::<Vec<_>>();
-        let context = match focus {
-            CognitiveRef::MemoryRevision(id) => {
-                let row=sqlx::query("SELECT o.cognitive_role,r.semantic_role,r.valid_time_kind,r.valid_time_start,r.valid_time_end FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2")
-                    .bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-                serde_json::json!({"cognitiveRole":row.try_get::<String,_>("cognitive_role").map_err(db)?,"semanticRole":row.try_get::<String,_>("semantic_role").map_err(db)?,"validTime":temporal_from_columns(row.try_get("valid_time_kind").map_err(db)?,row.try_get("valid_time_start").map_err(db)?,row.try_get("valid_time_end").map_err(db)?)?})
-            }
-            CognitiveRef::CognitiveSchemaRevision(id) => {
-                let row=sqlx::query("SELECT applicability_description,boundary_definition,valid_time_kind,valid_time_start,valid_time_end FROM cognitive_schema_revisions WHERE schema_revision_id=$1")
-                    .bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-                serde_json::json!({"applicability":row.try_get::<String,_>("applicability_description").map_err(db)?.chars().take(512).collect::<String>(),"boundary":row.try_get::<String,_>("boundary_definition").map_err(db)?.chars().take(512).collect::<String>(),"validTime":temporal_from_columns(row.try_get("valid_time_kind").map_err(db)?,row.try_get("valid_time_start").map_err(db)?,row.try_get("valid_time_end").map_err(db)?)?})
-            }
-            CognitiveRef::EpisodeRevision(id) => {
-                let episode = self.episode_revision(subject, *id).await?;
-                let members=episode.members.into_iter().take(8).enumerate().map(|(ordinal,member)|{
-                    let keys=basis.iter().filter_map(|(key,basis)|match (&member.reference,basis) {
-                        (CognitiveRef::Occurrence(id),AssociationBasis::Revision(RevisionBasis::Evidence(e))) if *id==e.occurrence_id=>Some(key),
-                        (reference,AssociationBasis::Revision(RevisionBasis::CognitionDependency(d))) if *reference==d.target_revision=>Some(key),
-                        _=>None,
-                    }).collect::<Vec<_>>();
-                    serde_json::json!({"ordinal":ordinal,"role":member.role.chars().take(128).collect::<String>(),"basisKeys":keys})
+        let mut context = self.owner_context.clone();
+        if !self.members.is_empty() {
+            context["orderedMembers"] = serde_json::json!(self.members.iter().take(8).map(|member| {
+                let keys = basis.iter().filter_map(|(key,basis)| match (&member.reference, basis) {
+                    (CognitiveRef::Occurrence(id), AssociationBasis::Revision(RevisionBasis::Evidence(e))) if *id == e.occurrence_id => Some(key),
+                    (reference, AssociationBasis::Revision(RevisionBasis::CognitionDependency(d))) if *reference == d.target_revision => Some(key),
+                    _ => None,
                 }).collect::<Vec<_>>();
-                serde_json::json!({"experienceTime":episode.revision.experience_time,"orderedMembers":members})
-            }
-            CognitiveRef::JournalRevision(id) => {
-                serde_json::json!({"temporalScope":self.journal_revision(subject,*id).await?.revision.temporal_scope})
-            }
-            _ => {
-                return Err(Error::Invalid(
-                    "concept focus must be exact cognition".into(),
-                ));
-            }
-        };
-        Ok(serde_json::json!({"sourceBasisKeys":source_keys,"ownerContext":context}))
+                serde_json::json!({"ordinal":member.ordinal,"role":member.role.chars().take(128).collect::<String>(),"basisKeys":keys})
+            }).collect::<Vec<_>>());
+        }
+        serde_json::json!({"sourceBasisKeys":source_keys,"ownerContext":context})
+    }
+}
+
+impl MemoryService {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one current focus projection preserves four owned cognition content contracts"
+    )]
+    pub(super) async fn concept_focus(
+        &self,
+        subject: SubjectId,
+        focus: &CognitiveRef,
+        policy: &AccessibilityPolicy,
+    ) -> Result<ConceptFocus> {
+        let mut members = Vec::new();
+        let (head, epoch, accepted, integrity, suppression, text, basis, entities, context) =
+            match focus {
+                CognitiveRef::MemoryRevision(id) => {
+                    let memory = self
+                        .memory_views(
+                            subject,
+                            &[id.0],
+                            policy,
+                            None,
+                            false,
+                            self.cognition.now(subject),
+                        )
+                        .await?
+                        .remove(&id.0)
+                        .ok_or_else(|| Error::NotFound("Memory concept focus not found".into()))?;
+                    (
+                        CognitiveRef::MemoryRevision(memory.object.current_revision_id),
+                        memory.object.object_epoch,
+                        memory.object.acceptance_state,
+                        memory.object.integrity_state,
+                        memory.object.suppression_state,
+                        match memory.revision.title {
+                            Some(title) => {
+                                format!("{title}: {}", memory.revision.representation_text)
+                            }
+                            None => memory.revision.representation_text,
+                        },
+                        memory.basis,
+                        memory.aboutness,
+                        serde_json::json!({"cognitiveRole":memory.object.cognitive_role.as_str(),"semanticRole":memory.revision.semantic_role,"validTime":memory.revision.valid_time}),
+                    )
+                }
+                CognitiveRef::CognitiveSchemaRevision(id) => {
+                    let schema = self.schema_revision(subject, *id).await?;
+                    let revision = schema.revision;
+                    let text = format!(
+                        "Title: {}\nClaim: {}\nApplicability: {}\nBoundary: {}",
+                        revision.title.as_deref().unwrap_or_default(),
+                        revision.structural_claim,
+                        revision.applicability_scope.description,
+                        revision.boundary_definition
+                    );
+                    (
+                        CognitiveRef::CognitiveSchemaRevision(schema.schema.current_revision_id),
+                        schema.schema.object_epoch,
+                        schema.schema.acceptance_state,
+                        schema.schema.integrity_state,
+                        schema.schema.suppression_state,
+                        text,
+                        schema
+                            .evidence_links
+                            .into_iter()
+                            .map(|link| link.basis)
+                            .collect(),
+                        revision.applicability_scope.aboutness,
+                        serde_json::json!({"applicability":revision.applicability_scope.description.chars().take(512).collect::<String>(),"boundary":revision.boundary_definition.chars().take(512).collect::<String>(),"validTime":revision.applicability_scope.valid_time}),
+                    )
+                }
+                CognitiveRef::EpisodeRevision(id) => {
+                    let episode = self.episode_revision(subject, *id).await?;
+                    let mut basis = episode.basis;
+                    basis.extend(episode.members.iter().take(8).filter_map(member_basis));
+                    members = episode.members;
+                    let text = format!(
+                        "{}\n{}",
+                        episode.revision.title.as_deref().unwrap_or_default(),
+                        episode.revision.boundary_explanation
+                    );
+                    (
+                        CognitiveRef::EpisodeRevision(episode.object.current_revision_id),
+                        episode.object.object_epoch,
+                        episode.object.acceptance_state,
+                        episode.object.integrity_state,
+                        episode.object.suppression_state,
+                        text,
+                        basis,
+                        Vec::new(),
+                        serde_json::json!({"experienceTime":episode.revision.experience_time}),
+                    )
+                }
+                CognitiveRef::JournalRevision(id) => {
+                    let journal = self.journal_revision(subject, *id).await?;
+                    let text = format!(
+                        "{}\n{}",
+                        journal.revision.title.as_deref().unwrap_or_default(),
+                        journal.revision.narrative
+                    );
+                    (
+                        CognitiveRef::JournalRevision(journal.object.current_revision_id),
+                        journal.object.object_epoch,
+                        journal.object.acceptance_state,
+                        journal.object.integrity_state,
+                        journal.object.suppression_state,
+                        text,
+                        journal
+                            .points
+                            .into_iter()
+                            .flat_map(|point| point.basis)
+                            .take(16)
+                            .collect(),
+                        Vec::new(),
+                        serde_json::json!({"temporalScope":journal.revision.temporal_scope}),
+                    )
+                }
+                _ => {
+                    return Err(Error::Invalid(
+                        "concept focus must be exact cognition".into(),
+                    ));
+                }
+            };
+        if head != *focus
+            || accepted != AcceptanceState::Accepted
+            || integrity != IntegrityState::Valid
+            || suppression != SuppressionState::Normal
+        {
+            return Err(Error::NotFound(
+                "concept focus is no longer current and eligible".into(),
+            ));
+        }
+        Ok(ConceptFocus {
+            epoch,
+            text: text.chars().take(2048).collect(),
+            basis,
+            entities: entities.into_iter().take(8).collect(),
+            owner_context: context,
+            members,
+        })
     }
     pub(super) async fn concept_source_text(
         &self,
         subject: SubjectId,
         basis: &BTreeMap<String, AssociationBasis>,
     ) -> Result<serde_json::Value> {
+        let entries = basis
+            .iter()
+            .filter_map(|(key, basis)| match basis {
+                AssociationBasis::Revision(RevisionBasis::Evidence(evidence)) => {
+                    Some((key, evidence.clone()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let evidence = entries
+            .iter()
+            .map(|(_, evidence)| evidence.clone())
+            .collect::<Vec<_>>();
+        let sources = self
+            .material
+            .evidence_text_views(subject, &evidence, 2048, None)
+            .await?;
         let mut result = serde_json::Map::new();
-        let mut remaining: usize = 8192;
-        for (key, basis) in basis {
-            let AssociationBasis::Revision(RevisionBasis::Evidence(e)) = basis else {
-                continue;
-            };
+        let mut remaining = 8192usize;
+        for ((key, _), (occurrence, selected)) in entries.into_iter().zip(sources) {
             if remaining == 0 {
                 break;
             }
-            let row=sqlx::query("SELECT o.source_class,o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at,a.content_hash,a.byte_length,(a.media_type LIKE 'text/%' OR a.media_type IN ('application/json','application/xml')) raw_text FROM observation_occurrences o LEFT JOIN artifacts a USING(artifact_id) WHERE o.subject_id=$1 AND o.occurrence_id=$2")
-                .bind(subject.0).bind(e.occurrence_id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-            let text = if row.try_get::<Option<bool>, _>("raw_text").map_err(db)? == Some(true) {
-                self.objects
-                    .read_text_prefix(
-                        &row.try_get::<String, _>("content_hash").map_err(db)?,
-                        u64::try_from(row.try_get::<i64, _>("byte_length").map_err(db)?)
-                            .map_err(|_| Error::Infrastructure("invalid source size".into()))?,
-                        remaining.min(2048) as u64,
-                    )
-                    .await?
-                    .unwrap_or_default()
-            } else {
-                self.store
-                    .query_descriptors(subject, &[CognitiveRef::Occurrence(e.occurrence_id)])
-                    .await?
-                    .into_iter()
-                    .next()
-                    .map(|d| d.text)
-                    .unwrap_or_default()
-            };
-            let text = text.chars().take(remaining.min(2048)).collect::<String>();
-            remaining -= text.chars().count();
-            result.insert(key.clone(),serde_json::json!({"text":text,"occurredTime":temporal_from_columns(row.try_get("occurred_time_kind").map_err(db)?,row.try_get("occurred_time_start").map_err(db)?,row.try_get("occurred_time_end").map_err(db)?)?,"sourceClass":row.try_get::<String,_>("source_class").map_err(db)?,"observedAt":row.try_get::<DateTime<Utc>,_>("observed_at").map_err(db)?}));
+            let mut text = selected.map(|selected| selected.text).unwrap_or_default();
+            let mut end = text.len().min(remaining);
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            remaining -= text.len();
+            result.insert(key.clone(), serde_json::json!({"text":text,"occurredTime":occurrence.occurred_time,"sourceClass":occurrence.source_class,"observedAt":occurrence.observed_at}));
         }
         Ok(serde_json::Value::Object(result))
     }

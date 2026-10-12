@@ -6,28 +6,13 @@ use super::*;
 impl MemoryService {
     pub async fn create_episode(&self, input: EpisodeInput) -> Result<EpisodeView> {
         let started_at = self.cognition.now(input.subject);
-        validate_episode_input(
-            &input.track_key,
-            &input.title,
-            &input.experience_time,
-            &input.boundary_explanation,
-            &input.members,
-            &input.basis,
-        )?;
+        validate_episode_track(&input.track_key)?;
+        input.content.validate()?;
         self.store.require_subject(input.subject).await?;
         let digest = operation_digest(
             "create_episode",
             input.subject,
-            &serde_json::json!({
-                "track_key": input.track_key,
-                "title": input.title,
-                "parent": input.parent_episode_revision_id,
-                "experience_time": input.experience_time,
-                "boundary_explanation": input.boundary_explanation,
-                "producer_signature_id": input.producer_signature_id,
-                "members": input.members,
-                "basis": input.basis,
-            }),
+            &serde_json::json!({"track_key": input.track_key, "content": input.content}),
         )?;
         let mut mutation = match self
             .start_mutation(input.subject, input.operation_id, "create_episode", &digest)
@@ -49,16 +34,23 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        validate_episode_refs_in_tx(&self.store, mutation.tx(), input.subject, &input.members)
+        validate_episode_refs_in_tx(
+            &self.store,
+            mutation.tx(),
+            input.subject,
+            &input.content.members,
+        )
+        .await?;
+        self.provenance_summary(input.subject, &input.content.basis)
             .await?;
-        validate_episode_basis_in_tx(&self.store, mutation.tx(), input.subject, &input.basis)
+        self.validate_basis_in_tx(mutation.tx(), input.subject, &input.content.basis)
             .await?;
         validate_parent_and_overlap(
             mutation.tx(),
             input.subject,
             &input.track_key,
-            input.parent_episode_revision_id,
-            &input.experience_time,
+            input.content.parent_episode_revision_id,
+            &input.content.experience_time,
             None,
         )
         .await?;
@@ -68,23 +60,23 @@ impl MemoryService {
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
             .await?;
         let now = self.cognition.now(input.subject);
-        let (time_kind, time_start, time_end) = temporal_columns(&input.experience_time);
         sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal',$5)")
             .bind(episode_id.0).bind(input.subject.0).bind(&input.track_key).bind(revision_id.0).bind(now)
             .execute(&mut **mutation.tx()).await.map_err(db)?;
         insert_episode_revision(
             &self.store,
             mutation.tx(),
-            &input,
-            episode_id,
-            revision_id,
-            None,
-            None,
-            time_kind,
-            time_start,
-            time_end,
-            formed_at,
-            now,
+            input.subject,
+            &input.content,
+            EpisodeRevisionWrite {
+                episode: episode_id,
+                revision: revision_id,
+                parent: None,
+                intent: None,
+                number: 1,
+                formed_at,
+                recorded_at: now,
+            },
         )
         .await?;
 
@@ -195,31 +187,14 @@ impl MemoryService {
     )]
     pub async fn revise_episode(&self, input: ReviseEpisodeInput) -> Result<EpisodeView> {
         let started_at = self.cognition.now(input.subject);
-        validate_episode_input(
-            "",
-            &input.title,
-            &input.experience_time,
-            &input.boundary_explanation,
-            &input.members,
-            &input.basis,
-        )?;
+        input.content.validate()?;
         if !matches!(input.intent.as_str(), "resegment" | "reinterpret") {
             return Err(Error::Invalid("invalid Episode revision intent".into()));
         }
         let digest = operation_digest(
             "revise_episode",
             input.subject,
-            &serde_json::json!({
-                "episode_id": input.episode_id,
-                "expected_object_epoch": input.expected_object_epoch,
-                "intent": input.intent,
-                "title": input.title,
-                "parent": input.parent_episode_revision_id,
-                "experience_time": input.experience_time,
-                "boundary_explanation": input.boundary_explanation,
-                "members": input.members,
-                "basis": input.basis,
-            }),
+            &serde_json::json!({"episode_id":input.episode_id,"expected_object_epoch":input.expected_object_epoch,"intent":input.intent,"content":input.content}),
         )?;
         let mut mutation = match self
             .start_mutation(input.subject, input.operation_id, "revise_episode", &digest)
@@ -241,17 +216,24 @@ impl MemoryService {
             .ok_or_else(|| Error::NotFound("Episode not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(epoch, input.expected_object_epoch)?;
-        validate_episode_refs_in_tx(&self.store, mutation.tx(), input.subject, &input.members)
+        validate_episode_refs_in_tx(
+            &self.store,
+            mutation.tx(),
+            input.subject,
+            &input.content.members,
+        )
+        .await?;
+        self.provenance_summary(input.subject, &input.content.basis)
             .await?;
-        validate_episode_basis_in_tx(&self.store, mutation.tx(), input.subject, &input.basis)
+        self.validate_basis_in_tx(mutation.tx(), input.subject, &input.content.basis)
             .await?;
-        let parent = input.parent_episode_revision_id;
+        let parent = input.content.parent_episode_revision_id;
         validate_parent_and_overlap(
             mutation.tx(),
             input.subject,
             &row.try_get::<String, _>("track_key").map_err(db)?,
             parent,
-            &input.experience_time,
+            &input.content.experience_time,
             Some(input.episode_id.0),
         )
         .await?;
@@ -271,34 +253,20 @@ impl MemoryService {
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
             .await?;
         let now = self.cognition.now(input.subject);
-        let (kind, start, end) = temporal_columns(&input.experience_time);
-        let create = EpisodeInput {
-            operation_id: input.operation_id,
-            subject: input.subject,
-            track_key: row.try_get("track_key").map_err(db)?,
-            title: input.title,
-            parent_episode_revision_id: input.parent_episode_revision_id,
-            experience_time: input.experience_time,
-            boundary_explanation: input.boundary_explanation,
-
-            producer_signature_id: input.producer_signature_id,
-            members: input.members,
-            basis: input.basis,
-        };
-        insert_episode_revision_with_intent(
+        insert_episode_revision(
             &self.store,
             mutation.tx(),
-            &create,
-            input.episode_id,
-            revision_id,
-            Some(EpisodeRevisionId(current)),
-            Some(input.intent),
-            revision_no,
-            kind,
-            start,
-            end,
-            formed_at,
-            now,
+            input.subject,
+            &input.content,
+            EpisodeRevisionWrite {
+                episode: input.episode_id,
+                revision: revision_id,
+                parent: Some(EpisodeRevisionId(current)),
+                intent: Some(input.intent),
+                number: revision_no,
+                formed_at,
+                recorded_at: now,
+            },
         )
         .await?;
         sqlx::query("UPDATE episode_objects SET current_revision_id=$3,object_epoch=object_epoch+1,integrity_state='valid' WHERE subject_id=$1 AND episode_id=$2")
@@ -315,7 +283,7 @@ impl MemoryService {
             mutation.tx(),
             input.subject,
             revision_id,
-            &create.track_key,
+            &row.try_get::<String, _>("track_key").map_err(db)?,
             sequence,
             true,
         )

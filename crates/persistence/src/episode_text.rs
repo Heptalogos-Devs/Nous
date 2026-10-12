@@ -20,15 +20,6 @@ pub struct EpisodeTextBudget {
 }
 
 impl AuthorityStore {
-    pub async fn episode_member_text_input(
-        &self,
-        subject: SubjectId,
-        revisions: &[Uuid],
-        budget: EpisodeTextBudget,
-    ) -> Result<BTreeMap<Uuid, Vec<TextProjectionFragment>>> {
-        self.episode_member_text_input_in_view(subject, revisions, budget, None)
-            .await
-    }
     pub async fn episode_member_text_input_in_view(
         &self,
         subject: SubjectId,
@@ -42,15 +33,6 @@ impl AuthorityStore {
         tx.commit().await.map_err(db)?;
         Ok(result)
     }
-}
-
-pub(crate) async fn episode_member_text_input_in(
-    tx: &mut Transaction<'_, Postgres>,
-    subject: SubjectId,
-    revisions: &[Uuid],
-    budget: EpisodeTextBudget,
-) -> Result<BTreeMap<Uuid, Vec<TextProjectionFragment>>> {
-    episode_member_text_input_in_view(tx, subject, revisions, budget, None).await
 }
 
 pub(crate) async fn episode_member_text_input_in_view(

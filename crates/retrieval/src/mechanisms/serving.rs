@@ -12,7 +12,6 @@ pub struct ServingSnapshot {
     pub concept: Vec<Arc<ConceptGeneration>>,
     pub topology: Option<Arc<WaveGraphGeneration>>,
     pub vcp: Option<Arc<VcpServingGeneration>>,
-    pub epa: Vec<Arc<EpaBasisGeneration>>,
 }
 
 #[derive(Clone)]
@@ -64,7 +63,6 @@ impl ServingSnapshot {
                 .as_ref()
                 .map(|g| g.generation_id)
                 .or_else(|| self.vcp.as_ref().map(|g| g.generation_id)),
-            epa_basis: self.epa.first().map(|g| g.generation_id),
         }
     }
     pub(crate) fn artifact(&self, id: ServingGenerationId) -> Option<OpenArtifact> {
@@ -76,13 +74,7 @@ impl ServingSnapshot {
             return Some(OpenArtifact::Lexical(value.clone()));
         }
         if let Some(value) = self.dense.iter().find(|value| value.generation_id == id) {
-            return Some(OpenArtifact::Dense(
-                value.clone(),
-                self.epa
-                    .iter()
-                    .find(|basis| basis.generation_id == id)
-                    .cloned(),
-            ));
+            return Some(OpenArtifact::Dense(value.clone()));
         }
         if let Some(value) = self.concept.iter().find(|value| value.generation_id == id) {
             return Some(OpenArtifact::Concept(value.clone()));
@@ -121,13 +113,10 @@ impl ServingSnapshot {
     pub(crate) fn install(&mut self, artifact: OpenArtifact) {
         match artifact {
             OpenArtifact::Lexical(index) => self.lexical = Some(index),
-            OpenArtifact::Dense(index, basis) => {
+            OpenArtifact::Dense(index) => {
                 self.dense
                     .retain(|old| old.space.space_hash != index.space.space_hash);
-                self.epa
-                    .retain(|old| old.basis.embedding_space != index.space.space_hash);
                 self.dense.push(index);
-                self.epa.extend(basis);
             }
             OpenArtifact::Topology(graph) => {
                 self.topology = Some(graph);

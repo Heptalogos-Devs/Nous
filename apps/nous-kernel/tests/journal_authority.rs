@@ -18,6 +18,10 @@ use test_support::longitudinal::{
 use test_support::query::subject as create_subject;
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one public Journal scenario verifies exact lineage, complete context sources and dependency invalidation"
+)]
 async fn journal_lineage_revalidation_and_receipt_are_exact() {
     use nous_core::{
         BasisRole, CognitionDependency, CognitiveRef, IntegrityState, OperationId, RevisionBasis,
@@ -55,7 +59,7 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
     let journal = memory.commit_journal(input.clone()).await.unwrap();
     let graph = rt
         .store
-        .topology_projection_input(subject, true)
+        .topology_projection_input(subject, true, None)
         .await
         .unwrap();
     assert_eq!(
@@ -71,6 +75,47 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
     }];
     assert_eq!(rt.query(recall.clone()).await.unwrap().results.len(), 1);
     let dependencies = create_journal_dependents(&rt, subject, &episode, &journal).await;
+    let session = rt
+        .cognition
+        .open_session(subject, serde_json::json!({}))
+        .await
+        .unwrap();
+    let service = nous_kernel::transport::KernelService(rt.clone());
+    let projection_request = nous_protocol::public::ProjectionRequest {
+        subject_id: subject.0.to_string(),
+        session_id: session.session_id.0.to_string(),
+        consumer_id: "default".into(),
+        situation_refs: [
+            CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id),
+            CognitiveRef::JournalRevision(journal.revision.journal_revision_id),
+            dependencies[2].clone(),
+        ]
+        .into_iter()
+        .map(|reference| {
+            let (kind, value) = nous_core::reference_parts(&reference);
+            nous_protocol::public::CognitiveRef { kind, value }
+        })
+        .collect(),
+        max_items: 3,
+        max_text_bytes: 8192,
+        memory_requirement: "REQUIRED".into(),
+        runtime_requirement: "FORBIDDEN".into(),
+        resource_requirement: "FORBIDDEN".into(),
+        materialize: true,
+        ..Default::default()
+    };
+    let projection = service
+        .build_contribution_batch(projection_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(projection.segments.len(), 3);
+    assert!(
+        projection
+            .segments
+            .iter()
+            .all(|segment| !segment.text.is_empty() && !segment.evidence.is_empty())
+    );
+    assert!(projection.segments[1].text.contains("Point-only detail"));
     let basis = RevisionBasis::CognitionDependency(CognitionDependency {
         epistemic_relation: None,
         target_revision: CognitiveRef::JournalRevision(journal.revision.journal_revision_id),
@@ -111,6 +156,14 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
     );
     assert_eq!(invalidated.revision.narrative, journal.revision.narrative);
     assert!(rt.query(recall).await.unwrap().results.is_empty());
+    assert!(
+        service
+            .build_contribution_batch(projection_request)
+            .await
+            .unwrap()
+            .segments
+            .is_empty()
+    );
     assert_invalidated_dependents(&rt, subject, &dependencies).await;
     let needs = rt.cognition.maintenance_needs(subject).await.unwrap();
     assert!(needs.iter().any(|need| need.kind == "journal_revalidate"
@@ -158,7 +211,7 @@ async fn assert_journal_revalidation(
     let revised = memory.commit_journal(input.clone()).await.unwrap();
     let graph = rt
         .store
-        .topology_projection_input(subject, true)
+        .topology_projection_input(subject, true, None)
         .await
         .unwrap();
     assert_eq!(
@@ -324,20 +377,23 @@ async fn create_journal_dependents(
             operation_id: OperationId::new(),
             subject,
             track_key: "manual-dependent".into(),
-            title: None,
-            parent_episode_revision_id: None,
-            experience_time: TemporalExtent::Unknown,
-            boundary_explanation: "Supported cognitive continuation.".into(),
-            producer_signature_id: None,
-            members: vec![nous_memory::EpisodeMemberInput {
-                reference: refs[0].clone(),
-                role: "context".into(),
-            }],
-            basis: vec![RevisionBasis::CognitionDependency(CognitionDependency {
-                epistemic_relation: None,
-                target_revision: refs[0].clone(),
-                basis_role: BasisRole::Direct,
-            })],
+
+            content: nous_memory::EpisodeContent {
+                title: None,
+                parent_episode_revision_id: None,
+                experience_time: TemporalExtent::Unknown,
+                boundary_explanation: "Supported cognitive continuation.".into(),
+                producer_signature_id: None,
+                members: vec![nous_memory::EpisodeMemberInput {
+                    reference: refs[0].clone(),
+                    role: "context".into(),
+                }],
+                basis: vec![RevisionBasis::CognitionDependency(CognitionDependency {
+                    epistemic_relation: None,
+                    target_revision: refs[0].clone(),
+                    basis_role: BasisRole::Direct,
+                })],
+            },
         })
         .await
         .unwrap();

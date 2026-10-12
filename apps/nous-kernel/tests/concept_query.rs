@@ -139,14 +139,16 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         .create_tag(
             subject,
             CreateTagRequest {
-                operation_id: OperationId::new(),
-                label: "reader reclamation".into(),
-                description: Some(
-                    "Wait for all active readers before freeing the old generation".into(),
-                ),
-                kind_hint: Some("procedure".into()),
-                origin: "host_explicit".into(),
                 producer: None,
+                operation_id: OperationId::new(),
+                content: nous_memory::TagContent {
+                    label: "reader reclamation".into(),
+                    description: Some(
+                        "Wait for all active readers before freeing the old generation".into(),
+                    ),
+                    kind_hint: Some("procedure".into()),
+                },
+                origin: "host_explicit".into(),
             },
         )
         .await
@@ -193,7 +195,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .enabled_lanes
             .contains(&EvidenceFamily::TopologyWave)
     );
-    assert!(rt.serving.current_snapshot(subject).concept.is_empty());
+    assert!(current_concepts(&rt, subject).await.is_empty());
     let mut direct = query(subject, vec![Cue::Tag(TagCue { tag: tag.tag_id })]);
     direct.capabilities.text_embedding = RequirementStrength::Forbidden;
     let direct = rt.execute_query(direct, None).await.unwrap();
@@ -317,14 +319,29 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
                 .enabled_lanes
                 .contains(&EvidenceFamily::TopologyWave)
         );
-        let snapshot = rt.serving.current_snapshot(subject);
+        let snapshot = current_concepts(&rt, subject).await;
         let concept = snapshot
-            .concept
             .iter()
             .find(|generation| generation.space.is_some())
             .unwrap();
         assert_eq!(concept.generation_id, concept_id);
-        if let Some(vcp) = &snapshot.vcp {
+        if let Some(record) = rt
+            .store
+            .serving_current(subject)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|record| record.family == "topology" && record.space.starts_with("vcp:"))
+        {
+            let vcp: nous_retrieval::VcpGeneration = serde_json::from_slice(
+                &std::fs::read(
+                    rt.serving
+                        .artifact_directory(record.generation_id)
+                        .join("vcp.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
             let id = vcp.identities.id(&CognitiveRef::Tag(tag.tag_id)).unwrap();
             assert_eq!(
                 vcp.vectors.iter().find(|(key, _)| *key == id).unwrap().1,
@@ -342,7 +359,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .count(),
         1
     );
-    let old_snapshot = rt.serving.current_snapshot(subject);
+    let old_snapshot = current_concepts(&rt, subject).await;
     let historical_cut = rt.cognition.now(subject);
     let revised = owner
         .revise_tag(
@@ -374,9 +391,8 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         updated.bound.activation.concept_generation,
         Some(concept_id)
     );
-    let snapshot = rt.serving.current_snapshot(subject);
+    let snapshot = current_concepts(&rt, subject).await;
     let concept = snapshot
-        .concept
         .iter()
         .find(|g| g.generation_id == updated.bound.activation.concept_generation.unwrap())
         .unwrap();
@@ -394,7 +410,6 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     );
     assert!(
         old_snapshot
-            .concept
             .iter()
             .find(|g| g.generation_id == concept_id)
             .unwrap()
@@ -464,4 +479,28 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     check_historical_profiles(&rt, subject, tag.tag_id, &revision, historical_cut).await;
     check_topology_asset_dependencies(&rt, subject).await;
     Box::pin(check_activation_configuration(&rt, subject)).await;
+}
+
+async fn current_concepts(
+    rt: &NousRuntime,
+    subject: SubjectId,
+) -> Vec<nous_retrieval::ConceptGeneration> {
+    rt.store
+        .serving_current(subject)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|record| record.family == "concept")
+        .map(|record| {
+            serde_json::from_slice(
+                &std::fs::read(
+                    rt.serving
+                        .artifact_directory(record.generation_id)
+                        .join("concept.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        })
+        .collect()
 }

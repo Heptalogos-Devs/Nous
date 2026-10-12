@@ -7,7 +7,7 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { ArtifactSchema } from "../../v1alpha1/types_pb.js";
+import type { ArtifactSchema, MaterializedEvidence, MaterializeRequestSchema } from "../../v1alpha1/types_pb.js";
 import { file_nous_wave_v1alpha1_types } from "../../v1alpha1/types_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -15,7 +15,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file nous/wave/kernel/v1alpha1/kernel.proto.
  */
 export const file_nous_wave_kernel_v1alpha1_kernel: GenFile = /*@__PURE__*/
-  fileDesc("CiZub3VzL3dhdmUva2VybmVsL3YxYWxwaGExL2tlcm5lbC5wcm90bxIZbm91cy53YXZlLmtlcm5lbC52MWFscGhhMSI2CgxVcGxvYWRIZWFkZXISEgoKc3ViamVjdF9pZBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJImMKC1VwbG9hZENodW5rEjkKBmhlYWRlchgBIAEoCzInLm5vdXMud2F2ZS5rZXJuZWwudjFhbHBoYTEuVXBsb2FkSGVhZGVySAASEQoHY29udGVudBgCIAEoDEgAQgYKBHBhcnQicgoPRG93bmxvYWRSZXF1ZXN0EhIKCnN1YmplY3RfaWQYASABKAkSEwoLYXJ0aWZhY3RfaWQYAiABKAkSEgoFc3RhcnQYAyABKARIAIgBARIQCgNlbmQYBCABKARIAYgBAUIICgZfc3RhcnRCBgoEX2VuZCIgCg1Eb3dubG9hZENodW5rEg8KB2NvbnRlbnQYASABKAwy3QEKFUFydGlmYWN0U3RyZWFtU2VydmljZRJYCg5VcGxvYWRBcnRpZmFjdBImLm5vdXMud2F2ZS5rZXJuZWwudjFhbHBoYTEuVXBsb2FkQ2h1bmsaHC5ub3VzLndhdmUudjFhbHBoYTEuQXJ0aWZhY3QoARJqChBEb3dubG9hZEFydGlmYWN0Eioubm91cy53YXZlLmtlcm5lbC52MWFscGhhMS5Eb3dubG9hZFJlcXVlc3QaKC5ub3VzLndhdmUua2VybmVsLnYxYWxwaGExLkRvd25sb2FkQ2h1bmswAWIGcHJvdG8z", [file_nous_wave_v1alpha1_types]);
+  fileDesc("CiZub3VzL3dhdmUva2VybmVsL3YxYWxwaGExL2tlcm5lbC5wcm90bxIZbm91cy53YXZlLmtlcm5lbC52MWFscGhhMSI2CgxVcGxvYWRIZWFkZXISEgoKc3ViamVjdF9pZBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJImMKC1VwbG9hZENodW5rEjkKBmhlYWRlchgBIAEoCzInLm5vdXMud2F2ZS5rZXJuZWwudjFhbHBoYTEuVXBsb2FkSGVhZGVySAASEQoHY29udGVudBgCIAEoDEgAQgYKBHBhcnQicgoPRG93bmxvYWRSZXF1ZXN0EhIKCnN1YmplY3RfaWQYASABKAkSEwoLYXJ0aWZhY3RfaWQYAiABKAkSEgoFc3RhcnQYAyABKARIAIgBARIQCgNlbmQYBCABKARIAYgBAUIICgZfc3RhcnRCBgoEX2VuZCIgCg1Eb3dubG9hZENodW5rEg8KB2NvbnRlbnQYASABKAwiagoRTWF0ZXJpYWxpemVkQ2h1bmsSOgoGaGVhZGVyGAEgASgLMigubm91cy53YXZlLnYxYWxwaGExLk1hdGVyaWFsaXplZEV2aWRlbmNlSAASEQoHY29udGVudBgCIAEoDEgAQgYKBHBhcnQyzAIKFUFydGlmYWN0U3RyZWFtU2VydmljZRJYCg5VcGxvYWRBcnRpZmFjdBImLm5vdXMud2F2ZS5rZXJuZWwudjFhbHBoYTEuVXBsb2FkQ2h1bmsaHC5ub3VzLndhdmUudjFhbHBoYTEuQXJ0aWZhY3QoARJqChBEb3dubG9hZEFydGlmYWN0Eioubm91cy53YXZlLmtlcm5lbC52MWFscGhhMS5Eb3dubG9hZFJlcXVlc3QaKC5ub3VzLndhdmUua2VybmVsLnYxYWxwaGExLkRvd25sb2FkQ2h1bmswARJtChNNYXRlcmlhbGl6ZUV2aWRlbmNlEiYubm91cy53YXZlLnYxYWxwaGExLk1hdGVyaWFsaXplUmVxdWVzdBosLm5vdXMud2F2ZS5rZXJuZWwudjFhbHBoYTEuTWF0ZXJpYWxpemVkQ2h1bmswAWIGcHJvdG8z", [file_nous_wave_v1alpha1_types]);
 
 /**
  * @generated from message nous.wave.kernel.v1alpha1.UploadHeader
@@ -118,6 +118,35 @@ export const DownloadChunkSchema: GenMessage<DownloadChunk> = /*@__PURE__*/
   messageDesc(file_nous_wave_kernel_v1alpha1_kernel, 3);
 
 /**
+ * @generated from message nous.wave.kernel.v1alpha1.MaterializedChunk
+ */
+export type MaterializedChunk = Message<"nous.wave.kernel.v1alpha1.MaterializedChunk"> & {
+  /**
+   * @generated from oneof nous.wave.kernel.v1alpha1.MaterializedChunk.part
+   */
+  part: {
+    /**
+     * @generated from field: nous.wave.v1alpha1.MaterializedEvidence header = 1;
+     */
+    value: MaterializedEvidence;
+    case: "header";
+  } | {
+    /**
+     * @generated from field: bytes content = 2;
+     */
+    value: Uint8Array;
+    case: "content";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message nous.wave.kernel.v1alpha1.MaterializedChunk.
+ * Use `create(MaterializedChunkSchema)` to create a new message.
+ */
+export const MaterializedChunkSchema: GenMessage<MaterializedChunk> = /*@__PURE__*/
+  messageDesc(file_nous_wave_kernel_v1alpha1_kernel, 4);
+
+/**
  * @generated from service nous.wave.kernel.v1alpha1.ArtifactStreamService
  */
 export const ArtifactStreamService: GenService<{
@@ -136,6 +165,14 @@ export const ArtifactStreamService: GenService<{
     methodKind: "server_streaming";
     input: typeof DownloadRequestSchema;
     output: typeof DownloadChunkSchema;
+  },
+  /**
+   * @generated from rpc nous.wave.kernel.v1alpha1.ArtifactStreamService.MaterializeEvidence
+   */
+  materializeEvidence: {
+    methodKind: "server_streaming";
+    input: typeof MaterializeRequestSchema;
+    output: typeof MaterializedChunkSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_nous_wave_kernel_v1alpha1_kernel, 0);

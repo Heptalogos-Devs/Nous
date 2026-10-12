@@ -53,23 +53,21 @@ pub struct SplitTagInput {
 }
 
 impl MemoryService {
-    pub async fn create_tag(&self, subject: SubjectId, mut input: CreateTagRequest) -> Result<Tag> {
+    pub async fn create_tag(
+        &self,
+        subject: SubjectId,
+        mut input: CreateTagRequest,
+    ) -> Result<TagView> {
         input.producer = input
             .producer
             .as_ref()
             .map(canonical_concept_producer)
             .transpose()?;
-        let content = TagContent {
-            label: input.label.clone(),
-            description: input.description.clone(),
-            kind_hint: input.kind_hint.clone(),
-        };
-        content.validate()?;
-        let digest = operation_digest(
-            "create_tag",
-            subject,
-            &serde_json::json!({"label":input.label,"description":input.description,"kind_hint":input.kind_hint,"origin":input.origin,"producer":input.producer}),
-        )?;
+        input.content.validate()?;
+        if input.origin.is_empty() {
+            input.origin = default_explicit_origin();
+        }
+        let digest = operation_digest("create_tag", subject, &input)?;
         let mut mutation = match self
             .start_mutation(subject, input.operation_id, "create_tag", &digest)
             .await?
@@ -77,30 +75,29 @@ impl MemoryService {
             MutationStart::Replay(receipt) => return self.replay_tag(subject, receipt).await,
             MutationStart::Active(mutation) => mutation,
         };
-        let tag = self
+        let (tag_id, revision_id) = self
             .create_tag_in(
                 mutation.tx(),
                 subject,
-                &content,
+                &input.content,
                 &input.origin,
                 input.producer.as_ref(),
             )
             .await?;
         mutation.invalidate(ProjectionInvalidation::all()).await?;
         mutation
-            .publish_workflow_results("memory", &[CognitiveRef::Tag(tag.tag_id)])
+            .publish_workflow_results("memory", &[CognitiveRef::Tag(tag_id)])
             .await?;
         mutation
-            .commit(
-                "tag",
-                Some(&tag.tag_id.0.to_string()),
-                Some(tag.current_revision_id),
-                None,
-            )
+            .commit("tag", Some(&tag_id.0.to_string()), Some(revision_id), None)
             .await?;
-        Ok(tag)
+        self.tag_view(subject, tag_id, Some(revision_id)).await
     }
-    pub async fn revise_tag(&self, subject: SubjectId, mut input: ReviseTagInput) -> Result<Tag> {
+    pub async fn revise_tag(
+        &self,
+        subject: SubjectId,
+        mut input: ReviseTagInput,
+    ) -> Result<TagView> {
         input.producer = input
             .producer
             .as_ref()
@@ -136,11 +133,10 @@ impl MemoryService {
                 None,
             )
             .await?;
-        let mut tag = self.tag(subject, input.target.tag_id).await?;
-        tag.current_revision_id = revision_id;
-        Ok(tag)
+        self.tag_view(subject, input.target.tag_id, Some(revision_id))
+            .await
     }
-    pub async fn merge_tags(&self, subject: SubjectId, input: MergeTagsInput) -> Result<Tag> {
+    pub async fn merge_tags(&self, subject: SubjectId, input: MergeTagsInput) -> Result<TagView> {
         let digest = operation_digest("merge_tags", subject, &input)?;
         let mut mutation = match self
             .start_mutation(subject, input.operation_id, "merge_tags", &digest)
@@ -158,11 +154,16 @@ impl MemoryService {
             .commit(
                 "tag",
                 Some(&input.survivor.tag_id.0.to_string()),
-                None,
+                Some(input.survivor.expected_revision_id),
                 None,
             )
             .await?;
-        self.tag(subject, input.survivor.tag_id).await
+        self.tag_view(
+            subject,
+            input.survivor.tag_id,
+            Some(input.survivor.expected_revision_id),
+        )
+        .await
     }
     pub async fn split_tag(
         &self,
@@ -193,7 +194,8 @@ impl MemoryService {
                 "memory",
                 &children
                     .iter()
-                    .map(|child| CognitiveRef::Tag(child.tag_id))
+                    .copied()
+                    .map(CognitiveRef::Tag)
                     .collect::<Vec<_>>(),
             )
             .await?;
@@ -212,7 +214,7 @@ impl MemoryService {
         subject: SubjectId,
         operation: OperationId,
     ) -> Result<Vec<TagView>> {
-        let rows = sqlx::query("SELECT t.tag_id,r.tag_revision_id current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tag_lineage l LEFT JOIN tags t ON t.tag_id=l.child_tag_id AND t.subject_id=l.subject_id LEFT JOIN tag_revisions r ON r.tag_id=t.tag_id AND r.tag_revision_id=l.child_revision_id WHERE l.subject_id=$1 AND l.operation_id=$2 AND l.relation='split_into' ORDER BY l.child_index")
+        let rows = sqlx::query("SELECT t.tag_id,t.current_revision_id,r.tag_revision_id revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tag_lineage l LEFT JOIN tags t ON t.tag_id=l.child_tag_id AND t.subject_id=l.subject_id LEFT JOIN tag_revisions r ON r.tag_id=t.tag_id AND r.tag_revision_id=l.child_revision_id WHERE l.subject_id=$1 AND l.operation_id=$2 AND l.relation='split_into' ORDER BY l.child_index")
             .bind(subject.0).bind(operation.0).fetch_all(self.store.pool()).await.map_err(db)?;
         if rows.is_empty() {
             return Err(Error::NotFound("Tag split results not found".into()));
@@ -220,7 +222,7 @@ impl MemoryService {
         rows.into_iter()
             .map(|row| {
                 if row
-                    .try_get::<Option<Uuid>, _>("current_revision_id")
+                    .try_get::<Option<Uuid>, _>("revision_id")
                     .map_err(db)?
                     .is_none()
                 {
@@ -234,27 +236,23 @@ impl MemoryService {
         &self,
         subject: SubjectId,
         receipt: nous_persistence::MutationReceipt,
-    ) -> Result<Tag> {
+    ) -> Result<TagView> {
         let id = receipt
             .result_ref
             .ok_or_else(|| Error::Infrastructure("tag receipt missing result".into()))?
             .parse()
             .map_err(|_| Error::Infrastructure("invalid Tag receipt".into()))?;
-        let mut tag = self.tag(subject, TagId(id)).await?;
-        if let Some(revision) = receipt.result_revision {
-            tag.current_revision_id = revision;
-        }
-        Ok(tag)
+        self.tag_view(subject, TagId(id), receipt.result_revision)
+            .await
     }
-    pub(crate) async fn create_tag_in(
+    async fn create_tag_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
         content: &TagContent,
         origin: &str,
         producer: Option<&ProducerSignature>,
-    ) -> Result<Tag> {
-        content.validate()?;
+    ) -> Result<(TagId, Uuid)> {
         let tag_id = TagId::new();
         let revision_id = Uuid::now_v7();
         let now = AuthorityStore::authority_time_in(tx).await?;
@@ -268,16 +266,9 @@ impl MemoryService {
             .bind(revision_id).bind(tag_id.0).bind(&content.label).bind(&content.description).bind(&content.kind_hint).bind(origin).bind(producer_id).bind(now).execute(&mut **tx).await.map_err(db)?;
         self.sync_tag_identity_in(tx, subject, tag_id, &content.label)
             .await?;
-        Ok(Tag {
-            tag_id,
-            subject_id: subject,
-            current_revision_id: revision_id,
-            status: "active".into(),
-            canonical_tag_id: None,
-            created_at: now,
-        })
+        Ok((tag_id, revision_id))
     }
-    pub(crate) async fn revise_tag_in(
+    async fn revise_tag_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
@@ -285,7 +276,6 @@ impl MemoryService {
         content: &TagContent,
         producer: Option<&ProducerSignature>,
     ) -> Result<Uuid> {
-        content.validate()?;
         self.expect_tag_in(tx, subject, target).await?;
         let revision_id = Uuid::now_v7();
         let producer_id = match producer {
@@ -305,7 +295,7 @@ impl MemoryService {
             .await?;
         Ok(revision_id)
     }
-    pub(crate) async fn expect_tag_in(
+    async fn expect_tag_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
@@ -326,7 +316,7 @@ impl MemoryService {
         }
         Ok(())
     }
-    pub(crate) async fn merge_tags_in(
+    async fn merge_tags_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
@@ -362,13 +352,13 @@ impl MemoryService {
             .bind(subject.0).bind(input.survivor.tag_id.0).execute(&mut **tx).await.map_err(db)?;
         Ok(())
     }
-    pub(crate) async fn split_tag_in(
+    async fn split_tag_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
         input: &SplitTagInput,
         producer: Option<&ProducerSignature>,
-    ) -> Result<Vec<Tag>> {
+    ) -> Result<Vec<TagId>> {
         if !(2..=8).contains(&input.children.len()) {
             return Err(Error::Invalid("split requires 2..8 child concepts".into()));
         }
@@ -384,7 +374,7 @@ impl MemoryService {
         self.expect_tag_in(tx, subject, &input.parent).await?;
         let mut result = Vec::new();
         for (index, content) in input.children.iter().enumerate() {
-            let child = self
+            let (child, _) = self
                 .create_tag_in(tx, subject, content, "split", producer)
                 .await?;
             self.record_tag_lineage_in(
@@ -392,7 +382,7 @@ impl MemoryService {
                 subject,
                 input.operation_id,
                 input.parent.tag_id,
-                child.tag_id,
+                child,
                 index,
                 "split_into",
                 &input.basis,
@@ -419,7 +409,7 @@ impl MemoryService {
                 ));
             }
         }
-        self.validate_basis_for_subject(subject, basis).await?;
+        self.provenance_summary(subject, basis).await?;
         self.validate_basis_in_tx(tx, subject, basis).await?;
         Ok(())
     }
@@ -461,21 +451,6 @@ impl MemoryService {
         }
         Ok(())
     }
-    pub(in crate::service) async fn tag(&self, subject: SubjectId, tag_id: TagId) -> Result<Tag> {
-        let row = sqlx::query("SELECT tag_id,subject_id,current_revision_id,canonical_tag_id,created_at,status FROM tags WHERE subject_id=$1 AND tag_id=$2")
-            .bind(subject.0).bind(tag_id.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(|| Error::NotFound("Tag not found".into()))?;
-        Ok(Tag {
-            tag_id: TagId(row.try_get("tag_id").map_err(db)?),
-            subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),
-            current_revision_id: row.try_get("current_revision_id").map_err(db)?,
-            status: row.try_get("status").map_err(db)?,
-            canonical_tag_id: row
-                .try_get::<Option<Uuid>, _>("canonical_tag_id")
-                .map_err(db)?
-                .map(TagId),
-            created_at: row.try_get("created_at").map_err(db)?,
-        })
-    }
 }
 
 fn canonical_concept_producer(producer: &ProducerSignature) -> Result<ProducerSignature> {
@@ -489,6 +464,7 @@ fn canonical_concept_producer(producer: &ProducerSignature) -> Result<ProducerSi
 pub struct TagView {
     pub tag_id: TagId,
     pub current_revision_id: Uuid,
+    pub revision_id: Uuid,
     pub status: String,
     pub canonical_tag_id: Option<TagId>,
     pub label: String,
@@ -504,7 +480,7 @@ impl MemoryService {
         tag: TagId,
         revision: Option<Uuid>,
     ) -> Result<TagView> {
-        let row = sqlx::query("SELECT t.tag_id,r.tag_revision_id current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_id=t.tag_id AND r.tag_revision_id=COALESCE($3,t.current_revision_id) WHERE t.subject_id=$1 AND t.tag_id=$2")
+        let row = sqlx::query("SELECT t.tag_id,t.current_revision_id,r.tag_revision_id revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_id=t.tag_id AND r.tag_revision_id=COALESCE($3,t.current_revision_id) WHERE t.subject_id=$1 AND t.tag_id=$2")
             .bind(subject.0).bind(tag.0).bind(revision).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(|| Error::NotFound("Tag not found".into()))?;
         decode_tag_view(row)
     }
@@ -519,13 +495,13 @@ impl MemoryService {
     ) -> Result<(Vec<TagView>, bool)> {
         self.store.require_subject(subject).await?;
         let status = if status.is_empty() { "active" } else { status };
-        if !matches!(status, "active" | "withdrawn") {
+        if !matches!(status, "active" | "merged" | "withdrawn") {
             return Err(Error::Invalid("invalid tag status".into()));
         }
         if text.chars().count() > 256 {
             return Err(Error::Invalid("tag search exceeds 256 characters".into()));
         }
-        let mut rows = sqlx::query("SELECT t.tag_id,t.current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status=$2 AND ($3::uuid IS NULL OR t.tag_id>$3) AND ($4='' OR strpos(lower(r.label || ' ' || COALESCE(r.description,'')),lower($4))>0 OR EXISTS(SELECT 1 FROM lexical_bindings b JOIN lexical_visibility v ON v.lexical_ref=b.lexical_ref WHERE v.subject_id=t.subject_id AND b.object_kind='tag' AND canonical_tag(t.subject_id,CASE WHEN b.object_kind='tag' THEN b.canonical_ref::uuid END)=t.tag_id AND b.tombstoned_at IS NULL AND (strpos(lower(v.display_name),lower($4))>0 OR EXISTS(SELECT 1 FROM unnest(v.aliases) alias WHERE strpos(lower(alias),lower($4))>0)))) ORDER BY t.tag_id LIMIT $5")
+        let mut rows = sqlx::query("SELECT t.tag_id,t.current_revision_id,r.tag_revision_id revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status=$2 AND ($3::uuid IS NULL OR t.tag_id>$3) AND ($4='' OR strpos(lower(r.label || ' ' || COALESCE(r.description,'')),lower($4))>0 OR EXISTS(SELECT 1 FROM lexical_bindings b JOIN lexical_visibility v ON v.lexical_ref=b.lexical_ref WHERE v.subject_id=t.subject_id AND b.object_kind='tag' AND canonical_tag(t.subject_id,CASE WHEN b.object_kind='tag' THEN b.canonical_ref::uuid END)=t.tag_id AND b.tombstoned_at IS NULL AND (strpos(lower(v.display_name),lower($4))>0 OR EXISTS(SELECT 1 FROM unnest(v.aliases) alias WHERE strpos(lower(alias),lower($4))>0)))) ORDER BY t.tag_id LIMIT $5")
             .bind(subject.0).bind(status).bind(after).bind(text).bind(limit+1).fetch_all(self.store.pool()).await.map_err(db)?;
         let more = rows.len() > limit as usize;
         rows.truncate(limit as usize);
@@ -541,6 +517,7 @@ fn decode_tag_view(row: sqlx::postgres::PgRow) -> Result<TagView> {
     Ok(TagView {
         tag_id: TagId(row.try_get("tag_id").map_err(db)?),
         current_revision_id: row.try_get("current_revision_id").map_err(db)?,
+        revision_id: row.try_get("revision_id").map_err(db)?,
         status: row.try_get("status").map_err(db)?,
         canonical_tag_id: row
             .try_get::<Option<Uuid>, _>("canonical_tag_id")

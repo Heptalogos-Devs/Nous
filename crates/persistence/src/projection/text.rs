@@ -15,7 +15,6 @@ pub struct TextProjectionSource {
     pub member_fragments: Vec<TextProjectionFragment>,
     pub title: Option<String>,
     pub source_class: Option<String>,
-    pub source_region: Option<SourceRegionId>,
     pub entity_refs: Vec<String>,
     pub tag_ids: Vec<String>,
     pub schema_ids: Vec<String>,
@@ -27,35 +26,41 @@ pub struct TextProjectionFragment {
 }
 
 pub struct TextProjectionInput {
-    pub watermark: i64,
+    pub watermarks: super::ProjectionWatermarks,
     pub sources: Vec<TextProjectionSource>,
 }
-
-use super::watermark;
 
 impl AuthorityStore {
     pub async fn text_projection_input(
         &self,
         subject: SubjectId,
-        family: &str,
-        space: &str,
         memory_enabled: bool,
         episode_budget: crate::EpisodeTextBudget,
+        view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<TextProjectionInput> {
         let mut tx = self.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let watermark = watermark(&mut tx, subject, family, space).await?;
-        let mut sources = material_sources(&mut tx, subject, None).await?;
-        if memory_enabled {
-            sources.extend(memory_sources(&mut tx, subject, None).await?);
-            sources.extend(longitudinal_sources(&mut tx, subject, episode_budget, None).await?);
+        if view.is_some_and(|view| view.subject != subject) {
+            return Err(Error::Invalid(
+                "text projection view Subject mismatch".into(),
+            ));
         }
+        let watermarks = if view.is_some() {
+            Default::default()
+        } else {
+            super::watermarks_in(&mut tx, subject).await?
+        };
+        let mut sources =
+            sources_in(&mut tx, subject, memory_enabled, episode_budget, view).await?;
         sources.sort_by_key(|source| source.reference.to_string());
         tx.commit().await.map_err(db)?;
-        Ok(TextProjectionInput { watermark, sources })
+        Ok(TextProjectionInput {
+            watermarks,
+            sources,
+        })
     }
 }
 
@@ -64,27 +69,25 @@ pub(crate) async fn memory_sources(
     subject: SubjectId,
     references: Option<&[CognitiveRef]>,
 ) -> Result<Vec<TextProjectionSource>> {
-    let rows = sqlx::query("SELECT o.memory_id,r.memory_revision_id,r.representation_text,r.title FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND ($2::uuid[] IS NULL OR r.memory_revision_id=ANY($2)) ORDER BY o.memory_id")
-        .bind(subject.0).bind(selected_ids(references, "memory_revision")).fetch_all(&mut **tx).await.map_err(db)?;
+    let rows = sqlx::query(r#"
+SELECT r.memory_revision_id,r.representation_text,r.title,
+ ARRAY(SELECT DISTINCT entity_ref FROM memory_revision_aboutness WHERE memory_revision_id=r.memory_revision_id ORDER BY entity_ref) entity_refs,
+ ARRAY(SELECT DISTINCT canonical_tag($1,tag_id)::text FROM memory_revision_tags WHERE memory_revision_id=r.memory_revision_id AND canonical_tag($1,tag_id) IS NOT NULL ORDER BY 1) tag_ids,
+ ARRAY(SELECT DISTINCT s.schema_id::text FROM cognitive_schemas s JOIN cognitive_schema_evidence_links l ON l.schema_revision_id=s.current_revision_id WHERE s.subject_id=$1 AND s.acceptance_state='accepted' AND s.integrity_state='valid' AND s.suppression_state='normal' AND l.revoked_at IS NULL AND l.role='support' AND l.epistemic_relation NOT IN ('contradicts','weakens','corrects','counterexample') AND l.basis_kind='memory_revision' AND l.basis_ref=r.memory_revision_id::text) schema_ids
+FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND ($2::uuid[] IS NULL OR r.memory_revision_id=ANY($2)) ORDER BY o.memory_id
+"#).bind(subject.0).bind(selected_ids(references, "memory_revision")).fetch_all(&mut **tx).await.map_err(db)?;
     let mut sources = Vec::new();
     for row in rows {
         let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;
-        let entities = sqlx::query_scalar("SELECT DISTINCT entity_ref FROM memory_revision_aboutness WHERE memory_revision_id=$1 ORDER BY entity_ref")
-            .bind(revision).fetch_all(&mut **tx).await.map_err(db)?;
-        let tags = sqlx::query_scalar("SELECT DISTINCT canonical_tag($2,tag_id)::text FROM memory_revision_tags WHERE memory_revision_id=$1 AND canonical_tag($2,tag_id) IS NOT NULL ORDER BY 1")
-            .bind(revision).bind(subject.0).fetch_all(&mut **tx).await.map_err(db)?;
-        let schema_ids = sqlx::query_scalar("SELECT DISTINCT s.schema_id::text FROM cognitive_schemas s JOIN cognitive_schema_revisions sr ON sr.schema_revision_id=s.current_revision_id JOIN cognitive_schema_evidence_links l ON l.schema_revision_id=sr.schema_revision_id WHERE s.subject_id=$1 AND s.acceptance_state='accepted' AND s.integrity_state='valid' AND s.suppression_state='normal' AND l.revoked_at IS NULL AND l.role='support' AND l.epistemic_relation NOT IN ('contradicts','weakens','corrects','counterexample') AND l.basis_kind='memory_revision' AND l.basis_ref=$2")
-            .bind(subject.0).bind(revision.to_string()).fetch_all(&mut **tx).await.map_err(db)?;
         sources.push(TextProjectionSource {
             reference: CognitiveRef::MemoryRevision(MemoryRevisionId(revision)),
             text: Some(row.try_get("representation_text").map_err(db)?),
             member_fragments: Vec::new(),
             title: row.try_get("title").map_err(db)?,
             source_class: None,
-            source_region: None,
-            entity_refs: entities,
-            tag_ids: tags,
-            schema_ids,
+            entity_refs: row.try_get("entity_refs").map_err(db)?,
+            tag_ids: row.try_get("tag_ids").map_err(db)?,
+            schema_ids: row.try_get("schema_ids").map_err(db)?,
         });
     }
     for (table, sql) in [
@@ -140,7 +143,6 @@ pub(crate) async fn memory_sources(
                 member_fragments: Vec::new(),
                 title: None,
                 source_class: None,
-                source_region: None,
                 entity_refs: Vec::new(),
                 tag_ids: Vec::new(),
                 schema_ids: Vec::new(),
@@ -155,23 +157,21 @@ pub(crate) async fn material_sources(
     subject: SubjectId,
     references: Option<&[CognitiveRef]>,
 ) -> Result<Vec<TextProjectionSource>> {
-    let rows = sqlx::query("SELECT o.occurrence_id,o.source_class,o.artifact_id FROM observation_occurrences o WHERE o.subject_id=$1 AND ($2::uuid[] IS NULL OR o.occurrence_id=ANY($2)) ORDER BY o.occurrence_id")
-        .bind(subject.0).bind(selected_ids(references, "occurrence")).fetch_all(&mut **tx).await.map_err(db)?;
+    let rows = sqlx::query(r#"
+SELECT o.occurrence_id,o.source_class,
+ ARRAY(SELECT DISTINCT b.entity_ref FROM entity_mentions m JOIN entity_binding_revisions b USING(mention_id) WHERE m.occurrence_id=o.occurrence_id AND b.revision_no=(SELECT max(b2.revision_no) FROM entity_binding_revisions b2 WHERE b2.mention_id=b.mention_id) AND b.binding_state='bound' AND b.entity_ref IS NOT NULL ORDER BY b.entity_ref) entity_refs
+FROM observation_occurrences o WHERE o.subject_id=$1 AND ($2::uuid[] IS NULL OR o.occurrence_id=ANY($2)) ORDER BY o.occurrence_id
+"#).bind(subject.0).bind(selected_ids(references, "occurrence")).fetch_all(&mut **tx).await.map_err(db)?;
     let mut sources = Vec::new();
     for row in rows {
         let occurrence: Uuid = row.try_get("occurrence_id").map_err(db)?;
-        let entities = sqlx::query_scalar("SELECT DISTINCT b.entity_ref FROM entity_mentions m JOIN entity_binding_revisions b USING(mention_id) WHERE m.occurrence_id=$1 AND b.revision_no=(SELECT max(b2.revision_no) FROM entity_binding_revisions b2 WHERE b2.mention_id=b.mention_id) AND b.binding_state='bound' AND b.entity_ref IS NOT NULL")
-            .bind(occurrence).fetch_all(&mut **tx).await.map_err(db)?;
-        let region: Option<Uuid> = sqlx::query_scalar("SELECT source_region_id FROM source_regions WHERE artifact_id=$1 AND coordinate_kind='whole_artifact' ORDER BY source_region_id LIMIT 1")
-            .bind(row.try_get::<Option<Uuid>,_>("artifact_id").map_err(db)?).fetch_optional(&mut **tx).await.map_err(db)?;
         sources.push(TextProjectionSource {
             reference: CognitiveRef::Occurrence(OccurrenceId(occurrence)),
             text: None,
             member_fragments: Vec::new(),
             title: None,
             source_class: Some(row.try_get("source_class").map_err(db)?),
-            source_region: region.map(SourceRegionId),
-            entity_refs: entities,
+            entity_refs: row.try_get("entity_refs").map_err(db)?,
             tag_ids: Vec::new(),
             schema_ids: Vec::new(),
         });
@@ -190,7 +190,6 @@ pub(crate) async fn material_sources(
             member_fragments: Vec::new(),
             title: None,
             source_class: row.try_get("source_class").map_err(db)?,
-            source_region: Some(SourceRegionId(row.try_get("source_region_id").map_err(db)?)),
             entity_refs: Vec::new(),
             tag_ids: Vec::new(),
             schema_ids: Vec::new(),
@@ -207,7 +206,6 @@ pub(crate) async fn material_sources(
             member_fragments: Vec::new(),
             title: Some(row.try_get("representation_kind").map_err(db)?),
             source_class: Some("derived".into()),
-            source_region: None,
             entity_refs: Vec::new(),
             tag_ids: Vec::new(),
             schema_ids: Vec::new(),
@@ -227,7 +225,6 @@ pub(crate) async fn material_sources(
             member_fragments: Vec::new(),
             title: Some(row.try_get("representation_kind").map_err(db)?),
             source_class: Some("derived".into()),
-            source_region: None,
             entity_refs: Vec::new(),
             tag_ids: Vec::new(),
             schema_ids: Vec::new(),
@@ -248,9 +245,14 @@ pub(crate) async fn longitudinal_sources(
         .iter()
         .map(|row| row.get("episode_revision_id"))
         .collect();
-    let mut member_fragments =
-        crate::episode_text::episode_member_text_input_in(tx, subject, &ids, episode_budget)
-            .await?;
+    let mut member_fragments = crate::episode_text::episode_member_text_input_in_view(
+        tx,
+        subject,
+        &ids,
+        episode_budget,
+        None,
+    )
+    .await?;
     let mut sources = Vec::with_capacity(episodes.len());
     for row in episodes {
         let revision: Uuid = row.get("episode_revision_id");
@@ -261,7 +263,6 @@ pub(crate) async fn longitudinal_sources(
             member_fragments: member_fragments.remove(&revision).unwrap_or_default(),
             title,
             source_class: None,
-            source_region: None,
             entity_refs: vec![],
             tag_ids: vec![],
             schema_ids: vec![],
@@ -285,7 +286,6 @@ pub(crate) async fn longitudinal_sources(
             member_fragments: vec![],
             title,
             source_class: None,
-            source_region: None,
             entity_refs: vec![],
             tag_ids: vec![],
             schema_ids: vec![],
@@ -327,4 +327,30 @@ pub(crate) fn episode_representation(row: &sqlx::postgres::PgRow) -> String {
         start,
         end
     )
+}
+
+pub(crate) async fn sources_in(
+    tx: &mut Transaction<'_, Postgres>,
+    subject: SubjectId,
+    memory_enabled: bool,
+    budget: crate::EpisodeTextBudget,
+    view: Option<&HistoricalAuthoritySnapshot>,
+) -> Result<Vec<TextProjectionSource>> {
+    if let Some(view) = view {
+        return Ok(crate::historical::text::historical_sources_in(
+            tx,
+            view,
+            budget,
+            memory_enabled,
+            None,
+        )
+        .await?
+        .0);
+    }
+    let mut sources = material_sources(tx, subject, None).await?;
+    if memory_enabled {
+        sources.extend(memory_sources(tx, subject, None).await?);
+        sources.extend(longitudinal_sources(tx, subject, budget, None).await?);
+    }
+    Ok(sources)
 }

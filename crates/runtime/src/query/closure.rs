@@ -4,6 +4,12 @@ use nous_core::*;
 
 pub(super) fn validate_query_input(query: &CognitiveQuery) -> Result<()> {
     query.validate()?;
+    if query.capabilities.residual_sensing == RequirementStrength::Required {
+        return Err(Error::Unavailable(
+            "residual sensing capability is not implemented".into(),
+        ));
+    }
+
     if !query
         .scopes()
         .iter()

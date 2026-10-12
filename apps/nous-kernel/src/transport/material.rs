@@ -13,6 +13,44 @@ use std::pin::Pin;
 
 const MAX_UNARY_MATERIAL_BYTES: u64 = 1_048_576;
 
+fn materialize_request(input: p::MaterializeRequest) -> Result<(SubjectId, MaterializeRequest)> {
+    let byte_range = match (input.start, input.end) {
+        (None, None) => None,
+        (Some(start), Some(end)) => Some(ByteRange { start, end }),
+        _ => return Err(Error::Invalid("both range endpoints required".into())),
+    };
+    Ok((
+        SubjectId(id(&input.subject_id)?),
+        MaterializeRequest {
+            reference: from_ref(required(input.reference, "reference")?)?,
+            byte_range,
+            max_bytes: input.max_bytes,
+        },
+    ))
+}
+
+fn materialized_evidence(result: nous_material::MaterializedEvidence) -> p::MaterializedEvidence {
+    p::MaterializedEvidence {
+        reference: Some(to_ref(result.reference)),
+        media_type: result.media_type,
+        content: result.bytes,
+        evidence: result
+            .provenance
+            .into_iter()
+            .map(|reference| p::Evidence {
+                epistemic_relation: None,
+                reference: Some(to_ref(reference)),
+                basis_role: "direct".into(),
+            })
+            .collect(),
+        degradation: Vec::new(),
+        total_bytes: result.total_bytes,
+        range_start: result.byte_range.start,
+        range_end: result.byte_range.end,
+        partial: result.partial,
+    }
+}
+
 fn artifact(value: nous_material::Artifact) -> p::Artifact {
     p::Artifact {
         artifact_id: value.artifact_id.0.to_string(),
@@ -155,43 +193,12 @@ impl KernelService {
                 "unary materialization exceeds 1 MiB; use stream".into(),
             ));
         }
-        let range = match (input.start, input.end) {
-            (None, None) => None,
-            (Some(start), Some(end)) => Some(ByteRange { start, end }),
-            _ => return Err(Error::Invalid("both range endpoints required".into())),
-        };
-        let result = self
-            .0
-            .materialize(
-                SubjectId(id(&input.subject_id)?),
-                MaterializeRequest {
-                    reference: from_ref(required(input.reference, "reference")?)?,
-                    byte_range: range,
-                    max_bytes: input.max_bytes,
-                    resource_handle: None,
-                    resource: None,
-                },
-            )
-            .await?;
-        Ok(p::MaterializedEvidence {
-            reference: Some(to_ref(result.reference)),
-            media_type: result.media_type,
-            content: result.bytes,
-            evidence: result
-                .provenance
-                .into_iter()
-                .map(|r| p::Evidence {
-                    epistemic_relation: None,
-                    reference: Some(to_ref(r)),
-                    basis_role: "direct".into(),
-                })
-                .collect(),
-            degradation: vec![],
-            total_bytes: result.total_bytes,
-            range_start: result.byte_range.start,
-            range_end: result.byte_range.end,
-            partial: result.partial,
-        })
+        let (subject, request) = materialize_request(input)?;
+        self.0
+            .material
+            .materialize(subject, request)
+            .await
+            .map(materialized_evidence)
     }
 }
 #[tonic::async_trait]
@@ -256,5 +263,34 @@ impl k::artifact_stream_service_server::ArtifactStreamService for KernelService 
                 .map_err(status)
         });
         Ok(Response::new(Box::pin(stream)))
+    }
+    type MaterializeEvidenceStream =
+        Pin<Box<dyn Stream<Item = std::result::Result<k::MaterializedChunk, Status>> + Send>>;
+    async fn materialize_evidence(
+        &self,
+        request: Request<p::MaterializeRequest>,
+    ) -> std::result::Result<Response<Self::MaterializeEvidenceStream>, Status> {
+        let (subject, request) = materialize_request(request.into_inner()).map_err(status)?;
+        let (header, bytes) = self
+            .0
+            .material
+            .materialize_stream(subject, request, None)
+            .await
+            .map_err(status)?;
+        let header = futures::stream::once(async move {
+            Ok(k::MaterializedChunk {
+                part: Some(k::materialized_chunk::Part::Header(materialized_evidence(
+                    header,
+                ))),
+            })
+        });
+        let content = bytes.map(|bytes| {
+            bytes
+                .map(|content| k::MaterializedChunk {
+                    part: Some(k::materialized_chunk::Part::Content(content)),
+                })
+                .map_err(status)
+        });
+        Ok(Response::new(Box::pin(header.chain(content))))
     }
 }

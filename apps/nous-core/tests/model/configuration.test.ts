@@ -24,14 +24,6 @@ const modelGraph = () => ({
   roles: { memory_formation: { routes: ["main"] } },
 });
 
-it("freezes protocol and gateway-dependent defaults in the owning normalized graph", () => {
-  const config = modelConfigurationSchema.parse(modelGraph());
-  expect(config.execution_profiles.main).toMatchObject({
-    max_output_tokens: 4096,
-    timeout_ms: 30000,
-  });
-});
-
 it("rejects a dangling explicit route with its exact configuration path", () => {
   const config = modelGraph();
   config.roles.memory_formation.routes = ["missing"];

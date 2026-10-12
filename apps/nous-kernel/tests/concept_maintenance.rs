@@ -165,9 +165,11 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             CreateTagRequest {
                 producer: Some(producer()),
                 operation_id: OperationId::new(),
-                label: "Reviewer approval".into(),
-                description: None,
-                kind_hint: None,
+                content: nous_memory::TagContent {
+                    label: "Reviewer approval".into(),
+                    description: None,
+                    kind_hint: None,
+                },
                 origin: "concept_maintenance".into(),
             },
         )
@@ -462,35 +464,38 @@ async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[Co
             operation_id: OperationId::new(),
             subject,
             track_key: "relation-witness".into(),
-            title: Some("Recorded approval sequence".into()),
-            parent_episode_revision_id: None,
-            experience_time: TemporalExtent::Unknown,
-            boundary_explanation: "Both exact members recorded in order".into(),
-            producer_signature_id: None,
-            members: revisions
-                .iter()
-                .enumerate()
-                .map(|(index, reference)| EpisodeMemberInput {
-                    reference: reference.clone(),
-                    role: if index == 0 { "procedure" } else { "outcome" }.into(),
-                })
-                .collect(),
-            basis: revisions
-                .iter()
-                .map(|reference| {
-                    RevisionBasis::CognitionDependency(CognitionDependency {
-                        epistemic_relation: None,
-                        target_revision: reference.clone(),
-                        basis_role: BasisRole::Direct,
+
+            content: nous_memory::EpisodeContent {
+                title: Some("Recorded approval sequence".into()),
+                parent_episode_revision_id: None,
+                experience_time: TemporalExtent::Unknown,
+                boundary_explanation: "Both exact members recorded in order".into(),
+                producer_signature_id: None,
+                members: revisions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, reference)| EpisodeMemberInput {
+                        reference: reference.clone(),
+                        role: if index == 0 { "procedure" } else { "outcome" }.into(),
                     })
-                })
-                .collect(),
+                    .collect(),
+                basis: revisions
+                    .iter()
+                    .map(|reference| {
+                        RevisionBasis::CognitionDependency(CognitionDependency {
+                            epistemic_relation: None,
+                            target_revision: reference.clone(),
+                            basis_role: BasisRole::Direct,
+                        })
+                    })
+                    .collect(),
+            },
         })
         .await
         .unwrap();
     let projection = rt
         .store
-        .topology_projection_input(subject, true)
+        .topology_projection_input(subject, true, None)
         .await
         .unwrap();
     let episode_ref = CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id);
@@ -505,7 +510,7 @@ async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[Co
     }
     assert!(
         !rt.store
-            .topology_projection_input(subject, false)
+            .topology_projection_input(subject, false, None)
             .await
             .unwrap()
             .nodes

@@ -94,12 +94,14 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         .create_tag(
             subject,
             CreateTagRequest {
-                operation_id: OperationId::new(),
-                label: "Release planning".into(),
-                description: Some("Subject release checkpoint".into()),
-                kind_hint: None,
-                origin: "host_explicit".into(),
                 producer: None,
+                operation_id: OperationId::new(),
+                content: nous_memory::TagContent {
+                    label: "Release planning".into(),
+                    description: Some("Subject release checkpoint".into()),
+                    kind_hint: None,
+                },
+                origin: "host_explicit".into(),
             },
         )
         .await
@@ -133,6 +135,37 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         )
         .await
         .unwrap();
+    let (page, more) = runtime
+        .cognition
+        .list_work_contexts(subject, 1, None)
+        .await
+        .unwrap();
+    assert!(!more);
+    assert_eq!(page[0].work_context_id, context.work_context_id);
+    assert_eq!(page[0].cognition_anchors, context.cognition_anchors);
+    assert_eq!(page[0].entity_anchors, context.entity_anchors);
+    assert_eq!(page[0].tag_anchors, context.tag_anchors);
+    let projection = nous_kernel::transport::KernelService(runtime.clone())
+        .build_contribution_batch(nous_protocol::public::ProjectionRequest {
+            subject_id: subject.0.to_string(),
+            session_id: session.session_id.0.to_string(),
+            consumer_id: "default".into(),
+            max_items: 1,
+            max_text_bytes: 256,
+            memory_requirement: "REQUIRED".into(),
+            runtime_requirement: "FORBIDDEN".into(),
+            resource_requirement: "FORBIDDEN".into(),
+            materialize: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        projection.active_work_context_id.as_deref(),
+        Some(context.work_context_id.to_string().as_str())
+    );
+    assert_eq!(projection.segments.len(), 1);
+    assert!(!projection.segments[0].text.is_empty());
     let mut request = query(subject);
     request.session = Some(session.session_id);
     request

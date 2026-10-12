@@ -18,7 +18,6 @@ export async function projectionCommands(env: CliEnvironment, action?: string) {
   const projection = {
     subjectId: env.subjectId,
     sessionId: env.required(env.state.sessionId, "Selected Session"),
-    activeWorkContextId: env.state.workContextId,
     consumerId: env.required(env.values.consumer, "--consumer"),
     maxItems: boundedInteger(
       env.values["max-items"] ?? "16",

@@ -16,7 +16,6 @@ pub use model_workflow::{
 mod episode_text;
 pub use episode_text::EpisodeTextBudget;
 mod historical;
-pub use historical::projection::HistoricalProjectionInput;
 pub use historical::*;
 mod producer;
 mod projection;
@@ -34,7 +33,7 @@ mod serving;
 mod tags;
 pub use projection::text::{TextProjectionFragment, TextProjectionInput, TextProjectionSource};
 pub use projection::topology::{
-    CognitiveProjectionRows, ProjectionEdgeProvenance, TopologyEdgeSource, TopologyProjectionInput,
+    ProjectionEdgeProvenance, TopologyEdgeSource, TopologyProjectionInput, VcpProjectionRows,
 };
 pub use projection::{DenseInvalidation, ProjectionInvalidation, ProjectionWatermarks};
 pub use serving::{ServingRecord, ServingView};
@@ -62,17 +61,6 @@ pub struct AuthorityStore {
 }
 
 impl AuthorityStore {
-    pub async fn active_subjects(&self) -> Result<Vec<SubjectId>> {
-        Ok(sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT subject_id FROM subjects WHERE status='active' ORDER BY subject_id",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(database_error)?
-        .into_iter()
-        .map(SubjectId)
-        .collect())
-    }
     pub async fn connect(
         url: &str,
         max_connections: u32,

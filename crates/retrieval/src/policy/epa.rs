@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use nous_configuration::*;
+use nous_configuration::{ConfigKey, ReferenceProfile};
 use nous_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +22,7 @@ pub struct EpaPolicy {
     pub representative_distance_epsilon: f64,
 }
 const REFERENCE: &str = include_str!("../../../../config/reference/epa.json");
-pub const EPA_POLICY: ConfigKey<EpaPolicy> = ConfigKey::new("retrieval.epa");
+const EPA_POLICY: ConfigKey<EpaPolicy> = ConfigKey::new("retrieval.epa");
 impl EpaPolicy {
     pub fn reference() -> Self {
         ReferenceProfile::parse(REFERENCE)
@@ -38,18 +38,4 @@ impl EpaPolicy {
         }
         Ok(())
     }
-}
-pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()> {
-    registry.register(
-        EPA_POLICY,
-        "cognitive-retrieval",
-        "EPA basis policy.",
-        EpaPolicy::reference(),
-        ConfigExposure::Developer,
-        ConfigScopePolicy::SystemOnly,
-        ConfigApplyMode::ServingRebuild,
-        ConfigSemanticEffect::ServingProjection,
-        EpaPolicy::validate,
-    )?;
-    ReferenceProfile::parse(REFERENCE)?.describe(registry)
 }

@@ -118,10 +118,4 @@ impl BoundQuery {
     pub fn lane_budget(&self, family: EvidenceFamily) -> usize {
         self.lane_budgets.get(&family).copied().unwrap_or(0)
     }
-
-    pub fn exact_binding_for(&self, reference: &CognitiveRef) -> Option<&ExactBinding> {
-        self.exact_bindings
-            .iter()
-            .find(|binding| &binding.requested_ref == reference)
-    }
 }

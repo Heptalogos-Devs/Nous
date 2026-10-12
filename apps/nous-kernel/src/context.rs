@@ -3,7 +3,7 @@
 
 use crate::NousRuntime;
 use nous_core::*;
-use nous_runtime::{ContextResolver, ContextSource, bounded_text};
+use nous_runtime::{ContextResolver, ContextSource};
 
 #[async_trait::async_trait]
 impl ContextResolver for NousRuntime {
@@ -13,21 +13,28 @@ impl ContextResolver for NousRuntime {
         reference: &CognitiveRef,
         max_bytes: usize,
         explicit: bool,
+        now: chrono::DateTime<chrono::Utc>,
+        configuration: &nous_configuration::ConfigSnapshot,
     ) -> Result<ContextSource> {
         if matches!(
             reference,
-            CognitiveRef::Memory(_) | CognitiveRef::MemoryRevision(_)
+            CognitiveRef::Memory(_)
+                | CognitiveRef::MemoryRevision(_)
+                | CognitiveRef::CognitiveSchema(_)
+                | CognitiveRef::CognitiveSchemaRevision(_)
+                | CognitiveRef::Episode(_)
+                | CognitiveRef::EpisodeRevision(_)
+                | CognitiveRef::Journal(_)
+                | CognitiveRef::JournalRevision(_)
         ) {
-            let policy = nous_memory::resolve_accessibility_policy(
-                &self.configuration.snapshot_for_subject(subject)?,
-            )?;
+            let policy = nous_memory::resolve_accessibility_policy(configuration)?;
             let memory = self
                 .require_memory()?
                 .context_projection(
                     subject,
                     reference,
                     &policy,
-                    self.cognition.now(subject),
+                    now,
                     CognitiveEffort::Normal,
                     explicit,
                     max_bytes,
@@ -35,38 +42,24 @@ impl ContextResolver for NousRuntime {
                 .await?;
             return Ok(ContextSource {
                 source_revision: Some(memory.source_revision),
-                media_type: "text/plain".into(),
                 text: memory.text,
-                authority: AuthorityClass::SubjectCognition,
-                provenance: ProvenanceSummary {
-                    source_count: memory.evidence.len(),
-                    producer_signatures: Vec::new(),
-                    note: None,
-                },
+                authority: memory.authority,
                 evidence: memory.evidence,
             });
         }
-        if let CognitiveRef::Resource(resource) = reference {
-            let descriptor = self.cognition.resource(subject, resource).await?.descriptor;
-            return Ok(ContextSource {
-                source_revision: None,
-                media_type: "text/plain".into(),
-                text: (max_bytes > 0).then(|| {
-                    bounded_text(
-                        descriptor
-                            .display_label
-                            .unwrap_or_else(|| resource.as_str().to_owned()),
-                        max_bytes,
-                    )
-                }),
-                authority: AuthorityClass::ResourceDescriptor,
-                evidence: Vec::new(),
-                provenance: ProvenanceSummary {
-                    source_count: 0,
-                    producer_signatures: Vec::new(),
-                    note: Some("resource awareness".into()),
-                },
-            });
+        if !matches!(
+            reference,
+            CognitiveRef::Occurrence(_)
+                | CognitiveRef::SourceRegion(_)
+                | CognitiveRef::DerivedRepresentation(_)
+                | CognitiveRef::DerivedRegion(_)
+                | CognitiveRef::Artifact(_)
+                | CognitiveRef::ExternalObject(_)
+        ) {
+            return self
+                .cognition
+                .runtime_context_source(subject, reference, max_bytes)
+                .await;
         }
         self.material
             .context_source(subject, reference, max_bytes)

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessageInitShape } from "@bufbuild/protobuf";
-import { StartOperationRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import {
+  StartOperationRequestSchema,
+  OperationRecordSchema,
+} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
 import { expect, it, vi } from "vitest";
 import { dirname, join } from "node:path";
@@ -69,6 +72,10 @@ import { ModelRuntime } from "../../src/model/runtime.js";
 import { type ModelInvocations } from "../../src/model/invocations.js";
 import type { KernelClient } from "../../src/kernel-client.js";
 import { create } from "@bufbuild/protobuf";
+import {
+  DerivedRepresentationSchema,
+  type DerivedRepresentation,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { DeriveMaterialRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 it("bounds samples and subprocess input, excludes gateway credentials and removes temporary media on success and failure", async () => {
   const policy = modelConfigurationSchema.parse({
@@ -139,37 +146,72 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       max_frames: 1,
     },
   });
-  const committed: { kind: string }[] = [];
+  const committed: DerivedRepresentation[] = [];
+  const operations = new Map<
+    string,
+    MessageInitShape<typeof OperationRecordSchema>
+  >();
+  let byteReads = 0;
   const modelInputs: unknown[] = [];
   const kernel = {
     execution: coreExecutionSchema.parse(undefined),
     material: {
-      getSourceRegion: async () => ({
-        artifactId: "artifact",
-        coordinateKind: "whole_artifact",
-      }),
-      getArtifact: async () => ({ byteLength: 3n, mediaType: "video/mp4" }),
+      listDerivedRepresentations: async () => ({ items: committed }),
     },
     artifacts: {
-      downloadArtifact: async function* () {
-        yield { content: new Uint8Array([1, 2, 3]) };
+      materializeEvidence: async function* (
+        _input: unknown,
+        options: { signal?: AbortSignal },
+      ) {
+        yield {
+          part: {
+            case: "header",
+            value: {
+              mediaType: "video/mp4",
+              partial: false,
+              rangeStart: 0n,
+              rangeEnd: 3n,
+            },
+          },
+        };
+        if (options.signal?.aborted) throw new Error("source read canceled");
+        byteReads++;
+        yield { part: { case: "content", value: new Uint8Array([1, 2, 3]) } };
       },
     },
     modelWorkflow: {
       startOperation: async (
         input: MessageInitShape<typeof StartOperationRequestSchema>,
-      ) => ({
-        snapshot: input.snapshot,
-      }),
-      saveOperation: async () => ({}),
+      ) => {
+        const key = input.identity!.operationKey!;
+        const record = operations.get(key) ?? { snapshot: input.snapshot };
+        operations.set(key, record);
+        return record;
+      },
+      readOperation: async (input: { operationKey: string }) =>
+        operations.get(input.operationKey) ?? {},
+      saveOperation: async (
+        input: Parameters<KernelClient["modelWorkflow"]["saveOperation"]>[0],
+      ) => {
+        if (input.outcome)
+          operations.get(input.identity!.operationKey!)!.outcome =
+            input.outcome;
+        return {};
+      },
     },
     materialWorkflow: {
-      commitInterpretation: async (input: { kind: string; text: string }) => {
-        committed.push(input);
-        return {
-          ...input,
+      commitInterpretation: async (
+        input: Parameters<
+          KernelClient["materialWorkflow"]["commitInterpretation"]
+        >[0],
+      ) => {
+        const { $typeName: _requestType, ...content } = input;
+        const representation = create(DerivedRepresentationSchema, {
+          ...content,
           representationId: "00000000-0000-0000-0000-000000000001",
-        };
+        });
+        committed.push(representation);
+        return representation;
       },
       segmentDescription: async () => ({
         segments: [
@@ -252,6 +294,30 @@ it("frames without a transcript cannot acquire audio evidence in either structur
         committed.some((item) => item.kind === "structured_interpretation"),
       ).toBe(false);
     }
+    const before = {
+      bytes: byteReads,
+      frames: observed.commands.filter((args) => args.includes("-frames:v"))
+        .length,
+      calls: modelInputs.length,
+    };
+    const replay = await deriveMaterial(
+      kernel,
+      models,
+      create(DeriveMaterialRequestSchema, {
+        subjectId: "subject",
+        sourceRegionId: "source",
+        strategy: "describe_then_structure",
+      }),
+      {},
+    );
+    expect(replay.selectedRepresentationId).toBe(
+      committed[0]!.representationId,
+    );
+    expect(byteReads).toBe(before.bytes);
+    expect(
+      observed.commands.filter((args) => args.includes("-frames:v")),
+    ).toHaveLength(before.frames);
+    expect(modelInputs).toHaveLength(before.calls + 1); // Only the still-invalid structured stage runs again.
     const frameInput = modelInputs.find(Array.isArray) as {
       type: string;
       text?: string;
@@ -286,13 +352,5 @@ it("rejects invalid derivation choices before reading or interpreting source", a
   } as Parameters<typeof deriveMaterial>[2];
   const invalid = deriveMaterial(kernel, models, request, {});
   await expect(invalid).rejects.toMatchObject({ code: 3 });
-  await expect(invalid).rejects.toThrow("config describe video");
-  await expect(
-    deriveMaterial(
-      kernel,
-      models,
-      { ...request, strategy: "description_only", target: "structured" },
-      {},
-    ),
-  ).rejects.toMatchObject({ code: 3 });
+  await expect(invalid).rejects.toThrow("Unknown material strategy");
 });

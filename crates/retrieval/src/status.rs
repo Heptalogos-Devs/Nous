@@ -20,7 +20,7 @@ pub struct ProjectionFamilyStatus {
 
 impl ServingService {
     pub async fn family_status(&self, subject: SubjectId) -> Result<Vec<ProjectionFamilyStatus>> {
-        self.store.require_subject(subject).await?;
+        let capabilities = self.projection_capabilities(subject).await?;
         let config = self.configuration.snapshot_for_subject(subject)?;
         let rows = sqlx::query("SELECT COALESCE(w.family,c.family) AS family,COALESCE(w.space_signature,c.space_signature) AS space_signature,g.authority_watermark,g.generation_id,g.config_digest FROM projection_watermarks w FULL JOIN serving_current c ON c.subject_id=w.subject_id AND c.family=w.family AND c.space_signature=w.space_signature LEFT JOIN serving_generations g ON g.generation_id=c.generation_id WHERE COALESCE(w.subject_id,c.subject_id)=$1 ORDER BY family,space_signature")
             .bind(subject.0).fetch_all(self.store.pool()).await.map_err(db)?;
@@ -33,9 +33,8 @@ impl ServingService {
             let authority_watermark: Option<i64> =
                 row.try_get("authority_watermark").map_err(db)?;
             let config_digest: Option<String> = row.try_get("config_digest").map_err(db)?;
-            let desired_config_digest = self
-                .config_digest(subject, &name, &space_signature, &config)
-                .await?;
+            let desired_config_digest =
+                self.config_digest(&name, &space_signature, &config, capabilities)?;
             let state = match authority_watermark {
                 Some(watermark)
                     if watermark >= desired_authority_seq

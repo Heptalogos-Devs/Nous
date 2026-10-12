@@ -54,12 +54,14 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .create_tag(
             subject,
             CreateTagRequest {
-                operation_id: OperationId::new(),
-                label: "Past concept".into(),
-                description: Some("PAST_DESCRIPTION reader ownership".into()),
-                kind_hint: None,
-                origin: "host_explicit".into(),
                 producer: None,
+                operation_id: OperationId::new(),
+                content: nous_memory::TagContent {
+                    label: "Past concept".into(),
+                    description: Some("PAST_DESCRIPTION reader ownership".into()),
+                    kind_hint: None,
+                },
+                origin: "host_explicit".into(),
             },
         )
         .await
@@ -301,12 +303,14 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .create_tag(
             subject,
             CreateTagRequest {
-                operation_id: OperationId::new(),
-                label: "New survivor concept".into(),
-                description: None,
-                kind_hint: None,
-                origin: "host_explicit".into(),
                 producer: None,
+                operation_id: OperationId::new(),
+                content: nous_memory::TagContent {
+                    label: "New survivor concept".into(),
+                    description: None,
+                    kind_hint: None,
+                },
+                origin: "host_explicit".into(),
             },
         )
         .await

@@ -152,7 +152,7 @@ impl CognitiveRuntimeService {
         &self,
         execution: QueryExecution,
         lease: QueryLease,
-    ) -> Result<(CognitiveQueryResult, Option<Uuid>)> {
+    ) -> Result<(CognitiveQueryResult, Uuid)> {
         lease.require_live()?;
         if execution.result.results.len() > 64 {
             return Err(Error::Invalid("rerank pool exceeds 64 candidates".into()));
@@ -165,9 +165,8 @@ impl CognitiveRuntimeService {
             .sum::<usize>()
             > 2 * 1024 * 1024
         {
-            return Ok(retention_fallback(
-                execution,
-                "validated pool exceeds the text retention bound",
+            return Err(Error::Unavailable(
+                "query validation pool exceeds the text retention bound".into(),
             ));
         }
         let mut pending = self
@@ -176,10 +175,7 @@ impl CognitiveRuntimeService {
             .map_err(|_| Error::Infrastructure("query lease lock unavailable".into()))?;
         pending.retain(|_, value| value.lease().live());
         if pending.len() >= execution.bound.config_snapshot.get(crate::QUERY_SLOTS)? {
-            return Ok(retention_fallback(
-                execution,
-                "bounded query lease slots are busy",
-            ));
+            return Err(Error::Unavailable("query validation slots are busy".into()));
         }
         let ticket = Uuid::new_v4();
         let result = execution.result.clone();
@@ -190,7 +186,7 @@ impl CognitiveRuntimeService {
                 lease,
             },
         );
-        Ok((result, Some(ticket)))
+        Ok((result, ticket))
     }
     fn take_query(&self, subject: SubjectId, ticket: Uuid) -> Result<(QueryExecution, QueryLease)> {
         let mut pending = self
@@ -446,22 +442,4 @@ fn apply_model_order(hits: &mut Vec<CognitiveHit>, mut order: Vec<(CognitiveRef,
     for (rank, hit) in hits.iter_mut().enumerate() {
         hit.match_evidence.final_score = (k + 1.0) / (k + (rank + 1) as f64);
     }
-}
-
-fn retention_fallback(
-    mut execution: QueryExecution,
-    reason: &str,
-) -> (CognitiveQueryResult, Option<Uuid>) {
-    execution
-        .result
-        .results
-        .truncate(execution.bound.source_query.result_need.limit);
-    execution.result.degradation.push(Degradation {
-        code: "query_rerank_pool_unavailable".into(),
-        detail: Some(reason.into()),
-    });
-    if execution.result.status == QueryStatus::Complete {
-        execution.result.status = QueryStatus::Degraded;
-    }
-    (execution.result, None)
 }

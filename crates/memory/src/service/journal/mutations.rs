@@ -17,7 +17,23 @@ struct JournalRevisionWrite {
 }
 
 impl MemoryService {
-    pub async fn commit_journal(&self, input: JournalInput) -> Result<JournalView> {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Journal commit owns one atomic Authority transaction"
+    )]
+    pub async fn commit_journal(&self, mut input: JournalInput) -> Result<JournalView> {
+        input.producer = input
+            .producer
+            .as_ref()
+            .map(|producer| {
+                if producer.operation != CapabilityOperation::JournalSynthesisText {
+                    return Err(Error::Invalid(
+                        "Journal requires a synthesis producer".into(),
+                    ));
+                }
+                AuthorityStore::canonical_producer(producer)
+            })
+            .transpose()?;
         validate_journal(&input)?;
         self.store.require_subject(input.subject).await?;
         let started = self.cognition.now(input.subject);
@@ -49,7 +65,7 @@ impl MemoryService {
         if let Some(target) = &input.target {
             self.validate_object_dependency_cycle(
                 input.subject,
-                &format!("journal:{}", target.journal_id.0),
+                &CognitiveRef::Journal(target.journal_id),
                 &basis,
             )
             .await?;
@@ -58,7 +74,12 @@ impl MemoryService {
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
             .await?;
         let recorded = self.cognition.now(input.subject);
-        let producer = journal_producer_in(mutation.tx(), input.producer.as_ref()).await?;
+        let producer = match &input.producer {
+            Some(producer) => {
+                Some(AuthorityStore::register_producer_in(mutation.tx(), producer).await?)
+            }
+            None => None,
+        };
         let revision = JournalRevisionId::new();
         self.write_journal_revision_in(
             mutation.tx(),
@@ -486,21 +507,4 @@ async fn insert_journal_points(
         }
     }
     Ok(())
-}
-
-async fn journal_producer_in(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    producer: Option<&nous_core::ProducerSignature>,
-) -> Result<Option<Uuid>> {
-    let Some(signature) = producer else {
-        return Ok(None);
-    };
-    if signature.operation != CapabilityOperation::JournalSynthesisText {
-        return Err(Error::Invalid(
-            "Journal requires a synthesis producer".into(),
-        ));
-    }
-    AuthorityStore::register_producer_in(tx, signature)
-        .await
-        .map(Some)
 }

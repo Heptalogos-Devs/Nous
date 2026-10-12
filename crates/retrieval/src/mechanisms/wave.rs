@@ -13,74 +13,6 @@ pub struct SourceSeed {
     pub hop_zero: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SeedFamily {
-    Explicit,
-    Exact,
-    Entity,
-    Tag,
-    Schema,
-    Resource,
-    Runtime,
-    Relation,
-    Residual,
-}
-impl SeedFamily {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Explicit => "explicit_query",
-            Self::Exact => "exact_target",
-            Self::Entity => "entity_cue",
-            Self::Tag => "tag_cue",
-            Self::Schema => "schema_cue",
-            Self::Resource => "resource_cue",
-            Self::Runtime => "runtime_situation",
-            Self::Relation => "relation_cue",
-            Self::Residual => "residual_discovery",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SeedOrigin {
-    ExplicitQuery,
-    ExactTarget,
-    EntityCue,
-    TagCue,
-    SchemaCue,
-    ResourceCue,
-    RuntimeSituation,
-    RelationCue,
-    ResidualDiscovery,
-}
-impl SeedOrigin {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::ExplicitQuery => "explicit_query",
-            Self::ExactTarget => "exact_target",
-            Self::EntityCue => "entity_cue",
-            Self::TagCue => "tag_cue",
-            Self::SchemaCue => "schema_cue",
-            Self::ResourceCue => "resource_cue",
-            Self::RuntimeSituation => "runtime_situation",
-            Self::RelationCue => "relation_cue",
-            Self::ResidualDiscovery => "residual_discovery",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WeightedCognitiveSeed {
-    pub node: u32,
-    pub weight: f64,
-    pub family: SeedFamily,
-    pub origin: SeedOrigin,
-    pub provenance: Option<String>,
-    pub embedding_space: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiverEdgeFlow {
     pub from: u32,
@@ -127,33 +59,6 @@ struct PropagationState {
 
 pub fn propagate(graph: &WaveGraphGeneration, seeds: &[SourceSeed]) -> QueryRiver {
     propagate_with_budget(graph, seeds, graph.config.max_hops, graph.config.max_states)
-}
-pub fn propagate_weighted(
-    graph: &WaveGraphGeneration,
-    seeds: &[WeightedCognitiveSeed],
-) -> QueryRiver {
-    propagate_weighted_with_budget(graph, seeds, graph.config.max_hops, graph.config.max_states)
-}
-pub fn propagate_weighted_with_budget(
-    graph: &WaveGraphGeneration,
-    seeds: &[WeightedCognitiveSeed],
-    max_hops: usize,
-    max_states: usize,
-) -> QueryRiver {
-    let converted = seeds
-        .iter()
-        .map(|seed| SourceSeed {
-            node: seed.node,
-            weight: seed.weight,
-            seed_family: seed.family.as_str().into(),
-            origin_cue: seed
-                .provenance
-                .clone()
-                .unwrap_or_else(|| seed.origin.as_str().into()),
-            hop_zero: true,
-        })
-        .collect::<Vec<_>>();
-    propagate_with_budget(graph, &converted, max_hops, max_states)
 }
 #[expect(
     clippy::collapsible_if,
@@ -368,10 +273,6 @@ mod tests {
                 .map(|node| WaveNode {
                     serving_id: node,
                     reference: CognitiveRef::MemoryRevision(MemoryRevisionId::new()),
-                    node_kind: WaveNodeKind::Memory,
-                    embedding_key: None,
-                    posting_key: None,
-                    intrinsic_residual_gain: None,
                 })
                 .collect(),
             evidence: Vec::new(),
@@ -445,26 +346,14 @@ mod tests {
                 WaveNode {
                     serving_id: 0,
                     reference: root.clone(),
-                    node_kind: WaveNodeKind::Memory,
-                    embedding_key: None,
-                    posting_key: None,
-                    intrinsic_residual_gain: None,
                 },
                 WaveNode {
                     serving_id: 1,
                     reference: left.clone(),
-                    node_kind: WaveNodeKind::Memory,
-                    embedding_key: None,
-                    posting_key: None,
-                    intrinsic_residual_gain: None,
                 },
                 WaveNode {
                     serving_id: 2,
                     reference: right.clone(),
-                    node_kind: WaveNodeKind::Memory,
-                    embedding_key: None,
-                    posting_key: None,
-                    intrinsic_residual_gain: None,
                 },
             ],
             &[

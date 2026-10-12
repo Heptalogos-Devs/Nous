@@ -23,7 +23,6 @@ pub struct QueryGenerationTrace {
     #[serde(default)]
     pub dense: Vec<ServingGenerationId>,
     pub topology: Option<ServingGenerationId>,
-    pub epa_basis: Option<ServingGenerationId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

@@ -36,7 +36,6 @@ mod topology;
 use crate::*;
 use chrono::{DateTime, Utc};
 use nous_core::*;
-use nous_object_store::ObjectStore;
 use nous_persistence::{
     AuthorityStore, MutationEnvelope, MutationStart, OwnerLock, ProjectionInvalidation,
     database_error as db,
@@ -45,7 +44,6 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sqlx::Row;
 pub use state::LifecycleAction;
 use state::{fence_epoch, require_transition};
-use std::sync::Arc;
 use uuid::Uuid;
 
 pub use crate::{CognitiveRole, FormationMode};
@@ -70,10 +68,8 @@ pub use tag::*;
 pub struct MemoryService {
     pub(crate) configuration: nous_configuration::ConfigurationService,
     pub(crate) store: AuthorityStore,
-    pub(crate) objects: ObjectStore,
     pub(crate) material: nous_material::MaterialService,
     pub(crate) cognition: nous_runtime::CognitiveRuntimeService,
-    capabilities: Arc<Vec<CapabilityDescriptor>>,
 }
 
 impl MemoryService {
@@ -100,13 +96,6 @@ impl MemoryService {
         }
         Ok(start)
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeStatus {
-    pub ready: bool,
-    pub authority: String,
-    pub capabilities: Vec<CapabilityStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,9 +127,7 @@ pub struct ReviseMemoryInput {
 pub struct CreateTagRequest {
     pub producer: Option<ProducerSignature>,
     pub operation_id: OperationId,
-    pub label: String,
-    pub description: Option<String>,
-    pub kind_hint: Option<String>,
+    pub content: TagContent,
     #[serde(default = "default_explicit_origin")]
     pub origin: String,
 }
@@ -226,7 +213,6 @@ impl MemoryService {
 
     pub fn new(
         store: AuthorityStore,
-        objects: ObjectStore,
         cognition: nous_runtime::CognitiveRuntimeService,
         material: nous_material::MaterialService,
         configuration: nous_configuration::ConfigurationService,
@@ -234,35 +220,8 @@ impl MemoryService {
         Self {
             configuration,
             store,
-            objects,
             cognition,
             material,
-            capabilities: Arc::new(Vec::new()),
-        }
-    }
-
-    pub fn with_capabilities(mut self, capabilities: Vec<CapabilityDescriptor>) -> Self {
-        self.capabilities = Arc::new(capabilities);
-        self
-    }
-
-    pub async fn status(&self) -> RuntimeStatus {
-        RuntimeStatus {
-            ready: true,
-            authority: "postgresql".into(),
-            capabilities: self
-                .capabilities
-                .iter()
-                .map(|capability| CapabilityStatus {
-                    capability_id: capability.operation.as_str().into(),
-                    status: match capability.readiness {
-                        CapabilityReadiness::Ready => Readiness::Ready,
-                        CapabilityReadiness::Degraded => Readiness::Degraded,
-                        CapabilityReadiness::Unavailable => Readiness::Unavailable,
-                    },
-                    reason: None,
-                })
-                .collect(),
         }
     }
 }

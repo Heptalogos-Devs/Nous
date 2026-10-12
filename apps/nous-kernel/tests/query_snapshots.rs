@@ -66,7 +66,7 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
             .cognition
             .finalize_query(
                 subject,
-                expired_ticket.unwrap(),
+                expired_ticket,
                 Vec::new(),
                 Vec::new(),
                 nous_runtime::CognitiveContributors {
@@ -83,7 +83,6 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
         .cognition
         .retain_query(execution, test_support::query_lease())
         .unwrap();
-    let ticket = ticket.expect("validated query snapshot should be retained");
     let first = &cohort[0];
     runtime
         .require_memory()
@@ -354,7 +353,7 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
     let memory_service = runtime.require_memory().unwrap();
     let result = runtime
         .cognition
-        .query_with_plan(
+        .execute_query_with_plan(
             bound,
             nous_runtime::CognitiveContributors {
                 material: Some(&runtime.material),
@@ -362,9 +361,11 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
                 memory: Some(memory_service as &dyn nous_runtime::CognitiveContributor),
             },
             plan,
+            None,
         )
         .await
-        .expect("stale exact query");
+        .expect("stale exact query")
+        .result;
     assert!(result.results.is_empty());
     assert_eq!(
         result

@@ -71,12 +71,9 @@ impl MaterialService {
         let mut values = Vec::new();
         let mut result = HashMap::new();
         for reference in refs {
-            let text = reference.to_string();
-            let (kind, value) = text
-                .split_once(':')
-                .ok_or_else(|| Error::Invalid("invalid time reference".into()))?;
-            kinds.push(kind.to_owned());
-            values.push(value.to_owned());
+            let (kind, value) = reference_parts(reference);
+            kinds.push(kind);
+            values.push(value);
             result.insert(reference.clone(), EvidenceTimes::default());
         }
         let rows = sqlx::query(r#"
@@ -354,19 +351,7 @@ SELECT * FROM records
             source_constraints.recorded = None;
             let mut hit = material_hit(reference, EvidenceFamily::Exact, query);
             let media: String = row.get("media_type");
-            let modality = if media.starts_with("text/") {
-                Modality::Text
-            } else if media.starts_with("image/") {
-                Modality::Image
-            } else if media.starts_with("audio/") {
-                Modality::Audio
-            } else if media.starts_with("video/") {
-                Modality::Video
-            } else if media.contains("json") {
-                Modality::Structured
-            } else {
-                Modality::Binary
-            };
+            let modality = media_modality(&media);
             if !c.matches_common(QueryFacts {
                 authority: hit.authority,
                 entities: &[],

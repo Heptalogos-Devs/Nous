@@ -3,8 +3,7 @@
 
 use nous_core::{CognitiveRef, MemoryRevisionId};
 use nous_retrieval::{
-    SourceSeed, WaveConfig, WaveEdgeEvidence, WaveGraphGeneration, WaveNode, WaveNodeKind,
-    propagate_with_budget,
+    SourceSeed, WaveConfig, WaveEdgeEvidence, WaveGraphGeneration, WaveNode, propagate_with_budget,
 };
 use serde_json::{Value, json};
 
@@ -20,10 +19,6 @@ fn graph() -> WaveGraphGeneration {
         .map(|index| WaveNode {
             serving_id: index as u32,
             reference: reference(index),
-            node_kind: WaveNodeKind::Memory,
-            embedding_key: None,
-            posting_key: None,
-            intrinsic_residual_gain: None,
         })
         .collect();
     let edge = |from, to, mass, root: &str| WaveEdgeEvidence {

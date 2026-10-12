@@ -15,10 +15,7 @@ use usearch::{
 pub struct VectorRecord {
     pub serving_doc_id: u64,
     pub reference: CognitiveRef,
-    pub embedding_space: EmbeddingSpaceSignature,
     pub producer_signature: String,
-    pub representation_kind: String,
-    pub source_region: Option<CognitiveRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,11 +70,6 @@ impl DenseGeneration {
             )
             .map_err(|error| Error::Infrastructure(format!("USearch load: {error}")))?;
         for record in records {
-            if !record.embedding_space.compatible_with(&generation.space) {
-                return Err(Error::Conflict(
-                    "dense artifact contains an incompatible embedding space".into(),
-                ));
-            }
             let mut vector = vec![0.0_f32; generation.space.dimension as usize];
             let count = generation
                 .index
@@ -140,11 +132,6 @@ impl DenseGeneration {
 
     pub fn insert(&mut self, record: VectorRecord, vector: &[f32]) -> Result<()> {
         validate_vector(&self.space, vector)?;
-        if !record.embedding_space.compatible_with(&self.space) {
-            return Err(Error::Conflict(
-                "vector embedding space does not match DenseGeneration".into(),
-            ));
-        }
         let serving_doc_id = record.serving_doc_id;
         self.index
             .add(record.serving_doc_id, vector)

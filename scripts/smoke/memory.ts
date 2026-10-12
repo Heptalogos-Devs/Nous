@@ -221,7 +221,7 @@ async function main() {
           create(CreateTagRequestSchema, {
             subjectId,
             operationId: randomUUID(),
-            tag: { label },
+            content: { label },
           }),
         ),
       ),

@@ -8,7 +8,6 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| [start.ts](start.ts) | 调用统一 launcher 的源码 serve 入口 |
 | [prepare.ts](prepare.ts) | 显式准备开发 PostgreSQL 运行包 |
 | [postgres-linux.ts](postgres-linux.ts) | Linux 开发 PostgreSQL 的依赖库准备，供 prepare 调用 |
 | [nous.ts](nous.ts) | 对开发 locator 调用源码 launcher |

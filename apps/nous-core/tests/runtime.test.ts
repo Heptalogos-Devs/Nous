@@ -92,25 +92,6 @@ describe("managed context synchronization", () => {
   });
 });
 describe("projection authority boundaries", () => {
-  it("applies the cognition consumer policy to Schema contributions", async () => {
-    const planner = new ProjectionPlanner(
-      new Map([["test", { ...policy, memory: "FORBIDDEN" } as ConsumerPolicy]]),
-    );
-    const input = create(ContextSegmentSchema, {
-      ...segment("schema", "supported pattern"),
-      sourceRefs: [
-        create(CognitiveRefSchema, {
-          kind: "cognitive_schema_revision",
-          value: "schema revision",
-        }),
-      ],
-    });
-    const result = await planner.build(projection(input), {
-      maxItems: 5,
-      maxTextBytes: 20,
-    });
-    expect(result.segments).toEqual([]);
-  });
   it("keeps projected segment identity stable across fresh contribution IDs and resets on evidence drift", async () => {
     let batch = projection();
     const execution = coreExecutionSchema.parse(undefined);
@@ -198,7 +179,11 @@ describe("projection authority boundaries", () => {
     const result = await new ProjectionPlanner(
       new Map([["test", policy]]),
       model,
-    ).build(projection(segment("a")), { maxItems: 5, maxTextBytes: 20 });
+    ).build(
+      projection(segment("a")),
+      { maxItems: 5, maxTextBytes: 20 },
+      policy,
+    );
     expect(result.segments.map((s) => s.sourceRefs)).toEqual([
       [create(CognitiveRefSchema, { kind: "memory", value: "a" })],
     ]);
@@ -210,10 +195,14 @@ describe("projection authority boundaries", () => {
       new Map([["test", required]]),
       new ModelRuntime(),
     );
-    const result = await planner.build(projection(segment("a", "中文中文")), {
-      maxItems: 1,
-      maxTextBytes: 5,
-    });
+    const result = await planner.build(
+      projection(segment("a", "中文中文")),
+      {
+        maxItems: 1,
+        maxTextBytes: 5,
+      },
+      required,
+    );
     expect(result.segments[0]?.text).toBe("中");
     expect(result.segments).toHaveLength(1);
   });

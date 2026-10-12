@@ -14,6 +14,7 @@ export async function resourceCommands(
   if (action === "list")
     return client.resourceRegistry.listResources({
       subjectId,
+      status: env.values.status,
       page: page(env),
     });
   if (action === "put")

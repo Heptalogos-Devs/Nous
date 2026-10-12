@@ -52,7 +52,7 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let summary = self
-            .validate_basis_for_subject(input.subject, &input.content.basis)
+            .provenance_summary(input.subject, &input.content.basis)
             .await?;
         if matches!(input.content.formation_mode, FormationMode::Synthesized) {
             Self::validate_synthesized_summary(&summary)?;
@@ -271,7 +271,7 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let summary = self
-            .validate_basis_for_subject(input.subject, &input.content.basis)
+            .provenance_summary(input.subject, &input.content.basis)
             .await?;
         if matches!(input.content.formation_mode, FormationMode::Synthesized) {
             Self::validate_synthesized_summary(&summary)?;
@@ -333,7 +333,7 @@ impl MemoryService {
         fence_epoch(epoch, input.expected_object_epoch)?;
         self.validate_object_dependency_cycle(
             input.subject,
-            &format!("memory:{}", input.memory_id.0),
+            &CognitiveRef::Memory(input.memory_id),
             &input.content.basis,
         )
         .await?;

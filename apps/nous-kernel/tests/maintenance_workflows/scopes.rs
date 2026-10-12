@@ -77,20 +77,23 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
             episode_id: episode.object.episode_id,
             expected_object_epoch: episode.object.object_epoch,
             intent: "reinterpret".into(),
-            title: Some("Updated source".into()),
-            parent_episode_revision_id: None,
-            experience_time: episode.revision.experience_time.clone(),
-            boundary_explanation: episode.revision.boundary_explanation.clone(),
-            producer_signature_id: None,
-            members: episode
-                .members
-                .iter()
-                .map(|member| nous_memory::EpisodeMemberInput {
-                    reference: member.reference.clone(),
-                    role: member.role.clone(),
-                })
-                .collect(),
-            basis: episode.basis.clone(),
+
+            content: nous_memory::EpisodeContent {
+                title: Some("Updated source".into()),
+                parent_episode_revision_id: None,
+                experience_time: episode.revision.experience_time.clone(),
+                boundary_explanation: episode.revision.boundary_explanation.clone(),
+                producer_signature_id: None,
+                members: episode
+                    .members
+                    .iter()
+                    .map(|member| nous_memory::EpisodeMemberInput {
+                        reference: member.reference.clone(),
+                        role: member.role.clone(),
+                    })
+                    .collect(),
+                basis: episode.basis.clone(),
+            },
         })
         .await
         .unwrap();

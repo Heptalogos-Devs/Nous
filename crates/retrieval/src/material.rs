@@ -4,6 +4,7 @@
 
 use crate::*;
 use nous_persistence::database_error as db;
+use sqlx::Row;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredEmbeddingConfig {
@@ -64,22 +65,64 @@ impl TextEmbeddingProvider for StoredEmbeddingProvider {
         self.config.producers.clone()
     }
     async fn embed(&self, request: TextEmbeddingRequest) -> Result<QuerySemanticEmbedding> {
-        for producer in &self.config.producers {
-            if !request.query {
-                let vector = sqlx::query_scalar::<_,Vec<f32>>("SELECT vector FROM embedding_materials WHERE subject_id=$1 AND content_digest=$2 AND space_hash=$3 AND producer_hash=$4")
-                    .bind(request.subject.0).bind(nous_material::text_content_identity(&request.text)).bind(&self.config.space.space_hash).bind(&producer.signature_hash)
-                    .fetch_optional(self.store.pool()).await.map_err(db)?;
-                if let Some(vector) = vector {
-                    return Ok(QuerySemanticEmbedding {
-                        vector,
-                        space: self.space(),
-                        producer: producer.clone(),
-                    });
-                }
-            }
+        if request.query {
+            return Err(Error::Unavailable(
+                "Host did not supply a query embedding".into(),
+            ));
         }
-        Err(Error::Unavailable(
-            "Host did not supply compatible embedding material".into(),
-        ))
+        self.embed_batch(request.subject, &[request.text])
+            .await?
+            .pop()
+            .ok_or_else(|| {
+                Error::Unavailable("Host did not supply compatible embedding material".into())
+            })
+    }
+    async fn embed_batch(
+        &self,
+        subject: SubjectId,
+        texts: &[String],
+    ) -> Result<Vec<QuerySemanticEmbedding>> {
+        if texts.len() > 256 {
+            return Err(Error::Invalid(
+                "embedding material batch exceeds 256".into(),
+            ));
+        }
+        let digests: Vec<_> = texts
+            .iter()
+            .map(|text| nous_material::text_content_identity(text))
+            .collect();
+        let producers: Vec<_> = self
+            .config
+            .producers
+            .iter()
+            .map(|producer| producer.signature_hash.clone())
+            .collect();
+        let rows = sqlx::query(r#"
+SELECT cached.vector,cached.producer_hash FROM unnest($2::text[]) WITH ORDINALITY needed(digest,ordinal)
+JOIN LATERAL (SELECT vector,producer_hash FROM embedding_materials WHERE subject_id=$1 AND content_digest=needed.digest AND space_hash=$3 AND producer_hash=ANY($4::text[]) ORDER BY array_position($4::text[],producer_hash) LIMIT 1) cached ON true ORDER BY needed.ordinal
+"#).bind(subject.0).bind(digests).bind(&self.config.space.space_hash).bind(producers).fetch_all(self.store.pool()).await.map_err(db)?;
+        if rows.len() != texts.len() {
+            return Err(Error::Unavailable(
+                "Host did not supply compatible embedding material".into(),
+            ));
+        }
+        rows.into_iter()
+            .map(|row| {
+                let hash: String = row.try_get("producer_hash").map_err(db)?;
+                let producer = self
+                    .config
+                    .producers
+                    .iter()
+                    .find(|producer| producer.signature_hash == hash)
+                    .ok_or_else(|| {
+                        Error::Infrastructure("cached embedding producer not configured".into())
+                    })?;
+                Ok(QuerySemanticEmbedding {
+                    vector: row.try_get("vector").map_err(db)?,
+                    space: self.space(),
+                    producer: producer.clone(),
+                })
+            })
+            .collect()
     }
 }

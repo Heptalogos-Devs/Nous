@@ -112,8 +112,6 @@ impl SubjectCoreService {
         input: CognitiveSeedInput,
         kind: SeedAdoptionKind,
     ) -> Result<CognitiveSeedView> {
-        input.validate()?;
-        self.subject(subject).await?;
         let guard = self.objects.reference_guard(false).await?;
         let digest = canonical_request_digest(
             "cognitive_seed.adopt",
@@ -137,15 +135,15 @@ impl SubjectCoreService {
         .await?;
         tx.commit().await.map_err(db)?;
         drop(guard);
-        self.cognitive_seed(subject, adoption).await
+        self.cognitive_seed(subject, Some(adoption)).await
     }
 
     pub async fn cognitive_seed(
         &self,
         subject: SubjectId,
-        adoption_id: Uuid,
+        adoption_id: Option<Uuid>,
     ) -> Result<CognitiveSeedView> {
-        let row = sqlx::query("SELECT a.adoption_id,a.subject_id,a.seed_version_id,a.kind,a.operation_id,a.request_digest,a.adopted_at,v.artifact_id,v.format,v.provenance,v.content_hash,v.created_at FROM subject_seed_adoptions a JOIN cognitive_seed_versions v USING(seed_version_id) WHERE a.subject_id=$1 AND a.adoption_id=$2")
+        let row = sqlx::query("SELECT a.adoption_id,a.subject_id,a.seed_version_id,a.kind,a.operation_id,a.request_digest,a.adopted_at,v.artifact_id,v.format,v.provenance,v.content_hash,v.created_at FROM subject_seed_adoptions a JOIN cognitive_seed_versions v USING(seed_version_id) WHERE a.subject_id=$1 AND ($2::uuid IS NULL OR a.adoption_id=$2) ORDER BY a.adopted_at DESC,a.adoption_id DESC LIMIT 1")
             .bind(subject.0)
             .bind(adoption_id)
             .fetch_optional(self.store.pool())
@@ -184,16 +182,6 @@ impl SubjectCoreService {
             text,
         })
     }
-
-    pub async fn latest_cognitive_seed(&self, subject: SubjectId) -> Result<CognitiveSeedView> {
-        let adoption: Uuid = sqlx::query_scalar("SELECT adoption_id FROM subject_seed_adoptions WHERE subject_id=$1 ORDER BY adopted_at DESC,adoption_id DESC LIMIT 1")
-            .bind(subject.0)
-            .fetch_optional(self.store.pool())
-            .await
-            .map_err(db)?
-            .ok_or_else(|| Error::NotFound("Cognitive Seed adoption not found".into()))?;
-        self.cognitive_seed(subject, adoption).await
-    }
 }
 
 pub(super) struct SeedAdoptionWrite<'a> {
@@ -220,9 +208,10 @@ pub(super) async fn insert_seed(
     } = adoption;
     sqlx::query("SELECT subject_id FROM subjects WHERE subject_id=$1 FOR UPDATE")
         .bind(subject.0)
-        .fetch_one(&mut **tx)
+        .fetch_optional(&mut **tx)
         .await
-        .map_err(db)?;
+        .map_err(db)?
+        .ok_or_else(|| Error::NotFound("Subject not found".into()))?;
     if let Some(row) = sqlx::query("SELECT adoption_id,request_digest FROM subject_seed_adoptions WHERE subject_id=$1 AND operation_id=$2")
         .bind(subject.0)
         .bind(operation_id.0)
@@ -237,6 +226,7 @@ pub(super) async fn insert_seed(
         }
         return row.try_get("adoption_id").map_err(db);
     }
+    input.validate()?;
     let artifact = nous_material::ArtifactRegistration::new(store.clone(), objects.clone())
         .write_in(
             tx,

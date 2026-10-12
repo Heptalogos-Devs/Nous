@@ -40,20 +40,18 @@ impl ArtifactRegistration {
         let artifact = Artifact {
             artifact_id: ArtifactId::new(),
             subject_id: subject,
-            storage_key: ObjectStore::storage_key(&hash)?,
             content_hash: hash,
             byte_length: size,
             media_type: metadata.media_type,
             created_at: now,
             metadata: metadata.metadata,
         };
-        artifact.validate()?;
-        sqlx::query("INSERT INTO artifacts(artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(subject_id,content_hash) DO NOTHING")
+        sqlx::query("INSERT INTO artifacts(artifact_id,subject_id,content_hash,byte_length,media_type,created_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(subject_id,content_hash) DO NOTHING")
             .bind(artifact.artifact_id.0).bind(subject.0).bind(&artifact.content_hash)
-            .bind(byte_length).bind(&artifact.media_type).bind(&artifact.storage_key)
+            .bind(byte_length).bind(&artifact.media_type)
             .bind(now).bind(&artifact.metadata).execute(&mut **tx).await.map_err(db)?;
         // A separate statement sees the winning row even when a concurrent insertion waited.
-        let row = sqlx::query("SELECT artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata FROM artifacts WHERE subject_id=$1 AND content_hash=$2")
+        let row = sqlx::query("SELECT artifact_id,subject_id,content_hash,byte_length,media_type,created_at,metadata FROM artifacts WHERE subject_id=$1 AND content_hash=$2")
             .bind(subject.0).bind(&artifact.content_hash).fetch_one(&mut **tx).await.map_err(db)?;
         let artifact = decode_artifact(row)?;
         self.store
@@ -68,6 +66,24 @@ impl ArtifactRegistration {
     }
 }
 
+impl MaterialService {
+    /// Explicit instance-wide reclamation; Artifact Authority in every Subject protects shared CAS bytes.
+    pub async fn clean(&self) -> Result<(u64, u64)> {
+        let guard = self.objects.reference_guard(true).await?;
+        let retained: Vec<String> =
+            sqlx::query_scalar("SELECT DISTINCT content_hash FROM artifacts")
+                .fetch_all(self.store.pool())
+                .await
+                .map_err(db)?;
+        let result = self
+            .objects
+            .reclaim(&retained.into_iter().collect())
+            .await?;
+        drop(guard);
+        Ok(result)
+    }
+}
+
 pub(super) fn decode_artifact(row: sqlx::postgres::PgRow) -> Result<Artifact> {
     Ok(Artifact {
         artifact_id: ArtifactId(row.try_get("artifact_id").map_err(db)?),
@@ -75,7 +91,6 @@ pub(super) fn decode_artifact(row: sqlx::postgres::PgRow) -> Result<Artifact> {
         content_hash: row.try_get("content_hash").map_err(db)?,
         byte_length: row.try_get::<i64, _>("byte_length").map_err(db)? as u64,
         media_type: row.try_get("media_type").map_err(db)?,
-        storage_key: row.try_get("storage_key").map_err(db)?,
         created_at: row.try_get("created_at").map_err(db)?,
         metadata: row.try_get("metadata").map_err(db)?,
     })

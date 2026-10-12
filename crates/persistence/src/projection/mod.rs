@@ -86,7 +86,6 @@ pub struct ProjectionInvalidation {
     pub lexical: bool,
     pub dense: DenseInvalidation,
     pub topology: bool,
-    pub synopsis: bool,
 }
 
 impl ProjectionInvalidation {
@@ -117,14 +116,12 @@ impl ProjectionInvalidation {
             lexical: true,
             dense: DenseInvalidation::All,
             topology: true,
-            synopsis: true,
         }
     }
 
     pub(crate) fn merge(&mut self, other: Self) {
         self.lexical |= other.lexical;
         self.topology |= other.topology;
-        self.synopsis |= other.synopsis;
         self.dense = match (std::mem::take(&mut self.dense), other.dense) {
             (DenseInvalidation::All, _) | (_, DenseInvalidation::All) => DenseInvalidation::All,
             (DenseInvalidation::None, right) => right,
@@ -140,11 +137,7 @@ impl ProjectionInvalidation {
 
     fn families(&self) -> Vec<(&'static str, String)> {
         let mut result = Vec::new();
-        for (family, changed) in [
-            ("lexical", self.lexical),
-            ("topology", self.topology),
-            ("synopsis", self.synopsis),
-        ] {
+        for (family, changed) in [("lexical", self.lexical), ("topology", self.topology)] {
             if changed {
                 result.push((family, String::new()));
             }

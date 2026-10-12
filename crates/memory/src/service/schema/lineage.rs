@@ -56,7 +56,7 @@ impl MemoryService {
         for mut child in children {
             child.subject = subject;
             for link in &child.content.evidence_links {
-                self.validate_basis_for_subject(subject, std::slice::from_ref(&link.basis))
+                self.provenance_summary(subject, std::slice::from_ref(&link.basis))
                     .await?;
             }
             self.validate_schema_formation(subject, &child.content)
@@ -204,7 +204,7 @@ impl MemoryService {
             ));
         }
         for link in merged_links.values() {
-            self.validate_basis_for_subject(subject, std::slice::from_ref(&link.basis))
+            self.provenance_summary(subject, std::slice::from_ref(&link.basis))
                 .await?;
         }
         merged.subject = subject;

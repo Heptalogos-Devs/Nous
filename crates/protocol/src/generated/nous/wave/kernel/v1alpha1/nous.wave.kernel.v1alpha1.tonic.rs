@@ -222,6 +222,20 @@ pub mod artifact_stream_service_server {
             tonic::Response<Self::DownloadArtifactStream>,
             tonic::Status,
         >;
+        /// Server streaming response type for the MaterializeEvidence method.
+        type MaterializeEvidenceStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::MaterializedChunk, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
+        ///
+        async fn materialize_evidence(
+            &self,
+            request: tonic::Request<super::super::super::v1alpha1::MaterializeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::MaterializeEvidenceStream>,
+            tonic::Status,
+        >;
     }
     ///
     #[derive(Debug)]
@@ -385,6 +399,59 @@ pub mod artifact_stream_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DownloadArtifactSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.kernel.v1alpha1.ArtifactStreamService/MaterializeEvidence" => {
+                    #[allow(non_camel_case_types)]
+                    struct MaterializeEvidenceSvc<T: ArtifactStreamService>(pub Arc<T>);
+                    impl<
+                        T: ArtifactStreamService,
+                    > tonic::server::ServerStreamingService<
+                        super::super::super::v1alpha1::MaterializeRequest,
+                    > for MaterializeEvidenceSvc<T> {
+                        type Response = super::MaterializedChunk;
+                        type ResponseStream = T::MaterializeEvidenceStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::super::v1alpha1::MaterializeRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ArtifactStreamService>::materialize_evidence(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = MaterializeEvidenceSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -768,10 +835,13 @@ pub mod kernel_material_workflow_service_server {
             tonic::Response<super::EmbeddingNeedsResponse>,
             tonic::Status,
         >;
-        async fn commit_embedding(
+        async fn commit_embeddings(
             &self,
-            request: tonic::Request<super::CommitEmbeddingRequest>,
-        ) -> std::result::Result<tonic::Response<()>, tonic::Status>;
+            request: tonic::Request<super::CommitEmbeddingsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CommitEmbeddingsResponse>,
+            tonic::Status,
+        >;
         async fn commit_interpretation(
             &self,
             request: tonic::Request<super::CommitInterpretationRequest>,
@@ -1060,27 +1130,27 @@ pub mod kernel_material_workflow_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/nous.wave.kernel.v1alpha1.KernelMaterialWorkflowService/CommitEmbedding" => {
+                "/nous.wave.kernel.v1alpha1.KernelMaterialWorkflowService/CommitEmbeddings" => {
                     #[allow(non_camel_case_types)]
-                    struct CommitEmbeddingSvc<T: KernelMaterialWorkflowService>(
+                    struct CommitEmbeddingsSvc<T: KernelMaterialWorkflowService>(
                         pub Arc<T>,
                     );
                     impl<
                         T: KernelMaterialWorkflowService,
-                    > tonic::server::UnaryService<super::CommitEmbeddingRequest>
-                    for CommitEmbeddingSvc<T> {
-                        type Response = ();
+                    > tonic::server::UnaryService<super::CommitEmbeddingsRequest>
+                    for CommitEmbeddingsSvc<T> {
+                        type Response = super::CommitEmbeddingsResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::CommitEmbeddingRequest>,
+                            request: tonic::Request<super::CommitEmbeddingsRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as KernelMaterialWorkflowService>::commit_embedding(
+                                <T as KernelMaterialWorkflowService>::commit_embeddings(
                                         &inner,
                                         request,
                                     )
@@ -1095,7 +1165,7 @@ pub mod kernel_material_workflow_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = CommitEmbeddingSvc(inner);
+                        let method = CommitEmbeddingsSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

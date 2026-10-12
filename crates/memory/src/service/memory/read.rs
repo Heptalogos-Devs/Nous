@@ -107,28 +107,6 @@ impl MemoryService {
         Ok(basis)
     }
 
-    pub(in crate::service) async fn temporal_evidence(
-        &self,
-        revision: MemoryRevisionId,
-    ) -> Result<TemporalEvidence> {
-        let rows = sqlx::query("SELECT o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at FROM memory_revision_evidence e JOIN observation_occurrences o USING(occurrence_id) WHERE e.memory_revision_id=$1 ORDER BY o.observed_at")
-            .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)?;
-        let mut occurred = Vec::new();
-        let mut observed_at = None;
-        for row in rows {
-            occurred.push(temporal_from_columns(
-                row.try_get("occurred_time_kind").map_err(db)?,
-                row.try_get("occurred_time_start").map_err(db)?,
-                row.try_get("occurred_time_end").map_err(db)?,
-            )?);
-            observed_at = Some(row.try_get("observed_at").map_err(db)?);
-        }
-        Ok(TemporalEvidence {
-            occurred,
-            observed_at,
-        })
-    }
-
     pub async fn memory_history(
         &self,
         subject: SubjectId,

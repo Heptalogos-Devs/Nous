@@ -12,7 +12,11 @@ export async function sessionCommands(
 ) {
   const { client, state, subjectId, save, required } = env;
   if (action === "list")
-    return client.runtime.listSessions({ subjectId, page: page(env) });
+    return client.runtime.listSessions({
+      subjectId,
+      status: env.values.status,
+      page: page(env),
+    });
   if (reference !== undefined && action !== "show")
     throw new CliError(
       "INVALID_ARGUMENT",

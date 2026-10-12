@@ -11,7 +11,7 @@ pub(super) async fn assert_maintained_concept_query(
 ) {
     let graph = rt
         .store
-        .topology_projection_input(subject, true)
+        .topology_projection_input(subject, true, None)
         .await
         .unwrap();
     assert!(

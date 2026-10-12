@@ -14,50 +14,13 @@ pub struct ProvenanceSummary {
     pub normalized_inputs: BTreeSet<String>,
 }
 
-impl MemoryService {
-    /// Context projection is an ordinary current read, including explicit refs.
-    /// A missing or hidden owned cognition must never become external authority.
-    pub async fn contextual_cognition_eligible(
-        &self,
-        subject: SubjectId,
-        reference: &CognitiveRef,
-    ) -> Result<bool> {
-        let exact = match self.store.bind_exact_reference(subject, reference).await {
-            Ok((exact, _, _)) => exact,
-            Err(Error::NotFound(_)) => return Ok(false),
-            Err(error) => return Err(error),
-        };
-        let (query, id) = match exact {
-            CognitiveRef::MemoryRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM memory_objects o JOIN memory_revisions r USING(memory_id) WHERE o.subject_id=$1 AND r.memory_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal')",
-                id.0,
-            ),
-            CognitiveRef::CognitiveSchemaRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM cognitive_schemas o JOIN cognitive_schema_revisions r USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal')",
-                id.0,
-            ),
-            CognitiveRef::EpisodeRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM episode_objects o JOIN episode_revisions r USING(episode_id) WHERE o.subject_id=$1 AND r.episode_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal')",
-                id.0,
-            ),
-            CognitiveRef::JournalRevision(id) => (
-                "SELECT EXISTS(SELECT 1 FROM journal_objects o JOIN journal_revisions r USING(journal_id) WHERE o.subject_id=$1 AND r.journal_revision_id=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal')",
-                id.0,
-            ),
-            _ => {
-                return Err(Error::Invalid(
-                    "contextual cognition requires an owned cognition reference".into(),
-                ));
-            }
-        };
-        sqlx::query_scalar(query)
-            .bind(subject.0)
-            .bind(id)
-            .fetch_one(self.store.pool())
-            .await
-            .map_err(db)
-    }
+pub(in crate::service) struct CognitionSupport {
+    pub object: CognitiveRef,
+    pub basis: Vec<RevisionBasis>,
+    pub members: Vec<EpisodeMember>,
+}
 
+impl MemoryService {
     pub async fn references_producer(&self, subject: SubjectId, producer: Uuid) -> Result<bool> {
         sqlx::query_scalar(
             "SELECT EXISTS (
@@ -113,7 +76,7 @@ impl MemoryService {
     pub(crate) async fn validate_object_dependency_cycle(
         &self,
         subject: SubjectId,
-        owner_key: &str,
+        owner: &CognitiveRef,
         basis: &[RevisionBasis],
     ) -> Result<()> {
         let mut stack = basis
@@ -126,8 +89,8 @@ impl MemoryService {
             .collect::<Vec<_>>();
         let mut visited = BTreeSet::new();
         while let Some(reference) = stack.pop() {
-            let object_key = self.revision_object_key(subject, &reference).await?;
-            if object_key == owner_key {
+            let support = self.exact_support(subject, &reference, None).await?;
+            if &support.object == owner {
                 return Err(Error::Invalid(
                     "cognition dependency would create an object cycle".into(),
                 ));
@@ -135,7 +98,7 @@ impl MemoryService {
             if !visited.insert(reference.to_string()) {
                 continue;
             }
-            for nested in self.revision_basis(subject, reference).await? {
+            for nested in support.basis {
                 if let RevisionBasis::CognitionDependency(value) = nested {
                     stack.push(value.target_revision);
                 }
@@ -163,19 +126,11 @@ impl MemoryService {
         }
         let mut summary = ProvenanceSummary::default();
         let mut stack = Vec::new();
+        let mut evidence_inputs = Vec::new();
         for basis in basis {
             match basis {
                 RevisionBasis::Evidence(evidence) => {
-                    for root in self
-                        .material
-                        .evidence_roots(subject, evidence, view)
-                        .await?
-                    {
-                        summary
-                            .normalized_inputs
-                            .insert(format!("source:{}", root.root_key));
-                        summary.roots.insert(root);
-                    }
+                    evidence_inputs.push(evidence.clone());
                 }
                 RevisionBasis::CognitionDependency(dependency) => {
                     let key = dependency.target_revision.to_string();
@@ -190,6 +145,7 @@ impl MemoryService {
             }
         }
 
+        let direct_evidence = evidence_inputs.len();
         let mut active = BTreeSet::new();
         let mut visited = BTreeSet::new();
         while let Some((reference, exit)) = stack.pop() {
@@ -207,20 +163,13 @@ impl MemoryService {
             if visited.contains(&key) {
                 continue;
             }
-            self.validate_dependency_target(subject, &reference).await?;
             active.insert(key.clone());
             stack.push((reference.clone(), true));
-            let nested = self
-                .revision_basis_in_view(subject, reference, view)
-                .await?;
+            let nested = self.exact_support(subject, &reference, view).await?.basis;
             for basis in nested.into_iter().rev() {
                 match basis {
                     RevisionBasis::Evidence(evidence) => {
-                        summary.roots.extend(
-                            self.material
-                                .evidence_roots(subject, &evidence, view)
-                                .await?,
-                        );
+                        evidence_inputs.push(evidence);
                     }
                     RevisionBasis::CognitionDependency(dependency) => {
                         stack.push((dependency.target_revision, false));
@@ -231,6 +180,22 @@ impl MemoryService {
                         ));
                     }
                 }
+            }
+        }
+        for (batch_index, evidence) in evidence_inputs.chunks(256).enumerate() {
+            for (index, roots) in self
+                .material
+                .evidence_roots_batch(subject, evidence, view)
+                .await?
+                .into_iter()
+                .enumerate()
+            {
+                if batch_index * 256 + index < direct_evidence {
+                    summary
+                        .normalized_inputs
+                        .extend(roots.iter().map(|root| format!("source:{}", root.root_key)));
+                }
+                summary.roots.extend(roots);
             }
         }
         Ok(summary)
@@ -248,8 +213,7 @@ impl MemoryService {
             | CognitiveRef::EpisodeRevision(_)
             | CognitiveRef::JournalRevision(_)
             | CognitiveRef::CognitiveSchemaRevision(_) => {
-                self.revision_basis_in_view(subject, reference.clone(), view)
-                    .await?
+                self.exact_support(subject, reference, view).await?.basis
             }
             CognitiveRef::Association(id) => {
                 if view
@@ -304,26 +268,19 @@ impl MemoryService {
         Ok(())
     }
 
-    async fn validate_dependency_target(
+    pub(in crate::service) async fn exact_support(
         &self,
         subject: SubjectId,
         reference: &CognitiveRef,
-    ) -> Result<()> {
-        let (query, id, _) = dependency_query(reference, false)?;
-        let row = sqlx::query(query)
-            .bind(subject.0)
-            .bind(id)
-            .fetch_optional(self.store.pool())
-            .await
-            .map_err(db)?;
-        require_dependency_row(row)
-    }
-
-    async fn revision_object_key(
-        &self,
-        subject: SubjectId,
-        reference: &CognitiveRef,
-    ) -> Result<String> {
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<CognitionSupport> {
+        if view
+            .is_some_and(|view| view.subject != subject || view.cognition_for(reference).is_none())
+        {
+            return Err(Error::NotFound(
+                "cognition support is outside the captured view".into(),
+            ));
+        }
         let (query, id, kind) = dependency_query(reference, false)?;
         let row = sqlx::query(query)
             .bind(subject.0)
@@ -333,50 +290,32 @@ impl MemoryService {
             .map_err(db)?
             .ok_or_else(|| Error::Invalid("cognition dependency is outside Subject".into()))?;
         let object: Uuid = row.try_get("object_id").map_err(db)?;
-        Ok(format!("{kind}:{object}"))
-    }
-
-    async fn revision_basis(
-        &self,
-        subject: SubjectId,
-        reference: CognitiveRef,
-    ) -> Result<Vec<RevisionBasis>> {
-        self.revision_basis_in_view(subject, reference, None).await
-    }
-
-    async fn revision_basis_in_view(
-        &self,
-        subject: SubjectId,
-        reference: CognitiveRef,
-        view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<Vec<RevisionBasis>> {
-        if view.is_some_and(|view| view.cognition_for(&reference).is_none()) {
-            return Err(Error::NotFound(
-                "cognition support is outside the captured view".into(),
-            ));
-        }
-        match reference {
-            CognitiveRef::MemoryRevision(revision) => self.load_basis(revision).await,
-            CognitiveRef::CognitiveSchemaRevision(revision) => Ok(self
-                .schema_links_in_view(subject, revision, view)
-                .await?
-                .into_iter()
-                .map(|link| link.basis)
-                .collect()),
+        let object = match kind {
+            "memory" => CognitiveRef::Memory(MemoryId(object)),
+            "schema" => CognitiveRef::CognitiveSchema(CognitiveSchemaId(object)),
+            "episode" => CognitiveRef::Episode(EpisodeId(object)),
+            "journal" => CognitiveRef::Journal(JournalId(object)),
+            _ => unreachable!("dependency kind is validated"),
+        };
+        let mut members = Vec::new();
+        let basis = match reference {
+            CognitiveRef::MemoryRevision(revision) => self.load_basis(*revision).await?,
+            CognitiveRef::CognitiveSchemaRevision(revision) => self.schema_links_in_view(subject, *revision, view).await?.into_iter().map(|link| link.basis).collect(),
             CognitiveRef::EpisodeRevision(revision) => {
-                Ok(self.episode_revision(subject, revision).await?.basis)
+                let support = self.episode_support(revision.0).await?;
+                members = support.1;
+                support.0
             }
-            CognitiveRef::JournalRevision(revision) => Ok(self
-                .journal_revision(subject, revision)
-                .await?
-                .points
-                .into_iter()
-                .flat_map(|point| point.basis)
-                .collect()),
-            _ => Err(Error::Invalid(
-                "cognition dependency needs exact revision".into(),
-            )),
-        }
+            CognitiveRef::JournalRevision(revision) => sqlx::query_scalar::<_,serde_json::Value>("SELECT basis FROM journal_point_basis WHERE journal_revision_id=$1 ORDER BY ordinal,basis_no")
+                .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)?.into_iter()
+                .map(|value| serde_json::from_value(value).map_err(|error| Error::Infrastructure(error.to_string()))).collect::<Result<_>>()?,
+            _ => unreachable!("dependency requires an exact revision"),
+        };
+        Ok(CognitionSupport {
+            object,
+            basis,
+            members,
+        })
     }
 }
 

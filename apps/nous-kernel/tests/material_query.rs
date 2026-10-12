@@ -159,7 +159,7 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
         .cognition
         .finalize_query(
             subject,
-            ticket.unwrap(),
+            ticket,
             Vec::new(),
             Vec::new(),
             nous_runtime::CognitiveContributors {

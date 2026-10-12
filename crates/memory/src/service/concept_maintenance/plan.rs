@@ -9,25 +9,43 @@ WITH current AS (
  UNION ALL SELECT 'cognitive_schema_revision',o.current_revision_id,o.object_epoch FROM cognitive_schemas o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
  UNION ALL SELECT 'episode_revision',o.current_revision_id,o.object_epoch FROM episode_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
  UNION ALL SELECT 'journal_revision',o.current_revision_id,o.object_epoch FROM journal_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
-) SELECT epoch FROM current WHERE kind=$2 AND id=$3
+) SELECT kind,id FROM current JOIN unnest($2::text[],$3::uuid[]) requested(kind,id) USING(kind,id)
 "#;
 impl MemoryService {
-    pub(super) async fn current_concept_epoch(
+    async fn current_concept_references(
         &self,
         subject: SubjectId,
-        reference: &CognitiveRef,
-    ) -> Result<Option<i64>> {
-        let (kind, value) = reference_parts(reference);
-        let id: Uuid = value
-            .parse()
-            .map_err(|_| Error::Invalid("concept focus must be exact cognition".into()))?;
-        sqlx::query_scalar(CURRENT_FOCUS)
+        references: &[CognitiveRef],
+    ) -> Result<std::collections::HashSet<CognitiveRef>> {
+        let (kinds, ids): (Vec<_>, Vec<_>) = references
+            .iter()
+            .map(|reference| {
+                let (kind, value) = reference_parts(reference);
+                Ok((
+                    kind,
+                    value.parse::<Uuid>().map_err(|_| {
+                        Error::Invalid("concept focus must be exact cognition".into())
+                    })?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .unzip();
+        sqlx::query(CURRENT_FOCUS)
             .bind(subject.0)
-            .bind(kind)
-            .bind(id)
-            .fetch_optional(self.store.pool())
+            .bind(kinds)
+            .bind(ids)
+            .fetch_all(self.store.pool())
             .await
-            .map_err(db)
+            .map_err(db)?
+            .into_iter()
+            .map(|row| {
+                parse_reference(
+                    &row.try_get::<String, _>("kind").map_err(db)?,
+                    &row.try_get::<Uuid, _>("id").map_err(db)?.to_string(),
+                )
+            })
+            .collect()
     }
     #[expect(
         clippy::too_many_lines,
@@ -42,24 +60,13 @@ impl MemoryService {
         let policy = snapshot.get(CONCEPT_MAINTENANCE)?;
         let config_digest = snapshot.digest_for(&[CONCEPT_MAINTENANCE.path(), ACCRETION.path()])?;
         let sequence = self.store.authority_seq(subject).await?;
-        let epoch = self
-            .current_concept_epoch(subject, &focus)
-            .await?
-            .ok_or_else(|| {
-                Error::NotFound("concept focus is no longer current and eligible".into())
-            })?;
-        let text = self
-            .store
-            .query_descriptors(subject, std::slice::from_ref(&focus))
-            .await?
-            .into_iter()
-            .next()
-            .ok_or_else(|| Error::NotFound("concept focus descriptor unavailable".into()))?
-            .text
-            .chars()
-            .take(4096)
-            .collect::<String>();
-        let (source_basis, entities) = self.concept_focus_sources(subject, &focus).await?;
+        let projected = self
+            .concept_focus(subject, &focus, &resolve_accessibility_policy(&snapshot)?)
+            .await?;
+        let epoch = projected.epoch;
+        let text = projected.text.clone();
+        let source_basis = projected.basis.clone();
+        let entities = projected.entities.clone();
         let mut basis = BTreeMap::new();
         basis.insert(
             "s0".into(),
@@ -103,7 +110,7 @@ impl MemoryService {
             .iter()
             .filter(|root| root.certainty == EvidenceRootCertainty::Known)
             .count();
-        let focus_context = self.concept_focus_context(subject, &focus, &basis).await?;
+        let focus_context = projected.context(&basis);
         let mut cognition = vec![
             serde_json::json!({"key":"c0","kind":reference_parts(&focus).0,"epoch":epoch,"text":text,"exactBasisKey":"s0","context":focus_context,"distinctRoots":distinct_roots}),
         ];
@@ -113,30 +120,37 @@ impl MemoryService {
                 neighbors.push(reference);
             }
         }
-        for reference in neighbors.iter().filter(|r| *r != &focus).take(8) {
-            if !matches!(
-                reference,
-                CognitiveRef::MemoryRevision(_)
-                    | CognitiveRef::CognitiveSchemaRevision(_)
-                    | CognitiveRef::EpisodeRevision(_)
-                    | CognitiveRef::JournalRevision(_)
-            ) {
-                continue;
-            }
-            if self
-                .current_concept_epoch(subject, reference)
-                .await?
-                .is_none()
-            {
-                continue;
-            }
-            if let Some(descriptor) = self
-                .store
-                .query_descriptors(subject, std::slice::from_ref(reference))
-                .await?
-                .into_iter()
-                .next()
-            {
+        let neighbors = neighbors
+            .into_iter()
+            .filter(|reference| reference != &focus)
+            .take(8)
+            .filter(|reference| {
+                matches!(
+                    reference,
+                    CognitiveRef::MemoryRevision(_)
+                        | CognitiveRef::CognitiveSchemaRevision(_)
+                        | CognitiveRef::EpisodeRevision(_)
+                        | CognitiveRef::JournalRevision(_)
+                )
+            })
+            .collect::<Vec<_>>();
+        let eligible = self.current_concept_references(subject, &neighbors).await?;
+        let mut descriptors = self
+            .store
+            .query_descriptors(
+                subject,
+                &neighbors
+                    .iter()
+                    .filter(|reference| eligible.contains(*reference))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+            .await?
+            .into_iter()
+            .map(|descriptor| (descriptor.reference.clone(), descriptor))
+            .collect::<std::collections::HashMap<_, _>>();
+        for reference in &neighbors {
+            if let Some(descriptor) = descriptors.remove(reference) {
                 let key = format!("c{}", cognition.len());
                 let basis_key = format!("s{}", basis.len());
                 basis.insert(

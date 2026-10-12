@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MaterialInterpretation } from "./interpretation.js";
-import { createHash } from "node:crypto";
-import { create } from "@bufbuild/protobuf";
-import {
-  ContextSegmentSchema,
-  DegradationSchema,
-  type Degradation,
-  type ContextSegment as Segment,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { ModelInvocations } from "./invocations.js";
 import {
   modelConfigurationSchema,
@@ -52,85 +44,5 @@ export class ModelRuntime {
       tempRoot,
       config.material_inputs,
     );
-  }
-  async refine(
-    segments: Segment[],
-    signal?: AbortSignal,
-  ): Promise<{ segments: Segment[]; degradation: Degradation[] }> {
-    if (!this.invocations.profile("projection_steward"))
-      return {
-        segments,
-        degradation: [
-          create(DegradationSchema, {
-            code: "steward_not_configured",
-            detail: "Deterministic projection",
-          }),
-        ],
-      };
-    try {
-      const output = (
-        await this.invocations.generate(
-          "projection_steward",
-          {
-            content: JSON.stringify(
-              segments.map((s) => ({
-                id: s.segmentId,
-                role: s.semanticRole,
-                text: s.text,
-              })),
-            ),
-          },
-          { signal: signal },
-        )
-      ).value;
-      const ids = new Set(segments.map((s) => s.segmentId));
-      if (
-        new Set(output.selectedIds).size !== output.selectedIds.length ||
-        output.selectedIds.some((id) => !ids.has(id))
-      )
-        throw new Error("Steward proposed invalid source IDs");
-      const selected = new Set(output.selectedIds);
-      const sources = segments.filter((s) => selected.has(s.segmentId));
-      if (output.summary) {
-        if (!sources.length)
-          throw new Error("A Steward summary requires selected sources");
-        const revision = createHash("sha256")
-          .update(
-            JSON.stringify([
-              this.invocations.identity("projection_steward"),
-              sources,
-              output.summary,
-            ]),
-          )
-          .digest("hex");
-        return {
-          segments: [
-            create(ContextSegmentSchema, {
-              segmentId: `steward:${revision}`,
-              text: output.summary,
-              semanticRole: "steward_synthesis",
-              sourceRefs: sources.flatMap((s) => s.sourceRefs),
-              evidence: sources.flatMap((s) => s.evidence),
-              authority: "interpretation",
-              stability: "EPOCH_STABLE",
-              sourceRevision: revision,
-            }),
-          ],
-          degradation: [],
-        };
-      }
-      return { segments: sources, degradation: [] };
-    } catch (error) {
-      if (signal?.aborted) throw signal.reason;
-      return {
-        segments,
-        degradation: [
-          create(DegradationSchema, {
-            code: "steward_rejected",
-            detail: error instanceof Error ? error.message : "Invalid proposal",
-          }),
-        ],
-      };
-    }
   }
 }

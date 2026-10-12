@@ -502,7 +502,7 @@ async function scenario(endpoint: string, token: string) {
               case: "reference" as const,
               value: {
                 kind: "cognitive_schema_revision",
-                value: schema.currentRevisionId,
+                value: schema.revisionId,
               },
             },
           },
@@ -579,13 +579,20 @@ async function scenario(endpoint: string, token: string) {
       operationId: randomUUID(),
       expectedObjectEpoch: episode.objectEpoch,
       intent: "reinterpret",
-      title: "Calibration sequence clarified",
-      experienceTime: originalEpisode.experienceTime,
-      boundaryExplanation: originalEpisode.boundaryExplanation,
-      members: originalEpisode.members,
-      basis: originalEpisode.basis,
+      content: {
+        title: "Calibration sequence clarified",
+        producerSignatureId: originalEpisode.producerSignatureId,
+        experienceTime: originalEpisode.experienceTime,
+        boundaryExplanation: originalEpisode.boundaryExplanation,
+        members: originalEpisode.members,
+        basis: originalEpisode.basis,
+      },
     });
     assert(revisedEpisode.episode?.currentRevision);
+    assert.equal(
+      revisedEpisode.episode.currentRevision.producerSignatureId,
+      originalEpisode.producerSignatureId,
+    );
     const firstHistory = await client.memory.listEpisodeRevisions({
       subjectId,
       episodeId: episode.episodeId,
@@ -625,11 +632,13 @@ async function scenario(endpoint: string, token: string) {
       subjectId,
       operationId: randomUUID(),
       trackKey: "pagination-smoke",
-      title: "Alternate calibration track",
-      experienceTime: originalEpisode.experienceTime,
-      boundaryExplanation: originalEpisode.boundaryExplanation,
-      members: originalEpisode.members,
-      basis: originalEpisode.basis,
+      content: {
+        title: "Alternate calibration track",
+        experienceTime: originalEpisode.experienceTime,
+        boundaryExplanation: originalEpisode.boundaryExplanation,
+        members: originalEpisode.members,
+        basis: originalEpisode.basis,
+      },
     });
     assert(extraEpisode.episode);
     const firstPage = await client.memory.listEpisodes({

@@ -4,6 +4,7 @@
 import { boot, stop, prepare, type Boot } from "./support.js";
 import { create } from "@bufbuild/protobuf";
 import { NousError } from "@nous-wave/client";
+import { runCli } from "../../apps/nous-cli/src/commands/index.js";
 import { TimestampSchema } from "@bufbuild/protobuf/wkt";
 import {
   CognitiveRefSchema,
@@ -30,7 +31,7 @@ import {
   WorkContextMutationRequestSchema,
   WorkContextClearScope,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { workspaceTemp } from "../workspace.js";
 
 const subjectId = "00000000-0000-0000-0000-000000009901";
@@ -261,6 +262,137 @@ async function main() {
       nextContexts.nextPageToken
     )
       throw new Error("WorkContext pagination repeated or lost a context");
+    const cliFlags = [
+      "--run-root",
+      `${root}/run`,
+      "--instance-root",
+      `${root}/instance`,
+      "--subject",
+      subjectId,
+      "--session",
+      sessionA.sessionId,
+      "--consumer",
+      "consumer:smoke:cognitive-runtime-episode",
+    ];
+    const createOperation = crypto.randomUUID();
+    const createdSubject = (await runCli([
+      "subject",
+      "create",
+      "--operation-id",
+      createOperation,
+      ...cliFlags,
+    ])) as { data: { subjectId: string } };
+    const replayedSubject = (await runCli([
+      "subject",
+      "create",
+      "--operation-id",
+      createOperation,
+      ...cliFlags,
+    ])) as { data: { subjectId: string } };
+    if (replayedSubject.data.subjectId !== createdSubject.data.subjectId)
+      throw new Error("CLI Subject create replay allocated another Subject");
+    const changedCreation = `${root}/changed-subject.toml`;
+    await writeFile(
+      changedCreation,
+      '[cognitive_seed]\ntext = "schema_version = 1"\nformat = "application/vnd.nous-wave.cognitive-seed+toml;version=1"\n[capabilities]\nmemory = true\n[metadata]\nnote = "changed input"\n',
+    );
+    let createConflict = false;
+    try {
+      await runCli([
+        "subject",
+        "create",
+        "--operation-id",
+        createOperation,
+        "--request-file",
+        changedCreation,
+        ...cliFlags,
+      ]);
+    } catch (error) {
+      createConflict =
+        error instanceof NousError &&
+        error.domainCode === "OPERATION_ID_CONFLICT";
+    }
+    if (!createConflict)
+      throw new Error(
+        "CLI Subject create changed-input retry did not conflict",
+      );
+    const createdSeed = await client.subjects.getCognitiveSeed({
+      subjectId: createdSubject.data.subjectId,
+    });
+    if (
+      !createdSubject.data.subjectId ||
+      createdSeed.operationId !== createOperation
+    )
+      throw new Error("CLI Subject create ignored operation identity");
+    const cliCreated = (await runCli([
+      "context",
+      "create",
+      "--purpose",
+      "local selection only",
+      ...cliFlags,
+    ])) as { data: { workContextId: string } };
+    await runCli(["projection", "build", ...cliFlags]);
+    await runCli(["context", "select", contextId, ...cliFlags]);
+    await runCli(["projection", "managed", ...cliFlags]);
+    const unforegrounded = await client.runtime.getSession({
+      subjectId,
+      id: sessionA.sessionId,
+    });
+    if (unforegrounded.activeWorkContextId || !cliCreated.data.workContextId)
+      throw new Error("CLI local selection foregrounded a WorkContext");
+    const acceptedMemories = (await runCli([
+      "memory",
+      "list",
+      "--status",
+      "accepted",
+      ...cliFlags,
+    ])) as { data: { items: { memoryId: string }[] } };
+    const withdrawnMemories = (await runCli([
+      "memory",
+      "list",
+      "--status",
+      "withdrawn",
+      ...cliFlags,
+    ])) as { data: { items: unknown[] } };
+    if (
+      !acceptedMemories.data.items.some(
+        (item) => item.memoryId === memory.memoryId,
+      ) ||
+      withdrawnMemories.data.items.length
+    )
+      throw new Error("CLI Memory list did not apply status");
+    const closedSessions = (await runCli([
+      "session",
+      "list",
+      "--status",
+      "closed",
+      ...cliFlags,
+    ])) as { data: { items: unknown[] } };
+    if (closedSessions.data.items.length)
+      throw new Error("CLI Session list did not apply status");
+    await runCli(["episode", "list", "--status", "withdrawn", ...cliFlags]);
+    await runCli(["journal", "list", "--status", "withdrawn", ...cliFlags]);
+    await runCli(["resource", "list", "--status", "unavailable", ...cliFlags]);
+    const cleanedMaterial = (await runCli([
+      "material",
+      "clean",
+      "--run-root",
+      `${root}/run`,
+      "--instance-root",
+      `${root}/cleanup-consumer`,
+    ])) as { data: { objectsDeleted: bigint; stagingDeleted: bigint } };
+    if (
+      typeof cleanedMaterial.data.objectsDeleted !== "bigint" ||
+      typeof cleanedMaterial.data.stagingDeleted !== "bigint" ||
+      cleanedMaterial.data.objectsDeleted < 0n ||
+      cleanedMaterial.data.stagingDeleted < 0n
+    )
+      throw new Error("Material cleanup returned invalid counts");
+    const seedAfterCleanup = await client.subjects.getCognitiveSeed({
+      subjectId: createdSubject.data.subjectId,
+    });
+    if (seedAfterCleanup.artifactId !== createdSeed.artifactId)
+      throw new Error("Material cleanup lost another Subject's Artifact");
     const foregroundRequest = create(SetActiveWorkContextRequestSchema, {
       operationId: "00000000-0000-0000-0000-000000009906",
       subjectId,
@@ -334,19 +466,21 @@ async function main() {
         operationId: "00000000-0000-0000-0000-000000009910",
         subjectId,
         trackKey: "interaction",
-        boundaryExplanation: "one bounded interaction",
-        experienceTime: create(TemporalExtentSchema, {}),
+        content: {
+          boundaryExplanation: "one bounded interaction",
+          experienceTime: create(TemporalExtentSchema, {}),
 
-        members: [
-          create(EpisodeMemberSchema, {
-            reference: create(CognitiveRefSchema, {
-              kind: "occurrence",
-              value: observed.occurrenceId,
+          members: [
+            create(EpisodeMemberSchema, {
+              reference: create(CognitiveRefSchema, {
+                kind: "occurrence",
+                value: observed.occurrenceId,
+              }),
+              role: "member",
             }),
-            role: "member",
-          }),
-        ],
-        basis: [evidence(observed.occurrenceId)],
+          ],
+          basis: [evidence(observed.occurrenceId)],
+        },
       }),
     );
     const episodeValue = episode.episode;
@@ -360,19 +494,21 @@ async function main() {
       episodeId,
       expectedObjectEpoch: episodeValue.objectEpoch,
       intent: "resegment",
-      boundaryExplanation: "resegmented interaction",
-      experienceTime: create(TemporalExtentSchema, {}),
+      content: {
+        boundaryExplanation: "resegmented interaction",
+        experienceTime: create(TemporalExtentSchema, {}),
 
-      members: [
-        create(EpisodeMemberSchema, {
-          reference: create(CognitiveRefSchema, {
-            kind: "occurrence",
-            value: observed.occurrenceId,
+        members: [
+          create(EpisodeMemberSchema, {
+            reference: create(CognitiveRefSchema, {
+              kind: "occurrence",
+              value: observed.occurrenceId,
+            }),
+            role: "member",
           }),
-          role: "member",
-        }),
-      ],
-      basis: [evidence(observed.occurrenceId)],
+        ],
+        basis: [evidence(observed.occurrenceId)],
+      },
     });
     const history = await current.client.memory.listEpisodeRevisions({
       subjectId,

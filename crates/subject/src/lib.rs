@@ -78,19 +78,34 @@ impl SubjectCoreService {
     }
 
     pub async fn create_subject(&self, input: CreateSubject) -> Result<SubjectView> {
-        input.cognitive_seed.validate()?;
         if input.operation_id.0.is_nil() {
             return Err(Error::Invalid("operation_id is required".into()));
         }
-        let subject = input.subject_id.unwrap_or_default();
+        let subject = input.subject_id.unwrap_or(SubjectId(input.operation_id.0));
+        let digest = nous_core::canonical_request_digest("subject.create", subject, &input)?;
+        let guard = self.objects.reference_guard(false).await?;
+        let mut tx = self.store.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("subject.create:{}", input.operation_id.0))
+            .execute(&mut *tx)
+            .await
+            .map_err(nous_persistence::database_error)?;
+        if let Some(row) = sqlx::query("SELECT subject_id,request_digest FROM mutation_receipts WHERE operation_id=$1 AND operation_kind='subject.create'")
+            .bind(input.operation_id.0).fetch_optional(&mut *tx).await.map_err(nous_persistence::database_error)? {
+            let saved_subject: uuid::Uuid = row.try_get("subject_id").map_err(nous_persistence::database_error)?;
+            if saved_subject != subject.0 || row.try_get::<String,_>("request_digest").map_err(nous_persistence::database_error)? != digest {
+                return Err(nous_core::DomainError::new(nous_core::DomainErrorCode::OperationIdConflict,"Subject creation operation_id already binds different input").with_context("operation_id",input.operation_id.0).into());
+            }
+            tx.commit().await.map_err(nous_persistence::database_error)?;
+            drop(guard);
+            return self.subject(subject).await;
+        }
         let snapshot = self.configuration.active_system_snapshot()?;
         let process = process_capabilities(&snapshot)?;
         let capabilities = input
             .capabilities
             .unwrap_or(subject_default_capabilities(&snapshot)?);
         let capabilities = capabilities.require_process(process)?;
-        let guard = self.objects.reference_guard(false).await?;
-        let mut tx = self.store.begin().await?;
         sqlx::query("INSERT INTO subjects(subject_id,created_at,metadata) VALUES($1,$2,$3)")
             .bind(subject.0)
             .bind(self.clock.now(subject))
@@ -104,6 +119,14 @@ impl SubjectCoreService {
             .execute(&mut *tx)
             .await
             .map_err(nous_persistence::database_error)?;
+        nous_persistence::check_receipt(
+            &mut tx,
+            subject,
+            input.operation_id,
+            "subject.create",
+            &digest,
+        )
+        .await?;
         seed::insert_seed(
             &self.store,
             &self.objects,
@@ -113,13 +136,19 @@ impl SubjectCoreService {
                 subject,
                 operation_id: input.operation_id,
                 kind: SeedAdoptionKind::Initial,
-                digest: &nous_core::canonical_request_digest(
-                    "subject.create",
-                    subject,
-                    &input.operation_id,
-                )?,
+                digest: &digest,
                 now: self.clock.now(subject),
             },
+        )
+        .await?;
+        nous_persistence::commit_receipt(
+            &mut tx,
+            subject,
+            input.operation_id,
+            "subject",
+            Some(&subject.0.to_string()),
+            None,
+            None,
         )
         .await?;
         tx.commit()

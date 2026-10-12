@@ -21,7 +21,7 @@ fn content(label: &str) -> TagContent {
         kind_hint: Some("procedure".into()),
     }
 }
-fn expectation(tag: &nous_memory::Tag) -> TagExpectation {
+fn expectation(tag: &nous_memory::TagView) -> TagExpectation {
     TagExpectation {
         tag_id: tag.tag_id,
         expected_revision_id: tag.current_revision_id,
@@ -66,9 +66,11 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
                     CreateTagRequest {
                         producer: None,
                         operation_id: OperationId::new(),
-                        label: label.into(),
-                        description: None,
-                        kind_hint: None,
+                        content: nous_memory::TagContent {
+                            label: label.into(),
+                            description: None,
+                            kind_hint: None,
+                        },
                         origin: "host_explicit".into(),
                     },
                 )
@@ -131,9 +133,10 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .await
         .unwrap()
         .into_inner();
+    assert_eq!(exact_replay.revision_id, revised.revision_id);
     assert_eq!(
         exact_replay.current_revision_id,
-        revised.current_revision_id
+        later_revision.current_revision_id
     );
     assert_eq!(exact_replay.description, revised.description);
     let mut stale = revise.clone();
@@ -213,6 +216,12 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     };
     owner.merge_tags(subject, merge.clone()).await.unwrap();
     owner.merge_tags(subject, merge).await.unwrap();
+    let (merged, _) = owner
+        .tag_views(subject, "", "merged", 50, None)
+        .await
+        .unwrap();
+    assert_eq!(merged[0].tag_id, tags[1].tag_id);
+    assert_eq!(merged[0].canonical_tag_id, Some(tags[0].tag_id));
     let occurrence = observation(&rt, subject, "Explicit concept formation after merge").await;
     let mut explicit = form_input(
         subject,
@@ -307,7 +316,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     assert_eq!(evidence_endpoint, tags[1].tag_id.0.to_string());
     let projection = rt
         .store
-        .topology_projection_input(subject, true)
+        .topology_projection_input(subject, true, None)
         .await
         .unwrap();
     assert!(
@@ -421,10 +430,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .await
         .unwrap();
     let replay = owner.split_tag(subject, split.clone()).await.unwrap();
-    assert_eq!(
-        replay[0].current_revision_id,
-        children[0].current_revision_id
-    );
+    assert_eq!(replay[0].revision_id, children[0].revision_id);
     assert_eq!(replay[0].label, "Approval policy");
     assert_eq!(replay[1].label, "Rollout procedure");
     assert_eq!(

@@ -75,21 +75,12 @@ impl ServingService {
         space_key: &str,
         dir: &std::path::Path,
         view: Option<&HistoricalAuthoritySnapshot>,
+        capabilities: ProjectionCapabilities,
     ) -> Result<i64> {
-        let input = match view {
-            Some(view) => {
-                self.store
-                    .historical_projection_input(
-                        view,
-                        self.configuration
-                            .snapshot_for_subject(subject)?
-                            .get(crate::EPISODE_SYNOPSIS)?,
-                    )
-                    .await?
-                    .concepts
-            }
-            None => self.store.concept_projection_input(subject).await?,
-        };
+        let input = self
+            .store
+            .concept_projection_input(subject, capabilities.memory, view)
+            .await?;
         let provider = if space_key.is_empty() {
             None
         } else {

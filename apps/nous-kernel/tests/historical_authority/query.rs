@@ -166,13 +166,20 @@ pub(super) async fn check_historical_serving(
     let view = bound.historical_authority.as_deref().unwrap();
     let input = rt
         .store
-        .historical_projection_input(
-            view,
+        .text_projection_input(
+            view.subject,
+            true,
             bound
                 .config_snapshot
                 .get(nous_configuration::ConfigKey::new("episode.synopsis"))
                 .unwrap(),
+            Some(view),
         )
+        .await
+        .unwrap();
+    let concepts = rt
+        .store
+        .concept_projection_input(view.subject, true, Some(view))
         .await
         .unwrap();
     assert!(
@@ -182,7 +189,7 @@ pub(super) async fn check_historical_serving(
             .any(|s| &s.reference == old && s.text.as_deref() == Some("original authority fact"))
     );
     assert!(!input.sources.iter().any(|s| &s.reference == future));
-    let concept = input.concepts.tags.iter().find(|t| t.tag == tag).unwrap();
+    let concept = concepts.tags.iter().find(|t| t.tag == tag).unwrap();
     assert!(concept.semantic.text.contains("PAST_DESCRIPTION"));
     assert!(concept.attachments.contains(old));
     assert!(!concept.attachments.contains(future));

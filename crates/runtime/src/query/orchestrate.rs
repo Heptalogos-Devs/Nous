@@ -42,28 +42,6 @@ pub struct CognitiveContributors<'a> {
 }
 
 impl CognitiveRuntimeService {
-    pub async fn query(
-        &self,
-        query: CognitiveQuery,
-        contributors: CognitiveContributors<'_>,
-    ) -> Result<CognitiveQueryResult> {
-        let bound = self.bind_query(query).await?;
-        let plan = QueryPlan::for_bound_query(&bound);
-        self.query_with_plan(bound, contributors, plan).await
-    }
-
-    pub async fn query_with_plan(
-        &self,
-        bound: BoundQuery,
-        contributors: CognitiveContributors<'_>,
-        plan: QueryPlan,
-    ) -> Result<CognitiveQueryResult> {
-        Ok(self
-            .execute_query_with_plan(bound, contributors, plan, None)
-            .await?
-            .result)
-    }
-
     pub async fn execute_query_with_plan(
         &self,
         bound: BoundQuery,
@@ -504,15 +482,6 @@ fn explain_plan(result: &mut CognitiveQueryResult, query: &CognitiveQuery, plan:
         diagnostics.lane_status.insert(
             "effort".into(),
             format!("{:?}", query.effort).to_lowercase(),
-        );
-        diagnostics.lane_status.insert(
-            "cue_sensing_plan".into(),
-            if plan.sense_cues {
-                "enabled"
-            } else {
-                "skipped"
-            }
-            .into(),
         );
         diagnostics.lane_status.insert(
             "topology_plan".into(),

@@ -1,9 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
-import {
-  CreateEpisodeRequestSchema,
-  ReviseEpisodeRequestSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { EpisodeContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { lifecycle, revisionLink } from "../cognition-owner.js";
 import { CliError } from "../agent.js";
 import { content, operationId, page, target } from "../content.js";
@@ -15,10 +12,15 @@ export async function episodeCommands(
 ) {
   const { client, subjectId } = env;
   if (action === "list")
-    return client.memory.listEpisodes({ subjectId, page: page(env) });
+    return client.memory.listEpisodes({
+      subjectId,
+      status: env.values.status,
+      page: page(env),
+    });
   if (action === "create")
     return client.memory.createEpisode({
-      ...(await content(env, CreateEpisodeRequestSchema)),
+      content: await content(env, EpisodeContentSchema),
+      trackKey: env.required(env.values.kind, "--kind <segmentation track>"),
       subjectId,
       operationId: operationId(env),
     });
@@ -49,7 +51,7 @@ export async function episodeCommands(
   };
   if (action === "revise")
     return client.memory.reviseEpisode({
-      ...(await content(env, ReviseEpisodeRequestSchema)),
+      content: await content(env, EpisodeContentSchema),
       ...mutation,
       intent: env.required(env.values.kind, "--kind resegment|reinterpret"),
     });
@@ -68,7 +70,11 @@ export async function journalCommands(
 ) {
   const { client, subjectId } = env;
   if (action === "list")
-    return client.memory.listJournals({ subjectId, page: page(env) });
+    return client.memory.listJournals({
+      subjectId,
+      status: env.values.status,
+      page: page(env),
+    });
   if (action === "revision")
     return client.memory.getJournalRevision({
       subjectId,

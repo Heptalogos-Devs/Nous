@@ -12,14 +12,6 @@ pub struct EpaBasis {
     pub embedding_space: String,
 }
 
-/// A published, immutable EPA serving projection for one embedding space.
-/// The basis is derived from active Tag vectors and is never Authority.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EpaBasisGeneration {
-    pub generation_id: ServingGenerationId,
-    pub basis: EpaBasis,
-}
-
 type RepresentativeSet = (Vec<(u64, Vec<f64>)>, Vec<f64>);
 
 pub fn build_epa_basis(

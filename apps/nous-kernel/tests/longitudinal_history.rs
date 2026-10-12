@@ -234,20 +234,23 @@ async fn historical_episode_text(
             episode_id: episode.object.episode_id,
             expected_object_epoch: episode.object.object_epoch,
             intent: "reinterpret".into(),
-            title: None,
-            parent_episode_revision_id: None,
-            experience_time: episode.revision.experience_time.clone(),
-            boundary_explanation: text.into(),
-            producer_signature_id: None,
-            members: episode
-                .members
-                .iter()
-                .map(|member| nous_memory::EpisodeMemberInput {
-                    reference: member.reference.clone(),
-                    role: member.role.clone(),
-                })
-                .collect(),
-            basis: episode.basis.clone(),
+
+            content: nous_memory::EpisodeContent {
+                title: None,
+                parent_episode_revision_id: None,
+                experience_time: episode.revision.experience_time.clone(),
+                boundary_explanation: text.into(),
+                producer_signature_id: None,
+                members: episode
+                    .members
+                    .iter()
+                    .map(|member| nous_memory::EpisodeMemberInput {
+                        reference: member.reference.clone(),
+                        role: member.role.clone(),
+                    })
+                    .collect(),
+                basis: episode.basis.clone(),
+            },
         })
         .await
         .unwrap()
@@ -295,7 +298,7 @@ async fn episode_media_synopsis_tracks_ready_derivation_without_revising_authori
         && basis.basis_role == "interpretation"));
     let fragments = rt
         .store
-        .episode_member_text_input(
+        .episode_member_text_input_in_view(
             subject,
             &[episode.revision.episode_revision_id.0],
             rt.configuration
@@ -303,6 +306,7 @@ async fn episode_media_synopsis_tracks_ready_derivation_without_revising_authori
                 .unwrap()
                 .get(nous_memory::EPISODE_SYNOPSIS)
                 .unwrap(),
+            None,
         )
         .await
         .unwrap();

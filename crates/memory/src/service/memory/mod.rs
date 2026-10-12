@@ -4,7 +4,6 @@
 use super::*;
 
 mod mutation;
-mod provenance;
 mod read;
 
 pub(super) fn decode_memory_row(

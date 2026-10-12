@@ -301,7 +301,7 @@ it("discovers and commits historical document embeddings against the reserved qu
       },
     ],
   }));
-  const commitEmbedding = vi.fn(async () => ({}));
+  const commitEmbeddings = vi.fn(async () => ({ committed: 1 }));
   const embeddingBatch = vi.fn(async (texts: string[]) => ({
     value: texts.map(() => [1, 0]),
     producer: { signature_hash: "producer" },
@@ -310,7 +310,7 @@ it("discovers and commits historical document embeddings against the reserved qu
     execution: coreExecutionSchema.parse(undefined),
     materialWorkflow: {
       listEmbeddingNeeds,
-      commitEmbedding,
+      commitEmbeddings,
       getEmbeddingConfig: async () => ({
         spaceHash: "space",
         producerHash: "producer",
@@ -347,16 +347,20 @@ it("discovers and commits historical document embeddings against the reserved qu
     { subjectId: "subject", limit: 256, preparationToken: "frozen-history" },
     expect.anything(),
   );
-  expect(commitEmbedding).toHaveBeenCalledWith(
+  expect(commitEmbeddings).toHaveBeenCalledWith(
     expect.objectContaining({
       subjectId: "subject",
       preparationToken: "frozen-history",
-      material: {
-        text: "Concept: old meaning",
-        spaceHash: "space",
-        producerHash: "producer",
-        vector: [1, 0],
-      },
+      items: [
+        expect.objectContaining({
+          material: {
+            text: "Concept: old meaning",
+            spaceHash: "space",
+            producerHash: "producer",
+            vector: [1, 0],
+          },
+        }),
+      ],
     }),
     expect.anything(),
   );

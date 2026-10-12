@@ -7,12 +7,14 @@ pub(crate) async fn check_activation_configuration(rt: &NousRuntime, subject: Su
             .create_tag(
                 subject,
                 CreateTagRequest {
-                    operation_id: OperationId::new(),
-                    label: label.into(),
-                    description: None,
-                    kind_hint: None,
-                    origin: "host_explicit".into(),
                     producer: None,
+                    operation_id: OperationId::new(),
+                    content: nous_memory::TagContent {
+                        label: label.into(),
+                        description: None,
+                        kind_hint: None,
+                    },
+                    origin: "host_explicit".into(),
                 },
             )
             .await
@@ -67,6 +69,10 @@ pub(crate) async fn check_activation_configuration(rt: &NousRuntime, subject: Su
 }
 
 // Both VCP readouts share text/vector assets; native consumes structure alone.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one query scenario checks native and VCP invalidation and asset reuse"
+)]
 pub(crate) async fn check_topology_asset_dependencies(rt: &NousRuntime, subject: SubjectId) {
     let need = ServingNeed {
         topology: true,
@@ -162,8 +168,23 @@ pub(crate) async fn check_topology_asset_dependencies(rt: &NousRuntime, subject:
             .rebuilt
             .contains(&"topology:vcp:concept-test".to_owned())
     );
-    let snapshot = rt.serving.current_snapshot(subject);
-    let generation = snapshot.vcp.as_ref().unwrap();
+    let record = rt
+        .store
+        .serving_current(subject)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|record| record.family == "topology" && record.space == "vcp:concept-test")
+        .unwrap();
+    let generation: nous_retrieval::VcpGeneration = serde_json::from_slice(
+        &std::fs::read(
+            rt.serving
+                .artifact_directory(record.generation_id)
+                .join("vcp.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert!(
         generation.identities.references().iter().any(
             |reference| reference == &CognitiveRef::Occurrence(added.occurrence.occurrence_id)

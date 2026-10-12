@@ -53,17 +53,20 @@ pub(crate) async fn check_historical_profiles(
         );
         let records = rt
             .store
-            .historical_serving_reusable(
+            .serving_candidates(
                 subject,
-                &result
-                    .bound
-                    .historical_authority
-                    .as_ref()
-                    .unwrap()
-                    .snapshot_digest,
+                Some(
+                    &result
+                        .bound
+                        .historical_authority
+                        .as_ref()
+                        .unwrap()
+                        .snapshot_digest,
+                ),
             )
             .await
             .unwrap();
+        let records: Vec<_> = records.into_iter().map(|(record, _)| record).collect();
         assert!(records.iter().any(|r| r.family == "dense"));
         assert!(records.iter().any(|r| r.family == "topology"));
         let concepts = records
@@ -140,25 +143,30 @@ pub(super) async fn check_historical_embedding(
     {
         assert!(
             rt.serving
-                .commit_embedding(
+                .commit_embeddings(
                     subject,
-                    need.reference.clone(),
-                    need.text.clone(),
-                    &generation.space.as_ref().unwrap().space_hash,
-                    &generation.producer.as_ref().unwrap().signature_hash,
-                    vec![1.0, 0.0]
+                    vec![nous_retrieval::EmbeddingSubmission {
+                        reference: need.reference.clone(),
+                        text: need.text.clone(),
+                        space: (generation.space.as_ref().unwrap().space_hash).clone(),
+                        producer: (generation.producer.as_ref().unwrap().signature_hash).clone(),
+                        vector: vec![1.0, 0.0]
+                    }],
+                    None
                 )
                 .await
                 .is_err()
         );
         rt.serving
-            .commit_embedding_in_view(
+            .commit_embeddings(
                 subject,
-                need.reference.clone(),
-                need.text.clone(),
-                &generation.space.as_ref().unwrap().space_hash,
-                &generation.producer.as_ref().unwrap().signature_hash,
-                vec![1.0, 0.0],
+                vec![nous_retrieval::EmbeddingSubmission {
+                    reference: need.reference.clone(),
+                    text: need.text.clone(),
+                    space: (generation.space.as_ref().unwrap().space_hash).clone(),
+                    producer: (generation.producer.as_ref().unwrap().signature_hash).clone(),
+                    vector: vec![1.0, 0.0],
+                }],
                 Some(view),
             )
             .await

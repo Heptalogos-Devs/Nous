@@ -184,10 +184,8 @@ export async function executeConceptMaintenance(
                 operationId,
                 subjectId: plan.subjectId,
                 producer,
-                tag: {
-                  ...content(action.content),
-                  origin: "concept_maintenance",
-                },
+                content: content(action.content),
+                origin: "concept_maintenance",
               },
               options,
             ),

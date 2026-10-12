@@ -6,12 +6,13 @@ use nous_persistence::ProjectionEdgeProvenance;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 pub struct OwnedTopologyProjection {
+    pub watermark: i64,
     pub nodes: Vec<CognitiveRef>,
     pub edges: Vec<WaveEdgeEvidence>,
 }
 
 /// SQL supplies rows; semantic owners supply their view-aware source meaning.
-pub struct CognitiveProjectionInput {
+pub struct VcpProjectionInput {
     pub authority_watermark: i64,
     pub watermarks: nous_persistence::ProjectionWatermarks,
     pub topology: OwnedTopologyProjection,
@@ -38,34 +39,72 @@ impl ServingService {
         self.documents(subject, sources, budget, view).await
     }
 
-    pub async fn projection_input(
+    pub async fn topology_projection(
+        &self,
+        subject: SubjectId,
+        memory_enabled: bool,
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<OwnedTopologyProjection> {
+        let topology = self
+            .store
+            .topology_projection_input(subject, memory_enabled, view)
+            .await?;
+        let references: HashSet<_> = topology
+            .edges
+            .iter()
+            .filter_map(|edge| match &edge.provenance {
+                ProjectionEdgeProvenance::AuthorityBasis(reference) => Some(reference.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut roots = HashMap::new();
+        for reference in references {
+            let contribution = if let Some(memory) = self.memory.as_ref().filter(|_| memory_enabled)
+            {
+                memory
+                    .provenance_for_reference(subject, &reference, view)
+                    .await?
+            } else {
+                BTreeSet::new()
+            };
+            roots.insert(reference, contribution);
+        }
+        if view.is_none()
+            && self
+                .store
+                .projection_watermark(subject, "topology", "")
+                .await?
+                != topology.watermark
+        {
+            return Err(Error::Conflict(
+                "Topology changed while reading owner contributions".into(),
+            ));
+        }
+        Ok(OwnedTopologyProjection {
+            watermark: topology.watermark,
+            nodes: topology.nodes,
+            edges: expand_edges(topology.edges, &roots)?,
+        })
+    }
+
+    pub async fn vcp_projection_input(
         &self,
         subject: SubjectId,
         memory_enabled: bool,
         budget: nous_persistence::EpisodeTextBudget,
+        space: &str,
         view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<CognitiveProjectionInput> {
-        let (authority_watermark, watermarks, sources, topology) = match view {
-            Some(view) => {
-                if view.subject != subject {
-                    return Err(Error::Invalid("projection view subject mismatch".into()));
-                }
-                let rows = self.store.historical_projection_input(view, budget).await?;
-                (0, Default::default(), rows.sources, rows.topology)
-            }
-            None => {
-                let rows = self
-                    .store
-                    .cognitive_projection_rows(subject, memory_enabled, budget)
-                    .await?;
-                (
-                    rows.authority_watermark,
-                    rows.watermarks,
-                    rows.sources,
-                    rows.topology,
-                )
-            }
-        };
+    ) -> Result<VcpProjectionInput> {
+        let rows = self
+            .store
+            .vcp_projection_rows(subject, memory_enabled, budget, space, view)
+            .await?;
+        let (authority_watermark, watermarks, sources, topology) = (
+            rows.authority_watermark,
+            rows.watermarks,
+            rows.sources,
+            rows.topology,
+        );
         let references: HashSet<_> = sources
             .iter()
             .map(|source| source.reference.clone())
@@ -82,19 +121,30 @@ impl ServingService {
             )
             .collect();
         let mut roots = HashMap::<CognitiveRef, BTreeSet<EvidenceRoot>>::new();
+        let material_refs: Vec<_> = references
+            .iter()
+            .filter(|reference| nous_runtime::CognitiveContributor::owns(&self.material, reference))
+            .cloned()
+            .collect();
+        for batch in material_refs.chunks(256) {
+            roots.extend(
+                self.material
+                    .lineage_roots_batch(subject, batch, view)
+                    .await?,
+            );
+        }
         for reference in references {
-            let contribution =
-                if nous_runtime::CognitiveContributor::owns(&self.material, &reference) {
-                    self.material
-                        .lineage_roots(subject, &reference, view)
-                        .await?
-                } else if let Some(memory) = self.memory.as_ref().filter(|_| memory_enabled) {
-                    memory
-                        .provenance_for_reference(subject, &reference, view)
-                        .await?
-                } else {
-                    BTreeSet::new()
-                };
+            if roots.contains_key(&reference) {
+                continue;
+            }
+            let contribution = if let Some(memory) = self.memory.as_ref().filter(|_| memory_enabled)
+            {
+                memory
+                    .provenance_for_reference(subject, &reference, view)
+                    .await?
+            } else {
+                BTreeSet::new()
+            };
             roots.insert(reference, contribution);
         }
         if view.is_none() && self.store.authority_seq(subject).await? != authority_watermark {
@@ -102,36 +152,7 @@ impl ServingService {
                 "Authority changed while reading owner projection contributions".into(),
             ));
         }
-        let mut edges = Vec::new();
-        for edge in topology.edges {
-            let origins: Vec<_> = match edge.provenance {
-                ProjectionEdgeProvenance::Structure(identity) => vec![Some(identity)],
-                ProjectionEdgeProvenance::AuthorityBasis(reference) => {
-                    let contribution = roots.get(&reference).ok_or_else(|| {
-                        Error::Infrastructure("owner provenance contribution missing".into())
-                    })?;
-                    if contribution.is_empty() {
-                        vec![None]
-                    } else {
-                        contribution
-                            .iter()
-                            .map(|root| Some(root.root_key.clone()))
-                            .collect()
-                    }
-                }
-            };
-            for provenance_root in origins {
-                edges.push(WaveEdgeEvidence {
-                    from: edge.from.clone(),
-                    to: edge.to.clone(),
-                    basis_class: edge.basis_class.clone(),
-                    association_kind: edge.association_kind.clone(),
-                    polarity: edge.polarity.clone(),
-                    support_mass: edge.support_mass,
-                    provenance_root,
-                });
-            }
-        }
+        let edges = expand_edges(topology.edges, &roots)?;
         let evidence_roots = roots
             .into_iter()
             .map(|(reference, roots)| {
@@ -145,11 +166,12 @@ impl ServingService {
                 )
             })
             .collect();
-        Ok(CognitiveProjectionInput {
+        Ok(VcpProjectionInput {
             authority_watermark,
             watermarks,
             sources,
             topology: OwnedTopologyProjection {
+                watermark: topology.watermark,
                 nodes: topology.nodes,
                 edges,
             },
@@ -266,4 +288,41 @@ impl ServingService {
         }
         Ok(documents)
     }
+}
+
+fn expand_edges(
+    edges_input: Vec<nous_persistence::TopologyEdgeSource>,
+    roots: &HashMap<CognitiveRef, BTreeSet<EvidenceRoot>>,
+) -> Result<Vec<WaveEdgeEvidence>> {
+    let mut edges = Vec::new();
+    for edge in edges_input {
+        let origins: Vec<_> = match edge.provenance {
+            ProjectionEdgeProvenance::Structure(identity) => vec![Some(identity)],
+            ProjectionEdgeProvenance::AuthorityBasis(reference) => {
+                let contribution = roots.get(&reference).ok_or_else(|| {
+                    Error::Infrastructure("owner provenance contribution missing".into())
+                })?;
+                if contribution.is_empty() {
+                    vec![None]
+                } else {
+                    contribution
+                        .iter()
+                        .map(|root| Some(root.root_key.clone()))
+                        .collect()
+                }
+            }
+        };
+        for provenance_root in origins {
+            edges.push(WaveEdgeEvidence {
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                basis_class: edge.basis_class.clone(),
+                association_kind: edge.association_kind.clone(),
+                polarity: edge.polarity.clone(),
+                support_mass: edge.support_mass,
+                provenance_root,
+            });
+        }
+    }
+    Ok(edges)
 }

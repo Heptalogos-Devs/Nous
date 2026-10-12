@@ -17,7 +17,6 @@ export async function deriveCommands(
       )
     ).value,
     strategy: values.strategy,
-    target: values.target,
     supersedes: values.supersedes
       ? (
           await env.resolveReference(

@@ -59,34 +59,37 @@ async fn drafts_commit_replay_and_ack_reclaim_runtime_rows() {
         )),
         subject,
         track_key: draft.track_key.clone(),
-        title: None,
-        parent_episode_revision_id: None,
-        experience_time: TemporalExtent::Interval {
-            start: Some(draft.observed_start),
-            end: Some(draft.observed_end),
-        },
-        boundary_explanation: draft.boundary_reason.clone().unwrap(),
-        producer_signature_id: None,
-        members: draft
-            .members
-            .iter()
-            .map(|id| EpisodeMemberInput {
-                reference: CognitiveRef::Occurrence(*id),
-                role: "experience".into(),
-            })
-            .collect(),
-        basis: draft
-            .members
-            .iter()
-            .map(|id| {
-                nous_core::RevisionBasis::Evidence(nous_core::EvidenceRef {
-                    epistemic_relation: None,
-                    occurrence_id: *id,
-                    locator: nous_core::EvidenceLocator::WholeOccurrence,
-                    basis_role: nous_core::BasisRole::Direct,
+
+        content: nous_memory::EpisodeContent {
+            title: None,
+            parent_episode_revision_id: None,
+            experience_time: TemporalExtent::Interval {
+                start: Some(draft.observed_start),
+                end: Some(draft.observed_end),
+            },
+            boundary_explanation: draft.boundary_reason.clone().unwrap(),
+            producer_signature_id: None,
+            members: draft
+                .members
+                .iter()
+                .map(|id| EpisodeMemberInput {
+                    reference: CognitiveRef::Occurrence(*id),
+                    role: "experience".into(),
                 })
-            })
-            .collect(),
+                .collect(),
+            basis: draft
+                .members
+                .iter()
+                .map(|id| {
+                    nous_core::RevisionBasis::Evidence(nous_core::EvidenceRef {
+                        epistemic_relation: None,
+                        occurrence_id: *id,
+                        locator: nous_core::EvidenceLocator::WholeOccurrence,
+                        basis_role: nous_core::BasisRole::Direct,
+                    })
+                })
+                .collect(),
+        },
     };
     let committed = rt
         .require_memory()

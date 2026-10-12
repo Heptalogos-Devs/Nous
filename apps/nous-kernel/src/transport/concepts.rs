@@ -9,7 +9,7 @@ use nous_memory::{CreateAssociationRequest, CreateTagRequest};
 impl KernelService {
     pub(super) async fn create_tag(&self, input: p::CreateTagRequest) -> Result<p::Tag> {
         let subject = SubjectId(id(&input.subject_id)?);
-        let tag = required(input.tag, "tag")?;
+        let content = tag_content(required(input.content, "content")?);
         let created = self
             .require_memory()?
             .create_tag(
@@ -17,15 +17,12 @@ impl KernelService {
                 CreateTagRequest {
                     producer: input.producer.map(from_producer).transpose()?,
                     operation_id: OperationId(id(&input.operation_id)?),
-                    label: tag.label,
-                    description: tag.description,
-                    kind_hint: tag.kind_hint,
-                    origin: tag.origin,
+                    content,
+                    origin: input.origin,
                 },
             )
             .await?;
-        self.read_tag_revision(subject, created.tag_id, created.current_revision_id)
-            .await
+        Ok(tag_view(created))
     }
     pub(super) async fn get_tag(&self, input: p::ObjectRequest) -> Result<p::Tag> {
         Ok(tag_view(
@@ -51,12 +48,7 @@ impl KernelService {
                 },
             )
             .await?;
-        self.read_tag_revision(
-            SubjectId(id(&input.subject_id)?),
-            result.tag_id,
-            result.current_revision_id,
-        )
-        .await
+        Ok(tag_view(result))
     }
     pub(super) async fn merge_tags(&self, input: p::MergeTagsRequest) -> Result<p::Tag> {
         let result = self
@@ -79,11 +71,7 @@ impl KernelService {
                 },
             )
             .await?;
-        self.get_tag(p::ObjectRequest {
-            subject_id: input.subject_id,
-            id: result.tag_id.0.to_string(),
-        })
-        .await
+        Ok(tag_view(result))
     }
     pub(super) async fn split_tag(&self, input: p::SplitTagRequest) -> Result<p::SplitTagResponse> {
         let results = self
@@ -105,18 +93,6 @@ impl KernelService {
             .await?;
         let children = results.into_iter().map(tag_view).collect();
         Ok(p::SplitTagResponse { children })
-    }
-    async fn read_tag_revision(
-        &self,
-        subject: SubjectId,
-        tag: nous_core::TagId,
-        revision: uuid::Uuid,
-    ) -> Result<p::Tag> {
-        Ok(tag_view(
-            self.require_memory()?
-                .tag_view(subject, tag, Some(revision))
-                .await?,
-        ))
     }
     pub(super) async fn list_tags(&self, input: p::ListRequest) -> Result<p::ListTagsResponse> {
         self.read_tags(&input.subject_id, "", input.page, &input.status)
@@ -309,6 +285,7 @@ fn tag_view(value: nous_memory::TagView) -> p::Tag {
     p::Tag {
         tag_id: value.tag_id.0.to_string(),
         current_revision_id: value.current_revision_id.to_string(),
+        revision_id: value.revision_id.to_string(),
         status: value.status,
         canonical_tag_id: value.canonical_tag_id.map(|id| id.0.to_string()),
         label: value.label,

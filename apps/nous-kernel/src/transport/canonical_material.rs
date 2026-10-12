@@ -14,6 +14,9 @@ rpc_service! {
             materialize_evidence(p::MaterializeRequest) -> p::MaterializedEvidence;
         }
         custom {
+            async fn clean(&self, _: Request<()>) -> std::result::Result<Response<p::MaterialCleanup>,Status> {
+                self.0.material.clean().await.map(|(objects_deleted,staging_deleted)|Response::new(p::MaterialCleanup {objects_deleted,staging_deleted})).map_err(status)
+            }
             async fn list_occurrences(
                 &self,
                 request: Request<p::OccurrenceListRequest>,

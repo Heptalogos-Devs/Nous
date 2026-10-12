@@ -103,8 +103,10 @@ export const commandInventory = {
   },
   commands: [
     {
-      command: "material limits|artifacts|occurrences|representations|producer",
+      command:
+        "material clean|limits|artifacts|occurrences|representations|producer",
       parameters: [
+        "clean reclaims unreferenced objects and staging across BlobRoot; no selected Subject required",
         "occurrences <Artifact reference>",
         "representations [Artifact or SourceRegion reference] [--kind <kind>]",
         "producer <signature identity>",
@@ -117,6 +119,7 @@ export const commandInventory = {
       parameters: [
         "[Memory reference]",
         "--request-file <Memory content TOML> for form/revise",
+        "list --status accepted|withdrawn (optional)",
         "--kind <revision intent or accessibility mode>",
         "--page-size <n> --page-token <token>",
       ],
@@ -139,7 +142,9 @@ export const commandInventory = {
       parameters: [
         "[Episode reference]",
         "--request-file <Episode content TOML>",
+        "create --kind <segmentation track>",
         "--kind resegment|reinterpret",
+        "list --status accepted|withdrawn (optional)",
       ],
     },
     {
@@ -147,6 +152,7 @@ export const commandInventory = {
         "journal get|list|revision|history|suppress|restore|withdraw|reaccept|purge",
       parameters: [
         "[Journal reference]",
+        "list --status accepted|withdrawn (optional)",
         "--page-size <n> --page-token <token>",
       ],
     },
@@ -155,6 +161,7 @@ export const commandInventory = {
       parameters: [
         "[Resource reference]",
         "--request-file <Resource descriptor or stable external reference TOML>",
+        "list --status ready|degraded|unavailable (optional)",
       ],
     },
     {
@@ -165,7 +172,7 @@ export const commandInventory = {
         "--request-file <query/situation_refs/known_cursor TOML> (optional)",
       ],
       description:
-        "Generate actual consumer projection or synchronize managed context; requires selected Session.",
+        "Generate actual consumer projection or synchronize managed context; requires selected Session and uses its foreground WorkContext.",
     },
 
     {
@@ -198,6 +205,8 @@ export const commandInventory = {
     {
       command: "tag list|get|search|resolve|create|revise|merge|split|attach",
       parameters: [
+        "list --status active|withdrawn (defaults to active)",
+        "create --name <label> [--description <text> --kind-hint <hint>] | --request-file <TagContent TOML>",
         "get <tag-ref>",
         "search <text>",
         "resolve <name>",
@@ -281,11 +290,16 @@ export const commandInventory = {
     },
     {
       command: "subject create|list|use|seed|adopt-seed",
-      parameters: ["[id]"],
+      parameters: [
+        "[id]",
+        "--operation-id <stable operation identity> (optional; generated)",
+        "list --status <Subject status> (optional)",
+      ],
     },
     {
       command: "session open|list|close",
       purpose: "Open a new Session or close the selected Session",
+      parameters: ["list --status open|closed (optional)"],
     },
     {
       command: "session show [reference]",

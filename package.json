@@ -8,7 +8,7 @@
     "node": ">=24.21.0"
   },
   "scripts": {
-    "dev": "tsx scripts/dev/start.ts",
+    "dev": "tsx scripts/dev/nous.ts serve",
     "nous": "tsx scripts/dev/nous.ts",
     "runtime:pack": "tsx scripts/runtime/pack.ts",
     "assemble:portable": "tsx scripts/release/assemble.ts",

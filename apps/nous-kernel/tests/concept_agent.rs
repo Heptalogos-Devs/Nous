@@ -67,9 +67,11 @@ async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
                 CreateTagRequest {
                     producer: Some(producer.clone()),
                     operation_id: OperationId::new(),
-                    label: label.into(),
-                    description: None,
-                    kind_hint: Some("topic".into()),
+                    content: nous_memory::TagContent {
+                        label: label.into(),
+                        description: None,
+                        kind_hint: Some("topic".into()),
+                    },
                     origin: "concept_maintenance".into(),
                 },
             )

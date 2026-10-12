@@ -72,7 +72,6 @@ proposal action 为 skip、create/revise Memory、create/revise CognitiveSchema�
 
 Query/Serving、WorkContext、UseEvent 和下游失效合同分别见 [Query](../memory-reference-profile/03-query-serving.md)、[WorkContext](work-context.md)、[Use](../memory-reference-profile/02-runtime-use.md) 和 [Authority](../memory-reference-profile/01-memory-authority-provenance.md)。
 
-
 ## 独立 concept maintenance
 
 `concept_maintenance` 复用 durable need、host grant、retry、固定 ModelWorkflow snapshot 和模型调用/elapsed 预算。accepted/revised Memory、Episode、Journal、CognitiveSchema 在 owner mutation 同一事务排入 exact focus；meaningful use 跨过 `maintenance.concept_use_review_interval` 时产生 review，普通 presented 不触发。

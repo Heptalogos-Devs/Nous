@@ -23,6 +23,14 @@ pub struct EmbeddingPage {
     pub next_cursor: Option<EmbeddingCursor>,
 }
 
+pub struct EmbeddingSubmission {
+    pub reference: CognitiveRef,
+    pub text: String,
+    pub space: String,
+    pub producer: String,
+    pub vector: Vec<f32>,
+}
+
 impl ServingService {
     pub async fn embedding_needs_page(
         &self,
@@ -131,63 +139,65 @@ SELECT digest FROM unnest($2::text[]) input(digest)
         }
     }
 
-    pub async fn commit_embedding(
+    /// Admit one completed Host batch. Source validation and cache publication
+    /// share one Authority fence; prior committed batches remain independent.
+    pub async fn commit_embeddings(
         &self,
         subject: SubjectId,
-        reference: CognitiveRef,
-        text: String,
-        space: &str,
-        producer: &str,
-        vector: Vec<f32>,
-    ) -> Result<()> {
-        self.commit_embedding_in_view(subject, reference, text, space, producer, vector, None)
-            .await
-    }
-
-    pub async fn commit_embedding_in_view(
-        &self,
-        subject: SubjectId,
-        reference: CognitiveRef,
-        text: String,
-        space: &str,
-        producer: &str,
-        vector: Vec<f32>,
+        items: Vec<EmbeddingSubmission>,
         view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<()> {
-        self.store.validate_reference(subject, &reference).await?;
+    ) -> Result<u32> {
+        if items.is_empty() || items.len() > 256 || view.is_some_and(|view| view.subject != subject)
+        {
+            return Err(Error::Invalid(
+                "embedding batch must be 1..256 for this Subject".into(),
+            ));
+        }
         let configured = self
             .embedding()
             .ok_or_else(|| Error::Unavailable("embedding not configured".into()))?;
-        if configured.space().space_hash != space
-            || !configured
-                .producers()
-                .iter()
-                .any(|p| p.signature_hash == producer)
-            || vector.len() != configured.space().dimension as usize
-            || vector.iter().any(|v| !v.is_finite())
-        {
-            return Err(Error::Invalid(
-                "embedding material disagrees with configured space/producer".into(),
-            ));
+        let space = configured.space();
+        let producers: HashSet<_> = configured
+            .producers()
+            .into_iter()
+            .map(|producer| producer.signature_hash)
+            .collect();
+        for item in &items {
+            if item.space != space.space_hash
+                || !producers.contains(&item.producer)
+                || item.vector.len() != space.dimension as usize
+                || item.vector.iter().any(|v| !v.is_finite())
+            {
+                return Err(Error::Invalid(
+                    "embedding material disagrees with configured space/producer".into(),
+                ));
+            }
         }
         let revision = self.store.authority_seq(subject).await?;
-        let digest = nous_material::text_content_identity(&text);
-        let document = self
-            .documents_lookup(subject, std::slice::from_ref(&reference), view)
+        let references: Vec<_> = items.iter().map(|item| item.reference.clone()).collect();
+        let documents: std::collections::HashMap<_, _> = self
+            .documents_lookup(subject, &references, view)
             .await?
-            .pop();
-        if document.is_none_or(|document| {
-            document.reference != reference
-                || nous_material::text_content_identity(&document.representation_text) != digest
-        }) {
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::StaleRevision,
-                "embedding source changed",
-            )
-            .into());
+            .into_iter()
+            .map(|document| {
+                (
+                    document.reference,
+                    nous_material::text_content_identity(&document.representation_text),
+                )
+            })
+            .collect();
+        for item in &items {
+            if documents.get(&item.reference)
+                != Some(&nous_material::text_content_identity(&item.text))
+            {
+                return Err(nous_core::DomainError::new(
+                    nous_core::DomainErrorCode::StaleRevision,
+                    "embedding source changed",
+                )
+                .into());
+            }
         }
         let mut tx = self.store.begin().await?;
-        // Authority writers advance this row in their transaction. Hold it through cache publication.
         let current: i64 =
             sqlx::query_scalar("SELECT authority_seq FROM subjects WHERE subject_id=$1 FOR UPDATE")
                 .bind(subject.0)
@@ -203,19 +213,37 @@ SELECT digest FROM unnest($2::text[]) input(digest)
             .with_context("actual_authority_seq", current)
             .into());
         }
-        let inserted = sqlx::query("INSERT INTO embedding_materials(subject_id,content_digest,space_hash,producer_hash,vector) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
-            .bind(subject.0).bind(digest).bind(space).bind(producer).bind(vector).execute(&mut *tx).await.map_err(db)?;
-        if inserted.rows_affected() > 0 {
+        let accepted = items.len() as u32;
+        let mut insert = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "INSERT INTO embedding_materials(subject_id,content_digest,space_hash,producer_hash,vector) ",
+        );
+        insert.push_values(items, |mut row, item| {
+            row.push_bind(subject.0)
+                .push_bind(nous_material::text_content_identity(&item.text))
+                .push_bind(item.space)
+                .push_bind(item.producer)
+                .push_bind(item.vector);
+        });
+        insert.push(" ON CONFLICT DO NOTHING");
+        if insert
+            .build()
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?
+            .rows_affected()
+            > 0
+        {
             AuthorityStore::invalidate_in(
                 &mut tx,
                 subject,
                 ProjectionInvalidation {
-                    dense: DenseInvalidation::Spaces(vec![space.into()]),
+                    dense: DenseInvalidation::Spaces(vec![space.space_hash]),
                     ..Default::default()
                 },
             )
             .await?;
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(db)?;
+        Ok(accepted)
     }
 }

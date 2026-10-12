@@ -33,3 +33,6 @@ CREATE INDEX episode_dependency_basis_source_idx
     ON episode_revision_basis(basis_kind,basis_ref,episode_revision_id);
 CREATE INDEX episode_dependency_member_source_idx
     ON episode_revision_members(ref_kind,ref_value,episode_revision_id);
+
+CREATE UNIQUE INDEX subject_creation_operation_idx
+    ON mutation_receipts(operation_id) WHERE operation_kind='subject.create';

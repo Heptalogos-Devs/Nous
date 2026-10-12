@@ -124,12 +124,6 @@ pub struct MemoryRevision {
     pub recorded_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryRevisionEvidence {
-    pub evidence_no: i32,
-    pub evidence: EvidenceRef,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryRelation {
@@ -157,29 +151,6 @@ pub struct MemoryRevisionRelation {
     pub from_revision_id: MemoryRevisionId,
     pub to_revision_id: MemoryRevisionId,
     pub relation: MemoryRelation,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tag {
-    pub tag_id: TagId,
-    pub subject_id: SubjectId,
-    pub current_revision_id: Uuid,
-    pub status: String,
-    pub canonical_tag_id: Option<TagId>,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TagRevision {
-    pub tag_revision_id: Uuid,
-    pub tag_id: TagId,
-    pub revision_no: i32,
-    pub label: String,
-    pub description: Option<String>,
-    pub kind_hint: Option<String>,
-    pub origin: String,
-    pub producer_signature_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -389,19 +360,6 @@ fn validate_basis(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum TagProposal {
-    Existing {
-        tag_id: TagId,
-    },
-    New {
-        label: String,
-        description: Option<String>,
-        kind_hint: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaScope {
     pub description: String,
     #[serde(default)]
@@ -488,13 +446,6 @@ pub struct SchemaEvidenceLink {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaLineage {
-    pub from_revision_id: CognitiveSchemaRevisionId,
-    pub to_revision_id: CognitiveSchemaRevisionId,
-    pub relation: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaContent {
     pub producer: Option<nous_core::ProducerSignature>,
     pub title: Option<String>,
@@ -530,19 +481,6 @@ pub struct ReviseSchemaInput {
     #[serde(flatten)]
     pub content: SchemaContent,
     pub copy_link_ids: Vec<SchemaEvidenceLinkId>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateAssociationInput {
-    pub operation_id: OperationId,
-    pub subject: SubjectId,
-    pub from: CognitiveRef,
-    pub to: CognitiveRef,
-    pub relation_kind: String,
-    pub polarity: AssociationPolarity,
-    pub basis_class: AssociationBasisClass,
-    pub basis: Vec<AssociationBasis>,
-    pub valid_time: TemporalExtent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

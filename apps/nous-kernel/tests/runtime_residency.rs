@@ -191,6 +191,7 @@ async fn resident_batch_is_atomic_and_invalid_persisted_refs_are_visible() {
         subject_a,
         session.session_id,
         vec![ResidentAdmission {
+            last_meaningful_use_at: None,
             reference: CognitiveRef::Occurrence(foreign.occurrence.occurrence_id),
             reason: "foreign".into(),
             hold_until: None,
@@ -224,6 +225,10 @@ async fn resident_batch_is_atomic_and_invalid_persisted_refs_are_visible() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one public residency scenario verifies shared admission policy, idempotency and concurrent close"
+)]
 async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision() {
     let (root, url, _postgres) = database().await;
     let mut runtime = open_runtime(&url, &root).await;
@@ -236,6 +241,7 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
     let first = observation(&runtime, subject, "first").await;
     let hold = Utc::now() + Duration::hours(1);
     let first_admission = ResidentAdmission {
+        last_meaningful_use_at: None,
         reference: CognitiveRef::Occurrence(first.occurrence.occurrence_id),
         reason: "observed".into(),
         hold_until: Some(hold),
@@ -256,6 +262,7 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
         subject,
         session.session_id,
         vec![ResidentAdmission {
+            last_meaningful_use_at: None,
             hold_until: Some(Utc::now()),
             ..first_admission
         }],
@@ -282,6 +289,7 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
         subject,
         session.session_id,
         vec![ResidentAdmission {
+            last_meaningful_use_at: None,
             reference: CognitiveRef::Occurrence(second.occurrence.occurrence_id),
             reason: "observed".into(),
             hold_until: None,
@@ -301,6 +309,78 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
             .resident
             .len(),
         1
+    );
+    let mut events = Vec::new();
+    for occurrence in [
+        first.occurrence.occurrence_id,
+        second.occurrence.occurrence_id,
+    ] {
+        let memory = runtime
+            .require_memory()
+            .unwrap()
+            .form_memory(test_support::form_input(
+                subject,
+                occurrence,
+                OperationId::new(),
+                "bounded use resident",
+            ))
+            .await
+            .unwrap();
+        events.push(nous_runtime::UseFeedbackEvent {
+            query_id: None,
+            event_id: nous_core::UseEventId::new(),
+            reference: CognitiveRef::MemoryRevision(memory.revision.memory_revision_id),
+            use_kind: nous_runtime::UseKind::Referenced,
+            occurred_at: runtime.cognition.now(subject),
+            context: serde_json::json!({}),
+        });
+    }
+    let uses = nous_runtime::UseFeedback {
+        subject,
+        session_id: Some(session.session_id),
+        consumer_ref: "consumer:resident-test".into(),
+        events,
+    };
+    assert_eq!(
+        runtime.cognition.use_feedback(uses.clone()).await.unwrap(),
+        (2, 0, Some(3))
+    );
+    assert_eq!(
+        runtime.cognition.use_feedback(uses).await.unwrap(),
+        (0, 2, Some(3))
+    );
+    let after_use = runtime
+        .cognition
+        .session(subject, session.session_id)
+        .await
+        .unwrap();
+    assert_eq!(after_use.resident.len(), 1);
+    assert_eq!(
+        after_use.resident[0].reference,
+        CognitiveRef::Occurrence(first.occurrence.occurrence_id)
+    );
+    assert_eq!(
+        after_use.resident[0]
+            .hold_until
+            .map(|at| at.timestamp_micros()),
+        Some(hold.timestamp_micros())
+    );
+    let (closed_a, closed_b) = tokio::join!(
+        runtime.cognition.close_session(subject, session.session_id),
+        runtime.cognition.close_session(subject, session.session_id)
+    );
+    assert_eq!(
+        usize::from(closed_a.is_ok()) + usize::from(closed_b.is_ok()),
+        1
+    );
+    assert_eq!(
+        runtime
+            .cognition
+            .session(subject, session.session_id)
+            .await
+            .unwrap()
+            .runtime_revision,
+        4
     );
 }
 
@@ -386,6 +466,10 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         consumer_id: "default".into(),
         max_items: 4,
         max_text_bytes: 8,
+        memory_requirement: "REQUIRED".into(),
+        runtime_requirement: "OPTIONAL".into(),
+        resource_requirement: "OPTIONAL".into(),
+        materialize: true,
         situation_refs: vec![nous_protocol::public::CognitiveRef {
             kind: "memory_revision".into(),
             value: memory.revision.memory_revision_id.0.to_string(),
@@ -403,6 +487,23 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         projection.segments[0].source_revision.as_deref(),
         Some(memory.revision.memory_revision_id.0.to_string().as_str())
     );
+    assert_eq!(projection.subject_id, subject.0.to_string());
+    assert_eq!(projection.session_id, session.session_id.0.to_string());
+    let mut material_request = request.clone();
+    material_request.memory_requirement = "FORBIDDEN".into();
+    material_request.runtime_requirement = "REQUIRED".into();
+    material_request.max_items = 1;
+    material_request.situation_refs = vec![nous_protocol::public::CognitiveRef {
+        kind: "occurrence".into(),
+        value: source.occurrence.occurrence_id.0.to_string(),
+    }];
+    let material = service
+        .build_contribution_batch(material_request)
+        .await
+        .unwrap();
+    assert_eq!(material.segments.len(), 1);
+    assert_eq!(material.segments[0].text, "Grounded");
+    assert_eq!(material.segments[0].authority, "evidence");
     let owner = service.0.require_memory().unwrap();
     owner
         .mutate_memory_lifecycle(
@@ -493,4 +594,24 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
     let purged = service.build_contribution_batch(request).await.unwrap();
     assert!(purged.segments.is_empty());
     assert_eq!(purged.degradation[0].code, "projection_source_unavailable");
+    service
+        .0
+        .cognition
+        .close_session(subject, session.session_id)
+        .await
+        .unwrap();
+    let closed = nous_protocol::public::ProjectionRequest {
+        subject_id: subject.0.to_string(),
+        session_id: session.session_id.0.to_string(),
+        consumer_id: "default".into(),
+        max_items: 1,
+        max_text_bytes: 8,
+        memory_requirement: "OPTIONAL".into(),
+        runtime_requirement: "OPTIONAL".into(),
+        resource_requirement: "OPTIONAL".into(),
+        materialize: true,
+        ..Default::default()
+    };
+    assert!(matches!(service.build_contribution_batch(closed).await,
+        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::StaleContext));
 }
