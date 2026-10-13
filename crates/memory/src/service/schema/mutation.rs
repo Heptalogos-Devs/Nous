@@ -36,7 +36,7 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        self.validate_schema_formation(input.subject, &input.content)
+        self.validate_schema_formation(mutation.tx(), input.subject, &input.content)
             .await?;
         let producer = if let Some(value) = &input.content.producer {
             Some(AuthorityStore::register_producer_in(mutation.tx(), value).await?)
@@ -159,8 +159,14 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        self.provenance_summary(subject, std::slice::from_ref(&link.basis))
-            .await?;
+        self.provenance_summary_in(
+            mutation.tx(),
+            subject,
+            std::slice::from_ref(&link.basis),
+            None,
+            &mut Default::default(),
+        )
+        .await?;
         let row=sqlx::query("SELECT current_revision_id,object_epoch FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2 FOR UPDATE").bind(subject.0).bind(schema_id.0).fetch_optional(&mut **mutation.tx()).await.map_err(db)?.ok_or_else(||Error::NotFound("CognitiveSchema not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         crate::service::state::fence_epoch(epoch, expected_object_epoch)?;
@@ -271,7 +277,8 @@ impl MemoryService {
             .iter()
             .map(|link| link.basis.clone())
             .collect::<Vec<_>>();
-        self.validate_object_dependency_cycle(
+        self.validate_object_dependency_cycle_in(
+            mutation.tx(),
             input.subject,
             &CognitiveRef::CognitiveSchema(input.schema_id),
             &copied_basis,
@@ -310,7 +317,7 @@ impl MemoryService {
             evidence_links: copied_links,
             ..input.content.clone()
         };
-        self.validate_schema_formation(input.subject, &content)
+        self.validate_schema_formation(mutation.tx(), input.subject, &content)
             .await?;
         let producer = if let Some(value) = &input.content.producer {
             Some(AuthorityStore::register_producer_in(mutation.tx(), value).await?)

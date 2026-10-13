@@ -29,7 +29,7 @@ import {
   UseEventSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { CreateTagRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { rm, writeFile } from "node:fs/promises";
+import { appendFile, rm, writeFile } from "node:fs/promises";
 import { runCli } from "../../apps/nous-cli/src/commands/index.js";
 import { NousError } from "@nous-wave/client";
 import { workspaceTemp } from "../workspace.js";
@@ -91,6 +91,10 @@ function hitMatches(
 async function main() {
   const root = await workspaceTemp("smoke", "memory-");
   const configPath = await prepare(root);
+  await appendFile(
+    `${root}/config/nous.toml`,
+    "\n[database]\nmax_connections = 1\n",
+  );
 
   let booted: Boot | undefined;
   try {

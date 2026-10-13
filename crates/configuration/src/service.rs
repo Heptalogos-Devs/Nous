@@ -117,10 +117,6 @@ impl ConfigurationService {
         self.snapshot(Some(subject), false)
     }
 
-    pub fn desired_snapshot_for_subject(&self, subject: SubjectId) -> Result<ConfigSnapshot> {
-        self.snapshot(Some(subject), true)
-    }
-
     fn snapshot(&self, subject: Option<SubjectId>, desired: bool) -> Result<ConfigSnapshot> {
         let state = self
             .inner

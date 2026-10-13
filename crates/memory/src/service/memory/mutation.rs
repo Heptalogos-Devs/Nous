@@ -52,7 +52,13 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let summary = self
-            .provenance_summary(input.subject, &input.content.basis)
+            .provenance_summary_in(
+                mutation.tx(),
+                input.subject,
+                &input.content.basis,
+                None,
+                &mut Default::default(),
+            )
             .await?;
         if matches!(input.content.formation_mode, FormationMode::Synthesized) {
             Self::validate_synthesized_summary(&summary)?;
@@ -271,7 +277,13 @@ impl MemoryService {
             MutationStart::Active(mutation) => mutation,
         };
         let summary = self
-            .provenance_summary(input.subject, &input.content.basis)
+            .provenance_summary_in(
+                mutation.tx(),
+                input.subject,
+                &input.content.basis,
+                None,
+                &mut Default::default(),
+            )
             .await?;
         if matches!(input.content.formation_mode, FormationMode::Synthesized) {
             Self::validate_synthesized_summary(&summary)?;
@@ -331,7 +343,8 @@ impl MemoryService {
             .bind(input.subject.0).bind(input.memory_id.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::NotFound("memory not found".into()))?;
         let epoch: i64 = row.try_get("object_epoch").map_err(db)?;
         fence_epoch(epoch, input.expected_object_epoch)?;
-        self.validate_object_dependency_cycle(
+        self.validate_object_dependency_cycle_in(
+            tx,
             input.subject,
             &CognitiveRef::Memory(input.memory_id),
             &input.content.basis,

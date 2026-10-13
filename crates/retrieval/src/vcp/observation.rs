@@ -134,9 +134,6 @@ impl VcpQueryObservation {
     pub fn policy(&self) -> &VcpQueryPolicy {
         &self.policy
     }
-    pub fn core_tag_ids(&self) -> &[i64] {
-        &self.core_tag_ids
-    }
     pub fn route_seed(&self, id: i64) -> Option<serde_json::Value> {
         self.query_seeds.iter().find(|seed| seed.id == id).map(|seed| serde_json::json!({"id":seed.id,"energy":seed.energy,"source":"query_activation"}))
             .or_else(|| self.numerical.gating.tags.iter().find(|seed| seed.id == id).map(|seed| serde_json::json!(seed)))

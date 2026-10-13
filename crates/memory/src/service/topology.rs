@@ -45,9 +45,17 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        self.store.validate_reference(subject, &input.from).await?;
-        self.store.validate_reference(subject, &input.to).await?;
-        self.validate_association_basis(subject, &input).await?;
+        for reference in [&input.from, &input.to] {
+            if !self
+                .store
+                .reference_in_subject_tx(mutation.tx(), subject, reference)
+                .await?
+            {
+                return Err(Error::NotFound("association endpoint not found".into()));
+            }
+        }
+        self.validate_association_basis(mutation.tx(), subject, &input)
+            .await?;
         if input.producer.is_some() {
             self.require_current_concept_endpoint(mutation.tx(), subject, &input.from)
                 .await?;
@@ -323,7 +331,7 @@ impl MemoryService {
         tx.commit().await.map_err(db)?;
         Ok((items, more))
     }
-    async fn association_basis_in(
+    pub(super) async fn association_basis_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
@@ -371,26 +379,32 @@ impl MemoryService {
 
     async fn validate_association_basis(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         input: &CreateAssociationRequest,
     ) -> Result<()> {
         let mut has_source_evidence = false;
         let mut use_events = Vec::new();
+        let mut revision_basis = Vec::new();
         for basis in &input.basis {
             match basis {
                 AssociationBasis::Revision(value) => {
                     if matches!(value, RevisionBasis::Evidence(_)) {
                         has_source_evidence = true;
                     }
-                    self.provenance_summary(subject, std::slice::from_ref(value))
-                        .await?;
+                    revision_basis.push(value.clone());
                 }
                 AssociationBasis::UseEvent(value) => {
-                    let active = self.cognition.use_event_support(subject, value).await?;
+                    let active = self
+                        .cognition
+                        .use_event_support_in(tx, subject, value)
+                        .await?;
                     use_events.push(active);
                 }
             }
         }
+        self.provenance_summary_in(tx, subject, &revision_basis, None, &mut Default::default())
+            .await?;
         match input.basis_class {
             AssociationBasisClass::HostExplicit => {}
             AssociationBasisClass::SourceEvidence if !has_source_evidence => {

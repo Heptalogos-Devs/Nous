@@ -91,27 +91,22 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), o
         Ok(result)
     }
 
-    pub async fn evidence_roots(
-        &self,
-        subject: SubjectId,
-        evidence: &EvidenceRef,
-        view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<BTreeSet<EvidenceRoot>> {
-        self.evidence_roots_batch(subject, std::slice::from_ref(evidence), view)
-            .await?
-            .pop()
-            .ok_or_else(|| Error::Infrastructure("evidence roots result missing".into()))
-    }
-
     /// Qualify each locator against its actual occurrence artifact and resolve all roots once.
-    pub async fn evidence_roots_batch(
+    pub async fn evidence_roots_batch_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         evidence: &[EvidenceRef],
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<Vec<BTreeSet<EvidenceRoot>>> {
+        if evidence.len() > 256 {
+            return Err(Error::Invalid(
+                "evidence root batch exceeds 256 references".into(),
+            ));
+        }
         let occurrences = self
-            .occurrences(
+            .occurrences_in(
+                tx,
                 subject,
                 &evidence
                     .iter()
@@ -121,7 +116,9 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), o
             )
             .await?;
         let references: Vec<_> = evidence.iter().map(evidence_reference).collect();
-        let roots = self.lineage_entries(subject, &references, view).await?;
+        let roots = self
+            .lineage_entries_in(tx, subject, &references, view)
+            .await?;
         evidence
             .iter()
             .zip(references)
@@ -148,12 +145,15 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), o
         references: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<HashMap<CognitiveRef, BTreeSet<EvidenceRoot>>> {
-        Ok(self
-            .lineage_entries(subject, references, view)
+        let mut tx = self.store.read_view().await?;
+        let roots = self
+            .lineage_entries_in(&mut tx, subject, references, view)
             .await?
             .into_iter()
             .map(|(reference, lineage)| (reference, lineage.roots))
-            .collect())
+            .collect();
+        tx.commit().await.map_err(db)?;
+        Ok(roots)
     }
 
     pub(super) fn require_lineage_view(
@@ -170,8 +170,9 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), o
         Ok(())
     }
 
-    async fn lineage_entries(
+    async fn lineage_entries_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         references: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
@@ -203,7 +204,7 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), o
             .bind(kinds)
             .bind(ids)
             .bind(view.map(|view| view.as_of))
-            .fetch_all(self.store.pool())
+            .fetch_all(&mut **tx)
             .await
             .map_err(db)?;
         let mut result = HashMap::new();

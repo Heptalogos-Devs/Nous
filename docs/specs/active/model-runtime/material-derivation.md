@@ -48,7 +48,7 @@ description segments 使用 `material.description_segment_bytes` 的稳定 UTF-8
 
 `formFromObservation` 使用调用方提供的稳定 operation_id。语义输入绑定到 operation identity；已有结果直接重放，已有提案直接提交，只有生成时才准备 model/profile/Prompt 与来源。未产生结果时不保存执行 snapshot；相同 operation 与相同输入重放原 outcome，相同 operation 携带不同输入返回 conflict。
 
-调用方可指定 exact representation_id。未指定时，Core 按 Artifact modality 和配置选择可用 representation：text 用 ExtractedText，image 用 ImageDescription，audio 用 AudioDescription 或 Transcript，video 用 SceneDescription。没有可用 textual representation 的 binary input 返回 `material_representation_required`。
+调用方可指定 exact representation_id。Core 向 Material 表达 Occurrence、显式表示、音频直接描述偏好及字节边界；Material 在同次读取中选择表示、解析 payload metadata 与所需 mentions，返回实际 exact 来源和有界内容。未指定表示时，text 用 ExtractedText，image 用 ImageDescription，audio 按偏好用 AudioDescription 或 Transcript，video 用 SceneDescription。没有可用 textual representation 的 binary input 返回 `material_representation_required`。
 
 Aboutness 支持 explicit、select_from_resolved_mentions 与 none。select 模式使用 Kernel 已解析的 mention candidate keys，由 Model 选择子集；显式引用由 owner 验证。Actor identity 单独保存在 Observation。
 

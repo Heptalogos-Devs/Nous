@@ -97,20 +97,6 @@ impl CognitiveRuntimeService {
         Ok((items, more))
     }
 
-    pub async fn require_session(&self, subject: SubjectId, session: SessionId) -> Result<()> {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2 AND closed_at IS NULL)")
-            .bind(subject.0)
-            .bind(session.0)
-            .fetch_one(self.store.pool())
-            .await
-            .map_err(db)?;
-        if exists {
-            Ok(())
-        } else {
-            Err(stale_session(session))
-        }
-    }
-
     pub async fn admit_batch_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

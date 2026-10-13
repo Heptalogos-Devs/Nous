@@ -74,8 +74,9 @@ impl MemoryService {
         Ok(())
     }
 
-    pub(crate) async fn validate_object_dependency_cycle(
+    pub(crate) async fn validate_object_dependency_cycle_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         owner: &CognitiveRef,
         basis: &[RevisionBasis],
@@ -92,14 +93,13 @@ impl MemoryService {
             return Ok(());
         }
         let mut visited = std::collections::HashSet::new();
-        let mut tx = self.store.read_view().await?;
         while !stack.is_empty() {
             let references = stack
                 .drain(..stack.len().min(256))
                 .filter(|reference| visited.insert(reference.clone()))
                 .collect::<Vec<_>>();
             for support in self
-                .exact_supports_in(&mut tx, subject, &references, None)
+                .exact_supports_in(tx, subject, &references, None)
                 .await?
                 .into_values()
             {
@@ -114,7 +114,6 @@ impl MemoryService {
                 }));
             }
         }
-        tx.commit().await.map_err(db)?;
         Ok(())
     }
 
@@ -123,14 +122,21 @@ impl MemoryService {
         subject: SubjectId,
         basis: &[RevisionBasis],
     ) -> Result<ProvenanceSummary> {
-        self.provenance_summary_in_view(subject, basis, None).await
+        let mut tx = self.store.read_view().await?;
+        let summary = self
+            .provenance_summary_in(&mut tx, subject, basis, None, &mut Default::default())
+            .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(summary)
     }
 
-    pub async fn provenance_summary_in_view(
+    pub(super) async fn provenance_summary_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         basis: &[RevisionBasis],
         view: Option<&HistoricalAuthoritySnapshot>,
+        supports: &mut std::collections::HashMap<CognitiveRef, super::support::CognitionSupport>,
     ) -> Result<ProvenanceSummary> {
         if view.is_some_and(|view| view.subject != subject) {
             return Err(Error::Invalid("provenance view subject mismatch".into()));
@@ -159,12 +165,6 @@ impl MemoryService {
         let direct_evidence = evidence_inputs.len();
         let mut active = std::collections::HashSet::new();
         let mut visited = std::collections::HashSet::new();
-        let mut supports = std::collections::HashMap::new();
-        let mut tx = if stack.is_empty() {
-            None
-        } else {
-            Some(self.store.read_view().await?)
-        };
         while let Some((reference, exit)) = stack.pop() {
             if exit {
                 active.remove(&reference);
@@ -197,13 +197,8 @@ impl MemoryService {
                     .into_iter()
                     .collect::<Vec<_>>();
                 supports.extend(
-                    self.exact_supports_in(
-                        tx.as_mut().expect("dependency read"),
-                        subject,
-                        &references,
-                        view,
-                    )
-                    .await?,
+                    self.exact_supports_in(tx, subject, &references, view)
+                        .await?,
                 );
             }
             let nested = supports
@@ -226,13 +221,10 @@ impl MemoryService {
                 }
             }
         }
-        if let Some(tx) = tx {
-            tx.commit().await.map_err(db)?;
-        }
         for (batch_index, evidence) in evidence_inputs.chunks(256).enumerate() {
             for (index, roots) in self
                 .material
-                .evidence_roots_batch(subject, evidence, view)
+                .evidence_roots_batch_in(tx, subject, evidence, view)
                 .await?
                 .into_iter()
                 .enumerate()
@@ -254,17 +246,25 @@ impl MemoryService {
         reference: &CognitiveRef,
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<BTreeSet<EvidenceRoot>> {
-        self.store.validate_reference(subject, reference).await?;
+        if matches!(reference, CognitiveRef::Tag(_)) {
+            self.store.validate_reference(subject, reference).await?;
+            return Ok(BTreeSet::new());
+        }
+        let mut tx = self.store.read_view().await?;
+        let mut supports = std::collections::HashMap::new();
         let basis = match reference {
             CognitiveRef::MemoryRevision(_)
             | CognitiveRef::EpisodeRevision(_)
             | CognitiveRef::JournalRevision(_)
             | CognitiveRef::CognitiveSchemaRevision(_) => {
-                self.exact_supports(subject, std::slice::from_ref(reference), view)
-                    .await?
-                    .remove(reference)
+                supports = self
+                    .exact_supports_in(&mut tx, subject, std::slice::from_ref(reference), view)
+                    .await?;
+                supports
+                    .get(reference)
                     .expect("loaded cognition support")
                     .basis
+                    .clone()
             }
             CognitiveRef::Association(id) => {
                 if view
@@ -274,9 +274,17 @@ impl MemoryService {
                         "association is outside captured view".into(),
                     ));
                 }
-                self.association(subject, *id)
+                if !self
+                    .store
+                    .reference_in_subject_tx(&mut tx, subject, reference)
                     .await?
-                    .basis
+                {
+                    return Err(Error::NotFound("association not found".into()));
+                }
+                self.association_basis_in(&mut tx, subject, &[id.0])
+                    .await?
+                    .remove(&id.0)
+                    .unwrap_or_default()
                     .into_iter()
                     .filter_map(|basis| match basis {
                         AssociationBasis::Revision(basis) => Some(basis),
@@ -285,17 +293,17 @@ impl MemoryService {
                     })
                     .collect()
             }
-            CognitiveRef::Tag(_) => return Ok(BTreeSet::new()),
             _ => {
                 return Err(Error::Invalid(
                     "provenance requires an owned exact cognition/association".into(),
                 ));
             }
         };
-        Ok(self
-            .provenance_summary_in_view(subject, &basis, view)
-            .await?
-            .roots)
+        let summary = self
+            .provenance_summary_in(&mut tx, subject, &basis, view, &mut supports)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(summary.roots)
     }
 
     pub(in crate::service) fn validate_synthesized_summary(

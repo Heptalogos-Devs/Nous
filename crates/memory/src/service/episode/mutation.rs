@@ -41,8 +41,14 @@ impl MemoryService {
             &input.content.members,
         )
         .await?;
-        self.provenance_summary(input.subject, &input.content.basis)
-            .await?;
+        self.provenance_summary_in(
+            mutation.tx(),
+            input.subject,
+            &input.content.basis,
+            None,
+            &mut Default::default(),
+        )
+        .await?;
         self.validate_basis_in_tx(mutation.tx(), input.subject, &input.content.basis)
             .await?;
         validate_parent_and_overlap(
@@ -223,8 +229,14 @@ impl MemoryService {
             &input.content.members,
         )
         .await?;
-        self.provenance_summary(input.subject, &input.content.basis)
-            .await?;
+        self.provenance_summary_in(
+            mutation.tx(),
+            input.subject,
+            &input.content.basis,
+            None,
+            &mut Default::default(),
+        )
+        .await?;
         self.validate_basis_in_tx(mutation.tx(), input.subject, &input.content.basis)
             .await?;
         let parent = input.content.parent_episode_revision_id;

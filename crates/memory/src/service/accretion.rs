@@ -106,10 +106,9 @@ impl MemoryService {
                 2048,
             )
             .await?;
-        tx.commit().await.map_err(db)?;
         let direct_basis = refs
             .iter()
-            .flat_map(|r| supports.remove(r).expect("selected cognition").basis)
+            .flat_map(|r| supports[r].basis.iter().cloned())
             .collect::<Vec<_>>();
         let texts = contents
             .into_iter()
@@ -119,7 +118,10 @@ impl MemoryService {
                 Err(e) => Some(Err(e)),
             })
             .collect::<Result<Vec<_>>>()?;
-        let summary = self.provenance_summary(subject, &direct_basis).await?;
+        let summary = self
+            .provenance_summary_in(&mut tx, subject, &direct_basis, None, &mut supports)
+            .await?;
+        tx.commit().await.map_err(db)?;
         roots.extend(
             summary
                 .roots

@@ -71,6 +71,7 @@ pub(super) struct SchemaRevisionWrite {
 impl MemoryService {
     pub(super) async fn validate_schema_formation(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         content: &SchemaContent,
     ) -> Result<()> {
@@ -85,10 +86,10 @@ impl MemoryService {
                 "Schema revision requires evidence links".into(),
             ));
         }
-        for basis in &basis {
-            validate_exact_basis(std::slice::from_ref(basis))?;
-        }
-        let summary = self.provenance_summary(subject, &basis).await?;
+        validate_exact_basis(&basis)?;
+        let summary = self
+            .provenance_summary_in(tx, subject, &basis, None, &mut Default::default())
+            .await?;
         if content.formation_kind == SchemaFormationKind::Synthesized {
             Self::validate_synthesized_summary(&summary)?;
         }

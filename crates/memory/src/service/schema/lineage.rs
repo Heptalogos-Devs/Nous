@@ -55,7 +55,7 @@ impl MemoryService {
         let mut revisions = Vec::new();
         for mut child in children {
             child.subject = subject;
-            self.validate_schema_formation(subject, &child.content)
+            self.validate_schema_formation(mutation.tx(), subject, &child.content)
                 .await?;
             let producer = if let Some(value) = &child.content.producer {
                 Some(AuthorityStore::register_producer_in(mutation.tx(), value).await?)
@@ -201,7 +201,7 @@ impl MemoryService {
         }
         merged.subject = subject;
         merged.content.evidence_links = merged_links.into_values().collect();
-        self.validate_schema_formation(subject, &merged.content)
+        self.validate_schema_formation(mutation.tx(), subject, &merged.content)
             .await?;
         let producer = if let Some(value) = &merged.content.producer {
             Some(AuthorityStore::register_producer_in(mutation.tx(), value).await?)

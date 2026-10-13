@@ -63,7 +63,8 @@ impl MemoryService {
         self.validate_basis_in_tx(mutation.tx(), input.subject, &basis)
             .await?;
         if let Some(target) = &input.target {
-            self.validate_object_dependency_cycle(
+            self.validate_object_dependency_cycle_in(
+                mutation.tx(),
                 input.subject,
                 &CognitiveRef::Journal(target.journal_id),
                 &basis,

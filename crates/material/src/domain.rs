@@ -182,17 +182,6 @@ pub enum ObservationMaterial {
     ResourceAvailability { resource: ResourceRef },
 }
 
-impl ObservationMaterial {
-    pub fn modality(&self) -> Modality {
-        match self {
-            Self::InlineText { .. } => Modality::Text,
-            Self::ArtifactRef { .. } => Modality::Binary,
-            Self::ExternalObjectRef { .. } => Modality::Structured,
-            Self::StructuredJson { .. } | Self::ResourceAvailability { .. } => Modality::Structured,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OccurrenceDescriptor {
     pub source_class: SourceClass,

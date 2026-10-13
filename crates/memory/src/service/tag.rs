@@ -409,7 +409,8 @@ impl MemoryService {
                 ));
             }
         }
-        self.provenance_summary(subject, basis).await?;
+        self.provenance_summary_in(tx, subject, basis, None, &mut Default::default())
+            .await?;
         self.validate_basis_in_tx(tx, subject, basis).await?;
         Ok(())
     }

@@ -109,8 +109,9 @@ impl CognitiveRuntimeService {
     }
 
     /// A purged event remains a known support receipt, with no surviving use payload.
-    pub async fn use_event_support(
+    pub async fn use_event_support_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         event: &UseEventRef,
     ) -> Result<Option<String>> {
@@ -120,7 +121,7 @@ impl CognitiveRuntimeService {
             ));
         }
         let row = sqlx::query("SELECT (SELECT use_kind FROM cognitive_use_events WHERE subject_id=$1 AND consumer_ref=$2 AND event_id=$3) AS kind,EXISTS(SELECT 1 FROM purged_use_receipts WHERE subject_id=$1 AND consumer_ref=$2 AND event_id=$3) AS purged")
-            .bind(subject.0).bind(&event.consumer_ref).bind(event.event_id.0).fetch_one(self.store.pool()).await.map_err(db)?;
+            .bind(subject.0).bind(&event.consumer_ref).bind(event.event_id.0).fetch_one(&mut **tx).await.map_err(db)?;
         let kind: Option<String> = row.try_get("kind").map_err(db)?;
         if kind.is_none() && !row.try_get::<bool, _>("purged").map_err(db)? {
             return Err(Error::Invalid("UseEvent support was not recorded".into()));
