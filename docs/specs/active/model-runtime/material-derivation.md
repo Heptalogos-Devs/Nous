@@ -12,7 +12,7 @@ Artifact、ObservationOccurrence、SourceRegion、DerivedRepresentation 与 Deri
 
 DerivedRepresentation 保存 ordered exact inputs、strategy、representation kind、ProducerSignature、revision、payload 与 quality。Inputs 可引用 SourceRegion、DerivedRepresentation 或 DerivedRegion，必须属于同一 Subject，不得重复、自引用或形成 cycle。已提交 input set 不可修改。Supersedes 表示显式 refinement lineage，不属于 derivation inputs。
 
-成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。Core 对相同 source region 的派生执行串行处理；已保存的 paid proposal/outcome 不重新读取媒体。原始 bytes 按需要加载，frames mode 先取得实际 FFmpeg version 与采样策略 identity，复用已成功表示保存的输入图和 paid outcome；命中时不下载原 bytes、不重新抽帧或调用模型。
+成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。Core 对相同 source region 的派生执行串行处理；已保存的 paid proposal/outcome 不重新读取媒体。原始 bytes 按需要加载，frames mode 按源引用、采样参数、模型/Prompt 与转写配置直接读取保存成果，proposal 保存正式 CommitInterpretationRequest；命中时不读取原 bytes、不探测 FFmpeg、不抽帧或调用模型。实际 FFmpeg version 在生成分支解析并随成果及 Producer 保存，不作为复用前置条件。
 
 ## Selected text 与 Serving
 
@@ -53,3 +53,5 @@ description segments 使用 `material.description_segment_bytes` 的稳定 UTF-8
 Aboutness 支持 explicit、select_from_resolved_mentions 与 none。select 模式使用 Kernel 已解析的 mention candidate keys，由 Model 选择子集；显式引用由 owner 验证。Actor identity 单独保存在 Observation。
 
 形成结果引用实际使用的 occurrence 与 DerivedRepresentation。Material read/materialize 可按 SourceRegion、DerivedRegion 或 representation 精确回读来源链。普通 recall 不重新解释媒体。
+
+Required role 的失败使用正式 CAPABILITY_UNAVAILABLE 错误保留 requirement 与实际调用 telemetry，外层继续传播。帧路径按真实音轨决定转写工作；已有付费结果可以直接使用，确实需要新转写时才调用 role，optional 失败由派生 owner 返回有效降级结果。

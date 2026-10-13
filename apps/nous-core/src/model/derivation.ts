@@ -7,6 +7,14 @@ import {
 } from "../operation-results.js";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
+import {
+  create,
+  fromJson,
+  toJson,
+  type MessageInitShape,
+} from "@bufbuild/protobuf";
+import { CommitInterpretationRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { DeriveMaterialRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "./runtime.js";
@@ -19,7 +27,7 @@ import type { ModelRole } from "./roles.js";
 import { modelProducer } from "./producer.js";
 import { z } from "zod";
 import type { DerivedRepresentation } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { sampleVideo, videoSampling } from "./video.js";
+import { sampleVideo, videoSamplingIdentity } from "./video.js";
 import { canonicalDigest } from "../digest.js";
 import {
   materialInterpretationSchemaDigest,
@@ -148,73 +156,62 @@ async function deriveMaterialOnce(
       return source;
     };
     const representations: DerivedRepresentation[] = [];
-    const commit = async (
-      text: string,
-      kind: string,
-      inputs: {
-        ordinal: number;
-        reference: { kind: string; value: string };
-        role: string;
-      }[],
-      producerMetadata?: ModelProducerMetadata,
-      quality: Record<string, unknown> = {},
+    type Interpretation = MessageInitShape<
+      typeof CommitInterpretationRequestSchema
+    >;
+    type Inputs = NonNullable<Interpretation["inputs"]>;
+    const content = (
+      input: Interpretation,
+      metadata?: ModelProducerMetadata,
       preprocessingDigest?: string,
-      structuredPayload?: JsonObject,
-      operationIdentity?:
-        | import("@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js").OperationIdentity
-        | Omit<
-            import("@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js").OperationIdentity,
-            "$typeName"
-          >,
-    ) => {
-      const representation = await kernel.materialWorkflow.commitInterpretation(
-        {
-          subjectId: request.subjectId,
-          text,
-          kind,
-          inputs,
-          strategy,
-          structuredPayload,
-          operationIdentity,
-          quality: quality as JsonObject,
-          supersedes:
-            representations.length === 0 ? request.supersedes : undefined,
-          producer: {
-            ...(producerMetadata
-              ? modelProducer(
-                  producerMetadata,
-                  kind === "image_description" || kind === "scene_description"
-                    ? "image_interpretation"
-                    : kind === "transcript"
-                      ? "speech_transcription"
-                      : kind === "extracted_text"
-                        ? "document_extraction"
-                        : "text_interpretation",
-                )
-              : {
-                  providerClass: "deterministic",
-                  operation: "document_extraction",
-                  implementation: "verified-utf8-decoding-v1",
-                }),
-            preprocessingIdentity: `${producerMetadata ? (producerMetadata.promptId ?? "standard-audio-transcription") : "verified-utf8"}/${strategy}`,
-            preprocessingRevision: producerMetadata?.promptDigest ?? "1",
-            configDigest:
-              preprocessingDigest || structuredPayload
-                ? canonicalDigest({
-                    role: producerMetadata?.configDigest,
-                    preprocessing: preprocessingDigest,
-                  })
-                : (producerMetadata?.configDigest ?? "utf8-fatal-v1"),
-          },
-        },
+    ) =>
+      create(CommitInterpretationRequestSchema, {
+        ...input,
+        subjectId: request.subjectId,
+        strategy,
+        supersedes:
+          representations.length === 0 ? request.supersedes : undefined,
+        producer: create(ProducerSignatureSchema, {
+          ...(metadata
+            ? modelProducer(
+                metadata,
+                input.kind === "image_description" ||
+                  input.kind === "scene_description"
+                  ? "image_interpretation"
+                  : input.kind === "transcript"
+                    ? "speech_transcription"
+                    : input.kind === "extracted_text"
+                      ? "document_extraction"
+                      : "text_interpretation",
+              )
+            : {
+                providerClass: "deterministic",
+                operation: "document_extraction",
+                implementation: "verified-utf8-decoding-v1",
+              }),
+          preprocessingIdentity: `${metadata ? (metadata.promptId ?? "standard-audio-transcription") : "verified-utf8"}/${strategy}`,
+          preprocessingRevision: metadata?.promptDigest ?? "1",
+          configDigest:
+            preprocessingDigest || input.structuredPayload
+              ? canonicalDigest({
+                  role: metadata?.configDigest,
+                  preprocessing: preprocessingDigest,
+                  ffmpegVersion: input.quality?.ffmpeg_version,
+                })
+              : (metadata?.configDigest ?? "utf8-fatal-v1"),
+        }),
+      });
+    const commit = async (input: Interpretation) => {
+      const value = await kernel.materialWorkflow.commitInterpretation(
+        input,
         options,
       );
-      representations.push(representation);
-      return representation;
+      representations.push(value);
+      return value;
     };
     const paidIdentity = (
       kind: string,
-      graph: Parameters<typeof commit>[2],
+      graph: Inputs,
       producer: string,
       preprocessingDigest?: string,
       supersedes?: string,
@@ -239,9 +236,25 @@ async function deriveMaterialOnce(
         semanticDigest: key,
       };
     };
+    const appendTranscripts = async (graph: Inputs) => {
+      for (const input of graph) {
+        if (
+          input.role === "transcript" &&
+          !representations.some(
+            (item) => item.representationId === input.reference!.value,
+          )
+        )
+          representations.push(
+            await kernel.material.getDerivedRepresentation(
+              { subjectId: request.subjectId, id: input.reference!.value },
+              options,
+            ),
+          );
+      }
+    };
     const paid = async (
       kind: string,
-      graph: Parameters<typeof commit>[2],
+      graph: Inputs,
       role: ModelRole,
       invoke: (snapshot: PreparedModelRole) => Promise<{
         text: string;
@@ -249,6 +262,8 @@ async function deriveMaterialOnce(
         execution: ExecutionTelemetry;
         inputAccess: ChannelAccess;
         structuredPayload?: JsonObject;
+        inputs?: Inputs;
+        quality?: Record<string, unknown>;
       }>,
       quality: Record<string, unknown> = {},
       preprocessingDigest?: string,
@@ -281,31 +296,43 @@ async function deriveMaterialOnce(
             { subjectId: request.subjectId, id: outcome.representationId },
             options,
           );
+          await appendTranscripts(representation.inputs);
           representations.push(representation);
           return representation;
         },
         generate: async () => {
-          const { execution, ...proposal } = await invoke(model);
-          return {
-            proposal,
-            execution,
-            dependencies: graph.map((input) => input.reference!),
-          };
+          try {
+            const produced = await invoke(model);
+            const input = content(
+              {
+                kind,
+                text: produced.text,
+                inputs: produced.inputs ?? graph,
+                quality: {
+                  ...quality,
+                  ...produced.quality,
+                  input_access: produced.inputAccess,
+                } as JsonObject,
+                structuredPayload: produced.structuredPayload,
+                operationIdentity: identity,
+              },
+              produced.producerMetadata,
+              preprocessingDigest,
+            );
+            return {
+              proposal: toJson(CommitInterpretationRequestSchema, input),
+              execution: produced.execution,
+              dependencies: input.inputs.map((item) => item.reference!),
+            };
+          } catch (error) {
+            models.invocations.allowDegradation(error, options.signal, role);
+            throw error;
+          }
         },
         commit: async (proposal) => {
-          const representation = await commit(
-            proposal.text,
-            kind,
-            graph,
-            proposal.producerMetadata,
-            {
-              ...quality,
-              input_access: channelAccessSchema.parse(proposal.inputAccess),
-            },
-            preprocessingDigest,
-            proposal.structuredPayload,
-            identity,
-          );
+          const input = fromJson(CommitInterpretationRequestSchema, proposal);
+          await appendTranscripts(input.inputs);
+          const representation = await commit(input);
           return {
             value: representation,
             outcome: { representationId: representation.representationId },
@@ -462,13 +489,9 @@ async function deriveMaterialOnce(
         };
       }
       if (mime.startsWith("video/")) {
-        if (!models.tempRoot)
+        const tempRoot = models.tempRoot;
+        if (!tempRoot)
           throw new Error("Resolved TempRoot is required for video sampling");
-        const sampling = await videoSampling(
-          models.configuration.video,
-          models.credentialEnvironments,
-          signal,
-        );
         const kind =
           strategy === "direct_structured"
             ? "structured_interpretation"
@@ -477,197 +500,138 @@ async function deriveMaterialOnce(
           strategy === "direct_structured"
             ? "material_direct_structuring"
             : "material_description";
-        const model = await models.invocations.preparePrompt(
-          role,
-          strategy === "direct_structured"
-            ? undefined
-            : models.configuration.video.prompt,
-        );
-        const transcriptionConfig = models.invocations.profile(
-          "speech_transcription",
-        )
+        const transcriptionConfig = models.configuration.roles
+          .speech_transcription
           ? models.invocations.prepare("speech_transcription").configDigest
           : null;
-        const available = await kernel.material.listDerivedRepresentations(
-          {
-            subjectId: request.subjectId,
-            sourceRegionId: request.sourceRegionId,
-            kind,
-            limit: 32,
-          },
-          options,
-        );
-        let selected: DerivedRepresentation | undefined;
-        let degradation: { code: string; detail: string }[] = [];
-        for (const candidate of available.items) {
-          if (
-            candidate.strategy !== strategy ||
-            candidate.quality?.preprocessing_digest !==
-              sampling.preprocessingDigest ||
-            candidate.quality?.transcription_config_digest !==
-              transcriptionConfig
-          )
-            continue;
-          const graph = candidate.inputs.map((input) => ({
-            ordinal: input.ordinal,
-            reference: {
-              kind: input.reference!.kind,
-              value: input.reference!.value,
-            },
-            role: input.role,
-          }));
-          const saved = await kernel.modelResults.readOperation(
-            paidIdentity(
-              kind,
-              graph,
-              model.configDigest,
-              sampling.preprocessingDigest,
-              graph.length === 1 ? request.supersedes : undefined,
-            ),
-            options,
-          );
-          if (!saved.outcome || saved.outcome.purged) continue;
-          const outcome = JSON.parse(saved.outcome.payloadJson) as {
-            representationId: string;
-          };
-          if (outcome.representationId !== candidate.representationId) continue;
-          const predecessors = await Promise.all(
-            graph
-              .filter(
-                (input) => input.reference.kind === "derived_representation",
-              )
-              .map((input) =>
-                kernel.material.getDerivedRepresentation(
-                  { subjectId: request.subjectId, id: input.reference.value },
-                  options,
-                ),
-              ),
-          );
-          if (
-            predecessors.length &&
-            predecessors[0]!.supersedes !== request.supersedes
-          )
-            continue;
-          representations.push(...predecessors);
-          representations.push(candidate);
-          selected = candidate;
-          degradation = (candidate.quality?.video_degradation ?? []) as {
-            code: string;
-            detail: string;
-          }[];
-          break;
-        }
-        if (!selected) {
-          const samples = await sampleVideo(
-            (await loadSource()).content,
-            models.configuration.video,
-            models.tempRoot,
-            models.credentialEnvironments,
-            Boolean(models.invocations.profile("speech_transcription")),
-            signal,
-            sampling,
-          );
-          let transcript: string | undefined;
-          let transcriptReference: { kind: string; value: string } | undefined;
-          const sceneInputs = [...inputs];
-          if (samples.audio) {
-            try {
-              const representation = await paid(
-                "transcript",
-                inputs,
-                "speech_transcription",
-                async (snapshot) => {
-                  const result = await models.invocations.transcription(
-                    samples.audio!,
-                    signal,
-                    snapshot,
-                  );
-                  return {
-                    text: result.value,
-                    producerMetadata: result.producerMetadata,
-                    execution: result.execution,
-                    inputAccess: {
-                      visual: "unavailable",
-                      audio: "original",
-                      source_text: "unavailable",
-                    },
-                  };
-                },
-                {
-                  ...samples.quality,
-                  preprocessing_digest: samples.preprocessingDigest,
-                },
-                samples.preprocessingDigest,
-              );
-              transcript = representation.text;
-              transcriptReference = {
-                kind: "derived_representation",
-                value: representation.representationId,
-              };
-              sceneInputs.push({
-                ordinal: 1,
-                reference: {
+        const preprocessingDigest = canonicalDigest({
+          sampling: videoSamplingIdentity(models.configuration.video),
+          transcriptionConfig,
+        });
+        const selected = await paid(
+          kind,
+          inputs,
+          role,
+          async (prepared) => {
+            const degradation: { code: string; detail: string }[] = [];
+            const samples = await sampleVideo(
+              (await loadSource()).content,
+              models.configuration.video,
+              tempRoot,
+              models.credentialEnvironments,
+              Boolean(models.configuration.roles.speech_transcription),
+              signal,
+            );
+            let transcript: string | undefined;
+            let transcriptReference:
+              { kind: string; value: string } | undefined;
+            const sceneInputs = [...inputs];
+            if (samples.audio) {
+              try {
+                const representation = await paid(
+                  "transcript",
+                  inputs,
+                  "speech_transcription",
+                  async (snapshot) => {
+                    const result = await models.invocations.transcription(
+                      samples.audio!,
+                      signal,
+                      snapshot,
+                    );
+                    return {
+                      text: result.value,
+                      producerMetadata: result.producerMetadata,
+                      execution: result.execution,
+                      inputAccess: {
+                        visual: "unavailable",
+                        audio: "original",
+                        source_text: "unavailable",
+                      },
+                    };
+                  },
+                  {
+                    ...samples.quality,
+                    preprocessing_digest: samples.preprocessingDigest,
+                  },
+                  samples.preprocessingDigest,
+                );
+                transcript = representation.text;
+                transcriptReference = {
                   kind: "derived_representation",
                   value: representation.representationId,
-                },
-                role: "transcript",
-              });
-            } catch (error) {
+                };
+                sceneInputs.push({
+                  ordinal: 1,
+                  reference: {
+                    kind: "derived_representation",
+                    value: representation.representationId,
+                  },
+                  role: "transcript",
+                });
+              } catch (error) {
+                models.invocations.allowDegradation(
+                  error,
+                  signal,
+                  "speech_transcription",
+                );
+                degradation.push({
+                  code: "video_transcription_unavailable",
+                  detail: "Scene description uses frames without a transcript",
+                });
+              }
+            } else if (samples.hasAudio) {
               models.invocations.allowDegradation(
-                error,
+                new Error(
+                  samples.audioProblem ?? "Video audio is not interpreted",
+                ),
                 signal,
                 "speech_transcription",
               );
               degradation.push({
-                code: "video_transcription_unavailable",
-                detail: "Scene description uses frames without a transcript",
+                code: "video_audio_not_interpreted",
+                detail: "Audio is not included in the scene description",
               });
             }
-          } else if (samples.hasAudio)
-            degradation.push({
-              code: "video_audio_not_interpreted",
-              detail: "Audio is not included in the scene description",
-            });
-          const sceneContext: StructuredMaterialContext = {
-            ...directContext,
-            access: {
-              ...directContext.access,
-              audio: transcript ? "representation" : "unavailable",
-            },
-            catalog: {
-              ...directContext.catalog,
-              ...(transcriptReference ? { T001: transcriptReference } : {}),
-            },
-          };
-          selected = await paid(
-            strategy === "direct_structured"
-              ? "structured_interpretation"
-              : "scene_description",
-            sceneInputs,
-            strategy === "direct_structured"
-              ? "material_direct_structuring"
-              : "material_description",
-            (snapshot) =>
-              models.material.describeScene(
-                samples.frames,
-                transcript,
-                strategy === "direct_structured",
-                signal,
-                snapshot,
-                sceneContext,
-              ),
-            {
-              ...samples.quality,
-              preprocessing_digest: samples.preprocessingDigest,
-              video_degradation: degradation,
-              transcription_config_digest: transcriptionConfig,
-            },
-            samples.preprocessingDigest,
-            strategy === "direct_structured"
-              ? undefined
-              : models.configuration.video.prompt,
-          );
-        }
+            const sceneContext: StructuredMaterialContext = {
+              ...directContext,
+              access: {
+                ...directContext.access,
+                audio: transcript ? "representation" : "unavailable",
+              },
+              catalog: {
+                ...directContext.catalog,
+                ...(transcriptReference ? { T001: transcriptReference } : {}),
+              },
+            };
+            const interpreted = await models.material.describeScene(
+              samples.frames,
+              transcript,
+              strategy === "direct_structured",
+              signal,
+              prepared,
+              sceneContext,
+            );
+            return {
+              ...interpreted,
+              inputs: sceneInputs,
+              quality: {
+                ...samples.quality,
+                preprocessing_digest: samples.preprocessingDigest,
+                video_degradation: degradation,
+                transcription_config_digest: transcriptionConfig,
+              },
+            };
+          },
+          {},
+          preprocessingDigest,
+          strategy === "direct_structured"
+            ? undefined
+            : models.configuration.video.prompt,
+        );
+        const degradation = (selected.quality?.video_degradation ?? []) as {
+          code: string;
+          detail: string;
+        }[];
         if (strategy === "describe_then_structure") {
           try {
             await structureDescription(selected);
@@ -714,13 +678,14 @@ async function deriveMaterialOnce(
       }
       const description = textual
         ? await commit(
-            new TextDecoder("utf-8", { fatal: true }).decode(
-              (await loadSource()).content,
-            ),
-            "extracted_text",
-            inputs,
-            undefined,
-            { input_access: directContext.access },
+            content({
+              text: new TextDecoder("utf-8", { fatal: true }).decode(
+                (await loadSource()).content,
+              ),
+              kind: "extracted_text",
+              inputs,
+              quality: { input_access: directContext.access },
+            }),
           )
         : mime.startsWith("audio/")
           ? await paid(

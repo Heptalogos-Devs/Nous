@@ -1,6 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { domainErrorDetail } from "@nous-wave/client/errors";
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { OperationRecordSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
@@ -13,6 +14,7 @@ const observed = vi.hoisted(() => ({
   roots: [] as string[],
   tokenInherited: false,
   failFrames: false,
+  hasAudio: false,
 }));
 vi.mock("node:child_process", async (original) => {
   const actual = await original<typeof import("node:child_process")>();
@@ -46,7 +48,11 @@ vi.mock("node:child_process", async (original) => {
           );
           return;
         }
-        callback(null, "", "Duration: 00:00:02.00\nStream #0:0 Video:");
+        callback(
+          null,
+          "",
+          `Duration: 00:00:02.00\nStream #0:0 Video:${observed.hasAudio ? "\nStream #0:1 Audio:" : ""}`,
+        );
         return;
       }
       if (observed.failFrames) {
@@ -54,7 +60,12 @@ vi.mock("node:child_process", async (original) => {
         return;
       }
       void fs
-        .writeFile(args.at(-1)!, new Uint8Array([255, 216, 255, 217]))
+        .writeFile(
+          args.at(-1)!,
+          args.at(-1)!.endsWith(".wav")
+            ? new Uint8Array(100)
+            : new Uint8Array([255, 216, 255, 217]),
+        )
         .then(
           () => callback(null, "", "showinfo pts_time:0"),
           () => callback(new Error("fixture write failure"), "", ""),
@@ -133,7 +144,7 @@ it("bounds samples and subprocess input, excludes gateway credentials and remove
   }
 });
 
-it("frames without a transcript cannot acquire audio evidence in either structured strategy", async () => {
+it("frame derivation preserves source channels, cached results and required audio failures", async () => {
   observed.failFrames = false;
   const instance = await mkdtemp(join(tmpdir(), "nous-frame-evidence-"));
   const policy = modelConfigurationSchema.parse({
@@ -153,7 +164,8 @@ it("frames without a transcript cannot acquire audio evidence in either structur
   const kernel = {
     execution: coreExecutionSchema.parse(undefined),
     material: {
-      listDerivedRepresentations: async () => ({ items: committed }),
+      getDerivedRepresentation: async ({ id }: { id: string }) =>
+        committed.find((item) => item.representationId === id)!,
     },
     artifacts: {
       materializeEvidence: async function* (
@@ -198,7 +210,7 @@ it("frames without a transcript cannot acquire audio evidence in either structur
         const { $typeName: _requestType, ...content } = input;
         const representation = create(DerivedRepresentationSchema, {
           ...content,
-          representationId: "00000000-0000-0000-0000-000000000001",
+          representationId: "00000000-0000-4000-8000-000000000001",
         });
         committed.push(representation);
         return representation;
@@ -312,9 +324,10 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       }),
       {},
     );
-    expect(replay.selectedRepresentationId).toBe(
-      committed[0]!.representationId,
-    );
+    expect(
+      replay.selectedRepresentationId,
+      JSON.stringify(replay.degradation),
+    ).toBe(committed[0]!.representationId);
     expect(byteReads).toBe(before.bytes);
     expect(
       observed.commands.filter((args) => args.includes("-frames:v")),
@@ -335,7 +348,64 @@ it("frames without a transcript cannot acquire audio evidence in either structur
     expect(JSON.parse(structuredText) as unknown).toMatchObject({
       modalities: { audio: false },
     });
+    const required = modelConfigurationSchema.parse({
+      ...policy,
+      gateway_profiles: {
+        unavailable: {
+          base_url: "http://127.0.0.1:1/v1",
+          credential_env: "NOUS_MEDIA_UNAVAILABLE",
+          enabled: false,
+        },
+      },
+      model_profiles: {
+        scene: {
+          gateway: "unavailable",
+          protocol: "openai-chat",
+          model: "scene",
+          capabilities: ["text", "image_input"],
+        },
+        speech: {
+          gateway: "unavailable",
+          protocol: "openai-audio-transcription",
+          model: "speech",
+          capabilities: ["speech_transcription"],
+        },
+      },
+      execution_profiles: {
+        scene: { model: "scene" },
+        speech: { model: "speech" },
+      },
+      roles: {
+        material_description: { routes: ["scene"] },
+        speech_transcription: { routes: ["speech"], requirement: "required" },
+      },
+    });
+    observed.hasAudio = true;
+    let requiredFailure: unknown;
+    try {
+      await deriveMaterial(
+        kernel,
+        new ModelRuntime(
+          await ModelInvocations.create(required),
+          required,
+          instance,
+        ),
+        create(DeriveMaterialRequestSchema, {
+          subjectId: "subject",
+          sourceRegionId: "source",
+          strategy: "description_only",
+        }),
+        {},
+      );
+    } catch (error) {
+      requiredFailure = error;
+    }
+    expect(domainErrorDetail(requiredFailure)?.context).toMatchObject({
+      capability: "model.speech_transcription",
+      requirement: "required",
+    });
   } finally {
+    observed.hasAudio = false;
     await rm(instance, { recursive: true, force: true });
   }
 });

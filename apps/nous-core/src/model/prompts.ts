@@ -1,6 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { getStreamAsBuffer } from "get-stream";
 import { open, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
@@ -51,20 +52,12 @@ export class PromptRegistry {
       const stat = await handle.stat();
       if (!stat.isFile() || stat.size > MAX_PROMPT_BYTES)
         throw new Error("Prompt exceeds 128 KiB or is not a file");
-      const buffer = Buffer.alloc(MAX_PROMPT_BYTES + 1);
-      let size = 0;
-      while (size < buffer.length) {
-        const { bytesRead } = await handle.read(
-          buffer,
-          size,
-          buffer.length - size,
-          null,
-        );
-        if (!bytesRead) break;
-        size += bytesRead;
-      }
-      if (size > MAX_PROMPT_BYTES) throw new Error("Prompt exceeds 128 KiB");
-      const bytes = buffer.subarray(0, size);
+      const bytes = await getStreamAsBuffer(
+        handle.createReadStream({ autoClose: false }),
+        {
+          maxBuffer: MAX_PROMPT_BYTES,
+        },
+      );
       const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       if (!text.trim()) throw new Error("Empty prompt asset");
       return {

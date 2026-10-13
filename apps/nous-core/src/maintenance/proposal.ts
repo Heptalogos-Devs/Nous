@@ -6,6 +6,7 @@ import { type ExecutionOptions } from "../execution.js";
 import { create, toJson } from "@bufbuild/protobuf";
 
 import {
+  MaintenancePlanSchema,
   ApplyEpisodePartitionRequestSchema,
   CommitJournalRequestSchema,
   type MaintenanceNeed,
@@ -27,17 +28,14 @@ import type { ModelGenerationOutput } from "../model/schemas/contracts.js";
 import { modelProducer } from "../model/producer.js";
 
 import { type MaintenancePlan } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
-import {
-  type MaintenanceSnapshot,
-  type MaintenanceProposal,
-} from "./records.js";
+import { type MaintenanceProposal } from "./records.js";
 
-/** Builds and validates a proposal from one frozen owner plan; commits remain in workflow. */
+/** Builds and validates a proposal from one frozen owner plan; commits remain with the owning maintenance operation. */
 export async function buildMaintenanceProposal({
   models,
   need,
   plan,
-  snapshot,
+  model,
   operationId,
   options,
   reserveModelCall,
@@ -45,12 +43,12 @@ export async function buildMaintenanceProposal({
   models: ModelRuntime;
   need: MaintenanceNeed;
   plan: MaintenancePlan;
-  snapshot: MaintenanceSnapshot;
+  model: import("../model/execution/binding.js").PreparedModelRole;
   operationId: string;
   options: ExecutionOptions;
   reserveModelCall: () => void;
 }): Promise<{ proposal: MaintenanceProposal; execution: ExecutionTelemetry }> {
-  const model = snapshot.model!;
+  const input = toJson(MaintenancePlanSchema, plan);
   if (
     need.kind === "concept_maintenance" &&
     (!plan.conceptCatalog || !plan.conceptModelInputJson)
@@ -59,7 +57,7 @@ export async function buildMaintenanceProposal({
   const content =
     need.kind === "concept_maintenance"
       ? plan.conceptModelInputJson!
-      : JSON.stringify(snapshot.plan);
+      : JSON.stringify(input);
   const result = await models.invocations.generate(
     model.role,
     { content },
@@ -129,7 +127,7 @@ export async function buildMaintenanceProposal({
         result.value as ModelGenerationOutput<"concept_maintenance">;
       proposed = {
         action: "concept",
-        input: snapshot.plan,
+        input: input,
         proposal,
         producer: toJson(
           ProducerSignatureSchema,
@@ -142,7 +140,7 @@ export async function buildMaintenanceProposal({
     } else if (need.kind === "memory_consolidate") {
       proposed = {
         action: "consolidation",
-        input: snapshot.plan,
+        input: input,
         proposal: result.value as ModelGenerationOutput<"memory_consolidation">,
         producer: toJson(
           ProducerSignatureSchema,

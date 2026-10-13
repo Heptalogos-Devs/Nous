@@ -23,11 +23,10 @@ export async function sampleVideo(
   secretNames: readonly string[],
   includeAudio: boolean,
   signal?: AbortSignal,
-  fixed?: Awaited<ReturnType<typeof videoSampling>>,
 ) {
   if (bytes.byteLength > policy.max_source_bytes)
     throw new Error("Video source exceeds configured byte bound");
-  const sampling = fixed ?? (await videoSampling(policy, secretNames, signal));
+  const sampling = await videoSampling(policy, secretNames, signal);
   const { run, version } = sampling;
   await mkdir(tempRoot, { recursive: true });
   const root = await mkdtemp(join(tempRoot, "nous-video-"));
@@ -186,7 +185,7 @@ export async function sampleVideo(
 }
 
 /** Resolve the actual sampling implementation before reading or transforming source bytes. */
-export async function videoSampling(
+async function videoSampling(
   policy: Policy,
   secretNames: readonly string[],
   signal?: AbortSignal,
@@ -233,10 +232,18 @@ export async function videoSampling(
   return {
     run,
     version,
-    preprocessingDigest: canonicalDigest({
-      version,
-      policy,
-      videoFrameInputIdentity,
-    }),
+    preprocessingDigest: videoSamplingIdentity(policy),
   };
+}
+
+/** Cache identity describes requested sampling; runtime facts are recorded with produced results. */
+export function videoSamplingIdentity(policy: Policy) {
+  return canonicalDigest({
+    videoFrameInputIdentity,
+    max_frames: policy.max_frames,
+    max_frame_bytes: policy.max_frame_bytes,
+    max_audio_bytes: policy.max_audio_bytes,
+    max_video_seconds: policy.max_video_seconds,
+    frame_end_margin_seconds: policy.frame_end_margin_seconds,
+  });
 }

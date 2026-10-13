@@ -9,7 +9,7 @@ import {
 } from "./identity.js";
 import { authorityRejection } from "./rejection.js";
 import type { ExecutionOptions } from "../execution.js";
-import { fromJson, toJson } from "@bufbuild/protobuf";
+import { fromJson } from "@bufbuild/protobuf";
 import { z } from "zod";
 import {
   MaintenancePlanSchema,
@@ -130,10 +130,7 @@ export async function runModelMaintenance(
           operationId,
           options,
           reserveModelCall,
-          snapshot: {
-            plan: toJson(MaintenancePlanSchema, plan),
-            model: models.invocations.prepare(role),
-          },
+          model: models.invocations.prepare(role),
         });
         const actions =
           generated.proposal.action === "concept" ||

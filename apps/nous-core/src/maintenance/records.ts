@@ -9,7 +9,6 @@ import {
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { protocolReferences } from "@nous-wave/protocol/messages";
 import type { Dependency } from "../operation-results.js";
-import type { PreparedModelRole } from "../model/execution/binding.js";
 import type { ModelGenerationOutput } from "../model/schemas/contracts.js";
 
 export const maintenanceRoles = {
@@ -40,10 +39,6 @@ export type MaintenanceOutcome = {
     | "rejected_invalid";
   problemCode?: string;
   actions?: MaintenanceActionResult[];
-};
-export type MaintenanceSnapshot = {
-  plan: JsonValue;
-  model: PreparedModelRole;
 };
 export type MaintenanceProposal =
   | { action: "partition" | "journal"; request: JsonValue }

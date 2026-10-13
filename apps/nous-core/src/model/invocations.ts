@@ -1,4 +1,4 @@
-import { Code, ConnectError } from "@connectrpc/connect";
+import { Code } from "@connectrpc/connect";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,7 +9,18 @@ import {
   type PreparedModelRole,
   type ModelProducerMetadata,
 } from "./execution/binding.js";
-import { executeRoutes, GenerationFailure } from "./execution/routes.js";
+import {
+  executeRoutes,
+  GenerationFailure,
+  attachExecutionTelemetry,
+  failedExecutionTelemetry,
+} from "./execution/routes.js";
+import {
+  domainError,
+  domainErrorDetail,
+  DomainErrorCode,
+  ErrorRecovery,
+} from "@nous-wave/client/errors";
 import type { UserContent } from "ai";
 import {
   generateProvider,
@@ -155,12 +166,35 @@ export class ModelInvocations {
     mandatory = false,
   ) {
     if (signal?.aborted) throw signal.reason ?? error;
+    const detail = domainErrorDetail(error);
+    if (
+      detail?.code === DomainErrorCode.CAPABILITY_UNAVAILABLE &&
+      detail.context.requirement === "required"
+    )
+      throw error;
     const failedRole = error instanceof GenerationFailure ? error.role : role;
     if (
       mandatory ||
       (failedRole && this.requirement(failedRole) === "required")
-    )
-      throw ConnectError.from(error, Code.FailedPrecondition);
+    ) {
+      const failure = domainError(
+        error instanceof Error
+          ? error.message
+          : "Required model capability unavailable",
+        Code.FailedPrecondition,
+        {
+          code: DomainErrorCode.CAPABILITY_UNAVAILABLE,
+          recovery: ErrorRecovery.CHECK_CONFIGURATION,
+          context: {
+            capability: `model.${failedRole ?? "generation"}`,
+            requirement: "required",
+          },
+        },
+      );
+      const execution = failedExecutionTelemetry(error);
+      if (execution) attachExecutionTelemetry(failure, execution);
+      throw failure;
+    }
   }
   prepare(name: ModelRole): PreparedModelRole {
     const value = this.roles.get(name)?.prepared;
