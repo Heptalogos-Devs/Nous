@@ -34,32 +34,28 @@ impl CognitiveRuntimeService {
                 "tag_anchors": input.tag_anchors,
             }),
         )?;
-        let mut tx = self.store.begin().await?;
-        lock_operation(&mut tx, input.subject, input.operation_id).await?;
-        if let Some(existing) = check_receipt(
-            &mut tx,
+        let mut mutation = match MutationEnvelope::begin(
+            &self.store,
             input.subject,
             input.operation_id,
             "create_work_context",
             &digest,
+            None,
         )
         .await?
         {
-            tx.commit().await.map_err(db)?;
-            return self
-                .work_context(input.subject, replay_context(existing)?)
-                .await;
-        }
+            MutationStart::Replay(existing) => {
+                return self
+                    .work_context(input.subject, replay_context(existing)?)
+                    .await;
+            }
+            MutationStart::Active(mutation) => mutation,
+        };
+        let tx = mutation.tx();
         let work_context_id = Uuid::now_v7();
-        validate_refs_in_tx(
-            &self.store,
-            &mut tx,
-            input.subject,
-            &input.cognition_anchors,
-        )
-        .await?;
+        validate_refs_in_tx(&self.store, tx, input.subject, &input.cognition_anchors).await?;
         let typed = typed_anchors(&input.entity_anchors, &input.tag_anchors);
-        validate_refs_in_tx(&self.store, &mut tx, input.subject, &typed).await?;
+        validate_refs_in_tx(&self.store, tx, input.subject, &typed).await?;
         let now = self.now(input.subject);
         sqlx::query(
             "INSERT INTO work_contexts(work_context_id,subject_id,state,purpose,unresolved_questions,constraints,resume_conditions,budget_summary,context_text,revision,created_at,updated_at) VALUES($1,$2,'open',$3,$4,$5,$6,$7,$9,1,$8,$8)",
@@ -73,13 +69,13 @@ impl CognitiveRuntimeService {
         .bind(&input.budget_summary)
         .bind(now)
         .bind(&input.context_text)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
-        write_anchors(&mut tx, work_context_id, &input.cognition_anchors, &typed).await?;
+        write_anchors(tx, work_context_id, &input.cognition_anchors, &typed).await?;
         self.store
             .ensure_identity_addresses_in(
-                &mut tx,
+                tx,
                 input.subject,
                 &[CognitiveRef::WorkContext(nous_core::WorkContextId(
                     work_context_id,
@@ -87,17 +83,14 @@ impl CognitiveRuntimeService {
                 &input.purpose,
             )
             .await?;
-        commit_receipt(
-            &mut tx,
-            input.subject,
-            input.operation_id,
-            "work_context",
-            Some(&work_context_id.to_string()),
-            None,
-            None,
-        )
-        .await?;
-        tx.commit().await.map_err(db)?;
+        mutation
+            .commit(
+                "work_context",
+                Some(&work_context_id.to_string()),
+                None,
+                None,
+            )
+            .await?;
         self.work_context(input.subject, work_context_id).await
     }
     pub async fn update_work_context(
@@ -114,32 +107,34 @@ impl CognitiveRuntimeService {
                 "intent": input.intent,
             }),
         )?;
-        let mut tx = self.store.begin().await?;
-        lock_operation(&mut tx, input.subject, input.operation_id).await?;
-        if let Some(existing) = check_receipt(
-            &mut tx,
+        let mut mutation = match MutationEnvelope::begin(
+            &self.store,
             input.subject,
             input.operation_id,
             "update_work_context",
             &digest,
+            None,
         )
         .await?
         {
-            tx.commit().await.map_err(db)?;
-            return self
-                .work_context(input.subject, replay_context(existing)?)
-                .await;
-        }
+            MutationStart::Replay(existing) => {
+                return self
+                    .work_context(input.subject, replay_context(existing)?)
+                    .await;
+            }
+            MutationStart::Active(mutation) => mutation,
+        };
+        let tx = mutation.tx();
         let row = sqlx::query(
             "SELECT * FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR UPDATE",
         )
         .bind(input.subject.0)
         .bind(input.work_context_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(db)?
         .ok_or_else(|| Error::NotFound("WorkContext not found".into()))?;
-        let mut next = self.work_context_from_row(row, &mut tx).await?;
+        let mut next = self.work_context_from_row(row, tx).await?;
         let revision = next.revision;
         if next.state == WorkContextState::Ended {
             return Err(Error::FailedPrecondition("WorkContext is ended".into()));
@@ -154,10 +149,17 @@ impl CognitiveRuntimeService {
             .with_context("actual_revision", revision)
             .into());
         }
+        let anchors_changed = !matches!(
+            &input.intent,
+            WorkContextIntent::Fields(_) | WorkContextIntent::Clear(WorkContextClearScope::Text)
+        );
         next.apply_intent(input.intent)?;
-        validate_refs_in_tx(&self.store, &mut tx, input.subject, &next.cognition_anchors).await?;
-        let typed = typed_anchors(&next.entity_anchors, &next.tag_anchors);
-        validate_refs_in_tx(&self.store, &mut tx, input.subject, &typed).await?;
+        if anchors_changed {
+            validate_refs_in_tx(&self.store, tx, input.subject, &next.cognition_anchors).await?;
+            let typed = typed_anchors(&next.entity_anchors, &next.tag_anchors);
+            validate_refs_in_tx(&self.store, tx, input.subject, &typed).await?;
+            write_anchors(tx, input.work_context_id, &next.cognition_anchors, &typed).await?;
+        }
         let now = self.now(input.subject);
         sqlx::query(
             "UPDATE work_contexts SET purpose=$3,unresolved_questions=$4,constraints=$5,resume_conditions=$6,budget_summary=$7,context_text=$9,revision=revision+1,updated_at=$8 WHERE subject_id=$1 AND work_context_id=$2",
@@ -171,27 +173,17 @@ impl CognitiveRuntimeService {
         .bind(&next.budget_summary)
         .bind(now)
         .bind(&next.context_text)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
-        write_anchors(
-            &mut tx,
-            input.work_context_id,
-            &next.cognition_anchors,
-            &typed,
-        )
-        .await?;
-        commit_receipt(
-            &mut tx,
-            input.subject,
-            input.operation_id,
-            "work_context",
-            Some(&input.work_context_id.to_string()),
-            None,
-            None,
-        )
-        .await?;
-        tx.commit().await.map_err(db)?;
+        mutation
+            .commit(
+                "work_context",
+                Some(&input.work_context_id.to_string()),
+                None,
+                None,
+            )
+            .await?;
         self.work_context(input.subject, input.work_context_id)
             .await
     }
@@ -225,12 +217,12 @@ async fn write_anchors(
     for (delete, insert, references) in [
         (
             "DELETE FROM work_context_refs WHERE work_context_id=$1",
-            "INSERT INTO work_context_refs(work_context_id,ordinal,ref_kind,ref_value) VALUES($1,$2,$3,$4)",
+            "INSERT INTO work_context_refs(work_context_id,ordinal,ref_kind,ref_value) SELECT $1,(ordinality-1)::integer,kind,value FROM unnest($2::text[],$3::text[]) WITH ORDINALITY AS refs(kind,value,ordinality)",
             cognition,
         ),
         (
             "DELETE FROM work_context_anchors WHERE work_context_id=$1",
-            "INSERT INTO work_context_anchors(work_context_id,ordinal,ref_kind,ref_value) VALUES($1,$2,$3,$4)",
+            "INSERT INTO work_context_anchors(work_context_id,ordinal,ref_kind,ref_value) SELECT $1,(ordinality-1)::integer,kind,value FROM unnest($2::text[],$3::text[]) WITH ORDINALITY AS refs(kind,value,ordinality)",
             typed,
         ),
     ] {
@@ -239,17 +231,14 @@ async fn write_anchors(
             .execute(&mut **tx)
             .await
             .map_err(db)?;
-        for (ordinal, reference) in references.iter().enumerate() {
-            let (kind, value) = reference_parts(reference);
-            sqlx::query(insert)
-                .bind(id)
-                .bind(ordinal as i32)
-                .bind(kind)
-                .bind(value)
-                .execute(&mut **tx)
-                .await
-                .map_err(db)?;
-        }
+        let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
+        sqlx::query(insert)
+            .bind(id)
+            .bind(kinds)
+            .bind(values)
+            .execute(&mut **tx)
+            .await
+            .map_err(db)?;
     }
     Ok(())
 }

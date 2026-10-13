@@ -80,19 +80,22 @@ impl CognitiveRuntimeService {
                 "expected_revision": expected_revision,
             }),
         )?;
-        let mut tx = self.store.begin().await?;
-        lock_operation(&mut tx, subject, operation_id).await?;
-        if let Some(existing) = check_receipt(&mut tx, subject, operation_id, kind, &digest).await?
-        {
-            tx.commit().await.map_err(db)?;
-            return self.work_context(subject, replay_context(existing)?).await;
-        }
+        let mut mutation =
+            match MutationEnvelope::begin(&self.store, subject, operation_id, kind, &digest, None)
+                .await?
+            {
+                MutationStart::Replay(existing) => {
+                    return self.work_context(subject, replay_context(existing)?).await;
+                }
+                MutationStart::Active(mutation) => mutation,
+            };
+        let tx = mutation.tx();
         let row = sqlx::query(
             "SELECT state,revision FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR UPDATE",
         )
         .bind(subject.0)
         .bind(work_context_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(db)?
         .ok_or_else(|| Error::NotFound("WorkContext not found".into()))?;
@@ -137,25 +140,15 @@ impl CognitiveRuntimeService {
             transition,
             WorkContextTransition::Pause | WorkContextTransition::End
         ) {
-            let sessions = sqlx::query_scalar::<_, Uuid>(
-                "SELECT session_id FROM cognitive_sessions WHERE subject_id=$1 AND active_work_context_id=$2 ORDER BY session_id FOR UPDATE",
+            sqlx::query(
+                "WITH bound AS (SELECT session_id FROM cognitive_sessions WHERE subject_id=$1 AND active_work_context_id=$2 ORDER BY session_id FOR UPDATE) UPDATE cognitive_sessions s SET active_work_context_id=NULL,runtime_revision=runtime_revision+1,last_activity_at=$3 FROM bound WHERE s.session_id=bound.session_id",
             )
             .bind(subject.0)
             .bind(work_context_id)
-            .fetch_all(&mut *tx)
+            .bind(self.now(subject))
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
-            for session in sessions {
-                sqlx::query(
-                    "UPDATE cognitive_sessions SET active_work_context_id=NULL,runtime_revision=runtime_revision+1,last_activity_at=$3 WHERE subject_id=$1 AND session_id=$2",
-                )
-                .bind(subject.0)
-                .bind(session)
-                .bind(self.now(subject))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-            }
         }
         let ended_at = (next == "ended").then(|| self.now(subject));
         sqlx::query(
@@ -166,24 +159,21 @@ impl CognitiveRuntimeService {
         .bind(next)
         .bind(self.now(subject))
         .bind(ended_at)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
         if next == "ended" {
-            self.wake_ended_context_in(&mut tx, subject, work_context_id)
+            self.wake_ended_context_in(tx, subject, work_context_id)
                 .await?;
         }
-        commit_receipt(
-            &mut tx,
-            subject,
-            operation_id,
-            "work_context",
-            Some(&work_context_id.to_string()),
-            None,
-            None,
-        )
-        .await?;
-        tx.commit().await.map_err(db)?;
+        mutation
+            .commit(
+                "work_context",
+                Some(&work_context_id.to_string()),
+                None,
+                None,
+            )
+            .await?;
         self.work_context(subject, work_context_id).await
     }
 
@@ -204,28 +194,27 @@ impl CognitiveRuntimeService {
                 "expected_runtime_revision": expected_runtime_revision,
             }),
         )?;
-        let mut tx = self.store.begin().await?;
-        lock_operation(&mut tx, subject, operation_id).await?;
-        if check_receipt(
-            &mut tx,
+        let mut mutation = match MutationEnvelope::begin(
+            &self.store,
             subject,
             operation_id,
             "set_active_work_context",
             &digest,
+            None,
         )
         .await?
-        .is_some()
         {
-            tx.commit().await.map_err(db)?;
-            return self.session(subject, session).await;
-        }
+            MutationStart::Replay(_) => return self.session(subject, session).await,
+            MutationStart::Active(mutation) => mutation,
+        };
+        let tx = mutation.tx();
         if let Some(work_context_id) = work_context_id {
             let context = sqlx::query(
                 "SELECT subject_id,state FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR SHARE",
             )
             .bind(subject.0)
             .bind(work_context_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(db)?
             .ok_or_else(|| Error::NotFound("WorkContext not found".into()))?;
@@ -239,7 +228,7 @@ impl CognitiveRuntimeService {
             "SELECT subject_id,closed_at,runtime_revision FROM cognitive_sessions WHERE session_id=$1 FOR UPDATE",
         )
         .bind(session.0)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(db)?
         .ok_or_else(|| crate::sessions::stale_session(session))?;
@@ -266,20 +255,10 @@ impl CognitiveRuntimeService {
         .bind(session.0)
         .bind(work_context_id)
         .bind(self.now(subject))
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
-        commit_receipt(
-            &mut tx,
-            subject,
-            operation_id,
-            "work_context",
-            None,
-            None,
-            None,
-        )
-        .await?;
-        tx.commit().await.map_err(db)?;
+        mutation.commit("work_context", None, None, None).await?;
         self.session(subject, session).await
     }
 }

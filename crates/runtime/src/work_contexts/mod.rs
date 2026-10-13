@@ -4,9 +4,7 @@
 use crate::*;
 use chrono::{DateTime, Utc};
 use nous_core::{CognitiveRef, OperationId, SubjectId};
-use nous_persistence::{
-    MutationReceipt, check_receipt, commit_receipt, database_error as db, lock_operation,
-};
+use nous_persistence::{MutationEnvelope, MutationReceipt, MutationStart, database_error as db};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::collections::BTreeSet;
