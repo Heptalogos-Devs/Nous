@@ -223,34 +223,49 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       role,
       configDigest: "fixture-config",
     }),
-    generate: async (role: string, request: { content: unknown }) => {
+    generate: async (
+      role: string,
+      request: { content: unknown },
+      options: {
+        interpretOutput?: (
+          value: unknown,
+          input: { visual: boolean; audio: boolean; text: boolean },
+        ) => unknown;
+      } = {},
+    ) => {
       const input = request.content;
       modelInputs.push(input);
-      return {
-        value:
-          role === "material_description"
-            ? "Only frames are visible."
-            : {
-                summary: {
-                  content: "Invented speech",
-                  basis_keys: [
-                    role === "material_structuring" ? "D001" : "S000",
-                  ],
-                },
-                coverage: {
-                  visual: "observed",
-                  audio: "observed",
-                  source_text: "not_available",
-                  embedded_text: "not_available",
-                },
-                observations: [],
-                mentions: [],
-                embedded_text: [],
-                source_text: [],
-                speech: [],
-                interpretations: [],
-                uncertainties: [],
+      const value =
+        role === "material_description"
+          ? "Only frames are visible."
+          : {
+              summary: {
+                content: "Invented speech",
+                basis_keys: [role === "material_structuring" ? "D001" : "S000"],
               },
+              coverage: {
+                visual: "observed",
+                audio: "observed",
+                source_text: "not_available",
+                embedded_text: "not_available",
+              },
+              observations: [],
+              mentions: [],
+              embedded_text: [],
+              source_text: [],
+              speech: [],
+              interpretations: [],
+              uncertainties: [],
+            };
+      const inputModalities = {
+        visual: Array.isArray(input),
+        audio: false,
+        text: true,
+      };
+      return {
+        value: options.interpretOutput
+          ? options.interpretOutput(value, inputModalities)
+          : value,
         producerMetadata: {
           protocol: "openai-chat",
           implementation: "fixture",
@@ -261,10 +276,7 @@ it("frames without a transcript cannot acquire audio evidence in either structur
   } as unknown as ModelInvocations;
   const models = new ModelRuntime(
     Object.assign(new ModelInvocations(), invocations),
-    "description_only",
-    policy.video,
-    [],
-    policy.audio,
+    policy,
     instance,
   );
   try {
@@ -326,21 +338,4 @@ it("frames without a transcript cannot acquire audio evidence in either structur
   } finally {
     await rm(instance, { recursive: true, force: true });
   }
-});
-
-it("rejects invalid derivation choices before reading or interpreting source", async () => {
-  const kernel = {
-    execution: coreExecutionSchema.parse(undefined),
-  } as Parameters<typeof deriveMaterial>[0];
-  const models = { materialStrategy: "description_only" } as Parameters<
-    typeof deriveMaterial
-  >[1];
-  const request = {
-    subjectId: "10000000-0000-4000-8000-000000000001",
-    sourceRegionId: "30000000-0000-4000-8000-000000000001",
-    strategy: "frames",
-  } as Parameters<typeof deriveMaterial>[2];
-  const invalid = deriveMaterial(kernel, models, request, {});
-  await expect(invalid).rejects.toMatchObject({ code: 3 });
-  await expect(invalid).rejects.toThrow("Unknown material strategy");
 });

@@ -46,15 +46,15 @@ type GenerationInput = {
   media?: DirectMedia;
   context?: (input: InputModalities) => Record<string, unknown>;
 };
-type GenerationOptions<R extends ModelRole> = {
+type GenerationOptions<R extends ModelRole, T> = {
   signal?: AbortSignal;
   prepared?: PreparedModelRole;
   prompt?: ModelRole | { role: ModelRole; path: string };
   beforeAttempt?: () => void;
-  validateOutput?: (
+  interpretOutput?: (
     value: ModelGenerationOutput<R>,
     input: InputModalities,
-  ) => void;
+  ) => T;
 };
 
 export class ModelInvocations {
@@ -242,16 +242,16 @@ export class ModelInvocations {
       rolePolicyDigest: role.policyDigest,
     };
   }
-  async generate<R extends ModelRole>(
+  async generate<R extends ModelRole, T = ModelGenerationOutput<R>>(
     name: R,
     request: GenerationInput,
-    options: GenerationOptions<R> = {},
+    options: GenerationOptions<R, T> = {},
   ) {
     const {
       signal,
       prompt: promptRole,
       beforeAttempt,
-      validateOutput,
+      interpretOutput,
     } = options;
     const { content, media } = request;
     let snapshot = options.prepared ?? this.prepare(name);
@@ -280,7 +280,7 @@ export class ModelInvocations {
     }
     return this.withRoutes<
       {
-        value: ModelGenerationOutput<R>;
+        value: T;
         producerMetadata: ModelProducerMetadata;
         usage?: unknown;
         input: InputModalities;
@@ -306,7 +306,13 @@ export class ModelInvocations {
           },
         };
         try {
-          validateOutput?.(result.value, input);
+          return {
+            ...result,
+            value: interpretOutput
+              ? interpretOutput(result.value, input)
+              : (result.value as T),
+            input,
+          };
         } catch {
           // Owner validation errors may contain source content; keep the public classification bounded.
           throw new GenerationFailure(
@@ -316,7 +322,6 @@ export class ModelInvocations {
             result.usage,
           );
         }
-        return { ...result, input };
       },
       signal,
       snapshot,

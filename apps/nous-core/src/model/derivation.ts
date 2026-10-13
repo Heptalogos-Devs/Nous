@@ -56,7 +56,7 @@ async function deriveMaterialOnce(
   request: DeriveMaterialRequest,
   options: ExecutionOptions,
 ) {
-  const strategy = request.strategy ?? models.materialStrategy;
+  const strategy = request.strategy ?? models.configuration.material_strategy;
   if (
     ![
       "description_only",
@@ -77,9 +77,9 @@ async function deriveMaterialOnce(
       reference: { kind: "source_region", value: request.sourceRegionId },
       maxBytes: BigInt(
         Math.max(
-          models.audio.max_source_bytes,
-          models.video.max_source_bytes,
-          models.materialInputs.derivation_source_max_bytes,
+          models.configuration.audio.max_source_bytes,
+          models.configuration.video.max_source_bytes,
+          models.configuration.material_inputs.derivation_source_max_bytes,
         ),
       ),
     },
@@ -97,10 +97,10 @@ async function deriveMaterialOnce(
     const isVideo = header.mediaType.toLowerCase().startsWith("video/");
     const isAudio = header.mediaType.toLowerCase().startsWith("audio/");
     const maxSourceBytes = isAudio
-      ? models.audio.max_source_bytes
+      ? models.configuration.audio.max_source_bytes
       : isVideo
-        ? models.video.max_source_bytes
-        : models.materialInputs.derivation_source_max_bytes;
+        ? models.configuration.video.max_source_bytes
+        : models.configuration.material_inputs.derivation_source_max_bytes;
     let source:
       { content: Uint8Array; mediaType: string; partial: boolean } | undefined;
     let sourceFailure: string | undefined;
@@ -405,7 +405,7 @@ async function deriveMaterialOnce(
       };
     if (
       mime.startsWith("audio/") &&
-      models.audio.input_mode === "transcription" &&
+      models.configuration.audio.input_mode === "transcription" &&
       strategy === "direct_structured"
     )
       return {
@@ -419,8 +419,10 @@ async function deriveMaterialOnce(
       };
     try {
       if (
-        (mime.startsWith("video/") && models.video.input_mode === "direct") ||
-        (mime.startsWith("audio/") && models.audio.input_mode === "direct")
+        (mime.startsWith("video/") &&
+          models.configuration.video.input_mode === "direct") ||
+        (mime.startsWith("audio/") &&
+          models.configuration.audio.input_mode === "direct")
       ) {
         const selected = await paid(
           strategy === "direct_structured"
@@ -447,7 +449,7 @@ async function deriveMaterialOnce(
           },
           canonicalDigest({ input_mode: "direct", media_type: mime }),
           mime.startsWith("video/") && strategy !== "direct_structured"
-            ? models.video.prompt
+            ? models.configuration.video.prompt
             : undefined,
           "gateway-chat-media-v1",
         );
@@ -463,7 +465,7 @@ async function deriveMaterialOnce(
         if (!models.tempRoot)
           throw new Error("Resolved TempRoot is required for video sampling");
         const sampling = await videoSampling(
-          models.video,
+          models.configuration.video,
           models.credentialEnvironments,
           signal,
         );
@@ -477,7 +479,9 @@ async function deriveMaterialOnce(
             : "material_description";
         const model = await models.invocations.preparePrompt(
           role,
-          strategy === "direct_structured" ? undefined : models.video.prompt,
+          strategy === "direct_structured"
+            ? undefined
+            : models.configuration.video.prompt,
         );
         const transcriptionConfig = models.invocations.profile(
           "speech_transcription",
@@ -556,7 +560,7 @@ async function deriveMaterialOnce(
         if (!selected) {
           const samples = await sampleVideo(
             (await loadSource()).content,
-            models.video,
+            models.configuration.video,
             models.tempRoot,
             models.credentialEnvironments,
             Boolean(models.invocations.profile("speech_transcription")),
@@ -659,7 +663,9 @@ async function deriveMaterialOnce(
               transcription_config_digest: transcriptionConfig,
             },
             samples.preprocessingDigest,
-            strategy === "direct_structured" ? undefined : models.video.prompt,
+            strategy === "direct_structured"
+              ? undefined
+              : models.configuration.video.prompt,
           );
         }
         if (strategy === "describe_then_structure") {

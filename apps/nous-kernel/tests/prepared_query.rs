@@ -305,19 +305,11 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
                     && tag.source == nous_runtime::ActivationSource::WorkContext)
         );
         assert_eq!(
-            selected.context_snapshot.digest,
-            first.context_snapshot.digest
+            selected.context_snapshot.source_refs,
+            first.context_snapshot.source_refs
         );
         assert_eq!(selected.representation.sha256, first.representation.sha256);
     }
-    assert_eq!(
-        first.context_snapshot.digest,
-        first
-            .for_profile(nous_runtime::CognitiveProfile::NousNodePotential)
-            .unwrap()
-            .context_snapshot
-            .digest
-    );
     assert!(
         first
             .context_snapshot
@@ -453,8 +445,8 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             .contains(&"TASK CONTEXT ".repeat(100))
     );
     assert_eq!(
-        frozen.bound.context_snapshot.digest,
-        first.context_snapshot.digest
+        frozen.bound.context_snapshot.source_refs,
+        first.context_snapshot.source_refs
     );
     let changed = runtime
         .cognition

@@ -48,10 +48,8 @@ pub(super) fn register(registry: &mut ConfigRegistryBuilder) -> Result<()> {
 pub struct QueryContextSnapshot {
     pub work_context: Option<WorkContextView>,
     pub session: Option<SessionView>,
-    pub situation_refs: Vec<CognitiveRef>,
     pub source_refs: Vec<QuerySource>,
     pub history_exclusions: Vec<Degradation>,
-    pub digest: String,
 }
 
 /// One admitted source, with its authored identity, bound revision and real origin.
@@ -76,21 +74,8 @@ impl QuerySource {
         )
     }
 }
-impl QueryContextSnapshot {
-    pub(super) fn freeze(&mut self) -> Result<()> {
-        self.digest.clear();
-        let bytes = serde_json::to_vec(self).map_err(|e| Error::Internal(e.to_string()))?;
-        self.digest = Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueryRepresentation {
-    pub representation_version: String,
     pub text: String,
     pub sha256: String,
     pub truncation_flags: Vec<String>,
@@ -280,10 +265,10 @@ pub fn build_query_representation(
         let mut values = descriptors
             .iter()
             .filter(|d| {
-                let kind = reference_parts(&d.reference).0;
+                let kind = d.reference.kind();
                 if select == "current" {
                     !matches!(
-                        kind.as_str(),
+                        kind,
                         "entity" | "tag" | "cognitive_schema" | "resource" | "external_object"
                     )
                 } else {
@@ -334,11 +319,10 @@ pub fn build_query_representation(
         builder.section("Consumer/task", consumer, 256);
     }
     let text = builder.render();
-    finish(text, builder.flags, "cognitive-query-v2")
+    finish(text, builder.flags)
 }
-fn finish(text: String, flags: BTreeSet<String>, version: &str) -> QueryRepresentation {
+fn finish(text: String, flags: BTreeSet<String>) -> QueryRepresentation {
     QueryRepresentation {
-        representation_version: version.into(),
         sha256: Sha256::digest(text.as_bytes())
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -451,9 +435,6 @@ impl CognitiveRuntimeService {
             .iter()
             .map(|source| &source.reference)
             .collect::<HashSet<_>>();
-        context_snapshot
-            .situation_refs
-            .retain(|r| admitted.contains(r));
         if let Some(session) = &mut context_snapshot.session {
             session.resident.retain(|r| admitted.contains(&r.reference));
         }
@@ -464,7 +445,6 @@ impl CognitiveRuntimeService {
         query: &mut CognitiveQuery,
     ) -> Result<QueryContextSnapshot> {
         let mut tx = self.store.read_view().await?;
-        let situation_refs = query.situation.current_refs.clone();
         let mut sources = query
             .situation
             .current_refs
@@ -550,10 +530,8 @@ impl CognitiveRuntimeService {
         Ok(QueryContextSnapshot {
             work_context: context,
             session,
-            situation_refs,
             source_refs: sources,
             history_exclusions: vec![],
-            digest: String::new(),
         })
     }
 }

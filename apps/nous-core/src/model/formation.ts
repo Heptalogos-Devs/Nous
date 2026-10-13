@@ -126,7 +126,7 @@ async function formObservationOnce(
         const kind = mime.startsWith("image/")
           ? "image_description"
           : mime.startsWith("audio/")
-            ? models.audio.input_mode === "direct"
+            ? models.configuration.audio.input_mode === "direct"
               ? "audio_description"
               : "transcript"
             : mime.startsWith("video/")
@@ -165,7 +165,9 @@ async function formObservationOnce(
                 value: representationId,
               }
             : { kind: "occurrence", value: r.occurrenceId },
-          maxBytes: BigInt(models.materialInputs.formation_source_max_bytes),
+          maxBytes: BigInt(
+            models.configuration.material_inputs.formation_source_max_bytes,
+          ),
         },
         options,
       );

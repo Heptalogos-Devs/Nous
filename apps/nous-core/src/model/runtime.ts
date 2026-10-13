@@ -12,16 +12,18 @@ export class ModelRuntime {
   readonly material: MaterialInterpretation;
   constructor(
     readonly invocations = new ModelInvocations(),
-    readonly materialStrategy: ModelConfiguration["material_strategy"] = "description_only",
-    readonly video = modelConfigurationSchema.parse({}).video,
-    readonly credentialEnvironments: readonly string[] = [],
-    readonly audio = modelConfigurationSchema.parse({}).audio,
+    readonly configuration = modelConfigurationSchema.parse({}),
     readonly tempRoot?: string,
-    readonly materialInputs = modelConfigurationSchema.parse({})
-      .material_inputs,
   ) {
-    this.material = new MaterialInterpretation(invocations, video.prompt);
+    this.material = new MaterialInterpretation(
+      invocations,
+      configuration.video.prompt,
+    );
+    this.credentialEnvironments = Object.values(
+      configuration.gateway_profiles,
+    ).map((gateway) => gateway.credential_env);
   }
+  readonly credentialEnvironments: readonly string[];
   static async fromConfig(
     config: ModelConfiguration,
     promptRoot?: string,
@@ -33,16 +35,6 @@ export class ModelRuntime {
       promptRoot,
       overridePromptRoot,
     );
-    return new ModelRuntime(
-      invocations,
-      config.material_strategy,
-      config.video,
-      Object.values(config.gateway_profiles).map(
-        (gateway) => gateway.credential_env,
-      ),
-      config.audio,
-      tempRoot,
-      config.material_inputs,
-    );
+    return new ModelRuntime(invocations, config, tempRoot);
   }
 }

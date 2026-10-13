@@ -24,7 +24,7 @@
 
 | 完整能力 | 当前责任与数据流 | 已删除的调用方流程 |
 | --- | --- | --- |
-| Query source admission | Runtime binding 形成一份含 requested/exact/canonical reference 与真实 origin 的来源；representation、activation 和 Runtime lane 从它派生 | ref/source 平行维护、WorkContext 再补种子、丢失来源后贴标签、旧 Tag 与 survivor 两份输入 |
+| Query source admission | Runtime binding 形成一份含 requested/exact/canonical reference 与真实 origin 的来源；representation、activation 和 Runtime lane 从它派生 | ref/source 平行维护、重复 situation 数组、无消费者的 context digest/version、WorkContext 再补种子、丢失来源后贴标签、旧 Tag 与 survivor 两份输入 |
 | Cognition semantic read | Memory 在共同只读事务内选择身份/修订，读取内容和依据，按用途判断生命周期与 accessibility；Query/Context 保留各自正文组织 | Persistence 第二套认知 descriptor 解释、先读 head 再补 view、消费者修补 canonical Tag |
 | Serving build | 一次准备共享同一捕获输入的来源、已物化文本和兼容向量；lexical、dense、VCP 使用本次产物 | VCP/dense 第二次共同正文与向量准备；无新增持久构建任务或缓存调度 |
 | Configuration / CLI / startup | 连接为基础，selection/receipt 按需取得；Configuration 返回所需 view/pending 并只更新目标 scope/key；启动直接传递规范化 registry/values 和 upload limit | 普通命令完整 consumer 初始化、单键写强制预读 revision、双完整 snapshot、全 Subject 状态克隆、重复配置解析与启动 RPC |

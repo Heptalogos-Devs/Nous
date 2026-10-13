@@ -194,18 +194,7 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), o
         let mut ids = Vec::new();
         for reference in &references {
             self.require_lineage_view(subject, reference, view)?;
-            let (kind, id) = match reference {
-                CognitiveRef::Occurrence(id) => ("occurrence", id.0),
-                CognitiveRef::Artifact(id) => ("artifact", id.0),
-                CognitiveRef::SourceRegion(id) => ("source_region", id.0),
-                CognitiveRef::DerivedRepresentation(id) => ("derived_representation", id.0),
-                CognitiveRef::DerivedRegion(id) => ("derived_region", id.0),
-                _ => {
-                    return Err(Error::Invalid(
-                        "lineage requires a Material reference".into(),
-                    ));
-                }
-            };
+            let (kind, id) = super::read::material_reference(reference)?;
             kinds.push(kind);
             ids.push(id);
         }

@@ -411,9 +411,10 @@ describe("model protocol and provenance boundaries", () => {
         { content: "evidence" },
         {
           prepared: semanticSnapshot,
-          validateOutput: () => {
+          interpretOutput: (value) => {
             if (++semanticChecks === 1)
               throw new Error("source semantics invalid");
+            return value;
           },
         },
       );

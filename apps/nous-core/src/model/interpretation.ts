@@ -3,6 +3,7 @@
 
 import type { UserContent } from "ai";
 import { ModelInvocations } from "./invocations.js";
+import type { ModelRole } from "./roles.js";
 import { type PreparedModelRole } from "./execution/binding.js";
 import {
   structuredMaterialResult,
@@ -17,6 +18,32 @@ export class MaterialInterpretation {
     private readonly invocations: ModelInvocations,
     private readonly videoPrompt: string,
   ) {}
+  private async interpretInput(
+    role: ModelRole,
+    request: Parameters<ModelInvocations["generate"]>[1],
+    structured: boolean,
+    available: (input: InputModalities) => StructuredMaterialContext,
+    signal?: AbortSignal,
+    prepared?: PreparedModelRole,
+    prompt?: { role: ModelRole; path: string },
+  ) {
+    const result = await this.invocations.generate(role, request, {
+      signal,
+      prepared,
+      prompt,
+      interpretOutput: (value, input) => ({
+        ...(structured
+          ? structuredMaterialResult(value, available(input))
+          : interpretationSchema.parse({ text: value })),
+        inputAccess: available(input).access,
+      }),
+    });
+    return {
+      ...result.value,
+      producerMetadata: result.producerMetadata,
+      execution: result.execution,
+    };
+  }
   async interpret(
     bytes: Uint8Array,
     mediaType: string,
@@ -25,21 +52,17 @@ export class MaterialInterpretation {
   ) {
     if (!mediaType.startsWith("image/"))
       throw new Error("Image description requires image material");
-    const content = [{ type: "file" as const, data: bytes, mediaType }];
-    const result = await this.invocations.generate(
+    return this.interpretInput(
       "material_description",
       {
-        content,
+        content: [{ type: "file", data: bytes, mediaType }],
         context: (actual) => ({ evidence_access: originalMediaAccess(actual) }),
       },
-      { signal: signal, prepared: fixed },
+      false,
+      (actual) => ({ access: originalMediaAccess(actual), catalog: {} }),
+      signal,
+      fixed,
     );
-    return {
-      text: interpretationSchema.parse({ text: result.value }).text,
-      producerMetadata: result.producerMetadata,
-      execution: result.execution,
-      inputAccess: originalMediaAccess(result.input),
-    };
   }
   async structure(
     input: string | { bytes: Uint8Array; mediaType: string },
@@ -91,7 +114,7 @@ export class MaterialInterpretation {
         type: "text",
         text: JSON.stringify({ basis_catalog: Object.keys(context.catalog) }),
       });
-    const result = await this.invocations.generate(
+    return this.interpretInput(
       role,
       {
         content,
@@ -103,20 +126,11 @@ export class MaterialInterpretation {
                 basis_catalog: Object.keys(context.catalog),
               }),
       },
-      {
-        signal: signal,
-        prepared: fixed,
-        validateOutput: (value, actual) => {
-          structuredMaterialResult(value, available(actual));
-        },
-      },
+      true,
+      available,
+      signal,
+      fixed,
     );
-    return {
-      ...structuredMaterialResult(result.value, available(result.input)),
-      producerMetadata: result.producerMetadata,
-      execution: result.execution,
-      inputAccess: available(result.input).access,
-    };
   }
   async describeMedia(
     bytes: Uint8Array,
@@ -134,7 +148,7 @@ export class MaterialInterpretation {
       ...context!,
       access: originalMediaAccess(actual),
     });
-    const result = await this.invocations.generate(
+    return this.interpretInput(
       structured ? "material_direct_structuring" : "material_description",
       {
         content: `Input media type: ${mediaType}. The attached material is the input evidence. Formation basis catalog: ${JSON.stringify(Object.keys(context?.catalog ?? {}))}.`,
@@ -144,24 +158,11 @@ export class MaterialInterpretation {
           basis_catalog: Object.keys(context?.catalog ?? {}),
         }),
       },
-      {
-        signal: signal,
-        prepared: fixed,
-        validateOutput: structured
-          ? (value, actual) => {
-              structuredMaterialResult(value, available(actual));
-            }
-          : undefined,
-      },
+      structured,
+      available,
+      signal,
+      fixed,
     );
-    return {
-      ...(structured
-        ? structuredMaterialResult(result.value, available(result.input))
-        : { text: interpretationSchema.parse({ text: result.value }).text }),
-      producerMetadata: result.producerMetadata,
-      execution: result.execution,
-      inputAccess: originalMediaAccess(result.input),
-    };
   }
   async describeScene(
     frames: { bytes: Uint8Array; timestamp: number }[],
@@ -208,7 +209,7 @@ export class MaterialInterpretation {
         },
       ]),
     ];
-    const result = await this.invocations.generate(
+    return this.interpretInput(
       structured ? "material_direct_structuring" : "material_description",
       {
         content,
@@ -217,28 +218,13 @@ export class MaterialInterpretation {
           basis_catalog: Object.keys(context?.catalog ?? {}),
         }),
       },
-      {
-        signal: signal,
-        prompt: fixed
-          ? undefined
-          : structured
-            ? undefined
-            : { role: "material_description", path: this.videoPrompt },
-        prepared: fixed,
-        validateOutput: structured
-          ? (value, actual) => {
-              structuredMaterialResult(value, available(actual));
-            }
-          : undefined,
-      },
+      structured,
+      available,
+      signal,
+      fixed,
+      fixed || structured
+        ? undefined
+        : { role: "material_description", path: this.videoPrompt },
     );
-    return {
-      ...(structured
-        ? structuredMaterialResult(result.value, available(result.input))
-        : { text: interpretationSchema.parse({ text: result.value }).text }),
-      producerMetadata: result.producerMetadata,
-      execution: result.execution,
-      inputAccess: available(result.input).access,
-    };
   }
 }

@@ -37,7 +37,7 @@ export type ReadyRole = import("../protocols.js").ProviderExecution & {
   profileDigest: string;
   configDigest: string;
 };
-export type PreparedRoute = {
+type PreparedRoute = {
   executionName: string;
   modelProfile: string;
   ready?: ReadyRole;

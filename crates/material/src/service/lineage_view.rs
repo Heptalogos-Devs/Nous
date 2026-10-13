@@ -84,18 +84,7 @@ impl MaterialService {
             let mut batch = Vec::new();
             let remaining = max_nodes - nodes.len();
             while let Some(reference) = pending.pop() {
-                if !matches!(
-                    reference,
-                    CognitiveRef::Occurrence(_)
-                        | CognitiveRef::Artifact(_)
-                        | CognitiveRef::SourceRegion(_)
-                        | CognitiveRef::DerivedRepresentation(_)
-                        | CognitiveRef::DerivedRegion(_)
-                ) {
-                    return Err(Error::Invalid(
-                        "lineage roots must be Material references".into(),
-                    ));
-                }
+                super::read::material_reference(&reference)?;
                 if visited.insert(reference.clone()) {
                     batch.push(reference);
                 }

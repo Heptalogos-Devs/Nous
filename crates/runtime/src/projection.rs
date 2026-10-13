@@ -127,11 +127,7 @@ impl CognitiveRuntimeService {
                 "projection requires a positive item budget".into(),
             ));
         }
-        let mut tx = self.store.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(nous_persistence::database_error)?;
+        let mut tx = self.store.read_view().await?;
         let session = self
             .session_in(input.subject, input.session, &mut tx)
             .await?;

@@ -17,7 +17,7 @@ pub use model_results::{
 mod topology;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use std::str::FromStr;
 pub use topology::TopologyRelation;
 use uuid::Uuid;
 
@@ -128,33 +128,6 @@ fn validate_opaque_ref(value: &str, expected_prefix: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
-pub enum CognitiveRef {
-    Memory(MemoryId),
-    MemoryRevision(MemoryRevisionId),
-    Episode(EpisodeId),
-    EpisodeRevision(EpisodeRevisionId),
-    Journal(JournalId),
-    JournalRevision(JournalRevisionId),
-    CognitiveSchema(CognitiveSchemaId),
-    CognitiveSchemaRevision(CognitiveSchemaRevisionId),
-    CognitiveSeedVersion(CognitiveSeedVersionId),
-    Artifact(ArtifactId),
-    SourceRegion(SourceRegionId),
-    DerivedRepresentation(DerivedRepresentationId),
-    DerivedRegion(DerivedRegionId),
-    Entity(EntityRef),
-    Tag(TagId),
-    Resource(ResourceRef),
-    ExternalObject(ObjectRef),
-    Occurrence(OccurrenceId),
-    Session(SessionId),
-    Subject(SubjectId),
-    WorkContext(WorkContextId),
-    Association(AssociationEvidenceId),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityClass {
@@ -256,25 +229,6 @@ pub enum CapabilityOperation {
     ImageEmbedding,
     SpeechTranscription,
     DocumentExtraction,
-}
-
-impl CapabilityOperation {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::TextEmbedding => "text.embedding",
-            Self::TextRerank => "text.rerank",
-            Self::TextInterpretation => "text.interpretation",
-            Self::MemoryFormationText => "memory.formation.text",
-            Self::MemoryConsolidationText => "memory.consolidation.text",
-            Self::ConceptMaintenanceText => "memory.concept.maintenance.text",
-            Self::EpisodeSegmentationText => "episode.segmentation.text",
-            Self::JournalSynthesisText => "journal.synthesis.text",
-            Self::ImageInterpretation => "image.interpretation",
-            Self::ImageEmbedding => "image.embedding",
-            Self::SpeechTranscription => "speech.transcription",
-            Self::DocumentExtraction => "document.extraction",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -416,37 +370,6 @@ pub struct SituationDescriptor {
 mod error;
 pub use error::{DomainError, DomainErrorCode, Error, Result};
 
-impl fmt::Display for CognitiveRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Memory(id) => write!(f, "memory:{}", id.0),
-            Self::MemoryRevision(id) => write!(f, "memory_revision:{}", id.0),
-            Self::Episode(id) => write!(f, "episode:{}", id.0),
-            Self::EpisodeRevision(id) => write!(f, "episode_revision:{}", id.0),
-            Self::Journal(id) => write!(f, "journal:{}", id.0),
-            Self::JournalRevision(id) => write!(f, "journal_revision:{}", id.0),
-            Self::CognitiveSchema(id) => write!(f, "cognitive_schema:{}", id.0),
-            Self::CognitiveSchemaRevision(id) => {
-                write!(f, "cognitive_schema_revision:{}", id.0)
-            }
-            Self::CognitiveSeedVersion(id) => write!(f, "cognitive_seed_version:{}", id.0),
-            Self::Artifact(id) => write!(f, "artifact:{}", id.0),
-            Self::SourceRegion(id) => write!(f, "source_region:{}", id.0),
-            Self::DerivedRepresentation(id) => write!(f, "derived_representation:{}", id.0),
-            Self::DerivedRegion(id) => write!(f, "derived_region:{}", id.0),
-            Self::Entity(id) => f.write_str(id.as_str()),
-            Self::Tag(id) => write!(f, "tag:{}", id.0),
-            Self::Resource(id) => f.write_str(id.as_str()),
-            Self::ExternalObject(id) => f.write_str(id.as_str()),
-            Self::Occurrence(id) => write!(f, "occurrence:{}", id.0),
-            Self::Session(id) => write!(f, "session:{}", id.0),
-            Self::Subject(id) => write!(f, "subject:{}", id.0),
-            Self::WorkContext(id) => write!(f, "work_context:{}", id.0),
-            Self::Association(id) => write!(f, "association:{}", id.0),
-        }
-    }
-}
-
 mod canonical;
 pub mod cognition;
 mod concept;
@@ -458,7 +381,7 @@ mod references;
 pub use canonical::canonical_request_digest;
 pub use cognition::*;
 pub use query::*;
-pub use references::{parse_reference, reference_parts};
+pub use references::{CognitiveRef, parse_reference, reference_parts};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UseEventRef {

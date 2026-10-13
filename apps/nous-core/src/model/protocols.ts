@@ -14,7 +14,11 @@ import {
 } from "ai";
 import { z } from "zod";
 import { getStreamAsArrayBuffer } from "get-stream";
-import type { ModelProfile, ExecutionProfile } from "./profiles.js";
+import type {
+  ModelProfile,
+  ExecutionProfile,
+  GatewayProfile,
+} from "./profiles.js";
 import type { PromptAsset } from "./prompts.js";
 import { directAudioFormats, type DirectMedia } from "./input.js";
 
@@ -22,7 +26,7 @@ export type ProviderExecution = {
   profile: ModelProfile;
   binding: ExecutionProfile;
   prompt?: PromptAsset;
-  gateway: import("./profiles.js").GatewayProfile;
+  gateway: GatewayProfile;
   credential: string;
   timeout: number;
 };

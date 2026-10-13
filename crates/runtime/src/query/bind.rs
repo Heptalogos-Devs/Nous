@@ -378,10 +378,6 @@ impl CognitiveRuntimeService {
         self.canonicalize_query_tags(&mut query, view, &mut bindings)
             .await?;
         let retrieval_policy = resolve_retrieval_policy(&config_snapshot)?;
-        if let Some(session) = query.session {
-            self.require_session(query.subject, session).await?;
-        }
-
         let mut context_snapshot = self.prepare_query_context(&mut query, view).await?;
         let (exact_bindings, mut allowed_revision_refs) =
             self.bind_exact_targets(&query, view, &mut bindings).await?;
@@ -402,9 +398,6 @@ impl CognitiveRuntimeService {
                 *reference = canonical.clone();
             }
         };
-        for reference in &mut context_snapshot.situation_refs {
-            canonical_tag(reference);
-        }
         for reference in &mut query.situation.current_refs {
             canonical_tag(reference);
         }
@@ -427,7 +420,6 @@ impl CognitiveRuntimeService {
             context.tag_anchors.sort();
             context.tag_anchors.dedup();
         }
-        context_snapshot.freeze()?;
         if let Some(view) = view {
             allowed_revision_refs.extend(
                 view.cognition

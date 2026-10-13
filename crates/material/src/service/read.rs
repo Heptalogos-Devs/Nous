@@ -29,38 +29,20 @@ fn decode<T: DeserializeOwned>(value: serde_json::Value) -> Result<T> {
     serde_json::from_value(value).map_err(|error| Error::Infrastructure(error.to_string()))
 }
 
-fn producer_value(mut value: serde_json::Value) -> Result<serde_json::Value> {
-    let operation = value["operation"]
-        .as_str()
-        .ok_or_else(|| Error::Infrastructure("producer operation missing".into()))?;
-    use CapabilityOperation::*;
-    let operation = [
-        TextEmbedding,
-        TextRerank,
-        TextInterpretation,
-        MemoryFormationText,
-        MemoryConsolidationText,
-        ConceptMaintenanceText,
-        EpisodeSegmentationText,
-        JournalSynthesisText,
-        ImageInterpretation,
-        ImageEmbedding,
-        SpeechTranscription,
-        DocumentExtraction,
-    ]
-    .into_iter()
-    .find(|candidate| candidate.as_str() == operation)
-    .ok_or_else(|| Error::Infrastructure("unknown producer operation".into()))?;
-    value["operation"] = serde_json::to_value(operation)
-        .map_err(|error| Error::Infrastructure(error.to_string()))?;
-    Ok(value)
-}
-
 const REPRESENTATION_READ: &str = "SELECT to_jsonb(d) || jsonb_build_object('producer',to_jsonb(p),'inputs',COALESCE((SELECT jsonb_agg(jsonb_build_object('ordinal',i.ordinal,'role',i.role,'reference',CASE WHEN i.source_region_id IS NOT NULL THEN jsonb_build_object('kind','source_region','id',i.source_region_id) WHEN i.input_representation_id IS NOT NULL THEN jsonb_build_object('kind','derived_representation','id',i.input_representation_id) ELSE jsonb_build_object('kind','derived_region','id',i.derived_region_id) END) ORDER BY i.ordinal) FROM derived_representation_inputs i WHERE i.derived_representation_id=d.derived_representation_id),'[]'::jsonb)) FROM derived_representations d JOIN producer_signatures p USING(producer_signature_id)";
 
-fn decode_representation(mut value: serde_json::Value) -> Result<DerivedRepresentation> {
-    value["producer"] = producer_value(value["producer"].take())?;
-    decode(value)
+pub(super) fn material_reference(reference: &CognitiveRef) -> Result<(&'static str, Uuid)> {
+    match reference {
+        CognitiveRef::Occurrence(_)
+        | CognitiveRef::Artifact(_)
+        | CognitiveRef::SourceRegion(_)
+        | CognitiveRef::DerivedRepresentation(_)
+        | CognitiveRef::DerivedRegion(_) => Ok((
+            reference.kind(),
+            reference.uuid().expect("Material references are UUIDs"),
+        )),
+        _ => Err(Error::Invalid("requires a Material reference".into())),
+    }
 }
 
 impl MaterialService {
@@ -70,53 +52,56 @@ impl MaterialService {
         subject: SubjectId,
         references: &[CognitiveRef],
     ) -> Result<Vec<MaterialLineageNode>> {
-        let ids = |kind: &str| {
-            references
-                .iter()
-                .filter_map(|reference| {
-                    let (candidate, id) = reference_parts(reference);
-                    (candidate == kind)
-                        .then(|| id.parse::<Uuid>().expect("typed Material identity"))
-                })
-                .collect::<Vec<_>>()
-        };
-        let mut nodes = Vec::new();
-        for row in sqlx::query("SELECT to_jsonb(o) occurrence FROM observation_occurrences o WHERE o.subject_id=$1 AND o.occurrence_id=ANY($2::uuid[])").bind(subject.0).bind(ids("occurrence")).fetch_all(&mut **tx).await.map_err(db)? { nodes.push(MaterialLineageNode::Occurrence(decode_occurrence(row)?)); }
-        for row in sqlx::query(
-            "SELECT * FROM artifacts WHERE subject_id=$1 AND artifact_id=ANY($2::uuid[])",
-        )
-        .bind(subject.0)
-        .bind(ids("artifact"))
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(db)?
-        {
-            nodes.push(MaterialLineageNode::Artifact(
-                super::artifact::decode_artifact(row)?,
-            ));
-        }
-        for value in sqlx::query_scalar("SELECT to_jsonb(s) FROM source_regions s WHERE s.subject_id=$1 AND s.source_region_id=ANY($2::uuid[])").bind(subject.0).bind(ids("source_region")).fetch_all(&mut **tx).await.map_err(db)? { nodes.push(MaterialLineageNode::SourceRegion(decode(value)?)); }
-        for value in sqlx::query_scalar("SELECT to_jsonb(g) FROM derived_regions g WHERE g.subject_id=$1 AND g.derived_region_id=ANY($2::uuid[])").bind(subject.0).bind(ids("derived_region")).fetch_all(&mut **tx).await.map_err(db)? { nodes.push(MaterialLineageNode::DerivedRegion(decode(value)?)); }
-        let sql = format!(
-            "{REPRESENTATION_READ} WHERE d.subject_id=$1 AND d.derived_representation_id=ANY($2::uuid[])"
+        let (kinds, ids): (Vec<_>, Vec<_>) = references
+            .iter()
+            .map(material_reference)
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .unzip();
+        let query = format!(
+            r#"
+WITH requested AS (SELECT * FROM unnest($2::text[],$3::uuid[]) r(kind,id))
+SELECT r.kind, CASE r.kind
+ WHEN 'occurrence' THEN to_jsonb(o) WHEN 'artifact' THEN to_jsonb(a)
+ WHEN 'source_region' THEN to_jsonb(s) WHEN 'derived_region' THEN to_jsonb(g)
+ WHEN 'derived_representation' THEN d.body END AS node
+FROM requested r
+LEFT JOIN observation_occurrences o ON r.kind='occurrence' AND o.subject_id=$1 AND o.occurrence_id=r.id
+LEFT JOIN artifacts a ON r.kind='artifact' AND a.subject_id=$1 AND a.artifact_id=r.id
+LEFT JOIN source_regions s ON r.kind='source_region' AND s.subject_id=$1 AND s.source_region_id=r.id
+LEFT JOIN derived_regions g ON r.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id=r.id
+LEFT JOIN LATERAL ({REPRESENTATION_READ} WHERE r.kind='derived_representation' AND d.subject_id=$1 AND d.derived_representation_id=r.id) d(body) ON true
+"#
         );
-        for value in sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(subject.0)
-            .bind(ids("derived_representation"))
+            .bind(kinds)
+            .bind(ids)
             .fetch_all(&mut **tx)
             .await
             .map_err(db)?
-        {
-            nodes.push(MaterialLineageNode::Representation(Box::new(
-                decode_representation(value)?,
-            )));
-        }
-        if nodes.len() != references.len() {
-            return Err(Error::NotFound(
-                "lineage contains a missing Material reference".into(),
-            ));
-        }
-        Ok(nodes)
+            .into_iter()
+            .map(|row| {
+                let value = row
+                    .try_get::<Option<serde_json::Value>, _>("node")
+                    .map_err(db)?
+                    .ok_or_else(|| {
+                        Error::NotFound("lineage contains a missing Material reference".into())
+                    })?;
+                Ok(
+                    match row.try_get::<String, _>("kind").map_err(db)?.as_str() {
+                        "occurrence" => MaterialLineageNode::Occurrence(occurrence_value(value)?),
+                        "artifact" => MaterialLineageNode::Artifact(decode(value)?),
+                        "source_region" => MaterialLineageNode::SourceRegion(decode(value)?),
+                        "derived_region" => MaterialLineageNode::DerivedRegion(decode(value)?),
+                        "derived_representation" => {
+                            MaterialLineageNode::Representation(Box::new(decode(value)?))
+                        }
+                        _ => unreachable!("validated Material reference"),
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Admit immutable source identities into the caller's mutation transaction in one batch.
@@ -284,9 +269,7 @@ impl MaterialService {
         if rows.len() != producers.len() {
             return Err(Error::NotFound("ProducerSignature not found".into()));
         }
-        rows.into_iter()
-            .map(|value| decode(producer_value(value)?))
-            .collect()
+        rows.into_iter().map(decode).collect()
     }
 
     /// The composition boundary must establish that this signature is referenced by its Subject.
@@ -298,9 +281,7 @@ impl MaterialService {
         .fetch_optional(self.store.pool())
         .await
         .map_err(db)?;
-        decode(producer_value(value.ok_or_else(|| {
-            Error::NotFound("ProducerSignature not found".into())
-        })?)?)
+        decode(value.ok_or_else(|| Error::NotFound("ProducerSignature not found".into()))?)
     }
 
     pub async fn derived_representation(
@@ -318,7 +299,7 @@ impl MaterialService {
             .await
             .map_err(db)?
             .ok_or_else(|| Error::NotFound("DerivedRepresentation not found".into()))?;
-        decode_representation(value)
+        decode(value)
     }
 
     pub async fn derived_representations(
@@ -347,18 +328,15 @@ impl MaterialService {
             .map_err(db)?;
         let more = values.len() > limit as usize;
         values.truncate(limit as usize);
-        Ok((
-            values
-                .into_iter()
-                .map(decode_representation)
-                .collect::<Result<_>>()?,
-            more,
-        ))
+        Ok((values.into_iter().map(decode).collect::<Result<_>>()?, more))
     }
 }
 
 fn decode_occurrence(row: sqlx::postgres::PgRow) -> Result<ObservationOccurrence> {
-    let mut value: serde_json::Value = row.try_get("occurrence").map_err(db)?;
+    occurrence_value(row.try_get("occurrence").map_err(db)?)
+}
+
+fn occurrence_value(mut value: serde_json::Value) -> Result<ObservationOccurrence> {
     let start: Option<DateTime<Utc>> = decode(value["occurred_time_start"].clone())?;
     let end: Option<DateTime<Utc>> = decode(value["occurred_time_end"].clone())?;
     let time = match value["occurred_time_kind"].as_str().unwrap_or("") {
@@ -418,16 +396,9 @@ impl MaterialService {
                 continue;
             }
             self.require_lineage_view(subject, reference, view)?;
-            let (kind, id) = match reference {
-                CognitiveRef::Occurrence(id) => ("occurrence", id.0),
-                CognitiveRef::Artifact(id) => ("artifact", id.0),
-                CognitiveRef::SourceRegion(id) => ("source_region", id.0),
-                CognitiveRef::DerivedRepresentation(id) => ("derived_representation", id.0),
-                CognitiveRef::DerivedRegion(id) => ("derived_region", id.0),
-                _ => {
-                    self.store.validate_reference(subject, reference).await?;
-                    continue;
-                }
+            let Ok((kind, id)) = material_reference(reference) else {
+                self.store.validate_reference(subject, reference).await?;
+                continue;
             };
             resolved.push(reference);
             kinds.push(kind);
