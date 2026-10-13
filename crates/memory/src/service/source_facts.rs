@@ -13,10 +13,9 @@ pub(super) fn push_source_facts(
     let (kinds, ids): (Vec<_>, Vec<_>) = roots
         .iter()
         .map(|reference| {
-            let (kind, value) = reference_parts(reference);
             Ok((
-                kind,
-                value.parse::<Uuid>().map_err(|_| {
+                reference.kind(),
+                reference.uuid().ok_or_else(|| {
                     Error::Invalid("cognition source root must be an exact revision".into())
                 })?,
             ))

@@ -67,23 +67,7 @@ pub(super) fn to_hit(
                 .view
                 .basis
                 .iter()
-                .map(|basis| match basis {
-                    RevisionBasis::Evidence(value) => EvidenceHandle {
-                        epistemic_relation: value.epistemic_relation,
-                        reference: value.cognitive_ref(),
-                        basis_role: value.basis_role.as_str().into(),
-                    },
-                    RevisionBasis::CognitionDependency(value) => EvidenceHandle {
-                        epistemic_relation: value.epistemic_relation,
-                        reference: value.target_revision.clone(),
-                        basis_role: value.basis_role.as_str().into(),
-                    },
-                    RevisionBasis::Seed(value) => EvidenceHandle {
-                        epistemic_relation: None,
-                        reference: CognitiveRef::CognitiveSeedVersion(value.seed_version_id),
-                        basis_role: "seed".into(),
-                    },
-                })
+                .map(RevisionBasis::evidence_handle)
                 .collect()
         } else {
             Vec::new()

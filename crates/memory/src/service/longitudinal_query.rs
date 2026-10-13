@@ -46,8 +46,35 @@ pub(super) async fn materialize_longitudinal(
             .fetch_all(service.store.pool())
             .await
             .map_err(db)?;
-        let ids: Vec<Uuid> = rows.iter().map(|row| row.get("revision_id")).collect();
-        let evidence = longitudinal_evidence(service, kind, &ids).await?;
+        let rows = rows
+            .into_iter()
+            .filter_map(
+                |row| match longitudinal_availability(bound, &row, kind, references) {
+                    Ok(Some((exact, epoch))) => Some(Ok((row, exact, epoch))),
+                    Ok(None) => {
+                        *drops.entry("longitudinal_unavailable".into()).or_default() += 1;
+                        None
+                    }
+                    Err(error) => Some(Err(error)),
+                },
+            )
+            .collect::<Result<Vec<_>>>()?;
+        let ids = rows
+            .iter()
+            .map(|(row, _, _)| row.get("revision_id"))
+            .collect::<Vec<Uuid>>();
+        let evidence = if bound.source_query.result_need.need_evidence {
+            longitudinal_evidence(
+                service,
+                subject,
+                kind,
+                &ids,
+                bound.historical_authority.as_deref(),
+            )
+            .await?
+        } else {
+            BTreeMap::new()
+        };
         let mut renderings = longitudinal_renderings(
             service,
             subject,
@@ -67,28 +94,8 @@ pub(super) async fn materialize_longitudinal(
             bound.historical_authority.as_deref(),
         )
         .await?;
-        for row in rows {
+        for (row, exact, epoch) in rows {
             let revision: Uuid = row.get("revision_id");
-            let object: Uuid = row.get("object_id");
-            let exact = if kind == "episode" {
-                CognitiveRef::EpisodeRevision(EpisodeRevisionId(revision))
-            } else {
-                CognitiveRef::JournalRevision(JournalRevisionId(revision))
-            };
-            let mutable = if kind == "episode" {
-                CognitiveRef::Episode(EpisodeId(object))
-            } else {
-                CognitiveRef::Journal(JournalId(object))
-            };
-            let requested = if references.contains(&exact) {
-                &exact
-            } else {
-                &mutable
-            };
-            let Some(epoch) = longitudinal_availability(bound, &row, &exact, requested)? else {
-                *drops.entry("longitudinal_unavailable".into()).or_default() += 1;
-                continue;
-            };
             let time = temporal_from_columns(
                 row.get("time_kind"),
                 row.get("time_start"),
@@ -99,11 +106,7 @@ pub(super) async fn materialize_longitudinal(
                 *drops.entry("longitudinal_constraints".into()).or_default() += 1;
                 continue;
             }
-            let basis = if bound.source_query.result_need.need_evidence {
-                evidence.get(&revision).cloned().unwrap_or_default()
-            } else {
-                vec![]
-            };
+            let basis = evidence.get(&revision).cloned().unwrap_or_default();
             let mut hit = longitudinal_hit(
                 &row,
                 kind,
@@ -121,11 +124,29 @@ pub(super) async fn materialize_longitudinal(
 fn longitudinal_availability(
     bound: &BoundQuery,
     row: &sqlx::postgres::PgRow,
-    exact: &CognitiveRef,
-    requested: &CognitiveRef,
-) -> Result<Option<i64>> {
+    kind: &str,
+    references: &[CognitiveRef],
+) -> Result<Option<(CognitiveRef, i64)>> {
+    let revision = row.get("revision_id");
+    let object = row.get("object_id");
+    let (exact, mutable) = if kind == "episode" {
+        (
+            CognitiveRef::EpisodeRevision(EpisodeRevisionId(revision)),
+            CognitiveRef::Episode(EpisodeId(object)),
+        )
+    } else {
+        (
+            CognitiveRef::JournalRevision(JournalRevisionId(revision)),
+            CognitiveRef::Journal(JournalId(object)),
+        )
+    };
+    let requested = if references.contains(&exact) {
+        &exact
+    } else {
+        &mutable
+    };
     let revision: Uuid = row.get("revision_id");
-    let header = match super::historical::historical_header(bound, exact) {
+    let header = match super::historical::historical_header(bound, &exact) {
         Ok(header) => header,
         Err(Error::NotFound(_)) => return Ok(None),
         Err(error) => return Err(error),
@@ -135,7 +156,7 @@ fn longitudinal_availability(
         || (bound.revision_policy.allows_historical(requested)
             && row.get::<Uuid, _>("current_revision_id") != revision);
     let changed_binding = bound.exact_bindings.iter().any(|binding| {
-        binding.bound_ref == *exact
+        binding.bound_ref == exact
             && binding.mutable_object
             && (binding.bound_object_epoch != Some(epoch)
                 || (header.is_none() && row.get::<Uuid, _>("current_revision_id") != revision))
@@ -155,7 +176,7 @@ fn longitudinal_availability(
     {
         return Ok(None);
     }
-    Ok(Some(epoch))
+    Ok(Some((exact, epoch)))
 }
 
 fn longitudinal_hit(
@@ -250,71 +271,32 @@ fn longitudinal_filter(
 }
 async fn longitudinal_evidence(
     service: &MemoryService,
+    subject: SubjectId,
     kind: &str,
     ids: &[Uuid],
+    view: Option<&HistoricalAuthoritySnapshot>,
 ) -> Result<BTreeMap<Uuid, Vec<EvidenceHandle>>> {
-    let mut result = BTreeMap::<Uuid, Vec<EvidenceHandle>>::new();
-    if kind == "episode" {
-        let rows=sqlx::query("SELECT episode_revision_id,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM episode_revision_basis WHERE episode_revision_id=ANY($1::uuid[]) ORDER BY episode_revision_id,basis_no")
-            .bind(ids).fetch_all(service.store.pool()).await.map_err(db)?;
-        for row in rows {
-            let reference = if row.get::<String, _>("basis_kind") == "evidence" {
-                if let Some(id) = row.get::<Option<Uuid>, _>("derived_region_id") {
-                    CognitiveRef::DerivedRegion(DerivedRegionId(id))
-                } else if let Some(id) = row.get::<Option<Uuid>, _>("derived_representation_id") {
-                    CognitiveRef::DerivedRepresentation(DerivedRepresentationId(id))
-                } else if let Some(id) = row.get::<Option<Uuid>, _>("source_region_id") {
-                    CognitiveRef::SourceRegion(SourceRegionId(id))
-                } else {
-                    CognitiveRef::Occurrence(OccurrenceId(row.get("occurrence_id")))
-                }
+    let references = ids
+        .iter()
+        .map(|id| {
+            if kind == "episode" {
+                CognitiveRef::EpisodeRevision(EpisodeRevisionId(*id))
             } else {
-                parse_reference(
-                    &row.get::<String, _>("basis_kind"),
-                    &row.get::<String, _>("basis_ref"),
-                )?
-            };
-            result
-                .entry(row.get("episode_revision_id"))
-                .or_default()
-                .push(EvidenceHandle {
-                    epistemic_relation: nous_core::parse_epistemic_relation(
-                        row.get("epistemic_relation"),
-                    )?,
-                    reference,
-                    basis_role: row.get("basis_role"),
-                });
-        }
-    } else {
-        let rows=sqlx::query("SELECT journal_revision_id,basis FROM journal_point_basis WHERE journal_revision_id=ANY($1::uuid[]) ORDER BY journal_revision_id,ordinal,basis_no")
-            .bind(ids).fetch_all(service.store.pool()).await.map_err(db)?;
-        let mut seen = BTreeSet::new();
-        for row in rows {
-            let revision: Uuid = row.get("journal_revision_id");
-            let basis: RevisionBasis = serde_json::from_value(row.get("basis"))
-                .map_err(|error| Error::Infrastructure(error.to_string()))?;
-            if !seen.insert((revision, basis.canonical_key())) {
-                continue;
+                CognitiveRef::JournalRevision(JournalRevisionId(*id))
             }
-            let judgment = basis.epistemic_relation();
-            let (reference, role) = match basis {
-                RevisionBasis::Evidence(evidence) => {
-                    (evidence.cognitive_ref(), evidence.basis_role)
-                }
-                RevisionBasis::CognitionDependency(dependency) => {
-                    (dependency.target_revision, dependency.basis_role)
-                }
-                RevisionBasis::Seed(_) => {
-                    return Err(Error::Infrastructure(
-                        "Journal has invalid Seed support".into(),
-                    ));
-                }
-            };
-            result.entry(revision).or_default().push(EvidenceHandle {
-                epistemic_relation: judgment,
-                reference,
-                basis_role: role.as_str().into(),
-            });
+        })
+        .collect::<Vec<_>>();
+    let mut result = BTreeMap::new();
+    for references in references.chunks(256) {
+        for (reference, support) in service.exact_supports(subject, references, view).await? {
+            let mut seen = BTreeSet::new();
+            let handles = support
+                .basis
+                .iter()
+                .filter(|basis| kind != "journal" || seen.insert(basis.canonical_key()))
+                .map(RevisionBasis::evidence_handle)
+                .collect();
+            result.insert(reference.uuid().expect("longitudinal revision"), handles);
         }
     }
     Ok(result)
@@ -353,34 +335,33 @@ async fn longitudinal_renderings(
             .store
             .episode_member_text_input_in_view(subject, ids, budget, view)
             .await?;
-        for (revision, members) in fragments {
-            for member in members {
+        let members = fragments
+            .into_iter()
+            .flat_map(|(revision, members)| {
+                members
+                    .into_iter()
+                    .map(move |member| (revision, member.reference))
+            })
+            .collect::<Vec<_>>();
+        for members in members.chunks(256) {
+            let references = members
+                .iter()
+                .map(|(_, reference)| reference.clone())
+                .collect::<Vec<_>>();
+            let texts = service
+                .material
+                .text_excerpts(subject, &references, budget.fragment_max_bytes as u64, view)
+                .await?;
+            for (revision, reference) in members {
+                let rendering = result.entry(*revision).or_default();
                 if matches!(
-                    member.reference,
+                    reference,
                     CognitiveRef::DerivedRepresentation(_) | CognitiveRef::DerivedRegion(_)
                 ) {
-                    result
-                        .entry(revision)
-                        .or_default()
-                        .sources
-                        .push(member.reference.clone());
+                    rendering.sources.push(reference.clone());
                 }
-                let text = service
-                    .material
-                    .text_excerpt(
-                        subject,
-                        &member.reference,
-                        budget.fragment_max_bytes as u64,
-                        view,
-                    )
-                    .await?
-                    .map(|view| view.text);
-                if let Some(text) = text {
-                    append_rendering(
-                        &mut result.entry(revision).or_default().text,
-                        &text,
-                        budget.total_max_bytes,
-                    );
+                if let Some(text) = texts.get(reference) {
+                    append_rendering(&mut rendering.text, &text.text, budget.total_max_bytes);
                 }
             }
         }

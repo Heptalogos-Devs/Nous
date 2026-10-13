@@ -9,7 +9,7 @@
 
 use crate::{
     CognitiveRef, CognitiveSeedVersionId, DerivedRegionId, DerivedRepresentationId, Error,
-    OccurrenceId, Result, SourceRegionId,
+    EvidenceHandle, OccurrenceId, Result, SourceRegionId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -237,6 +237,23 @@ impl RevisionBasis {
             Self::Evidence(v) => v.epistemic_relation,
             Self::CognitionDependency(v) => v.epistemic_relation,
             Self::Seed(_) => None,
+        }
+    }
+    pub fn evidence_handle(&self) -> EvidenceHandle {
+        let (reference, role) = match self {
+            Self::Evidence(value) => (value.cognitive_ref(), value.basis_role.as_str()),
+            Self::CognitionDependency(value) => {
+                (value.target_revision.clone(), value.basis_role.as_str())
+            }
+            Self::Seed(value) => (
+                CognitiveRef::CognitiveSeedVersion(value.seed_version_id),
+                "seed",
+            ),
+        };
+        EvidenceHandle {
+            reference,
+            epistemic_relation: self.epistemic_relation(),
+            basis_role: role.into(),
         }
     }
     pub fn canonical_key(&self) -> String {

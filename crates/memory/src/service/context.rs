@@ -87,26 +87,7 @@ fn project_context(
     basis: Vec<RevisionBasis>,
     max_bytes: usize,
 ) -> ContextSource {
-    let evidence = basis
-        .into_iter()
-        .map(|basis| match basis {
-            RevisionBasis::Evidence(value) => EvidenceHandle {
-                reference: value.cognitive_ref(),
-                epistemic_relation: value.epistemic_relation,
-                basis_role: value.basis_role.as_str().into(),
-            },
-            RevisionBasis::CognitionDependency(value) => EvidenceHandle {
-                reference: value.target_revision,
-                epistemic_relation: value.epistemic_relation,
-                basis_role: value.basis_role.as_str().into(),
-            },
-            RevisionBasis::Seed(value) => EvidenceHandle {
-                reference: CognitiveRef::CognitiveSeedVersion(value.seed_version_id),
-                epistemic_relation: None,
-                basis_role: "seed".into(),
-            },
-        })
-        .collect();
+    let evidence = basis.iter().map(RevisionBasis::evidence_handle).collect();
     let text = (max_bytes > 0).then(|| {
         text.truncate(text.floor_char_boundary(max_bytes));
         text
