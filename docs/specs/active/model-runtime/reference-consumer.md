@@ -24,7 +24,7 @@ native JSON 由 Buf toJson 负责：oneof 为实际字段，Timestamp 为 ISO，
 
 有同请求重放合同的写操作在正式 Proto RPC 上声明 IDEMPOTENT。Client 和 CLI 共用服务描述符；CLI 据此保存冻结请求，不另维护一份业务方法名单。该声明只允许重发原输入，不把未声明的 Session、upload 或 Host 操作推断为同类请求。
 
-semantic owner 是唯一结果与拒绝 Authority。consumer 不建立 complete/rejected 状态表。成功响应，以及 owner 明确的提交前拒绝（STALE_REVISION、OPERATION_ID_CONFLICT、InvalidArgument、PermissionDenied、Unauthenticated）删除本地原请求；删除失败只附 REQUEST_UNSAVED notice，不改变业务结果。连接丢失、DeadlineExceeded、Unavailable 或可能发生于提交后的 Internal/Unknown 保留原请求并返回 retry ID，`retry <id>` 将相同原输入再次发送给 owner，不重新读当前 revision、生成 identity 或重新解析名称。Subject creation 重试不要求先选择新 Subject；其他 Subject-bound 重试校验 scope。重试只恢复业务请求，不补做独立的 local selection 更新。
+semantic owner 是唯一结果与拒绝 Authority。consumer 不建立 complete/rejected 状态表。成功响应，以及 owner 在正式 ErrorDetail 中声明 `context.commit_status=rejected` 的提交前拒绝，删除本地原请求；删除失败只附 REQUEST_UNSAVED notice，不改变业务结果。连接丢失、DeadlineExceeded、Unavailable 或可能发生于提交后的 Internal/Unknown 保留原请求并返回 retry ID，`retry <id>` 将相同原输入再次发送给 owner，不重新读当前 revision、生成 identity 或重新解析名称。Subject creation 重试不要求先选择新 Subject；其他 Subject-bound 重试校验 scope。重试只恢复业务请求，不补做独立的 local selection 更新。
 
 `retry forget <id>` 只删除本地原请求，不撤销 Authority 操作。保存请求容量耗尽时先恢复或明确丢弃原请求；没有第二套终态回收规则。Session lifecycle、Identity binding、derivation、upload 的实际幂等合同由各 owner 决定，不声称全部调用都可用同一方式恢复。
 
@@ -42,4 +42,4 @@ Material `show` 读取 metadata，`read` 通过 Material Authority 返回 bounde
 
 STALE_CONTEXT/STALE_REVISION 要求刷新状态；OPERATION_ID_CONFLICT 要求为不同输入使用新 identity。recovery 是调用者建议，不授权额外 mutation。未知 detail/enum 保留原信息，不猜测业务含义。
 
-冻结请求只在正式 owner 的 ErrorDetail 明确声明 `context.commit_status=rejected` 时删除。其他失败按提交结果不确定处理，保留原请求。
+Configuration 的输入、scope 与 storage 校验拒绝使用 INVALID_CONFIGURATION/CORRECT_REQUEST，并声明提交前拒绝；该操作的 STALE_REVISION 和 OPERATION_ID_CONFLICT 同样声明提交阶段。通用 RPC 状态不用于推断复合操作是否已经提交。

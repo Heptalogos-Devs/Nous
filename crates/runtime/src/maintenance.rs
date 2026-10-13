@@ -144,7 +144,7 @@ impl CognitiveRuntimeService {
         let mut tx = self.store.begin().await?;
         let now = self.now(subject);
         let blocked_digest = self.maintenance_block_digest(subject)?;
-        sqlx::query("UPDATE maintenance_needs SET state='pending',trigger_revision=trigger_revision+1,blocked_config_digest=NULL,retry_not_before=NULL,retry_count=0 WHERE subject_id=$1 AND state='blocked' AND (blocked_config_digest IS DISTINCT FROM $2 OR (last_problem_code='maintenance_retry_exhausted' AND $3::text IS NOT NULL AND model_execution_digest IS DISTINCT FROM $3))")
+        sqlx::query("UPDATE maintenance_needs SET state='pending',trigger_revision=trigger_revision+1,blocked_config_digest=NULL,retry_not_before=NULL,retry_count=0 WHERE subject_id=$1 AND state='blocked' AND (blocked_config_digest IS DISTINCT FROM $2 OR (last_problem_code IN ('maintenance_retry_exhausted','capability_unavailable') AND $3::text IS NOT NULL AND model_execution_digest IS DISTINCT FROM $3))")
             .bind(subject.0).bind(blocked_digest).bind(model_execution_digest).execute(&mut *tx).await.map_err(db)?;
         self.cleanup_maintenance_in(&mut tx, subject).await?;
         let rows = sqlx::query(

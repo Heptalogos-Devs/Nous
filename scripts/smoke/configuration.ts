@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { rm, readFile, writeFile } from "node:fs/promises";
+import { rm, readFile, writeFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { ConfigExposure, ConfigurationView } from "@nous-wave/client";
 import { boot, prepare, stop, type Boot } from "./support.js";
@@ -13,6 +13,8 @@ import { workspaceTemp } from "../workspace.js";
 import { fromJson, toJson } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { resolveLocations } from "../../apps/nous-core/src/locations.js";
+import { runCli } from "../../apps/nous-cli/src/commands/index.js";
+import { NousError } from "@nous-wave/client";
 
 const root = await workspaceTemp("smoke", "configuration-");
 let current: Boot | undefined;
@@ -239,6 +241,37 @@ try {
     /revision.*changed|revision.*conflict/i,
   );
   assert.deepEqual((await entry("models", undefined, true)).value, frozenGraph);
+  const receipts = async () =>
+    (await readdir(join(locations.instance, "consumers"), { recursive: true }))
+      .filter(
+        (path) =>
+          path.split(/[\\/]/).at(-2) === "operations" && path.endsWith(".json"),
+      )
+      .sort();
+  const beforeRejected = await receipts();
+  for (const args of [
+    ["models", JSON.stringify(frozenGraph), "--subject", subject.subjectId],
+    ["host.port", "1"],
+  ]) {
+    await assert.rejects(
+      runCli([
+        "config",
+        "set",
+        ...args,
+        "--run-root",
+        locations.run,
+        "--instance-root",
+        locations.instance,
+        "--json",
+      ]),
+      (error: unknown) =>
+        error instanceof NousError &&
+        error.domainCode === "INVALID_CONFIGURATION" &&
+        error.context.commit_status === "rejected" &&
+        !("receipt" in error),
+    );
+    assert.deepEqual(await receipts(), beforeRejected);
+  }
   await assert.rejects(
     client.configuration.setSystemOverride({
       operationId: randomUUID(),

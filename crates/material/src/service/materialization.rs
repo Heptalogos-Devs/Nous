@@ -55,15 +55,23 @@ impl MaterialService {
         references: &[CognitiveRef],
         max_bytes: usize,
     ) -> Result<Vec<Result<nous_runtime::ContextSource>>> {
-        let mut inputs = self.read_inputs(subject, references, None).await?;
+        self.store.require_subject(subject).await?;
+        let mut tx = self.store.read_view().await?;
+        let mut inputs = self
+            .read_inputs_in(&mut tx, subject, references, None, max_bytes > 0)
+            .await?;
+        tx.commit().await.map_err(db)?;
         let mut results = Vec::with_capacity(references.len());
-        for reference in references {
+        for (index, reference) in references.iter().enumerate() {
+            let input = if references[index + 1..].contains(reference) {
+                inputs.get(reference).cloned()
+            } else {
+                inputs.remove(reference)
+            };
             let result = async {
-                let mut payload = inputs
-                    .get_mut(reference)
+                let mut payload = input
                     .ok_or_else(|| Error::Unavailable("material metadata is unavailable".into()))?
-                    .payload
-                    .clone()?;
+                    .payload?;
                 let media_type = payload.media_type.clone();
                 let producer = payload.producer.take();
                 let provenance = std::mem::take(&mut payload.provenance);
@@ -156,10 +164,17 @@ impl MaterialService {
             CognitiveRef::DerivedRepresentation,
         );
         let input = self
-            .read_inputs_in(&mut tx, subject, std::slice::from_ref(&reference), None)
+            .read_inputs_in(
+                &mut tx,
+                subject,
+                std::slice::from_ref(&reference),
+                None,
+                true,
+            )
             .await?
             .remove(&reference)
             .ok_or_else(|| Error::Unavailable("formation source unavailable".into()))?;
+        let payload = input.payload?;
         if representation.is_some()
             && artifact.is_none_or(|id| !input.source_artifacts.contains(&id))
         {
@@ -181,7 +196,7 @@ impl MaterialService {
                     byte_range: None,
                     max_bytes,
                 },
-                input.payload?,
+                payload,
             )
             .await?;
         Ok((source, mentions))
@@ -441,12 +456,17 @@ impl MaterialService {
             .await?;
         let references: Vec<_> = evidence.iter().map(evidence_reference).collect();
         let mut inputs = self
-            .read_inputs_in(&mut tx, subject, &references, view)
+            .read_inputs_in(&mut tx, subject, &references, view, true)
             .await?;
         tx.commit().await.map_err(db)?;
         let mut text = std::collections::HashMap::new();
         for (evidence, reference) in evidence.iter().zip(&references) {
             let occurrence = &occurrences[&evidence.occurrence_id];
+            if let Some(Err(error)) = inputs.get(reference).map(|input| &input.payload)
+                && !matches!(error, Error::Unavailable(_))
+            {
+                return Err(error.clone());
+            }
             if !matches!(evidence.locator, EvidenceLocator::WholeOccurrence)
                 && !inputs.get(reference).is_some_and(|input| {
                     occurrence

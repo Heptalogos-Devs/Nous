@@ -6,7 +6,11 @@ import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { ConfigurationService } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import { normalizeCoreConfigurationValue } from "./catalog.js";
-import { domainError, ErrorRecovery } from "@nous-wave/client/errors";
+import {
+  domainError,
+  DomainErrorCode,
+  ErrorRecovery,
+} from "@nous-wave/client/errors";
 import { z } from "zod";
 
 /** Kernel owns precedence and snapshots; Core only runs the owning TypeScript normalizer. */
@@ -37,6 +41,7 @@ export function configurationOperations(
           : `Invalid configuration ${path}`,
         Code.InvalidArgument,
         {
+          code: DomainErrorCode.INVALID_CONFIGURATION,
           recovery: ErrorRecovery.CORRECT_REQUEST,
           context: { commit_status: "rejected", path },
         },

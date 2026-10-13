@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { createInterface } from "node:readline";
 import {
   timestampFromDate,
@@ -223,6 +224,7 @@ async function scenario(endpoint: string, token: string) {
     return JSON.parse(response.value) as { endpoint?: string };
   };
   let { models, calls } = proposalModels();
+  let recoveryProvider: ReturnType<typeof createServer> | undefined;
   async function openCore(kernelEndpoint: string) {
     let kernel = KernelClient.connect(kernelEndpoint, token);
     const snapshot = await kernel.configuration.getConfiguration({
@@ -828,28 +830,61 @@ async function scenario(endpoint: string, token: string) {
       path: "maintenance.max_model_calls_per_tick",
       value: fromJson(ValueSchema, 1),
     });
-    models = await ModelRuntime.fromConfig(
-      modelConfigurationSchema.parse({
-        gateway_profiles: {
-          missing: {
-            base_url: "http://127.0.0.1:1/v1",
-            credential_env: "NOUS_SMOKE_MISSING_CREDENTIAL",
-          },
-        },
-        model_profiles: {
-          chat: {
-            gateway: "missing",
-            protocol: "openai-chat",
-            model: "unavailable",
-            capabilities: ["text", "structured_output"],
-          },
-        },
-        execution_profiles: { chat: { model: "chat" } },
-        roles: {
-          concept_maintenance: { routes: ["chat"], requirement: "required" },
-        },
-      }),
+    let recoveredCalls = 0;
+    recoveryProvider = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        assert.equal(
+          request.headers.authorization,
+          "Bearer controlled-maintenance-recovery",
+        );
+        recoveredCalls++;
+        response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify({
+            choices: [
+              {
+                index: 0,
+                finish_reason: "stop",
+                message: {
+                  role: "assistant",
+                  content: JSON.stringify({
+                    actions: [{ action: "no_change" }],
+                  }),
+                },
+              },
+            ],
+          }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) =>
+      recoveryProvider!.listen(0, "127.0.0.1", resolve),
     );
+    const recoveryAddress = recoveryProvider.address();
+    assert(recoveryAddress && typeof recoveryAddress !== "string");
+    const requiredConfig = modelConfigurationSchema.parse({
+      gateway_profiles: {
+        missing: {
+          base_url: `http://127.0.0.1:${recoveryAddress.port}/v1`,
+          credential_env: "NOUS_SMOKE_MISSING_CREDENTIAL",
+        },
+      },
+      model_profiles: {
+        chat: {
+          gateway: "missing",
+          protocol: "openai-chat",
+          model: "unavailable",
+          capabilities: ["text", "structured_output"],
+        },
+      },
+      execution_profiles: { chat: { model: "chat" } },
+      roles: {
+        concept_maintenance: { routes: ["chat"], requirement: "required" },
+      },
+    });
+    delete process.env.NOUS_SMOKE_MISSING_CREDENTIAL;
+    models = await ModelRuntime.fromConfig(requiredConfig);
     await app.close();
     app = await openCore(restarted.endpoint);
     publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -875,9 +910,37 @@ async function scenario(endpoint: string, token: string) {
       required.results[0]?.errorDetail?.context.capability,
       "model.concept_maintenance",
     );
+    assert.equal(recoveredCalls, 0);
+    process.env.NOUS_SMOKE_MISSING_CREDENTIAL =
+      "controlled-maintenance-recovery";
+    models = await ModelRuntime.fromConfig(requiredConfig);
+    await app.close();
+    const recoveredKernel = await control({ command: "restart" });
+    assert(recoveredKernel.endpoint);
+    app = await openCore(recoveredKernel.endpoint);
+    publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
+    client = connectNous(publicEndpoint, token);
+    const recovered = await client.cognition.grantMaintenance({
+      subjectId,
+      maxOperations: 1,
+      maxModelCalls: 1,
+      maxElapsedMs: 60000,
+    });
+    assert.equal(recovered.operationsConsumed, 1);
+    assert.equal(recovered.modelCalls, 1);
+    assert.equal(recoveredCalls, 1);
+    assert.equal(recovered.results[0]?.needId, required.results[0]?.needId);
+    assert.equal(recovered.results[0]?.status, "no_change");
     console.error("Longitudinal smoke passed");
   } finally {
     await app.close();
+    delete process.env.NOUS_SMOKE_MISSING_CREDENTIAL;
+    if (recoveryProvider) {
+      recoveryProvider.closeAllConnections();
+      await new Promise<void>((resolve) =>
+        recoveryProvider!.close(() => resolve()),
+      );
+    }
     channel.close();
     process.stdout.write(JSON.stringify({ command: "done" }) + "\n");
     process.stdin.destroy();

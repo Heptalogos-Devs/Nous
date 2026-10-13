@@ -44,8 +44,7 @@ impl ContextResolver for NousRuntime {
             .into_iter()
             .map(|s| s.reference)
             .partition(|reference| {
-                matches!(reference, CognitiveRef::ExternalObject(_))
-                    || nous_runtime::CognitiveContributor::owns(&self.material, reference)
+                nous_runtime::CognitiveContributor::owns(&self.material, reference)
             });
         descriptors.extend(
             self.material

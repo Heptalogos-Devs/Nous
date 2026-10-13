@@ -332,6 +332,44 @@ async function main() {
     });
     assert.equal(associationLast.items.length, 1);
     assert.equal(associationLast.nextPageToken, "");
+    const derivation = {
+      from: { kind: "memory_revision", value: formed.revisionId },
+      to: { kind: "tag", value: tags[0]!.tagId },
+      relationKind: "assoc.related",
+      polarity: "positive",
+      basisClass: "cognitive_derivation",
+      basis: [
+        { basis: { case: "revision" as const, value: formed.basis[0]! } },
+      ],
+    };
+    const registered = await client.concepts.createAssociation({
+      subjectId,
+      operationId: randomUUID(),
+      association: derivation,
+      producer: {
+        providerClass: "deterministic-single-connection",
+        operation: "concept_maintenance_text",
+        implementation: "public-association",
+        preprocessingIdentity: "exact-memory",
+        preprocessingRevision: "1",
+        configDigest: "single-connection",
+      },
+    });
+    assert(registered.producerSignatureId);
+    const byProducerId = await client.concepts.createAssociation({
+      subjectId,
+      operationId: randomUUID(),
+      association: {
+        ...derivation,
+        basisClass: "derived_structure",
+        producerSignatureId: registered.producerSignatureId,
+      },
+    });
+    assert.equal(
+      byProducerId.producerSignatureId,
+      registered.producerSignatureId,
+    );
+    assert(byProducerId.associationId);
     const reclaimed = await runCli(["serving", "clean", ...cliFlags, "--json"]);
     assert(reclaimed);
 

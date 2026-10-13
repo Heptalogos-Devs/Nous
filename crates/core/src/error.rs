@@ -15,6 +15,7 @@ pub enum DomainErrorCode {
     StaleRevision,
     OperationIdConflict,
     CapabilityUnavailable,
+    InvalidConfiguration,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]

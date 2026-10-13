@@ -261,6 +261,12 @@ pub fn build_query_representation(
             512,
         ),
         ("Resources", "resource", limits.max_context_items, 512),
+        (
+            "External objects",
+            "external_object",
+            limits.max_context_items,
+            512,
+        ),
     ] {
         let mut values = descriptors
             .iter()

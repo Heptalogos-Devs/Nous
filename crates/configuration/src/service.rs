@@ -294,35 +294,48 @@ impl ConfigurationService {
         expected_revision: Option<i64>,
     ) -> Result<ConfigChangeOutcome> {
         let _mutation = self.inner.mutation.lock().await;
-        if expected_revision.is_some_and(|revision| revision < 0) {
-            return Err(Error::Invalid(
-                "expected configuration revision must be nonnegative".into(),
-            ));
-        }
-        if operation_id.0.is_nil() {
-            return Err(Error::Invalid(
-                "configuration operation_id is required".into(),
-            ));
-        }
-        let descriptor = self
-            .inner
-            .registry
-            .descriptor(key)
-            .ok_or_else(|| Error::Invalid(format!("unknown configuration key: {key}")))?;
-        if descriptor.storage_policy == ConfigStoragePolicy::DeploymentOnly {
-            return Err(Error::Invalid(format!(
-                "configuration path is deployment-only: {key}"
-            )));
-        }
-        let value = value
-            .map(|value| self.inner.registry.normalize(key, &value))
-            .transpose()?;
-        if subject.is_some() && descriptor.scope_policy != ConfigScopePolicy::SubjectOverrideAllowed
-        {
-            return Err(Error::Invalid(format!(
-                "configuration key is system-only: {key}"
-            )));
-        }
+        let (descriptor, value) = (|| {
+            if expected_revision.is_some_and(|revision| revision < 0) {
+                return Err(Error::Invalid(
+                    "expected configuration revision must be nonnegative".into(),
+                ));
+            }
+            if operation_id.0.is_nil() {
+                return Err(Error::Invalid(
+                    "configuration operation_id is required".into(),
+                ));
+            }
+            let descriptor = self
+                .inner
+                .registry
+                .descriptor(key)
+                .ok_or_else(|| Error::Invalid(format!("unknown configuration key: {key}")))?;
+            if descriptor.storage_policy == ConfigStoragePolicy::DeploymentOnly {
+                return Err(Error::Invalid(format!(
+                    "configuration path is deployment-only: {key}"
+                )));
+            }
+            let value = value
+                .map(|value| self.inner.registry.normalize(key, &value))
+                .transpose()?;
+            if subject.is_some()
+                && descriptor.scope_policy != ConfigScopePolicy::SubjectOverrideAllowed
+            {
+                return Err(Error::Invalid(format!(
+                    "configuration key is system-only: {key}"
+                )));
+            }
+            Ok((descriptor, value))
+        })()
+        .map_err(|error| match error {
+            Error::Invalid(message) => {
+                DomainError::new(DomainErrorCode::InvalidConfiguration, message)
+                    .with_context("path", key)
+                    .with_context("commit_status", "rejected")
+                    .into()
+            }
+            error => error,
+        })?;
         let action = if value.is_some() { "set" } else { "clear" };
         let request = serde_json::json!({
             "subject_id": subject.map(|value| value.0),

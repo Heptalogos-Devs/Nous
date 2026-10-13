@@ -126,9 +126,9 @@ ModelRole、ExecutionProfile、ModelProfile 和 Gateway 分别表达工作、调
 | Material 批量正文与片段 | Material 拥有请求内已解析引用/metadata 与有界字节；Retrieval 消费选中正文                   | 最多 256 refs 一批 metadata，同引用和已有正文复用，fragment 按剩余预算读取                                                              | selection 后逐项重新验证/加载 metadata、再次解析 UUID、旁路单项 payload SQL；不新增持久缓存或调度框架                                                   |
 | 测试与生成数据          | 公共功能场景；owner 独特脆弱逻辑；workspacePaths                                            | 单次真实公共路径检查，显式清理本地临时/缓存                                                                                             | 重叠脚手架测试、重复运行、过时目录扫描；不删数值 oracle、真实语料和独特并发/解析风险                                                                    |
 
-## 本轮仍需替换的完整流程
+## 当前能力与剩余边界
 
-| 能力                  | 当前剩余流程                                                                                                                          | 本轮删除单位                                                                                 |
+| 能力                  | 当前实现与边界                                                                                                                        | 责任与简化结果                                                                               |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | 认知内容与 Projection | Memory/Material 已批量读取；accretion 复用同次读取的内容与 support，保持 kind/value 顺序；Projection 每批最多 16 项，其他 Runtime 来源仍按项读取               | 窄内容和 exact support 各归 Memory；Runtime 有界批量消费；按输入顺序比较，不伪造 QuerySource |
 | 维护 grant            | 已替换：按选取时的排序位置继续翻页；operationsConsumed 贯通 grant/scheduler；无生成机会跳过，required 失败返回正式详情                | 复用排序有界翻页；正式 operationsConsumed；生成前统一角色要求；无状态变化不写确认            |
@@ -138,7 +138,7 @@ ModelRole、ExecutionProfile、ModelProfile 和 Gateway 分别表达工作、调
 | 正式管理与读取        | 已接：serving clean、Schema list/history、Tag history、Association get/list；复用正式分页与既有 owner 解码                            | 复用 owner 能力接最短入口；缺少领域实现的标明未实现，不造占位业务                            |
 | 生成数据              | Serving 已接独立回收，receipt、Query 缓存和临时目录有边界；embedding_material 尚无独立淘汰策略，随新内容与向量空间增长                                                                                                  | 分别说明所属能力、位置和增长边界；清理保护已接纳材料、付费成果、研究与活跃数据               |
 
-这张表是当前源码核对结果，不表示已完成替换。已有 Query 单一来源、共享 Serving 构建输入、四家族 purge、完整读取事务、WorkContext 锁序和真实模型结果保存继续作为基础。
+这张表区分已经接通的能力与仍未交付的边界，公共路径验证见下文。已有 Query 单一来源、共享 Serving 构建输入、四家族 purge、完整读取事务、WorkContext 锁序和真实模型结果保存继续作为基础。
 
 ## 实际功能验证与边界
 
@@ -146,6 +146,6 @@ ModelRole、ExecutionProfile、ModelProfile 和 Gateway 分别表达工作、调
 
 已有隔离实例实际跑通 Ark 文本形成、已保存成果重放、向量提交与自有检索；未启用模型 Rerank。这不证明模型输出和算法质量。编译包的 Launcher、Client、CLI、MCP、独立 cwd、分离布局和重启已有运行验证。Windows fast CI 已通过，原生 Windows 正式发布装配未验证。
 
-本轮以附件 Spec 的固定基线统计累计差异，生产和全部手写代码分别要求新增量不超过删除量的十分之一。纯搬移、格式、生成绑定和文档不算能力删减。预算与完整功能均达到才可交付完成；不新增统计门禁或证明目录。
+本轮收尾以 Association 事务、Material 逐项失败及引用模式、维护能力恢复、ExternalObject 描述和配置拒绝的公共行为为范围。新增代码按明确职责、调用方是否更简单、规则是否仍重复解释审查；行数比例要求已撤销。Runtime 其他来源的批量优化、embedding 淘汰、stock Resource adapter 和原生 Windows 发布装配保留现有边界，不在这轮扩建。
 
 相关入口：[当前实现架构](current-implementation.md)、[配置](../reference/CONFIGURATION.md)、[官方 CLI](../../apps/nous-cli/README.md)、[Client operations](../reference/CLIENT.md)、[检索合同](../specs/active/memory-reference-profile/03-query-serving.md)、[脚本](../../scripts/INDEX.md)。

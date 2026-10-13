@@ -60,7 +60,7 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), c
             .cloned()
             .collect();
         let inputs = self
-            .read_inputs_in(&mut tx, subject, &references, view)
+            .read_inputs_in(&mut tx, subject, &references, view, true)
             .await?;
         tx.commit().await.map_err(db)?;
         self.read_text_inputs(inputs, self.max_upload_bytes).await

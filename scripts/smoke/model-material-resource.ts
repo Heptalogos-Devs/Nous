@@ -107,7 +107,7 @@ const provider = createServer((request, response) => {
                 role: "assistant",
                 content: JSON.stringify({
                   selectedIds: segments.map((segment) => segment.id),
-                  summary: "Foreground Steward continuity marker.",
+                  summary: segments.map((segment) => segment.text).join("\n"),
                 }),
               },
               finish_reason: "stop",
@@ -499,6 +499,34 @@ try {
     selectedOccurrence.externalObjectRef!,
     /^object:resource-entry:[a-f0-9]{64}$/,
   );
+  await client.identity.bindIdentity({
+    subjectId,
+    canonical: {
+      kind: "external_object",
+      value: selectedOccurrence.externalObjectRef!,
+    },
+    displayName: "Named external source marker",
+    aliases: ["External alias marker"],
+  });
+  const externalPrepared = await client.cognition.prepareQuery({
+    subjectId,
+    expression: {
+      operation: "atom",
+      cues: [
+        { cue: { case: "text", value: "Recall named external source" } },
+        {
+          cue: {
+            case: "externalObjectRef",
+            value: selectedOccurrence.externalObjectRef!,
+          },
+        },
+      ],
+    },
+  });
+  assert(
+    externalPrepared.embeddingText.includes("Named external source marker"),
+  );
+  assert(externalPrepared.embeddingText.includes("External alias marker"));
   const selectedSource = await client.material.materializeEvidence({
     subjectId,
     reference: {
@@ -884,11 +912,50 @@ routes = ["memory_formation"]
   );
   const beforeRefs = providerCalls;
   const references = await restarted.cognition.buildManagedContext({
-    projection: { ...projection, consumerId: "refs-only" },
+    projection: {
+      ...projection,
+      consumerId: "refs-only",
+      situationRefs: [
+        { kind: "derived_representation", value: structured.representationId },
+      ],
+    },
   });
   assert.equal(providerCalls, beforeRefs);
   assert(references.projection?.segments.length);
   assert(references.projection.segments.every((entry) => !entry.text));
+  assert(
+    references.projection.segments.some((entry) =>
+      entry.sourceRefs.some(
+        (ref) =>
+          ref.kind === "derived_representation" &&
+          ref.value === structured.representationId,
+      ),
+    ),
+  );
+  const missingArtifact = crypto.randomUUID();
+  const mixed = await restarted.cognition.buildProjection({
+    ...projection,
+    maxItems: 32,
+    situationRefs: [
+      { kind: "occurrence", value: occurrenceId },
+      { kind: "artifact", value: missingArtifact },
+    ],
+  });
+  assert(
+    mixed.segments.some(
+      (contextPart) =>
+        contextPart.sourceRefs.some(
+          (ref) => ref.kind === "occurrence" && ref.value === occurrenceId,
+        ) && contextPart.text.includes("protocol continuity"),
+    ),
+  );
+  assert(
+    mixed.degradation.some(
+      (problem) =>
+        problem.code === "projection_source_unavailable" &&
+        problem.detail?.includes(missingArtifact),
+    ),
+  );
   await restarted.runtime.closeSession({ subjectId, id: sessionId });
   await assert.rejects(
     restarted.cognition.query({

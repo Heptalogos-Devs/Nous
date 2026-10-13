@@ -430,7 +430,7 @@ impl MemoryService {
                     })?;
                     let exists: bool = sqlx::query_scalar(
                         "SELECT EXISTS(SELECT 1 FROM producer_signatures WHERE producer_signature_id=$1)")
-                        .bind(producer).fetch_one(self.store.pool()).await.map_err(db)?;
+                        .bind(producer).fetch_one(&mut **tx).await.map_err(db)?;
                     if !exists {
                         return Err(Error::Invalid(
                             "producer signature is not registered".into(),

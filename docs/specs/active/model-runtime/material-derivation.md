@@ -20,6 +20,8 @@ Material 对 Occurrence、Artifact、SourceRegion、DerivedRepresentation 和 De
 
 普通 Serving 使用有效 representation；superseded representation 仍可精确回读，并按 captured historical view 决定过去的有效文档。Material 拥有 Artifact／外部来源 lineage 与多来源派生根，Memory 组合 cognition basis；Serving 消费相同的 current/as-of provenance contribution。Meaningful Use 可以支持关联，但不会凭空成为独立事实来源。
 
+Projection 的材料批量读取按输入次序返回逐项结果；单个对象缺失、不可读或选区无效不终止其他来源，数据库连接与查询执行错误仍使整次读取失败。精确读取继续传播所选来源的错误。引用模式只读取身份、authority 和 provenance 所需元数据，SQL 不返回 `payload_text`，也不读取 ObjectStore 正文字节。
+
 Embedding discovery 先选择至多 256 个 candidate refs，再通过共同文档合同读取正文，并批量判定兼容缓存缺口。返回的 continuation 绑定 Subject、当前内容 watermark 或历史 view digest；空 needs page 仍可能有 continuation。提交批量读取指定 exact references，核对各文本 content identity 和 view，并在 Authority fence 内发布缓存；provider batch 不拆成逐项 owner RPC/事务。Serving build、discovery 和 commit 使用相同正文格式。模型 batch admission 与文档候选 page 是不同预算；宿主遵守调用者的总提交上限。
 
 材料与 Resource 的其他读取边界见 [Cognitive IO](cognitive-io-and-resources.md)。

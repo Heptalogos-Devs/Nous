@@ -376,7 +376,7 @@ impl MaterialService {
             .map(|(_, reference)| reference.clone())
             .collect::<Vec<_>>();
         let inputs = self
-            .read_inputs_in(&mut tx, subject, &references, None)
+            .read_inputs_in(&mut tx, subject, &references, None, true)
             .await?;
         tx.commit().await.map_err(db)?;
         // Different observations may select the same representation; metadata remains request-scoped.
@@ -404,7 +404,7 @@ impl MaterialService {
         self.store.require_subject(subject).await?;
         let mut tx = self.store.read_view().await?;
         let result = self
-            .read_inputs_in(&mut tx, subject, references, view)
+            .read_inputs_in(&mut tx, subject, references, view, true)
             .await?;
         tx.commit().await.map_err(db)?;
         Ok(result)
@@ -416,11 +416,15 @@ impl MaterialService {
         subject: SubjectId,
         references: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
+        read_text: bool,
     ) -> Result<std::collections::HashMap<CognitiveRef, MaterialReadInput>> {
         if references.len() > 256 {
             return Err(Error::Invalid(
                 "Material text lookup supports at most 256 references".into(),
             ));
+        }
+        if view.is_some_and(|view| view.subject != subject) {
+            return Err(Error::Invalid("Material view subject mismatch".into()));
         }
         if references.is_empty() {
             return Ok(std::collections::HashMap::new());
@@ -429,19 +433,42 @@ impl MaterialService {
         let mut kinds = Vec::new();
         let mut ids = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        let mut result = std::collections::HashMap::new();
         for reference in references {
             if !seen.insert(reference) {
                 continue;
             }
-            self.require_lineage_view(subject, reference, view)?;
+            if let Err(error) = self.require_lineage_view(subject, reference, view) {
+                result.insert(
+                    reference.clone(),
+                    MaterialReadInput {
+                        reference: reference.clone(),
+                        payload: Err(error),
+                        source_artifacts: vec![],
+                        view_digest: view.map(|view| view.snapshot_digest.clone()),
+                    },
+                );
+                continue;
+            }
             let Ok((kind, id)) = material_reference(reference) else {
-                if !self
+                let error = if !self
                     .store
                     .reference_in_subject_tx(tx, subject, reference)
                     .await?
                 {
-                    return Err(Error::NotFound("cognitive reference not found".into()));
-                }
+                    Error::NotFound(format!("{reference}: cognitive reference not found"))
+                } else {
+                    Error::NotFound(format!("{reference}: no Material payload"))
+                };
+                result.insert(
+                    reference.clone(),
+                    MaterialReadInput {
+                        reference: reference.clone(),
+                        payload: Err(error),
+                        source_artifacts: vec![],
+                        view_digest: view.map(|view| view.snapshot_digest.clone()),
+                    },
+                );
                 continue;
             };
             resolved.push(reference);
@@ -449,7 +476,7 @@ impl MaterialService {
             ids.push(id);
         }
         if resolved.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(result);
         }
         let rows = sqlx::query(r#"
 WITH requested AS (SELECT kind,id,ordinality FROM unnest($2::text[],$3::uuid[]) WITH ORDINALITY AS r(kind,id,ordinality)),
@@ -465,7 +492,8 @@ resolved AS (
  LEFT JOIN derived_representations d ON r.kind='derived_representation' AND d.subject_id=$1 AND d.derived_representation_id=r.id
  LEFT JOIN derived_regions dr ON r.kind='derived_region' AND dr.subject_id=$1 AND dr.derived_region_id=r.id
 )
-SELECT r.ordinality,r.present,r.artifact_id,r.derived_id,r.coordinate_kind,r.coordinate,d.payload_text,
+SELECT r.ordinality,r.present,r.artifact_id,r.derived_id,r.coordinate_kind,r.coordinate,
+ CASE WHEN $4 THEN d.payload_text END AS payload_text,octet_length(d.payload_text) AS text_length,
  a.artifact_id AS payload_artifact_id,to_jsonb(p) AS producer,
  a.content_hash,a.media_type,a.byte_length,
  COALESCE(roots.regions,'{}'::uuid[]) AS source_roots,
@@ -475,23 +503,25 @@ LEFT JOIN derived_representations d ON d.subject_id=$1 AND d.derived_representat
 LEFT JOIN artifacts a ON a.subject_id=$1 AND a.artifact_id=coalesce(r.artifact_id,d.payload_artifact_id)
 LEFT JOIN producer_signatures p ON p.producer_signature_id=d.producer_signature_id
 LEFT JOIN LATERAL (SELECT array_agg(DISTINCT sr.source_region_id) AS regions,array_agg(DISTINCT sr.artifact_id) AS artifacts FROM representation_source_regions($1,r.derived_id) roots JOIN source_regions sr USING(source_region_id)) roots ON r.derived_id IS NOT NULL
-"#).bind(subject.0).bind(kinds).bind(ids).fetch_all(&mut **tx).await.map_err(db)?;
-        let mut result = std::collections::HashMap::new();
+"#).bind(subject.0).bind(kinds).bind(ids).bind(read_text).fetch_all(&mut **tx).await.map_err(db)?;
         for row in rows {
             let index: i64 = row.try_get("ordinality").map_err(db)?;
             let reference = resolved[index as usize - 1];
-            if !row.try_get::<bool, _>("present").map_err(db)? {
-                return Err(Error::NotFound("cognitive reference not found".into()));
-            }
+            let present: bool = row.try_get("present").map_err(db)?;
             let derived: Option<Uuid> = row.try_get("derived_id").map_err(db)?;
             let roots: Vec<Uuid> = row.try_get("source_roots").map_err(db)?;
-            if derived.is_some() && roots.is_empty() {
-                return Err(Error::Invalid(
-                    "derived representation has no source roots".into(),
-                ));
-            }
             let source_artifacts: Vec<Uuid> = row.try_get("source_artifacts").map_err(db)?;
-            let payload = read_payload(&row, reference, derived, roots);
+            let payload = if !present {
+                Err(Error::NotFound(format!(
+                    "{reference}: cognitive reference not found"
+                )))
+            } else if derived.is_some() && roots.is_empty() {
+                Err(Error::Invalid(
+                    "derived representation has no source roots".into(),
+                ))
+            } else {
+                read_payload(&row, reference, derived, roots)
+            };
             result.insert(
                 reference.clone(),
                 MaterialReadInput {
@@ -513,14 +543,15 @@ fn read_payload(
     roots: Vec<Uuid>,
 ) -> Result<Payload> {
     let text: Option<String> = row.try_get("payload_text").map_err(db)?;
+    let text_length: Option<i32> = row.try_get("text_length").map_err(db)?;
     let hash: Option<String> = row.try_get("content_hash").map_err(db)?;
-    if text.is_none() && hash.is_none() {
+    if text_length.is_none() && hash.is_none() {
         return Err(Error::Unavailable(
             "Material reference has no locally available byte/text payload".into(),
         ));
     }
-    let (media_type, length) = if let Some(text) = &text {
-        ("text/plain; charset=utf-8".to_owned(), text.len() as u64)
+    let (media_type, length) = if let Some(length) = text_length {
+        ("text/plain; charset=utf-8".to_owned(), length as u64)
     } else {
         (
             row.try_get::<String, _>("media_type").map_err(db)?,
@@ -553,7 +584,7 @@ fn read_payload(
                 .into_iter()
                 .map(|id| CognitiveRef::SourceRegion(SourceRegionId(id))),
         );
-        if text.is_none() {
+        if text_length.is_none() {
             provenance.push(CognitiveRef::Artifact(ArtifactId(
                 row.try_get("payload_artifact_id").map_err(db)?,
             )));

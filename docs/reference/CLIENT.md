@@ -52,6 +52,8 @@ Session state is isolated; WorkContexts belong to Subject and can continue acros
 
 `identity.bindIdentity/resolve` discover real canonical identities and returned LexicalRefs. Same display names may produce ambiguity; use the chosen returned candidate, never guess a vector identity. `identity.rebindEntity` changes the interpretation of a source mention without rewriting its original surface.
 
+ExternalObject 的目录名称与别名也通过 `identity.bindIdentity` 登记，返回 `obj:` 词汇地址；显式 object cue 的 Query preparation 使用这些描述。材料来源、正文与 lineage 仍由 Material 读取。
+
 `identity.getIdentityAddresses({ targets: [{ subjectId, canonical: { kind, value } }] })` reads existing directory addresses in one batch, preserving target order. It never allocates an address, adds Subject visibility or changes display names/aliases. Up to 2048 targets are accepted; each result reports `BOUND`, `UNKNOWN_REFERENCE` or `REFERENCE_TOMBSTONED` with a LexicalRef only when visible and live. Merged Tag lookup uses its current canonical address. Explicit `identity.bindIdentity` remains the operation for assigning a name or alias.
 
 Context projection 由 Runtime 读取真实 Session foreground，拒绝关闭的 Session，并提供 WorkContext 的 purpose、问题、任务正文及非空的 constraints、恢复条件和预算摘要；这些任务描述不自动修改执行策略或触发恢复。Memory 提供四类 cognition 的正文与 basis，以及 active canonical Tag 的名称、描述、kind；consumer 的 `memory` policy 同时约束这些 Tag。Entity 使用已绑定的目录名称与别名，未绑定时仅提供引用。材料由 Material 解释；仅引用的投影不调用 Steward。family policy 与预算先限制选中来源，Core steward 再表达。`sourceRefs` 表达实际解析后的来源，`sourceRevision` 表达真实内容修订标记，不用对象 ID 冒充修订。

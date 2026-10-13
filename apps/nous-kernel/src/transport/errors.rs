@@ -69,6 +69,11 @@ fn domain_status(error: DomainError) -> Status {
             WireCode::CapabilityUnavailable,
             Recovery::CheckConfiguration,
         ),
+        DomainCode::InvalidConfiguration => (
+            Code::InvalidArgument,
+            WireCode::InvalidConfiguration,
+            Recovery::CorrectRequest,
+        ),
     };
     let detail = p::ErrorDetail {
         code: code.into(),

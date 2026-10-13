@@ -242,6 +242,7 @@ pub enum DomainErrorCode {
     StaleRevision = 7,
     OperationIdConflict = 8,
     CapabilityUnavailable = 11,
+    InvalidConfiguration = 12,
 }
 impl DomainErrorCode {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -260,6 +261,7 @@ impl DomainErrorCode {
             Self::StaleRevision => "DOMAIN_ERROR_CODE_STALE_REVISION",
             Self::OperationIdConflict => "DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT",
             Self::CapabilityUnavailable => "DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE",
+            Self::InvalidConfiguration => "DOMAIN_ERROR_CODE_INVALID_CONFIGURATION",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -275,6 +277,7 @@ impl DomainErrorCode {
             "DOMAIN_ERROR_CODE_STALE_REVISION" => Some(Self::StaleRevision),
             "DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT" => Some(Self::OperationIdConflict),
             "DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE" => Some(Self::CapabilityUnavailable),
+            "DOMAIN_ERROR_CODE_INVALID_CONFIGURATION" => Some(Self::InvalidConfiguration),
             _ => None,
         }
     }

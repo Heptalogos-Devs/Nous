@@ -16,6 +16,7 @@ enum DomainErrorCode {
   DOMAIN_ERROR_CODE_STALE_REVISION = 7;
   DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT = 8;
   DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE = 11;
+  DOMAIN_ERROR_CODE_INVALID_CONFIGURATION = 12;
 }
 
 // Guidance, never an instruction to perform an automatic retry or mutation.
