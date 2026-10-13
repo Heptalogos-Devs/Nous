@@ -96,35 +96,6 @@ impl MemoryService {
         .await
     }
 
-    pub(in crate::service) async fn load_basis(
-        &self,
-        revision: MemoryRevisionId,
-    ) -> Result<Vec<RevisionBasis>> {
-        let mut basis = Vec::new();
-        for row in sqlx::query("SELECT occurrence_id,source_region_id,derived_representation_id,derived_region_id,basis_role,epistemic_relation FROM memory_revision_evidence WHERE memory_revision_id=$1 ORDER BY evidence_no")
-            .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)? {
-            let locator = match (
-                row.try_get::<Option<Uuid>, _>("source_region_id").map_err(db)?,
-                row.try_get::<Option<Uuid>, _>("derived_representation_id").map_err(db)?,
-                row.try_get::<Option<Uuid>, _>("derived_region_id").map_err(db)?,
-            ) {
-                (Some(id), None, None) => EvidenceLocator::SourceRegion(nous_core::SourceRegionId(id)),
-                (None, Some(id), None) => EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(id)),
-                (None, None, Some(id)) => EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(id)),
-                (None, None, None) => EvidenceLocator::WholeOccurrence,
-                _ => return Err(Error::Infrastructure("evidence locator union is invalid".into())),
-            };
-            basis.push(RevisionBasis::Evidence(EvidenceRef {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?, occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?), locator, basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")? }));
-        }
-        for row in sqlx::query("SELECT target_ref_kind,target_ref,basis_role,epistemic_relation FROM memory_revision_dependencies WHERE memory_revision_id=$1 ORDER BY target_ref_kind,target_ref")
-            .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)? {
-            basis.push(RevisionBasis::CognitionDependency(CognitionDependency {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?, target_revision: parse_reference(&row.try_get::<String, _>("target_ref_kind").map_err(db)?, &row.try_get::<String, _>("target_ref").map_err(db)?)?, basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")? }));
-        }
-        Ok(basis)
-    }
-
     pub async fn memory_history(
         &self,
         subject: SubjectId,

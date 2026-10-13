@@ -52,54 +52,9 @@ async fn active_schema_link_inputs(
 }
 
 fn decode_schema_link_input(row: &sqlx::postgres::PgRow) -> Result<SchemaEvidenceLinkInput> {
-    let basis_kind: String = row.try_get("basis_kind").map_err(db)?;
-    let basis_role = parse_enum(row.try_get("basis_role").map_err(db)?, "schema basis role")?;
-    let basis = if basis_kind == "evidence" {
-        let locator = match (
-            row.try_get::<Option<Uuid>, _>("source_region_id")
-                .map_err(db)?,
-            row.try_get::<Option<Uuid>, _>("derived_representation_id")
-                .map_err(db)?,
-            row.try_get::<Option<Uuid>, _>("derived_region_id")
-                .map_err(db)?,
-        ) {
-            (Some(id), None, None) => EvidenceLocator::SourceRegion(nous_core::SourceRegionId(id)),
-            (None, Some(id), None) => {
-                EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(id))
-            }
-            (None, None, Some(id)) => {
-                EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(id))
-            }
-            (None, None, None) => EvidenceLocator::WholeOccurrence,
-            _ => {
-                return Err(Error::Infrastructure(
-                    "schema evidence locator is invalid".into(),
-                ));
-            }
-        };
-        RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
-            locator,
-            basis_role,
-        })
-    } else {
-        RevisionBasis::CognitionDependency(CognitionDependency {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            target_revision: parse_reference(
-                &basis_kind,
-                &row.try_get::<String, _>("basis_ref").map_err(db)?,
-            )?,
-            basis_role,
-        })
-    };
     Ok(SchemaEvidenceLinkInput {
         role: parse_enum(row.try_get("role").map_err(db)?, "schema evidence role")?,
-        basis,
+        basis: basis_from_row(row)?,
     })
 }
 

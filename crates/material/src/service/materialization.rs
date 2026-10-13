@@ -5,6 +5,7 @@ use super::lineage::evidence_reference;
 use super::read::{MaterialReadInput, Payload};
 use super::*;
 use futures::{StreamExt, stream::BoxStream};
+use nous_persistence::database_error as db;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ByteRange {
@@ -314,7 +315,18 @@ impl MaterialService {
         if max_bytes == 0 {
             return Err(Error::Invalid("text projection bound is invalid".into()));
         }
-        let inputs = self.read_inputs(subject, references, view).await?;
+        self.read_text_inputs(
+            self.read_inputs(subject, references, view).await?,
+            max_bytes,
+        )
+        .await
+    }
+
+    pub(super) async fn read_text_inputs(
+        &self,
+        inputs: std::collections::HashMap<CognitiveRef, MaterialReadInput>,
+        max_bytes: u64,
+    ) -> Result<std::collections::HashMap<CognitiveRef, MaterialTextView>> {
         let mut result = std::collections::HashMap::new();
         for (reference, input) in inputs {
             if let Some(text) = self.read_text_input(input, max_bytes).await? {
@@ -337,8 +349,10 @@ impl MaterialService {
                 "evidence batch exceeds 256 references".into(),
             ));
         }
+        let mut tx = self.store.read_view().await?;
         let occurrences = self
-            .occurrences(
+            .occurrences_in(
+                &mut tx,
                 subject,
                 &evidence
                     .iter()
@@ -348,7 +362,10 @@ impl MaterialService {
             )
             .await?;
         let references: Vec<_> = evidence.iter().map(evidence_reference).collect();
-        let mut inputs = self.read_inputs(subject, &references, view).await?;
+        let mut inputs = self
+            .read_inputs_in(&mut tx, subject, &references, view)
+            .await?;
+        tx.commit().await.map_err(db)?;
         let mut text = std::collections::HashMap::new();
         for (evidence, reference) in evidence.iter().zip(&references) {
             let occurrence = &occurrences[&evidence.occurrence_id];

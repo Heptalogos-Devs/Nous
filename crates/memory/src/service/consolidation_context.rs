@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 impl MemoryService {
     pub async fn consolidation_catalog_basis(
         &self,
@@ -10,34 +10,46 @@ impl MemoryService {
         scopes: &[CognitiveRef],
     ) -> Result<Vec<RevisionBasis>> {
         let mut allowed = std::collections::BTreeMap::new();
-        let mut visited = BTreeSet::new();
+        let mut visited = HashSet::new();
         let mut pending = scopes.to_vec();
-        while let Some(reference) = pending.pop() {
-            if !visited.insert(reference.to_string()) {
-                continue;
-            }
-            let direct = RevisionBasis::CognitionDependency(CognitionDependency {
-                epistemic_relation: None,
-                target_revision: reference.clone(),
-                basis_role: BasisRole::Direct,
-            });
-            allowed.insert(direct.canonical_key(), direct);
-            let support = self.exact_support(subject, &reference, None).await?;
-            allowed.extend(
-                support
-                    .members
-                    .iter()
-                    .filter_map(member_basis)
-                    .map(|basis| (basis.canonical_key(), basis)),
-            );
-            let basis = support.basis;
-            for basis in basis {
-                allowed.insert(basis.canonical_key(), basis.clone());
-                if let RevisionBasis::CognitionDependency(dependency) = basis {
-                    pending.push(dependency.target_revision);
-                }
+        let mut tx = self.store.read_view().await?;
+        while !pending.is_empty() {
+            let references = pending
+                .drain(..pending.len().min(256))
+                .filter(|r| visited.insert(r.clone()))
+                .collect::<Vec<_>>();
+            for (reference, support) in self
+                .exact_supports_in(&mut tx, subject, &references, None)
+                .await?
+            {
+                let direct = RevisionBasis::CognitionDependency(CognitionDependency {
+                    epistemic_relation: None,
+                    target_revision: reference,
+                    basis_role: BasisRole::Direct,
+                });
+                allowed.insert(direct.canonical_key(), direct);
+                allowed.extend(
+                    support
+                        .members
+                        .iter()
+                        .filter_map(member_basis)
+                        .map(|basis| (basis.canonical_key(), basis)),
+                );
+                pending.extend(support.basis.iter().filter_map(|basis| match basis {
+                    RevisionBasis::CognitionDependency(dependency) => {
+                        Some(dependency.target_revision.clone())
+                    }
+                    _ => None,
+                }));
+                allowed.extend(
+                    support
+                        .basis
+                        .into_iter()
+                        .map(|basis| (basis.canonical_key(), basis)),
+                );
             }
         }
+        tx.commit().await.map_err(db)?;
         Ok(allowed.into_values().collect())
     }
 }

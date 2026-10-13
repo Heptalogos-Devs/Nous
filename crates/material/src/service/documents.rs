@@ -50,18 +50,25 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), c
                 "Material text lookup supports at most 256 references".into(),
             ));
         }
-        let selected = self.document_selection(subject, references, view).await?;
+        let mut tx = self.store.read_view().await?;
+        let selected = self
+            .document_selection_in(&mut tx, subject, references, view)
+            .await?;
         let references: Vec<_> = references
             .iter()
             .filter(|reference| selected.contains(*reference))
             .cloned()
             .collect();
-        self.text_excerpts(subject, &references, self.max_upload_bytes, view)
-            .await
+        let inputs = self
+            .read_inputs_in(&mut tx, subject, &references, view)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        self.read_text_inputs(inputs, self.max_upload_bytes).await
     }
 
-    pub(super) async fn document_selection(
+    async fn document_selection_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         references: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
@@ -99,7 +106,7 @@ SELECT 'derived_representation' kind,d.derived_representation_id id FROM derived
 UNION ALL SELECT 'derived_region',r.derived_region_id FROM derived_regions r JOIN derived_representations d USING(derived_representation_id)
  WHERE r.subject_id=$1 AND r.derived_region_id=ANY($3::uuid[])
  AND NOT EXISTS(SELECT 1 FROM derived_representations newer WHERE newer.subject_id=d.subject_id AND newer.supersedes=d.derived_representation_id)
-"#).bind(subject.0).bind(representations).bind(regions).fetch_all(self.store.pool()).await.map_err(db)?;
+"#).bind(subject.0).bind(representations).bind(regions).fetch_all(&mut **tx).await.map_err(db)?;
         let mut selected: HashSet<_> = references
             .iter()
             .filter(|reference| {

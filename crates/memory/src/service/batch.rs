@@ -62,72 +62,9 @@ impl MemoryService {
             .map(|row| row.try_get::<Uuid, _>("memory_revision_id").map_err(db))
             .collect::<Result<Vec<_>>>()?;
         let revisions = selected.as_slice();
-        let evidence_rows = sqlx::query("SELECT memory_revision_id,occurrence_id,source_region_id,derived_representation_id,derived_region_id,basis_role,evidence_no,epistemic_relation FROM memory_revision_evidence WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,evidence_no")
-        .bind(revisions)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(db)?;
-        let dependency_rows = sqlx::query("SELECT memory_revision_id,target_ref_kind,target_ref,basis_role,epistemic_relation FROM memory_revision_dependencies WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,target_ref_kind,target_ref")
-        .bind(revisions)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(db)?;
+        let mut basis = self.memory_basis_in(tx, revisions).await?;
         let aboutness_rows = sqlx::query("SELECT memory_revision_id,entity_ref FROM memory_revision_aboutness WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,entity_ref")
-        .bind(revisions)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(db)?;
-        let mut basis = HashMap::<Uuid, Vec<RevisionBasis>>::new();
-        for row in evidence_rows {
-            let locator = match (
-                row.try_get::<Option<Uuid>, _>("source_region_id")
-                    .map_err(db)?,
-                row.try_get::<Option<Uuid>, _>("derived_representation_id")
-                    .map_err(db)?,
-                row.try_get::<Option<Uuid>, _>("derived_region_id")
-                    .map_err(db)?,
-            ) {
-                (Some(value), None, None) => EvidenceLocator::SourceRegion(SourceRegionId(value)),
-                (None, Some(value), None) => {
-                    EvidenceLocator::DerivedRepresentation(DerivedRepresentationId(value))
-                }
-                (None, None, Some(value)) => EvidenceLocator::DerivedRegion(DerivedRegionId(value)),
-                (None, None, None) => EvidenceLocator::WholeOccurrence,
-                _ => {
-                    return Err(Error::Infrastructure(
-                        "evidence locator union is invalid".into(),
-                    ));
-                }
-            };
-            let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;
-            basis
-                .entry(revision)
-                .or_default()
-                .push(RevisionBasis::Evidence(EvidenceRef {
-                    epistemic_relation: parse_epistemic_relation(
-                        row.try_get("epistemic_relation").map_err(db)?,
-                    )?,
-                    occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
-                    locator,
-                    basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")?,
-                }));
-        }
-        for row in dependency_rows {
-            let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;
-            basis
-                .entry(revision)
-                .or_default()
-                .push(RevisionBasis::CognitionDependency(CognitionDependency {
-                    epistemic_relation: parse_epistemic_relation(
-                        row.try_get("epistemic_relation").map_err(db)?,
-                    )?,
-                    target_revision: parse_reference(
-                        &row.try_get::<String, _>("target_ref_kind").map_err(db)?,
-                        &row.try_get::<String, _>("target_ref").map_err(db)?,
-                    )?,
-                    basis_role: parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")?,
-                }));
-        }
+            .bind(revisions).fetch_all(&mut **tx).await.map_err(db)?;
         let mut aboutness = HashMap::<Uuid, Vec<EntityRef>>::new();
         for row in aboutness_rows {
             let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;

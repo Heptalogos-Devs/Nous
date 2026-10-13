@@ -128,7 +128,7 @@ impl MemoryService {
             .collect()
     }
 
-    async fn episode_supports_in(
+    pub(in crate::service) async fn episode_supports_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         revisions: &[Uuid],
@@ -152,19 +152,6 @@ impl MemoryService {
             basis.entry(revision_id).or_default().push(value);
         }
         Ok((basis, members))
-    }
-
-    pub(in crate::service) async fn episode_support(
-        &self,
-        revision: Uuid,
-    ) -> Result<(Vec<RevisionBasis>, Vec<EpisodeMember>)> {
-        let mut tx = self.store.read_view().await?;
-        let (mut basis, mut members) = self.episode_supports_in(&mut tx, &[revision]).await?;
-        tx.commit().await.map_err(db)?;
-        Ok((
-            basis.remove(&revision).unwrap_or_default(),
-            members.remove(&revision).unwrap_or_default(),
-        ))
     }
 
     pub async fn episode_revision(
@@ -247,47 +234,4 @@ impl MemoryService {
         tx.commit().await.map_err(db)?;
         Ok((items, more))
     }
-}
-
-fn basis_from_row(row: &sqlx::postgres::PgRow) -> Result<RevisionBasis> {
-    let role = parse_enum(row.try_get("basis_role").map_err(db)?, "basis role")?;
-    let kind: String = row.try_get("basis_kind").map_err(db)?;
-    if kind == "evidence" {
-        let locator = if let Some(value) = row
-            .try_get::<Option<Uuid>, _>("source_region_id")
-            .map_err(db)?
-        {
-            EvidenceLocator::SourceRegion(SourceRegionId(value))
-        } else if let Some(value) = row
-            .try_get::<Option<Uuid>, _>("derived_representation_id")
-            .map_err(db)?
-        {
-            EvidenceLocator::DerivedRepresentation(DerivedRepresentationId(value))
-        } else if let Some(value) = row
-            .try_get::<Option<Uuid>, _>("derived_region_id")
-            .map_err(db)?
-        {
-            EvidenceLocator::DerivedRegion(DerivedRegionId(value))
-        } else {
-            EvidenceLocator::WholeOccurrence
-        };
-        return Ok(RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            occurrence_id: OccurrenceId(row.try_get::<Uuid, _>("occurrence_id").map_err(db)?),
-            locator,
-            basis_role: role,
-        }));
-    }
-    Ok(RevisionBasis::CognitionDependency(CognitionDependency {
-        epistemic_relation: parse_epistemic_relation(
-            row.try_get("epistemic_relation").map_err(db)?,
-        )?,
-        target_revision: parse_reference(
-            &kind,
-            &row.try_get::<String, _>("basis_ref").map_err(db)?,
-        )?,
-        basis_role: role,
-    }))
 }

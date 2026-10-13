@@ -30,6 +30,7 @@ mod schema_lane;
 mod source_classes;
 mod source_facts;
 mod state;
+mod support;
 mod tag;
 mod topology;
 mod trace;
@@ -45,6 +46,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sqlx::Row;
 pub use state::LifecycleAction;
 use state::{fence_epoch, require_transition};
+use support::basis_from_row;
 use uuid::Uuid;
 
 pub use crate::{CognitiveRole, FormationMode};

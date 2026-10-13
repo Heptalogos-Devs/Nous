@@ -79,10 +79,12 @@ impl MemoryService {
         let mut roots = BTreeSet::new();
         let mut occurrences = BTreeSet::new();
         let mut counterevidence = 0u64;
-        let mut direct_basis = Vec::new();
-        for reference in &refs {
-            direct_basis.extend(self.exact_support(subject, reference, None).await?.basis);
-        }
+        let direct_basis = self
+            .exact_supports(subject, &refs, None)
+            .await?
+            .into_values()
+            .flat_map(|support| support.basis)
+            .collect::<Vec<_>>();
         let summary = self.provenance_summary(subject, &direct_basis).await?;
         roots.extend(
             summary

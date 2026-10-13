@@ -17,7 +17,7 @@ pub enum DomainErrorCode {
     CapabilityUnavailable,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("{message}")]
 pub struct DomainError {
     pub code: DomainErrorCode,
@@ -41,7 +41,7 @@ impl DomainError {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Domain(#[from] DomainError),

@@ -14,12 +14,6 @@ pub struct ProvenanceSummary {
     pub normalized_inputs: BTreeSet<String>,
 }
 
-pub(in crate::service) struct CognitionSupport {
-    pub object: CognitiveRef,
-    pub basis: Vec<RevisionBasis>,
-    pub members: Vec<EpisodeMember>,
-}
-
 impl MemoryService {
     pub async fn references_producer(&self, subject: SubjectId, producer: Uuid) -> Result<bool> {
         sqlx::query_scalar(
@@ -59,14 +53,16 @@ impl MemoryService {
             match basis {
                 RevisionBasis::Evidence(_) => {}
                 RevisionBasis::CognitionDependency(dependency) => {
-                    let (query, id, _) = dependency_query(&dependency.target_revision, true)?;
+                    let (query, id) = dependency_query(&dependency.target_revision)?;
                     let row = sqlx::query(query)
                         .bind(subject.0)
                         .bind(id)
                         .fetch_optional(&mut **tx)
                         .await
                         .map_err(db)?;
-                    require_dependency_row(row)?;
+                    row.ok_or_else(|| {
+                        Error::Invalid("cognition dependency is outside Subject".into())
+                    })?;
                 }
                 RevisionBasis::Seed(_) => {
                     return Err(Error::Invalid(
@@ -92,23 +88,33 @@ impl MemoryService {
                 RevisionBasis::Seed(_) => None,
             })
             .collect::<Vec<_>>();
-        let mut visited = BTreeSet::new();
-        while let Some(reference) = stack.pop() {
-            let support = self.exact_support(subject, &reference, None).await?;
-            if &support.object == owner {
-                return Err(Error::Invalid(
-                    "cognition dependency would create an object cycle".into(),
-                ));
-            }
-            if !visited.insert(reference.to_string()) {
-                continue;
-            }
-            for nested in support.basis {
-                if let RevisionBasis::CognitionDependency(value) = nested {
-                    stack.push(value.target_revision);
+        if stack.is_empty() {
+            return Ok(());
+        }
+        let mut visited = std::collections::HashSet::new();
+        let mut tx = self.store.read_view().await?;
+        while !stack.is_empty() {
+            let references = stack
+                .drain(..stack.len().min(256))
+                .filter(|reference| visited.insert(reference.clone()))
+                .collect::<Vec<_>>();
+            for support in self
+                .exact_supports_in(&mut tx, subject, &references, None)
+                .await?
+                .into_values()
+            {
+                if &support.object == owner {
+                    return Err(Error::Invalid(
+                        "cognition dependency would create an object cycle".into(),
+                    ));
                 }
+                stack.extend(support.basis.into_iter().filter_map(|basis| match basis {
+                    RevisionBasis::CognitionDependency(value) => Some(value.target_revision),
+                    _ => None,
+                }));
             }
         }
+        tx.commit().await.map_err(db)?;
         Ok(())
     }
 
@@ -151,26 +157,59 @@ impl MemoryService {
         }
 
         let direct_evidence = evidence_inputs.len();
-        let mut active = BTreeSet::new();
-        let mut visited = BTreeSet::new();
+        let mut active = std::collections::HashSet::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut supports = std::collections::HashMap::new();
+        let mut tx = if stack.is_empty() {
+            None
+        } else {
+            Some(self.store.read_view().await?)
+        };
         while let Some((reference, exit)) = stack.pop() {
-            let key = reference.to_string();
             if exit {
-                active.remove(&key);
-                visited.insert(key);
+                active.remove(&reference);
+                visited.insert(reference);
                 continue;
             }
-            if active.contains(&key) {
+            if active.contains(&reference) {
                 return Err(Error::FailedPrecondition(
                     "cognition dependency cycle detected".into(),
                 ));
             }
-            if visited.contains(&key) {
+            if visited.contains(&reference) {
                 continue;
             }
-            active.insert(key.clone());
+            active.insert(reference.clone());
             stack.push((reference.clone(), true));
-            let nested = self.exact_support(subject, &reference, view).await?.basis;
+            if !supports.contains_key(&reference) {
+                let references = std::iter::once(reference.clone())
+                    .chain(
+                        stack
+                            .iter()
+                            .filter(|(r, exit)| {
+                                !exit && !visited.contains(r) && !active.contains(r)
+                            })
+                            .map(|(r, _)| r.clone()),
+                    )
+                    .filter(|r| !supports.contains_key(r))
+                    .take(256)
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                supports.extend(
+                    self.exact_supports_in(
+                        tx.as_mut().expect("dependency read"),
+                        subject,
+                        &references,
+                        view,
+                    )
+                    .await?,
+                );
+            }
+            let nested = supports
+                .remove(&reference)
+                .expect("loaded cognition support")
+                .basis;
             for basis in nested.into_iter().rev() {
                 match basis {
                     RevisionBasis::Evidence(evidence) => {
@@ -186,6 +225,9 @@ impl MemoryService {
                     }
                 }
             }
+        }
+        if let Some(tx) = tx {
+            tx.commit().await.map_err(db)?;
         }
         for (batch_index, evidence) in evidence_inputs.chunks(256).enumerate() {
             for (index, roots) in self
@@ -218,7 +260,11 @@ impl MemoryService {
             | CognitiveRef::EpisodeRevision(_)
             | CognitiveRef::JournalRevision(_)
             | CognitiveRef::CognitiveSchemaRevision(_) => {
-                self.exact_support(subject, reference, view).await?.basis
+                self.exact_supports(subject, std::slice::from_ref(reference), view)
+                    .await?
+                    .remove(reference)
+                    .expect("loaded cognition support")
+                    .basis
             }
             CognitiveRef::Association(id) => {
                 if view
@@ -272,106 +318,30 @@ impl MemoryService {
         }
         Ok(())
     }
+}
 
-    pub(in crate::service) async fn exact_support(
-        &self,
-        subject: SubjectId,
-        reference: &CognitiveRef,
-        view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<CognitionSupport> {
-        if view
-            .is_some_and(|view| view.subject != subject || view.cognition_for(reference).is_none())
-        {
-            return Err(Error::NotFound(
-                "cognition support is outside the captured view".into(),
+fn dependency_query(reference: &CognitiveRef) -> Result<(&'static str, Uuid)> {
+    Ok(match reference {
+        CognitiveRef::MemoryRevision(id) => (
+            "SELECT r.memory_id FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o",
+            id.0,
+        ),
+        CognitiveRef::CognitiveSchemaRevision(id) => (
+            "SELECT r.schema_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o",
+            id.0,
+        ),
+        CognitiveRef::EpisodeRevision(id) => (
+            "SELECT r.episode_id FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o",
+            id.0,
+        ),
+        CognitiveRef::JournalRevision(id) => (
+            "SELECT r.journal_id FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o",
+            id.0,
+        ),
+        _ => {
+            return Err(Error::Invalid(
+                "cognition dependency needs exact revision".into(),
             ));
         }
-        let (query, id, kind) = dependency_query(reference, false)?;
-        let row = sqlx::query(query)
-            .bind(subject.0)
-            .bind(id)
-            .fetch_optional(self.store.pool())
-            .await
-            .map_err(db)?
-            .ok_or_else(|| Error::Invalid("cognition dependency is outside Subject".into()))?;
-        let object: Uuid = row.try_get("object_id").map_err(db)?;
-        let object = match kind {
-            "memory" => CognitiveRef::Memory(MemoryId(object)),
-            "schema" => CognitiveRef::CognitiveSchema(CognitiveSchemaId(object)),
-            "episode" => CognitiveRef::Episode(EpisodeId(object)),
-            "journal" => CognitiveRef::Journal(JournalId(object)),
-            _ => unreachable!("dependency kind is validated"),
-        };
-        let mut members = Vec::new();
-        let basis = match reference {
-            CognitiveRef::MemoryRevision(revision) => self.load_basis(*revision).await?,
-            CognitiveRef::CognitiveSchemaRevision(revision) => self.schema_links_in_view(subject, *revision, view).await?.into_iter().map(|link| link.basis).collect(),
-            CognitiveRef::EpisodeRevision(revision) => {
-                let support = self.episode_support(revision.0).await?;
-                members = support.1;
-                support.0
-            }
-            CognitiveRef::JournalRevision(revision) => sqlx::query_scalar::<_,serde_json::Value>("SELECT basis FROM journal_point_basis WHERE journal_revision_id=$1 ORDER BY ordinal,basis_no")
-                .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)?.into_iter()
-                .map(|value| serde_json::from_value(value).map_err(|error| Error::Infrastructure(error.to_string()))).collect::<Result<_>>()?,
-            _ => unreachable!("dependency requires an exact revision"),
-        };
-        Ok(CognitionSupport {
-            object,
-            basis,
-            members,
-        })
-    }
-}
-
-fn dependency_query(
-    reference: &CognitiveRef,
-    lock: bool,
-) -> Result<(&'static str, Uuid, &'static str)> {
-    match reference {
-        CognitiveRef::MemoryRevision(id) => Ok((
-            if lock {
-                "SELECT r.memory_id AS object_id FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o"
-            } else {
-                "SELECT r.memory_id AS object_id FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2"
-            },
-            id.0,
-            "memory",
-        )),
-        CognitiveRef::CognitiveSchemaRevision(id) => Ok((
-            if lock {
-                "SELECT r.schema_id AS object_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o"
-            } else {
-                "SELECT r.schema_id AS object_id FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2"
-            },
-            id.0,
-            "schema",
-        )),
-        CognitiveRef::EpisodeRevision(id) => Ok((
-            if lock {
-                "SELECT r.episode_id AS object_id FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o"
-            } else {
-                "SELECT r.episode_id AS object_id FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2"
-            },
-            id.0,
-            "episode",
-        )),
-        CognitiveRef::JournalRevision(id) => Ok((
-            if lock {
-                "SELECT r.journal_id AS object_id FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o"
-            } else {
-                "SELECT r.journal_id AS object_id FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2"
-            },
-            id.0,
-            "journal",
-        )),
-        _ => Err(Error::Invalid(
-            "cognition dependency needs exact revision".into(),
-        )),
-    }
-}
-
-fn require_dependency_row(row: Option<sqlx::postgres::PgRow>) -> Result<()> {
-    row.map(|_| ())
-        .ok_or_else(|| Error::Invalid("cognition dependency is outside Subject".into()))
+    })
 }

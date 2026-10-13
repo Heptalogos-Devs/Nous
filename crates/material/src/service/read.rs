@@ -7,6 +7,7 @@ use super::*;
 use nous_persistence::database_error as db;
 use serde::de::DeserializeOwned;
 
+#[derive(Clone)]
 pub(super) struct Payload {
     pub(super) text: Option<String>,
     pub(super) hash: Option<String>,
@@ -18,6 +19,7 @@ pub(super) struct Payload {
 }
 
 /// Request-scoped resolved metadata. Payload bytes are read only when consumed.
+#[derive(Clone)]
 pub struct MaterialReadInput {
     pub(super) reference: CognitiveRef,
     pub(super) payload: Result<Payload>,
@@ -354,19 +356,40 @@ fn occurrence_value(mut value: serde_json::Value) -> Result<ObservationOccurrenc
 }
 
 impl MaterialService {
-    pub async fn maintenance_sources(
+    pub async fn maintenance_inputs(
         &self,
         subject: SubjectId,
         occurrences: &[OccurrenceId],
-    ) -> Result<Vec<(ObservationOccurrence, CognitiveRef)>> {
+    ) -> Result<Vec<(ObservationOccurrence, MaterialReadInput)>> {
+        self.store.require_subject(subject).await?;
+        let mut tx = self.store.read_view().await?;
         let ids: Vec<_> = occurrences.iter().map(|id| id.0).collect();
-        sqlx::query("SELECT to_jsonb(o) AS occurrence,d.derived_representation_id FROM observation_occurrences o LEFT JOIN LATERAL (SELECT r.derived_representation_id FROM coverage_needs c JOIN source_regions s USING(source_region_id) JOIN derived_representations r ON r.derived_representation_id=c.current_representation_id WHERE c.subject_id=$1 AND s.artifact_id=o.artifact_id AND c.state='ready' AND r.payload_text IS NOT NULL ORDER BY r.created_at DESC,r.derived_representation_id LIMIT 1) d ON true WHERE o.subject_id=$1 AND o.occurrence_id=ANY($2::uuid[])")
-            .bind(subject.0).bind(ids).fetch_all(self.store.pool()).await.map_err(db)?.into_iter().map(|row| {
+        let sources = sqlx::query("SELECT to_jsonb(o) AS occurrence,d.derived_representation_id FROM observation_occurrences o LEFT JOIN LATERAL (SELECT r.derived_representation_id FROM coverage_needs c JOIN source_regions s USING(source_region_id) JOIN derived_representations r ON r.derived_representation_id=c.current_representation_id WHERE c.subject_id=$1 AND s.artifact_id=o.artifact_id AND c.state='ready' AND r.payload_text IS NOT NULL ORDER BY r.created_at DESC,r.derived_representation_id LIMIT 1) d ON true WHERE o.subject_id=$1 AND o.occurrence_id=ANY($2::uuid[])")
+            .bind(subject.0).bind(ids).fetch_all(&mut *tx).await.map_err(db)?.into_iter().map(|row| {
                 let derived = row.try_get::<Option<Uuid>,_>("derived_representation_id").map_err(db)?;
                 let occurrence = decode_occurrence(row)?;
                 let reference = derived.map(|id| CognitiveRef::DerivedRepresentation(DerivedRepresentationId(id))).unwrap_or(CognitiveRef::Occurrence(occurrence.occurrence_id));
                 Ok((occurrence,reference))
-            }).collect()
+            }).collect::<Result<Vec<_>>>()?;
+        let references = sources
+            .iter()
+            .map(|(_, reference)| reference.clone())
+            .collect::<Vec<_>>();
+        let inputs = self
+            .read_inputs_in(&mut tx, subject, &references, None)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        // Different observations may select the same representation; metadata remains request-scoped.
+        sources
+            .into_iter()
+            .map(|(occurrence, reference)| {
+                let input = inputs
+                    .get(&reference)
+                    .expect("selected Material input")
+                    .clone();
+                Ok((occurrence, input))
+            })
+            .collect()
     }
 }
 
@@ -374,6 +397,22 @@ impl MaterialService {
     /// Resolve exact Material payload, producer and provenance metadata without reading object bytes.
     pub async fn read_inputs(
         &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<std::collections::HashMap<CognitiveRef, MaterialReadInput>> {
+        self.store.require_subject(subject).await?;
+        let mut tx = self.store.read_view().await?;
+        let result = self
+            .read_inputs_in(&mut tx, subject, references, view)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(result)
+    }
+
+    pub(super) async fn read_inputs_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         references: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
@@ -386,7 +425,6 @@ impl MaterialService {
         if references.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        self.store.require_subject(subject).await?;
         let mut resolved = Vec::new();
         let mut kinds = Vec::new();
         let mut ids = Vec::new();
@@ -397,7 +435,13 @@ impl MaterialService {
             }
             self.require_lineage_view(subject, reference, view)?;
             let Ok((kind, id)) = material_reference(reference) else {
-                self.store.validate_reference(subject, reference).await?;
+                if !self
+                    .store
+                    .reference_in_subject_tx(tx, subject, reference)
+                    .await?
+                {
+                    return Err(Error::NotFound("cognitive reference not found".into()));
+                }
                 continue;
             };
             resolved.push(reference);
@@ -431,7 +475,7 @@ LEFT JOIN derived_representations d ON d.subject_id=$1 AND d.derived_representat
 LEFT JOIN artifacts a ON a.subject_id=$1 AND a.artifact_id=coalesce(r.artifact_id,d.payload_artifact_id)
 LEFT JOIN producer_signatures p ON p.producer_signature_id=d.producer_signature_id
 LEFT JOIN LATERAL (SELECT array_agg(DISTINCT sr.source_region_id) AS regions,array_agg(DISTINCT sr.artifact_id) AS artifacts FROM representation_source_regions($1,r.derived_id) roots JOIN source_regions sr USING(source_region_id)) roots ON r.derived_id IS NOT NULL
-"#).bind(subject.0).bind(kinds).bind(ids).fetch_all(self.store.pool()).await.map_err(db)?;
+"#).bind(subject.0).bind(kinds).bind(ids).fetch_all(&mut **tx).await.map_err(db)?;
         let mut result = std::collections::HashMap::new();
         for row in rows {
             let index: i64 = row.try_get("ordinality").map_err(db)?;

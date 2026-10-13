@@ -439,7 +439,7 @@ impl MemoryService {
             .await?;
         let mut sources = self
             .material
-            .maintenance_sources(subject, occurrences)
+            .maintenance_inputs(subject, occurrences)
             .await?;
         sources.sort_by_key(|(occurrence, _)| {
             (
@@ -454,18 +454,13 @@ impl MemoryService {
         let mut remaining = 65536usize;
         let mut exceeded = false;
         let mut members = Vec::with_capacity(sources.len());
-        for (occurrence, reference) in sources {
+        for (occurrence, input) in sources {
             let excerpt = if remaining == 0 {
                 exceeded = true;
                 None
             } else {
                 self.material
-                    .text_excerpt(
-                        subject,
-                        &reference,
-                        remaining.min(member_bytes) as u64,
-                        None,
-                    )
+                    .read_text_input(input, remaining.min(member_bytes) as u64)
                     .await?
             };
             let (text, text_partial) = match excerpt {
