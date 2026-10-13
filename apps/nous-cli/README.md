@@ -171,3 +171,5 @@ Memory、Schema、Episode、Journal 的修订和 lifecycle 可用 `--expected-ob
 `config list|describe|get` 直接连接配置入口；`config set|clear` 无需先读取 revision，需要条件替换时才带 `--expected-revision`。明确的提交前拒绝不会留下 retry 请求；结果不确定时仍可 `retry <id>` 发送冻结原请求。
 
 `trace <精确认知修订> --max-nodes 64 --max-bytes 65536` 返回认知依赖节点、材料来源 DAG 和实际 producers。Memory 与 Material 分别完成自己的遍历，CLI 不逐节点编排 RPC。节点和正文预算共享于本次 trace；`truncated` 表示边界内未返回全部来源。
+
+`serving clean --subject <Subject>` 直接回收过期 Serving 制品；返回 reclaimed、bytesReclaimed、readersActive 和 orphanDirectories，保护 current、research-pinned 和在用制品。`schema list|history`、`tag history`、`association get|list` 提供完整 owner 读取与既有分页；history 对显式对象返回其修订，当前对象状态与 get 保持一致。

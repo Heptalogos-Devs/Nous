@@ -7,7 +7,7 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { lifecycle } from "../cognition-owner.js";
 import { CliError } from "../agent.js";
-import { content, objectEpoch, operationId, target } from "../content.js";
+import { content, objectEpoch, operationId, target, page } from "../content.js";
 import type { CliEnvironment } from "../runtime.js";
 export async function schemaCommands(
   env: CliEnvironment,
@@ -16,6 +16,21 @@ export async function schemaCommands(
 ) {
   const { client } = env;
   const subjectId = await env.subjectId;
+  if (action === "list")
+    return client.concepts.listCognitiveSchemas({
+      subjectId,
+      status: env.values.status,
+      page: page(env),
+    });
+  if (action === "history")
+    return client.concepts.listCognitiveSchemaRevisions({
+      subjectId,
+      object: {
+        kind: "cognitive_schema",
+        value: await target(env, ref, "cognitive_schema"),
+      },
+      page: page(env),
+    });
   if (action === "create")
     return client.concepts.createCognitiveSchema({
       subjectId,

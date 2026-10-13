@@ -228,6 +228,12 @@ export async function runCli(
     },
     subCommands: {
       help,
+      serving: family(
+        "serving",
+        async (env) =>
+          env.client.system.reclaimServing({ subjectId: await env.subjectId }),
+        ["clean"],
+      ),
       status: leaf("status", (env) => statusCommands(env)),
       config: family("config", configCommands, [
         "list",
@@ -260,6 +266,7 @@ export async function runCli(
       ]),
       maintenance: family("maintenance", maintenanceCommands, ["grant"]),
       tag: family("tag", tagCommands, [
+        "history",
         "create",
         "get",
         "list",
@@ -271,6 +278,8 @@ export async function runCli(
         "attach",
       ]),
       association: family("association", associationCommands, [
+        "list",
+        "get",
         "create",
         "revoke",
         "neighborhood",
@@ -299,6 +308,8 @@ export async function runCli(
         "purge",
       ]),
       schema: family("schema", schemaCommands, [
+        "list",
+        "history",
         "create",
         "get",
         "revision",

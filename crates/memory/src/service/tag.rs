@@ -485,6 +485,54 @@ impl MemoryService {
         decode_tag_view(row)
     }
 
+    pub async fn tag_history(
+        &self,
+        subject: SubjectId,
+        tag: TagId,
+        limit: i64,
+        after: Option<Uuid>,
+    ) -> Result<(Vec<TagView>, bool)> {
+        if !(1..=200).contains(&limit) {
+            return Err(Error::Invalid("Tag page limit exceeded".into()));
+        }
+        let mut tx = self.store.read_view().await?;
+        let head: Option<Uuid> = sqlx::query_scalar(
+            "SELECT current_revision_id FROM tags WHERE subject_id=$1 AND tag_id=$2",
+        )
+        .bind(subject.0)
+        .bind(tag.0)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+        if head.is_none() {
+            return Err(Error::NotFound("Tag not found".into()));
+        }
+        let after_no = if let Some(after) = after {
+            Some(
+                sqlx::query_scalar::<_, i32>(
+                    "SELECT revision_no FROM tag_revisions WHERE tag_id=$1 AND tag_revision_id=$2",
+                )
+                .bind(tag.0)
+                .bind(after)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?
+                .ok_or_else(|| Error::Invalid("invalid Tag history cursor".into()))?,
+            )
+        } else {
+            None
+        };
+        let mut rows = sqlx::query("SELECT t.tag_id,t.current_revision_id,r.tag_revision_id revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r USING(tag_id) WHERE t.subject_id=$1 AND t.tag_id=$2 AND ($3::int IS NULL OR r.revision_no>$3) ORDER BY r.revision_no LIMIT $4")
+            .bind(subject.0).bind(tag.0).bind(after_no).bind(limit+1).fetch_all(&mut *tx).await.map_err(db)?;
+        let more = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        let items = rows
+            .into_iter()
+            .map(decode_tag_view)
+            .collect::<Result<_>>()?;
+        tx.commit().await.map_err(db)?;
+        Ok((items, more))
+    }
     pub async fn tag_views(
         &self,
         subject: SubjectId,

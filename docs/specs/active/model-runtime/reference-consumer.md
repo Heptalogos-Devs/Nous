@@ -42,4 +42,4 @@ Material `show` 读取 metadata，`read` 通过 Material Authority 返回 bounde
 
 STALE_CONTEXT/STALE_REVISION 要求刷新状态；OPERATION_ID_CONFLICT 要求为不同输入使用新 identity。recovery 是调用者建议，不授权额外 mutation。未知 detail/enum 保留原信息，不猜测业务含义。
 
-冻结请求只在正式 owner 的 ErrorDetail 明确声明 `context.commit_status=rejected` 时删除。通用 InvalidArgument、PermissionDenied 或 typed error 不能证明复合操作无副作用；未声明提交阶段的失败保留原请求。
+冻结请求只在正式 owner 的 ErrorDetail 明确声明 `context.commit_status=rejected` 时删除。其他失败按提交结果不确定处理，保留原请求。

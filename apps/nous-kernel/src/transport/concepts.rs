@@ -8,6 +8,30 @@ use nous_memory::AssociationBasis;
 use nous_memory::{CreateAssociationRequest, CreateTagRequest};
 
 impl KernelService {
+    pub(super) async fn list_tag_revisions(
+        &self,
+        input: p::CognitionHistoryRequest,
+    ) -> Result<p::ListTagsResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let nous_core::CognitiveRef::Tag(tag) = from_ref(required(input.object, "Tag")?)? else {
+            return Err(Error::Invalid("Tag history requires a Tag object".into()));
+        };
+        let scope = format!("tag-history:{}:{}", subject.0, tag.0);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .tag_history(subject, tag, limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(&scope, items.last().expect("nonempty page").revision_id)
+        } else {
+            String::new()
+        };
+        Ok(p::ListTagsResponse {
+            items: items.into_iter().map(tag_view).collect(),
+            next_page_token,
+        })
+    }
     pub(super) async fn create_tag(&self, input: p::CreateTagRequest) -> Result<p::Tag> {
         let subject = SubjectId(id(&input.subject_id)?);
         let content = tag_content(required(input.content, "content")?);
@@ -178,20 +202,45 @@ impl KernelService {
                 subject,
             )
             .await?;
-        Ok(p::Association {
-            association_id: result.association_evidence_id.0.to_string(),
-            from: Some(to_ref(result.from)),
-            to: Some(to_ref(result.to)),
-            relation_kind: result.relation_kind,
-            polarity: enum_name(result.polarity),
-            basis_class: enum_name(result.basis_class),
-            basis: result
-                .basis
-                .into_iter()
-                .map(association_basis_proto)
-                .collect(),
-            producer_signature_id: result.producer_signature_id.map(|value| value.to_string()),
+        Ok(association_view(result))
+    }
+    pub(super) async fn list_associations(
+        &self,
+        input: p::ListRequest,
+    ) -> Result<p::ListAssociationsResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let scope = format!("associations:{}:{}", subject.0, input.status);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .association_page(subject, &input.status, limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                items
+                    .last()
+                    .expect("nonempty page")
+                    .association_evidence_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
+        Ok(p::ListAssociationsResponse {
+            items: items.into_iter().map(association_view).collect(),
+            next_page_token,
         })
+    }
+    pub(super) async fn get_association(&self, input: p::ObjectRequest) -> Result<p::Association> {
+        Ok(association_view(
+            self.require_memory()?
+                .association(
+                    SubjectId(id(&input.subject_id)?),
+                    nous_core::AssociationEvidenceId(id(&input.id)?),
+                )
+                .await?,
+        ))
     }
 
     pub(super) async fn revoke_association(
@@ -232,16 +281,7 @@ impl KernelService {
             associations: result
                 .associations
                 .into_iter()
-                .map(|a| p::Association {
-                    association_id: a.association_evidence_id.0.to_string(),
-                    from: Some(to_ref(a.from)),
-                    to: Some(to_ref(a.to)),
-                    relation_kind: a.relation_kind,
-                    polarity: enum_name(a.polarity),
-                    basis_class: enum_name(a.basis_class),
-                    basis: a.basis.into_iter().map(association_basis_proto).collect(),
-                    producer_signature_id: a.producer_signature_id.map(|id| id.to_string()),
-                })
+                .map(association_view)
                 .collect(),
             truncated: result.truncated,
         })
@@ -306,5 +346,25 @@ fn tag_content(content: p::TagContent) -> nous_memory::TagContent {
         label: content.label,
         description: content.description,
         kind_hint: content.kind_hint,
+    }
+}
+
+fn association_view(result: nous_memory::AssociationEvidence) -> p::Association {
+    p::Association {
+        association_id: result.association_evidence_id.0.to_string(),
+        from: Some(to_ref(result.from)),
+        to: Some(to_ref(result.to)),
+        relation_kind: result.relation_kind,
+        polarity: enum_name(result.polarity),
+        basis_class: enum_name(result.basis_class),
+        basis: result
+            .basis
+            .into_iter()
+            .map(association_basis_proto)
+            .collect(),
+        producer_signature_id: result.producer_signature_id.map(|value| value.to_string()),
+        subject_id: result.subject_id.0.to_string(),
+        created_at: Some(timestamp(result.created_at)),
+        revoked_at: result.revoked_at.map(timestamp),
     }
 }

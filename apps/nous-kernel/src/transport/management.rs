@@ -132,6 +132,31 @@ impl KernelService {
                 .collect(),
         })
     }
+    pub(super) async fn reclaim_serving(
+        &self,
+        input: p::SubjectRequest,
+    ) -> Result<p::ServingReclamation> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let config = self.0.configuration.snapshot_for_subject(subject)?;
+        let report = self
+            .0
+            .serving
+            .reclaim_retired(
+                subject,
+                std::time::Duration::from_secs(config.get(nous_retrieval::RETIRED_GRACE_SECONDS)?),
+            )
+            .await?;
+        Ok(p::ServingReclamation {
+            reclaimed: report
+                .reclaimed
+                .into_iter()
+                .map(|id| id.0.to_string())
+                .collect(),
+            bytes_reclaimed: report.bytes_reclaimed,
+            readers_active: report.readers_active,
+            orphan_directories: report.orphan_directories as u32,
+        })
+    }
     pub(super) async fn get_projection_status(
         &self,
         input: p::SubjectRequest,

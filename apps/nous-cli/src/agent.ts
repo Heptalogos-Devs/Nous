@@ -91,6 +91,12 @@ export const commandInventory = {
   },
   commands: [
     {
+      command: "serving clean",
+      parameters: ["--subject <Subject reference>"],
+      description:
+        "Reclaim retired/failed and orphan Serving assets without rebuilding; protect active readers, current and research-pinned generations.",
+    },
+    {
       command:
         "material clean|limits|artifacts|occurrences|representations|producer",
       parameters: [
@@ -117,7 +123,7 @@ export const commandInventory = {
     },
     {
       command:
-        "schema create|get|revision|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge",
+        "schema create|get|list|history|revision|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge",
       parameters: [
         "[Schema reference]",
         "--request-file <Schema content/evidence/children or MergeCognitiveSchemasRequest TOML>",
@@ -209,7 +215,7 @@ export const commandInventory = {
       example: "nous tag resolve deploy",
     },
     {
-      command: "association neighborhood",
+      command: "association get|list|neighborhood",
       parameters: [
         "<canonical-or-lexical-ref>",
         "--kind <kind> (for lexical)",

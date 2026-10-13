@@ -168,9 +168,8 @@ export async function createCore(settings: CoreOptions) {
     };
   };
   const system: ServiceImpl<typeof SystemService> = {
+    ...forward(SystemService, kernel.system),
     getStatus: systemStatus,
-    getProjectionStatus: (r, c) =>
-      kernel.system.getProjectionStatus(r, options(c)),
   };
   await app.register(fastifyConnectPlugin, {
     routes: (router) => {

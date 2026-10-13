@@ -606,6 +606,18 @@ async function scenario(endpoint: string, token: string) {
       nousql: `Calibration $return(schema) $time(formed,at="${toJson(TimestampSchema, create(TimestampSchema, schema.formedAt))}")`,
     });
     assert.equal(nousqlPoint.hits.length, 1);
+    const schemas = await client.concepts.listCognitiveSchemas({
+      subjectId,
+      page: { pageSize: 1 },
+    });
+    assert.equal(schemas.items[0]?.schemaId, schema.schemaId);
+    const schemaHistory = await client.concepts.listCognitiveSchemaRevisions({
+      subjectId,
+      object: { kind: "cognitive_schema", value: schema.schemaId },
+      page: { pageSize: 1 },
+    });
+    assert.equal(schemaHistory.items[0]?.revisionId, schema.revisionId);
+    assert(schemaHistory.items[0]?.evidenceLinks.length);
     const originalEpisode = episode.currentRevision!;
     const revisedEpisode = await client.memory.reviseEpisode({
       subjectId,

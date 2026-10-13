@@ -3,7 +3,7 @@
 
 import { CliError, boundedInteger } from "../agent.js";
 import { CreateAssociationRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { content } from "../content.js";
+import { content, page } from "../content.js";
 import type { CliEnvironment } from "../runtime.js";
 
 export async function associationCommands(
@@ -13,6 +13,22 @@ export async function associationCommands(
 ) {
   const { client, values, required, resolveReference } = env;
   const subjectId = await env.subjectId;
+  if (action === "list")
+    return client.concepts.listAssociations({
+      subjectId,
+      status: env.values.status,
+      page: page(env),
+    });
+  if (action === "get")
+    return client.concepts.getAssociation({
+      subjectId,
+      id: (
+        await resolveReference(
+          required(argument, "Association reference"),
+          "association",
+        )
+      ).value,
+    });
   if (action === "revoke") {
     const operationId = values["operation-id"] ?? crypto.randomUUID();
     const associationId = (

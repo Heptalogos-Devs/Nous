@@ -263,12 +263,7 @@ impl MemoryService {
             .iter()
             .map(|edge| edge.association_evidence_id.0)
             .collect::<Vec<_>>();
-        let mut basis = std::collections::HashMap::<Uuid, Vec<AssociationBasis>>::new();
-        for row in sqlx::query("SELECT * FROM association_evidence_basis WHERE association_evidence_id=ANY($1::uuid[]) ORDER BY association_evidence_id,basis_kind,basis_ref,basis_role")
-            .bind(ids).fetch_all(&mut *tx).await.map_err(db)? {
-            basis.entry(row.try_get("association_evidence_id").map_err(db)?).or_default()
-                .push(decode_association_basis(&row, subject)?);
-        }
+        let mut basis = self.association_basis_in(&mut tx, subject, &ids).await?;
         for association in &mut associations {
             association.basis = basis
                 .remove(&association.association_evidence_id.0)
@@ -282,17 +277,77 @@ impl MemoryService {
         })
     }
 
-    pub(crate) async fn association(
+    pub async fn association_page(
+        &self,
+        subject: SubjectId,
+        status: &str,
+        limit: i64,
+        after: Option<Uuid>,
+    ) -> Result<(Vec<AssociationEvidence>, bool)> {
+        let status = if status.is_empty() { "active" } else { status };
+        if !(1..=200).contains(&limit) || !matches!(status, "active" | "revoked") {
+            return Err(Error::Invalid("invalid Association page envelope".into()));
+        }
+        self.store.require_subject(subject).await?;
+        let mut tx = self.store.read_view().await?;
+        let mut rows = sqlx::query("SELECT * FROM association_evidence WHERE subject_id=$1 AND (revoked_at IS NULL)=($2='active') AND ($3::uuid IS NULL OR association_evidence_id>$3) ORDER BY association_evidence_id LIMIT $4")
+            .bind(subject.0).bind(status).bind(after).bind(limit+1).fetch_all(&mut *tx).await.map_err(db)?;
+        let more = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        let ids = rows
+            .iter()
+            .map(|r| r.try_get::<Uuid, _>("association_evidence_id").map_err(db))
+            .collect::<Result<Vec<_>>>()?;
+        let mut basis = self.association_basis_in(&mut tx, subject, &ids).await?;
+        let items = rows
+            .into_iter()
+            .map(|row| {
+                let id: Uuid = row.try_get("association_evidence_id").map_err(db)?;
+                let from = parse_reference(
+                    &row.try_get::<String, _>("from_ref_kind").map_err(db)?,
+                    &row.try_get::<String, _>("from_ref").map_err(db)?,
+                )?;
+                let to = parse_reference(
+                    &row.try_get::<String, _>("to_ref_kind").map_err(db)?,
+                    &row.try_get::<String, _>("to_ref").map_err(db)?,
+                )?;
+                decode_association(
+                    &row,
+                    subject,
+                    from,
+                    to,
+                    basis.remove(&id).unwrap_or_default(),
+                )
+            })
+            .collect::<Result<_>>()?;
+        tx.commit().await.map_err(db)?;
+        Ok((items, more))
+    }
+    async fn association_basis_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<AssociationBasis>>> {
+        let mut basis = std::collections::HashMap::<Uuid, Vec<AssociationBasis>>::new();
+        for row in sqlx::query("SELECT * FROM association_evidence_basis WHERE association_evidence_id=ANY($1::uuid[]) ORDER BY association_evidence_id,basis_kind,basis_ref,basis_role")
+            .bind(ids).fetch_all(&mut **tx).await.map_err(db)? {
+            basis.entry(row.try_get("association_evidence_id").map_err(db)?).or_default().push(decode_association_basis(&row,subject)?);
+        }
+        Ok(basis)
+    }
+    pub async fn association(
         &self,
         subject: SubjectId,
         id: AssociationEvidenceId,
     ) -> Result<AssociationEvidence> {
+        let mut tx = self.store.read_view().await?;
         let row = sqlx::query(
             "SELECT * FROM association_evidence WHERE subject_id=$1 AND association_evidence_id=$2",
         )
         .bind(subject.0)
         .bind(id.0)
-        .fetch_optional(self.store.pool())
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?
         .ok_or_else(|| Error::NotFound("association evidence not found".into()))?;
@@ -304,10 +359,14 @@ impl MemoryService {
             &row.try_get::<String, _>("to_ref_kind").map_err(db)?,
             &row.try_get::<String, _>("to_ref").map_err(db)?,
         )?;
-        let basis = sqlx::query("SELECT * FROM association_evidence_basis WHERE association_evidence_id=$1 ORDER BY basis_kind,basis_ref,basis_role")
-            .bind(id.0).fetch_all(self.store.pool()).await.map_err(db)?
-            .iter().map(|row| decode_association_basis(row, subject)).collect::<Result<Vec<_>>>()?;
-        decode_association(&row, subject, from, to, basis)
+        let basis = self
+            .association_basis_in(&mut tx, subject, &[id.0])
+            .await?
+            .remove(&id.0)
+            .unwrap_or_default();
+        let view = decode_association(&row, subject, from, to, basis)?;
+        tx.commit().await.map_err(db)?;
+        Ok(view)
     }
 
     async fn validate_association_basis(

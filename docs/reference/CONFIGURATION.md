@@ -123,7 +123,7 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 
 `video.frame_end_margin_seconds` 默认 0.1；frame sampling 将最后一个采样点留在该 configured end margin 之前。
 
-`retrieval.cognitive.profile` 使用 SubjectOverrideAllowed / Live / QueryPolicy，两个 Subject 可选择不同 profile；变更只影响后续 preparation，已形成的 in-flight query 保留自己的 snapshot 和 semantic representation；DTSC/RiverMemo 共享 VCP asset，不因 readout 切换重建。`serving.retired_grace_seconds` 默认 300，范围 0..604800，Developer/SystemOnly/Live；active readers、validation tickets、current artifacts 和 research pins 保护回收边界。显式 Serving refresh 与维护负责回收 retired artifact；普通 query 不扫描整个资产目录，回收删除物理 cache 与对应 catalog row，不保留 audit/tombstone。
+`retrieval.cognitive.profile` 使用 SubjectOverrideAllowed / Live / QueryPolicy，两个 Subject 可选择不同 profile；变更只影响后续 preparation，已形成的 in-flight query 保留自己的 snapshot 和 semantic representation；DTSC/RiverMemo 共享 VCP asset，不因 readout 切换重建。`serving.retired_grace_seconds` 默认 300，范围 0..604800，Developer/SystemOnly/Live；active readers、validation tickets、current artifacts 和 research pins 保护回收边界。`serving clean` 直接回收 retired/failed 和 orphan 制品，返回 reclaimed IDs、bytes、readersActive 和 orphanDirectories；不先刷新或构建。显式 Serving refresh 与维护也可回收 retired artifact；普通 query 不扫描整个资产目录，回收删除物理 cache 与对应 catalog row，不保留 audit/tombstone。
 
 `retrieval.query.representation` 控制完整 query embedding 的 typed character/descriptor/count budgets，Developer、SubjectOverrideAllowed、Live。配置只有 `total_chars=8192` 与 `max_context_items=16`。各 section 的 hard ceilings 由实现持有；预算优先满足 Intent、显式时间/selector descriptor、Entity/Tag、current exact refs、WorkContext 和其他 descriptor，输出 section 顺序固定。一次 prepare 固定 policy；inspection 返回实际 SHA256 与截断/缺失 descriptor 诊断。Preparation token 与 validation ticket 共用 `runtime.query_lease_slots`/query lease 的现有预算机制。
 
@@ -134,3 +134,15 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 `retrieval.query.concept_activation` 下的独立叶字段由 Runtime 注册为 Advanced/SubjectOverrideAllowed/Live/QueryPolicy：`max_activated_tags` 默认 8，控制合并后保留的 inferred Tags；`minimum_similarity` 默认 0.72，范围为余弦的 -1–1；`model_catalog_limit` 默认 32，控制给 query model 的冻结 catalog。两个数量预算为正整数。默认值只由当前 reference profile 定义；Retrieval 和 model readout 读取同一 prepared operation 的配置快照，在途查询不受后续修改影响。Provider 的结构化输出合同仍独立限制一次模型响应的合法形状。
 
 `runtime.query_feedback_retention` 默认 604800 认知秒（七天）；bounded records 包含 query/activation digest、signals 与 returned exact refs，不保存正文。过期清理不删除已接受的 UseEvents。Historical artifact cache 复用 `serving.retired_grace_seconds` 与 query readers，不引入第二套 history DB/独立缓存政策。Semantic intervals 使用 captured Subject CognitiveClock，timeout/lease/retry 使用 infrastructure time。
+
+## 运行数据与清理
+
+| 数据               | 所属能力与位置                                    | 增长边界或清理方式                                                                                                                                       |
+| ------------------ | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Serving 制品       | Retrieval、CacheRoot 下 serving generations       | `serving clean` 使用 grace，保护 current、reader 和 research pin；普通 Query 不遍历目录                                                                  |
+| 不可变材料         | Material/ObjectStore、BlobRoot                    | `material clean` 只清无引用 CAS/staging；有效材料通过显式领域 purge 管理                                                                                 |
+| embedding material | Retrieval、PostgreSQL embedding_materials         | 以 Subject/content digest/space/producer 去重；目前无独立淘汰入口，新增内容或模型空间仍会增长，清理边界尚未完成                                          |
+| 模型成果           | Core 结果操作、PostgreSQL model_results           | 只保存实际成果与必要输入；每条 telemetry 最多 64 attempts，已完成/被替换的维护记录由 need 生命周期清理；有效付费成果保留，cognition purge 删除其正文依赖 |
+| consumer receipt   | CLI、InstanceRoot/consumers 下 operations         | receipt_limit、file_max_bytes；成功或正式拒绝删除，未知结果手动 retry/forget                                                                             |
+| Query 内存缓存     | Core/Runtime 进程内                               | query_embedding_cache_entries、context_track_limit、query slots/deadline 限制；重启释放                                                                  |
+| 临时与开发缓存     | Locations、TempRoot；仓库 data/temp 和 data/cache | `clean:local` 限定生成目录，并先停止所属临时 PostgreSQL；保留程序、配置、密钥、业务和研究成果                                                            |

@@ -265,6 +265,20 @@ async function main() {
     }
     if (!staleTagHead)
       throw new Error("CLI replaced an observed stale Tag head");
+    const tagPage = await client.concepts.listTagRevisions({
+      subjectId,
+      object: { kind: "tag", value: tags[0]!.tagId },
+      page: { pageSize: 1 },
+    });
+    assert.equal(tagPage.items[0]?.revisionId, tags[0]!.revisionId);
+    assert(tagPage.nextPageToken);
+    const tagLast = await client.concepts.listTagRevisions({
+      subjectId,
+      object: { kind: "tag", value: tags[0]!.tagId },
+      page: { pageSize: 1, pageToken: tagPage.nextPageToken },
+    });
+    assert.equal(tagLast.items[0]?.revisionId, revisedTag.data.revisionId);
+    assert.equal(tagLast.nextPageToken, "");
     const associationFile = `${root}/association.toml`;
     await writeFile(
       associationFile,
@@ -296,6 +310,27 @@ async function main() {
     ])) as { data: { associationId: string } };
     if (!attached.data.associationId)
       throw new Error("CLI formal attachment basis did not commit");
+    const association = await client.concepts.getAssociation({
+      subjectId,
+      id: associated.data.associationId,
+    });
+    assert.equal(association.from?.value, original.revisionId);
+    assert(association.basis.length && association.createdAt);
+    const associationPage = await client.concepts.listAssociations({
+      subjectId,
+      page: { pageSize: 1 },
+    });
+    assert.equal(associationPage.items.length, 1);
+    assert(associationPage.nextPageToken);
+    const associationLast = await client.concepts.listAssociations({
+      subjectId,
+      page: { pageSize: 1, pageToken: associationPage.nextPageToken },
+    });
+    assert.equal(associationLast.items.length, 1);
+    assert.equal(associationLast.nextPageToken, "");
+    const reclaimed = await runCli(["serving", "clean", ...cliFlags, "--json"]);
+    assert(reclaimed);
+
     const revisionRequest = create(ReviseMemoryRequestSchema, {
       subjectId,
       memoryId: formed.memoryId,

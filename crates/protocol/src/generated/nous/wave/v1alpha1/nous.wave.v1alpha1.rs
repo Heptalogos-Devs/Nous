@@ -2251,6 +2251,12 @@ pub struct Association {
     pub basis: ::prost::alloc::vec::Vec<AssociationBasis>,
     #[prost(string, optional, tag="8")]
     pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="9")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="10")]
+    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(string, tag="11")]
+    pub subject_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateAssociationRequest {
@@ -2634,6 +2640,40 @@ pub struct ResourceMaterialization {
     pub content: ::prost::alloc::string::String,
     #[prost(string, tag="4")]
     pub media_type: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CognitionHistoryRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub object: ::core::option::Option<CognitiveRef>,
+    #[prost(message, optional, tag="3")]
+    pub page: ::core::option::Option<Page>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListSchemasResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<CognitiveSchema>,
+    #[prost(string, tag="2")]
+    pub next_page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListAssociationsResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<Association>,
+    #[prost(string, tag="2")]
+    pub next_page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ServingReclamation {
+    #[prost(string, repeated, tag="1")]
+    pub reclaimed: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(uint64, tag="2")]
+    pub bytes_reclaimed: u64,
+    #[prost(bool, tag="3")]
+    pub readers_active: bool,
+    #[prost(uint32, tag="4")]
+    pub orphan_directories: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MaterialLineageRequest {

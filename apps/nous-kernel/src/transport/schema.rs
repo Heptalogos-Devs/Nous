@@ -10,6 +10,69 @@ use nous_memory::{
     SchemaFormationKind, SchemaScope,
 };
 
+impl KernelService {
+    pub(super) async fn list_cognitive_schemas(
+        &self,
+        input: p::ListRequest,
+    ) -> Result<p::ListSchemasResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let scope = format!("schemas:{}:{}", subject.0, input.status);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .schema_page(subject, None, &input.status, limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                items.last().expect("nonempty page").schema.schema_id.0,
+            )
+        } else {
+            String::new()
+        };
+        Ok(p::ListSchemasResponse {
+            items: items.into_iter().map(schema_view).collect(),
+            next_page_token,
+        })
+    }
+    pub(super) async fn list_cognitive_schema_revisions(
+        &self,
+        input: p::CognitionHistoryRequest,
+    ) -> Result<p::ListSchemasResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let nous_core::CognitiveRef::CognitiveSchema(schema) =
+            from_ref(required(input.object, "Schema")?)?
+        else {
+            return Err(Error::Invalid(
+                "Schema history requires a Schema object".into(),
+            ));
+        };
+        let scope = format!("schema-history:{}:{}", subject.0, schema.0);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .schema_page(subject, Some(schema), "", limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                items
+                    .last()
+                    .expect("nonempty page")
+                    .revision
+                    .schema_revision_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
+        Ok(p::ListSchemasResponse {
+            items: items.into_iter().map(schema_view).collect(),
+            next_page_token,
+        })
+    }
+}
+
 fn schema_input(
     subject: SubjectId,
     operation_id: OperationId,

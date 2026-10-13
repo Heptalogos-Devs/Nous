@@ -22,6 +22,15 @@ export async function tagCommands(
   const { client, values, required, resolveReference } = env;
   const subjectId = await env.subjectId;
   const operationId = values["operation-id"] ?? crypto.randomUUID();
+  if (action === "history")
+    return client.concepts.listTagRevisions({
+      subjectId,
+      object: await resolveReference(
+        required(argument, "Tag reference"),
+        "tag",
+      ),
+      page: page(env),
+    });
   if (action === "create")
     return client.concepts.createTag({
       subjectId,

@@ -464,6 +464,57 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             .max_suggestions,
         2
     );
+    // Three asymmetric cached vectors make the first-member baseline observable.
+    rt.configuration
+        .clear_subject_override(OperationId::new(), subject, ACCRETION.path(), None)
+        .await
+        .unwrap();
+    let source = observation(&rt, subject, "Another recorded approval fact").await;
+    let mut input = form_input(
+        subject,
+        source.occurrence.occurrence_id,
+        OperationId::new(),
+        "Another recorded approval fact",
+    );
+    input.content.tags = vec![concept.tag_id];
+    let third = owner.form_memory(input).await.unwrap();
+    let mut ordered = revisions.clone();
+    ordered.push(CognitiveRef::MemoryRevision(
+        third.revision.memory_revision_id,
+    ));
+    let snapshot = rt.configuration.snapshot_for_subject(subject).unwrap();
+    let descriptors = owner
+        .query_descriptors(
+            subject,
+            &ordered
+                .iter()
+                .map(|r| (r.clone(), true))
+                .collect::<Vec<_>>(),
+            CognitiveEffort::Maximum,
+            rt.cognition.now(subject),
+            &snapshot,
+            None,
+        )
+        .await
+        .unwrap();
+    for (descriptor, vector) in
+        descriptors
+            .iter()
+            .zip([vec![1.0f32, 0.0], vec![0.0, 1.0], vec![0.0, -1.0]])
+    {
+        sqlx::query("INSERT INTO embedding_materials(subject_id,content_digest,space_hash,producer_hash,vector) VALUES($1,$2,$3,$4,$5)")
+            .bind(subject.0).bind(blake3::hash(descriptor.text.as_bytes()).to_hex().to_string())
+            .bind("a".repeat(64)).bind("b".repeat(64)).bind(vector).execute(rt.store.pool()).await.unwrap();
+    }
+    for _ in 0..3 {
+        let signal = owner
+            .accretion_signal(subject, &tag)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(signal.member_refs, ordered);
+        assert_eq!(signal.semantic_coherence, Some(0.0));
+    }
 }
 async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[CognitiveRef]) {
     let owner = rt.require_memory().unwrap();

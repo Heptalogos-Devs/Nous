@@ -4,6 +4,51 @@
 use super::*;
 
 impl MemoryService {
+    pub async fn schema_page(
+        &self,
+        subject: SubjectId,
+        schema: Option<CognitiveSchemaId>,
+        status: &str,
+        limit: i64,
+        after: Option<Uuid>,
+    ) -> Result<(Vec<SchemaView>, bool)> {
+        if !(1..=200).contains(&limit) || !matches!(status, "" | "accepted" | "withdrawn") {
+            return Err(Error::Invalid("invalid Schema page envelope".into()));
+        }
+        self.store.require_subject(subject).await?;
+        let mut tx = self.store.read_view().await?;
+        let mut ids: Vec<Uuid> = if let Some(schema) = schema {
+            let head: Option<Uuid> = sqlx::query_scalar("SELECT current_revision_id FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2")
+                .bind(subject.0).bind(schema.0).fetch_optional(&mut *tx).await.map_err(db)?;
+            if head.is_none() {
+                return Err(Error::NotFound("Schema not found".into()));
+            }
+            let after_no = if let Some(after) = after {
+                Some(sqlx::query_scalar::<_,i32>("SELECT revision_no FROM cognitive_schema_revisions WHERE schema_id=$1 AND schema_revision_id=$2")
+                .bind(schema.0).bind(after).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(|| Error::Invalid("invalid Schema history cursor".into()))?)
+            } else {
+                None
+            };
+            sqlx::query_scalar("SELECT schema_revision_id FROM cognitive_schema_revisions WHERE schema_id=$1 AND ($2::int IS NULL OR revision_no>$2) ORDER BY revision_no LIMIT $3")
+                .bind(schema.0).bind(after_no).bind(limit+1).fetch_all(&mut *tx).await.map_err(db)?
+        } else {
+            sqlx::query_scalar("SELECT current_revision_id FROM cognitive_schemas WHERE subject_id=$1 AND ($2='' OR acceptance_state=$2) AND ($3::uuid IS NULL OR schema_id>$3) ORDER BY schema_id LIMIT $4")
+                .bind(subject.0).bind(status).bind(after).bind(limit+1).fetch_all(&mut *tx).await.map_err(db)?
+        };
+        let more = ids.len() > limit as usize;
+        ids.truncate(limit as usize);
+        let mut views = self.schema_views_in(&mut tx, subject, &ids, &[]).await?;
+        let items = ids
+            .into_iter()
+            .map(|id| {
+                views
+                    .remove(&id)
+                    .ok_or_else(|| Error::NotFound("Schema page not found".into()))
+            })
+            .collect::<Result<_>>()?;
+        tx.commit().await.map_err(db)?;
+        Ok((items, more))
+    }
     pub async fn schema(
         &self,
         subject: SubjectId,
