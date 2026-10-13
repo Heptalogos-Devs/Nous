@@ -13,7 +13,7 @@ message DerivationResponse { repeated DerivedRepresentation representations = 1;
 message PrepareEmbeddingsRequest { string subject_id = 1 [(reference_kind) = "subject"]; uint32 limit = 2; }
 message PrepareEmbeddingsResponse { uint32 committed = 1; repeated Degradation degradation = 2; }
 service ModelService {
-  rpc FormFromObservation(FormationRequest) returns (FormationResponse);
+  rpc FormFromObservation(FormationRequest) returns (FormationResponse) { option idempotency_level = IDEMPOTENT; }
   rpc DeriveMaterial(DeriveMaterialRequest) returns (DerivationResponse);
   rpc PrepareEmbeddings(PrepareEmbeddingsRequest) returns (PrepareEmbeddingsResponse);
 }

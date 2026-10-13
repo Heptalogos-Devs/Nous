@@ -1545,6 +1545,7 @@ pub mod concept_service_server {
             &self,
             request: tonic::Request<super::CognitiveSchemaMutationRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
+        ///
         async fn reaccept_cognitive_schema(
             &self,
             request: tonic::Request<super::CognitiveSchemaMutationRequest>,
@@ -4513,7 +4514,6 @@ pub mod cognition_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with CognitionServiceServer.
     #[async_trait]
     pub trait CognitionService: std::marker::Send + std::marker::Sync + 'static {
-        ///
         async fn grant_maintenance(
             &self,
             request: tonic::Request<super::MaintenanceGrantRequest>,

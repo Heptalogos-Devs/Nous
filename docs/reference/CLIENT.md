@@ -76,6 +76,8 @@ Tag revise/merge/split 的 CLI request-file 直接使用对应正式请求，tar
 
 `subject seed/adopt-seed` 读取或采用种子，采用文件包含 `text`、`format` 和所需 provenance；`identity rebind --request-file` 明确修改 source mention interpretation。`context create/set --request-file` 可以输入 unresolved_questions、constraints、resume_conditions、budget_summary；set 列表字段采用 `{ values = [...] }` 表达未提供与清空的区别。Session 与 Context list 支持真正的有界分页。
 
+Client 分组使用正式服务描述符，CLI 按 Proto RPC 的 IDEMPOTENT 声明决定保存哪些冻结请求。
+
 本地仅保存 selection、exact result 索引和 RPC 前的冻结原请求。`retry <id>` 再次请求 semantic owner，由 owner 返回幂等结果；收到成功响应后删除本地原请求。不缓存成功/拒绝终态，不根据 transport 数字码建立第二个业务状态机。`retry forget <id>` 只删除本地重试输入；不会撤销 Authority 操作。源 Artifact 的 `read <art:...> --output <new-file>` 通过 authenticated download 流导出完整字节，不受 preview 的 1 MiB 上限限制；失败不留下部分输出。
 
 [Reference index](README.md) · [Documentation index](../INDEX.md)

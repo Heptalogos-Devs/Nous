@@ -59,11 +59,32 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { ModelService } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 
+/** Client namespaces use the canonical service descriptors. */
+export const serviceDescriptors = {
+  subjects: SubjectService,
+  runtime: RuntimeService,
+  cognition: CognitionService,
+  memory: MemoryService,
+  material: MaterialService,
+  identity: IdentityService,
+  model: ModelService,
+  configuration: ConfigurationService,
+  resourceRegistry: ResourceRegistryService,
+  resources: ResourceService,
+  concepts: ConceptService,
+  system: SystemService,
+} as const;
+export type NousClient = {
+  [K in keyof typeof serviceDescriptors]: Client<
+    (typeof serviceDescriptors)[K]
+  >;
+};
+
 export interface RequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
 }
-export function createNousClient(transport: Transport) {
+export function createNousClient(transport: Transport): NousClient {
   const configuration = owned(ConfigurationService);
   const executionTimeout = async (
     workMs?: number,
@@ -126,19 +147,17 @@ export function createNousClient(transport: Transport) {
     }
     return client;
   }
-  return {
-    subjects: owned(SubjectService),
-    runtime: owned(RuntimeService),
-    cognition: owned(CognitionService, true),
-    memory: owned(MemoryService),
-    material: owned(MaterialService),
-    identity: owned(IdentityService),
-    model: owned(ModelService, true),
-    configuration,
-    resourceRegistry: owned(ResourceRegistryService),
-    resources: owned(ResourceService, true),
-    concepts: owned(ConceptService),
-    system: owned(SystemService),
-  };
+  return Object.fromEntries(
+    Object.entries(serviceDescriptors).map(([name, service]) => [
+      name,
+      service === ConfigurationService
+        ? configuration
+        : owned(
+            service,
+            service === CognitionService ||
+              service === ModelService ||
+              service === ResourceService,
+          ),
+    ]),
+  ) as NousClient;
 }
-export type NousClient = ReturnType<typeof createNousClient>;

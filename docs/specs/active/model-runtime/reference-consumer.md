@@ -22,6 +22,8 @@ native JSON 由 Buf toJson 负责：oneof 为实际字段，Timestamp 为 ISO，
 
 幂等 mutation 在 RPC 前保存完整冻结原请求，包括实际 operation/event identity、expected epoch/revision、时间戳和已解析 canonical references。原请求 identity 不允许被不同输入替换；codec 区分 BigInt 与用户 JSON 字符串。
 
+有同请求重放合同的写操作在正式 Proto RPC 上声明 IDEMPOTENT。Client 和 CLI 共用服务描述符；CLI 据此保存冻结请求，不另维护一份业务方法名单。该声明只允许重发原输入，不把未声明的 Session、upload 或 Host 操作推断为同类请求。
+
 semantic owner 是唯一结果与拒绝 Authority。consumer 不建立 complete/rejected 状态表。成功响应，以及 owner 明确的提交前拒绝（STALE_REVISION、OPERATION_ID_CONFLICT、InvalidArgument、PermissionDenied、Unauthenticated）删除本地原请求；删除失败只附 REQUEST_UNSAVED notice，不改变业务结果。连接丢失、DeadlineExceeded、Unavailable 或可能发生于提交后的 Internal/Unknown 保留原请求并返回 retry ID，`retry <id>` 将相同原输入再次发送给 owner，不重新读当前 revision、生成 identity 或重新解析名称。Subject creation 重试不要求先选择新 Subject；其他 Subject-bound 重试校验 scope。重试只恢复业务请求，不补做独立的 local selection 更新。
 
 `retry forget <id>` 只删除本地原请求，不撤销 Authority 操作。保存请求容量耗尽时先恢复或明确丢弃原请求；没有第二套终态回收规则。Session lifecycle、Identity binding、derivation、upload 的实际幂等合同由各 owner 决定，不声称全部调用都可用同一方式恢复。

@@ -32,8 +32,8 @@ service ConfigurationService {
   rpc ListConfigDescriptors(ListConfigDescriptorsRequest) returns (ListConfigDescriptorsResponse);
   rpc GetConfigDescriptor(GetConfigDescriptorRequest) returns (ConfigDescriptor);
   rpc GetConfiguration(GetConfigurationRequest) returns (ConfigurationSnapshot);
-  rpc SetSystemOverride(SetSystemOverrideRequest) returns (ConfigurationChange);
-  rpc ClearSystemOverride(ClearSystemOverrideRequest) returns (ConfigurationChange);
-  rpc SetSubjectOverride(SetSubjectOverrideRequest) returns (ConfigurationChange);
-  rpc ClearSubjectOverride(ClearSubjectOverrideRequest) returns (ConfigurationChange);
+  rpc SetSystemOverride(SetSystemOverrideRequest) returns (ConfigurationChange) { option idempotency_level = IDEMPOTENT; }
+  rpc ClearSystemOverride(ClearSystemOverrideRequest) returns (ConfigurationChange) { option idempotency_level = IDEMPOTENT; }
+  rpc SetSubjectOverride(SetSubjectOverrideRequest) returns (ConfigurationChange) { option idempotency_level = IDEMPOTENT; }
+  rpc ClearSubjectOverride(ClearSubjectOverrideRequest) returns (ConfigurationChange) { option idempotency_level = IDEMPOTENT; }
 }

@@ -1,9 +1,12 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { toJson } from "@bufbuild/protobuf";
-import { ValueSchema } from "@bufbuild/protobuf/wkt";
+import {
+  ValueSchema,
+  MethodOptions_IdempotencyLevel,
+} from "@bufbuild/protobuf/wkt";
 import { connectNousInstance } from "@nous-wave/client/node";
-import { NousError } from "@nous-wave/client";
+import { NousError, serviceDescriptors } from "@nous-wave/client";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -260,75 +263,15 @@ export async function createEnvironment(
   }
   const client = { ...original };
   if (needs.receipts) {
-    const retryMethods: Record<string, readonly string[]> = {
-      subjects: ["createSubject", "adoptCognitiveSeed"],
-      configuration: [
-        "setSystemOverride",
-        "setSubjectOverride",
-        "clearSystemOverride",
-        "clearSubjectOverride",
-      ],
-      model: ["formFromObservation"],
-      resources: ["materializeResource"],
-      runtime: [
-        "recordObservation",
-        "reportUse",
-        "createWorkContext",
-        "updateWorkContext",
-        "pauseWorkContext",
-        "resumeWorkContext",
-        "endWorkContext",
-        "setActiveWorkContext",
-      ],
-      concepts: [
-        "createTag",
-        "reviseTag",
-        "mergeTags",
-        "splitTag",
-        "createAssociation",
-        "revokeAssociation",
-        "createCognitiveSchema",
-        "addSchemaEvidence",
-        "reviseCognitiveSchema",
-        "splitCognitiveSchema",
-        "mergeCognitiveSchemas",
-        "suppressCognitiveSchema",
-        "restoreCognitiveSchema",
-        "withdrawCognitiveSchema",
-        "reacceptCognitiveSchema",
-        "purgeCognitiveSchema",
-      ],
-      memory: [
-        "formMemory",
-        "reviseMemory",
-        "suppressMemory",
-        "restoreMemory",
-        "withdrawMemory",
-        "reacceptMemory",
-        "purgeMemory",
-        "setAccessibility",
-        "linkRevisions",
-        "createEpisode",
-        "reviseEpisode",
-        "linkEpisodeRevisions",
-        "suppressEpisode",
-        "restoreEpisode",
-        "withdrawEpisode",
-        "reacceptEpisode",
-        "purgeEpisode",
-        "suppressJournal",
-        "restoreJournal",
-        "withdrawJournal",
-        "reacceptJournal",
-        "purgeJournal",
-      ],
-    };
-    for (const [domain, names] of Object.entries(retryMethods)) {
+    for (const [domain, service] of Object.entries(serviceDescriptors)) {
       const source = original[
         domain as keyof typeof original
       ] as unknown as Record<string, (request: object) => Promise<unknown>>;
       const wrapped = { ...source };
-      for (const name of names)
+      for (const method of service.methods) {
+        if (method.idempotency !== MethodOptions_IdempotencyLevel.IDEMPOTENT)
+          continue;
+        const name = method.localName;
         wrapped[name] = async (request) => {
           const id = crypto.randomUUID();
           const receipt = {
@@ -341,6 +284,7 @@ export async function createEnvironment(
           await (await local()).writeReceipt(id, receipt);
           return executeReceipt(id, receipt);
         };
+      }
       Object.assign(client, { [domain]: wrapped });
     }
   }
