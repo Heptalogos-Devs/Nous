@@ -35,7 +35,7 @@ fn producer() -> ProducerSignature {
 }
 async fn select_need(rt: &NousRuntime, subject: SubjectId) -> MaintenanceNeed {
     rt.cognition
-        .select_maintenance(subject, &["concept_maintenance".into()], 1, None)
+        .select_maintenance(subject, &["concept_maintenance".into()], 1, None, None)
         .await
         .unwrap()
         .pop()

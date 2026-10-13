@@ -197,9 +197,13 @@ export class ModelInvocations {
     }
   }
   prepare(name: ModelRole): PreparedModelRole {
-    const value = this.roles.get(name)?.prepared;
-    if (!value) throw new GenerationFailure(name, "role_unavailable");
-    return value;
+    const role = this.roles.get(name);
+    if (role?.state !== "READY" || !role.prepared) {
+      const error = new GenerationFailure(name, "role_unavailable");
+      this.allowDegradation(error, undefined, name);
+      throw error;
+    }
+    return role.prepared;
   }
   async preparePrompt(
     name: ModelRole,
@@ -246,14 +250,20 @@ export class ModelInvocations {
     beforeAttempt?: () => void,
     prepare?: (role: ReadyRole) => Input,
   ) {
-    return executeRoutes(
-      name,
-      fixed ?? this.prepare(name),
-      invoke,
-      signal,
-      beforeAttempt,
-      prepare,
-    );
+    try {
+      return await executeRoutes(
+        name,
+        fixed ?? this.prepare(name),
+        invoke,
+        signal,
+        beforeAttempt,
+        prepare,
+      );
+    } catch (error) {
+      if (error instanceof GenerationFailure)
+        this.allowDegradation(error, signal, name);
+      throw error;
+    }
   }
   identity(role: ModelRole) {
     return this.roles.get(role)?.prepared?.routes.find((route) => route.ready)

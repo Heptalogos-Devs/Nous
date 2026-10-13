@@ -149,6 +149,7 @@ async fn assert_consolidation_context(
     let service = nous_kernel::transport::KernelService(rt.clone());
     let claim = service
         .select_maintenance(tonic::Request::new(k::SelectMaintenanceRequest {
+            after: None,
             subject_id: subject.0.to_string(),
             allowed_kinds: vec!["memory_consolidate".into()],
             limit: 1,
@@ -378,6 +379,7 @@ async fn assert_manual_consolidation_plans(
     let service = nous_kernel::transport::KernelService(rt.clone());
     let selection = service
         .select_maintenance(tonic::Request::new(k::SelectMaintenanceRequest {
+            after: None,
             subject_id: subject.0.to_string(),
             allowed_kinds: vec!["memory_consolidate".into()],
             limit: 8,

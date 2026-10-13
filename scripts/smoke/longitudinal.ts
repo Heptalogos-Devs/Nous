@@ -18,6 +18,10 @@ import { KernelClient } from "../../apps/nous-core/src/kernel-client.js";
 import { createCore } from "../../apps/nous-core/src/server.js";
 import { parseEffectiveConfiguration } from "../../apps/nous-core/src/configuration/schema.js";
 import { ConfigExposure } from "@nous-wave/client";
+import { SubjectMaintenanceScheduler } from "../../apps/nous-core/src/maintenance/grants.js";
+import { DomainErrorCode } from "@nous-wave/client/errors";
+import { modelConfigurationSchema } from "../../apps/nous-core/src/model/configuration.js";
+import { GenerationFailure } from "../../apps/nous-core/src/model/execution/routes.js";
 import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
 import {
   episodePartitionSchema,
@@ -46,11 +50,11 @@ function proposalModels() {
     ].includes(role)
       ? ({} as NonNullable<ReturnType<typeof models.invocations.profile>>)
       : undefined;
-  models.invocations.prepare = (role) => ({
-    role,
-    routes: [],
-    configDigest: "b".repeat(64),
-  });
+  models.invocations.prepare = (role) => {
+    if (!models.invocations.profile(role))
+      throw new GenerationFailure(role, "role_unavailable");
+    return { role, routes: [], configDigest: "b".repeat(64) };
+  };
   const producerMetadata = {
     modelRole: "journal_synthesis" as const,
     modelProfile: "stub",
@@ -218,7 +222,7 @@ async function scenario(endpoint: string, token: string) {
     assert(!response.done, "harness control closed");
     return JSON.parse(response.value) as { endpoint?: string };
   };
-  const { models, calls } = proposalModels();
+  let { models, calls } = proposalModels();
   async function openCore(kernelEndpoint: string) {
     let kernel = KernelClient.connect(kernelEndpoint, token);
     const snapshot = await kernel.configuration.getConfiguration({
@@ -693,6 +697,172 @@ async function scenario(endpoint: string, token: string) {
       assert(item.currentRevision?.members.length);
       assert(item.currentRevision?.basis.length);
     }
+    // Real pending cognition fills a complete candidate page before a deterministic withdrawal.
+    const waiting = [];
+    for (let index = 0; index < 130; index++) {
+      const formed = await client.memory.formMemory({
+        subjectId,
+        operationId: randomUUID(),
+        cognitiveRole: "declarative",
+        input: {
+          formationMode: "grounded",
+          groundingOccurrenceId: observationIds[0],
+          semanticRole: "fact",
+          text: `Calibration fact ${index}`,
+          epistemicClass: "observed",
+          basis: [
+            {
+              basis: {
+                case: "evidence",
+                value: {
+                  occurrenceId: observationIds[0],
+                  basisRole: "direct",
+                  locator: { case: "wholeOccurrence", value: true },
+                },
+              },
+            },
+          ],
+        },
+      });
+      waiting.push(formed.revisionId);
+    }
+    await control({
+      command: "prioritize",
+      subject: subjectId,
+      references: waiting,
+    });
+    for (const current of [...firstPage.items, ...lastPage.items]) {
+      const head = await client.memory.getEpisode({
+        subjectId,
+        id: current.episodeId,
+      });
+      await client.memory.withdrawEpisode({
+        subjectId,
+        operationId: randomUUID(),
+        episodeId: head.episode!.episodeId,
+        expectedObjectEpoch: head.episode!.objectEpoch,
+      });
+    }
+    const priorCalls = { ...calls };
+    const deterministic = await client.cognition.grantMaintenance({
+      subjectId,
+      maxOperations: 1,
+      maxModelCalls: 0,
+      maxElapsedMs: 60000,
+    });
+    assert.equal(deterministic.operationsConsumed, 1);
+    assert.equal(deterministic.modelCalls, 0);
+    assert.equal(deterministic.results[0]?.kind, "journal_revalidate");
+    assert.equal(deterministic.results[0]?.status, "committed");
+    assert.equal(
+      (await client.memory.getJournal({ subjectId, id: journal.journalId }))
+        .journal!.acceptanceState,
+      "withdrawn",
+    );
+    assert.deepEqual(calls, priorCalls);
+
+    const secondSubject = "ffffffff-ffff-4fff-bfff-fffffffffff0";
+    await client.subjects.createSubject({
+      subjectId: secondSubject,
+      operationId: randomUUID(),
+      cognitiveSeed: {
+        text: "schema_version = 1",
+        format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
+      },
+      capabilities: { memory: true },
+    });
+    const nextSession = await client.runtime.openSession({
+      subjectId: secondSubject,
+    });
+    await client.runtime.recordObservation({
+      subjectId: secondSubject,
+      sessionId: nextSession.sessionId,
+      requestId: randomUUID(),
+      sourceClass: "message",
+      material: {
+        case: "inlineText",
+        value: { text: "Second Subject experience", mediaType: "text/plain" },
+      },
+    });
+    await control({
+      command: "advance",
+      subject: secondSubject,
+      seconds: 2000,
+    });
+    await client.configuration.setSystemOverride({
+      operationId: randomUUID(),
+      path: "maintenance.max_model_calls_per_tick",
+      value: fromJson(ValueSchema, 0),
+    });
+    const scheduler = new SubjectMaintenanceScheduler(
+      KernelClient.connect(restarted.endpoint, token),
+      models,
+    );
+    await scheduler.poll(new AbortController().signal);
+    assert.equal(
+      (
+        await client.memory.listEpisodes({
+          subjectId: secondSubject,
+          status: "accepted",
+        })
+      ).items.length,
+      1,
+    );
+    assert.deepEqual(calls, priorCalls);
+
+    // A real required role with missing credentials must return its formal diagnostic.
+    await client.configuration.setSystemOverride({
+      operationId: randomUUID(),
+      path: "maintenance.max_model_calls_per_tick",
+      value: fromJson(ValueSchema, 1),
+    });
+    models = await ModelRuntime.fromConfig(
+      modelConfigurationSchema.parse({
+        gateway_profiles: {
+          missing: {
+            base_url: "http://127.0.0.1:1/v1",
+            credential_env: "NOUS_SMOKE_MISSING_CREDENTIAL",
+          },
+        },
+        model_profiles: {
+          chat: {
+            gateway: "missing",
+            protocol: "openai-chat",
+            model: "unavailable",
+            capabilities: ["text", "structured_output"],
+          },
+        },
+        execution_profiles: { chat: { model: "chat" } },
+        roles: {
+          concept_maintenance: { routes: ["chat"], requirement: "required" },
+        },
+      }),
+    );
+    await app.close();
+    app = await openCore(restarted.endpoint);
+    publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
+    client = connectNous(publicEndpoint, token);
+    const required = await client.cognition.grantMaintenance({
+      subjectId,
+      maxOperations: 1,
+      maxModelCalls: 1,
+      maxElapsedMs: 60000,
+    });
+    assert.equal(required.operationsConsumed, 1);
+    assert.equal(required.modelCalls, 0);
+    assert.equal(required.results[0]?.status, "blocked_dependency");
+    assert.equal(
+      required.results[0]?.errorDetail?.code,
+      DomainErrorCode.CAPABILITY_UNAVAILABLE,
+    );
+    assert.equal(
+      required.results[0]?.errorDetail?.context.requirement,
+      "required",
+    );
+    assert.equal(
+      required.results[0]?.errorDetail?.context.capability,
+      "model.concept_maintenance",
+    );
     console.error("Longitudinal smoke passed");
   } finally {
     await app.close();

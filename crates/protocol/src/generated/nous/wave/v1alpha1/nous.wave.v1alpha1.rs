@@ -2030,7 +2030,7 @@ pub struct MaintenanceGrantRequest {
     #[prost(uint32, tag="4")]
     pub max_elapsed_ms: u32,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MaintenanceOperationResult {
     #[prost(string, tag="1")]
     pub need_id: ::prost::alloc::string::String,
@@ -2040,6 +2040,8 @@ pub struct MaintenanceOperationResult {
     pub status: ::prost::alloc::string::String,
     #[prost(string, optional, tag="4")]
     pub problem_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="5")]
+    pub error_detail: ::core::option::Option<ErrorDetail>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MaintenanceGrantResponse {
@@ -2051,6 +2053,8 @@ pub struct MaintenanceGrantResponse {
     pub elapsed_ms: u32,
     #[prost(string, tag="4")]
     pub disposition: ::prost::alloc::string::String,
+    #[prost(uint32, tag="5")]
+    pub operations_consumed: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceDescriptor {

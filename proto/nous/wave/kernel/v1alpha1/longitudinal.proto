@@ -25,7 +25,7 @@ message MaintenanceNeed {
   uint32 retry_count = 16;
   uint64 trigger_revision = 17;
 }
-message SelectMaintenanceRequest { string subject_id = 1; repeated string allowed_kinds = 2; uint32 limit = 3; optional string model_execution_digest = 5; }
+message SelectMaintenanceRequest { string subject_id = 1; repeated string allowed_kinds = 2; uint32 limit = 3; optional string model_execution_digest = 5; MaintenanceNeed after = 6; }
 message SelectMaintenanceResponse { repeated MaintenanceNeed needs = 1; }
 message FinishMaintenanceRequest { MaintenanceNeed selected = 1; string disposition = 2; google.protobuf.Timestamp next_due = 3; optional string problem_code = 4; uint32 retry_delay_seconds = 5; }
 message OrganizeExperienceRequest { string subject_id = 1; uint32 limit = 2; bool close = 3; }

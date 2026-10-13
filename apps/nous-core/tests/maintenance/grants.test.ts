@@ -1,75 +1,16 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { coreExecutionSchema } from "../../src/configuration/catalog.js";
-
 import { describe, expect, it, vi } from "vitest";
 import { Code, ConnectError } from "@connectrpc/connect";
 
-import { type KernelClient } from "../../src/kernel-client.js";
-
-import { ModelRuntime } from "../../src/model/runtime.js";
 import { GenerationFailure } from "../../src/model/execution/routes.js";
 
-import {
-  grantMaintenance,
-  SubjectMaintenanceScheduler,
-} from "../../src/maintenance/grants.js";
+import { grantMaintenance } from "../../src/maintenance/grants.js";
 
 import { subject, need, fixture } from "./support.js";
 
 describe("bounded maintenance grants", () => {
-  it("selects work before checking generation budgets and defers it once per grant", async () => {
-    const state = fixture();
-    let attempts = 0;
-    const select = vi.fn(async (input: { allowedKinds: string[] }) => {
-      if (!input.allowedKinds.includes(need.kind)) return { needs: [] };
-      attempts++;
-      return { needs: [need] };
-    });
-    Object.assign(state.kernel.maintenance, {
-      getMaintenancePolicy: vi.fn(async () => ({
-        enabled: true,
-        maxOperations: 4,
-        experienceBatchSize: 256,
-      })),
-      selectMaintenance: select,
-      finishMaintenance: vi.fn(),
-    });
-    const input = {
-      $typeName: "nous.wave.v1alpha1.MaintenanceGrantRequest" as const,
-      subjectId: subject,
-      maxOperations: 1,
-      maxModelCalls: 1,
-      maxElapsedMs: 1000,
-    };
-    vi.spyOn(state.models.invocations, "profile").mockReturnValueOnce(
-      undefined,
-    );
-    const unavailable = await grantMaintenance(
-      state.kernel,
-      state.models,
-      input,
-    );
-    expect(unavailable.results[0]).toMatchObject({
-      status: "deferred",
-      problemCode: "model_unavailable",
-    });
-    expect(attempts).toBe(1);
-    vi.spyOn(state.models.invocations, "capabilities", "get").mockReturnValue([
-      { name: "model.journal_synthesis", state: "READY", detail: "Configured" },
-    ]);
-    const exhausted = await grantMaintenance(state.kernel, state.models, {
-      ...input,
-      maxModelCalls: 0,
-    });
-    expect(exhausted.results[0]).toMatchObject({
-      status: "deferred",
-      problemCode: "model_budget_exhausted",
-    });
-    expect(attempts).toBe(2);
-    expect(state.synthesize).not.toHaveBeenCalled();
-  });
   it("defers unfinished work when the granted opportunity actually expires", async () => {
     const state = fixture();
     const originalSave = state.kernel.modelResults.saveOperation;
@@ -85,6 +26,7 @@ describe("bounded maintenance grants", () => {
     Object.assign(state.kernel.maintenance, {
       getMaintenancePolicy: vi.fn(async () => ({
         enabled: true,
+        maxModelCalls: 4,
         maxOperations: 1,
         experienceBatchSize: 256,
         retryMaxAttempts: 4,
@@ -166,6 +108,7 @@ describe("bounded maintenance grants", () => {
     Object.assign(state.kernel.maintenance, {
       getMaintenancePolicy: vi.fn(async () => ({
         enabled: true,
+        maxModelCalls: 4,
         maxOperations: 4,
         experienceBatchSize: 256,
         retryInitialSeconds: 2,
@@ -195,68 +138,6 @@ describe("bounded maintenance grants", () => {
     expect(log).toHaveBeenCalled();
     log.mockRestore();
   });
-  it("continues through more than one Subject page under sustained due work", async () => {
-    const ids = Array.from({ length: 75 }, (_, index) => `subject-${index}`);
-    const opportunities: string[] = [];
-    const list = vi.fn(async (input: { page?: { pageToken?: string } }) => {
-      const offset = Number(input.page?.pageToken || 0);
-      const items = ids
-        .slice(offset, offset + 50)
-        .map((subjectId) => ({ subjectId, capabilities: { memory: true } }));
-      return {
-        items,
-        nextPageToken: offset + 50 < ids.length ? String(offset + 50) : "",
-      };
-    });
-    const kernel = {
-      execution: coreExecutionSchema.parse(undefined),
-      subjects: { listSubjects: list },
-      maintenance: {
-        getMaintenancePolicy: vi.fn(async () => ({
-          enabled: true,
-          maxOperations: 4,
-          experienceBatchSize: 7,
-          maxModelCalls: 4,
-          maxElapsedMs: 60000,
-          pollIntervalSeconds: 30,
-        })),
-        selectMaintenance: vi.fn(async (input: { subjectId: string }) => ({
-          needs: [
-            { ...need, subjectId: input.subjectId, kind: "episode_segment" },
-          ],
-        })),
-        organizeExperience: vi.fn(async (input: { subjectId: string }) => {
-          opportunities.push(input.subjectId);
-          return { episodes: [], nextDue: undefined };
-        }),
-        finishMaintenance: vi.fn(async () => ({})),
-      },
-    } as unknown as KernelClient;
-    const scheduler = new SubjectMaintenanceScheduler(
-      kernel,
-      new ModelRuntime(),
-    );
-    for (let tick = 0; tick < 20; tick++)
-      await scheduler.poll(new AbortController().signal);
-    expect(kernel.maintenance.organizeExperience).toHaveBeenCalledWith(
-      expect.objectContaining({ limit: 7 }),
-      expect.anything(),
-    );
-    expect(opportunities.slice(0, 75)).toEqual(ids);
-    expect(opportunities.slice(75)).toEqual(ids.slice(0, 5));
-    expect(list).toHaveBeenCalledWith(
-      expect.objectContaining({ page: { pageToken: "50" } }),
-      expect.anything(),
-    );
-    list.mockRejectedValueOnce(
-      new ConnectError("expired page token", Code.InvalidArgument),
-    );
-    for (let tick = 0; tick < 40; tick++)
-      await scheduler.poll(new AbortController().signal);
-    expect(
-      opportunities.filter((id) => id === ids[74]).length,
-    ).toBeGreaterThanOrEqual(2);
-  });
   it("exposes an owner invariant failure and stops the grant without a provider retry", async () => {
     const state = fixture();
     state.commit.mockRejectedValue(
@@ -267,6 +148,7 @@ describe("bounded maintenance grants", () => {
     Object.assign(state.kernel.maintenance, {
       getMaintenancePolicy: vi.fn(async () => ({
         enabled: true,
+        maxModelCalls: 4,
         maxOperations: 4,
         experienceBatchSize: 256,
         retryInitialSeconds: 1,

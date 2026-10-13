@@ -119,6 +119,7 @@ impl KernelService {
         &self,
         input: k::SelectMaintenanceRequest,
     ) -> Result<k::SelectMaintenanceResponse> {
+        let after = input.after.map(need).transpose()?;
         Ok(k::SelectMaintenanceResponse {
             needs: self
                 .0
@@ -128,6 +129,7 @@ impl KernelService {
                     &input.allowed_kinds,
                     input.limit,
                     input.model_execution_digest.as_deref(),
+                    after.as_ref(),
                 )
                 .await?
                 .into_iter()

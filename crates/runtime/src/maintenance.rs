@@ -119,6 +119,7 @@ impl CognitiveRuntimeService {
         allowed_kinds: &[String],
         limit: u32,
         model_execution_digest: Option<&str>,
+        after: Option<&MaintenanceNeed>,
     ) -> Result<Vec<MaintenanceNeed>> {
         self.require_subject(subject).await?;
         if model_execution_digest.is_some_and(|digest| {
@@ -129,7 +130,8 @@ impl CognitiveRuntimeService {
         }) {
             return Err(Error::Invalid("invalid model execution digest".into()));
         }
-        if limit == 0
+        if after.is_some_and(|a| a.subject_id != subject || !(0..=100).contains(&a.priority))
+            || limit == 0
             || limit > 128
             || allowed_kinds
                 .iter()
@@ -146,13 +148,16 @@ impl CognitiveRuntimeService {
             .bind(subject.0).bind(blocked_digest).bind(model_execution_digest).execute(&mut *tx).await.map_err(db)?;
         self.cleanup_maintenance_in(&mut tx, subject).await?;
         let rows = sqlx::query(
-            "WITH due AS (SELECT need_id FROM maintenance_needs WHERE subject_id=$1 AND kind=ANY($2::text[]) AND state='pending' AND EXISTS(SELECT 1 FROM subjects s WHERE s.subject_id=maintenance_needs.subject_id AND s.status='active') AND due_at<=$3 AND (retry_not_before IS NULL OR retry_not_before<=clock_timestamp()) ORDER BY priority DESC,due_at,need_id LIMIT $4), selected AS (UPDATE maintenance_needs n SET model_execution_digest=$5 FROM due WHERE n.need_id=due.need_id RETURNING n.*) SELECT * FROM selected ORDER BY priority DESC,due_at,need_id",
+            "WITH due AS (SELECT need_id FROM maintenance_needs WHERE subject_id=$1 AND kind=ANY($2::text[]) AND state='pending' AND EXISTS(SELECT 1 FROM subjects s WHERE s.subject_id=maintenance_needs.subject_id AND s.status='active') AND due_at<=$3 AND ($6::int IS NULL OR priority<$6 OR (priority=$6 AND (due_at,need_id)>($7,$8))) AND (retry_not_before IS NULL OR retry_not_before<=clock_timestamp()) ORDER BY priority DESC,due_at,need_id LIMIT $4), selected AS (UPDATE maintenance_needs n SET model_execution_digest=$5 FROM due WHERE n.need_id=due.need_id RETURNING n.*) SELECT * FROM selected ORDER BY priority DESC,due_at,need_id",
         )
         .bind(subject.0)
         .bind(allowed_kinds)
         .bind(now)
         .bind(i64::from(limit))
         .bind(model_execution_digest)
+        .bind(after.map(|a| a.priority))
+        .bind(after.map(|a| a.due_at))
+        .bind(after.map(|a| a.need_id))
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?;

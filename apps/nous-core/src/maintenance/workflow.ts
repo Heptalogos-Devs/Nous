@@ -114,15 +114,22 @@ export async function runModelMaintenance(
         const role =
           maintenanceRoles[need.kind as keyof typeof maintenanceRoles];
         if (!role) throw new Error(`Unknown maintenance kind: ${need.kind}`);
-        if (!modelBudget || !models.invocations.profile(role))
+        if (!modelBudget)
           return {
             value: {
               status: "deferred",
-              problemCode: !modelBudget
-                ? "model_budget_exhausted"
-                : "model_unavailable",
+              problemCode: "model_budget_exhausted",
             },
           };
+        let model;
+        try {
+          model = models.invocations.prepare(role);
+        } catch (error) {
+          models.invocations.allowDegradation(error, options.signal, role);
+          return {
+            value: { status: "deferred", problemCode: "model_unavailable" },
+          };
+        }
         const generated = await buildMaintenanceProposal({
           models,
           need,
@@ -130,7 +137,7 @@ export async function runModelMaintenance(
           operationId,
           options,
           reserveModelCall,
-          model: models.invocations.prepare(role),
+          model,
         });
         const actions =
           generated.proposal.action === "concept" ||

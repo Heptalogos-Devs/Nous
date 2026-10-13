@@ -142,7 +142,7 @@ async fn maintenance_selection_preserves_new_triggers_during_work() {
     let kinds = vec!["journal_review".into()];
     assert!(
         rt.cognition
-            .select_maintenance(subject, &kinds, 1, None)
+            .select_maintenance(subject, &kinds, 1, None, None)
             .await
             .unwrap()
             .is_empty()
@@ -150,7 +150,7 @@ async fn maintenance_selection_preserves_new_triggers_during_work() {
     clock.advance_by(subject, Duration::hours(1)).unwrap();
     let selected = rt
         .cognition
-        .select_maintenance(subject, &kinds, 1, None)
+        .select_maintenance(subject, &kinds, 1, None, None)
         .await
         .unwrap()
         .remove(0);
@@ -158,7 +158,7 @@ async fn maintenance_selection_preserves_new_triggers_during_work() {
     assert_eq!(selected.state, "pending");
     let during_work = rt
         .cognition
-        .select_maintenance(subject, &kinds, 1, None)
+        .select_maintenance(subject, &kinds, 1, None, None)
         .await
         .unwrap()
         .remove(0);
@@ -175,7 +175,7 @@ async fn maintenance_selection_preserves_new_triggers_during_work() {
         .unwrap();
     let next = rt
         .cognition
-        .select_maintenance(subject, &kinds, 1, None)
+        .select_maintenance(subject, &kinds, 1, None, None)
         .await
         .unwrap()
         .remove(0);
@@ -245,7 +245,7 @@ async fn ended_work_context_wakes_and_closes_experience_before_idle_deadline() {
     assert!(initial.episodes.is_empty());
     let selected = rt
         .cognition
-        .select_maintenance(subject, &["episode_segment".into()], 1, None)
+        .select_maintenance(subject, &["episode_segment".into()], 1, None, None)
         .await
         .unwrap();
     rt.cognition
@@ -269,7 +269,7 @@ async fn ended_work_context_wakes_and_closes_experience_before_idle_deadline() {
         .unwrap();
     let needs = rt
         .cognition
-        .select_maintenance(subject, &["episode_segment".into()], 1, None)
+        .select_maintenance(subject, &["episode_segment".into()], 1, None, None)
         .await
         .unwrap();
     assert_eq!(needs.len(), 1);

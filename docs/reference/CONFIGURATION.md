@@ -82,6 +82,8 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 
 ## 纵向认知配置
 
+`maintenance.max_model_calls_per_tick` 可设为 0：停止本轮模型生成，已有成果提交和确定性维护继续执行。操作消耗由 grant 的 `operationsConsumed` 返回，每项实际处理的 need 计一次，跳过无法生成的候选不计。
+
 这些 typed settings 由 Runtime/Memory registry 定义，支持 registry 声明的 scope override 与 apply mode；实际生效快照由 Configuration Service 读取。
 
 | Setting                                   | 默认值                                                                                          | 单位/含义                                                                                                                                              |

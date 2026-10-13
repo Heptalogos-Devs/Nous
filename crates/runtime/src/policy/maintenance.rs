@@ -182,6 +182,7 @@ fn register_work_state_configuration(registry: &mut ConfigRegistryBuilder) -> Re
             900000,
         ),
     ] {
+        let minimum = u64::from(key.path() != MAX_MODEL_CALLS.path());
         registry.register(
             key,
             "cognitive-runtime",
@@ -192,11 +193,11 @@ fn register_work_state_configuration(registry: &mut ConfigRegistryBuilder) -> Re
             ConfigApplyMode::Live,
             ConfigSemanticEffect::Operational,
             move |value| {
-                if (1..=ceiling).contains(value) {
+                if (minimum..=ceiling).contains(value) {
                     Ok(())
                 } else {
                     Err(Error::Invalid(format!(
-                        "{} must be 1..{ceiling}",
+                        "{} must be {minimum}..{ceiling}",
                         key.path()
                     )))
                 }
@@ -209,7 +210,7 @@ fn register_work_state_configuration(registry: &mut ConfigRegistryBuilder) -> Re
         } else {
             "items"
         };
-        registry.bounds(key, 1, ceiling, Some(unit))?;
+        registry.bounds(key, minimum, ceiling, Some(unit))?;
     }
     Ok(())
 }

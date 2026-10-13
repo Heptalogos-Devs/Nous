@@ -178,7 +178,7 @@ async fn assert_maintenance_operation_validates_parent_trigger(
         .unwrap();
     let needs = runtime
         .cognition
-        .select_maintenance(subject, &["memory_consolidate".into()], 1, None)
+        .select_maintenance(subject, &["memory_consolidate".into()], 1, None, None)
         .await
         .unwrap();
     let need = needs.iter().find(|need| need.need_id == need_id).unwrap();

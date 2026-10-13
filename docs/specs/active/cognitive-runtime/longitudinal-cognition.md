@@ -50,6 +50,8 @@ unexpected scheduler/runtime failures 输出 Subject、stage、已知 need kind�
 
 Episode/Journal/Memory/Schema revisions 是 durable cognition history；Observation/ExperienceItem 是 durable experience；EpisodeDraft 与 MaintenanceNeed 是临时 Runtime 工作；model_results 只保存实际提案、结果与调用记录。terminal need 按 `maintenance.terminal_retention_seconds` 保留短期 inspection，再在 selection/ack 路径删除；pending、blocked 不被 terminal housekeeping 删除。
 
+一次 grant 按 priority 降序、due 和 need ID 的既有顺序有界翻页；游标使用选取时的位置，已查看 ID 只保留在本次调用。未获得生成机会的项不消耗操作预算，也不确认 pending、重置 retry 或重写 due；随后继续查看已有成果和确定性操作。每个实际处理的 need（含终结或失败尝试）消耗一个操作名额，公开响应返回 `operationsConsumed`，scheduler 直接使用它。模型预算只计实际 provider attempt，跳过 route 不计。执行期限覆盖整次机会。scheduler 的 grant RPC 失败时停止本轮，不猜测未知的操作消耗；下一轮继续已推进的 Subject 顺序。required 角色不可用或执行失败保留正式 `ErrorDetail` 的 capability、requirement 与恢复建议，optional 的有效降级结果由功能 owner 决定。
+
 Core 的 `model_results` 在实际生成后保存 proposal、必要的 owner 输入、依赖与 telemetry，提交后保存 outcome；执行前不登记 snapshot。identity 由 need、trigger authority sequence 和 trigger revision 生成。后续显式机会复用已存 proposal/outcome；只有重新生成才检查角色可用性和模型调用预算。确定性 Journal 撤回不创建模型记录。多 action 提案按原顺序调用 owner，稳定 child operation ID 和 owner receipt 重放已提交结果，不持久化逐项 progress、临时绑定或第二份回执。后项失败不回滚已提交的独立前项。结果关联 need/trigger，ack 删除已完成记录，selection/ack 清理被新 trigger 替代的记录。显式形成、Material 结果和仍需提交的当前提案保留其结果合同。owner 验证 Subject、head、epoch、lifecycle、来源和 authority sequence；变化返回 stale 并刷新维护计划。取消与机会耗尽保留 need 原有 CognitiveClock due，不写基础设施 wall-clock nextDue。
 
 Workflow owner 是 1..64 字节的 semantic identifier，格式为 `[a-z][a-z0-9_]*`；Persistence 不枚举认知领域。private Kernel API 仅接受已实现的 `memory / material` 调用路径；Longitudinal 的 Memory-domain operations 使用 `memory`。

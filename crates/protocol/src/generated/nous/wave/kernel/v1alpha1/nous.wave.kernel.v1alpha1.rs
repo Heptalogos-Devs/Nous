@@ -101,6 +101,8 @@ pub struct SelectMaintenanceRequest {
     pub limit: u32,
     #[prost(string, optional, tag="5")]
     pub model_execution_digest: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="6")]
+    pub after: ::core::option::Option<MaintenanceNeed>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SelectMaintenanceResponse {

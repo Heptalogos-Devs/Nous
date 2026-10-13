@@ -159,7 +159,7 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
     let kinds = vec![request.kind.clone()];
     let selected = rt
         .cognition
-        .select_maintenance(subject, &kinds, 1, None)
+        .select_maintenance(subject, &kinds, 1, None, None)
         .await
         .unwrap()
         .remove(0);
@@ -241,7 +241,7 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .unwrap();
     let selected = rt
         .cognition
-        .select_maintenance(subject, &kinds, 1, None)
+        .select_maintenance(subject, &kinds, 1, None, None)
         .await
         .unwrap()
         .remove(0);
@@ -264,7 +264,7 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .unwrap();
     assert!(
         rt.cognition
-            .select_maintenance(subject, &kinds, 1, None)
+            .select_maintenance(subject, &kinds, 1, None, None)
             .await
             .unwrap()
             .is_empty()
@@ -272,7 +272,7 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
     sqlx::query("UPDATE maintenance_needs SET retry_not_before=clock_timestamp()-interval '1 second' WHERE need_id=$1").bind(pending).execute(rt.store.pool()).await.unwrap();
     let retry = rt
         .cognition
-        .select_maintenance(subject, &kinds, 1, None)
+        .select_maintenance(subject, &kinds, 1, None, None)
         .await
         .unwrap()
         .remove(0);
@@ -328,7 +328,7 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
     let replacement_digest = "b".repeat(64);
     let blocked = rt
         .cognition
-        .select_maintenance(subject, &kinds, 1, Some(&original_digest))
+        .select_maintenance(subject, &kinds, 1, Some(&original_digest), None)
         .await
         .unwrap()
         .remove(0);
@@ -343,14 +343,14 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .unwrap();
     assert!(
         rt.cognition
-            .select_maintenance(subject, &kinds, 1, Some(&original_digest))
+            .select_maintenance(subject, &kinds, 1, Some(&original_digest), None)
             .await
             .unwrap()
             .is_empty()
     );
     let reactivated = rt
         .cognition
-        .select_maintenance(subject, &kinds, 1, Some(&replacement_digest))
+        .select_maintenance(subject, &kinds, 1, Some(&replacement_digest), None)
         .await
         .unwrap()
         .remove(0);

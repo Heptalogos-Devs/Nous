@@ -409,7 +409,7 @@ async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
     let kinds = vec!["episode_resegment".into()];
     let needs = rt
         .cognition
-        .select_maintenance(subject, &kinds, 8, None)
+        .select_maintenance(subject, &kinds, 8, None, None)
         .await
         .unwrap();
     let need = needs

@@ -131,7 +131,7 @@ ModelRole、ExecutionProfile、ModelProfile 和 Gateway 分别表达工作、调
 | 能力                  | 当前剩余流程                                                                                                            | 本轮删除单位                                                                                 |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | 认知内容与 Projection | 已替换：窄文本与 support 同次读取，Memory 只接收召回意图，Projection 每批最多 16 项，accretion 保留 kind/value 成员顺序 | 窄内容和 exact support 各归 Memory；Runtime 有界批量消费；按输入顺序比较，不伪造 QuerySource |
-| 维护 grant            | 一次固定取得前 128 项；scheduler 从结果条目数推算预算；无法生成也确认 pending                                           | 复用排序有界翻页；正式 operationsConsumed；生成前统一角色要求；无状态变化不写确认            |
+| 维护 grant            | 已替换：按选取时的排序位置继续翻页；operationsConsumed 贯通 grant/scheduler；无生成机会跳过，required 失败返回正式详情  | 复用排序有界翻页；正式 operationsConsumed；生成前统一角色要求；无状态变化不写确认            |
 | Query Host            | Kernel 读模型 JSON 路径；Core 与 Kernel 分别判断执行能力                                                                | Core 传实际可执行能力，Runtime 结合查询计划决定直达或 continuation                           |
 | formation             | Core 串联 Occurrence、Artifact、representation、mentions 和 evidence RPC                                                | Material 完成选择、metadata、mentions 和有界内容准备；Core 仅决定模型与媒体策略              |
 | CLI                   | family/例外名单选择整套环境；部分简单操作仍取得无关状态                                                                 | 连接为基础，操作按需取得 selection、result 和 receipt；明确拒绝由正式提交阶段表达            |
