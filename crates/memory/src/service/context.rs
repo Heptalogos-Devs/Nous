@@ -55,7 +55,7 @@ impl MemoryService {
         let mut points = std::collections::HashMap::<Uuid, Vec<String>>::new();
         if max_bytes > 0 && !journals.is_empty() {
             for row in sqlx::query("SELECT journal_revision_id,left(text,$2) text FROM journal_revision_points WHERE journal_revision_id=ANY($1) ORDER BY journal_revision_id,ordinal")
-                .bind(&journals).bind(max_bytes as i64).fetch_all(&mut *tx).await.map_err(db)? {
+                .bind(&journals).bind(max_bytes as i32).fetch_all(&mut *tx).await.map_err(db)? {
                 points.entry(row.try_get("journal_revision_id").map_err(db)?).or_default().push(row.try_get("text").map_err(db)?);
             }
         }
