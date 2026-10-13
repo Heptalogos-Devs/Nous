@@ -99,7 +99,6 @@ impl CognitiveContributor for MemoryService {
                 &revision_ids,
                 &accessibility_policy,
                 bound.historical_authority.as_deref(),
-                false,
                 self.cognition.now(subject),
             )
             .await?;

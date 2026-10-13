@@ -287,6 +287,88 @@ pub fn eligible(level: AccessibilityLevel, effort: CognitiveEffort, exact: bool)
 }
 
 impl MemoryService {
+    pub(super) async fn memory_accessibility_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        memories: &[Uuid],
+        accessibility_policy: &AccessibilityPolicy,
+        view: Option<&HistoricalAuthoritySnapshot>,
+        now: DateTime<Utc>,
+    ) -> Result<std::collections::HashMap<Uuid, AccessibilityLevel>> {
+        use std::collections::HashMap;
+        if memories.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let now = view.map_or(now, |v| v.as_of);
+        let rows = sqlx::query("SELECT memory_id,accessibility_mode,created_at,ARRAY(SELECT memory_revision_id FROM memory_revisions r WHERE r.memory_id=o.memory_id) sibling_revisions FROM memory_objects o WHERE subject_id=$1 AND memory_id=ANY($2)")
+            .bind(subject.0).bind(memories).fetch_all(&mut **tx).await.map_err(db)?;
+        let mut revision_owners = HashMap::new();
+        let mut accessibility_inputs =
+            HashMap::<Uuid, (String, DateTime<Utc>, Vec<(String, f64)>)>::new();
+        for row in rows {
+            let memory: Uuid = row.try_get("memory_id").map_err(db)?;
+            accessibility_inputs.entry(memory).or_insert((
+                row.try_get("accessibility_mode").map_err(db)?,
+                row.try_get("created_at").map_err(db)?,
+                vec![],
+            ));
+            for revision in row
+                .try_get::<Vec<Uuid>, _>("sibling_revisions")
+                .map_err(db)?
+            {
+                revision_owners.insert(
+                    CognitiveRef::MemoryRevision(MemoryRevisionId(revision)),
+                    memory,
+                );
+            }
+        }
+        let uses = self
+            .cognition
+            .use_facts_in(
+                tx,
+                subject,
+                &revision_owners.keys().cloned().collect::<Vec<_>>(),
+                view.map(|view| view.as_of),
+            )
+            .await?;
+        for fact in uses {
+            if let Some(memory) = revision_owners.get(&fact.reference) {
+                accessibility_inputs
+                    .get_mut(memory)
+                    .expect("selected Memory")
+                    .2
+                    .push((
+                        fact.kind,
+                        (now - fact.occurred_at).num_seconds().max(0) as f64 / 86400.0,
+                    ));
+            }
+        }
+        let mut accessibility = HashMap::<Uuid, AccessibilityLevel>::new();
+        for (memory, (mut mode, created, uses)) in accessibility_inputs {
+            if let Some(state) =
+                view.and_then(|v| v.cognition_for(&CognitiveRef::Memory(MemoryId(memory))))
+            {
+                mode = state.state["accessibility_mode"]
+                    .as_str()
+                    .unwrap_or("auto")
+                    .to_owned();
+            }
+            let level = match mode.as_str() {
+                "normal" => AccessibilityLevel::Normal,
+                "deep" => AccessibilityLevel::Deep,
+                "explicit" => AccessibilityLevel::Explicit,
+                _ => accessibility_policy.level_from_activation(
+                    accessibility_policy
+                        .activation((now - created).num_seconds().max(0) as f64 / 86400.0, &uses),
+                ),
+            };
+            accessibility.insert(memory, level);
+        }
+
+        Ok(accessibility)
+    }
+
     pub async fn set_accessibility(
         &self,
         subject: SubjectId,

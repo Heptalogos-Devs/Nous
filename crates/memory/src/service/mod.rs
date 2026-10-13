@@ -57,7 +57,6 @@ pub use accessibility::{
 pub use accretion::{ACCRETION, AccretionPolicy, AccretionSignal};
 pub use concept_maintenance::*;
 pub use consolidation_context::ConsolidationMetadata;
-pub use content::CognitionContent;
 pub use episode::*;
 pub use journal::*;
 pub use longitudinal_policy::{
@@ -67,6 +66,7 @@ pub use maintenance_planning::{MaintenanceMember, MaintenanceScope};
 pub use nous_core::TopologyRelation;
 pub use nous_core::{CognitiveQuery, CognitiveQueryResult};
 pub use tag::*;
+pub use trace::CognitionContent;
 pub use trace::CognitionTrace;
 
 #[derive(Clone)]

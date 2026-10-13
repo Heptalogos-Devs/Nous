@@ -90,7 +90,6 @@ impl MemoryService {
             selection,
             &policy,
             None,
-            true,
             self.cognition.now(subject),
         )
         .await

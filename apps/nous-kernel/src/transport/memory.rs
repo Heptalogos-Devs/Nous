@@ -166,7 +166,6 @@ impl KernelService {
                         CognitiveRef::JournalRevision(v.revision.journal_revision_id),
                         C::Journal(super::journal::journal_revision_proto(v)),
                     ),
-                    N::Tag { .. } => unreachable!("trace has only exact cognition revisions"),
                 };
                 p::CognitionTraceNode {
                     reference: Some(to_ref(reference)),

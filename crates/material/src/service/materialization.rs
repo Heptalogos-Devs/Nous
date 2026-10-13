@@ -49,64 +49,72 @@ pub struct MaterialTextView {
 
 impl MaterialService {
     /// Material owns its evidence and interpretation meaning in working context.
-    pub async fn context_source(
+    pub async fn context_sources(
         &self,
         subject: SubjectId,
-        reference: &CognitiveRef,
+        references: &[CognitiveRef],
         max_bytes: usize,
-    ) -> Result<nous_runtime::ContextSource> {
-        let mut payload = self
-            .read_inputs(subject, std::slice::from_ref(reference), None)
-            .await?
-            .remove(reference)
-            .ok_or_else(|| Error::Unavailable("material metadata is unavailable".into()))?
-            .payload?;
-        let media_type = payload.media_type.clone();
-        let producer = payload.producer.take();
-        let provenance = std::mem::take(&mut payload.provenance);
-        let text = if max_bytes > 0
-            && matches!(
-                media_modality(&media_type),
-                Modality::Text | Modality::Structured
-            ) {
-            let selected = self
-                .materialize_payload(
-                    MaterializeRequest {
-                        reference: reference.clone(),
-                        byte_range: None,
-                        max_bytes: max_bytes as u64,
+    ) -> Result<Vec<Result<nous_runtime::ContextSource>>> {
+        let mut inputs = self.read_inputs(subject, references, None).await?;
+        let mut results = Vec::with_capacity(references.len());
+        for reference in references {
+            let result = async {
+                let mut payload = inputs
+                    .get_mut(reference)
+                    .ok_or_else(|| Error::Unavailable("material metadata is unavailable".into()))?
+                    .payload
+                    .clone()?;
+                let media_type = payload.media_type.clone();
+                let producer = payload.producer.take();
+                let provenance = std::mem::take(&mut payload.provenance);
+                let text = if max_bytes > 0
+                    && matches!(
+                        media_modality(&media_type),
+                        Modality::Text | Modality::Structured
+                    ) {
+                    let selected = self
+                        .materialize_payload(
+                            MaterializeRequest {
+                                reference: reference.clone(),
+                                byte_range: None,
+                                max_bytes: max_bytes as u64,
+                            },
+                            payload,
+                        )
+                        .await?;
+                    let end = std::str::from_utf8(&selected.bytes)
+                        .map_or_else(|error| error.valid_up_to(), str::len);
+                    Some(
+                        String::from_utf8(selected.bytes[..end].to_vec())
+                            .map_err(|error| Error::Infrastructure(error.to_string()))?,
+                    )
+                } else {
+                    None
+                };
+                let evidence: Vec<_> = provenance
+                    .into_iter()
+                    .map(|reference| EvidenceHandle {
+                        epistemic_relation: None,
+                        reference,
+                        basis_role: "source".into(),
+                    })
+                    .collect();
+                Ok(nous_runtime::ContextSource {
+                    reference: reference.clone(),
+                    source_revision: None,
+                    text,
+                    authority: if producer.is_some() {
+                        AuthorityClass::Interpretation
+                    } else {
+                        AuthorityClass::Evidence
                     },
-                    payload,
-                )
-                .await?;
-            let end = std::str::from_utf8(&selected.bytes)
-                .map_or_else(|error| error.valid_up_to(), str::len);
-            Some(
-                String::from_utf8(selected.bytes[..end].to_vec())
-                    .map_err(|error| Error::Infrastructure(error.to_string()))?,
-            )
-        } else {
-            None
-        };
-        let evidence: Vec<_> = provenance
-            .into_iter()
-            .map(|reference| EvidenceHandle {
-                epistemic_relation: None,
-                reference,
-                basis_role: "source".into(),
-            })
-            .collect();
-        Ok(nous_runtime::ContextSource {
-            reference: reference.clone(),
-            source_revision: None,
-            text,
-            authority: if producer.is_some() {
-                AuthorityClass::Interpretation
-            } else {
-                AuthorityClass::Evidence
-            },
-            evidence,
-        })
+                    evidence,
+                })
+            }
+            .await;
+            results.push(result);
+        }
+        Ok(results)
     }
 
     pub async fn materialize(

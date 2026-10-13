@@ -141,9 +141,7 @@ impl MemoryService {
                 &neighbors
                     .iter()
                     .filter(|reference| eligible.contains(*reference))
-                    .map(|reference| {
-                        nous_runtime::QuerySource::new(reference.clone(), "exact_target")
-                    })
+                    .map(|reference| (reference.clone(), true))
                     .collect::<Vec<_>>(),
                 CognitiveEffort::Maximum,
                 self.cognition.now(subject),

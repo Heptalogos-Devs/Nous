@@ -55,14 +55,7 @@ impl MemoryService {
             match focus {
                 CognitiveRef::MemoryRevision(id) => {
                     let memory = self
-                        .memory_views(
-                            subject,
-                            &[id.0],
-                            policy,
-                            None,
-                            false,
-                            self.cognition.now(subject),
-                        )
+                        .memory_views(subject, &[id.0], policy, None, self.cognition.now(subject))
                         .await?
                         .remove(&id.0)
                         .ok_or_else(|| Error::NotFound("Memory concept focus not found".into()))?;

@@ -24,7 +24,15 @@ impl ContextResolver for NousRuntime {
             self.require_memory()?
                 .query_descriptors(
                     query.subject,
-                    &cognition,
+                    &cognition
+                        .iter()
+                        .map(|s| {
+                            (
+                                s.reference.clone(),
+                                !s.is_runtime() || s.origin == "work_context",
+                            )
+                        })
+                        .collect::<Vec<_>>(),
                     query.effort,
                     query.temporal_frame.clock_now,
                     configuration,
@@ -36,7 +44,8 @@ impl ContextResolver for NousRuntime {
             .into_iter()
             .map(|s| s.reference)
             .partition(|reference| {
-                nous_runtime::CognitiveContributor::owns(&self.material, reference)
+                matches!(reference, CognitiveRef::ExternalObject(_))
+                    || nous_runtime::CognitiveContributor::owns(&self.material, reference)
             });
         descriptors.extend(
             self.material
@@ -51,46 +60,67 @@ impl ContextResolver for NousRuntime {
         Ok(descriptors)
     }
 
-    async fn context_source(
+    async fn context_sources(
         &self,
         subject: SubjectId,
-        reference: &CognitiveRef,
+        references: &[(CognitiveRef, bool)],
         max_bytes: usize,
-        explicit: bool,
         now: chrono::DateTime<chrono::Utc>,
         configuration: &nous_configuration::ConfigSnapshot,
-    ) -> Result<ContextSource> {
-        if nous_memory::MemoryService::owns_content(reference) {
+    ) -> Result<Vec<Result<ContextSource>>> {
+        let mut result = (0..references.len())
+            .map(|_| Err(Error::NotFound("context source not found".into())))
+            .collect::<Vec<_>>();
+        let (cognition, other): (Vec<_>, Vec<_>) = references
+            .iter()
+            .enumerate()
+            .partition(|(_, (reference, _))| nous_memory::MemoryService::owns_content(reference));
+        if !cognition.is_empty() {
             let policy = nous_memory::resolve_accessibility_policy(configuration)?;
-            return self
+            let sources = self
                 .require_memory()?
-                .context_projection(
+                .context_sources(
                     subject,
-                    reference,
+                    &cognition
+                        .iter()
+                        .map(|(_, r)| (*r).clone())
+                        .collect::<Vec<_>>(),
                     &policy,
                     now,
-                    CognitiveEffort::Normal,
-                    explicit,
                     max_bytes,
                 )
-                .await;
+                .await?;
+            for ((index, _), source) in cognition.into_iter().zip(sources) {
+                result[index] = source;
+            }
         }
-        if !matches!(
-            reference,
-            CognitiveRef::Occurrence(_)
-                | CognitiveRef::SourceRegion(_)
-                | CognitiveRef::DerivedRepresentation(_)
-                | CognitiveRef::DerivedRegion(_)
-                | CognitiveRef::Artifact(_)
-                | CognitiveRef::ExternalObject(_)
-        ) {
-            return self
+        let (material, other): (Vec<_>, Vec<_>) =
+            other.into_iter().partition(|(_, (reference, _))| {
+                matches!(reference, CognitiveRef::ExternalObject(_))
+                    || nous_runtime::CognitiveContributor::owns(&self.material, reference)
+            });
+        if !material.is_empty() {
+            let sources = self
+                .material
+                .context_sources(
+                    subject,
+                    &material
+                        .iter()
+                        .map(|(_, (r, _))| r.clone())
+                        .collect::<Vec<_>>(),
+                    max_bytes,
+                )
+                .await?;
+            for ((index, _), source) in material.into_iter().zip(sources) {
+                result[index] = source;
+            }
+        }
+        for (index, (reference, _)) in other {
+            result[index] = self
                 .cognition
                 .runtime_context_source(subject, reference, max_bytes)
                 .await;
         }
-        self.material
-            .context_source(subject, reference, max_bytes)
-            .await
+        Ok(result)
     }
 }

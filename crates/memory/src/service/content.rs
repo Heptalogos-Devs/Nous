@@ -1,120 +1,31 @@
+//! Bounded cognition text reads; complete views and exact support have separate readers.
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::schema::SchemaView;
 use super::*;
-use nous_runtime::QuerySource;
+use std::collections::{HashMap, HashSet};
 
-pub enum CognitionContent {
-    Memory(MemoryView),
-    Schema(SchemaView),
-    Episode(EpisodeView),
-    Journal(JournalView),
-    Tag {
-        tag: TagId,
-        revision: Uuid,
-        text: String,
-    },
+pub(super) struct CognitionText {
+    pub reference: CognitiveRef,
+    pub revision: Uuid,
+    pub title: Option<String>,
+    pub text: String,
+    pub scope: Option<String>,
+    pub boundary: Option<String>,
 }
-impl CognitionContent {
-    pub(super) fn reference(&self) -> CognitiveRef {
-        match self {
-            Self::Memory(v) => CognitiveRef::MemoryRevision(v.revision.memory_revision_id),
-            Self::Schema(v) => CognitiveRef::CognitiveSchemaRevision(v.revision.schema_revision_id),
-            Self::Episode(v) => CognitiveRef::EpisodeRevision(v.revision.episode_revision_id),
-            Self::Journal(v) => CognitiveRef::JournalRevision(v.revision.journal_revision_id),
-            Self::Tag { tag, .. } => CognitiveRef::Tag(*tag),
-        }
-    }
-    pub(super) fn require_available(
-        &self,
-        effort: CognitiveEffort,
-        explicit: bool,
-        historical: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<()> {
-        let reference = self.reference();
-        let states = match self {
-            Self::Memory(v) => (
-                v.object.acceptance_state,
-                v.object.integrity_state,
-                v.object.suppression_state,
-            ),
-            Self::Schema(v) => (
-                v.schema.acceptance_state,
-                v.schema.integrity_state,
-                v.schema.suppression_state,
-            ),
-            Self::Episode(v) => (
-                v.object.acceptance_state,
-                v.object.integrity_state,
-                v.object.suppression_state,
-            ),
-            Self::Journal(v) => (
-                v.object.acceptance_state,
-                v.object.integrity_state,
-                v.object.suppression_state,
-            ),
-            Self::Tag { .. } => return Ok(()),
-        };
-        let states = if let Some(state) = historical.and_then(|v| v.cognition_for(&reference)) {
-            (
-                serde_json::from_value(state.state["acceptance_state"].clone())
-                    .map_err(|e| Error::Infrastructure(e.to_string()))?,
-                serde_json::from_value(state.state["integrity_state"].clone())
-                    .map_err(|e| Error::Infrastructure(e.to_string()))?,
-                serde_json::from_value(state.state["suppression_state"].clone())
-                    .map_err(|e| Error::Infrastructure(e.to_string()))?,
-            )
-        } else {
-            states
-        };
-        require_context_states(&reference, states)?;
-        if let Self::Memory(v) = self
-            && !accessibility_eligible(
-                v.accessibility_level,
-                effort,
-                explicit || historical.is_some(),
-            )
-        {
-            return Err(Error::Unavailable(
-                "Memory accessibility requires deeper or explicit recall".into(),
-            ));
-        }
-        Ok(())
-    }
-    fn descriptor(&self) -> QueryDescriptor {
-        if let Self::Tag { text, .. } = self {
-            return QueryDescriptor {
-                reference: self.reference(),
-                text: text.clone(),
-            };
-        }
-
-        let (title, text) = match self {
-            Self::Memory(v) => (
-                v.revision.title.as_deref(),
-                v.revision.representation_text.clone(),
-            ),
-            Self::Schema(v) => (
-                v.revision.title.as_deref(),
-                format!(
-                    "{} Scope: {} Boundary: {}",
-                    v.revision.structural_claim,
-                    v.revision.applicability_scope.description,
-                    v.revision.boundary_definition
-                ),
-            ),
-            Self::Episode(v) => (
-                v.revision.title.as_deref(),
-                v.revision.boundary_explanation.clone(),
-            ),
-            Self::Journal(v) => (v.revision.title.as_deref(), v.revision.narrative.clone()),
-            Self::Tag { text, .. } => (None, text.clone()),
+impl CognitionText {
+    pub(super) fn descriptor(self) -> QueryDescriptor {
+        let text = match (self.scope, self.boundary) {
+            (Some(scope), Some(boundary)) => {
+                format!("{} Scope: {scope} Boundary: {boundary}", self.text)
+            }
+            _ => self.text,
         };
         QueryDescriptor {
-            reference: self.reference(),
-            text: title
-                .map_or(text.clone(), |title| format!("{title}: {text}"))
+            reference: self.reference,
+            text: self
+                .title
+                .map_or_else(|| text.clone(), |title| format!("{title}: {text}"))
                 .chars()
                 .take(2048)
                 .collect(),
@@ -141,189 +52,224 @@ impl MemoryService {
     pub async fn query_descriptors(
         &self,
         subject: SubjectId,
-        sources: &[QuerySource],
+        references: &[(CognitiveRef, bool)],
         effort: CognitiveEffort,
         now: DateTime<Utc>,
         configuration: &nous_configuration::ConfigSnapshot,
         historical: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<Vec<QueryDescriptor>> {
         let policy = resolve_accessibility_policy(configuration)?;
-        let refs = sources
-            .iter()
-            .map(|s| s.reference.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut tx = self.store.read_view().await?;
         let contents = self
-            .cognition_contents(subject, &refs, &policy, historical, now)
+            .content_in(
+                &mut tx, subject, references, &policy, historical, now, effort, 2048,
+            )
             .await?;
+        tx.commit().await.map_err(db)?;
+        let mut seen = HashSet::new();
         contents
             .into_iter()
-            .filter_map(|content| {
-                let reference = content.reference();
-                let explicit = sources.iter().any(|source| {
-                    source.reference == reference
-                        && (!source.is_runtime() || source.origin == "work_context")
-                });
-                match content.require_available(effort, explicit, historical) {
-                    Ok(()) => Some(Ok(content.descriptor())),
-                    Err(Error::Unavailable(_)) => None,
-                    Err(error) => Some(Err(error)),
+            .filter_map(|content| match content {
+                Ok(content) if seen.insert(content.reference.clone()) => {
+                    Some(Ok(content.descriptor()))
                 }
+                Ok(_) | Err(Error::Unavailable(_) | Error::NotFound(_)) => None,
+                Err(error) => Some(Err(error)),
             })
             .collect()
     }
 
-    /// One bounded owner read owns head selection, canonical identity, content and support.
-    pub(super) async fn cognition_contents(
-        &self,
-        subject: SubjectId,
-        refs: &[CognitiveRef],
-        policy: &AccessibilityPolicy,
-        historical: Option<&HistoricalAuthoritySnapshot>,
-        now: DateTime<Utc>,
-    ) -> Result<Vec<CognitionContent>> {
-        let mut tx = self.store.read_view().await?;
-        let contents = self
-            .cognition_contents_in(&mut tx, subject, refs, policy, historical, now, false)
-            .await?;
-        tx.commit().await.map_err(db)?;
-        Ok(contents)
-    }
-
     #[allow(clippy::too_many_arguments)]
-    pub(super) async fn cognition_contents_in(
+    pub(super) async fn content_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
-        refs: &[CognitiveRef],
+        references: &[(CognitiveRef, bool)],
         policy: &AccessibilityPolicy,
         historical: Option<&HistoricalAuthoritySnapshot>,
         now: DateTime<Utc>,
-        full_details: bool,
-    ) -> Result<Vec<CognitionContent>> {
-        if refs.len() > 256 || historical.is_some_and(|v| v.subject != subject) {
+        effort: CognitiveEffort,
+        max_bytes: usize,
+    ) -> Result<Vec<Result<CognitionText>>> {
+        if references.len() > 256 || historical.is_some_and(|v| v.subject != subject) {
             return Err(Error::Invalid("cognition content scope exceeded".into()));
         }
-        let mut memory = (vec![], vec![]);
-        let mut schema = (vec![], vec![]);
-        let mut episode = (vec![], vec![]);
-        let mut journal = (vec![], vec![]);
-        let mut tags = vec![];
-        for reference in refs {
-            match reference {
-                CognitiveRef::Memory(id) => memory.1.push(id.0),
-                CognitiveRef::MemoryRevision(id) => memory.0.push(id.0),
-                CognitiveRef::CognitiveSchema(id) => schema.1.push(id.0),
-                CognitiveRef::CognitiveSchemaRevision(id) => schema.0.push(id.0),
-                CognitiveRef::Episode(id) => episode.1.push(id.0),
-                CognitiveRef::EpisodeRevision(id) => episode.0.push(id.0),
-                CognitiveRef::Journal(id) => journal.1.push(id.0),
-                CognitiveRef::JournalRevision(id) => journal.0.push(id.0),
-                CognitiveRef::Tag(id) => tags.push(*id),
-                _ => {
-                    return Err(Error::Invalid(
-                        "content requires a cognition reference".into(),
-                    ));
-                }
-            }
+        let selected = references
+            .iter()
+            .map(|(reference, _)| {
+                historical
+                    .and_then(|view| view.cognition_for(reference))
+                    .filter(|state| state.object == *reference)
+                    .map_or_else(|| reference.clone(), |state| state.head.clone())
+            })
+            .collect::<Vec<_>>();
+        let (kinds, values): (Vec<_>, Vec<_>) = selected.iter().map(reference_parts).unzip();
+        let rows = sqlx::query(r#"
+WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) WITH ORDINALITY r(kind,value,ordinal))
+SELECT q.ordinal,'memory_revision' kind,r.memory_revision_id id,o.memory_id object_id,
+ o.acceptance_state,o.integrity_state,o.suppression_state,
+ CASE WHEN $4>0 THEN r.title END title,CASE WHEN $4>0 THEN left(r.representation_text,$4) ELSE '' END text,NULL::text scope,NULL::text boundary
+ FROM requested q JOIN memory_objects o ON o.subject_id=$1
+ JOIN memory_revisions r ON r.memory_id=o.memory_id
+ WHERE (q.kind='memory_revision' AND r.memory_revision_id::text=q.value)
+    OR (q.kind='memory' AND o.memory_id::text=q.value AND r.memory_revision_id=o.current_revision_id)
+UNION ALL
+SELECT q.ordinal,'cognitive_schema_revision',r.schema_revision_id,o.schema_id,
+ o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
+ CASE WHEN $4>0 THEN left(r.structural_claim,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.applicability_description,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.boundary_definition,$4) ELSE '' END
+ FROM requested q JOIN cognitive_schemas o ON o.subject_id=$1
+ JOIN cognitive_schema_revisions r ON r.schema_id=o.schema_id
+ WHERE (q.kind='cognitive_schema_revision' AND r.schema_revision_id::text=q.value)
+    OR (q.kind='cognitive_schema' AND o.schema_id::text=q.value AND r.schema_revision_id=o.current_revision_id)
+UNION ALL
+SELECT q.ordinal,'episode_revision',r.episode_revision_id,o.episode_id,
+ o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
+ CASE WHEN $4>0 THEN left(r.boundary_explanation,$4) ELSE '' END,NULL,NULL
+ FROM requested q JOIN episode_objects o ON o.subject_id=$1 JOIN episode_revisions r ON r.episode_id=o.episode_id
+ WHERE (q.kind='episode_revision' AND r.episode_revision_id::text=q.value)
+    OR (q.kind='episode' AND o.episode_id::text=q.value AND r.episode_revision_id=o.current_revision_id)
+UNION ALL
+SELECT q.ordinal,'journal_revision',r.journal_revision_id,o.journal_id,
+ o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
+ CASE WHEN $4>0 THEN left(r.narrative,$4) ELSE '' END,NULL,NULL
+ FROM requested q JOIN journal_objects o ON o.subject_id=$1 JOIN journal_revisions r ON r.journal_id=o.journal_id
+ WHERE (q.kind='journal_revision' AND r.journal_revision_id::text=q.value)
+    OR (q.kind='journal' AND o.journal_id::text=q.value AND r.journal_revision_id=o.current_revision_id)
+UNION ALL
+SELECT q.ordinal,'tag',t.tag_id,r.tag_revision_id,'accepted','valid','normal',
+ CASE WHEN $4>0 THEN r.label END,CASE WHEN $4>0 THEN COALESCE(r.description,'') ELSE '' END,
+ CASE WHEN $4>0 THEN r.kind_hint END,NULL
+ FROM requested q JOIN tags t ON q.kind='tag' AND t.tag_id=canonical_tag($1,CASE WHEN q.kind='tag' THEN q.value::uuid END)
+ JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status='active'
+"#).bind(subject.0).bind(kinds).bind(values).bind(i32::try_from(max_bytes).map_err(|_| Error::Invalid("content bound exceeded".into()))?)
+            .fetch_all(&mut **tx).await.map_err(db)?;
+        let memories = rows
+            .iter()
+            .filter(|r| r.get::<String, _>("kind") == "memory_revision")
+            .map(|r| r.try_get::<Uuid, _>("object_id").map_err(db))
+            .collect::<Result<Vec<_>>>()?;
+        let accessibility = self
+            .memory_accessibility_in(tx, subject, &memories, policy, historical, now)
+            .await?;
+        let mut found = HashMap::new();
+        for row in rows {
+            let ordinal: i64 = row.try_get("ordinal").map_err(db)?;
+            found.insert(ordinal as usize - 1, row);
         }
-        let mut contents = vec![];
-        if !memory.0.is_empty() || !memory.1.is_empty() {
-            contents.extend(
-                self.memory_views_in(
-                    tx,
-                    subject,
-                    (&memory.0, &memory.1),
-                    policy,
+        Ok(references
+            .iter()
+            .enumerate()
+            .map(|(ordinal, (requested, explicit))| {
+                read_content(
+                    requested,
+                    *explicit,
+                    found.remove(&ordinal),
                     historical,
-                    full_details,
-                    now,
+                    &accessibility,
+                    effort,
+                    max_bytes,
                 )
-                .await?
-                .into_values()
-                .map(CognitionContent::Memory),
-            );
-        }
-        if !schema.0.is_empty() || !schema.1.is_empty() {
-            contents.extend(
-                self.schema_views_in(tx, subject, &schema.0, &schema.1)
-                    .await?
-                    .into_values()
-                    .map(CognitionContent::Schema),
-            );
-        }
-        if !episode.0.is_empty() || !episode.1.is_empty() {
-            contents.extend(
-                self.episode_views_in(tx, subject, &episode.0, &episode.1)
-                    .await?
-                    .into_values()
-                    .map(CognitionContent::Episode),
-            );
-        }
-        if !journal.0.is_empty() || !journal.1.is_empty() {
-            contents.extend(
-                self.journal_views_in(tx, subject, &journal.0, &journal.1)
-                    .await?
-                    .into_values()
-                    .map(CognitionContent::Journal),
-            );
-        }
-        if let Some(historical) = historical {
-            for tag in tags {
-                if let Some(canonical) = historical.canonical_tag(tag)
-                    && let Some(state) = historical.tags.iter().find(|v| v.tag == canonical)
-                {
-                    contents.push(CognitionContent::Tag {
-                        tag: canonical,
-                        revision: state.revision_id,
-                        text: state.semantic.text.clone(),
-                    });
-                }
-            }
-        } else if !tags.is_empty() {
-            let rows = sqlx::query("SELECT DISTINCT t.tag_id,r.tag_revision_id,r.label,r.description,r.kind_hint FROM unnest($2::uuid[]) requested JOIN tags t ON t.tag_id=canonical_tag($1,requested) JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status='active'")
-                .bind(subject.0).bind(tags.iter().map(|id| id.0).collect::<Vec<_>>()).fetch_all(&mut **tx).await.map_err(db)?;
-            for row in rows {
-                contents.push(CognitionContent::Tag {
-                    tag: TagId(row.try_get("tag_id").map_err(db)?),
-                    revision: row.try_get("tag_revision_id").map_err(db)?,
-                    text: tag_semantic_representation(
-                        &row.try_get::<String, _>("label").map_err(db)?,
-                        row.try_get::<Option<String>, _>("description")
-                            .map_err(db)?
-                            .as_deref(),
-                        row.try_get::<Option<String>, _>("kind_hint")
-                            .map_err(db)?
-                            .as_deref(),
-                    )?
-                    .text,
-                });
-            }
-        }
-        Ok(contents)
+            })
+            .collect())
     }
 }
 
-fn require_context_states(
-    source_revision: &CognitiveRef,
-    states: (AcceptanceState, IntegrityState, SuppressionState),
-) -> Result<()> {
-    let name = match source_revision {
-        CognitiveRef::MemoryRevision(_) => "Memory",
-        CognitiveRef::CognitiveSchemaRevision(_) => "CognitiveSchema",
-        CognitiveRef::EpisodeRevision(_) => "Episode",
-        CognitiveRef::JournalRevision(_) => "Journal",
-        _ => unreachable!(),
-    };
-    if states.0 != AcceptanceState::Accepted {
-        return Err(Error::Unavailable(format!("{name} is withdrawn")));
+fn read_content(
+    requested: &CognitiveRef,
+    explicit: bool,
+    row: Option<sqlx::postgres::PgRow>,
+    historical: Option<&HistoricalAuthoritySnapshot>,
+    accessibility: &HashMap<Uuid, AccessibilityLevel>,
+    effort: CognitiveEffort,
+    max_bytes: usize,
+) -> Result<CognitionText> {
+    if !MemoryService::owns_content(requested) {
+        return Err(Error::Invalid(
+            "content requires a cognition reference".into(),
+        ));
     }
-    if states.1 != IntegrityState::Valid {
-        return Err(Error::Unavailable(format!("{name} requires revalidation")));
+    if let (Some(view), CognitiveRef::Tag(tag)) = (historical, requested) {
+        let canonical = view
+            .canonical_tag(*tag)
+            .ok_or_else(|| Error::Unavailable("historical Tag is unavailable".into()))?;
+        let state = view
+            .tag_state(canonical)
+            .ok_or_else(|| Error::NotFound("historical Tag not found".into()))?;
+        return Ok(CognitionText {
+            reference: CognitiveRef::Tag(canonical),
+            revision: state.revision_id,
+            title: None,
+            text: if max_bytes > 0 {
+                state.semantic.text.clone()
+            } else {
+                String::new()
+            },
+            scope: None,
+            boundary: None,
+        });
     }
-    if states.2 != SuppressionState::Normal {
-        return Err(Error::Unavailable(format!("{name} is suppressed")));
+    let row =
+        row.ok_or_else(|| Error::NotFound(format!("{requested}: cognition source not found")))?;
+    let kind: String = row.try_get("kind").map_err(db)?;
+    let id: Uuid = row.try_get("id").map_err(db)?;
+    let reference = parse_reference(&kind, &id.to_string())?;
+    let state = historical.and_then(|v| v.cognition_for(&reference));
+    if historical.is_some() && state.is_none() {
+        return Err(Error::NotFound(
+            "cognition source is outside the captured view".into(),
+        ));
     }
-    Ok(())
+    if kind != "tag" {
+        for (field, expected, reason) in [
+            ("acceptance_state", "accepted", "is withdrawn"),
+            ("integrity_state", "valid", "requires revalidation"),
+            ("suppression_state", "normal", "is suppressed"),
+        ] {
+            let actual: String = row.try_get(field).map_err(db)?;
+            if state.map_or(actual.as_str(), |v| v.state[field].as_str().unwrap_or("")) != expected
+            {
+                let name = match reference {
+                    CognitiveRef::MemoryRevision(_) => "Memory",
+                    CognitiveRef::CognitiveSchemaRevision(_) => "CognitiveSchema",
+                    CognitiveRef::EpisodeRevision(_) => "Episode",
+                    CognitiveRef::JournalRevision(_) => "Journal",
+                    _ => unreachable!("owned cognition family"),
+                };
+                return Err(Error::Unavailable(format!("{name} {reason}")));
+            }
+        }
+    }
+    let owner: Uuid = row.try_get("object_id").map_err(db)?;
+    if kind == "memory_revision"
+        && !accessibility_eligible(
+            accessibility[&owner],
+            effort,
+            explicit || historical.is_some(),
+        )
+    {
+        return Err(Error::Unavailable(
+            "Memory accessibility requires deeper or explicit recall".into(),
+        ));
+    }
+    let mut title: Option<String> = row.try_get("title").map_err(db)?;
+    let mut text: String = row.try_get("text").map_err(db)?;
+    let mut scope: Option<String> = row.try_get("scope").map_err(db)?;
+    if kind == "tag" && max_bytes > 0 {
+        text = tag_semantic_representation(
+            title.as_deref().unwrap_or_default(),
+            Some(&text),
+            scope.as_deref(),
+        )?
+        .text;
+        title = None;
+        scope = None;
+    }
+    Ok(CognitionText {
+        reference,
+        revision: if kind == "tag" { owner } else { id },
+        title,
+        text,
+        scope,
+        boundary: row.try_get("boundary").map_err(db)?,
+    })
 }

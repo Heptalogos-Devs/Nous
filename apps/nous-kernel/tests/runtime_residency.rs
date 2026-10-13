@@ -391,32 +391,24 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         &runtime.configuration.snapshot_for_subject(subject).unwrap(),
     )
     .unwrap();
-    let aged = owner
-        .context_projection(
+    let mut sources = owner
+        .context_sources(
             subject,
-            &reference,
+            &[(reference.clone(), false), (reference.clone(), true)],
             &policy,
             runtime.cognition.now(subject) + Duration::days(36_500),
-            nous_core::CognitiveEffort::Normal,
-            false,
             8,
         )
         .await
+        .unwrap()
+        .into_iter();
+    let aged = sources
+        .next()
+        .unwrap()
         .err()
         .expect("unrequested old memory must require explicit recall");
     assert!(aged.to_string().contains("accessibility"));
-    let explicit = owner
-        .context_projection(
-            subject,
-            &reference,
-            &policy,
-            runtime.cognition.now(subject) + Duration::days(36_500),
-            nous_core::CognitiveEffort::Normal,
-            true,
-            8,
-        )
-        .await
-        .unwrap();
+    let explicit = sources.next().unwrap().unwrap();
     assert_eq!(explicit.text.as_deref(), Some("Grounded"));
     let permissive_policy = nous_memory::AccessibilityPolicy {
         normal_threshold: -100.0,
@@ -424,16 +416,17 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         ..policy
     };
     owner
-        .context_projection(
+        .context_sources(
             subject,
-            &reference,
+            &[(reference.clone(), false)],
             &permissive_policy,
             runtime.cognition.now(subject) + Duration::days(36_500),
-            nous_core::CognitiveEffort::Normal,
-            false,
             8,
         )
         .await
+        .unwrap()
+        .pop()
+        .unwrap()
         .expect("caller policy controls accessibility");
     let session = runtime
         .cognition

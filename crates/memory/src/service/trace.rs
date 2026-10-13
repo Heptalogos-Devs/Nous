@@ -5,6 +5,23 @@
 use super::*;
 use std::collections::HashSet;
 
+pub enum CognitionContent {
+    Memory(MemoryView),
+    Schema(super::schema::SchemaView),
+    Episode(EpisodeView),
+    Journal(JournalView),
+}
+impl CognitionContent {
+    fn reference(&self) -> CognitiveRef {
+        match self {
+            Self::Memory(v) => CognitiveRef::MemoryRevision(v.revision.memory_revision_id),
+            Self::Schema(v) => CognitiveRef::CognitiveSchemaRevision(v.revision.schema_revision_id),
+            Self::Episode(v) => CognitiveRef::EpisodeRevision(v.revision.episode_revision_id),
+            Self::Journal(v) => CognitiveRef::JournalRevision(v.revision.journal_revision_id),
+        }
+    }
+}
+
 pub struct CognitionTrace {
     pub nodes: Vec<CognitionContent>,
     pub material_roots: Vec<CognitiveRef>,
@@ -84,7 +101,6 @@ impl CognitionContent {
                 v.revision.producer_signature_id.into_iter().collect(),
                 v.revision.narrative.len() + v.points.iter().map(|p| p.text.len()).sum::<usize>(),
             ),
-            Self::Tag { .. } => unreachable!("trace accepts exact cognition revisions"),
         };
         for support in basis {
             match support {
@@ -140,17 +156,57 @@ impl MemoryService {
                 break;
             }
             let batch = pending.drain(..pending.len().min(128)).collect::<Vec<_>>();
-            let mut contents = self
-                .cognition_contents_in(
-                    &mut tx,
-                    subject,
-                    &batch,
-                    &policy,
-                    None,
-                    self.cognition.now(subject),
-                    true,
-                )
-                .await?;
+            let ids = |kind| {
+                batch
+                    .iter()
+                    .filter(|r| r.kind() == kind)
+                    .filter_map(CognitiveRef::uuid)
+                    .collect::<Vec<_>>()
+            };
+            let mut contents = Vec::new();
+            let memories = ids("memory_revision");
+            if !memories.is_empty() {
+                contents.extend(
+                    self.memory_views_in(
+                        &mut tx,
+                        subject,
+                        (&memories, &[]),
+                        &policy,
+                        None,
+                        self.cognition.now(subject),
+                    )
+                    .await?
+                    .into_values()
+                    .map(CognitionContent::Memory),
+                );
+            }
+            let schemas = ids("cognitive_schema_revision");
+            if !schemas.is_empty() {
+                contents.extend(
+                    self.schema_views_in(&mut tx, subject, &schemas, &[])
+                        .await?
+                        .into_values()
+                        .map(CognitionContent::Schema),
+                );
+            }
+            let episodes = ids("episode_revision");
+            if !episodes.is_empty() {
+                contents.extend(
+                    self.episode_views_in(&mut tx, subject, &episodes, &[])
+                        .await?
+                        .into_values()
+                        .map(CognitionContent::Episode),
+                );
+            }
+            let journals = ids("journal_revision");
+            if !journals.is_empty() {
+                contents.extend(
+                    self.journal_views_in(&mut tx, subject, &journals, &[])
+                        .await?
+                        .into_values()
+                        .map(CognitionContent::Journal),
+                );
+            }
             if contents.len() != batch.len() {
                 return Err(Error::NotFound(
                     "trace dependency was not found in Subject".into(),

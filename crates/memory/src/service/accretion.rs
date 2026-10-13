@@ -7,11 +7,13 @@ use nous_configuration::*;
 use std::collections::BTreeSet;
 pub const ACCRETION: ConfigKey<AccretionPolicy> = ConfigKey::new("maintenance.accretion");
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct AccretionPolicy {
     pub enabled: bool,
     pub generic_degree: usize,
     pub recurrence_review: usize,
+    pub member_budget: usize,
+    pub coherence_threshold: f64,
 }
 impl Default for AccretionPolicy {
     fn default() -> Self {
@@ -19,6 +21,8 @@ impl Default for AccretionPolicy {
             enabled: true,
             generic_degree: 32,
             recurrence_review: 3,
+            member_budget: 32,
+            coherence_threshold: 0.35,
         }
     }
 }
@@ -33,7 +37,12 @@ pub(super) fn register_accretion_configuration(registry: &mut ConfigRegistryBuil
         ConfigApplyMode::Live,
         ConfigSemanticEffect::AuthorityFormation,
         |p| {
-            if !(4..=256).contains(&p.generic_degree) || !(1..=16).contains(&p.recurrence_review) {
+            if !(4..=256).contains(&p.generic_degree)
+                || !(1..=16).contains(&p.recurrence_review)
+                || !(1..=256).contains(&p.member_budget)
+                || !p.coherence_threshold.is_finite()
+                || !(0.0..=1.0).contains(&p.coherence_threshold)
+            {
                 return Err(Error::Invalid("invalid accretion policy".into()));
             }
             Ok(())
@@ -72,19 +81,44 @@ impl MemoryService {
             return Ok(None);
         }
         self.store.validate_reference(subject, center).await?;
-        let mut members = self.accretion_members(subject, center, 32).await?;
+        let mut tx = self.store.read_view().await?;
+        let mut members = self
+            .accretion_members(&mut tx, subject, center, policy.member_budget)
+            .await?;
         let total = members.1;
         let partial = total > members.0.len();
         let refs = std::mem::take(&mut members.0);
         let mut roots = BTreeSet::new();
         let mut occurrences = BTreeSet::new();
         let mut counterevidence = 0u64;
-        let direct_basis = self
-            .exact_supports(subject, &refs, None)
-            .await?
-            .into_values()
-            .flat_map(|support| support.basis)
+        let mut supports = self
+            .exact_supports_in(&mut tx, subject, &refs, None)
+            .await?;
+        let contents = self
+            .content_in(
+                &mut tx,
+                subject,
+                &refs.iter().map(|r| (r.clone(), true)).collect::<Vec<_>>(),
+                &resolve_accessibility_policy(&snapshot)?,
+                None,
+                self.cognition.now(subject),
+                CognitiveEffort::Maximum,
+                2048,
+            )
+            .await?;
+        tx.commit().await.map_err(db)?;
+        let direct_basis = refs
+            .iter()
+            .flat_map(|r| supports.remove(r).expect("selected cognition").basis)
             .collect::<Vec<_>>();
+        let texts = contents
+            .into_iter()
+            .filter_map(|c| match c {
+                Ok(c) => Some(Ok(c.descriptor().text)),
+                Err(Error::Unavailable(_) | Error::NotFound(_)) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect::<Result<Vec<_>>>()?;
         let summary = self.provenance_summary(subject, &direct_basis).await?;
         roots.extend(
             summary
@@ -145,22 +179,6 @@ impl MemoryService {
             .map_err(|_| Error::Infrastructure("invalid degree".into()))?;
         counterevidence += u64::try_from(degree.try_get::<i64, _>("negative").map_err(db)?)
             .map_err(|_| Error::Infrastructure("invalid negative count".into()))?;
-        let descriptors = self
-            .query_descriptors(
-                subject,
-                &refs
-                    .iter()
-                    .map(|reference| {
-                        nous_runtime::QuerySource::new(reference.clone(), "exact_target")
-                    })
-                    .collect::<Vec<_>>(),
-                CognitiveEffort::Maximum,
-                self.cognition.now(subject),
-                &snapshot,
-                None,
-            )
-            .await?;
-        let texts = descriptors.into_iter().map(|d| d.text).collect::<Vec<_>>();
         let coherence = if let Some(first) = texts.first() {
             let scores = self
                 .store
@@ -175,8 +193,8 @@ impl MemoryService {
         } else {
             None
         };
-        let broad =
-            degree_count.max(total) > policy.generic_degree || coherence.is_some_and(|c| c < 0.35);
+        let broad = degree_count.max(total) > policy.generic_degree
+            || coherence.is_some_and(|c| c < policy.coherence_threshold);
         Ok(Some(AccretionSignal {
             independent_roots: roots.len(),
             attached_cognition: total,
@@ -195,6 +213,7 @@ impl MemoryService {
     }
     async fn accretion_members(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         center: &CognitiveRef,
         limit: usize,
@@ -220,11 +239,9 @@ impl MemoryService {
             CognitiveRef::Tag(id) => id.0,
             CognitiveRef::CognitiveSchemaRevision(id) => id.0,
             CognitiveRef::CognitiveSchema(_) => {
-                let (r, _, _) = self.store.bind_exact_reference(subject, center).await?;
-                let CognitiveRef::CognitiveSchemaRevision(id) = r else {
-                    unreachable!()
-                };
-                id.0
+                sqlx::query_scalar::<_,Uuid>("SELECT current_revision_id FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2")
+                    .bind(subject.0).bind(center.uuid()).fetch_optional(&mut **tx).await.map_err(db)?
+                    .ok_or_else(|| Error::NotFound("accretion Schema not found".into()))?
             }
             _ => unreachable!(),
         };
@@ -236,7 +253,7 @@ impl MemoryService {
                 i64::try_from(limit)
                     .map_err(|_| Error::Invalid("member budget exceeded".into()))?,
             )
-            .fetch_all(self.store.pool())
+            .fetch_all(&mut **tx)
             .await
             .map_err(db)?;
         let total = rows

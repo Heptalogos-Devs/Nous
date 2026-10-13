@@ -12,7 +12,6 @@ impl MemoryService {
         revisions: &[Uuid],
         accessibility_policy: &AccessibilityPolicy,
         view: Option<&HistoricalAuthoritySnapshot>,
-        full_details: bool,
         now: DateTime<Utc>,
     ) -> Result<HashMap<Uuid, MemoryView>> {
         let mut tx = self.store.read_view().await?;
@@ -23,7 +22,6 @@ impl MemoryService {
                 (revisions, &[]),
                 accessibility_policy,
                 view,
-                full_details,
                 now,
             )
             .await?;
@@ -42,7 +40,6 @@ impl MemoryService {
         selection: (&[Uuid], &[Uuid]),
         accessibility_policy: &AccessibilityPolicy,
         view: Option<&HistoricalAuthoritySnapshot>,
-        full_details: bool,
         now: DateTime<Utc>,
     ) -> Result<HashMap<Uuid, MemoryView>> {
         let (revisions, objects) = selection;
@@ -50,7 +47,7 @@ impl MemoryService {
             return Ok(HashMap::new());
         }
         let now = view.map_or(now, |view| view.as_of);
-        let rows = sqlx::query("SELECT o.memory_id,o.subject_id,o.cognitive_role,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.accessibility_mode,o.created_at,ARRAY(SELECT sibling.memory_revision_id FROM memory_revisions sibling WHERE sibling.memory_id=o.memory_id) sibling_revisions,r.memory_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.formation_mode,r.grounding_occurrence_id,r.semantic_role,r.title,r.representation_text,r.epistemic_class,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM memory_objects o JOIN memory_revisions r ON r.memory_id=o.memory_id WHERE o.subject_id=$1 AND (r.memory_revision_id=ANY($2::uuid[]) OR (o.memory_id=ANY($3::uuid[]) AND r.memory_revision_id=o.current_revision_id))")
+        let rows = sqlx::query("SELECT o.memory_id,o.subject_id,o.cognitive_role,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.accessibility_mode,o.created_at,r.memory_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.formation_mode,r.grounding_occurrence_id,r.semantic_role,r.title,r.representation_text,r.epistemic_class,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM memory_objects o JOIN memory_revisions r ON r.memory_id=o.memory_id WHERE o.subject_id=$1 AND (r.memory_revision_id=ANY($2::uuid[]) OR (o.memory_id=ANY($3::uuid[]) AND r.memory_revision_id=o.current_revision_id))")
         .bind(subject.0)
         .bind(revisions)
         .bind(objects)
@@ -100,7 +97,7 @@ impl MemoryService {
             let entry = temporal.entry(*revision).or_default();
             for occurrence in occurrences {
                 entry.occurred.push(occurrence.occurred_time.clone());
-                if full_details || entry.observed_at.is_none() {
+                {
                     entry.observed_at = Some(occurrence.observed_at);
                 }
                 source_classes
@@ -113,72 +110,23 @@ impl MemoryService {
                 classes.dedup();
             }
         }
-        let mut revision_owners = HashMap::new();
-        let mut accessibility_inputs =
-            HashMap::<Uuid, (String, DateTime<Utc>, Vec<(String, f64)>)>::new();
-        for row in &rows {
-            let memory: Uuid = row.try_get("memory_id").map_err(db)?;
-            accessibility_inputs.entry(memory).or_insert((
-                row.try_get("accessibility_mode").map_err(db)?,
-                row.try_get("created_at").map_err(db)?,
-                vec![],
-            ));
-            for revision in row
-                .try_get::<Vec<Uuid>, _>("sibling_revisions")
-                .map_err(db)?
-            {
-                revision_owners.insert(
-                    CognitiveRef::MemoryRevision(MemoryRevisionId(revision)),
-                    memory,
-                );
-            }
-        }
-        let uses = self
-            .cognition
-            .use_facts_in(
+        let accessibility = self
+            .memory_accessibility_in(
                 tx,
                 subject,
-                &revision_owners.keys().cloned().collect::<Vec<_>>(),
-                view.map(|view| view.as_of),
+                &rows
+                    .iter()
+                    .map(|row| row.try_get::<Uuid, _>("memory_id").map_err(db))
+                    .collect::<Result<Vec<_>>>()?,
+                accessibility_policy,
+                view,
+                now,
             )
             .await?;
-        for fact in uses {
-            if let Some(memory) = revision_owners.get(&fact.reference) {
-                accessibility_inputs
-                    .get_mut(memory)
-                    .expect("selected Memory")
-                    .2
-                    .push((
-                        fact.kind,
-                        (now - fact.occurred_at).num_seconds().max(0) as f64 / 86400.0,
-                    ));
-            }
-        }
-        let mut accessibility = HashMap::<Uuid, AccessibilityLevel>::new();
-        for (memory, (mut mode, created, uses)) in accessibility_inputs {
-            if let Some(state) =
-                view.and_then(|v| v.cognition_for(&CognitiveRef::Memory(MemoryId(memory))))
-            {
-                mode = state.state["accessibility_mode"]
-                    .as_str()
-                    .unwrap_or("auto")
-                    .to_owned();
-            }
-            let level = match mode.as_str() {
-                "normal" => AccessibilityLevel::Normal,
-                "deep" => AccessibilityLevel::Deep,
-                "explicit" => AccessibilityLevel::Explicit,
-                _ => accessibility_policy.level_from_activation(
-                    accessibility_policy
-                        .activation((now - created).num_seconds().max(0) as f64 / 86400.0, &uses),
-                ),
-            };
-            accessibility.insert(memory, level);
-        }
 
         let mut tags = HashMap::<Uuid, Vec<TagId>>::new();
         let mut relations = HashMap::<Uuid, Vec<MemoryRevisionRelation>>::new();
-        if full_details {
+        {
             for row in sqlx::query("SELECT memory_revision_id,tag_id FROM memory_revision_tags WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,tag_id").bind(revisions).fetch_all(&mut **tx).await.map_err(db)? {
                 tags.entry(row.try_get("memory_revision_id").map_err(db)?).or_default().push(TagId(row.try_get("tag_id").map_err(db)?));
             }

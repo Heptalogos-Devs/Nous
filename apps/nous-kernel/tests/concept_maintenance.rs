@@ -265,6 +265,30 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         .acknowledge_maintenance(&episode_need, MaintenanceDisposition::Satisfied)
         .await
         .unwrap();
+    let snapshot = rt.configuration.snapshot_for_subject(subject).unwrap();
+    let reverse = revisions
+        .iter()
+        .rev()
+        .map(|r| (r.clone(), true))
+        .collect::<Vec<_>>();
+    let descriptors = owner
+        .query_descriptors(
+            subject,
+            &reverse,
+            CognitiveEffort::Maximum,
+            rt.cognition.now(subject),
+            &snapshot,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        descriptors
+            .into_iter()
+            .map(|d| d.reference)
+            .collect::<Vec<_>>(),
+        revisions.iter().rev().cloned().collect::<Vec<_>>()
+    );
     let before = owner
         .accretion_signal(subject, &tag)
         .await

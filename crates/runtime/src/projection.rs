@@ -21,15 +21,14 @@ pub trait ContextResolver: Send + Sync {
         historical: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<Vec<QueryDescriptor>>;
 
-    async fn context_source(
+    async fn context_sources(
         &self,
         subject: SubjectId,
-        reference: &CognitiveRef,
+        references: &[(CognitiveRef, bool)],
         max_bytes: usize,
-        explicit: bool,
         now: DateTime<Utc>,
         configuration: &nous_configuration::ConfigSnapshot,
-    ) -> Result<ContextSource>;
+    ) -> Result<Vec<Result<ContextSource>>>;
 }
 
 pub struct ProjectionRequest {
@@ -226,55 +225,64 @@ impl CognitiveRuntimeService {
         let mut segments = Vec::new();
         let mut emitted = HashSet::new();
         let mut degradation = Vec::new();
-        for (reference, role, stability, _) in references {
-            if segments.len() >= input.max_items {
+        let mut references = references.into_iter();
+        while segments.len() < input.max_items {
+            let batch = references
+                .by_ref()
+                .filter(|(r, ..)| !emitted.contains(r))
+                .take((input.max_items - segments.len()).min(16))
+                .collect::<Vec<_>>();
+            if batch.is_empty() {
                 break;
             }
-            if emitted.contains(&reference) {
-                continue;
-            }
-            let explicit = explicit_refs.contains(&reference);
-            let source = if let Some(context) = foreground.as_ref().filter(|context| {
-                reference == CognitiveRef::WorkContext(WorkContextId(context.work_context_id))
-            }) {
-                Ok(work_context_source(context, remaining))
-            } else {
-                resolver
-                    .context_source(
-                        input.subject,
-                        &reference,
-                        remaining,
-                        explicit,
-                        now,
-                        &configuration,
-                    )
-                    .await
-            };
-            match source {
-                Ok(source) => {
-                    let reference = source.reference.clone();
-                    if !emitted.insert(reference.clone()) {
+            let requested = batch
+                .iter()
+                .filter(|(r, ..)| {
+                    foreground.as_ref().is_none_or(|c| {
+                        *r != CognitiveRef::WorkContext(WorkContextId(c.work_context_id))
+                    })
+                })
+                .map(|(r, ..)| (r.clone(), explicit_refs.contains(r)))
+                .collect::<Vec<_>>();
+            let mut sources = resolver
+                .context_sources(input.subject, &requested, remaining, now, &configuration)
+                .await?
+                .into_iter();
+            for (reference, role, stability, _) in batch {
+                let source = if let Some(context) = foreground.as_ref().filter(|c| {
+                    reference == CognitiveRef::WorkContext(WorkContextId(c.work_context_id))
+                }) {
+                    Ok(work_context_source(context, remaining))
+                } else {
+                    sources.next().expect("resolver preserves request order")
+                };
+                let mut source = match source {
+                    Ok(source) => source,
+                    Err(
+                        Error::Invalid(message)
+                        | Error::NotFound(message)
+                        | Error::Unavailable(message),
+                    ) => {
+                        degradation.push(Degradation {
+                            code: "projection_source_unavailable".into(),
+                            detail: Some(format!("{reference}: {message}")),
+                        });
                         continue;
                     }
-                    remaining =
-                        remaining.saturating_sub(source.text.as_ref().map_or(0, String::len));
-                    segments.push(ProjectionSegment {
-                        semantic_role: role,
-                        stability,
-                        source,
-                    });
+                    Err(error) => return Err(error),
+                };
+                if !emitted.insert(source.reference.clone()) {
+                    continue;
                 }
-                Err(
-                    Error::Invalid(message)
-                    | Error::NotFound(message)
-                    | Error::Unavailable(message),
-                ) => {
-                    degradation.push(Degradation {
-                        code: "projection_source_unavailable".into(),
-                        detail: Some(format!("{reference}: {message}")),
-                    });
+                if let Some(text) = source.text.as_mut() {
+                    text.truncate(text.floor_char_boundary(remaining));
                 }
-                Err(error) => return Err(error),
+                remaining = remaining.saturating_sub(source.text.as_ref().map_or(0, String::len));
+                segments.push(ProjectionSegment {
+                    semantic_role: role,
+                    stability,
+                    source,
+                });
             }
         }
         let current: bool = sqlx::query_scalar(
