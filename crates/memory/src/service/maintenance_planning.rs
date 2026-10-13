@@ -94,12 +94,21 @@ impl MemoryService {
                 {
                     return Ok(MaintenanceScope::empty("obsolete"));
                 }
-                for source in &journal.sources {
-                    if let CognitiveRef::EpisodeRevision(id) = source {
-                        result
-                            .episodes
-                            .push(self.episode_revision(subject, *id).await?);
-                    }
+                let ids = journal
+                    .sources
+                    .iter()
+                    .filter_map(|source| match source {
+                        CognitiveRef::EpisodeRevision(id) => Some(id.0),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let mut episodes = self.episode_views(subject, &ids).await?;
+                for id in ids {
+                    result.episodes.push(
+                        episodes
+                            .remove(&id)
+                            .ok_or_else(|| Error::NotFound("Episode revision not found".into()))?,
+                    );
                 }
                 result.journal = Some(journal);
             }
@@ -140,7 +149,7 @@ impl MemoryService {
                 source.revision.parent_episode_revision_id.map(|id| id.0),
             )
         } else if scope_kind == "track" {
-            let late = sqlx::query("SELECT e.occurrence_id,e.observed_at FROM experience_items e WHERE e.subject_id=$1 AND e.recorded_seq<=$2 AND NOT EXISTS(SELECT 1 FROM episode_revision_members m JOIN episode_objects o ON o.current_revision_id=m.episode_revision_id WHERE o.subject_id=$1 AND o.track_key=$3 AND o.acceptance_state='accepted' AND m.ref_kind='occurrence' AND m.ref_value=e.occurrence_id::text) AND NOT EXISTS(SELECT 1 FROM episode_draft_members m JOIN episode_drafts d USING(draft_id) WHERE m.occurrence_id=e.occurrence_id AND d.state IN ('open','ready')) ORDER BY e.recorded_seq LIMIT 1")
+            let late = sqlx::query("SELECT e.occurrence_id,e.observed_at FROM runtime_available_experience($1,$2) e WHERE NOT EXISTS(SELECT 1 FROM episode_revision_members m JOIN episode_objects o ON o.current_revision_id=m.episode_revision_id WHERE o.subject_id=$1 AND o.track_key=$3 AND o.acceptance_state='accepted' AND m.ref_kind='occurrence' AND m.ref_value=e.occurrence_id::text) ORDER BY e.recorded_seq LIMIT 1")
                 .bind(subject.0).bind(trigger).bind(scope).fetch_optional(self.store.pool()).await.map_err(db)?;
             let Some(late) = late else {
                 return Ok(MaintenanceScope::empty("obsolete"));
@@ -167,10 +176,12 @@ impl MemoryService {
             return Ok(result);
         }
         let mut result = MaintenanceScope::empty("ready");
+        let mut episodes = self.episode_views(subject, &ids).await?;
         for id in ids {
             result.episodes.push(
-                self.episode_revision(subject, EpisodeRevisionId(id))
-                    .await?,
+                episodes
+                    .remove(&id)
+                    .ok_or_else(|| Error::NotFound("Episode revision not found".into()))?,
             );
         }
         result.episodes.sort_by_key(|episode| {
@@ -274,10 +285,11 @@ impl MemoryService {
         }
         let mut scope_start: Option<DateTime<Utc>> = None;
         let mut scope_end: Option<DateTime<Utc>> = None;
+        let mut episodes = self.episode_views(subject, &ids).await?;
         for id in ids {
-            let episode = self
-                .episode_revision(subject, EpisodeRevisionId(id))
-                .await?;
+            let episode = episodes
+                .remove(&id)
+                .ok_or_else(|| Error::NotFound("Episode revision not found".into()))?;
             if episode.revision.recorded_at + delay > now {
                 result.next_due = Some(episode.revision.recorded_at + delay);
                 if result.journal.is_some() {
@@ -355,14 +367,19 @@ impl MemoryService {
             ));
         }
         let ids: Vec<Uuid> = occurrences.into_iter().collect();
-        let ordered: Vec<Uuid>=sqlx::query_scalar("SELECT occurrence_id FROM experience_items WHERE subject_id=$1 AND occurrence_id=ANY($2::uuid[]) ORDER BY observed_at,recorded_seq")
-            .bind(subject.0).bind(&ids).fetch_all(self.store.pool()).await.map_err(db)?;
+        let ordered = self
+            .cognition
+            .experience_order(
+                subject,
+                &ids.iter().map(|id| OccurrenceId(*id)).collect::<Vec<_>>(),
+            )
+            .await?;
         if ordered.len() != ids.len() {
             return Err(Error::Invalid(
                 "maintenance members require Session experience".into(),
             ));
         }
-        Ok(ordered.into_iter().map(OccurrenceId).collect())
+        Ok(ordered)
     }
 }
 fn scope_occurrences(episodes: &[EpisodeView]) -> Result<Vec<OccurrenceId>> {

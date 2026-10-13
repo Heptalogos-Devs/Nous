@@ -9,9 +9,9 @@ mod mutations;
 pub use mutations::{
     MutationEnvelope, MutationReceipt, MutationStart, OwnerLock, check_receipt, commit_receipt,
 };
-mod model_workflow;
-pub use model_workflow::{
-    WORKFLOW_VALUE_MAX_BYTES, WorkflowIdentity, WorkflowOwner, WorkflowRecord,
+mod model_results;
+pub use model_results::{
+    MODEL_RESULT_MAX_BYTES, ModelOperationIdentity, ModelResultOwner, ModelResultRecord,
 };
 mod episode_text;
 pub use episode_text::EpisodeTextBudget;
@@ -20,14 +20,12 @@ pub use historical::*;
 mod producer;
 mod projection;
 pub use projection::concept::{ConceptProjectionInput, ConceptProjectionTag};
-mod query_descriptors;
 mod query_time;
 pub use query_time::{TimeColumns, push_time_predicate};
 mod references;
 pub use identity::{
     IdentityAddress, IdentityAddressTarget, IdentityBinding, lexical_prefix, validate_lexical,
 };
-pub use query_descriptors::QueryDescriptor;
 mod semantic_catalog;
 mod serving;
 mod tags;
@@ -112,6 +110,15 @@ impl AuthorityStore {
 
     pub async fn begin(&self) -> Result<Transaction<'_, Postgres>> {
         self.pool.begin().await.map_err(database_error)
+    }
+
+    pub async fn read_view(&self) -> Result<Transaction<'_, Postgres>> {
+        let mut tx = self.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(database_error)?;
+        Ok(tx)
     }
 
     pub async fn close(&self) {

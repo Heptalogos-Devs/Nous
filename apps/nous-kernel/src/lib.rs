@@ -41,8 +41,7 @@ pub struct RuntimeOptions {
     pub serving_options: ServingOptions,
     pub embedding: Option<Arc<dyn TextEmbeddingProvider>>,
     pub stored_embedding: Option<nous_retrieval::StoredEmbeddingConfig>,
-    pub deployment_document: serde_json::Value,
-    pub core_descriptors: Vec<nous_configuration::ConfigDescriptor>,
+    pub configuration: nous_configuration::ConfigDeployment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,10 +66,8 @@ impl NousRuntime {
         )
         .await?;
         store.migrate().await?;
-        let registry = configuration_catalog(options.core_descriptors)?;
         let configuration =
-            ConfigurationService::open(store.clone(), registry, options.deployment_document)
-                .await?;
+            ConfigurationService::open(store.clone(), options.configuration).await?;
         let system_snapshot = configuration.active_system_snapshot()?;
         let process_capabilities = process_capabilities(&system_snapshot)?;
         let resident_limit = system_snapshot.get(nous_runtime::RESIDENT_LIMIT_KEY)?;
@@ -169,7 +166,7 @@ impl NousRuntime {
             None
         };
         self.cognition
-            .bind_query_with_authority_view(query, config, view)
+            .bind_query_with_authority_view(query, config, view, self)
             .await
     }
     pub async fn historical_authority_view(

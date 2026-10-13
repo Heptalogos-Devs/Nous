@@ -300,7 +300,7 @@ export async function executeConceptMaintenance(
   const failed = results.some(
     (r) => !["committed", "no_change"].includes(r.status),
   );
-  const status = committed
+  const status: import("./records.js").MaintenanceOutcome["status"] = committed
     ? failed
       ? ("partial" as const)
       : ("committed" as const)

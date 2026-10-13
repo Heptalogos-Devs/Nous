@@ -1,15 +1,46 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+use super::content::CognitionContent;
 use super::*;
-
 use nous_runtime::ContextSource;
 
+impl CognitionContent {
+    fn context(self, max_bytes: usize) -> Result<ContextSource> {
+        let reference = self.reference();
+        match self {
+            Self::Memory(v) => Ok(project_context(
+                reference,
+                v.revision.representation_text,
+                v.basis,
+                max_bytes,
+            )),
+            Self::Schema(v) => Ok(project_context(
+                reference,
+                format!(
+                    "{}\n{}",
+                    v.revision.structural_claim, v.revision.applicability_scope.description
+                ),
+                v.evidence_links.into_iter().map(|l| l.basis).collect(),
+                max_bytes,
+            )),
+            Self::Episode(v) => Ok(project_context(
+                reference,
+                v.revision.boundary_explanation,
+                v.basis,
+                max_bytes,
+            )),
+            Self::Journal(v) => journal_context_projection(v, max_bytes),
+            Self::Tag { text, revision, .. } => {
+                let mut source = project_context(reference, text, vec![], max_bytes);
+                source.source_revision = Some(revision.to_string());
+                Ok(source)
+            }
+        }
+    }
+}
+
 impl MemoryService {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one owner operation resolves canonical or exact sources and applies lifecycle and accessibility"
-    )]
     pub async fn context_projection(
         &self,
         subject: SubjectId,
@@ -20,142 +51,18 @@ impl MemoryService {
         explicit: bool,
         max_bytes: usize,
     ) -> Result<ContextSource> {
-        if !matches!(
-            reference,
-            CognitiveRef::Memory(_) | CognitiveRef::MemoryRevision(_)
-        ) {
-            let (source, text, basis, states) = match reference {
-                CognitiveRef::Tag(id) => {
-                    let tag = self.canonical_tag_view(subject, *id).await?;
-                    let representation = tag_semantic_representation(
-                        &tag.label,
-                        tag.description.as_deref(),
-                        tag.kind_hint.as_deref(),
-                    )?;
-                    let mut source = project_context(
-                        CognitiveRef::Tag(tag.tag_id),
-                        representation.text,
-                        Vec::new(),
-                        max_bytes,
-                    );
-                    source.source_revision = Some(tag.revision_id.to_string());
-                    return Ok(source);
-                }
-                CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_) => {
-                    let view = match reference {
-                        CognitiveRef::CognitiveSchema(id) => self.schema(subject, *id).await?,
-                        CognitiveRef::CognitiveSchemaRevision(id) => {
-                            self.schema_revision(subject, *id).await?
-                        }
-                        _ => unreachable!(),
-                    };
-                    (
-                        CognitiveRef::CognitiveSchemaRevision(view.revision.schema_revision_id),
-                        format!(
-                            "{}\n{}",
-                            view.revision.structural_claim,
-                            view.revision.applicability_scope.description
-                        ),
-                        view.evidence_links
-                            .into_iter()
-                            .map(|link| link.basis)
-                            .collect(),
-                        (
-                            view.schema.acceptance_state,
-                            view.schema.integrity_state,
-                            view.schema.suppression_state,
-                        ),
-                    )
-                }
-                CognitiveRef::Episode(_) | CognitiveRef::EpisodeRevision(_) => {
-                    let view = match reference {
-                        CognitiveRef::Episode(id) => self.episode(subject, *id, None).await?,
-                        CognitiveRef::EpisodeRevision(id) => {
-                            self.episode_revision(subject, *id).await?
-                        }
-                        _ => unreachable!(),
-                    };
-                    (
-                        CognitiveRef::EpisodeRevision(view.revision.episode_revision_id),
-                        view.revision.boundary_explanation,
-                        view.basis,
-                        (
-                            view.object.acceptance_state,
-                            view.object.integrity_state,
-                            view.object.suppression_state,
-                        ),
-                    )
-                }
-                CognitiveRef::Journal(_) | CognitiveRef::JournalRevision(_) => {
-                    let view = match reference {
-                        CognitiveRef::Journal(id) => self.journal(subject, *id, None).await?,
-                        CognitiveRef::JournalRevision(id) => {
-                            self.journal_revision(subject, *id).await?
-                        }
-                        _ => unreachable!(),
-                    };
-                    return journal_context_projection(view, max_bytes);
-                }
-                _ => {
-                    return Err(Error::Invalid(
-                        "context requires a cognition reference".into(),
-                    ));
-                }
-            };
-            require_context_states(&source, states)?;
-            return Ok(project_context(source, text, basis, max_bytes));
-        }
-        let revision = match reference {
-            CognitiveRef::Memory(id) => sqlx::query_scalar::<_, Uuid>(
-                "SELECT current_revision_id FROM memory_objects WHERE subject_id=$1 AND memory_id=$2",
-            )
-            .bind(subject.0)
-            .bind(id.0)
-            .fetch_optional(self.store.pool())
-            .await
-            .map_err(db)?
-            .ok_or_else(|| Error::NotFound("memory not found".into()))?,
-            CognitiveRef::MemoryRevision(id) => id.0,
-            _ => return Err(Error::Invalid("Memory context requires a Memory reference".into())),
-        };
-        let memory = self
-            .memory_views(subject, &[revision], policy, None, false, now)
+        let content = self
+            .cognition_contents(subject, std::slice::from_ref(reference), policy, None, now)
             .await?
-            .remove(&revision)
-            .ok_or_else(|| Error::NotFound("memory not found".into()))?;
-        let source = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
-        require_context_states(
-            &source,
-            (
-                memory.object.acceptance_state,
-                memory.object.integrity_state,
-                memory.object.suppression_state,
-            ),
-        )?;
-        if !accessibility_eligible(memory.accessibility_level, effort, explicit) {
-            return Err(Error::Unavailable(
-                "Memory accessibility requires deeper or explicit recall".into(),
-            ));
-        }
-        Ok(project_context(
-            source,
-            memory.revision.representation_text,
-            memory.basis,
-            max_bytes,
-        ))
+            .pop()
+            .ok_or_else(|| Error::NotFound("cognition source not found".into()))?;
+        content.require_available(effort, explicit, None)?;
+        content.context(max_bytes)
     }
 }
 
 fn journal_context_projection(view: JournalView, max_bytes: usize) -> Result<ContextSource> {
     let source = CognitiveRef::JournalRevision(view.revision.journal_revision_id);
-    require_context_states(
-        &source,
-        (
-            view.object.acceptance_state,
-            view.object.integrity_state,
-            view.object.suppression_state,
-        ),
-    )?;
     let mut text = view.revision.narrative;
     let mut basis = Vec::new();
     for point in view.points {
@@ -172,29 +79,6 @@ fn journal_context_projection(view: JournalView, max_bytes: usize) -> Result<Con
             basis_role: "source".into(),
         }));
     Ok(projection)
-}
-
-fn require_context_states(
-    source_revision: &CognitiveRef,
-    states: (AcceptanceState, IntegrityState, SuppressionState),
-) -> Result<()> {
-    let name = match source_revision {
-        CognitiveRef::MemoryRevision(_) => "Memory",
-        CognitiveRef::CognitiveSchemaRevision(_) => "CognitiveSchema",
-        CognitiveRef::EpisodeRevision(_) => "Episode",
-        CognitiveRef::JournalRevision(_) => "Journal",
-        _ => unreachable!(),
-    };
-    if states.0 != AcceptanceState::Accepted {
-        return Err(Error::Unavailable(format!("{name} is withdrawn")));
-    }
-    if states.1 != IntegrityState::Valid {
-        return Err(Error::Unavailable(format!("{name} requires revalidation")));
-    }
-    if states.2 != SuppressionState::Normal {
-        return Err(Error::Unavailable(format!("{name} is suppressed")));
-    }
-    Ok(())
 }
 
 fn project_context(

@@ -55,10 +55,6 @@ impl MemoryService {
         let mut revisions = Vec::new();
         for mut child in children {
             child.subject = subject;
-            for link in &child.content.evidence_links {
-                self.provenance_summary(subject, std::slice::from_ref(&link.basis))
-                    .await?;
-            }
             self.validate_schema_formation(subject, &child.content)
                 .await?;
             let producer = if let Some(value) = &child.content.producer {
@@ -202,10 +198,6 @@ impl MemoryService {
             return Err(Error::Invalid(
                 "merged CognitiveSchema needs at least two active evidence links".into(),
             ));
-        }
-        for link in merged_links.values() {
-            self.provenance_summary(subject, std::slice::from_ref(&link.basis))
-                .await?;
         }
         merged.subject = subject;
         merged.content.evidence_links = merged_links.into_values().collect();

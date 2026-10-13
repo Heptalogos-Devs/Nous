@@ -62,11 +62,7 @@ impl AuthorityStore {
         memory_enabled: bool,
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<TopologyProjectionInput> {
-        let mut tx = self.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.read_view().await?;
         if view.is_some_and(|view| view.subject != subject) {
             return Err(Error::Invalid("topology view Subject mismatch".into()));
         }
@@ -99,11 +95,7 @@ impl AuthorityStore {
         space: &str,
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<VcpProjectionRows> {
-        let mut tx = self.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.read_view().await?;
         let authority_watermark: i64 =
             sqlx::query_scalar("SELECT authority_seq FROM subjects WHERE subject_id=$1")
                 .bind(subject.0)

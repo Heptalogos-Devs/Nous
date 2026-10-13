@@ -290,7 +290,7 @@ export async function executeConsolidation(
   const failed = results.some((result) =>
     ["rejected_invalid", "skipped_dependency", "stale"].includes(result.status),
   );
-  const status = committed
+  const status: import("./records.js").MaintenanceOutcome["status"] = committed
     ? failed
       ? "partial"
       : "committed"

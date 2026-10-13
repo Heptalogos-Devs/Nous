@@ -64,6 +64,91 @@ fn decode_representation(mut value: serde_json::Value) -> Result<DerivedRepresen
 }
 
 impl MaterialService {
+    pub(super) async fn lineage_nodes_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+    ) -> Result<Vec<MaterialLineageNode>> {
+        let ids = |kind: &str| {
+            references
+                .iter()
+                .filter_map(|reference| {
+                    let (candidate, id) = reference_parts(reference);
+                    (candidate == kind)
+                        .then(|| id.parse::<Uuid>().expect("typed Material identity"))
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut nodes = Vec::new();
+        for row in sqlx::query("SELECT to_jsonb(o) occurrence FROM observation_occurrences o WHERE o.subject_id=$1 AND o.occurrence_id=ANY($2::uuid[])").bind(subject.0).bind(ids("occurrence")).fetch_all(&mut **tx).await.map_err(db)? { nodes.push(MaterialLineageNode::Occurrence(decode_occurrence(row)?)); }
+        for row in sqlx::query(
+            "SELECT * FROM artifacts WHERE subject_id=$1 AND artifact_id=ANY($2::uuid[])",
+        )
+        .bind(subject.0)
+        .bind(ids("artifact"))
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db)?
+        {
+            nodes.push(MaterialLineageNode::Artifact(
+                super::artifact::decode_artifact(row)?,
+            ));
+        }
+        for value in sqlx::query_scalar("SELECT to_jsonb(s) FROM source_regions s WHERE s.subject_id=$1 AND s.source_region_id=ANY($2::uuid[])").bind(subject.0).bind(ids("source_region")).fetch_all(&mut **tx).await.map_err(db)? { nodes.push(MaterialLineageNode::SourceRegion(decode(value)?)); }
+        for value in sqlx::query_scalar("SELECT to_jsonb(g) FROM derived_regions g WHERE g.subject_id=$1 AND g.derived_region_id=ANY($2::uuid[])").bind(subject.0).bind(ids("derived_region")).fetch_all(&mut **tx).await.map_err(db)? { nodes.push(MaterialLineageNode::DerivedRegion(decode(value)?)); }
+        let sql = format!(
+            "{REPRESENTATION_READ} WHERE d.subject_id=$1 AND d.derived_representation_id=ANY($2::uuid[])"
+        );
+        for value in sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(subject.0)
+            .bind(ids("derived_representation"))
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(db)?
+        {
+            nodes.push(MaterialLineageNode::Representation(Box::new(
+                decode_representation(value)?,
+            )));
+        }
+        if nodes.len() != references.len() {
+            return Err(Error::NotFound(
+                "lineage contains a missing Material reference".into(),
+            ));
+        }
+        Ok(nodes)
+    }
+
+    /// Admit immutable source identities into the caller's mutation transaction in one batch.
+    pub async fn lock_occurrences_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        occurrences: &[OccurrenceId],
+    ) -> Result<std::collections::HashMap<OccurrenceId, DateTime<Utc>>> {
+        let ids = occurrences
+            .iter()
+            .map(|id| id.0)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let rows = sqlx::query("SELECT occurrence_id,observed_at FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=ANY($2::uuid[]) ORDER BY occurrence_id FOR SHARE")
+            .bind(subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
+        if rows.len() != ids.len() {
+            return Err(Error::Invalid(
+                "evidence occurrence is outside Subject".into(),
+            ));
+        }
+        rows.into_iter()
+            .map(|row| {
+                Ok((
+                    OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
+                    row.try_get("observed_at").map_err(db)?,
+                ))
+            })
+            .collect()
+    }
+
     pub async fn occurrence(
         &self,
         subject: SubjectId,
@@ -93,12 +178,28 @@ impl MaterialService {
                 "occurrence batch exceeds 256 references".into(),
             ));
         }
+        let mut tx = self.store.read_view().await?;
+        let result = self
+            .occurrences_in(&mut tx, subject, occurrences, view)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(result)
+    }
+
+    /// Source facts can participate in the caller's captured read without a second snapshot.
+    pub async fn occurrences_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        occurrences: &[OccurrenceId],
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<std::collections::HashMap<OccurrenceId, ObservationOccurrence>> {
         for occurrence in occurrences {
             self.require_lineage_view(subject, &CognitiveRef::Occurrence(*occurrence), view)?;
         }
         let ids: Vec<_> = occurrences.iter().map(|id| id.0).collect();
         let rows = sqlx::query("SELECT to_jsonb(o) AS occurrence FROM observation_occurrences o WHERE subject_id=$1 AND occurrence_id=ANY($2::uuid[]) AND ($3::timestamptz IS NULL OR created_at<=$3)")
-            .bind(subject.0).bind(ids).bind(view.map(|view|view.as_of)).fetch_all(self.store.pool()).await.map_err(db)?;
+            .bind(subject.0).bind(ids).bind(view.map(|view|view.as_of)).fetch_all(&mut **tx).await.map_err(db)?;
         let result = rows
             .into_iter()
             .map(|row| {
@@ -112,6 +213,15 @@ impl MaterialService {
             ));
         }
         Ok(result)
+    }
+
+    pub async fn occurrence_observed_span(
+        &self,
+        subject: SubjectId,
+        occurrences: &[OccurrenceId],
+    ) -> Result<i64> {
+        sqlx::query_scalar("SELECT COALESCE(extract(epoch FROM max(observed_at)-min(observed_at))::bigint,0) FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=ANY($2::uuid[])")
+            .bind(subject.0).bind(occurrences.iter().map(|id| id.0).collect::<Vec<_>>()).fetch_one(self.store.pool()).await.map_err(db)
     }
 
     pub async fn occurrences_for_artifact(
@@ -162,6 +272,21 @@ impl MaterialService {
         let value: Option<serde_json::Value> = sqlx::query_scalar("SELECT to_jsonb(r) FROM derived_regions r WHERE subject_id=$1 AND derived_region_id=$2")
             .bind(subject.0).bind(region.0).fetch_optional(self.store.pool()).await.map_err(db)?;
         decode(value.ok_or_else(|| Error::NotFound("DerivedRegion not found".into()))?)
+    }
+
+    /// IDs have already been authorized by the owning Subject operation.
+    pub async fn producer_signatures(&self, producers: &[Uuid]) -> Result<Vec<ProducerSignature>> {
+        if producers.len() > 2048 {
+            return Err(Error::Invalid("producer batch exceeds bound".into()));
+        }
+        let rows: Vec<serde_json::Value> = sqlx::query_scalar("SELECT to_jsonb(p) FROM producer_signatures p WHERE producer_signature_id=ANY($1) ORDER BY producer_signature_id")
+            .bind(producers).fetch_all(self.store.pool()).await.map_err(db)?;
+        if rows.len() != producers.len() {
+            return Err(Error::NotFound("ProducerSignature not found".into()));
+        }
+        rows.into_iter()
+            .map(|value| decode(producer_value(value)?))
+            .collect()
     }
 
     /// The composition boundary must establish that this signature is referenced by its Subject.

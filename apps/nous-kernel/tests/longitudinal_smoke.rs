@@ -45,8 +45,12 @@ impl Server {
                 },
                 embedding: None,
                 stored_embedding: None,
-                core_descriptors: configuration.core_descriptors.clone(),
-                deployment_document: configuration.deployment_document.clone(),
+                configuration: nous_kernel::configuration_catalog(
+                    configuration.core_descriptors.clone(),
+                )
+                .unwrap()
+                .deployment(&configuration.deployment_document.clone())
+                .unwrap(),
             },
             clock,
         )

@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  startOperation,
+  runRecordedOperation,
   serializeOperation,
-  workflowPayload,
-} from "../durable-operation.js";
+} from "../operation-results.js";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { executionOptions, type ExecutionOptions } from "../execution.js";
 import type { DeriveMaterialRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
@@ -14,8 +13,8 @@ import type { ModelRuntime } from "./runtime.js";
 import { type ExecutionTelemetry } from "./execution/routes.js";
 import {
   type ModelProducerMetadata,
-  type ModelRoleSnapshot,
-} from "./execution/snapshot.js";
+  type PreparedModelRole,
+} from "./execution/binding.js";
 import type { ModelRole } from "./roles.js";
 import { modelProducer } from "./producer.js";
 import { z } from "zod";
@@ -244,7 +243,7 @@ async function deriveMaterialOnce(
       kind: string,
       graph: Parameters<typeof commit>[2],
       role: ModelRole,
-      invoke: (snapshot: ModelRoleSnapshot) => Promise<{
+      invoke: (snapshot: PreparedModelRole) => Promise<{
         text: string;
         producerMetadata: ModelProducerMetadata;
         execution: ExecutionTelemetry;
@@ -256,7 +255,7 @@ async function deriveMaterialOnce(
       promptPath?: string,
       adapter?: string,
     ) => {
-      const model = await models.invocations.snapshotPrompt(
+      const model = await models.invocations.preparePrompt(
         role,
         promptPath,
         adapter,
@@ -268,76 +267,56 @@ async function deriveMaterialOnce(
         preprocessingDigest,
         representations.length === 0 ? request.supersedes : undefined,
       );
-      const operation = await startOperation(
-        kernel,
-        identity,
-        {
-          content: workflowPayload(
-            model,
-            graph.map((input) => input.reference!),
-          ),
+      return runRecordedOperation(kernel, identity, options, {
+        replay: async (outcomeRecord) => {
+          if (outcomeRecord.purged)
+            throw new ConnectError(
+              "Derivation outcome was purged",
+              Code.NotFound,
+            );
+          const outcome = z
+            .strictObject({ representationId: z.string().uuid() })
+            .parse(JSON.parse(outcomeRecord.payloadJson));
+          const representation = await kernel.material.getDerivedRepresentation(
+            { subjectId: request.subjectId, id: outcome.representationId },
+            options,
+          );
+          representations.push(representation);
+          return representation;
         },
-        options,
-      );
-      const record = operation.record;
-      if (record.outcome) {
-        if (record.outcome.purged)
-          throw new ConnectError(
-            "Derivation outcome was purged",
-            Code.NotFound,
-          );
-        const outcome = z
-          .strictObject({ representationId: z.string().uuid() })
-          .parse(JSON.parse(record.outcome.payloadJson));
-        const representation = await kernel.material.getDerivedRepresentation(
-          { subjectId: request.subjectId, id: outcome.representationId },
-          options,
-        );
-        representations.push(representation);
-        return representation;
-      }
-      return operation.run(async () => {
-        let proposal = record.proposal?.payloadJson
-          ? (JSON.parse(record.proposal?.payloadJson) as {
-              text: string;
-              producerMetadata: ModelProducerMetadata;
-              execution: ExecutionTelemetry;
-              inputAccess: ChannelAccess;
-              structuredPayload?: JsonObject;
-            })
-          : undefined;
-        if (!proposal) {
-          proposal = await invoke(
-            JSON.parse(
-              record.snapshot!.content!.payloadJson,
-            ) as ModelRoleSnapshot,
-          );
-          const { execution, ...saved } = proposal;
-          await operation.saveProposal(saved, [], execution);
-        }
-        const representation = await commit(
-          proposal.text,
-          kind,
-          graph,
-          proposal.producerMetadata,
-          {
-            ...quality,
-            input_access: channelAccessSchema.parse(proposal.inputAccess),
-          },
-          preprocessingDigest,
-          proposal.structuredPayload,
-          operation.identity,
-        );
-        await operation.complete(
-          { representationId: representation.representationId },
-          [
+        generate: async () => {
+          const { execution, ...proposal } = await invoke(model);
+          return {
+            proposal,
+            execution,
+            dependencies: graph.map((input) => input.reference!),
+          };
+        },
+        commit: async (proposal) => {
+          const representation = await commit(
+            proposal.text,
+            kind,
+            graph,
+            proposal.producerMetadata,
             {
-              kind: "derived_representation",
-              value: representation.representationId,
+              ...quality,
+              input_access: channelAccessSchema.parse(proposal.inputAccess),
             },
-          ],
-        );
-        return representation;
+            preprocessingDigest,
+            proposal.structuredPayload,
+            identity,
+          );
+          return {
+            value: representation,
+            outcome: { representationId: representation.representationId },
+            dependencies: [
+              {
+                kind: "derived_representation",
+                value: representation.representationId,
+              },
+            ],
+          };
+        },
       });
     };
     const inputs = [
@@ -496,14 +475,14 @@ async function deriveMaterialOnce(
           strategy === "direct_structured"
             ? "material_direct_structuring"
             : "material_description";
-        const model = await models.invocations.snapshotPrompt(
+        const model = await models.invocations.preparePrompt(
           role,
           strategy === "direct_structured" ? undefined : models.video.prompt,
         );
         const transcriptionConfig = models.invocations.profile(
           "speech_transcription",
         )
-          ? models.invocations.snapshot("speech_transcription").configDigest
+          ? models.invocations.prepare("speech_transcription").configDigest
           : null;
         const available = await kernel.material.listDerivedRepresentations(
           {
@@ -533,7 +512,7 @@ async function deriveMaterialOnce(
             },
             role: input.role,
           }));
-          const saved = await kernel.modelWorkflow.readOperation(
+          const saved = await kernel.modelResults.readOperation(
             paidIdentity(
               kind,
               graph,
@@ -629,8 +608,12 @@ async function deriveMaterialOnce(
                 },
                 role: "transcript",
               });
-            } catch {
-              if (signal?.aborted) throw signal.reason;
+            } catch (error) {
+              models.invocations.allowDegradation(
+                error,
+                signal,
+                "speech_transcription",
+              );
               degradation.push({
                 code: "video_transcription_unavailable",
                 detail: "Scene description uses frames without a transcript",
@@ -682,8 +665,12 @@ async function deriveMaterialOnce(
         if (strategy === "describe_then_structure") {
           try {
             await structureDescription(selected);
-          } catch {
-            if (signal?.aborted) throw signal.reason;
+          } catch (error) {
+            models.invocations.allowDegradation(
+              error,
+              signal,
+              "material_structuring",
+            );
             degradation.push({
               code: "material_structuring_failed",
               detail: "The committed scene description is retained",
@@ -773,7 +760,7 @@ async function deriveMaterialOnce(
         degradation: [],
       };
     } catch (error) {
-      if (signal?.aborted) throw error;
+      models.invocations.allowDegradation(error, signal);
       return {
         representations,
         selectedRepresentationId: representations[0]?.representationId,

@@ -148,7 +148,7 @@ impl<'a> MutationEnvelope<'a> {
         owner: &str,
         references: &[nous_core::CognitiveRef],
     ) -> Result<()> {
-        AuthorityStore::add_workflow_dependencies_in(
+        AuthorityStore::add_model_result_dependencies_in(
             &mut self.tx,
             self.subject,
             owner,

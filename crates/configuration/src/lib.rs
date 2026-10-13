@@ -16,8 +16,8 @@ mod snapshot;
 
 pub use key::*;
 pub use registry::{
-    CONFIG_SCHEMA_DIALECT, ConfigDescriptor, ConfigRegistry, ConfigRegistryBuilder,
-    ConfigurationBootstrapBundle,
+    CONFIG_SCHEMA_DIALECT, ConfigDeployment, ConfigDescriptor, ConfigRegistry,
+    ConfigRegistryBuilder, ConfigurationBootstrapBundle,
 };
 pub use service::{ConfigChangeOutcome, ConfigurationService};
 pub use snapshot::{ConfigSnapshot, ResolvedConfigValue};

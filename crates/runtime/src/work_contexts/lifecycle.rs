@@ -219,6 +219,22 @@ impl CognitiveRuntimeService {
             tx.commit().await.map_err(db)?;
             return self.session(subject, session).await;
         }
+        if let Some(work_context_id) = work_context_id {
+            let context = sqlx::query(
+                "SELECT subject_id,state FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR SHARE",
+            )
+            .bind(subject.0)
+            .bind(work_context_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| Error::NotFound("WorkContext not found".into()))?;
+            if context.try_get::<String, _>("state").map_err(db)? != "open" {
+                return Err(Error::FailedPrecondition(
+                    "only an open WorkContext can be foreground".into(),
+                ));
+            }
+        }
         let row = sqlx::query(
             "SELECT subject_id,closed_at,runtime_revision FROM cognitive_sessions WHERE session_id=$1 FOR UPDATE",
         )
@@ -242,22 +258,6 @@ impl CognitiveRuntimeService {
             .with_context("expected_revision", expected_runtime_revision)
             .with_context("actual_revision", current)
             .into());
-        }
-        if let Some(work_context_id) = work_context_id {
-            let context = sqlx::query(
-                "SELECT subject_id,state FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR SHARE",
-            )
-            .bind(subject.0)
-            .bind(work_context_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| Error::NotFound("WorkContext not found".into()))?;
-            if context.try_get::<String, _>("state").map_err(db)? != "open" {
-                return Err(Error::FailedPrecondition(
-                    "only an open WorkContext can be foreground".into(),
-                ));
-            }
         }
         sqlx::query(
             "UPDATE cognitive_sessions SET active_work_context_id=$3,runtime_revision=runtime_revision+1,last_activity_at=$4 WHERE subject_id=$1 AND session_id=$2",

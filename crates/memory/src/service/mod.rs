@@ -8,6 +8,7 @@ mod accretion;
 mod batch;
 mod concept_maintenance;
 mod consolidation_context;
+mod content;
 mod context;
 mod dependencies;
 mod episode;
@@ -31,6 +32,7 @@ mod source_facts;
 mod state;
 mod tag;
 mod topology;
+mod trace;
 
 use crate::*;
 use chrono::{DateTime, Utc};
@@ -53,6 +55,7 @@ pub use accessibility::{
 pub use accretion::{ACCRETION, AccretionPolicy, AccretionSignal};
 pub use concept_maintenance::*;
 pub use consolidation_context::ConsolidationMetadata;
+pub use content::CognitionContent;
 pub use episode::*;
 pub use journal::*;
 pub use longitudinal_policy::{
@@ -62,6 +65,7 @@ pub use maintenance_planning::{MaintenanceMember, MaintenanceScope};
 pub use nous_core::TopologyRelation;
 pub use nous_core::{CognitiveQuery, CognitiveQueryResult};
 pub use tag::*;
+pub use trace::CognitionTrace;
 
 #[derive(Clone)]
 pub struct MemoryService {
@@ -200,7 +204,7 @@ impl MemoryService {
         operation: OperationId,
         started_at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>> {
-        Ok(AuthorityStore::workflow_cognitive_time_in(
+        Ok(AuthorityStore::model_result_cognitive_time_in(
             tx,
             subject,
             "memory",

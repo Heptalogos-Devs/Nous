@@ -28,7 +28,7 @@ Session-bound Observation 在 Material 提交事务内写入一个 ExperienceIte
 
 ## Maintenance 与工作流
 
-`RuntimeService` 承载 canonical Session、WorkContext、Observation 和 Use 操作；Core 的 `CognitionService` 提供公开维护 grant 与查询/投影编排。Core 通过 private `KernelMaintenanceService` 调用 durable need 和 longitudinal owner commit，通过 `KernelModelWorkflowService` 管理模型执行重放状态。
+`RuntimeService` 承载 canonical Session、WorkContext、Observation 和 Use 操作；Core 的 `CognitionService` 提供公开维护 grant 与查询/投影编排。Core 通过 private `KernelMaintenanceService` 调用 durable need 和 longitudinal owner commit，通过 `KernelModelResultsService` 保存和复用实际模型结果。
 
 MaintenanceNeed 在 active scope 内合并 trigger，due time 使用 CognitiveClock。单一 Core 按 Subject 串行执行 Host grant；Runtime 从 pending needs 选择固定 trigger snapshot，执行期间记录仍为 pending。每次新 trigger 推进 trigger revision；ack 只对匹配 captured authority sequence/revision 的 pending need 应用 disposition，因此新工作不丢失。Core crash 后工作立即可重新选择，不需要租约过期或 takeover。
 
@@ -48,9 +48,9 @@ MaintenanceNeed 状态为 `pending / blocked / satisfied / obsolete`。deferred 
 
 unexpected scheduler/runtime failures 输出 Subject、stage、已知 need kind、稳定 problem class 和 retry/blocked decision；相同 scheduler failures 按重复次数聚合。凭据、配置值和原始 model payload 不进入诊断。正常 blocked 或未配置角色无需 exception 日志。
 
-Episode/Journal/Memory/Schema revisions 是 durable cognition history；Observation/ExperienceItem 是 durable experience；EpisodeDraft、MaintenanceNeed 和 model workflow 是 temporary runtime work state。terminal need 按 `maintenance.terminal_retention_seconds` 保留短期 inspection，再在 selection/ack 路径删除；pending、blocked 不被 terminal housekeeping 删除。
+Episode/Journal/Memory/Schema revisions 是 durable cognition history；Observation/ExperienceItem 是 durable experience；EpisodeDraft 与 MaintenanceNeed 是临时 Runtime 工作；model_results 只保存实际提案、结果与调用记录。terminal need 按 `maintenance.terminal_retention_seconds` 保留短期 inspection，再在 selection/ack 路径删除；pending、blocked 不被 terminal housekeeping 删除。
 
-Core 的 `model_workflow_operations` 保存固定 model/plan snapshot、proposal 与 outcome。operation identity 由 need、trigger authority sequence 和 trigger revision 生成，proposal 在 owner commit 前持久化；重试复用已存 proposal/outcome。多 action 提案每次从头按固定顺序执行；稳定 child operation ID 使 canonical owner receipt 返回同一已提交结果，并重建本次执行所需的临时引用。Core 不持久化每项 progress、临时绑定或另一份 action receipt。后项失败不回滚已提交的独立前项，最终 outcome 一次保存。maintenance workflow 显式绑定 need 和 trigger；ack 成功后删除已完成的关联 workflow。selection/ack 路径删除新 trigger 已替代的旧 workflow。显式 Memory formation、Material workflow 和仍需 retry 的当前 workflow 保持自身合同。owner 验证 Subject、head、epoch、lifecycle、来源 catalog 和 authority sequence；变化返回 stale 并刷新维护计划。
+Core 的 `model_results` 在实际生成后保存 proposal、必要的 owner 输入、依赖与 telemetry，提交后保存 outcome；执行前不登记 snapshot。identity 由 need、trigger authority sequence 和 trigger revision 生成。后续显式机会复用已存 proposal/outcome；只有重新生成才检查角色可用性和模型调用预算。确定性 Journal 撤回不创建模型记录。多 action 提案按原顺序调用 owner，稳定 child operation ID 和 owner receipt 重放已提交结果，不持久化逐项 progress、临时绑定或第二份回执。后项失败不回滚已提交的独立前项。结果关联 need/trigger，ack 删除已完成记录，selection/ack 清理被新 trigger 替代的记录。显式形成、Material 结果和仍需提交的当前提案保留其结果合同。owner 验证 Subject、head、epoch、lifecycle、来源和 authority sequence；变化返回 stale 并刷新维护计划。取消与机会耗尽保留 need 原有 CognitiveClock due，不写基础设施 wall-clock nextDue。
 
 Workflow owner 是 1..64 字节的 semantic identifier，格式为 `[a-z][a-z0-9_]*`；Persistence 不枚举认知领域。private Kernel API 仅接受已实现的 `memory / material` 调用路径；Longitudinal 的 Memory-domain operations 使用 `memory`。
 
@@ -68,17 +68,17 @@ Journal 重验证等待全部当前来源稳定后再规划完整集合。来源
 
 `memory_consolidation` 使用 `MemoryConsolidationText`，scope 为 current eligible EpisodeRevision 或 JournalRevision。计划包含有界 source/member/support/entity catalogs、independent roots 和通过 Query/Serving 选出的最多 16 个当前 Memory/Schema context candidates。候选包括 exact revision/epoch、正文及 text_truncated 标记、Schema applicability/boundary/tags、独立时间轴和按 use kind 汇总的 meaningful use；presented 不计入摘要。截断标记描述模型当前可见范围，不表示来源或已存 cognition 缺少该内容，不能仅据此修订候选。
 
-proposal action 为 skip、create/revise Memory、create/revise CognitiveSchema、link relation。引用只能选择 supplied catalog 或较早 action result。Core 保存一次模型 proposal 后逐项调用 canonical FormMemory、ReviseMemory、Create/ReviseCognitiveSchema 和 LinkRevisions；每项使用由 workflow id、index 与 action kind 派生的稳定 operation ID。各 owner 的 receipt 与 Authority mutation 同事务；后项非法不回滚此前独立提交，依赖失败 action 的 relation 记录 skipped_dependency，其他独立 action 继续。逐项结果保存到 workflow，transport retry 重放同一 proposal 和 ID，不再次调用模型。目标 epoch 已陈旧时记录 stale；owner invariant/internal failure 停止 grant 并暴露工程错误。Planner 为每个 revision candidate 提供排除该对象全部旧 revision 的 eligible basis keys；owner 继续执行 cycle、provenance、lifecycle 与身份核验。skip 不修改认知 Authority。Journal 是可选来源，Episode 可直接整合。
+proposal action 为 skip、create/revise Memory、create/revise CognitiveSchema、link relation。引用只能选择 supplied catalog 或较早 action result。Core 保存一次模型 proposal 后逐项调用 canonical FormMemory、ReviseMemory、Create/ReviseCognitiveSchema 和 LinkRevisions；每项使用由 operation id、index 与 action kind 派生的稳定 operation ID。各 owner 的 receipt 与 Authority mutation 同事务；后项非法不回滚此前独立提交，依赖失败 action 的 relation 记录 skipped_dependency，其他独立 action 继续。本次逐项结果随最终 outcome 一次保存，transport retry 重放同一 proposal 和 ID，不再次调用模型。目标 epoch 已陈旧时记录 stale；owner invariant/internal failure 停止 grant 并暴露工程错误。Planner 为每个 revision candidate 提供排除该对象全部旧 revision 的 eligible basis keys；owner 继续执行 cycle、provenance、lifecycle 与身份核验。skip 不修改认知 Authority。Journal 是可选来源，Episode 可直接整合。
 
 Query/Serving、WorkContext、UseEvent 和下游失效合同分别见 [Query](../memory-reference-profile/03-query-serving.md)、[WorkContext](work-context.md)、[Use](../memory-reference-profile/02-runtime-use.md) 和 [Authority](../memory-reference-profile/01-memory-authority-provenance.md)。
 
 ## 独立 concept maintenance
 
-`concept_maintenance` 复用 durable need、host grant、retry、固定 ModelWorkflow snapshot 和模型调用/elapsed 预算。accepted/revised Memory、Episode、Journal、CognitiveSchema 在 owner mutation 同一事务排入 exact focus；meaningful use 跨过 `maintenance.concept_use_review_interval` 时产生 review，普通 presented 不触发。
+`concept_maintenance` 复用 durable need、host grant、retry、已保存的实际模型结果 和模型调用/elapsed 预算。accepted/revised Memory、Episode、Journal、CognitiveSchema 在 owner mutation 同一事务排入 exact focus；meaningful use 跨过 `maintenance.concept_use_review_interval` 时产生 review，普通 presented 不触发。
 
-Memory planner 只围绕一个 current eligible exact cognition。局部输入包含 focus 语义、来源、aboutness Entity、已附 Tags、名称/别名匹配、既有 embedding material 的相似候选和一跳 AssociationEvidence；不拼整个 Subject cognition catalog，不调用 embedding provider。固定 snapshot 保存 typed canonical refs、TagRevisionTarget、AssociationSupport 和当前配置 digest；模型只看到 local keys 与有界描述。
+Memory planner 只围绕一个 current eligible exact cognition。局部输入包含 focus 语义、来源、aboutness Entity、已附 Tags、名称/别名匹配、既有 embedding material 的相似候选和一跳 AssociationEvidence；不拼整个 Subject cognition catalog，不调用 embedding provider。owner plan 提供 typed canonical refs、TagRevisionTarget、AssociationSupport 和策略；实际产生提案后保存提交所需输入，模型只看到 local keys 与有界描述。
 
-`concept_maintenance` role 使用 `prompts/memory/concept-maintenance.md` 和独立 Structured Contract，最多四个 ordered suggestions，配置可以进一步收紧。Core 保存 proposal 后逐项调用 Create/Revise/Merge/SplitTag、Create/RevokeAssociation；operation id 来自 workflow id、index 和 kind。每项保存 committed/no_change/rejected_invalid/stale/skipped_dependency 与实际结果，临时 `new_` keys 解析为先前成功返回的 Tag identity。后续失败保留先前成功，依赖失败只跳过依赖项，独立项继续；transport 重试复用已存 proposal 和相同 owner receipts，不重新调用模型。owner invariant 停止该 grant，返回 internal_failure。
+`concept_maintenance` role 使用 `prompts/memory/concept-maintenance.md` 和独立 Structured Contract，最多四个 ordered suggestions，配置可以进一步收紧。Core 保存 proposal 后逐项调用 Create/Revise/Merge/SplitTag、Create/RevokeAssociation；operation id 来自 operation id、index 和 kind。每项保存 committed/no_change/rejected_invalid/stale/skipped_dependency 与实际结果，临时 `new_` keys 解析为先前成功返回的 Tag identity。后续失败保留先前成功，依赖失败只跳过依赖项，独立项继续；transport 重试复用已存 proposal 和相同 owner receipts，不重新调用模型。owner invariant 停止该 grant，返回 internal_failure。
 
 Tag merge/split 保留 exact supports 和 lineage，一个明确来源可以支持 alias/equivalence 或语义分化；不要求两个独立根。merge/split 自身仍为天然原子操作。后置 `tag_attachment` 是正向 exact cognition→Tag AssociationEvidence，不修改旧 cognition revision。owner 校验 Subject、当前 endpoint 生命周期、relation registry、方向/极性、显式支持和 producer，不递归证明整个 cognition graph。Serving 直接使用既有 Memory dependencies、Episode members、Journal sources、Schema evidence 作为结构 adjacency；不要求复制 AssociationEvidence。contradiction/negative evidence 保留独立语义。
 

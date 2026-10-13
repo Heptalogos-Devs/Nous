@@ -16,7 +16,7 @@ fn member(value: p::EpisodeMember) -> Result<EpisodeMemberInput> {
     })
 }
 
-fn revision(
+pub(super) fn revision(
     value: nous_memory::EpisodeRevision,
     members: Vec<nous_memory::EpisodeMember>,
     basis: Vec<nous_memory::RevisionBasis>,

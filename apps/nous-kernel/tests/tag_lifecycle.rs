@@ -510,32 +510,35 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     );
     let bound = rt
         .cognition
-        .bind_query(CognitiveQuery {
-            subject,
-            projection: Default::default(),
-            temporal_frame: Default::default(),
+        .bind_query(
+            CognitiveQuery {
+                subject,
+                projection: Default::default(),
+                temporal_frame: Default::default(),
 
-            work_context: None,
-            session: None,
-            situation: Default::default(),
-            expression: CognitiveQueryExpr {
-                cues: vec![
-                    Cue::Text(TextCue {
-                        text: "release approval".into(),
-                    }),
-                    Cue::Tag(TagCue {
-                        tag: tags[1].tag_id,
-                    }),
-                ],
-                ..Default::default()
+                work_context: None,
+                session: None,
+                situation: Default::default(),
+                expression: CognitiveQueryExpr {
+                    cues: vec![
+                        Cue::Text(TextCue {
+                            text: "release approval".into(),
+                        }),
+                        Cue::Tag(TagCue {
+                            tag: tags[1].tag_id,
+                        }),
+                    ],
+                    ..Default::default()
+                },
+                exploration: Default::default(),
+                resources: Default::default(),
+                result_need: Default::default(),
+                effort: Default::default(),
+                capabilities: Default::default(),
+                diagnostics: Default::default(),
             },
-            exploration: Default::default(),
-            resources: Default::default(),
-            result_need: Default::default(),
-            effort: Default::default(),
-            capabilities: Default::default(),
-            diagnostics: Default::default(),
-        })
+            &rt,
+        )
         .await
         .unwrap();
     assert!(

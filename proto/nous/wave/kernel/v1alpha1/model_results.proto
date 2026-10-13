@@ -8,7 +8,7 @@ import "google/protobuf/timestamp.proto";
 
 // Only the semantic owner interprets payload_json. Dependencies are explicit;
 // storage and purge never inspect the domain payload for references.
-message WorkflowPayload {
+message ResultPayload {
   string payload_json = 1;
   repeated nous.wave.v1alpha1.CognitiveRef dependencies = 2;
   bool purged = 3;
@@ -18,8 +18,8 @@ message MaintenanceTrigger {
   int64 trigger_authority_seq = 3;
   uint64 trigger_revision = 4;
 }
-message WorkflowSnapshot {
-  WorkflowPayload content = 1;
+message ModelResultContext {
+  repeated nous.wave.v1alpha1.CognitiveRef dependencies = 1;
   google.protobuf.Timestamp cognitive_formed_at = 2;
   MaintenanceTrigger maintenance_trigger = 3;
 }

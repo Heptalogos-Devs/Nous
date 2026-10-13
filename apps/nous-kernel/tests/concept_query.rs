@@ -127,7 +127,7 @@ fn query(subject: SubjectId, mut cues: Vec<Cue>) -> CognitiveQuery {
 async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_profiles() {
     let (root, url, _pg) = database().await;
     let probe = Arc::new(Probe::default());
-    let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:ServingOptions {root:root.path().join("serving"),lexical:true,dense:true,topology:true,memory_enabled:true},embedding:Some(probe.clone()),stored_embedding:None,core_descriptors:vec![],deployment_document:serde_json::json!({"capabilities":{"process":{"memory":true},"subject_defaults":{"memory":true}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":true},"topology":{"enabled":true}}})}).await.unwrap();
+    let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:ServingOptions {root:root.path().join("serving"),lexical:true,dense:true,topology:true,memory_enabled:true},embedding:Some(probe.clone()),stored_embedding:None,configuration: nous_kernel::configuration_catalog(vec![]).unwrap().deployment(&serde_json::json!({"capabilities":{"process":{"memory":true},"subject_defaults":{"memory":true}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":true},"topology":{"enabled":true}}})).unwrap()}).await.unwrap();
     let subject = rt
         .subjects
         .create_subject(CreateSubject {
@@ -303,7 +303,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     let calls_before_prepare = probe.calls.lock().unwrap().len();
     let prepared = rt
         .cognition
-        .bind_query(query(subject, vec![text.clone()]))
+        .bind_query(query(subject, vec![text.clone()]), &rt)
         .await
         .unwrap();
     assert_eq!(probe.calls.lock().unwrap().len(), calls_before_prepare);

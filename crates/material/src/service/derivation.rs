@@ -37,7 +37,7 @@ impl MaterialService {
     pub async fn persist_derived_representation(
         &self,
         mut representation: DerivedRepresentation,
-        operation: Option<&nous_persistence::WorkflowIdentity>,
+        operation: Option<&nous_persistence::ModelOperationIdentity>,
     ) -> Result<DerivedRepresentation> {
         if operation.is_some_and(|identity| {
             identity.subject != representation.subject_id || identity.owner != "material"

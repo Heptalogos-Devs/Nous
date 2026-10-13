@@ -60,20 +60,46 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
             let concept_enrichment_requirement =
                 enum_name(bound.source_query.capabilities.query_concept_enrichment);
             let historical_view = bound.historical_authority.is_some();
-            let token = if input.reserve_execution {
+            let rerank_configured = bound
+                .config_snapshot
+                .json("models")
+                .and_then(|models| models.pointer("/roles/query_rerank/routes"))
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|routes| !routes.is_empty());
+            let needs_host = embedding_required
+                || (bound.concept_enrichment == nous_runtime::ConceptEnrichment::Model
+                    && bound.source_query.capabilities.query_concept_enrichment
+                        != RequirementStrength::Forbidden)
+                || (!bound.source_query.is_exact_read()
+                    && !embedding_text.is_empty()
+                    && (bound.source_query.capabilities.rerank == RequirementStrength::Required
+                        || (bound.source_query.capabilities.rerank
+                            != RequirementStrength::Forbidden
+                            && rerank_configured)));
+            let (token, execution) = if input.execute_query {
                 let lease = nous_runtime::QueryLease::new(std::time::Duration::from_secs(
                     u64::from(input.lease_seconds),
                 ))?;
-                let reservation = nous_runtime::QueryReservation::new(bound, lease)?;
-                Some(
-                    self.0
-                        .cognition
-                        .retain_prepared_query(reservation)?
-                        .to_string(),
-                )
+                if needs_host {
+                    let reservation = nous_runtime::QueryReservation::new(bound, lease)?;
+                    (
+                        Some(
+                            self.0
+                                .cognition
+                                .retain_prepared_query(reservation)?
+                                .to_string(),
+                        ),
+                        None,
+                    )
+                } else {
+                    (None, Some(Box::pin(self.query(bound, lease, None)).await?))
+                }
             } else {
-                None
+                (None, None)
             };
+            let (result, validation_ticket) = execution
+                .map(|value| (value.response, value.validation_ticket))
+                .unwrap_or_default();
             Ok(p::PreparedQueryResponse {
                 bound_query: inspection,
                 preparation_token: token,
@@ -84,6 +110,8 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                 concept_enrichment_mode,
                 concept_enrichment_requirement,
                 historical_view,
+                result,
+                validation_ticket,
             })
         }
         .await;

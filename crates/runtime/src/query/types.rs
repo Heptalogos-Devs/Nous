@@ -24,9 +24,6 @@ pub struct BoundQuery {
     pub bound_at_authority_seq: i64,
     pub revision_policy: RevisionPolicy,
     pub exact_bindings: Vec<ExactBinding>,
-    pub runtime_refs: Vec<CognitiveRef>,
-    pub runtime_sources: Vec<(CognitiveRef, String)>,
-    pub topology_seed_refs: Vec<(CognitiveRef, String)>,
     pub enabled_lanes: Vec<EvidenceFamily>,
     pub lane_budgets: BTreeMap<EvidenceFamily, usize>,
     pub selected_embedding_space: Option<EmbeddingSpaceSignature>,
@@ -107,6 +104,13 @@ impl From<&CognitiveHit> for CandidateStamp {
 }
 
 impl BoundQuery {
+    pub fn runtime_sources(&self) -> impl Iterator<Item = &super::QuerySource> {
+        self.context_snapshot
+            .source_refs
+            .iter()
+            .filter(|source| source.is_runtime())
+    }
+
     pub fn query(&self) -> &CognitiveQuery {
         &self.source_query
     }

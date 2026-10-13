@@ -204,11 +204,7 @@ impl MemoryService {
                 "neighborhood requires 1..256 nodes and 1..4 depth".into(),
             ));
         }
-        let mut tx = self.store.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.store.read_view().await?;
         let (root, _, _) = self
             .store
             .bind_exact_reference_in(&mut tx, subject, &root)
@@ -331,34 +327,7 @@ impl MemoryService {
                         .await?;
                 }
                 AssociationBasis::UseEvent(value) => {
-                    if value.subject_id != subject {
-                        return Err(Error::Invalid(
-                            "association UseEvent support belongs to another Subject".into(),
-                        ));
-                    }
-                    let active = sqlx::query_scalar::<_, String>(
-                        "SELECT use_kind FROM cognitive_use_events WHERE subject_id=$1 AND consumer_ref=$2 AND event_id=$3",
-                    )
-                    .bind(subject.0)
-                    .bind(&value.consumer_ref)
-                    .bind(value.event_id.0)
-                    .fetch_optional(self.store.pool())
-                    .await
-                    .map_err(db)?;
-                    let purged = sqlx::query_scalar::<_, bool>(
-                        "SELECT EXISTS(SELECT 1 FROM purged_use_receipts WHERE subject_id=$1 AND consumer_ref=$2 AND event_id=$3)",
-                    )
-                    .bind(subject.0)
-                    .bind(&value.consumer_ref)
-                    .bind(value.event_id.0)
-                    .fetch_one(self.store.pool())
-                    .await
-                    .map_err(db)?;
-                    if active.is_none() && !purged {
-                        return Err(Error::Invalid(
-                            "association UseEvent support was not recorded".into(),
-                        ));
-                    }
+                    let active = self.cognition.use_event_support(subject, value).await?;
                     use_events.push(active);
                 }
             }

@@ -33,8 +33,7 @@ pub(crate) async fn runtime_with_clock_serving(
         object_root: root.path().join("objects").to_string_lossy().into_owned(),
         serving_options: ServingOptions { root: root.path().join("serving"), lexical: serving, dense: serving, topology: false, memory_enabled: true },
         embedding: serving.then(|| Arc::new(LongitudinalEmbedding) as Arc<dyn nous_retrieval::TextEmbeddingProvider>), stored_embedding: None,
-        core_descriptors: vec![],
-        deployment_document: serde_json::json!({"serving":{"lexical":{"enabled":serving},"dense":{"enabled":serving},"topology":{"enabled":false}}}),
+        configuration: nous_kernel::configuration_catalog(vec![]).unwrap().deployment(&serde_json::json!({"serving":{"lexical":{"enabled":serving},"dense":{"enabled":serving},"topology":{"enabled":false}}})).unwrap(),
     }, clock).await.expect("open clock-injected runtime")
 }
 

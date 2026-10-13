@@ -84,7 +84,7 @@ impl MemoryService {
         }
         let first = &sources[0];
         let track: String = first.try_get("track_key").map_err(db)?;
-        let occurrences = validate_partition_occurrences(mutation.tx(), &input).await?;
+        let occurrences = validate_partition_occurrences(self, mutation.tx(), &input).await?;
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
             .await?;
@@ -391,28 +391,30 @@ async fn unchanged_partition(
 }
 
 async fn validate_partition_occurrences(
+    service: &MemoryService,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     input: &EpisodePartitionInput,
 ) -> Result<Vec<DateTime<Utc>>> {
-    let ids: Vec<Uuid> = input.ordered_occurrences.iter().map(|id| id.0).collect();
-    let rows = sqlx::query("SELECT o.occurrence_id,o.observed_at FROM observation_occurrences o JOIN experience_items e ON e.occurrence_id=o.occurrence_id AND e.subject_id=o.subject_id WHERE o.subject_id=$1 AND o.occurrence_id=ANY($2::uuid[]) ORDER BY o.observed_at,e.recorded_seq FOR SHARE OF o,e")
-        .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
-    if rows.len() != ids.len() {
+    let times = service
+        .material
+        .lock_occurrences_in(tx, input.subject, &input.ordered_occurrences)
+        .await?;
+    let ordered = service
+        .cognition
+        .lock_experience_order_in(tx, input.subject, &input.ordered_occurrences)
+        .await?;
+    if ordered.len() != input.ordered_occurrences.len() {
         return Err(Error::FailedPrecondition(
-            "partition occurrence is foreign or missing".into(),
+            "partition occurrence has no recorded experience".into(),
         ));
     }
-    let ordered: Vec<Uuid> = rows.iter().map(|row| row.get("occurrence_id")).collect();
-    if ordered != ids {
+    if ordered != input.ordered_occurrences {
         return Err(Error::Invalid(
             "partition members must follow experience chronology".into(),
         ));
     }
-    let times: std::collections::HashMap<Uuid, DateTime<Utc>> = rows
+    ordered
         .into_iter()
-        .map(|row| (row.get("occurrence_id"), row.get("observed_at")))
-        .collect();
-    ids.into_iter()
         .map(|id| {
             times
                 .get(&id)

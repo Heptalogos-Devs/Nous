@@ -11,7 +11,7 @@ import { stat, mkdir, writeFile, rm } from "node:fs/promises";
 import {
   ConfigurationError,
   readConfiguration,
-  parseEffectiveConfiguration,
+  parseModelConfiguration,
   kernelExecutable,
 } from "./schema.js";
 import type { RuntimeLocations } from "../locations.js";
@@ -32,9 +32,7 @@ export async function checkConfiguration(
       locations,
       development,
     );
-    const { models } = parseEffectiveConfiguration(
-      coreConfigurationValues(document),
-    );
+    const models = parseModelConfiguration(coreConfigurationValues(document));
     const prompts = new PromptRegistry(
       join(locations.program, "prompts"),
       join(locations.config, "prompts"),

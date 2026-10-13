@@ -136,14 +136,19 @@ impl MemoryService {
             .collect::<Vec<_>>();
         let eligible = self.current_concept_references(subject, &neighbors).await?;
         let mut descriptors = self
-            .store
             .query_descriptors(
                 subject,
                 &neighbors
                     .iter()
                     .filter(|reference| eligible.contains(*reference))
-                    .cloned()
+                    .map(|reference| {
+                        nous_runtime::QuerySource::new(reference.clone(), "exact_target")
+                    })
                     .collect::<Vec<_>>(),
+                CognitiveEffort::Maximum,
+                self.cognition.now(subject),
+                &snapshot,
+                None,
             )
             .await?
             .into_iter()
@@ -170,12 +175,13 @@ impl MemoryService {
         let mut entity_input = Vec::new();
         for descriptor in self
             .store
-            .query_descriptors(
+            .identity_descriptors(
                 subject,
                 &entities
                     .into_iter()
                     .map(CognitiveRef::Entity)
                     .collect::<Vec<_>>(),
+                None,
             )
             .await?
         {
@@ -235,17 +241,25 @@ impl MemoryService {
                 partial = true;
             }
         }
-        let (kind, value) = reference_parts(&focus);
-        let use_rows=sqlx::query("SELECT consumer_ref,event_id,use_kind FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind=$2 AND ref_value=$3 AND use_kind IN ('referenced','acted_on','result_supported','corrected','pinned') ORDER BY occurred_at DESC,event_id LIMIT 4")
-            .bind(subject.0).bind(kind).bind(value).fetch_all(self.store.pool()).await.map_err(db)?;
-        for row in use_rows {
+        for event in self
+            .cognition
+            .recent_use_events(
+                subject,
+                &focus,
+                &[
+                    "referenced",
+                    "acted_on",
+                    "result_supported",
+                    "corrected",
+                    "pinned",
+                ],
+                4,
+            )
+            .await?
+        {
             basis.insert(
                 format!("s{}", basis.len()),
-                AssociationBasis::UseEvent(UseEventRef {
-                    subject_id: subject,
-                    consumer_ref: row.try_get("consumer_ref").map_err(db)?,
-                    event_id: UseEventId(row.try_get("event_id").map_err(db)?),
-                }),
+                AssociationBasis::UseEvent(event),
             );
         }
         let accretion_policy = snapshot.get(ACCRETION)?;

@@ -39,11 +39,7 @@ impl AuthorityStore {
         subject: SubjectId,
         as_of: chrono::DateTime<chrono::Utc>,
     ) -> Result<HistoricalOwnerRows> {
-        let mut tx = self.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.read_view().await?;
         let mut cognition = Vec::new();
         for (kind, objects, revisions, object_id, revision_id) in [
             (

@@ -240,7 +240,11 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         .expression
         .cues
         .push(Cue::Entity(EntityCue { entity_ref: entity }));
-    let first = runtime.cognition.bind_query(request.clone()).await.unwrap();
+    let first = runtime
+        .cognition
+        .bind_query(request.clone(), &runtime)
+        .await
+        .unwrap();
     assert!(
         first
             .representation
@@ -274,7 +278,11 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
     );
     assert!(!first.representation.text.contains("UNRELATED HISTORY"));
     assert!(!first.representation.text.contains("entity:alice-opaque"));
-    assert!(first.runtime_refs.contains(&reference));
+    assert!(
+        first
+            .runtime_sources()
+            .any(|source| source.reference == reference)
+    );
     assert_eq!(
         first
             .context_snapshot
@@ -312,10 +320,10 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
     );
     assert!(
         first
-            .representation
+            .context_snapshot
             .source_refs
             .iter()
-            .any(|(r, source)| r == &reference && source == "work_context")
+            .any(|source| source.reference == reference && source.origin == "work_context")
     );
     assert!(
         runtime
@@ -329,7 +337,10 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         .for_profile(nous_runtime::CognitiveProfile::VcpDtsc)
         .unwrap();
     assert_eq!(selected.representation.sha256, first.representation.sha256);
-    assert_eq!(selected.runtime_refs, first.runtime_refs);
+    assert_eq!(
+        selected.context_snapshot.source_refs,
+        first.context_snapshot.source_refs
+    );
     assert_eq!(
         selected
             .config_snapshot
@@ -368,7 +379,11 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         .cognition
         .take_prepared_query(subject, token)
         .unwrap();
-    let timed = runtime.cognition.bind_query(query(subject)).await.unwrap();
+    let timed = runtime
+        .cognition
+        .bind_query(query(subject), &runtime)
+        .await
+        .unwrap();
     let timed_token = runtime
         .cognition
         .retain_prepared_query(
@@ -441,11 +456,19 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         frozen.bound.context_snapshot.digest,
         first.context_snapshot.digest
     );
-    let changed = runtime.cognition.bind_query(request).await.unwrap();
+    let changed = runtime
+        .cognition
+        .bind_query(request, &runtime)
+        .await
+        .unwrap();
     assert_ne!(changed.representation.sha256, first.representation.sha256);
     let mut runtime_query = query(subject);
     runtime_query.session = Some(session.session_id);
-    let frozen_runtime = runtime.cognition.bind_query(runtime_query).await.unwrap();
+    let frozen_runtime = runtime
+        .cognition
+        .bind_query(runtime_query, &runtime)
+        .await
+        .unwrap();
     let newer_source = observation(&runtime, subject, "Bob reports an unrelated task").await;
     let newer = runtime
         .require_memory()
@@ -499,7 +522,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
     assert!(
         runtime
             .cognition
-            .bind_query(raw.clone())
+            .bind_query(raw.clone(), &runtime)
             .await
             .unwrap()
             .representation
@@ -507,5 +530,5 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             .contains("What did I discuss yesterday?")
     );
     raw.session = Some(session.session_id);
-    assert!(runtime.cognition.bind_query(raw).await.is_ok());
+    assert!(runtime.cognition.bind_query(raw, &runtime).await.is_ok());
 }

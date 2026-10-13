@@ -167,3 +167,7 @@ Schema content 使用 title、structural_claim、applicability_scope、boundary_
 `tag create --request-file tag.toml` 使用与修订/拆分相同的 TagContent 字段；创建默认 host-explicit origin。`material clean` 清理整个 BlobRoot 的无引用对象与残留 staging，不要求选中 Subject；登记中的内容和所有 Subject 引用的材料由 Material owner 保护。
 
 Memory、Schema、Episode、Journal 的修订和 lifecycle 可用 `--expected-object-epoch <已观察epoch>` 直接发送 owner 并发 fence，省略时仍读取当前对象获取 epoch。`schema merge --request-file` 使用正式 MergeCognitiveSchemasRequest 字段 `schema_ids`、`expected_object_epochs`、`merged`；提供对应 epochs 不读取完整 sources，省略 epochs 时读取当前 sources。
+
+`config list|describe|get` 直接连接配置入口；`config set|clear` 无需先读取 revision，需要条件替换时才带 `--expected-revision`。明确的提交前拒绝不会留下 retry 请求；结果不确定时仍可 `retry <id>` 发送冻结原请求。
+
+`trace <精确认知修订> --max-nodes 64 --max-bytes 65536` 返回认知依赖节点、材料来源 DAG 和实际 producers。Memory 与 Material 分别完成自己的遍历，CLI 不逐节点编排 RPC。节点和正文预算共享于本次 trace；`truncated` 表示边界内未返回全部来源。

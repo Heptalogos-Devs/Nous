@@ -51,6 +51,46 @@ FROM resolved r
 "#;
 
 impl MaterialService {
+    /// External object origins are source facts, separate from independence-root grouping.
+    pub async fn source_objects_batch(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<HashMap<CognitiveRef, Vec<CognitiveRef>>> {
+        if references.len() > 256 || view.is_some_and(|v| v.subject != subject) {
+            return Err(Error::Invalid("source object batch scope exceeded".into()));
+        }
+        let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
+        let rows = sqlx::query(r#"
+WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), origins AS (
+ SELECT r.kind,r.value,o.external_object_ref FROM requested r JOIN observation_occurrences o ON r.kind='occurrence' AND o.occurrence_id::text=r.value WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4)
+ UNION
+ SELECT r.kind,r.value,o.external_object_ref FROM requested r
+ LEFT JOIN derived_regions g ON r.kind='derived_region' AND g.derived_region_id::text=r.value AND g.subject_id=$1
+ JOIN derived_representations d ON d.subject_id=$1 AND ((r.kind='derived_representation' AND d.derived_representation_id::text=r.value) OR d.derived_representation_id=g.derived_representation_id)
+ CROSS JOIN LATERAL representation_source_regions($1,d.derived_representation_id) roots JOIN source_regions s USING(source_region_id)
+ JOIN observation_occurrences o ON o.subject_id=$1 AND o.artifact_id=s.artifact_id
+ WHERE ($4::timestamptz IS NULL OR (d.created_at<=$4 AND s.created_at<=$4 AND o.created_at<=$4))
+) SELECT DISTINCT kind,value,external_object_ref FROM origins WHERE external_object_ref IS NOT NULL ORDER BY kind,value,external_object_ref
+"#).bind(subject.0).bind(kinds).bind(values).bind(view.map(|v| v.as_of)).fetch_all(self.store.pool()).await.map_err(db)?;
+        let mut result = HashMap::<CognitiveRef, Vec<CognitiveRef>>::new();
+        for row in rows {
+            let reference = parse_reference(
+                &row.try_get::<String, _>("kind").map_err(db)?,
+                &row.try_get::<String, _>("value").map_err(db)?,
+            )?;
+            result
+                .entry(reference)
+                .or_default()
+                .push(CognitiveRef::ExternalObject(ObjectRef::new(
+                    row.try_get::<String, _>("external_object_ref")
+                        .map_err(db)?,
+                )?));
+        }
+        Ok(result)
+    }
+
     pub async fn evidence_roots(
         &self,
         subject: SubjectId,

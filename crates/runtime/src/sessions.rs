@@ -42,11 +42,7 @@ impl CognitiveRuntimeService {
     }
 
     pub async fn session(&self, subject: SubjectId, session: SessionId) -> Result<SessionView> {
-        let mut tx = self.store.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.store.read_view().await?;
         let session = self.session_in(subject, session, &mut tx).await?;
         tx.commit().await.map_err(db)?;
         Ok(session)
@@ -76,11 +72,7 @@ impl CognitiveRuntimeService {
         if !matches!(status, "" | "open" | "closed") {
             return Err(Error::Invalid("invalid session status".into()));
         }
-        let mut tx = self.store.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.store.read_view().await?;
         let mut rows = sqlx::query("SELECT * FROM cognitive_sessions WHERE subject_id=$1 AND ($2::uuid IS NULL OR session_id>$2) AND ($3='' OR ($3='open' AND closed_at IS NULL) OR ($3='closed' AND closed_at IS NOT NULL)) ORDER BY session_id LIMIT $4")
             .bind(subject.0).bind(after).bind(status).bind(limit+1).fetch_all(&mut *tx).await.map_err(db)?;
         let more = rows.len() > limit as usize;

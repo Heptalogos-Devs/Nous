@@ -77,6 +77,7 @@ function required(value: string | undefined, name: string): string {
 }
 export async function createEnvironment(
   values: CliValues,
+  needs: { selection: "none" | "subject" | "context"; receipts: boolean },
   connect = connectNousInstance,
   input?: AsyncIterable<string | Uint8Array>,
 ) {
@@ -87,32 +88,42 @@ export async function createEnvironment(
       required(values["run-root"], "--run-root or nous launcher"),
     ),
   });
-  const policy = await original.configuration.getConfiguration({
-    paths: consumerStatePaths,
-  });
-  const policyValue = Object.fromEntries(
-    consumerStatePaths.map((path) => {
-      const entry = policy.entries.find((candidate) => candidate.path === path);
-      if (entry?.value === undefined)
-        throw new CliError(
-          "CONFIGURATION_UNAVAILABLE",
-          `Core did not return the active consumer state policy: ${path}`,
-        );
-      return [
-        path.slice("consumer_state.".length),
-        toJson(ValueSchema, entry.value),
-      ];
-    }),
-  );
-  const local = cliState(
-    values["instance-root"] && resolve(values["instance-root"]),
-    {
-      instanceId: original.instanceId,
-      consumer: values.consumer ?? "default",
-    },
-    consumerStatePolicySchema.parse(policyValue),
-  );
-  const selected = await local.selection();
+  let localState: Promise<ReturnType<typeof cliState>> | undefined;
+  async function local() {
+    return (localState ??= (async () => {
+      const policy = await original.configuration.getConfiguration({
+        paths: consumerStatePaths,
+      });
+      const policyValue = Object.fromEntries(
+        consumerStatePaths.map((path) => {
+          const entry = policy.entries.find(
+            (candidate) => candidate.path === path,
+          );
+          if (entry?.value === undefined)
+            throw new CliError(
+              "CONFIGURATION_UNAVAILABLE",
+              `Core did not return the active consumer state policy: ${path}`,
+            );
+          return [
+            path.slice("consumer_state.".length),
+            toJson(ValueSchema, entry.value),
+          ];
+        }),
+      );
+      return cliState(
+        values["instance-root"] && resolve(values["instance-root"]),
+        {
+          instanceId: original.instanceId,
+          consumer: values.consumer ?? "default",
+        },
+        consumerStatePolicySchema.parse(policyValue),
+      );
+    })());
+  }
+  const selected: Selection =
+    needs.selection === "none" || !values["instance-root"]
+      ? { format: "nous.consumer.selection" }
+      : await (await local()).selection();
   let savedBaseline = selected;
   async function bindReference(text: string, kind: string, subject: string) {
     if (kind && /^[0-9a-f-]{36}$/i.test(text))
@@ -153,31 +164,33 @@ export async function createEnvironment(
   async function addressId(kind: string, text: string, subject: string) {
     return (await bindReference(text, kind, subject)).value;
   }
-  const selectedSubject = values.subject
-    ? await addressId("subject", values.subject, "")
-    : selected.subjectId;
-  values = {
-    ...values,
-    ...(values.subject ? { subject: selectedSubject } : {}),
-    ...(values.session
-      ? {
-          session: await addressId(
-            "session",
-            values.session,
-            selectedSubject ?? "",
-          ),
-        }
-      : {}),
-    ...(values["work-context"]
-      ? {
-          "work-context": await addressId(
-            "work_context",
-            values["work-context"],
-            selectedSubject ?? "",
-          ),
-        }
-      : {}),
-  };
+  const selectedSubject =
+    needs.selection !== "none" && values.subject
+      ? await addressId("subject", values.subject, "")
+      : selected.subjectId;
+  if (needs.selection !== "none")
+    values = {
+      ...values,
+      ...(values.subject ? { subject: selectedSubject } : {}),
+      ...(needs.selection === "context" && values.session
+        ? {
+            session: await addressId(
+              "session",
+              values.session,
+              selectedSubject ?? "",
+            ),
+          }
+        : {}),
+      ...(needs.selection === "context" && values["work-context"]
+        ? {
+            "work-context": await addressId(
+              "work_context",
+              values["work-context"],
+              selectedSubject ?? "",
+            ),
+          }
+        : {}),
+    };
   const sameSubject = !values.subject || values.subject === selected.subjectId;
   const state: Selection = {
     format: "nous.consumer.selection",
@@ -192,7 +205,7 @@ export async function createEnvironment(
   const notices: { code: string; message: string; receipt?: string }[] = [];
   async function executeReceipt(
     id: string,
-    receipt: Awaited<ReturnType<typeof local.receipt>>,
+    receipt: Awaited<ReturnType<ReturnType<typeof cliState>["receipt"]>>,
   ) {
     const [domain, name] = receipt.name.split(".");
     const methods = original[
@@ -202,7 +215,7 @@ export async function createEnvironment(
       throw new CliError("INVALID_ARGUMENT", "Saved operation is unavailable");
     try {
       const result = await methods[name!]!(receipt.request as object);
-      await local.removeReceipt(id).catch(() =>
+      await (await local()).removeReceipt(id).catch(() =>
         notices.push({
           code: "REQUEST_UNSAVED",
           message:
@@ -212,6 +225,28 @@ export async function createEnvironment(
       );
       return result;
     } catch (error) {
+      const rejected =
+        error instanceof NousError
+          ? ["STALE_REVISION", "OPERATION_ID_CONFLICT"].includes(
+              error.domainCode ?? "",
+            ) ||
+            [
+              "INVALID_ARGUMENT",
+              "PERMISSION_DENIED",
+              "UNAUTHENTICATED",
+            ].includes(error.codeName)
+          : error instanceof CliError && error.code === "INVALID_ARGUMENT";
+      if (rejected) {
+        await (await local()).removeReceipt(id).catch(() =>
+          notices.push({
+            code: "REQUEST_UNSAVED",
+            message:
+              "Rejected request could not be removed; forget this saved request",
+            receipt: id,
+          }),
+        );
+        throw error;
+      }
       const failure =
         error instanceof NousError || error instanceof CliError
           ? error
@@ -223,89 +258,91 @@ export async function createEnvironment(
       throw failure;
     }
   }
-  const retryMethods: Record<string, readonly string[]> = {
-    subjects: ["createSubject", "adoptCognitiveSeed"],
-    configuration: [
-      "setSystemOverride",
-      "setSubjectOverride",
-      "clearSystemOverride",
-      "clearSubjectOverride",
-    ],
-    model: ["formFromObservation"],
-    resources: ["materializeResource"],
-    runtime: [
-      "recordObservation",
-      "reportUse",
-      "createWorkContext",
-      "updateWorkContext",
-      "pauseWorkContext",
-      "resumeWorkContext",
-      "endWorkContext",
-      "setActiveWorkContext",
-    ],
-    concepts: [
-      "createTag",
-      "reviseTag",
-      "mergeTags",
-      "splitTag",
-      "createAssociation",
-      "revokeAssociation",
-      "createCognitiveSchema",
-      "addSchemaEvidence",
-      "reviseCognitiveSchema",
-      "splitCognitiveSchema",
-      "mergeCognitiveSchemas",
-      "suppressCognitiveSchema",
-      "restoreCognitiveSchema",
-      "withdrawCognitiveSchema",
-      "reacceptCognitiveSchema",
-      "purgeCognitiveSchema",
-    ],
-    memory: [
-      "formMemory",
-      "reviseMemory",
-      "suppressMemory",
-      "restoreMemory",
-      "withdrawMemory",
-      "reacceptMemory",
-      "purgeMemory",
-      "setAccessibility",
-      "linkRevisions",
-      "createEpisode",
-      "reviseEpisode",
-      "linkEpisodeRevisions",
-      "suppressEpisode",
-      "restoreEpisode",
-      "withdrawEpisode",
-      "reacceptEpisode",
-      "purgeEpisode",
-      "suppressJournal",
-      "restoreJournal",
-      "withdrawJournal",
-      "reacceptJournal",
-      "purgeJournal",
-    ],
-  };
   const client = { ...original };
-  for (const [domain, names] of Object.entries(retryMethods)) {
-    const source = original[
-      domain as keyof typeof original
-    ] as unknown as Record<string, (request: object) => Promise<unknown>>;
-    const wrapped = { ...source };
-    for (const name of names)
-      wrapped[name] = async (request) => {
-        const id = crypto.randomUUID();
-        const receipt = {
-          format: "nous.consumer.operation" as const,
-          name: `${domain}.${name}`,
-          subjectId:
-            "subjectId" in request ? String(request.subjectId) : undefined,
-          request,
+  if (needs.receipts) {
+    const retryMethods: Record<string, readonly string[]> = {
+      subjects: ["createSubject", "adoptCognitiveSeed"],
+      configuration: [
+        "setSystemOverride",
+        "setSubjectOverride",
+        "clearSystemOverride",
+        "clearSubjectOverride",
+      ],
+      model: ["formFromObservation"],
+      resources: ["materializeResource"],
+      runtime: [
+        "recordObservation",
+        "reportUse",
+        "createWorkContext",
+        "updateWorkContext",
+        "pauseWorkContext",
+        "resumeWorkContext",
+        "endWorkContext",
+        "setActiveWorkContext",
+      ],
+      concepts: [
+        "createTag",
+        "reviseTag",
+        "mergeTags",
+        "splitTag",
+        "createAssociation",
+        "revokeAssociation",
+        "createCognitiveSchema",
+        "addSchemaEvidence",
+        "reviseCognitiveSchema",
+        "splitCognitiveSchema",
+        "mergeCognitiveSchemas",
+        "suppressCognitiveSchema",
+        "restoreCognitiveSchema",
+        "withdrawCognitiveSchema",
+        "reacceptCognitiveSchema",
+        "purgeCognitiveSchema",
+      ],
+      memory: [
+        "formMemory",
+        "reviseMemory",
+        "suppressMemory",
+        "restoreMemory",
+        "withdrawMemory",
+        "reacceptMemory",
+        "purgeMemory",
+        "setAccessibility",
+        "linkRevisions",
+        "createEpisode",
+        "reviseEpisode",
+        "linkEpisodeRevisions",
+        "suppressEpisode",
+        "restoreEpisode",
+        "withdrawEpisode",
+        "reacceptEpisode",
+        "purgeEpisode",
+        "suppressJournal",
+        "restoreJournal",
+        "withdrawJournal",
+        "reacceptJournal",
+        "purgeJournal",
+      ],
+    };
+    for (const [domain, names] of Object.entries(retryMethods)) {
+      const source = original[
+        domain as keyof typeof original
+      ] as unknown as Record<string, (request: object) => Promise<unknown>>;
+      const wrapped = { ...source };
+      for (const name of names)
+        wrapped[name] = async (request) => {
+          const id = crypto.randomUUID();
+          const receipt = {
+            format: "nous.consumer.operation" as const,
+            name: `${domain}.${name}`,
+            subjectId:
+              "subjectId" in request ? String(request.subjectId) : undefined,
+            request,
+          };
+          await (await local()).writeReceipt(id, receipt);
+          return executeReceipt(id, receipt);
         };
-        await local.writeReceipt(id, receipt);
-        return executeReceipt(id, receipt);
-      };
-    Object.assign(client, { [domain]: wrapped });
+      Object.assign(client, { [domain]: wrapped });
+    }
   }
   async function resolveReference(text: string, kind = "") {
     const resultNumber = /^result:(\d+)$/.exec(text);
@@ -366,7 +403,7 @@ export async function createEnvironment(
     readText,
     async save(this: void, value: Selection) {
       try {
-        await local.save(value, savedBaseline);
+        await (await local()).save(value, savedBaseline);
         savedBaseline = value;
       } catch (error) {
         notices.push({
@@ -379,11 +416,11 @@ export async function createEnvironment(
       }
     },
     async forget(id: string) {
-      await local.removeReceipt(id);
+      await (await local()).removeReceipt(id);
       return { forgottenRequest: id };
     },
     async retry(id: string) {
-      const receipt = await local.receipt(id);
+      const receipt = await (await local()).receipt(id);
       if (
         receipt.name !== "subjects.createSubject" &&
         receipt.subjectId &&

@@ -38,11 +38,7 @@ impl AuthorityStore {
         episode_budget: crate::EpisodeTextBudget,
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<TextProjectionInput> {
-        let mut tx = self.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.read_view().await?;
         if view.is_some_and(|view| view.subject != subject) {
             return Err(Error::Invalid(
                 "text projection view Subject mismatch".into(),

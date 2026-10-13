@@ -45,14 +45,19 @@ impl MemoryService {
         subject: SubjectId,
         basis: &[RevisionBasis],
     ) -> Result<()> {
+        let occurrences = basis
+            .iter()
+            .filter_map(|basis| match basis {
+                RevisionBasis::Evidence(e) => Some(e.occurrence_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        self.material
+            .lock_occurrences_in(tx, subject, &occurrences)
+            .await?;
         for basis in basis {
             match basis {
-                RevisionBasis::Evidence(evidence) => {
-                    sqlx::query("SELECT occurrence_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2 FOR SHARE")
-                        .bind(subject.0).bind(evidence.occurrence_id.0)
-                        .fetch_optional(&mut **tx).await.map_err(db)?
-                        .ok_or_else(|| Error::Invalid("evidence occurrence is outside Subject".into()))?;
-                }
+                RevisionBasis::Evidence(_) => {}
                 RevisionBasis::CognitionDependency(dependency) => {
                     let (query, id, _) = dependency_query(&dependency.target_revision, true)?;
                     let row = sqlx::query(query)

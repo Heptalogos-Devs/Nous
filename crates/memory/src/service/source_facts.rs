@@ -60,11 +60,10 @@ lineage(root_kind,root,kind,value) AS (
 ), source_occurrences AS (
  SELECT DISTINCT l.root_kind,l.root,o.occurrence_id,o.source_class,o.actor_entity_ref,
   o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at,
-  ARRAY(SELECT DISTINCT b.entity_ref FROM entity_mentions m CROSS JOIN LATERAL (
-   SELECT entity_ref,binding_state FROM entity_binding_revisions WHERE mention_id=m.mention_id AND (NOT x.historical OR binding_revision_id=ANY(x.bindings)) ORDER BY revision_no DESC LIMIT 1
-  ) b WHERE m.subject_id=x.subject AND m.occurrence_id=o.occurrence_id AND b.binding_state='bound' AND b.entity_ref IS NOT NULL) entities
- FROM lineage l CROSS JOIN source_settings x JOIN observation_occurrences o ON o.occurrence_id=CASE WHEN l.kind='occurrence' THEN l.value::uuid END
- WHERE o.subject_id=x.subject AND (NOT x.historical OR o.created_at<=x.cut)
+  o.entities
+ FROM lineage l CROSS JOIN source_settings x
+ JOIN LATERAL material_occurrence_facts(x.subject,x.cut,CASE WHEN x.historical THEN x.bindings ELSE NULL END) o ON o.occurrence_id=CASE WHEN l.kind='occurrence' THEN l.value::uuid END
+
 )
 "#);
     Ok(())

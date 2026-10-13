@@ -3,7 +3,7 @@
 
 import type { UserContent } from "ai";
 import { ModelInvocations } from "./invocations.js";
-import { type ModelRoleSnapshot } from "./execution/snapshot.js";
+import { type PreparedModelRole } from "./execution/binding.js";
 import {
   structuredMaterialResult,
   type StructuredMaterialContext,
@@ -21,7 +21,7 @@ export class MaterialInterpretation {
     bytes: Uint8Array,
     mediaType: string,
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    fixed?: PreparedModelRole,
   ) {
     if (!mediaType.startsWith("image/"))
       throw new Error("Image description requires image material");
@@ -32,7 +32,7 @@ export class MaterialInterpretation {
         content,
         context: (actual) => ({ evidence_access: originalMediaAccess(actual) }),
       },
-      { signal: signal, snapshot: fixed },
+      { signal: signal, prepared: fixed },
     );
     return {
       text: interpretationSchema.parse({ text: result.value }).text,
@@ -44,7 +44,7 @@ export class MaterialInterpretation {
   async structure(
     input: string | { bytes: Uint8Array; mediaType: string },
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    fixed?: PreparedModelRole,
     context?: StructuredMaterialContext,
   ) {
     if (!context)
@@ -105,7 +105,7 @@ export class MaterialInterpretation {
       },
       {
         signal: signal,
-        snapshot: fixed,
+        prepared: fixed,
         validateOutput: (value, actual) => {
           structuredMaterialResult(value, available(actual));
         },
@@ -123,7 +123,7 @@ export class MaterialInterpretation {
     mediaType: string,
     structured: boolean,
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    fixed?: PreparedModelRole,
     context?: StructuredMaterialContext,
   ) {
     if (structured && !context)
@@ -146,7 +146,7 @@ export class MaterialInterpretation {
       },
       {
         signal: signal,
-        snapshot: fixed,
+        prepared: fixed,
         validateOutput: structured
           ? (value, actual) => {
               structuredMaterialResult(value, available(actual));
@@ -168,7 +168,7 @@ export class MaterialInterpretation {
     transcript: string | undefined,
     structured: boolean,
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    fixed?: PreparedModelRole,
     context?: StructuredMaterialContext,
   ) {
     if (structured && !context)
@@ -224,7 +224,7 @@ export class MaterialInterpretation {
           : structured
             ? undefined
             : { role: "material_description", path: this.videoPrompt },
-        snapshot: fixed,
+        prepared: fixed,
         validateOutput: structured
           ? (value, actual) => {
               structuredMaterialResult(value, available(actual));

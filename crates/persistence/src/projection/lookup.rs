@@ -17,11 +17,7 @@ impl AuthorityStore {
         if references.len() > 256 || view.is_some_and(|view| view.subject != subject) {
             return Err(Error::Invalid("invalid bounded document lookup".into()));
         }
-        let mut tx = self.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.read_view().await?;
         let mut sources = if let Some(view) = view {
             crate::historical::text::historical_sources_in(
                 &mut tx,

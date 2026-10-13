@@ -274,3 +274,22 @@ CREATE TABLE subject_capabilities (
     subject_id uuid PRIMARY KEY REFERENCES subjects(subject_id) ON DELETE CASCADE,
     memory boolean NOT NULL
 );
+
+-- Material source facts, including the selected identity bindings at a historical cut.
+-- Cognition repositories can join these facts without interpreting Material tables.
+CREATE FUNCTION material_occurrence_facts(owner_subject uuid, cutoff timestamptz, binding_ids uuid[])
+RETURNS TABLE (occurrence_id uuid, source_class text, actor_entity_ref text,
+               occurred_time_kind text, occurred_time_start timestamptz, occurred_time_end timestamptz,
+               observed_at timestamptz, entities text[])
+LANGUAGE SQL STABLE AS $$
+    SELECT o.occurrence_id,o.source_class,o.actor_entity_ref,
+           o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at,
+           ARRAY(SELECT DISTINCT b.entity_ref FROM entity_mentions m
+                 CROSS JOIN LATERAL (SELECT entity_ref,binding_state FROM entity_binding_revisions
+                                     WHERE mention_id=m.mention_id AND (binding_ids IS NULL OR binding_revision_id=ANY(binding_ids))
+                                     ORDER BY revision_no DESC LIMIT 1) b
+                 WHERE m.subject_id=owner_subject AND m.occurrence_id=o.occurrence_id
+                   AND b.binding_state='bound' AND b.entity_ref IS NOT NULL)
+    FROM observation_occurrences o
+    WHERE o.subject_id=owner_subject AND (cutoff IS NULL OR o.created_at<=cutoff)
+$$;

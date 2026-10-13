@@ -221,6 +221,21 @@ impl CognitiveRuntimeService {
             branch.source_query.expression = scope;
             branch.source_query.expression.preferences.clear();
             branch.exact_bindings.retain(|binding| branch.source_query.expression.targets.iter().any(|target| matches!(target, QueryTarget::Exact { reference } if reference == &binding.requested_ref)));
+            let explicit = super::bind::expression_sources(&branch.source_query);
+            let sources = branch
+                .context_snapshot
+                .source_refs
+                .iter()
+                .filter(|source| {
+                    source.is_runtime()
+                        || explicit.iter().any(|requested| {
+                            (requested.requested_ref == source.requested_ref
+                                || requested.reference == source.reference)
+                                && requested.origin == source.origin
+                        })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
             branch.activation = bound.activation.scoped(
                 &branch.source_query,
                 branch
@@ -228,7 +243,7 @@ impl CognitiveRuntimeService {
                     .iter()
                     .map(|binding| binding.bound_ref.clone())
                     .collect(),
-                &branch.topology_seed_refs,
+                &sources,
             );
             let branch_plan = plan.for_leaf(&mut branch, index, count);
             if branch.enabled_lanes.is_empty() && !branch.source_query.requests_resources() {

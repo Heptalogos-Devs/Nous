@@ -165,7 +165,7 @@ fn source_seeds(graph: &crate::WaveGraphGeneration, bound: &BoundQuery) -> Vec<S
     for seed in &bound.activation.seeds {
         if let Some(node) = graph.node_id(&seed.reference) {
             let default = match seed.origin.as_str() {
-                "runtime_situation" => 0.85,
+                "runtime_situation" | "runtime_resident" => 0.85,
                 "entity_cue" => 0.90,
                 "tag_cue" | "existing_semantic_match" => 0.75,
                 _ => 1.0,

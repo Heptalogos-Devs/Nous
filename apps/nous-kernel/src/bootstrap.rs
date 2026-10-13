@@ -47,8 +47,8 @@ pub async fn open(path: &Path) -> Result<(NousRuntime, Option<PostgreSQL>)> {
         .ok_or_else(|| Error::Invalid("config parent required".into()))?;
     let bundle = config.configuration;
     // Validate the complete catalog/document before acquiring database resources.
-    nous_kernel::configuration_catalog(bundle.core_descriptors.clone())?
-        .deployment_values(&bundle.deployment_document)?;
+    let configuration = nous_kernel::configuration_catalog(bundle.core_descriptors)?
+        .deployment(&bundle.deployment_document)?;
     let (postgres_url, managed) = open_database(root, &config.bootstrap.database).await?;
     let result = NousRuntime::open(RuntimeOptions {
         postgres_url,
@@ -66,8 +66,7 @@ pub async fn open(path: &Path) -> Result<(NousRuntime, Option<PostgreSQL>)> {
         },
         embedding: None,
         stored_embedding: None,
-        core_descriptors: bundle.core_descriptors,
-        deployment_document: bundle.deployment_document,
+        configuration,
     })
     .await;
     match result {

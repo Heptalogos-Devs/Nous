@@ -103,13 +103,21 @@ impl MemoryService {
         journal: JournalId,
         revision: Option<JournalRevisionId>,
     ) -> Result<JournalView> {
-        let selected: Option<Uuid> = sqlx::query_scalar("SELECT r.journal_revision_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id AND r.journal_revision_id=COALESCE($3,o.current_revision_id) WHERE o.subject_id=$1 AND o.journal_id=$2")
-            .bind(subject.0).bind(journal.0).bind(revision.map(|id| id.0)).fetch_optional(self.store.pool()).await.map_err(db)?;
-        self.journal_revision(
-            subject,
-            JournalRevisionId(selected.ok_or_else(|| Error::NotFound("Journal not found".into()))?),
-        )
-        .await
+        let mut tx = self.store.read_view().await?;
+        let revisions = revision.map(|id| vec![id.0]).unwrap_or_default();
+        let objects = if revision.is_none() {
+            vec![journal.0]
+        } else {
+            vec![]
+        };
+        let views = self
+            .journal_views_in(&mut tx, subject, &revisions, &objects)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        views
+            .into_values()
+            .find(|view| view.object.journal_id == journal)
+            .ok_or_else(|| Error::NotFound("Journal not found".into()))
     }
 
     async fn journal_views(
@@ -117,11 +125,30 @@ impl MemoryService {
         subject: SubjectId,
         revisions: &[Uuid],
     ) -> Result<std::collections::HashMap<Uuid, JournalView>> {
+        let mut tx = self.store.read_view().await?;
+        let result = self
+            .journal_views_in(&mut tx, subject, revisions, &[])
+            .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(result)
+    }
+
+    pub(in crate::service) async fn journal_views_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        revisions: &[Uuid],
+        objects: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, JournalView>> {
         use std::collections::HashMap;
-        let rows = sqlx::query("SELECT o.*,r.journal_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end,r.narrative,r.formed_at,r.recorded_at,r.producer_signature_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id WHERE o.subject_id=$1 AND r.journal_revision_id=ANY($2)").bind(subject.0).bind(revisions).fetch_all(self.store.pool()).await.map_err(db)?;
+        let rows = sqlx::query("SELECT o.*,r.journal_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end,r.narrative,r.formed_at,r.recorded_at,r.producer_signature_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id WHERE o.subject_id=$1 AND (r.journal_revision_id=ANY($2) OR (o.journal_id=ANY($3) AND r.journal_revision_id=o.current_revision_id))").bind(subject.0).bind(revisions).bind(objects).fetch_all(&mut **tx).await.map_err(db)?;
+        let selected = rows
+            .iter()
+            .map(|row| row.try_get::<Uuid, _>("journal_revision_id").map_err(db))
+            .collect::<Result<Vec<_>>>()?;
         let mut points: HashMap<Uuid, Vec<JournalPoint>> = HashMap::new();
         for row in sqlx::query("SELECT p.journal_revision_id,p.ordinal,p.role,p.text,COALESCE(jsonb_agg(s.basis ORDER BY s.basis_no) FILTER(WHERE s.basis_no IS NOT NULL),'[]') AS basis FROM journal_revision_points p LEFT JOIN journal_point_basis s USING(journal_revision_id,ordinal) WHERE p.journal_revision_id=ANY($1) GROUP BY p.journal_revision_id,p.ordinal,p.role,p.text ORDER BY p.journal_revision_id,p.ordinal")
-            .bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+            .bind(&selected).fetch_all(&mut **tx).await.map_err(db)? {
             points.entry(row.try_get("journal_revision_id").map_err(db)?).or_default().push(JournalPoint {
                 role: parse_enum(row.try_get("role").map_err(db)?, "Journal point role")?,
                 text: row.try_get("text").map_err(db)?,
@@ -130,7 +157,7 @@ impl MemoryService {
         }
         let mut sources: HashMap<Uuid, Vec<CognitiveRef>> = HashMap::new();
         for row in sqlx::query("SELECT journal_revision_id,ref_kind,ref_value FROM journal_revision_sources WHERE journal_revision_id=ANY($1) ORDER BY journal_revision_id,ref_kind,ref_value")
-            .bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+            .bind(&selected).fetch_all(&mut **tx).await.map_err(db)? {
             sources.entry(row.try_get("journal_revision_id").map_err(db)?).or_default().push(parse_reference(&row.try_get::<String,_>("ref_kind").map_err(db)?, &row.try_get::<String,_>("ref_value").map_err(db)?)?);
         }
         rows.into_iter()
@@ -216,24 +243,26 @@ impl MemoryService {
             return Err(Error::Invalid("invalid Journal status filter".into()));
         }
         self.store.require_subject(subject).await?;
+        let mut tx = self.store.read_view().await?;
         let ids: Vec<Uuid> = if let Some(journal) = journal {
             self.store
                 .validate_reference(subject, &CognitiveRef::Journal(journal))
                 .await?;
             let after_no = if let Some(last) = last {
                 Some(sqlx::query_scalar::<_, i32>("SELECT revision_no FROM journal_revisions WHERE subject_id=$1 AND journal_id=$2 AND journal_revision_id=$3")
-                    .bind(subject.0).bind(journal.0).bind(last).fetch_optional(self.store.pool()).await.map_err(db)?
+                    .bind(subject.0).bind(journal.0).bind(last).fetch_optional(&mut *tx).await.map_err(db)?
                     .ok_or_else(|| Error::Invalid("invalid Journal history cursor".into()))?)
             } else {
                 None
             };
             sqlx::query_scalar("SELECT journal_revision_id FROM journal_revisions WHERE subject_id=$1 AND journal_id=$2 AND ($3::int IS NULL OR revision_no>$3) ORDER BY revision_no LIMIT $4")
-                .bind(subject.0).bind(journal.0).bind(after_no).bind(limit).fetch_all(self.store.pool()).await.map_err(db)?
+                .bind(subject.0).bind(journal.0).bind(after_no).bind(limit).fetch_all(&mut *tx).await.map_err(db)?
         } else {
             sqlx::query_scalar("SELECT current_revision_id FROM journal_objects WHERE subject_id=$1 AND ($2::uuid IS NULL OR journal_id>$2) AND ($4='' OR acceptance_state=$4) ORDER BY journal_id LIMIT $3")
-                .bind(subject.0).bind(last).bind(limit).bind(status).fetch_all(self.store.pool()).await.map_err(db)?
+                .bind(subject.0).bind(last).bind(limit).bind(status).fetch_all(&mut *tx).await.map_err(db)?
         };
-        let mut views = self.journal_views(subject, &ids).await?;
+        let mut views = self.journal_views_in(&mut tx, subject, &ids, &[]).await?;
+        tx.commit().await.map_err(db)?;
         ids.into_iter()
             .map(|id| {
                 views

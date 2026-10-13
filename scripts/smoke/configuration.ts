@@ -312,10 +312,8 @@ try {
   });
   assert.equal(replay.revision, change.revision);
   assert.equal((await entry("maintenance.enabled")).value, true);
-  await assert.rejects(
-    cli("set", "maintenance.enabled", "false", "--json"),
-    /expected-revision/,
-  );
+  await cli("set", "maintenance.enabled", "false", "--json");
+  assert.equal((await entry("maintenance.enabled")).value, false);
   await assert.rejects(
     cli(
       "clear",

@@ -252,7 +252,7 @@ async fn ended_work_context_wakes_and_closes_experience_before_idle_deadline() {
         .acknowledge_maintenance(
             &selected[0],
             MaintenanceDisposition::Pending {
-                due_at: initial.next_due.unwrap(),
+                due_at: initial.next_due,
                 problem_code: None,
             },
         )

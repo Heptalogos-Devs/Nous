@@ -6,13 +6,6 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 impl MemoryService {
-    /// Materialize the selected revision set through owner-batched Authority
-    /// reads. Query orchestration must not turn a candidate list into one
-    /// `memory(...)` call per candidate.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one owner-level batch materializer keeps all candidate projections consistent"
-    )]
     pub(crate) async fn memory_views(
         &self,
         subject: SubjectId,
@@ -22,42 +15,68 @@ impl MemoryService {
         full_details: bool,
         now: DateTime<Utc>,
     ) -> Result<HashMap<Uuid, MemoryView>> {
-        if revisions.is_empty() {
+        let mut tx = self.store.read_view().await?;
+        let result = self
+            .memory_views_in(
+                &mut tx,
+                subject,
+                (revisions, &[]),
+                accessibility_policy,
+                view,
+                full_details,
+                now,
+            )
+            .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(result)
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one owner-level batch materializer keeps all candidate projections consistent"
+    )]
+    pub(in crate::service) async fn memory_views_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        selection: (&[Uuid], &[Uuid]),
+        accessibility_policy: &AccessibilityPolicy,
+        view: Option<&HistoricalAuthoritySnapshot>,
+        full_details: bool,
+        now: DateTime<Utc>,
+    ) -> Result<HashMap<Uuid, MemoryView>> {
+        let (revisions, objects) = selection;
+        if revisions.is_empty() && objects.is_empty() {
             return Ok(HashMap::new());
         }
         let now = view.map_or(now, |view| view.as_of);
-        let rows = sqlx::query("SELECT o.memory_id,o.subject_id,o.cognitive_role,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.accessibility_mode,o.created_at,r.memory_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.formation_mode,r.grounding_occurrence_id,r.semantic_role,r.title,r.representation_text,r.epistemic_class,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM memory_objects o JOIN memory_revisions r ON r.memory_id=o.memory_id WHERE o.subject_id=$1 AND r.memory_revision_id=ANY($2::uuid[])")
+        let rows = sqlx::query("SELECT o.memory_id,o.subject_id,o.cognitive_role,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.accessibility_mode,o.created_at,ARRAY(SELECT sibling.memory_revision_id FROM memory_revisions sibling WHERE sibling.memory_id=o.memory_id) sibling_revisions,r.memory_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.formation_mode,r.grounding_occurrence_id,r.semantic_role,r.title,r.representation_text,r.epistemic_class,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM memory_objects o JOIN memory_revisions r ON r.memory_id=o.memory_id WHERE o.subject_id=$1 AND (r.memory_revision_id=ANY($2::uuid[]) OR (o.memory_id=ANY($3::uuid[]) AND r.memory_revision_id=o.current_revision_id))")
         .bind(subject.0)
         .bind(revisions)
-        .fetch_all(self.store.pool())
+        .bind(objects)
+        .fetch_all(&mut **tx)
         .await
         .map_err(db)?;
+        let selected = rows
+            .iter()
+            .map(|row| row.try_get::<Uuid, _>("memory_revision_id").map_err(db))
+            .collect::<Result<Vec<_>>>()?;
+        let revisions = selected.as_slice();
         let evidence_rows = sqlx::query("SELECT memory_revision_id,occurrence_id,source_region_id,derived_representation_id,derived_region_id,basis_role,evidence_no,epistemic_relation FROM memory_revision_evidence WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,evidence_no")
         .bind(revisions)
-        .fetch_all(self.store.pool())
+        .fetch_all(&mut **tx)
         .await
         .map_err(db)?;
         let dependency_rows = sqlx::query("SELECT memory_revision_id,target_ref_kind,target_ref,basis_role,epistemic_relation FROM memory_revision_dependencies WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,target_ref_kind,target_ref")
         .bind(revisions)
-        .fetch_all(self.store.pool())
+        .fetch_all(&mut **tx)
         .await
         .map_err(db)?;
         let aboutness_rows = sqlx::query("SELECT memory_revision_id,entity_ref FROM memory_revision_aboutness WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,entity_ref")
         .bind(revisions)
-        .fetch_all(self.store.pool())
+        .fetch_all(&mut **tx)
         .await
         .map_err(db)?;
-        let temporal_rows = sqlx::query("SELECT e.memory_revision_id,o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at FROM memory_revision_evidence e JOIN observation_occurrences o USING(occurrence_id) WHERE e.memory_revision_id=ANY($1::uuid[]) ORDER BY e.memory_revision_id,o.observed_at")
-        .bind(revisions)
-        .fetch_all(self.store.pool())
-        .await
-        .map_err(db)?;
-        let source_rows = sqlx::query("SELECT DISTINCT e.memory_revision_id,o.source_class FROM memory_revision_evidence e JOIN observation_occurrences o USING(occurrence_id) WHERE e.memory_revision_id=ANY($1::uuid[]) ORDER BY e.memory_revision_id,o.source_class")
-        .bind(revisions)
-        .fetch_all(self.store.pool())
-        .await
-        .map_err(db)?;
-
         let mut basis = HashMap::<Uuid, Vec<RevisionBasis>>::new();
         for row in evidence_rows {
             let locator = match (
@@ -116,63 +135,89 @@ impl MemoryService {
                 row.try_get::<String, _>("entity_ref").map_err(db)?,
             )?);
         }
+        let occurrence_ids = basis
+            .values()
+            .flatten()
+            .filter_map(|basis| match basis {
+                RevisionBasis::Evidence(e) => Some(e.occurrence_id),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let occurrence_facts = self
+            .material
+            .occurrences_in(tx, subject, &occurrence_ids, view)
+            .await?;
         let mut temporal = HashMap::<Uuid, TemporalEvidence>::new();
-        for row in temporal_rows {
-            let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;
-            let entry = temporal.entry(revision).or_default();
-            entry.occurred.push(temporal_from_columns(
-                row.try_get("occurred_time_kind").map_err(db)?,
-                row.try_get("occurred_time_start").map_err(db)?,
-                row.try_get("occurred_time_end").map_err(db)?,
-            )?);
-            if full_details || entry.observed_at.is_none() {
-                entry.observed_at = row.try_get("observed_at").map_err(db)?;
+        let mut source_classes = HashMap::<Uuid, Vec<SourceClass>>::new();
+        for (revision, support) in &basis {
+            let mut occurrences = support
+                .iter()
+                .filter_map(|basis| match basis {
+                    RevisionBasis::Evidence(e) => occurrence_facts.get(&e.occurrence_id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            occurrences.sort_by_key(|o| o.observed_at);
+            let entry = temporal.entry(*revision).or_default();
+            for occurrence in occurrences {
+                entry.occurred.push(occurrence.occurred_time.clone());
+                if full_details || entry.observed_at.is_none() {
+                    entry.observed_at = Some(occurrence.observed_at);
+                }
+                source_classes
+                    .entry(*revision)
+                    .or_default()
+                    .push(occurrence.source_class.clone());
+            }
+            if let Some(classes) = source_classes.get_mut(revision) {
+                classes.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+                classes.dedup();
             }
         }
-        let mut source_classes = HashMap::<Uuid, Vec<SourceClass>>::new();
-        for row in source_rows {
-            let revision: Uuid = row.try_get("memory_revision_id").map_err(db)?;
-            source_classes
-                .entry(revision)
-                .or_default()
-                .push(SourceClass::from(
-                    row.try_get::<String, _>("source_class").map_err(db)?,
-                ));
-        }
-        let memory_ids = rows
-            .iter()
-            .map(|row| row.try_get::<Uuid, _>("memory_id").map_err(db))
-            .collect::<Result<Vec<_>>>()?;
-        let accessibility_rows = sqlx::query("SELECT o.memory_id,o.accessibility_mode,o.created_at,u.use_kind,u.occurred_at FROM memory_objects o LEFT JOIN cognitive_use_events u ON u.subject_id=o.subject_id AND u.ref_kind='memory_revision' AND u.ref_value IN (SELECT memory_revision_id::text FROM memory_revisions mr2 WHERE mr2.memory_id=o.memory_id) AND u.use_kind <> 'presented' AND ($3::timestamptz IS NULL OR u.occurred_at<=$3) WHERE o.subject_id=$1 AND o.memory_id=ANY($2::uuid[])")
-        .bind(subject.0)
-        .bind(&memory_ids)
-        .bind(view.map(|v|v.as_of))
-        .fetch_all(self.store.pool())
-        .await
-        .map_err(db)?;
-        let mut accessibility = HashMap::<Uuid, AccessibilityLevel>::new();
+        let mut revision_owners = HashMap::new();
         let mut accessibility_inputs =
             HashMap::<Uuid, (String, DateTime<Utc>, Vec<(String, f64)>)>::new();
-        for row in accessibility_rows {
+        for row in &rows {
             let memory: Uuid = row.try_get("memory_id").map_err(db)?;
-            let entry = accessibility_inputs.entry(memory).or_insert_with(|| {
-                (
-                    row.try_get("accessibility_mode")
-                        .unwrap_or_else(|_| "auto".into()),
-                    row.try_get("created_at").unwrap_or(now),
-                    Vec::new(),
-                )
-            });
-            if let (Some(kind), Some(at)) = (
-                row.try_get::<Option<String>, _>("use_kind").map_err(db)?,
-                row.try_get::<Option<DateTime<Utc>>, _>("occurred_at")
-                    .map_err(db)?,
-            ) {
-                entry
-                    .2
-                    .push((kind, (now - at).num_seconds().max(0) as f64 / 86400.0));
+            accessibility_inputs.entry(memory).or_insert((
+                row.try_get("accessibility_mode").map_err(db)?,
+                row.try_get("created_at").map_err(db)?,
+                vec![],
+            ));
+            for revision in row
+                .try_get::<Vec<Uuid>, _>("sibling_revisions")
+                .map_err(db)?
+            {
+                revision_owners.insert(
+                    CognitiveRef::MemoryRevision(MemoryRevisionId(revision)),
+                    memory,
+                );
             }
         }
+        let uses = self
+            .cognition
+            .use_facts_in(
+                tx,
+                subject,
+                &revision_owners.keys().cloned().collect::<Vec<_>>(),
+                view.map(|view| view.as_of),
+            )
+            .await?;
+        for fact in uses {
+            if let Some(memory) = revision_owners.get(&fact.reference) {
+                accessibility_inputs
+                    .get_mut(memory)
+                    .expect("selected Memory")
+                    .2
+                    .push((
+                        fact.kind,
+                        (now - fact.occurred_at).num_seconds().max(0) as f64 / 86400.0,
+                    ));
+            }
+        }
+        let mut accessibility = HashMap::<Uuid, AccessibilityLevel>::new();
         for (memory, (mut mode, created, uses)) in accessibility_inputs {
             if let Some(state) =
                 view.and_then(|v| v.cognition_for(&CognitiveRef::Memory(MemoryId(memory))))
@@ -197,11 +242,11 @@ impl MemoryService {
         let mut tags = HashMap::<Uuid, Vec<TagId>>::new();
         let mut relations = HashMap::<Uuid, Vec<MemoryRevisionRelation>>::new();
         if full_details {
-            for row in sqlx::query("SELECT memory_revision_id,tag_id FROM memory_revision_tags WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,tag_id").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+            for row in sqlx::query("SELECT memory_revision_id,tag_id FROM memory_revision_tags WHERE memory_revision_id=ANY($1::uuid[]) ORDER BY memory_revision_id,tag_id").bind(revisions).fetch_all(&mut **tx).await.map_err(db)? {
                 tags.entry(row.try_get("memory_revision_id").map_err(db)?).or_default().push(TagId(row.try_get("tag_id").map_err(db)?));
             }
             for row in sqlx::query("SELECT refs.id,r.* FROM unnest($1::uuid[]) refs(id) JOIN LATERAL (SELECT * FROM memory_revision_relations WHERE from_revision_id=refs.id OR to_revision_id=refs.id ORDER BY created_at,from_revision_id,to_revision_id LIMIT 257) r ON true ORDER BY refs.id,r.created_at,r.from_revision_id,r.to_revision_id")
-                .bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+                .bind(revisions).fetch_all(&mut **tx).await.map_err(db)? {
                 relations.entry(row.try_get("id").map_err(db)?).or_default().push(MemoryRevisionRelation { from_revision_id: MemoryRevisionId(row.try_get("from_revision_id").map_err(db)?), to_revision_id: MemoryRevisionId(row.try_get("to_revision_id").map_err(db)?), relation: parse_enum(row.try_get("relation").map_err(db)?, "memory relation")?, created_at: row.try_get("created_at").map_err(db)? });
             }
         }

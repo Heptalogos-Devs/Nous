@@ -63,20 +63,8 @@ export function cliErrorPayload(error: unknown) {
     };
   const message =
     error instanceof Error ? error.message : "CLI operation failed";
-  const transportCodes: Record<number, string> = {
-    3: "INVALID_ARGUMENT",
-    5: "NOT_FOUND",
-    8: "RESOURCE_EXHAUSTED",
-    9: "FAILED_PRECONDITION",
-    10: "ABORTED",
-    14: "UNAVAILABLE",
-    4: "DEADLINE_EXCEEDED",
-  };
   return {
-    code:
-      error instanceof NousError
-        ? (error.domainCode ?? transportCodes[error.code] ?? "RPC_ERROR")
-        : "INVALID_ARGUMENT",
+    code: error instanceof NousError ? error.codeName : "INVALID_ARGUMENT",
     message,
     details: error instanceof NousError ? error.details : [],
     candidates: error instanceof NousError ? error.candidates : [],

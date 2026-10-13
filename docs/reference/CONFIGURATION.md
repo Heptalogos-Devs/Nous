@@ -32,7 +32,7 @@ Artifact 上传预算为 `object_store.max_upload_bytes`，归 Material owner；
 
 Canonical `ConfigurationService` 提供 list/describe/get 与 system/Subject set/clear。Schema 和配置值使用 protobuf JSON Value；结构化值保持结构。所有公开写入携带 desired view 返回的 `configuration_revision` 作为 `expected_revision`；Kernel 在同一数据库事务内比较全局修订，过期写入或清除返回 conflict，不改变配置或修订。Mutation identity 包含 operation ID、expected revision 和规范输入；同 ID 不同输入 conflict。已完成请求先重放冻结回执，即使后续修改已推进修订。SystemService 提供系统状态与 projection 状态。
 
-Official Client 使用 `client.configuration.list / describe / get / setSystem / clearSystem / setSubject / clearSubject`；写入参数要求 `expectedRevision: bigint`。CLI 默认显示 Standard，`--advanced` 包含 Advanced，`--developer` 包含全部目录；`--subject <id>` 选择 Subject scope，`--desired` 读取 desired view。`set/clear` 必须显式提供 `--expected-revision`，重试使用原 operation ID、原 expected revision 和原值。
+Official Client 使用 generated ConfigurationService 方法：`listConfigDescriptors`、`getConfigDescriptor`、`getConfiguration`、`setSystemOverride`、`clearSystemOverride`、`setSubjectOverride` 和 `clearSubjectOverride`。`expectedRevision: bigint` 是可选并发条件；明确赋值或清除无需先读取全局 revision。CLI 默认显示 Standard，`--advanced` 包含 Advanced，`--developer` 包含全部目录；`--subject <id或名称>` 选择 Subject scope，`--desired` 读取 desired view。需要条件替换时显式提供 `--expected-revision`。重试使用原 operation ID、原条件和原值。
 
 ```sh
 nous config list
@@ -40,9 +40,9 @@ nous config list --developer
 nous config describe maintenance.enabled
 nous config get runtime.resident_limit --desired
 nous config get maintenance.enabled --desired
-nous config set maintenance.enabled true --expected-revision <configurationRevision>
-nous config set maintenance.enabled false --subject <id> --expected-revision <configurationRevision>
-nous config clear maintenance.enabled --subject <id> --expected-revision <configurationRevision>
+nous config set maintenance.enabled true
+nous config set maintenance.enabled false --subject <id>
+nous config clear maintenance.enabled --subject <id>
 nous config get models --desired
 nous config describe models
 nous config check --home <instance>
@@ -70,7 +70,7 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 
 `audio.input_mode` 为 `direct`（默认）或 `transcription`。Direct 将原始 Artifact bytes 作为 chat 的 `input_audio` 发送；transcription 需要 speech_transcription role。
 
-独立字段具有真实叶路径，例如 `video.input_mode`、`video.max_frames`、`audio.max_source_bytes`、`material.inputs.formation_source_max_bytes`、`core_execution.opportunity.work_timeout_ms` 与 `consumer_state.receipt_limit`。`config describe video.max_frames` 直接返回该字段的范围与默认值；`config set video.max_frames 4 --expected-revision <configurationRevision>` 只覆盖该字段，其他字段保留各自来源。Catalog 不同时注册这些字段的 parent。媒体、Material 输入和策略影响 Authority formation；consumer composition 和 rerank candidate budget 标注 Query policy，其余基础设施预算标注 operational。当前这些 Core 参数仍实际使用 RestartProcess，按回执重启后生效。
+独立字段具有真实叶路径，例如 `video.input_mode`、`video.max_frames`、`audio.max_source_bytes`、`material.inputs.formation_source_max_bytes`、`core_execution.opportunity.work_timeout_ms` 与 `consumer_state.receipt_limit`。`config describe video.max_frames` 直接返回该字段的范围与默认值；`config set video.max_frames 4` 只覆盖该字段，其他字段保留各自来源。Catalog 不同时注册这些字段的 parent。媒体、Material 输入和策略影响 Authority formation；consumer composition 和 rerank candidate budget 标注 Query policy，其余基础设施预算标注 operational。当前这些 Core 参数仍实际使用 RestartProcess，按回执重启后生效。
 
 `video.ffmpeg_executable` 默认显式 null，表示使用 RuntimeRoot 已安装 FFmpeg pack；string 表示 ConfigurationRoot 下的显式 executable。清除 override 回落到部署值或 reference default，显式 null 覆盖部署的 executable，空 string 非法。模型图中的空 profile map 是明确空集合，省略字段则由 owning graph 填入默认值。
 

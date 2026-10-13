@@ -2,15 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { JsonValue } from "@bufbuild/protobuf";
-import type { WorkflowPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
+import type { ResultPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_results_pb.js";
 import {
   MaintenancePlanSchema,
   type MaintenancePlan,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { protocolReferences } from "@nous-wave/protocol/messages";
-import type { Dependency } from "../durable-operation.js";
-import type { ModelRoleSnapshot } from "../model/execution/snapshot.js";
+import type { Dependency } from "../operation-results.js";
+import type { PreparedModelRole } from "../model/execution/binding.js";
 import type { ModelGenerationOutput } from "../model/schemas/contracts.js";
+
+export const maintenanceRoles = {
+  episode_resegment: "episode_segmentation",
+  journal_review: "journal_synthesis",
+  journal_revalidate: "journal_synthesis",
+  memory_consolidate: "memory_consolidation",
+  concept_maintenance: "concept_maintenance",
+} as const;
 
 export type MaintenanceActionResult = {
   index: number;
@@ -22,7 +30,7 @@ export type MaintenanceActionResult = {
     | "stale";
   resultRef: Dependency | null;
 };
-type MaintenanceOutcome = {
+export type MaintenanceOutcome = {
   status:
     | "committed"
     | "partial"
@@ -35,17 +43,19 @@ type MaintenanceOutcome = {
 };
 export type MaintenanceSnapshot = {
   plan: JsonValue;
-  model: ModelRoleSnapshot | null;
+  model: PreparedModelRole;
 };
 export type MaintenanceProposal =
   | { action: "partition" | "journal"; request: JsonValue }
   | {
       action: "consolidation";
+      input: JsonValue;
       proposal: ModelGenerationOutput<"memory_consolidation">;
       producer: JsonValue;
     }
   | {
       action: "concept";
+      input: JsonValue;
       proposal: ModelGenerationOutput<"concept_maintenance">;
       producer: JsonValue;
     }
@@ -53,7 +63,7 @@ export type MaintenanceProposal =
   | { action: "no_change" };
 
 /** These payloads are immutable Core-owned records, not provider or caller inputs. */
-export function readOutcome(saved: WorkflowPayload): MaintenanceOutcome {
+export function readOutcome(saved: ResultPayload): MaintenanceOutcome {
   return saved.purged
     ? { status: "obsolete" }
     : (JSON.parse(saved.payloadJson) as MaintenanceOutcome);

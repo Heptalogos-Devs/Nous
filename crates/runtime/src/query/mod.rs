@@ -9,7 +9,7 @@ pub use activation::*;
 mod representation;
 pub use representation::{
     QUERY_REPRESENTATION, QueryContextSnapshot, QueryRepresentation, QueryRepresentationLimits,
-    build_query_representation,
+    QuerySource, build_query_representation,
 };
 mod closure;
 mod cognitive_profile;

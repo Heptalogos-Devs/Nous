@@ -16,32 +16,13 @@ import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "../model/runtime.js";
 import { canonicalDigest } from "../digest.js";
 import { GenerationFailure } from "../model/execution/routes.js";
-import { serializeOperation } from "../durable-operation.js";
+import { serializeOperation } from "../operation-results.js";
 import { authorityRejection } from "./rejection.js";
 import { runModelMaintenance } from "./workflow.js";
-import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { executionOptions } from "../execution.js";
 
-const roles = {
-  episode_resegment: "episode_segmentation",
-  journal_review: "journal_synthesis",
-  journal_revalidate: "journal_synthesis",
-  memory_consolidate: "memory_consolidation",
-  concept_maintenance: "concept_maintenance",
-} as const;
-function allowedKinds(models: ModelRuntime, modelBudget: number) {
-  const ready = new Set(
-    models.invocations.capabilities
-      .filter((role) => role.state === "READY")
-      .map((role) => role.name),
-  );
-  return [
-    "episode_segment",
-    ...Object.entries(roles)
-      .filter(([, role]) => modelBudget > 0 && ready.has(`model.${role}`))
-      .map(([kind]) => kind),
-  ];
-}
+import { maintenanceRoles } from "./records.js";
+
 function problemClass(error: unknown) {
   const detail = domainErrorDetail(error);
   if (detail?.code && DomainErrorCode[detail.code])
@@ -144,7 +125,6 @@ async function grantMaintenanceOnce(
       elapsedMs: Math.round(performance.now() - started),
     };
   const limit = Math.min(input.maxOperations, policy.maxOperations);
-  const kinds = allowedKinds(models, input.maxModelCalls);
   const readyRoles = new Set(
     models.invocations.capabilities
       .filter((capability) => capability.state === "READY")
@@ -152,24 +132,23 @@ async function grantMaintenanceOnce(
   );
   const modelExecutionDigest = canonicalDigest(
     Object.fromEntries(
-      [...new Set(Object.values(roles))]
+      [...new Set(Object.values(maintenanceRoles))]
         .filter((role) => readyRoles.has(`model.${role}`))
-        .map((role) => [role, models.invocations.snapshot(role).configDigest]),
+        .map((role) => [role, models.invocations.prepare(role).configDigest]),
     ),
   );
-  for (let index = 0; index < limit && !signal.aborted; index++) {
-    const needs = await kernel.maintenance.selectMaintenance(
-      {
-        subjectId: input.subjectId,
-        allowedKinds:
-          modelCalls < input.maxModelCalls ? kinds : ["episode_segment"],
-        modelExecutionDigest,
-        limit: 1,
-      },
-      calls,
-    );
-    const need = needs.needs[0];
-    if (!need) break;
+  const needs = await kernel.maintenance.selectMaintenance(
+    {
+      subjectId: input.subjectId,
+      allowedKinds: ["episode_segment", ...Object.keys(maintenanceRoles)],
+      modelExecutionDigest,
+      limit: 128,
+    },
+    calls,
+  );
+  let operations = 0;
+  for (const need of needs.needs) {
+    if (operations >= limit || signal.aborted) break;
     let status: string;
     let problemCode: string | undefined;
     let nextDue;
@@ -195,6 +174,7 @@ async function grantMaintenanceOnce(
           models,
           need,
           calls,
+          input.maxModelCalls - modelCalls,
           () => {
             if (modelCalls >= input.maxModelCalls)
               throw new ConnectError(
@@ -213,7 +193,6 @@ async function grantMaintenanceOnce(
       if (signal.aborted) {
         // Host opportunity exhaustion leaves the durable need available to the next grant.
         status = "deferred";
-        nextDue = timestampFromDate(new Date());
         problemCode = callerSignal?.aborted
           ? "opportunity_canceled"
           : "opportunity_budget_exhausted";
@@ -253,6 +232,11 @@ async function grantMaintenanceOnce(
         );
       }
     }
+    if (
+      problemCode !== "model_unavailable" &&
+      problemCode !== "model_budget_exhausted"
+    )
+      operations++;
     if (status === "retry" && need.retryCount + 1 >= policy.retryMaxAttempts) {
       status = "blocked_dependency";
       problemCode = "maintenance_retry_exhausted";

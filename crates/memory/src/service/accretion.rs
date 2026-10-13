@@ -57,15 +57,17 @@ pub struct AccretionSignal {
     pub member_refs: Vec<CognitiveRef>,
 }
 impl MemoryService {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one signal combines direct support, recursive roots and owner usage facts"
+    )]
     pub async fn accretion_signal(
         &self,
         subject: SubjectId,
         center: &CognitiveRef,
     ) -> Result<Option<AccretionSignal>> {
-        let policy = self
-            .configuration
-            .snapshot_for_subject(subject)?
-            .get(ACCRETION)?;
+        let snapshot = self.configuration.snapshot_for_subject(subject)?;
+        let policy = snapshot.get(ACCRETION)?;
         if !policy.enabled {
             return Ok(None);
         }
@@ -77,48 +79,63 @@ impl MemoryService {
         let mut roots = BTreeSet::new();
         let mut occurrences = BTreeSet::new();
         let mut counterevidence = 0u64;
+        let mut direct_basis = Vec::new();
         for reference in &refs {
-            let direct = RevisionBasis::CognitionDependency(CognitionDependency {
-                epistemic_relation: None,
-                target_revision: reference.clone(),
-                basis_role: BasisRole::Direct,
-            });
-            let summary = self
-                .provenance_summary(subject, std::slice::from_ref(&direct))
-                .await?;
-            roots.extend(
-                summary
-                    .roots
-                    .into_iter()
-                    .filter(|r| r.certainty == EvidenceRootCertainty::Known)
-                    .map(|r| r.root_key),
-            );
-            let (source_ids, contradictions) = self.accretion_sources(subject, reference).await?;
-            occurrences.extend(source_ids);
-            counterevidence += contradictions;
+            direct_basis.extend(self.exact_support(subject, reference, None).await?.basis);
+        }
+        let summary = self.provenance_summary(subject, &direct_basis).await?;
+        roots.extend(
+            summary
+                .roots
+                .into_iter()
+                .filter(|r| r.certainty == EvidenceRootCertainty::Known)
+                .map(|r| r.root_key),
+        );
+        for basis in direct_basis {
+            match basis {
+                RevisionBasis::Evidence(e) => {
+                    occurrences.insert(e.occurrence_id.0);
+                    counterevidence +=
+                        u64::from(e.epistemic_relation == Some(EpistemicRelation::Contradicts));
+                }
+                RevisionBasis::CognitionDependency(d) => {
+                    counterevidence +=
+                        u64::from(d.epistemic_relation == Some(EpistemicRelation::Contradicts))
+                }
+                RevisionBasis::Seed(_) => {}
+            }
         }
         let (kinds, values): (Vec<_>, Vec<_>) = refs.iter().map(reference_parts).unzip();
-        let use_rows=sqlx::query("WITH members AS (SELECT * FROM unnest($2::text[],$3::text[]) AS m(kind,value)) SELECT use_kind,count(*)::bigint count FROM cognitive_use_events e WHERE e.subject_id=$1 AND EXISTS(SELECT 1 FROM members m WHERE m.kind=e.ref_kind AND m.value=e.ref_value) GROUP BY use_kind")
-                .bind(subject.0).bind(&kinds).bind(&values).fetch_all(self.store.pool()).await.map_err(db)?;
         let mut meaningful = 0u64;
-        for row in use_rows {
-            let count = u64::try_from(row.try_get::<i64, _>("count").map_err(db)?)
-                .map_err(|_| Error::Infrastructure("invalid use count".into()))?;
-            let kind: String = row.try_get("use_kind").map_err(db)?;
+        for fact in self
+            .cognition
+            .use_summaries(subject, &refs)
+            .await?
+            .into_values()
+            .flatten()
+        {
             if matches!(
-                kind.as_str(),
+                fact.kind.as_str(),
                 "referenced" | "acted_on" | "result_supported" | "corrected" | "pinned"
             ) {
-                meaningful += count;
+                meaningful += fact.count;
             }
-            if kind == "result_refuted" {
-                counterevidence += count;
+            if fact.kind == "result_refuted" {
+                counterevidence += fact.count;
             }
         }
         let episodes:i64=sqlx::query_scalar("WITH members AS (SELECT * FROM unnest($2::text[],$3::text[]) AS m(kind,value)) SELECT count(DISTINCT r.episode_revision_id)::bigint FROM episode_revisions r JOIN episode_objects o ON o.current_revision_id=r.episode_revision_id JOIN episode_revision_members e USING(episode_revision_id) WHERE r.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND (EXISTS(SELECT 1 FROM members m WHERE m.kind=e.ref_kind AND m.value=e.ref_value) OR (e.ref_kind='occurrence' AND e.ref_value=ANY($4::text[])))")
                 .bind(subject.0).bind(&kinds).bind(&values).bind(occurrences.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_one(self.store.pool()).await.map_err(db)?;
-        let span:i64=sqlx::query_scalar("SELECT COALESCE(extract(epoch FROM max(observed_at)-min(observed_at))::bigint,0) FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=ANY($2::uuid[])")
-                .bind(subject.0).bind(occurrences.iter().copied().collect::<Vec<_>>()).fetch_one(self.store.pool()).await.map_err(db)?;
+        let span = self
+            .material
+            .occurrence_observed_span(
+                subject,
+                &occurrences
+                    .iter()
+                    .map(|id| OccurrenceId(*id))
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
         let (kind, value) = reference_parts(center);
         let degree=sqlx::query("SELECT count(*)::bigint degree,count(DISTINCT relation_kind)::bigint diversity,count(*) FILTER(WHERE polarity='negative')::bigint negative FROM association_evidence a WHERE a.subject_id=$1 AND a.revoked_at IS NULL AND ((a.from_ref_kind=$2 AND a.from_ref=$3) OR (a.to_ref_kind=$2 AND a.to_ref=$3) OR ($2='tag' AND ((a.from_ref_kind='tag' AND canonical_tag($1,CASE WHEN a.from_ref_kind='tag' THEN a.from_ref::uuid END)=$4) OR (a.to_ref_kind='tag' AND canonical_tag($1,CASE WHEN a.to_ref_kind='tag' THEN a.to_ref::uuid END)=$4))))")
                 .bind(subject.0).bind(kind).bind(value).bind(if let CognitiveRef::Tag(id)=center {Some(id.0)}else {None}).fetch_one(self.store.pool()).await.map_err(db)?;
@@ -127,8 +144,19 @@ impl MemoryService {
         counterevidence += u64::try_from(degree.try_get::<i64, _>("negative").map_err(db)?)
             .map_err(|_| Error::Infrastructure("invalid negative count".into()))?;
         let descriptors = self
-            .store
-            .query_descriptors(subject, &refs.iter().take(32).cloned().collect::<Vec<_>>())
+            .query_descriptors(
+                subject,
+                &refs
+                    .iter()
+                    .map(|reference| {
+                        nous_runtime::QuerySource::new(reference.clone(), "exact_target")
+                    })
+                    .collect::<Vec<_>>(),
+                CognitiveEffort::Maximum,
+                self.cognition.now(subject),
+                &snapshot,
+                None,
+            )
             .await?;
         let texts = descriptors.into_iter().map(|d| d.text).collect::<Vec<_>>();
         let coherence = if let Some(first) = texts.first() {
@@ -162,47 +190,6 @@ impl MemoryService {
             partial,
             member_refs: refs,
         }))
-    }
-    async fn accretion_sources(
-        &self,
-        subject: SubjectId,
-        reference: &CognitiveRef,
-    ) -> Result<(BTreeSet<Uuid>, u64)> {
-        let basis = match reference {
-            CognitiveRef::MemoryRevision(id) => self.load_basis(*id).await?,
-            CognitiveRef::CognitiveSchemaRevision(id) => self
-                .schema_links(subject, *id)
-                .await?
-                .into_iter()
-                .map(|link| link.basis)
-                .collect(),
-            CognitiveRef::EpisodeRevision(id) => self.episode_revision(subject, *id).await?.basis,
-            CognitiveRef::JournalRevision(id) => self
-                .journal_revision(subject, *id)
-                .await?
-                .points
-                .into_iter()
-                .flat_map(|point| point.basis)
-                .collect(),
-            _ => vec![],
-        };
-        let mut occurrences = BTreeSet::new();
-        let mut contradictions = 0;
-        for basis in basis {
-            match basis {
-                RevisionBasis::Evidence(e) => {
-                    occurrences.insert(e.occurrence_id.0);
-                    contradictions +=
-                        u64::from(e.epistemic_relation == Some(EpistemicRelation::Contradicts));
-                }
-                RevisionBasis::CognitionDependency(d) => {
-                    contradictions +=
-                        u64::from(d.epistemic_relation == Some(EpistemicRelation::Contradicts))
-                }
-                _ => {}
-            }
-        }
-        Ok((occurrences, contradictions))
     }
     async fn accretion_members(
         &self,

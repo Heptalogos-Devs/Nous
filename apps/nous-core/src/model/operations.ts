@@ -42,7 +42,7 @@ export function modelOperations(
           }),
         );
       } catch (error) {
-        if (c.signal.aborted) throw error;
+        models.invocations.allowDegradation(error, c.signal, "query_embedding");
         return {
           committed: 0,
           degradation: failure("embedding_preparation_failed", error),
@@ -58,6 +58,11 @@ export function modelOperations(
       } catch (error) {
         if (c.signal.aborted || !(error instanceof GenerationFailure))
           throw error;
+        models.invocations.allowDegradation(
+          error,
+          c.signal,
+          "memory_formation",
+        );
         return {
           degradation: failure("memory_formation_failed", error),
         };

@@ -215,7 +215,7 @@ impl MaterialService {
             .ensure_identity_addresses_in(&mut tx, input.subject, &addresses, "")
             .await?;
         if let Some(request_id) = request_id {
-            AuthorityStore::add_workflow_dependencies_in(
+            AuthorityStore::add_model_result_dependencies_in(
                 &mut tx,
                 input.subject,
                 "material",

@@ -13,6 +13,14 @@ pub struct ContextSource {
 
 #[async_trait::async_trait]
 pub trait ContextResolver: Send + Sync {
+    async fn query_descriptors(
+        &self,
+        query: &CognitiveQuery,
+        sources: &[crate::QuerySource],
+        configuration: &nous_configuration::ConfigSnapshot,
+        historical: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<Vec<QueryDescriptor>>;
+
     async fn context_source(
         &self,
         subject: SubjectId,
@@ -88,7 +96,7 @@ impl CognitiveRuntimeService {
         self.store.validate_reference(subject, reference).await?;
         let text = if max_bytes > 0 && matches!(reference, CognitiveRef::Entity(_)) {
             self.store
-                .query_descriptors(subject, std::slice::from_ref(reference))
+                .identity_descriptors(subject, std::slice::from_ref(reference), None)
                 .await?
                 .into_iter()
                 .find(|descriptor| descriptor.reference == *reference)

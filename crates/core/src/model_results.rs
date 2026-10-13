@@ -9,7 +9,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowPayload {
+pub struct ResultPayload {
     pub payload: Value,
     #[serde(default)]
     pub dependencies: Vec<CognitiveRef>,
@@ -17,8 +17,8 @@ pub struct WorkflowPayload {
     pub purged: bool,
 }
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowSnapshot {
-    pub content: WorkflowPayload,
+pub struct ModelResultContext {
+    pub dependencies: Vec<CognitiveRef>,
     pub cognitive_formed_at: Option<DateTime<Utc>>,
     pub maintenance_trigger: Option<MaintenanceTrigger>,
 }

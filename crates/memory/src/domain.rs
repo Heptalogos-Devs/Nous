@@ -15,7 +15,7 @@ pub use nous_core::cognition::{
 use nous_core::{
     AssociationEvidenceId, CognitiveRef, CognitiveSchemaId, CognitiveSchemaRevisionId, EntityRef,
     EpistemicClass, Error, MemoryId, MemoryRevisionId, OccurrenceId, OperationId, Result,
-    SchemaEvidenceLinkId, SubjectId, TagId, TemporalExtent, UseEventId,
+    SchemaEvidenceLinkId, SubjectId, TagId, TemporalExtent, UseEventRef,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -178,22 +178,6 @@ pub enum AssociationBasisClass {
     CognitiveDerivation,
     MeaningfulUse,
     DerivedStructure,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UseEventRef {
-    pub subject_id: SubjectId,
-    pub consumer_ref: String,
-    pub event_id: UseEventId,
-}
-
-impl UseEventRef {
-    pub fn canonical_key(&self) -> String {
-        format!(
-            "{}:{}:{}",
-            self.subject_id.0, self.consumer_ref, self.event_id.0
-        )
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,22 +9,15 @@ import { type FormationRequest } from "@nous-wave/protocol/nous/wave/v1alpha1/mo
 import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "./runtime.js";
 import {
-  startOperation,
+  runRecordedOperation,
   serializeOperation,
-  workflowPayload,
-} from "../durable-operation.js";
-import type { WorkflowPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
-import { type ModelRoleSnapshot } from "./execution/snapshot.js";
+} from "../operation-results.js";
+import type { ResultPayload } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_results_pb.js";
 import { canonicalDigest } from "../digest.js";
 import { z } from "zod";
+import { attachExecutionTelemetry } from "./execution/routes.js";
 import { modelProducer } from "./producer.js";
 
-type FormationSnapshot = {
-  model: ModelRoleSnapshot;
-  sourceMaxBytes: number;
-  representationId?: string;
-  candidates: { key: string; surface: string; entityRef: string }[];
-};
 export async function formObservation(
   kernel: KernelClient,
   models: ModelRuntime,
@@ -96,7 +89,7 @@ async function formObservationOnce(
       explicitTags: r.explicitTags,
     }),
   };
-  const replay = async (saved: WorkflowPayload) => {
+  const replay = async (saved: ResultPayload) => {
     if (saved.purged)
       throw new ConnectError("Formation outcome was purged", Code.NotFound);
     const outcome = JSON.parse(saved.payloadJson) as { revisionId: string };
@@ -109,95 +102,70 @@ async function formObservationOnce(
       degradation: [],
     };
   };
-  const previous = await kernel.modelWorkflow.readOperation(identity, options);
-  if (previous.outcome) return replay(previous.outcome);
-  let snapshot: Parameters<typeof startOperation>[2] | undefined =
-    previous.snapshot;
-  if (!snapshot) {
-    const model = models.invocations.snapshot("memory_formation");
-    const occurrence = await kernel.material.getOccurrence(
-      { subjectId: r.subjectId, id: r.occurrenceId },
-      options,
-    );
-    let representationId = r.representationId;
-    if (!representationId && occurrence.artifactId) {
-      const artifact = await kernel.material.getArtifact(
-        { subjectId: r.subjectId, id: occurrence.artifactId },
-        options,
-      );
-      const mime = artifact.mediaType.split(";")[0]!.trim().toLowerCase();
-      const kind = mime.startsWith("image/")
-        ? "image_description"
-        : mime.startsWith("audio/")
-          ? models.audio.input_mode === "direct"
-            ? "audio_description"
-            : "transcript"
-          : mime.startsWith("video/")
-            ? "scene_description"
-            : "extracted_text";
-      const available = await kernel.material.listDerivedRepresentations(
-        {
-          subjectId: r.subjectId,
-          artifactId: occurrence.artifactId,
-          kind,
-          limit: 1,
-        },
-        options,
-      );
-      representationId = available.items[0]?.representationId;
+  return runRecordedOperation<
+    { request: JsonValue },
+    {
+      memory: Awaited<ReturnType<KernelClient["memory"]["formMemory"]>>;
+      degradation: never[];
     }
-    const candidates =
-      mode === "select_from_resolved_mentions"
-        ? (
-            await kernel.materialWorkflow.getResolvedMentions(
-              { subjectId: r.subjectId, occurrenceId: r.occurrenceId },
-              options,
-            )
-          ).candidates.map((candidate) => ({
-            key: candidate.key,
-            surface: candidate.surface,
-            entityRef: candidate.entityRef,
-          }))
-        : [];
-    snapshot = {
-      content: workflowPayload(
-        {
-          model,
-          representationId,
-          candidates,
-          sourceMaxBytes: models.materialInputs.formation_source_max_bytes,
-        },
-        [
-          { kind: "occurrence", value: r.occurrenceId },
-          ...(representationId
-            ? [{ kind: "derived_representation", value: representationId }]
-            : []),
-          ...r.explicitTags.map((value) => ({ kind: "tag", value })),
-        ],
-      ),
-    };
-  }
-  const operation = await startOperation(kernel, identity, snapshot, options);
-  const record = operation.record;
-  if (record.outcome) return replay(record.outcome);
-  return operation.run(async () => {
-    let proposed = record.proposal?.payloadJson
-      ? (JSON.parse(record.proposal.payloadJson) as { request: JsonValue })
-      : undefined;
-    if (!proposed) {
-      const frozenSnapshot = JSON.parse(
-        record.snapshot!.content!.payloadJson,
-      ) as FormationSnapshot;
+  >(kernel, identity, options, {
+    replay,
+    generate: async () => {
+      const model = models.invocations.prepare("memory_formation");
+      const occurrence = await kernel.material.getOccurrence(
+        { subjectId: r.subjectId, id: r.occurrenceId },
+        options,
+      );
+      let representationId = r.representationId;
+      if (!representationId && occurrence.artifactId) {
+        const artifact = await kernel.material.getArtifact(
+          { subjectId: r.subjectId, id: occurrence.artifactId },
+          options,
+        );
+        const mime = artifact.mediaType.split(";")[0]!.trim().toLowerCase();
+        const kind = mime.startsWith("image/")
+          ? "image_description"
+          : mime.startsWith("audio/")
+            ? models.audio.input_mode === "direct"
+              ? "audio_description"
+              : "transcript"
+            : mime.startsWith("video/")
+              ? "scene_description"
+              : "extracted_text";
+        const available = await kernel.material.listDerivedRepresentations(
+          {
+            subjectId: r.subjectId,
+            artifactId: occurrence.artifactId,
+            kind,
+            limit: 1,
+          },
+          options,
+        );
+        representationId = available.items[0]?.representationId;
+      }
+      const candidates =
+        mode === "select_from_resolved_mentions"
+          ? (
+              await kernel.materialWorkflow.getResolvedMentions(
+                { subjectId: r.subjectId, occurrenceId: r.occurrenceId },
+                options,
+              )
+            ).candidates.map((candidate) => ({
+              key: candidate.key,
+              surface: candidate.surface,
+              entityRef: candidate.entityRef,
+            }))
+          : [];
       const source = await kernel.material.materializeEvidence(
         {
           subjectId: r.subjectId,
-          reference: frozenSnapshot.representationId
+          reference: representationId
             ? {
                 kind: "derived_representation",
-                value: frozenSnapshot.representationId,
+                value: representationId,
               }
             : { kind: "occurrence", value: r.occurrenceId },
-          maxBytes: BigInt(frozenSnapshot.sourceMaxBytes),
+          maxBytes: BigInt(models.materialInputs.formation_source_max_bytes),
         },
         options,
       );
@@ -220,13 +188,13 @@ async function formObservationOnce(
         {
           content: JSON.stringify({
             evidenceText: text,
-            resolvedEntityCandidates: frozenSnapshot.candidates,
+            resolvedEntityCandidates: candidates,
             aboutnessMode: mode,
           }),
         },
         {
           signal: options.signal ?? undefined,
-          snapshot: frozenSnapshot.model,
+          prepared: model,
         },
       );
       const result = {
@@ -234,88 +202,97 @@ async function formObservationOnce(
         producerMetadata: generated.producerMetadata,
         execution: generated.execution,
       };
-      await operation.recordExecution(result.execution);
-      if (
-        new Set(result.selectedEntityKeys).size !==
-          result.selectedEntityKeys.length ||
-        result.selectedEntityKeys.some(
-          (key) =>
-            !frozenSnapshot.candidates.some(
-              (candidate) => candidate.key === key,
-            ),
+      try {
+        if (
+          new Set(result.selectedEntityKeys).size !==
+            result.selectedEntityKeys.length ||
+          result.selectedEntityKeys.some(
+            (key) => !candidates.some((candidate) => candidate.key === key),
+          )
         )
-      )
-        throw new ConnectError(
-          "Model selected an invalid entity candidate",
-          Code.FailedPrecondition,
-        );
-      const aboutness =
-        mode === "explicit"
-          ? r.explicitAboutness
-          : mode === "none"
-            ? []
-            : [
-                ...new Set(
-                  frozenSnapshot.candidates
-                    .filter((candidate) =>
-                      result.selectedEntityKeys.includes(candidate.key),
-                    )
-                    .map((candidate) => candidate.entityRef),
-                ),
-              ];
-      const request = create(FormMemoryRequestSchema, {
-        operationId: r.operationId,
-        subjectId: r.subjectId,
-        cognitiveRole: "declarative",
-        input: {
-          formationMode: "grounded",
-          groundingOccurrenceId: r.occurrenceId,
-          semanticRole: result.semanticRole,
-          text: result.text,
-          title: result.title ?? undefined,
-          epistemicClass: "derived",
-          aboutness,
-          tags: r.explicitTags,
-          producer: modelProducer(
-            result.producerMetadata,
-            "memory_formation_text",
-          ),
-          basis: [
-            {
-              basis: {
-                case: "evidence",
-                value: {
-                  occurrenceId: r.occurrenceId,
-                  basisRole: "interpretation",
-                  locator: frozenSnapshot.representationId
-                    ? {
-                        case: "derivedRepresentationId",
-                        value: frozenSnapshot.representationId,
-                      }
-                    : { case: "wholeOccurrence", value: true },
+          throw new ConnectError(
+            "Model selected an invalid entity candidate",
+            Code.FailedPrecondition,
+          );
+        const aboutness =
+          mode === "explicit"
+            ? r.explicitAboutness
+            : mode === "none"
+              ? []
+              : [
+                  ...new Set(
+                    candidates
+                      .filter((candidate) =>
+                        result.selectedEntityKeys.includes(candidate.key),
+                      )
+                      .map((candidate) => candidate.entityRef),
+                  ),
+                ];
+        const request = create(FormMemoryRequestSchema, {
+          operationId: r.operationId,
+          subjectId: r.subjectId,
+          cognitiveRole: "declarative",
+          input: {
+            formationMode: "grounded",
+            groundingOccurrenceId: r.occurrenceId,
+            semanticRole: result.semanticRole,
+            text: result.text,
+            title: result.title ?? undefined,
+            epistemicClass: "derived",
+            aboutness,
+            tags: r.explicitTags,
+            producer: modelProducer(
+              result.producerMetadata,
+              "memory_formation_text",
+            ),
+            basis: [
+              {
+                basis: {
+                  case: "evidence",
+                  value: {
+                    occurrenceId: r.occurrenceId,
+                    basisRole: "interpretation",
+                    locator: representationId
+                      ? {
+                          case: "derivedRepresentationId",
+                          value: representationId,
+                        }
+                      : { case: "wholeOccurrence", value: true },
+                  },
                 },
               },
-            },
+            ],
+          },
+        });
+        return {
+          proposal: { request: toJson(FormMemoryRequestSchema, request) },
+          dependencies: [
+            { kind: "occurrence", value: r.occurrenceId },
+            ...(representationId
+              ? [{ kind: "derived_representation", value: representationId }]
+              : []),
+            ...r.explicitTags.map((value) => ({ kind: "tag", value })),
           ],
-        },
-      });
-      proposed = {
-        request: toJson(FormMemoryRequestSchema, request),
+          execution: result.execution,
+        };
+      } catch (error) {
+        throw attachExecutionTelemetry(error, result.execution);
+      }
+    },
+    commit: async (proposed) => {
+      const request = fromJson(
+        FormMemoryRequestSchema,
+        proposed.request as JsonValue,
+      );
+      const memory = await kernel.memory.formMemory(request, options);
+      return {
+        value: { memory, degradation: [] },
+        outcome: { revisionId: memory.revisionId },
+        dependencies: [
+          { kind: "memory", value: memory.memoryId },
+          { kind: "memory_revision", value: memory.revisionId },
+        ],
       };
-      await operation.saveProposal(proposed);
-    }
-    const request = fromJson(
-      FormMemoryRequestSchema,
-      proposed.request as JsonValue,
-    );
-    const memory = await kernel.memory.formMemory(request, options);
-    await operation.complete({ revisionId: memory.revisionId }, [
-      { kind: "memory", value: memory.memoryId },
-      { kind: "memory_revision", value: memory.revisionId },
-    ]);
-    return {
-      memory,
-      degradation: [],
-    };
+    },
   });
 }

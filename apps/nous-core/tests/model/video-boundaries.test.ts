@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessageInitShape } from "@bufbuild/protobuf";
-import {
-  StartOperationRequestSchema,
-  OperationRecordSchema,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+import { OperationRecordSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
 import { expect, it, vi } from "vitest";
 import { dirname, join } from "node:path";
@@ -69,7 +66,7 @@ import { sampleVideo } from "../../src/model/video.js";
 import { modelConfigurationSchema } from "../../src/model/configuration.js";
 import { deriveMaterial } from "../../src/model/derivation.js";
 import { ModelRuntime } from "../../src/model/runtime.js";
-import { type ModelInvocations } from "../../src/model/invocations.js";
+import { ModelInvocations } from "../../src/model/invocations.js";
 import type { KernelClient } from "../../src/kernel-client.js";
 import { create } from "@bufbuild/protobuf";
 import {
@@ -179,23 +176,16 @@ it("frames without a transcript cannot acquire audio evidence in either structur
         yield { part: { case: "content", value: new Uint8Array([1, 2, 3]) } };
       },
     },
-    modelWorkflow: {
-      startOperation: async (
-        input: MessageInitShape<typeof StartOperationRequestSchema>,
+    modelResults: {
+      readOperation: async (identity: { operationKey: string }) =>
+        operations.get(identity.operationKey) ?? {},
+      saveOperation: async (
+        input: Parameters<KernelClient["modelResults"]["saveOperation"]>[0],
       ) => {
         const key = input.identity!.operationKey!;
-        const record = operations.get(key) ?? { snapshot: input.snapshot };
+        const record = operations.get(key) ?? {};
+        Object.assign(record, input);
         operations.set(key, record);
-        return record;
-      },
-      readOperation: async (input: { operationKey: string }) =>
-        operations.get(input.operationKey) ?? {},
-      saveOperation: async (
-        input: Parameters<KernelClient["modelWorkflow"]["saveOperation"]>[0],
-      ) => {
-        if (input.outcome)
-          operations.get(input.identity!.operationKey!)!.outcome =
-            input.outcome;
         return {};
       },
     },
@@ -229,7 +219,7 @@ it("frames without a transcript cannot acquire audio evidence in either structur
       role === "speech_transcription"
         ? undefined
         : { capabilities: ["image_input"] },
-    snapshotPrompt: async (role: string) => ({
+    preparePrompt: async (role: string) => ({
       role,
       configDigest: "fixture-config",
     }),
@@ -270,7 +260,7 @@ it("frames without a transcript cannot acquire audio evidence in either structur
     },
   } as unknown as ModelInvocations;
   const models = new ModelRuntime(
-    invocations,
+    Object.assign(new ModelInvocations(), invocations),
     "description_only",
     policy.video,
     [],

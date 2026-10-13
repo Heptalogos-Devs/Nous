@@ -51,7 +51,7 @@ fn materialized_evidence(result: nous_material::MaterializedEvidence) -> p::Mate
     }
 }
 
-fn artifact(value: nous_material::Artifact) -> p::Artifact {
+pub(super) fn artifact(value: nous_material::Artifact) -> p::Artifact {
     p::Artifact {
         artifact_id: value.artifact_id.0.to_string(),
         subject_id: value.subject_id.0.to_string(),
@@ -64,6 +64,57 @@ fn artifact(value: nous_material::Artifact) -> p::Artifact {
 }
 
 impl KernelService {
+    pub(super) async fn read_lineage(
+        &self,
+        input: p::MaterialLineageRequest,
+    ) -> Result<p::MaterialLineage> {
+        let roots = input
+            .roots
+            .into_iter()
+            .map(from_ref)
+            .collect::<Result<Vec<_>>>()?;
+        let view = self
+            .0
+            .material
+            .lineage_view(
+                SubjectId(id(&input.subject_id)?),
+                &roots,
+                if input.max_nodes == 0 {
+                    512
+                } else {
+                    input.max_nodes as usize
+                },
+                if input.max_bytes == 0 {
+                    65536
+                } else {
+                    input.max_bytes as usize
+                },
+            )
+            .await?;
+        let nodes = view
+            .nodes
+            .into_iter()
+            .map(|node| {
+                use nous_material::MaterialLineageNode as N;
+                use p::material_lineage_node::Value as V;
+                let reference = Some(to_ref(node.reference()));
+                let value = Some(match node {
+                    N::Occurrence(v) => V::Occurrence(evidence::occurrence(v)),
+                    N::Artifact(v) => V::Artifact(artifact(v)),
+                    N::SourceRegion(v) => V::SourceRegion(evidence::source_region(v)),
+                    N::Representation(v) => V::Representation(evidence::representation(*v)),
+                    N::DerivedRegion(v) => V::DerivedRegion(evidence::derived_region(v)),
+                });
+                p::MaterialLineageNode { reference, value }
+            })
+            .collect();
+        Ok(p::MaterialLineage {
+            nodes,
+            truncated: view.truncated,
+            payloads_truncated: view.payloads_truncated,
+        })
+    }
+
     pub(super) async fn record_observation(
         &self,
         input: p::ObservationInput,

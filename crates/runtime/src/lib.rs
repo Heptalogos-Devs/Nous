@@ -36,7 +36,7 @@ pub use query::{
     LaneStatus, NovelConceptHypothesis, QUERY_REPRESENTATION, QueryActivation, QueryActivationView,
     QueryConceptCandidate, QueryConceptOutput, QueryConceptSelection, QueryContextSnapshot,
     QueryExecution, QueryLease, QueryPlan, QueryRepresentation, QueryRepresentationLimits,
-    QueryReservation, QuerySemanticEmbedding, SharedLaneProvider, TagActivation,
+    QueryReservation, QuerySemanticEmbedding, QuerySource, SharedLaneProvider, TagActivation,
     TopologyWorkSummary, build_query_representation, register_retrieval_configuration,
 };
 pub use segmentation::{EpisodeDraft, SegmentationProgress};

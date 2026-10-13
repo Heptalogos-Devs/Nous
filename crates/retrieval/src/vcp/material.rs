@@ -21,57 +21,32 @@ pub struct VcpProjectedDocument {
 }
 
 impl ServingService {
-    pub(crate) async fn vcp_projection_material_in_view(
+    pub(crate) async fn vcp_projection_material(
         &self,
         subject: SubjectId,
-        snapshot: &nous_configuration::ConfigSnapshot,
-        view: Option<&HistoricalAuthoritySnapshot>,
+        input: &mut crate::assets::build::TextDocuments,
         serving: &ServingSnapshot,
-        capabilities: ProjectionCapabilities,
     ) -> Result<VcpProjectionMaterial> {
         let provider = self.embedding().ok_or_else(|| {
             Error::Unavailable("VCP serving build requires configured embedding material".into())
         })?;
         let space = provider.space();
         let producer = provider.producer();
-        let budget = snapshot.get(crate::EPISODE_SYNOPSIS)?;
-        let input = self
-            .vcp_projection_input(
-                subject,
-                capabilities.memory,
-                budget,
-                &format!("vcp:{}", space.space_hash),
-                view,
-            )
-            .await?;
-        let concepts = serving.concept.iter().find(|generation| {
-            generation
-                .space
-                .as_ref()
-                .is_some_and(|s| s.compatible_with(&space))
-                && generation
-                    .producer
-                    .as_ref()
-                    .is_some_and(|p| p.signature_hash == producer.signature_hash)
-        });
-        let mut documents = Vec::new();
-        let source_documents = self.documents(subject, input.sources, budget, view).await?;
+        let embedded = self.embedded_documents(subject, input, serving).await?;
+        let source_documents = &input.documents;
         let expected = source_documents.len();
-        let embedded = self
-            .embed_documents(
-                subject,
-                &source_documents,
-                concepts.map(AsRef::as_ref),
-                provider.as_ref(),
-            )
-            .await?;
+        let (topology, evidence_roots) = input
+            .vcp
+            .take()
+            .ok_or_else(|| Error::Infrastructure("VCP topology missing".into()))?;
+        let mut documents = Vec::new();
         if embedded.len() != expected {
             return Err(Error::Unavailable(
                 "VCP requires compatible shared concept material".into(),
             ));
         }
-        for (index, output) in embedded {
-            let document = &source_documents[index];
+        for (index, output) in embedded.iter() {
+            let document = &source_documents[*index];
             let concept_refs = document
                 .tag_ids
                 .iter()
@@ -85,8 +60,7 @@ impl ServingService {
                         })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let evidence_roots = input
-                .evidence_roots
+            let evidence_roots = evidence_roots
                 .get(&document.reference)
                 .cloned()
                 .unwrap_or_default()
@@ -96,14 +70,13 @@ impl ServingService {
                 evidence_roots,
                 reference: document.reference.clone(),
                 representation_text: document.representation_text.clone(),
-                vector: output.vector,
+                vector: output.vector.clone(),
                 concept_refs,
                 curve_order: VcpCurveOrder::StableIdentity,
             });
         }
         let identities = VcpIdentityMap::new(
-            input
-                .topology
+            topology
                 .nodes
                 .into_iter()
                 .chain(documents.iter().map(|d| d.reference.clone()))
@@ -120,7 +93,7 @@ impl ServingService {
             space,
             producer,
             identities,
-            edges: input.topology.edges,
+            edges: topology.edges,
             documents,
         })
     }

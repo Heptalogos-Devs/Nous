@@ -34,7 +34,7 @@ pub(crate) async fn check_activation_configuration(rt: &NousRuntime, subject: Su
             .unwrap();
     }
     let input = query(subject, vec![]);
-    let frozen = rt.cognition.bind_query(input.clone()).await.unwrap();
+    let frozen = rt.cognition.bind_query(input.clone(), rt).await.unwrap();
     for path in [limit, catalog] {
         rt.configuration
             .set_subject_override(

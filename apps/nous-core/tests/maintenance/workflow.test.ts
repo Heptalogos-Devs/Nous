@@ -38,7 +38,14 @@ describe("maintenance fixed workflow retry", () => {
     );
     const reserveCall = vi.fn();
     await expect(
-      runModelMaintenance(state.kernel, state.models, need, {}, reserveCall),
+      runModelMaintenance(
+        state.kernel,
+        state.models,
+        need,
+        {},
+        32,
+        reserveCall,
+      ),
     ).rejects.toThrow();
     const first = state.commit.mock.calls[0];
     const result = await runModelMaintenance(
@@ -46,6 +53,7 @@ describe("maintenance fixed workflow retry", () => {
       state.models,
       need,
       {},
+      0,
       reserveCall,
     );
     expect(result.status).toBe("committed");
@@ -60,6 +68,7 @@ describe("maintenance fixed workflow retry", () => {
           state.models,
           need,
           {},
+          0,
           reserveCall,
         )
       ).status,
@@ -84,6 +93,7 @@ describe("maintenance fixed workflow retry", () => {
           state.models,
           need,
           {},
+          32,
           () => {},
         )
       ).status,
@@ -96,6 +106,7 @@ describe("maintenance fixed workflow retry", () => {
           state.models,
           need,
           {},
+          32,
           () => {},
         )
       ).status,
@@ -114,6 +125,7 @@ describe("maintenance fixed workflow retry", () => {
           invalid.models,
           need,
           {},
+          32,
           () => {},
         )
       ).status,
@@ -130,12 +142,19 @@ describe("maintenance fixed workflow retry", () => {
     );
     conflict.commit.mockRejectedValueOnce(error);
     await expect(
-      runModelMaintenance(conflict.kernel, conflict.models, need, {}, () => {}),
+      runModelMaintenance(
+        conflict.kernel,
+        conflict.models,
+        need,
+        {},
+        32,
+        () => {},
+      ),
     ).rejects.toBe(error);
     expect(conflict.refresh).not.toHaveBeenCalled();
     expect(
       vi
-        .mocked(conflict.kernel.modelWorkflow.saveOperation)
+        .mocked(conflict.kernel.modelResults.saveOperation)
         .mock.calls.some(([input]) => input.outcome !== undefined),
     ).toBe(false);
   });
@@ -203,6 +222,7 @@ it("routes concepts through bounded input and replays the saved outcome without 
     state.models,
     topoNeed,
     {},
+    32,
     reserveCall,
   );
   expect(first.status).toBe("no_change");
@@ -213,6 +233,7 @@ it("routes concepts through bounded input and replays the saved outcome without 
         state.models,
         topoNeed,
         {},
+        32,
         reserveCall,
       )
     ).status,
@@ -296,7 +317,7 @@ it("replays a committed consolidation action after a lost response without anoth
   const reserve = vi.fn();
   const current = { ...need, kind: "memory_consolidate" };
   const run = () =>
-    runModelMaintenance(state.kernel, state.models, current, {}, reserve);
+    runModelMaintenance(state.kernel, state.models, current, {}, 32, reserve);
   await expect(run()).rejects.toThrow("lost committed action response");
   const outcome = await run();
   expect(outcome.status).toBe("partial");

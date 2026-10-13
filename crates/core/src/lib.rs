@@ -9,10 +9,10 @@
 
 mod time;
 pub use time::{TemporalExtent, TimeInterval, TimePredicate};
-mod workflow;
-pub use workflow::{
+mod model_results;
+pub use model_results::{
     AttemptStatus, ExecutionAttempt, ExecutionTelemetry, ExecutionUsage, MaintenanceTrigger,
-    WorkflowPayload, WorkflowSnapshot,
+    ModelResultContext, ResultPayload,
 };
 mod topology;
 use chrono::{DateTime, Utc};
@@ -459,3 +459,25 @@ pub use canonical::canonical_request_digest;
 pub use cognition::*;
 pub use query::*;
 pub use references::{parse_reference, reference_parts};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UseEventRef {
+    pub subject_id: SubjectId,
+    pub consumer_ref: String,
+    pub event_id: UseEventId,
+}
+
+impl UseEventRef {
+    pub fn canonical_key(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.subject_id.0, self.consumer_ref, self.event_id.0
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryDescriptor {
+    pub reference: CognitiveRef,
+    pub text: String,
+}

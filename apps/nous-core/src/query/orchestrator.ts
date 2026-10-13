@@ -37,12 +37,12 @@ export class QueryOrchestrator {
     const calls = executionOptions(this.kernel.execution.opportunity, options);
     options = calls;
     const { opportunity } = calls;
-    const material: QueryEmbedding[] = [];
+    let material: QueryEmbedding | undefined;
     let failure: string | undefined;
     const preparation = await this.kernel.queryWorkflow.prepareQuery(
       {
         query: input,
-        reserveExecution: true,
+        executeQuery: true,
         leaseSeconds:
           Math.ceil(
             (opportunity.remainingWorkMs +
@@ -52,16 +52,14 @@ export class QueryOrchestrator {
       },
       options,
     );
-    if (!preparation.preparationToken)
+    if (!preparation.preparationToken && !preparation.result)
       throw new ConnectError("Prepared query token missing", Code.Internal);
     let executionToken = preparation.preparationToken;
     try {
-      const texts = new Set(
-        preparation.embeddingRequired && preparation.embeddingText
-          ? [preparation.embeddingText]
-          : [],
-      );
-      if (texts.size) {
+      const text = preparation.embeddingRequired
+        ? preparation.embeddingText
+        : "";
+      if (text) {
         try {
           if (!this.models.invocations.profile("query_embedding"))
             throw domainError(
@@ -89,19 +87,23 @@ export class QueryOrchestrator {
             options,
           );
           const producers = config.producerHashes;
-          const key = (text: string, producer: string) =>
-            canonicalDigest({ text, space: config.spaceHash, producer });
-          const cached = (text: string) =>
+          const key = (sourceText: string, producer: string) =>
+            canonicalDigest({
+              text: sourceText,
+              space: config.spaceHash,
+              producer,
+            });
+          const cached = (sourceText: string) =>
             producers
               .map((producer) => ({
                 producer,
-                vector: this.queryVectors.get(key(text, producer)),
+                vector: this.queryVectors.get(key(sourceText, producer)),
               }))
               .find((item) => item.vector);
-          const missing = [...texts].filter((text) => !cached(text));
-          if (missing.length) {
+          let selected = cached(text);
+          if (!selected?.vector) {
             const vectors = await this.models.invocations.embeddingBatch(
-              missing,
+              [text],
               config.model,
               options.signal ?? undefined,
             );
@@ -110,45 +112,33 @@ export class QueryOrchestrator {
                 "Embedding producer is not in the prepared configuration",
                 Code.FailedPrecondition,
               );
-            missing.forEach((text, index) =>
-              this.queryVectors.set(
-                key(text, vectors.producer.signature_hash),
-                vectors.value[index]!,
-              ),
-            );
-          }
-          for (const text of texts) {
-            const selected = cached(text);
-            if (!selected?.vector)
+            const vector = vectors.value[0];
+            if (!vector)
               throw new ConnectError(
                 "Query embedding material missing",
                 Code.Internal,
               );
-            material.push(
-              create(QueryEmbeddingSchema, {
-                text,
-                spaceHash: config.spaceHash,
-                producerHash: selected.producer,
-                vector: selected.vector,
-              }),
-            );
+            selected = { producer: vectors.producer.signature_hash, vector };
+            this.queryVectors.set(key(text, selected.producer), vector);
           }
+          material = create(QueryEmbeddingSchema, {
+            text,
+            spaceHash: config.spaceHash,
+            producerHash: selected.producer,
+            vector: selected.vector,
+          });
           while (
             this.queryVectors.size >
             this.kernel.execution.query_embedding_cache_entries
           )
             this.queryVectors.delete(this.queryVectors.keys().next().value!);
         } catch (error) {
-          if (options.signal?.aborted) throw error;
-          if (
-            preparation.textEmbeddingRequirement === "required" ||
-            this.models.invocations.requirement("query_embedding") ===
-              "required"
-          )
-            throw new ConnectError(
-              `Required query embedding unavailable: ${error instanceof GenerationFailure ? error.reason : safeProviderFailure(error)}`,
-              Code.FailedPrecondition,
-            );
+          this.models.invocations.allowDegradation(
+            error,
+            options.signal,
+            "query_embedding",
+            preparation.textEmbeddingRequirement === "required",
+          );
           failure =
             error instanceof Error ? error.message : "Embedding unavailable";
         }
@@ -163,8 +153,8 @@ export class QueryOrchestrator {
         const activation = await this.kernel.queryWorkflow.activateQuery(
           {
             subjectId: input.subjectId,
-            preparationToken: executionToken,
-            embeddings: material,
+            preparationToken: executionToken ?? "",
+            embedding: material,
           },
           options,
         );
@@ -197,16 +187,12 @@ export class QueryOrchestrator {
           );
           conceptOutput = JSON.stringify(response.value);
         } catch (error) {
-          if (options.signal?.aborted) throw error;
-          if (
-            preparation.conceptEnrichmentRequirement === "required" ||
-            this.models.invocations.requirement("query_concept_enrichment") ===
-              "required"
-          )
-            throw new ConnectError(
-              `Required query concept model unavailable: ${error instanceof GenerationFailure ? error.reason : safeProviderFailure(error)}`,
-              Code.FailedPrecondition,
-            );
+          this.models.invocations.allowDegradation(
+            error,
+            options.signal,
+            "query_concept_enrichment",
+            preparation.conceptEnrichmentRequirement === "required",
+          );
           conceptFailure =
             error instanceof Error
               ? error.message
@@ -232,21 +218,26 @@ export class QueryOrchestrator {
             context: { capability: "model.query_rerank" },
           },
         );
-      const prepared = await this.kernel.queryWorkflow.query(
-        {
-          subjectId: input.subjectId,
-          preparationToken: executionToken,
-          embeddings: conceptOutput || conceptFailure ? [] : material,
-          conceptOutput,
-          conceptFailure,
-          conceptModelCalls,
-          validatedCandidateLimit:
-            intent && profile
-              ? this.kernel.execution.query_rerank_candidate_limit
-              : undefined,
-        },
-        options,
-      );
+      const prepared = preparation.result
+        ? {
+            response: preparation.result,
+            validationTicket: preparation.validationTicket,
+          }
+        : await this.kernel.queryWorkflow.query(
+            {
+              subjectId: input.subjectId,
+              preparationToken: executionToken ?? "",
+              embedding: conceptOutput || conceptFailure ? undefined : material,
+              conceptOutput,
+              conceptFailure,
+              conceptModelCalls,
+              validatedCandidateLimit:
+                intent && profile
+                  ? this.kernel.execution.query_rerank_candidate_limit
+                  : undefined,
+            },
+            options,
+          );
       if (!prepared.response)
         throw new ConnectError("Kernel query response missing", Code.Internal);
       let result = prepared.response;
@@ -284,12 +275,12 @@ export class QueryOrchestrator {
                 return { reference, score: item.relevance_score };
               });
             } catch (error) {
-              if (options.signal?.aborted) throw error;
-              if (rerankRequired)
-                throw new ConnectError(
-                  `Required rerank invocation unavailable: ${error instanceof GenerationFailure ? error.reason : safeProviderFailure(error)}`,
-                  Code.FailedPrecondition,
-                );
+              this.models.invocations.allowDegradation(
+                error,
+                options.signal,
+                "query_rerank",
+                rerankRequired,
+              );
               rerankFailure =
                 error instanceof GenerationFailure
                   ? error.reason
@@ -337,15 +328,16 @@ export class QueryOrchestrator {
       result.boundQuery ??= prepared.response.boundQuery;
       return result;
     } finally {
-      await this.kernel.queryWorkflow
-        .releaseQuery(
-          {
-            subjectId: input.subjectId,
-            validationTicket: executionToken,
-          },
-          opportunity.cleanup(),
-        )
-        .catch(() => {});
+      if (executionToken)
+        await this.kernel.queryWorkflow
+          .releaseQuery(
+            {
+              subjectId: input.subjectId,
+              validationTicket: executionToken,
+            },
+            opportunity.cleanup(),
+          )
+          .catch(() => {});
     }
   }
 }

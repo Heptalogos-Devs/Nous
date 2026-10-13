@@ -4,9 +4,11 @@
 use super::{convert::*, k};
 use nous_core::{Error, Result};
 
-pub(super) fn identity(value: k::OperationIdentity) -> Result<nous_persistence::WorkflowIdentity> {
-    super::model::private_workflow_owner(&value.owner)?;
-    Ok(nous_persistence::WorkflowIdentity {
+pub(super) fn identity(
+    value: k::OperationIdentity,
+) -> Result<nous_persistence::ModelOperationIdentity> {
+    super::model::private_result_owner(&value.owner)?;
+    Ok(nous_persistence::ModelOperationIdentity {
         subject: nous_core::SubjectId(id(&value.subject_id)?),
         owner: value.owner,
         operation_key: value.operation_key,
@@ -14,17 +16,17 @@ pub(super) fn identity(value: k::OperationIdentity) -> Result<nous_persistence::
     })
 }
 
-pub(super) fn record(value: nous_persistence::WorkflowRecord) -> k::OperationRecord {
+pub(super) fn record(value: nous_persistence::ModelResultRecord) -> k::OperationRecord {
     k::OperationRecord {
-        snapshot: Some(snapshot_proto(value.snapshot)),
+        context: value.context.map(context_proto),
         proposal: value.proposal.map(payload_proto),
         outcome: value.outcome.map(payload_proto),
         execution_telemetry: value.execution_telemetry.map(telemetry_proto),
     }
 }
 
-pub(super) fn payload(value: k::WorkflowPayload) -> Result<nous_core::WorkflowPayload> {
-    Ok(nous_core::WorkflowPayload {
+pub(super) fn payload(value: k::ResultPayload) -> Result<nous_core::ResultPayload> {
+    Ok(nous_core::ResultPayload {
         payload: super::model::workflow_json(&value.payload_json)?,
         dependencies: value
             .dependencies
@@ -34,16 +36,20 @@ pub(super) fn payload(value: k::WorkflowPayload) -> Result<nous_core::WorkflowPa
         purged: value.purged,
     })
 }
-pub(super) fn payload_proto(value: nous_core::WorkflowPayload) -> k::WorkflowPayload {
-    k::WorkflowPayload {
+pub(super) fn payload_proto(value: nous_core::ResultPayload) -> k::ResultPayload {
+    k::ResultPayload {
         payload_json: value.payload.to_string(),
         dependencies: value.dependencies.into_iter().map(to_ref).collect(),
         purged: value.purged,
     }
 }
-pub(super) fn snapshot(value: k::WorkflowSnapshot) -> Result<nous_core::WorkflowSnapshot> {
-    Ok(nous_core::WorkflowSnapshot {
-        content: payload(required(value.content, "workflow content")?)?,
+pub(super) fn context(value: k::ModelResultContext) -> Result<nous_core::ModelResultContext> {
+    Ok(nous_core::ModelResultContext {
+        dependencies: value
+            .dependencies
+            .into_iter()
+            .map(from_ref)
+            .collect::<Result<_>>()?,
         cognitive_formed_at: time(value.cognitive_formed_at)?,
         maintenance_trigger: value
             .maintenance_trigger
@@ -57,9 +63,9 @@ pub(super) fn snapshot(value: k::WorkflowSnapshot) -> Result<nous_core::Workflow
             .transpose()?,
     })
 }
-pub(super) fn snapshot_proto(value: nous_core::WorkflowSnapshot) -> k::WorkflowSnapshot {
-    k::WorkflowSnapshot {
-        content: Some(payload_proto(value.content)),
+pub(super) fn context_proto(value: nous_core::ModelResultContext) -> k::ModelResultContext {
+    k::ModelResultContext {
+        dependencies: value.dependencies.into_iter().map(to_ref).collect(),
         cognitive_formed_at: value.cognitive_formed_at.map(timestamp),
         maintenance_trigger: value
             .maintenance_trigger

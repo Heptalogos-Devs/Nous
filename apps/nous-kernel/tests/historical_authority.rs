@@ -394,7 +394,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
 async fn historical_material_query_runs_without_memory_micro_system() {
     use nous_kernel::{NousRuntime, RuntimeOptions};
     let (root, url, _pg) = database().await;
-    let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:nous_retrieval::ServingOptions {root:root.path().join("serving"),lexical:true,dense:false,topology:false,memory_enabled:false},embedding:None,stored_embedding:None,core_descriptors:vec![],deployment_document:serde_json::json!({"capabilities":{"process":{"memory":false},"subject_defaults":{"memory":false}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":false},"topology":{"enabled":false}}})}).await.unwrap();
+    let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:nous_retrieval::ServingOptions {root:root.path().join("serving"),lexical:true,dense:false,topology:false,memory_enabled:false},embedding:None,stored_embedding:None,configuration: nous_kernel::configuration_catalog(vec![]).unwrap().deployment(&serde_json::json!({"capabilities":{"process":{"memory":false},"subject_defaults":{"memory":false}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":false},"topology":{"enabled":false}}})).unwrap()}).await.unwrap();
     assert!(rt.memory.is_none());
     let subject = rt
         .subjects

@@ -433,7 +433,7 @@ pub struct ExpectedCognition {
 /// Only the semantic owner interprets payload_json. Dependencies are explicit;
 /// storage and purge never inspect the domain payload for references.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct WorkflowPayload {
+pub struct ResultPayload {
     #[prost(string, tag="1")]
     pub payload_json: ::prost::alloc::string::String,
     #[prost(message, repeated, tag="2")]
@@ -451,9 +451,9 @@ pub struct MaintenanceTrigger {
     pub trigger_revision: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct WorkflowSnapshot {
-    #[prost(message, optional, tag="1")]
-    pub content: ::core::option::Option<WorkflowPayload>,
+pub struct ModelResultContext {
+    #[prost(message, repeated, tag="1")]
+    pub dependencies: ::prost::alloc::vec::Vec<super::super::v1alpha1::CognitiveRef>,
     #[prost(message, optional, tag="2")]
     pub cognitive_formed_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="3")]
@@ -522,14 +522,14 @@ pub struct PrepareQueryRequest {
     #[prost(message, optional, tag="1")]
     pub query: ::core::option::Option<super::super::v1alpha1::QueryRequest>,
     #[prost(bool, tag="2")]
-    pub reserve_execution: bool,
+    pub execute_query: bool,
     #[prost(uint32, tag="3")]
     pub lease_seconds: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KernelQueryRequest {
-    #[prost(message, repeated, tag="2")]
-    pub embeddings: ::prost::alloc::vec::Vec<QueryEmbedding>,
+    #[prost(message, optional, tag="2")]
+    pub embedding: ::core::option::Option<QueryEmbedding>,
     #[prost(uint32, optional, tag="3")]
     pub validated_candidate_limit: ::core::option::Option<u32>,
     #[prost(string, tag="4")]
@@ -696,20 +696,13 @@ pub struct OperationIdentity {
     pub semantic_digest: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct StartOperationRequest {
-    #[prost(message, optional, tag="1")]
-    pub identity: ::core::option::Option<OperationIdentity>,
-    #[prost(message, optional, tag="2")]
-    pub snapshot: ::core::option::Option<WorkflowSnapshot>,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OperationRecord {
     #[prost(message, optional, tag="1")]
-    pub snapshot: ::core::option::Option<WorkflowSnapshot>,
+    pub context: ::core::option::Option<ModelResultContext>,
     #[prost(message, optional, tag="2")]
-    pub proposal: ::core::option::Option<WorkflowPayload>,
+    pub proposal: ::core::option::Option<ResultPayload>,
     #[prost(message, optional, tag="3")]
-    pub outcome: ::core::option::Option<WorkflowPayload>,
+    pub outcome: ::core::option::Option<ResultPayload>,
     #[prost(message, optional, tag="4")]
     pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
 }
@@ -718,13 +711,15 @@ pub struct SaveOperationRequest {
     #[prost(message, optional, tag="1")]
     pub identity: ::core::option::Option<OperationIdentity>,
     #[prost(message, optional, tag="2")]
-    pub proposal: ::core::option::Option<WorkflowPayload>,
+    pub proposal: ::core::option::Option<ResultPayload>,
     #[prost(message, optional, tag="3")]
-    pub outcome: ::core::option::Option<WorkflowPayload>,
+    pub outcome: ::core::option::Option<ResultPayload>,
     #[prost(message, optional, tag="4")]
     pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
     #[prost(string, repeated, tag="5")]
     pub mutation_operations: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="6")]
+    pub context: ::core::option::Option<ModelResultContext>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResolvedMentionsRequest {

@@ -94,7 +94,7 @@ message QueryExpr { string operation = 1; repeated Cue cues = 2; repeated QueryE
 message QueryCapabilities { string text_embedding = 1; string multimodal_interpretation = 2; string residual_sensing = 3; string rerank = 4; string query_concept_enrichment = 5; }
 message QuerySituation { optional string consumer = 1; repeated CognitiveRef current_refs = 2; repeated string current_objects = 3; map<string,string> object_descriptions = 4; }
 message QueryRequest { string subject_id = 1 [(reference_kind) = "subject"]; optional string session_id = 2 [(reference_kind) = "session"]; QueryExpr expression = 3; optional string nousql = 4; optional string work_context_id = 5 [(reference_kind) = "work_context"]; QuerySituation situation = 6; reserved 7; QueryCapabilities capabilities = 8; }
-message PreparedQueryResponse { string bound_query = 1; optional string preparation_token = 2; string embedding_text = 3; bool embedding_required = 4; string text_embedding_requirement = 5; string rerank_requirement = 6; string concept_enrichment_mode = 7; string concept_enrichment_requirement = 8; bool historical_view = 9; }
+message PreparedQueryResponse { string bound_query = 1; optional string preparation_token = 2; string embedding_text = 3; bool embedding_required = 4; string text_embedding_requirement = 5; string rerank_requirement = 6; string concept_enrichment_mode = 7; string concept_enrichment_requirement = 8; bool historical_view = 9; QueryResponse result = 10; optional string validation_ticket = 11; }
 message Evidence { CognitiveRef reference = 1; string basis_role = 2; optional string epistemic_relation = 3; }
 message Hit {
   CognitiveRef reference = 1;

@@ -57,7 +57,11 @@ export class ModelMaterialPipeline {
           );
           committed += accepted.committed;
         } catch (error) {
-          if (options.signal?.aborted) throw error;
+          this.models.invocations.allowDegradation(
+            error,
+            options.signal,
+            "query_embedding",
+          );
           return {
             committed,
             degradation: [

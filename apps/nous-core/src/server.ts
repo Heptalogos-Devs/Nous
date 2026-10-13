@@ -46,6 +46,7 @@ export interface CoreOptions {
   kernel: KernelClient;
   token: string;
   consumers: ConsumerPolicy[];
+  maxUploadBytes: number;
   models?: ModelRuntime;
   resources?: ResourceRegistry;
   execution?: CoreExecutionPolicy;
@@ -82,8 +83,7 @@ export async function createCore(settings: CoreOptions) {
       .http_body_limit_bytes,
   });
   const kernel = settings.kernel;
-  const materialLimits = await kernel.material.getLimits({});
-  const maxUploadBytes = Number(materialLimits.maxUploadBytes);
+  const maxUploadBytes = settings.maxUploadBytes;
   if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes < 1)
     throw new Error(
       "Kernel upload limit cannot be represented by the HTTP host",

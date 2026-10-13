@@ -164,38 +164,45 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .unwrap()
         .remove(0);
     rt.store
-        .start_model_operation(
-            subject,
-            "memory",
-            "maintenance-test",
-            "input",
-            &nous_core::WorkflowSnapshot {
+        .save_model_operation(
+            &test_support::model_operation_identity(subject, "memory", "maintenance-test", "input"),
+            Some(&nous_core::ModelResultContext {
                 maintenance_trigger: Some(nous_core::MaintenanceTrigger {
                     need_id,
                     trigger_authority_seq: selected.trigger_authority_seq,
                     trigger_revision: selected.trigger_revision,
                 }),
                 ..Default::default()
-            },
+            }),
+            Some(&test_support::result_payload(
+                serde_json::json!({"action":"no_change"}),
+            )),
+            None,
+            None,
+            &[],
         )
         .await
         .unwrap();
     rt.store
-        .start_model_operation(
-            subject,
-            "memory",
-            "explicit-test",
-            "input",
-            &nous_core::WorkflowSnapshot::default(),
+        .save_model_operation(
+            &test_support::model_operation_identity(subject, "memory", "explicit-test", "input"),
+            Some(&nous_core::ModelResultContext::default()),
+            Some(&test_support::result_payload(
+                serde_json::json!({"action":"no_change"}),
+            )),
+            None,
+            None,
+            &[],
         )
         .await
         .unwrap();
     for key in ["maintenance-test", "explicit-test"] {
         rt.store
             .save_model_operation(
-                &test_support::workflow_identity(subject, "memory", key, "input"),
+                &test_support::model_operation_identity(subject, "memory", key, "input"),
                 None,
-                Some(&test_support::workflow_payload(
+                None,
+                Some(&test_support::result_payload(
                     serde_json::json!({"status":"no_change"}),
                 )),
                 None,
@@ -209,13 +216,12 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .await
         .unwrap();
     clock.advance_by(subject, Duration::days(100)).unwrap();
-    let keys: Vec<String> = sqlx::query_scalar(
-        "SELECT operation_key FROM model_workflow_operations WHERE subject_id=$1",
-    )
-    .bind(subject.0)
-    .fetch_all(rt.store.pool())
-    .await
-    .unwrap();
+    let keys: Vec<String> =
+        sqlx::query_scalar("SELECT operation_key FROM model_results WHERE subject_id=$1")
+            .bind(subject.0)
+            .fetch_all(rt.store.pool())
+            .await
+            .unwrap();
     assert_eq!(keys, vec!["explicit-test"]);
     // Execution time, not accelerated cognition time, defines the replay window.
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM maintenance_needs WHERE need_id=$1")
@@ -272,19 +278,22 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .remove(0);
     assert_eq!(retry.retry_count, 1);
     rt.store
-        .start_model_operation(
-            subject,
-            "memory",
-            "superseded-test",
-            "input",
-            &nous_core::WorkflowSnapshot {
+        .save_model_operation(
+            &test_support::model_operation_identity(subject, "memory", "superseded-test", "input"),
+            Some(&nous_core::ModelResultContext {
                 maintenance_trigger: Some(nous_core::MaintenanceTrigger {
                     need_id: pending,
                     trigger_authority_seq: retry.trigger_authority_seq,
                     trigger_revision: retry.trigger_revision,
                 }),
                 ..Default::default()
-            },
+            }),
+            Some(&test_support::result_payload(
+                serde_json::json!({"action":"no_change"}),
+            )),
+            None,
+            None,
+            &[],
         )
         .await
         .unwrap();
@@ -304,7 +313,12 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
         .acknowledge_maintenance(&retry, MaintenanceDisposition::Satisfied)
         .await
         .unwrap();
-    let survives: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM model_workflow_operations WHERE operation_key='superseded-test')").fetch_one(rt.store.pool()).await.unwrap();
+    let survives: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM model_results WHERE operation_key='superseded-test')",
+    )
+    .fetch_one(rt.store.pool())
+    .await
+    .unwrap();
     assert!(!survives);
     assert_eq!(
         rt.cognition.maintenance_needs(subject).await.unwrap()[0].state,
@@ -348,5 +362,5 @@ async fn maintenance_terminal_retention_workflow_cleanup_and_execution_backoff()
     assert_eq!(reactivated.retry_count, 0);
 }
 
-#[path = "maintenance_workflows/scopes.rs"]
+#[path = "maintenance_model_results/scopes.rs"]
 mod scopes;

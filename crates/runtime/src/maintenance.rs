@@ -58,7 +58,7 @@ pub enum MaintenanceDisposition {
         problem_code: String,
     },
     Pending {
-        due_at: DateTime<Utc>,
+        due_at: Option<DateTime<Utc>>,
         problem_code: Option<String>,
     },
 }
@@ -196,7 +196,7 @@ impl CognitiveRuntimeService {
             MaintenanceDisposition::Pending {
                 due_at,
                 problem_code,
-            } => ("pending", due_at, problem_code),
+            } => ("pending", due_at.unwrap_or(selected.due_at), problem_code),
         };
         // The captured trigger is the acknowledgement fence; new work remains pending.
         let mut tx = self.store.begin().await?;
@@ -207,7 +207,7 @@ impl CognitiveRuntimeService {
             .bind(retry_delay).bind(self.maintenance_block_digest(selected.subject_id)?)
             .execute(&mut *tx).await.map_err(db)?;
         // Only maintenance-bound completed workflows lose their runtime purpose after ack.
-        sqlx::query("DELETE FROM model_workflow_operations WHERE subject_id=$1 AND maintenance_need_id=$2 AND maintenance_trigger_revision=$3 AND outcome IS NOT NULL")
+        sqlx::query("DELETE FROM model_results WHERE subject_id=$1 AND maintenance_need_id=$2 AND maintenance_trigger_revision=$3 AND outcome IS NOT NULL")
             .bind(selected.subject_id.0).bind(selected.need_id).bind(selected.trigger_revision as i64).execute(&mut *tx).await.map_err(db)?;
         self.cleanup_maintenance_in(&mut tx, selected.subject_id)
             .await?;
@@ -227,7 +227,7 @@ impl CognitiveRuntimeService {
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
     ) -> Result<()> {
-        sqlx::query("DELETE FROM model_workflow_operations w USING maintenance_needs n WHERE w.subject_id=$1 AND w.maintenance_need_id=n.need_id AND w.maintenance_trigger_revision<n.trigger_revision")
+        sqlx::query("DELETE FROM model_results w USING maintenance_needs n WHERE w.subject_id=$1 AND w.maintenance_need_id=n.need_id AND w.maintenance_trigger_revision<n.trigger_revision")
             .bind(subject.0).execute(&mut **tx).await.map_err(db)?;
         let retention = self
             .configuration

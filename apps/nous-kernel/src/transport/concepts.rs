@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use nous_core::UseEventRef;
 use nous_core::{OperationId, Result, SubjectId};
-use nous_memory::{AssociationBasis, UseEventRef};
+use nous_memory::AssociationBasis;
 use nous_memory::{CreateAssociationRequest, CreateTagRequest};
 
 impl KernelService {

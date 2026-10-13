@@ -7,6 +7,50 @@ use nous_runtime::{ContextResolver, ContextSource};
 
 #[async_trait::async_trait]
 impl ContextResolver for NousRuntime {
+    async fn query_descriptors(
+        &self,
+        query: &CognitiveQuery,
+        sources: &[nous_runtime::QuerySource],
+        configuration: &nous_configuration::ConfigSnapshot,
+        historical: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<Vec<QueryDescriptor>> {
+        let (cognition, other): (Vec<_>, Vec<_>) = sources
+            .iter()
+            .cloned()
+            .partition(|source| nous_memory::MemoryService::owns_content(&source.reference));
+        let mut descriptors = if cognition.is_empty() {
+            vec![]
+        } else {
+            self.require_memory()?
+                .query_descriptors(
+                    query.subject,
+                    &cognition,
+                    query.effort,
+                    query.temporal_frame.clock_now,
+                    configuration,
+                    historical,
+                )
+                .await?
+        };
+        let (material, identities): (Vec<_>, Vec<_>) = other
+            .into_iter()
+            .map(|s| s.reference)
+            .partition(|reference| {
+                nous_runtime::CognitiveContributor::owns(&self.material, reference)
+            });
+        descriptors.extend(
+            self.material
+                .query_descriptors(query.subject, &material, historical)
+                .await?,
+        );
+        descriptors.extend(
+            self.store
+                .identity_descriptors(query.subject, &identities, historical)
+                .await?,
+        );
+        Ok(descriptors)
+    }
+
     async fn context_source(
         &self,
         subject: SubjectId,
@@ -16,18 +60,7 @@ impl ContextResolver for NousRuntime {
         now: chrono::DateTime<chrono::Utc>,
         configuration: &nous_configuration::ConfigSnapshot,
     ) -> Result<ContextSource> {
-        if matches!(
-            reference,
-            CognitiveRef::Memory(_)
-                | CognitiveRef::MemoryRevision(_)
-                | CognitiveRef::CognitiveSchema(_)
-                | CognitiveRef::CognitiveSchemaRevision(_)
-                | CognitiveRef::Episode(_)
-                | CognitiveRef::EpisodeRevision(_)
-                | CognitiveRef::Journal(_)
-                | CognitiveRef::JournalRevision(_)
-                | CognitiveRef::Tag(_)
-        ) {
+        if nous_memory::MemoryService::owns_content(reference) {
             let policy = nous_memory::resolve_accessibility_policy(configuration)?;
             return self
                 .require_memory()?

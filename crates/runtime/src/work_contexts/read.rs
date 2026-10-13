@@ -6,11 +6,7 @@ impl CognitiveRuntimeService {
         subject: SubjectId,
         work_context_id: Uuid,
     ) -> Result<WorkContextView> {
-        let mut tx = self.store.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.store.read_view().await?;
         let context = self
             .work_context_in(subject, work_context_id, &mut tx)
             .await?;
@@ -47,11 +43,7 @@ impl CognitiveRuntimeService {
             ));
         }
         self.store.require_subject(subject).await?;
-        let mut tx = self.store.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.store.read_view().await?;
         let mut rows = sqlx::query("SELECT * FROM work_contexts WHERE subject_id=$1 AND ($2::uuid IS NULL OR work_context_id>$2) ORDER BY work_context_id LIMIT $3")
             .bind(subject.0).bind(after).bind(limit+1).fetch_all(&mut *tx).await.map_err(db)?;
         let more = rows.len() > limit as usize;

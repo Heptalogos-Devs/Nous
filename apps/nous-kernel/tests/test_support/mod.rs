@@ -91,18 +91,20 @@ pub(crate) async fn open_memory_only_runtime(url: &str, root: &TempDir) -> NousR
         },
         embedding: None,
         stored_embedding: None,
-        core_descriptors: vec![],
-        deployment_document: serde_json::json!({
-                "capabilities": {
-                    "process": { "memory": true },
-                    "subject_defaults": { "memory": true }
-                },
-                "serving": {
-                    "lexical": { "enabled": false },
-                    "dense": { "enabled": false },
-                    "topology": { "enabled": false }
-                }
-        }),
+        configuration: nous_kernel::configuration_catalog(vec![])
+            .unwrap()
+            .deployment(&serde_json::json!({
+                    "capabilities": {
+                        "process": { "memory": true },
+                        "subject_defaults": { "memory": true }
+                    },
+                    "serving": {
+                        "lexical": { "enabled": false },
+                        "dense": { "enabled": false },
+                        "topology": { "enabled": false }
+                    }
+            }))
+            .unwrap(),
     })
     .await
     .expect("open memory-only runtime")
@@ -141,18 +143,20 @@ pub(crate) fn runtime_options(
         },
         embedding: None,
         stored_embedding: None,
-        core_descriptors: vec![],
-        deployment_document: serde_json::json!({
-                "capabilities": {
-                    "process": { "memory": true },
-                    "subject_defaults": { "memory": true }
-                },
-                "serving": {
-                    "lexical": { "enabled": lexical },
-                    "dense": { "enabled": dense },
-                    "topology": { "enabled": topology }
-                }
-        }),
+        configuration: nous_kernel::configuration_catalog(vec![])
+            .unwrap()
+            .deployment(&serde_json::json!({
+                    "capabilities": {
+                        "process": { "memory": true },
+                        "subject_defaults": { "memory": true }
+                    },
+                    "serving": {
+                        "lexical": { "enabled": lexical },
+                        "dense": { "enabled": dense },
+                        "topology": { "enabled": topology }
+                    }
+            }))
+            .unwrap(),
     }
 }
 
@@ -374,28 +378,20 @@ pub(crate) fn query_reservation(bound: nous_runtime::BoundQuery) -> nous_runtime
 }
 
 #[allow(dead_code)]
-pub(crate) fn workflow_payload(payload: serde_json::Value) -> nous_core::WorkflowPayload {
-    nous_core::WorkflowPayload {
+pub(crate) fn result_payload(payload: serde_json::Value) -> nous_core::ResultPayload {
+    nous_core::ResultPayload {
         payload,
         ..Default::default()
     }
 }
 #[allow(dead_code)]
-pub(crate) fn workflow_snapshot(payload: serde_json::Value) -> nous_core::WorkflowSnapshot {
-    nous_core::WorkflowSnapshot {
-        content: workflow_payload(payload),
-        ..Default::default()
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn workflow_identity(
+pub(crate) fn model_operation_identity(
     subject: nous_core::SubjectId,
     owner: &str,
     key: &str,
     digest: &str,
-) -> nous_persistence::WorkflowIdentity {
-    nous_persistence::WorkflowIdentity {
+) -> nous_persistence::ModelOperationIdentity {
+    nous_persistence::ModelOperationIdentity {
         subject,
         owner: owner.into(),
         operation_key: key.into(),

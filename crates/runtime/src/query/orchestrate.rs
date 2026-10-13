@@ -186,16 +186,16 @@ impl CognitiveRuntimeService {
         let runtime_allowed = query.projection.has_cognition()
             || query.projection.domains.contains(&ResultDomain::Evidence);
         if runtime_allowed && bound.lane_enabled(EvidenceFamily::Runtime) {
-            for (reference, source) in &bound.runtime_sources {
+            for source in bound.runtime_sources() {
                 lane_outputs.push(LaneOutput {
                     family: EvidenceFamily::Runtime,
                     status: LaneStatus::Ready,
                     generation_ref: None,
                     authority_watermark: None,
                     candidates: vec![LaneCandidate {
-                        reference: reference.clone(),
+                        reference: source.reference.clone(),
                         rank: 1,
-                        variants: vec![source.clone()],
+                        variants: vec![source.origin.clone()],
                         provider_metadata: serde_json::Value::Null,
                     }],
                     diagnostics: Vec::new(),

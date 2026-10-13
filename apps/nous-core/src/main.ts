@@ -106,6 +106,7 @@ export async function runCore(
       resources: resources ?? new ResourceRegistry(),
       models,
       execution: effective.execution,
+      maxUploadBytes: effective.maxUploadBytes,
     });
     const endpoint = await app.listen({ host: "127.0.0.1", port: config.port });
     await instance.publish(endpoint, token);

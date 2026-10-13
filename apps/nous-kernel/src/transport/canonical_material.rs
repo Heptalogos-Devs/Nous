@@ -6,6 +6,7 @@ use super::*;
 rpc_service! {
     p::material_service_server::MaterialService {
         forward {
+            read_lineage(p::MaterialLineageRequest) -> p::MaterialLineage;
             get_occurrence(p::ObjectRequest) -> p::Occurrence;
             get_source_region(p::ObjectRequest) -> p::SourceRegion;
             get_derived_representation(p::ObjectRequest) -> p::DerivedRepresentation;
@@ -36,7 +37,7 @@ rpc_service! {
                 let input = request.into_inner();
                 let result: nous_core::Result<_> = async {
                     let value = self.0.material.derived_region(SubjectId(id(&input.subject_id)?), nous_core::DerivedRegionId(id(&input.id)?)).await?;
-                    Ok(p::DerivedRegion { derived_region_id: value.derived_region_id.0.to_string(), subject_id: value.subject_id.0.to_string(), representation_id: value.derived_representation_id.0.to_string(), coordinate_kind: value.coordinate_kind, coordinate: to_object(value.coordinate), coordinate_hash: value.coordinate_hash, parent_derived_region_id: value.parent_derived_region_id.map(|id| id.0.to_string()) })
+                    Ok(evidence::derived_region(value))
                 }
                 .await;
                 result.map(Response::new).map_err(status)

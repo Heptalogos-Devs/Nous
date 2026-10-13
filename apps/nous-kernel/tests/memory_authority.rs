@@ -1,3 +1,4 @@
+use nous_core::UseEventRef;
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +11,7 @@ use nous_core::{
 use nous_memory::{
     AssociationBasis, AssociationBasisClass, AssociationPolarity, BasisRole, CreateSchemaInput,
     EvidenceLocator, EvidenceRef, FormationMode, RevisionBasis, SchemaEvidenceLinkInput,
-    SchemaEvidenceRole, SchemaFormationKind, SchemaScope, UseEventRef,
+    SchemaEvidenceRole, SchemaFormationKind, SchemaScope,
 };
 use nous_runtime::{UseFeedback, UseFeedbackEvent, UseKind};
 use test_support::query::{query, subject};

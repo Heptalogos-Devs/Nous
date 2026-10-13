@@ -153,7 +153,6 @@ pub struct QueryActivation {
     pub inferred_tags: Vec<TagActivation>,
     pub novel_concepts: Vec<NovelConceptHypothesis>,
     pub schema_refs: Vec<CognitiveRef>,
-    pub runtime_refs: Vec<CognitiveRef>,
     pub seeds: Vec<ActivationSeed>,
     pub exploration: ExplorationIntent,
     pub temporal_frame: TemporalFrame,
@@ -170,72 +169,16 @@ impl QueryActivation {
         query: &CognitiveQuery,
         digest: String,
         exact_refs: Vec<CognitiveRef>,
-        runtime_refs: Vec<CognitiveRef>,
-        structural_seeds: &[(CognitiveRef, String)],
+        sources: &[super::QuerySource],
     ) -> Self {
-        let mut seeds = exact_refs
+        let mut seeds = sources
             .iter()
-            .cloned()
-            .map(|reference| ActivationSeed {
-                reference,
-                origin: "exact_target".into(),
+            .map(|source| ActivationSeed {
+                reference: source.reference.clone(),
+                origin: source.origin.clone(),
                 strength: 1.0,
             })
-            .chain(
-                runtime_refs
-                    .iter()
-                    .cloned()
-                    .map(|reference| ActivationSeed {
-                        reference,
-                        origin: "runtime_situation".into(),
-                        strength: 1.0,
-                    }),
-            )
             .collect::<Vec<_>>();
-        seeds.extend(
-            structural_seeds
-                .iter()
-                .cloned()
-                .map(|(reference, origin)| ActivationSeed {
-                    reference,
-                    origin,
-                    strength: 1.0,
-                }),
-        );
-        seeds.extend(
-            query
-                .scopes()
-                .into_iter()
-                .flat_map(|scope| &scope.targets)
-                .filter_map(|target| {
-                    if let QueryTarget::EntityNeighborhood { entity_ref } = target {
-                        Some(ActivationSeed {
-                            reference: CognitiveRef::Entity(entity_ref.clone()),
-                            origin: "entity_cue".into(),
-                            strength: 1.0,
-                        })
-                    } else {
-                        None
-                    }
-                }),
-        );
-        for cue in query.scopes().into_iter().flat_map(|scope| &scope.cues) {
-            let value = match cue {
-                Cue::Tag(tag) => Some((CognitiveRef::Tag(tag.tag), "tag_cue")),
-                Cue::Entity(entity) => Some((
-                    CognitiveRef::Entity(entity.entity_ref.clone()),
-                    "entity_cue",
-                )),
-                _ => None,
-            };
-            if let Some((reference, origin)) = value {
-                seeds.push(ActivationSeed {
-                    reference,
-                    origin: origin.into(),
-                    strength: 1.0,
-                });
-            }
-        }
         seeds.sort_by_key(|s| (s.reference.to_string(), s.origin.clone()));
         seeds.dedup_by(|a, b| a.reference == b.reference && a.origin == b.origin);
         let explicit_tags = explicit_tag_activations(&seeds);
@@ -269,7 +212,6 @@ impl QueryActivation {
             inferred_tags: vec![],
             novel_concepts: vec![],
             schema_refs,
-            runtime_refs,
             seeds,
             exploration: query.exploration,
             temporal_frame: query.temporal_frame.clone(),
@@ -288,14 +230,13 @@ impl QueryActivation {
         &self,
         query: &CognitiveQuery,
         exact_refs: Vec<CognitiveRef>,
-        structural_seeds: &[(CognitiveRef, String)],
+        sources: &[super::QuerySource],
     ) -> Self {
         let mut scoped = Self::prepared(
             query,
             self.semantic_text_digest.clone(),
             exact_refs,
-            self.runtime_refs.clone(),
-            structural_seeds,
+            sources,
         );
         scoped.concept_catalog = self.concept_catalog.clone();
         scoped.frozen = self.frozen;
@@ -328,7 +269,10 @@ fn explicit_tag_activations(seeds: &[ActivationSeed]) -> Vec<TagActivation> {
                     strength: 1.0,
                     source: if seed.origin == "work_context" {
                         ActivationSource::WorkContext
-                    } else if seed.origin == "runtime_situation" {
+                    } else if matches!(
+                        seed.origin.as_str(),
+                        "runtime_situation" | "runtime_resident"
+                    ) {
                         ActivationSource::RuntimeContext
                     } else {
                         ActivationSource::ExplicitQuery

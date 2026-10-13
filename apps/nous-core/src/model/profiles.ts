@@ -115,3 +115,5 @@ export function embeddingSpaceParameters(profile: ModelProfile) {
     output_semantics: embedding.output_semantics,
   };
 }
+
+export type GatewayProfile = z.infer<typeof gatewaySchema>;

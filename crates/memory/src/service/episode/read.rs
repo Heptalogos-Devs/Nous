@@ -10,13 +10,21 @@ impl MemoryService {
         episode: EpisodeId,
         revision: Option<EpisodeRevisionId>,
     ) -> Result<EpisodeView> {
-        let selected: Option<Uuid> = sqlx::query_scalar("SELECT r.episode_revision_id FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id AND r.episode_revision_id=COALESCE($3,o.current_revision_id) WHERE o.subject_id=$1 AND o.episode_id=$2")
-            .bind(subject.0).bind(episode.0).bind(revision.map(|value| value.0)).fetch_optional(self.store.pool()).await.map_err(db)?;
-        self.episode_revision(
-            subject,
-            EpisodeRevisionId(selected.ok_or_else(|| Error::NotFound("Episode not found".into()))?),
-        )
-        .await
+        let mut tx = self.store.read_view().await?;
+        let revisions = revision.map(|id| vec![id.0]).unwrap_or_default();
+        let objects = if revision.is_none() {
+            vec![episode.0]
+        } else {
+            vec![]
+        };
+        let views = self
+            .episode_views_in(&mut tx, subject, &revisions, &objects)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        views
+            .into_values()
+            .find(|view| view.object.episode_id == episode)
+            .ok_or_else(|| Error::NotFound("Episode not found".into()))
     }
 
     pub(in crate::service) async fn episode_views(
@@ -24,11 +32,30 @@ impl MemoryService {
         subject: SubjectId,
         revisions: &[Uuid],
     ) -> Result<std::collections::HashMap<Uuid, EpisodeView>> {
+        let mut tx = self.store.read_view().await?;
+        let result = self
+            .episode_views_in(&mut tx, subject, revisions, &[])
+            .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(result)
+    }
+
+    pub(in crate::service) async fn episode_views_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        revisions: &[Uuid],
+        objects: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, EpisodeView>> {
         use std::collections::HashMap;
-        let rows = sqlx::query("SELECT o.episode_id,o.subject_id,o.track_key,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.created_at,r.episode_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end,r.boundary_explanation,r.formed_at,r.recorded_at,r.producer_signature_id FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2)").bind(subject.0).bind(revisions).fetch_all(self.store.pool()).await.map_err(db)?;
-        let (mut basis, mut members) = self.episode_supports(revisions).await?;
+        let rows = sqlx::query("SELECT o.episode_id,o.subject_id,o.track_key,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.created_at,r.episode_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end,r.boundary_explanation,r.formed_at,r.recorded_at,r.producer_signature_id FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND (r.episode_revision_id=ANY($2) OR (o.episode_id=ANY($3) AND r.episode_revision_id=o.current_revision_id))").bind(subject.0).bind(revisions).bind(objects).fetch_all(&mut **tx).await.map_err(db)?;
+        let selected = rows
+            .iter()
+            .map(|row| row.try_get::<Uuid, _>("episode_revision_id").map_err(db))
+            .collect::<Result<Vec<_>>>()?;
+        let (mut basis, mut members) = self.episode_supports_in(tx, &selected).await?;
         let mut relations: HashMap<Uuid, Vec<EpisodeRelation>> = HashMap::new();
-        for row in sqlx::query("SELECT from_revision_id,to_revision_id,relation,created_at FROM episode_revision_relations WHERE from_revision_id=ANY($1) OR to_revision_id=ANY($1) ORDER BY created_at,from_revision_id,to_revision_id").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+        for row in sqlx::query("SELECT from_revision_id,to_revision_id,relation,created_at FROM episode_revision_relations WHERE from_revision_id=ANY($1) OR to_revision_id=ANY($1) ORDER BY created_at,from_revision_id,to_revision_id").bind(&selected).fetch_all(&mut **tx).await.map_err(db)? {
             let relation = EpisodeRelation {
                 from_revision_id: EpisodeRevisionId(row.try_get("from_revision_id").map_err(db)?),
                 to_revision_id: EpisodeRevisionId(row.try_get("to_revision_id").map_err(db)?),
@@ -36,7 +63,7 @@ impl MemoryService {
                 created_at: row.try_get("created_at").map_err(db)?,
             };
             for id in [relation.from_revision_id.0, relation.to_revision_id.0] {
-                if revisions.contains(&id) { relations.entry(id).or_default().push(relation.clone()); }
+                if selected.contains(&id) { relations.entry(id).or_default().push(relation.clone()); }
             }
         }
         rows.into_iter()
@@ -101,8 +128,9 @@ impl MemoryService {
             .collect()
     }
 
-    async fn episode_supports(
+    async fn episode_supports_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         revisions: &[Uuid],
     ) -> Result<(
         std::collections::HashMap<Uuid, Vec<RevisionBasis>>,
@@ -110,7 +138,7 @@ impl MemoryService {
     )> {
         use std::collections::HashMap;
         let mut members: HashMap<Uuid, Vec<EpisodeMember>> = HashMap::new();
-        for row in sqlx::query("SELECT episode_revision_id,ordinal,ref_kind,ref_value,role FROM episode_revision_members WHERE episode_revision_id=ANY($1) ORDER BY episode_revision_id,ordinal").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+        for row in sqlx::query("SELECT episode_revision_id,ordinal,ref_kind,ref_value,role FROM episode_revision_members WHERE episode_revision_id=ANY($1) ORDER BY episode_revision_id,ordinal").bind(revisions).fetch_all(&mut **tx).await.map_err(db)? {
             members.entry(row.try_get("episode_revision_id").map_err(db)?).or_default().push(EpisodeMember {
                 ordinal: row.try_get("ordinal").map_err(db)?,
                 reference: parse_reference(&row.try_get::<String,_>("ref_kind").map_err(db)?, &row.try_get::<String,_>("ref_value").map_err(db)?)?,
@@ -118,7 +146,7 @@ impl MemoryService {
             });
         }
         let mut basis: HashMap<Uuid, Vec<RevisionBasis>> = HashMap::new();
-        for row in sqlx::query("SELECT episode_revision_id,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM episode_revision_basis WHERE episode_revision_id=ANY($1) ORDER BY episode_revision_id,basis_no").bind(revisions).fetch_all(self.store.pool()).await.map_err(db)? {
+        for row in sqlx::query("SELECT episode_revision_id,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM episode_revision_basis WHERE episode_revision_id=ANY($1) ORDER BY episode_revision_id,basis_no").bind(revisions).fetch_all(&mut **tx).await.map_err(db)? {
             let revision_id: Uuid = row.try_get("episode_revision_id").map_err(db)?;
             let value = basis_from_row(&row)?;
             basis.entry(revision_id).or_default().push(value);
@@ -130,7 +158,9 @@ impl MemoryService {
         &self,
         revision: Uuid,
     ) -> Result<(Vec<RevisionBasis>, Vec<EpisodeMember>)> {
-        let (mut basis, mut members) = self.episode_supports(&[revision]).await?;
+        let mut tx = self.store.read_view().await?;
+        let (mut basis, mut members) = self.episode_supports_in(&mut tx, &[revision]).await?;
+        tx.commit().await.map_err(db)?;
         Ok((
             basis.remove(&revision).unwrap_or_default(),
             members.remove(&revision).unwrap_or_default(),
@@ -162,11 +192,12 @@ impl MemoryService {
         if !matches!(status, "" | "accepted" | "withdrawn") {
             return Err(Error::Invalid("invalid Episode acceptance status".into()));
         }
+        let mut tx = self.store.read_view().await?;
         let mut ids: Vec<Uuid> = sqlx::query_scalar("SELECT current_revision_id FROM episode_objects WHERE subject_id=$1 AND ($2='' OR acceptance_state=$2) AND ($3::uuid IS NULL OR episode_id>$3) ORDER BY episode_id LIMIT $4")
-            .bind(subject.0).bind(status).bind(after).bind(limit+1).fetch_all(self.store.pool()).await.map_err(db)?;
+            .bind(subject.0).bind(status).bind(after).bind(limit+1).fetch_all(&mut *tx).await.map_err(db)?;
         let more = ids.len() > limit as usize;
         ids.truncate(limit as usize);
-        let mut views = self.episode_views(subject, &ids).await?;
+        let mut views = self.episode_views_in(&mut tx, subject, &ids, &[]).await?;
         let items = ids
             .into_iter()
             .map(|id| {
@@ -175,6 +206,7 @@ impl MemoryService {
                     .ok_or_else(|| Error::NotFound("Episode page changed while reading".into()))
             })
             .collect::<Result<_>>()?;
+        tx.commit().await.map_err(db)?;
         Ok((items, more))
     }
 
@@ -191,18 +223,19 @@ impl MemoryService {
         self.store
             .validate_reference(subject, &CognitiveRef::Episode(episode))
             .await?;
+        let mut tx = self.store.read_view().await?;
         let after_no = if let Some(after) = after {
             Some(sqlx::query_scalar::<_, i32>("SELECT revision_no FROM episode_revisions WHERE subject_id=$1 AND episode_id=$2 AND episode_revision_id=$3")
-                .bind(subject.0).bind(episode.0).bind(after).fetch_optional(self.store.pool()).await.map_err(db)?
+                .bind(subject.0).bind(episode.0).bind(after).fetch_optional(&mut *tx).await.map_err(db)?
                 .ok_or_else(|| Error::Invalid("invalid Episode history cursor".into()))?)
         } else {
             None
         };
         let mut ids: Vec<Uuid> = sqlx::query_scalar("SELECT episode_revision_id FROM episode_revisions WHERE subject_id=$1 AND episode_id=$2 AND ($3::int IS NULL OR revision_no>$3) ORDER BY revision_no LIMIT $4")
-            .bind(subject.0).bind(episode.0).bind(after_no).bind(limit+1).fetch_all(self.store.pool()).await.map_err(db)?;
+            .bind(subject.0).bind(episode.0).bind(after_no).bind(limit+1).fetch_all(&mut *tx).await.map_err(db)?;
         let more = ids.len() > limit as usize;
         ids.truncate(limit as usize);
-        let mut views = self.episode_views(subject, &ids).await?;
+        let mut views = self.episode_views_in(&mut tx, subject, &ids, &[]).await?;
         let items = ids
             .into_iter()
             .map(|id| {
@@ -211,6 +244,7 @@ impl MemoryService {
                     .ok_or_else(|| Error::NotFound("Episode history changed while reading".into()))
             })
             .collect::<Result<_>>()?;
+        tx.commit().await.map_err(db)?;
         Ok((items, more))
     }
 }

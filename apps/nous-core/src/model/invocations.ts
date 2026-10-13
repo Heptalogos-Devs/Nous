@@ -1,12 +1,14 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
 import {
   resolveRole,
+  bindPrompt,
   type ReadyRole,
-  type ModelRoleSnapshot,
+  type PreparedModelRole,
   type ModelProducerMetadata,
-} from "./execution/snapshot.js";
+} from "./execution/binding.js";
 import { executeRoutes, GenerationFailure } from "./execution/routes.js";
 import type { UserContent } from "ai";
 import {
@@ -46,7 +48,7 @@ type GenerationInput = {
 };
 type GenerationOptions<R extends ModelRole> = {
   signal?: AbortSignal;
-  snapshot?: ModelRoleSnapshot;
+  prepared?: PreparedModelRole;
   prompt?: ModelRole | { role: ModelRole; path: string };
   beforeAttempt?: () => void;
   validateOutput?: (
@@ -57,12 +59,10 @@ type GenerationOptions<R extends ModelRole> = {
 
 export class ModelInvocations {
   private prompts?: PromptRegistry;
-  private readonly active = new Map<ModelRole, ReadyRole[]>();
   private configuration!: ModelConfiguration;
-  private readonly credentialOrigins = new Set<string>();
-  private readonly states = new Map<
+  private readonly roles = new Map<
     ModelRole,
-    { state: string; detail: string }
+    { state: string; detail: string; prepared?: PreparedModelRole }
   >();
   static async create(
     config: ModelConfiguration,
@@ -75,23 +75,18 @@ export class ModelInvocations {
     const runtime = new ModelInvocations();
     config = modelConfigurationSchema.parse(config);
     runtime.configuration = config;
-    for (const gateway of Object.values(config.gateway_profiles))
-      if (gateway.enabled)
-        runtime.credentialOrigins.add(
-          `${gateway.credential_env}@${new URL(gateway.base_url).origin}`,
-        );
     const prompts = new PromptRegistry(promptRoot, overridePromptRoot);
     runtime.prompts = prompts;
     for (const name of roleNames) {
       const policy = config.roles[name];
       if (!policy) {
-        runtime.states.set(name, {
+        runtime.roles.set(name, {
           state: "NOT_CONFIGURED",
           detail: "Role has no policy",
         });
         continue;
       }
-      const routes: ReadyRole[] = [];
+      const routes: PreparedModelRole["routes"] = [];
       let problem = "Execution route unavailable";
       let prompt: PromptAsset | undefined;
       try {
@@ -99,20 +94,41 @@ export class ModelInvocations {
       } catch {
         problem = "Prompt asset unavailable or invalid";
       }
+      const configDigest = canonicalDigest({
+        policy,
+        configuration: modelRoleGraph(config, name),
+        prompt: prompt && { id: prompt.id, digest: prompt.digest },
+        outputSchemaDigest: providerContractForRole(name)?.digest,
+      });
       for (const executionName of policy.routes) {
         try {
-          routes.push(resolveRole(config, name, executionName, prompt));
+          routes.push({
+            executionName,
+            modelProfile: config.execution_profiles[executionName]!.model,
+            ready: resolveRole(
+              config,
+              name,
+              executionName,
+              prompt,
+              configDigest,
+            ),
+          });
         } catch (error) {
           problem =
             error instanceof Error
               ? error.message
               : "Execution route unavailable";
+          routes.push({
+            executionName,
+            modelProfile: config.execution_profiles[executionName]!.model,
+          });
         }
       }
-      runtime.active.set(name, routes);
-      runtime.states.set(name, {
-        state: routes.length ? "READY" : "UNAVAILABLE",
-        detail: routes.length ? "Executable ordered routes available" : problem,
+      const ready = routes.some((route) => route.ready);
+      runtime.roles.set(name, {
+        state: ready ? "READY" : "UNAVAILABLE",
+        detail: ready ? "Executable ordered routes available" : problem,
+        prepared: { role: name, routes, configDigest },
       });
     }
     return runtime;
@@ -120,52 +136,66 @@ export class ModelInvocations {
   get capabilities() {
     return roleNames.map((role) => ({
       name: `model.${role}`,
-      ...(this.states.get(role) ?? {
-        state: "NOT_CONFIGURED",
-        detail: "Role has no binding",
-      }),
+      state: this.roles.get(role)?.state ?? "NOT_CONFIGURED",
+      detail: this.roles.get(role)?.detail ?? "Role has no binding",
     }));
   }
   profile(role: ModelRole) {
-    return this.active.get(role)?.[0]?.profile;
+    return this.roles.get(role)?.prepared?.routes.find((route) => route.ready)
+      ?.ready?.profile;
   }
   requirement(role: ModelRole) {
     return this.configuration?.roles[role]?.requirement ?? "optional";
   }
-  snapshot(name: ModelRole): ModelRoleSnapshot {
-    const role = this.require(name);
-    return {
-      role: name,
-      configuration: modelRoleGraph(this.configuration, name),
-      prompt: role.prompt,
-      configDigest: canonicalDigest({
-        policy: role.policy,
-        configuration: modelRoleGraph(this.configuration, name),
-        prompt: role.prompt && {
-          id: role.prompt.id,
-          digest: role.prompt.digest,
-        },
-        outputSchemaDigest: providerContractForRole(name)?.digest,
-      }),
-    };
+  /** Owners choose the optional result; required roles and cancellation always propagate. */
+  allowDegradation(
+    error: unknown,
+    signal?: AbortSignal | null,
+    role?: ModelRole,
+    mandatory = false,
+  ) {
+    if (signal?.aborted) throw signal.reason ?? error;
+    const failedRole = error instanceof GenerationFailure ? error.role : role;
+    if (
+      mandatory ||
+      (failedRole && this.requirement(failedRole) === "required")
+    )
+      throw ConnectError.from(error, Code.FailedPrecondition);
   }
-  async snapshotPrompt(
+  prepare(name: ModelRole): PreparedModelRole {
+    const value = this.roles.get(name)?.prepared;
+    if (!value) throw new GenerationFailure(name, "role_unavailable");
+    return value;
+  }
+  async preparePrompt(
     name: ModelRole,
     path?: string,
     adapter?: string,
-  ): Promise<ModelRoleSnapshot> {
-    const snapshot = this.snapshot(name);
-    if (path) {
-      const prompt = await this.prompts?.load(name, path);
-      if (!prompt) throw new Error("Strategy prompt unavailable");
-      snapshot.prompt = prompt;
-    }
-    snapshot.configDigest = invocationConfigDigest(
-      snapshot.configDigest,
-      path ? snapshot.prompt : undefined,
+  ): Promise<PreparedModelRole> {
+    const prepared = this.prepare(name);
+    if (!path && !adapter) return prepared;
+    const prompt = path
+      ? await this.prompts?.load(name, path).catch(() => {
+          throw new GenerationFailure(name, "prompt_unavailable");
+        })
+      : undefined;
+    if (path && !prompt)
+      throw new GenerationFailure(name, "prompt_unavailable");
+    const configDigest = invocationConfigDigest(
+      prepared.configDigest,
+      prompt,
       adapter,
     );
-    return snapshot;
+    return {
+      ...prepared,
+      configDigest,
+      routes: prepared.routes.map((route) => ({
+        ...route,
+        ready:
+          route.ready &&
+          bindPrompt(route.ready, prompt ?? route.ready.prompt, configDigest),
+      })),
+    };
   }
   private async withRoutes<
     T extends {
@@ -178,14 +208,13 @@ export class ModelInvocations {
     name: ModelRole,
     invoke: (role: ReadyRole, input: Input) => Promise<T>,
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    fixed?: PreparedModelRole,
     beforeAttempt?: () => void,
     prepare?: (role: ReadyRole) => Input,
   ) {
     return executeRoutes(
       name,
-      fixed ?? this.snapshot(name),
-      this.credentialOrigins,
+      fixed ?? this.prepare(name),
       invoke,
       signal,
       beforeAttempt,
@@ -193,12 +222,8 @@ export class ModelInvocations {
     );
   }
   identity(role: ModelRole) {
-    return this.active.get(role)?.[0]?.configDigest;
-  }
-  private require(role: ModelRole): ReadyRole {
-    const value = this.active.get(role)?.[0];
-    if (!value) throw new Error(`Model role ${role} unavailable`);
-    return value;
+    return this.roles.get(role)?.prepared?.routes.find((route) => route.ready)
+      ?.ready?.configDigest;
   }
   private metadata(role: ReadyRole, adapter: string): ModelProducerMetadata {
     return {
@@ -229,7 +254,7 @@ export class ModelInvocations {
       validateOutput,
     } = options;
     const { content, media } = request;
-    let snapshot = options.snapshot ?? this.snapshot(name);
+    let snapshot = options.prepared ?? this.prepare(name);
     if (promptRole) {
       const selected =
         typeof promptRole === "string" ? promptRole : promptRole.role;
@@ -240,10 +265,17 @@ export class ModelInvocations {
           : promptRole.path,
       );
       if (!prompt) throw new Error("Strategy prompt unavailable");
+      const configDigest = invocationConfigDigest(
+        snapshot.configDigest,
+        prompt,
+      );
       snapshot = {
         ...snapshot,
-        prompt,
-        configDigest: invocationConfigDigest(snapshot.configDigest, prompt),
+        configDigest,
+        routes: snapshot.routes.map((route) => ({
+          ...route,
+          ready: route.ready && bindPrompt(route.ready, prompt, configDigest),
+        })),
       };
     }
     return this.withRoutes<
@@ -337,7 +369,7 @@ export class ModelInvocations {
   async transcription(
     audio: Uint8Array,
     signal?: AbortSignal,
-    fixed?: ModelRoleSnapshot,
+    fixed?: PreparedModelRole,
   ) {
     return this.withRoutes(
       "speech_transcription",

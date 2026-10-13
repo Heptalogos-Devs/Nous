@@ -67,34 +67,44 @@ export async function readConfiguration(
   );
 }
 
-/** Zod owners consume values resolved by Kernel; no override precedence exists in Core. */
-export function parseEffectiveConfiguration(values: Record<string, unknown>) {
-  const parseOwner = <T>(
-    path: string,
-    schema: z.ZodType<T>,
-    input: unknown,
-  ): T => {
-    const parsed = schema.safeParse(input);
-    if (!parsed.success)
-      throw new ConfigurationError(
-        parsed.error.issues.map((issue) => ({
-          path: [path, ...issue.path].filter(Boolean).join("."),
-          code: issue.code,
-          message: issue.message,
-        })),
-      );
-    return parsed.data;
-  };
-  const models = parseOwner("", modelConfigurationSchema, {
+const parseOwner = <T>(
+  path: string,
+  schema: z.ZodType<T>,
+  input: unknown,
+): T => {
+  const parsed = schema.safeParse(input);
+  if (!parsed.success)
+    throw new ConfigurationError(
+      parsed.error.issues.map((issue) => ({
+        path: [path, ...issue.path].filter(Boolean).join("."),
+        code: issue.code,
+        message: issue.message,
+      })),
+    );
+  return parsed.data;
+};
+
+export function parseModelConfiguration(values: Record<string, unknown>) {
+  return parseOwner("", modelConfigurationSchema, {
     ...((values.models ?? {}) as Record<string, unknown>),
     audio: coreConfigurationGroup(values, "audio"),
     video: coreConfigurationGroup(values, "video"),
     material_strategy: values["material.strategy"],
     material_inputs: coreConfigurationGroup(values, "material.inputs"),
   });
+}
+
+/** Zod owners consume the complete startup values resolved by Kernel. */
+export function parseEffectiveConfiguration(values: Record<string, unknown>) {
+  const models = parseModelConfiguration(values);
   const consumers = parseOwner("consumers", consumersSchema, values.consumers);
   return {
     models,
+    maxUploadBytes: parseOwner(
+      "object_store.max_upload_bytes",
+      z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      values["object_store.max_upload_bytes"],
+    ),
     execution: parseOwner(
       "core_execution",
       coreExecutionSchema,

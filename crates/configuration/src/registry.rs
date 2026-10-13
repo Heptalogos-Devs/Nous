@@ -65,6 +65,12 @@ pub struct ConfigRegistry {
 }
 
 impl ConfigRegistry {
+    pub fn deployment(&self, document: &Value) -> Result<ConfigDeployment> {
+        Ok(ConfigDeployment {
+            registry: self.clone(),
+            values: self.deployment_values(document)?,
+        })
+    }
     pub fn descriptor(&self, path: &str) -> Option<&ConfigDescriptor> {
         self.descriptors.get(path).map(|entry| &entry.descriptor)
     }
@@ -357,4 +363,10 @@ impl ConfigRegistryBuilder {
 pub struct ConfigurationBootstrapBundle {
     pub core_descriptors: Vec<ConfigDescriptor>,
     pub deployment_document: Value,
+}
+
+#[derive(Clone)]
+pub struct ConfigDeployment {
+    pub(crate) registry: ConfigRegistry,
+    pub(crate) values: BTreeMap<String, Value>,
 }

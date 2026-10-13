@@ -127,11 +127,11 @@ async function run() {
   const input =
     captured?.messages[1]!.content ??
     JSON.stringify(toJson(MaintenancePlanSchema, plan!));
-  const snapshot = models.invocations.snapshot(role!);
+  const snapshot = models.invocations.prepare(role!);
   const result = await models.invocations.generate(
     role!,
     { content: input },
-    { signal: signal.signal, snapshot },
+    { signal: signal.signal, prepared: snapshot },
   );
   if (!captured && role === "episode_segmentation") {
     partitionIndices(

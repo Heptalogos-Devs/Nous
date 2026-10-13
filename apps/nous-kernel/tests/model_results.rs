@@ -3,12 +3,12 @@
 
 #[path = "test_support/mod.rs"]
 mod test_support;
-use nous_core::{MaintenanceTrigger, OperationId, WorkflowSnapshot};
+use nous_core::{MaintenanceTrigger, ModelResultContext, OperationId};
 use nous_subject::{CognitiveSeedInput, CreateSubject};
-use test_support::{workflow_payload as payload, workflow_snapshot as snapshot};
+use test_support::result_payload as payload;
 
 #[tokio::test]
-async fn workflow_identity_conflict_proposal_resume_and_outcome_replay() {
+async fn model_operation_identity_conflict_proposal_resume_and_outcome_replay() {
     let (root, url, _postgres) = test_support::database().await;
     let runtime = test_support::open_runtime(&url, &root).await;
     let subject = runtime
@@ -28,99 +28,60 @@ async fn workflow_identity_conflict_proposal_resume_and_outcome_replay() {
         .unwrap()
         .subject_id;
     let key = OperationId::new().0.to_string();
-    let first = runtime
-        .store
-        .start_model_operation(
-            subject,
-            "memory",
-            &key,
-            "same input",
-            &snapshot(serde_json::json!({"model":"original"})),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        first.snapshot.content.payload,
-        serde_json::json!({"model":"original"})
-    );
-    let concurrent = runtime
-        .store
-        .start_model_operation(
-            subject,
-            "memory",
-            &key,
-            "same input",
-            &snapshot(serde_json::json!({"model":"changed"})),
-        )
-        .await
-        .unwrap();
-    assert_eq!(concurrent.snapshot, first.snapshot);
+    let identity = test_support::model_operation_identity(subject, "memory", &key, "same input");
     assert!(
         runtime
             .store
-            .start_model_operation(
-                subject,
-                "memory",
-                &key,
-                "different input",
-                &snapshot(serde_json::json!({}))
-            )
+            .read_model_operation(subject, "memory", &key, "same input")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    runtime
+        .store
+        .save_model_operation(
+            &identity,
+            Some(&ModelResultContext::default()),
+            Some(&payload(serde_json::json!({"text":"paid proposal"}))),
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    let saved = runtime
+        .store
+        .read_model_operation(subject, "memory", &key, "same input")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        saved.proposal.unwrap().payload,
+        serde_json::json!({"text":"paid proposal"})
+    );
+    assert!(saved.context.is_some());
+    assert!(
+        runtime
+            .store
+            .read_model_operation(subject, "memory", &key, "different input")
             .await
             .is_err()
     );
-    runtime
-        .store
-        .save_model_operation(
-            &test_support::workflow_identity(subject, "memory", &key, "same input"),
-            Some(&payload(serde_json::json!({"text":"validated proposal"}))),
-            None,
-            None,
-            &[],
-        )
-        .await
-        .unwrap();
-    let resumed = runtime
-        .store
-        .start_model_operation(
-            subject,
-            "memory",
-            &key,
-            "same input",
-            &snapshot(serde_json::json!({"model":"changed"})),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        resumed.snapshot.content.payload,
-        serde_json::json!({"model":"original"})
-    );
-    assert!(resumed.proposal.is_some());
     let outcome = payload(serde_json::json!({"revision":"receipt reference"}));
     runtime
         .store
-        .save_model_operation(
-            &test_support::workflow_identity(subject, "memory", &key, "same input"),
-            None,
-            Some(&outcome),
-            None,
-            &[],
-        )
+        .save_model_operation(&identity, None, None, Some(&outcome), None, &[])
         .await
         .unwrap();
     let completed = runtime
         .store
-        .start_model_operation(
-            subject,
-            "memory",
-            &key,
-            "same input",
-            &snapshot(serde_json::json!({})),
-        )
+        .read_model_operation(subject, "memory", &key, "same input")
         .await
+        .unwrap()
         .unwrap();
     assert_eq!(completed.outcome, Some(outcome));
     assert!(completed.proposal.is_none());
-    assert_eq!(completed.snapshot, WorkflowSnapshot::default());
+    assert!(completed.context.is_none());
     assert_owner_validation(&runtime.store, subject, &key).await;
     assert_maintenance_operation_validates_parent_trigger(&runtime, subject).await;
     assert_child_result_purge_before_host_ack(&runtime, subject).await;
@@ -135,20 +96,24 @@ async fn assert_child_result_purge_before_host_ack(
     let key = parent.0.to_string();
     runtime
         .store
-        .start_model_operation(
-            subject,
-            "memory",
-            &key,
-            "child commit",
-            &snapshot(serde_json::json!({"model":"frozen"})),
+        .save_model_operation(
+            &test_support::model_operation_identity(subject, "memory", &key, "child commit"),
+            Some(&ModelResultContext::default()),
+            Some(&test_support::result_payload(
+                serde_json::json!({"action":"no_change"}),
+            )),
+            None,
+            None,
+            &[],
         )
         .await
         .unwrap();
-    let identity = test_support::workflow_identity(subject, "memory", &key, "child commit");
+    let identity = test_support::model_operation_identity(subject, "memory", &key, "child commit");
     runtime
         .store
         .save_model_operation(
             &identity,
+            None,
             Some(&payload(
                 serde_json::json!({"text":"private pending proposal"}),
             )),
@@ -193,12 +158,13 @@ async fn assert_child_result_purge_before_host_ack(
         "the owner commit links its result before the host acknowledges it"
     );
     assert!(found.proposal.is_none());
-    assert_eq!(found.snapshot, WorkflowSnapshot::default());
+    assert_eq!(found.context, None);
     assert!(
         runtime
             .store
             .save_model_operation(
                 &identity,
+                None,
                 Some(&payload(serde_json::json!({"text":"resurrect"}))),
                 None,
                 None,
@@ -233,7 +199,7 @@ async fn assert_maintenance_operation_validates_parent_trigger(
         .unwrap();
     let need = needs.iter().find(|need| need.need_id == need_id).unwrap();
     let key = OperationId::new().0.to_string();
-    let snapshot = WorkflowSnapshot {
+    let snapshot = ModelResultContext {
         maintenance_trigger: Some(MaintenanceTrigger {
             need_id,
             trigger_authority_seq: need.trigger_authority_seq,
@@ -250,19 +216,43 @@ async fn assert_maintenance_operation_validates_parent_trigger(
     assert!(
         runtime
             .store
-            .start_model_operation(subject, "memory", &key, "bounded maintenance", &invalid,)
+            .save_model_operation(
+                &test_support::model_operation_identity(
+                    subject,
+                    "memory",
+                    &key,
+                    "bounded maintenance"
+                ),
+                Some(&invalid),
+                Some(&test_support::result_payload(
+                    serde_json::json!({"action":"no_change"})
+                )),
+                None,
+                None,
+                &[]
+            )
             .await
             .is_err()
     );
     runtime
         .store
-        .start_model_operation(subject, "memory", &key, "bounded maintenance", &snapshot)
+        .save_model_operation(
+            &test_support::model_operation_identity(subject, "memory", &key, "bounded maintenance"),
+            Some(&snapshot),
+            Some(&test_support::result_payload(
+                serde_json::json!({"action":"no_change"}),
+            )),
+            None,
+            None,
+            &[],
+        )
         .await
         .unwrap();
     runtime
         .store
         .save_model_operation(
-            &test_support::workflow_identity(subject, "memory", &key, "bounded maintenance"),
+            &test_support::model_operation_identity(subject, "memory", &key, "bounded maintenance"),
+            None,
             Some(&payload(serde_json::json!({"action":"no_change"}))),
             None,
             None,
@@ -277,16 +267,19 @@ async fn assert_owner_validation(
     subject: nous_core::SubjectId,
     key: &str,
 ) {
-    use nous_persistence::WorkflowOwner;
-    let domain = WorkflowOwner::new("test_domain_42").unwrap();
+    use nous_persistence::ModelResultOwner;
+    let domain = ModelResultOwner::new("test_domain_42").unwrap();
     assert_eq!(domain.as_str(), "test_domain_42");
     store
-        .start_model_operation(
-            subject,
-            domain.as_str(),
-            key,
-            "domain input",
-            &snapshot(serde_json::json!({})),
+        .save_model_operation(
+            &test_support::model_operation_identity(subject, domain.as_str(), key, "domain input"),
+            Some(&ModelResultContext::default()),
+            Some(&test_support::result_payload(
+                serde_json::json!({"action":"no_change"}),
+            )),
+            None,
+            None,
+            &[],
         )
         .await
         .unwrap();
@@ -298,19 +291,22 @@ async fn assert_owner_validation(
         "领域",
         &"a".repeat(65),
     ] {
-        assert!(WorkflowOwner::new(owner).is_err());
+        assert!(ModelResultOwner::new(owner).is_err());
         assert!(
             store
-                .start_model_operation(
-                    subject,
-                    owner,
-                    key,
-                    "input",
-                    &snapshot(serde_json::json!({}))
+                .save_model_operation(
+                    &test_support::model_operation_identity(subject, owner, key, "input"),
+                    Some(&ModelResultContext::default()),
+                    Some(&test_support::result_payload(
+                        serde_json::json!({"action":"no_change"})
+                    )),
+                    None,
+                    None,
+                    &[]
                 )
                 .await
                 .is_err()
         );
-        assert!(sqlx::query("INSERT INTO model_workflow_operations(subject_id,owner,operation_key,semantic_digest,snapshot) VALUES($1,$2,'invalid','input','{}')").bind(subject.0).bind(owner).execute(store.pool()).await.is_err());
+        assert!(sqlx::query("INSERT INTO model_results(subject_id,owner,operation_key,semantic_digest,context) VALUES($1,$2,'invalid','input','{}')").bind(subject.0).bind(owner).execute(store.pool()).await.is_err());
     }
 }

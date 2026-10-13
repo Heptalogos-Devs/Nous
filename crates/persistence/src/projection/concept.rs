@@ -22,11 +22,7 @@ impl AuthorityStore {
         memory_enabled: bool,
         view: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<ConceptProjectionInput> {
-        let mut tx = self.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let mut tx = self.read_view().await?;
         if view.is_some_and(|view| view.subject != subject) {
             return Err(Error::Invalid(
                 "concept projection view Subject mismatch".into(),

@@ -6,7 +6,7 @@
 
 `apps/nous-cli` 是第一方 consumer，通过 public `@nous-wave/client` 调用 Core。[CLI README](../../../../apps/nous-cli/README.md) 定义可执行命令。Terminal 与官方 stdio MCP 调用同一个 in-process command core；MCP 提供 help、argv 与 NousQL query，stdin/stdout 仅用于协议，不接受文件 `-`。MCP 显式提供私有 state root 与稳定 consumer identity。consumer 是不超过 512 UTF-8 字节的非空、不含空白的 opaque ID；配置、projection、CLI selection 与 UseEvent 使用同一原值，默认 ID 为 default。
 
-Core discovery 由 RunRoot 提供。consumer InstanceRoot 保存 Subject/Session/WorkContext selection、exact result:N 索引与冻结原请求，不拥有 Nous Wave Authority。state 按稳定 Core instanceId 与 consumer 隔离。每次调用只读取一次 selection 与 active consumer_state policy；原子写与跨进程锁仅覆盖短事务，RPC/provider 等待不占锁。独立 selection 字段可合并，冲突 Subject/query scope 或同字段更新返回 STATE_UNSAVED，保留实际业务结果和可继续使用的 exact references。
+Core discovery 由 RunRoot 提供。consumer InstanceRoot 保存 Subject/Session/WorkContext selection、exact result:N 索引与冻结原请求，不拥有 Nous Wave Authority。state 按稳定 Core instanceId 与 consumer 隔离。只读配置直接使用连接；显式 Subject 按需解析。需要当前上下文的操作才读取 selection，需要结果索引或冻结请求才读取 active consumer_state policy；原子写与跨进程锁仅覆盖短事务，RPC/provider 等待不占锁。独立 selection 字段可合并，冲突 Subject/query scope 或同字段更新返回 STATE_UNSAVED，保留实际业务结果和可继续使用的 exact references。
 
 ## Canonical DTO 与呈现
 
@@ -22,7 +22,7 @@ native JSON 由 Buf toJson 负责：oneof 为实际字段，Timestamp 为 ISO，
 
 幂等 mutation 在 RPC 前保存完整冻结原请求，包括实际 operation/event identity、expected epoch/revision、时间戳和已解析 canonical references。原请求 identity 不允许被不同输入替换；codec 区分 BigInt 与用户 JSON 字符串。
 
-semantic owner 是唯一结果与拒绝 Authority。consumer 不缓存 complete/rejected，不依据 transport 数字码建立终态。成功响应后删除本地原请求；删除失败只附 REQUEST_UNSAVED notice，不改变业务结果。响应失败保留原请求并返回 retry ID，`retry <id>` 将相同原输入再次发送给 owner，不重新读当前 revision、生成 identity 或重新解析名称。Subject creation 重试不要求先选择新 Subject；其他 Subject-bound 重试校验 scope。重试只恢复业务请求，不补做独立的 local selection 更新。
+semantic owner 是唯一结果与拒绝 Authority。consumer 不建立 complete/rejected 状态表。成功响应，以及 owner 明确的提交前拒绝（STALE_REVISION、OPERATION_ID_CONFLICT、InvalidArgument、PermissionDenied、Unauthenticated）删除本地原请求；删除失败只附 REQUEST_UNSAVED notice，不改变业务结果。连接丢失、DeadlineExceeded、Unavailable 或可能发生于提交后的 Internal/Unknown 保留原请求并返回 retry ID，`retry <id>` 将相同原输入再次发送给 owner，不重新读当前 revision、生成 identity 或重新解析名称。Subject creation 重试不要求先选择新 Subject；其他 Subject-bound 重试校验 scope。重试只恢复业务请求，不补做独立的 local selection 更新。
 
 `retry forget <id>` 只删除本地原请求，不撤销 Authority 操作。保存请求容量耗尽时先恢复或明确丢弃原请求；没有第二套终态回收规则。Session lifecycle、Identity binding、derivation、upload 的实际幂等合同由各 owner 决定，不声称全部调用都可用同一方式恢复。
 

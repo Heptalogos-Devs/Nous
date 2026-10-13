@@ -27,14 +27,7 @@ impl KernelService {
                 SourceRegionId(id(&input.id)?),
             )
             .await?;
-        Ok(p::SourceRegion {
-            source_region_id: value.source_region_id.0.to_string(),
-            artifact_id: value.artifact_id.0.to_string(),
-            coordinate_kind: value.coordinate_kind,
-            coordinate: to_object(value.coordinate),
-            coordinate_hash: value.coordinate_hash,
-            parent_source_region_id: value.parent_source_region_id.map(|id| id.0.to_string()),
-        })
+        Ok(source_region(value))
     }
     pub(super) async fn get_derived_representation(
         &self,
@@ -119,5 +112,28 @@ pub(super) fn representation(
         text: value.payload_text,
         structured_payload: value.payload_json.and_then(to_object),
         artifact_id: value.payload_artifact_id.map(|id| id.0.to_string()),
+    }
+}
+
+pub(super) fn source_region(value: nous_material::SourceRegion) -> p::SourceRegion {
+    p::SourceRegion {
+        source_region_id: value.source_region_id.0.to_string(),
+        artifact_id: value.artifact_id.0.to_string(),
+        coordinate_kind: value.coordinate_kind,
+        coordinate: to_object(value.coordinate),
+        coordinate_hash: value.coordinate_hash,
+        parent_source_region_id: value.parent_source_region_id.map(|id| id.0.to_string()),
+    }
+}
+
+pub(super) fn derived_region(value: nous_material::DerivedRegion) -> p::DerivedRegion {
+    p::DerivedRegion {
+        derived_region_id: value.derived_region_id.0.to_string(),
+        subject_id: value.subject_id.0.to_string(),
+        representation_id: value.derived_representation_id.0.to_string(),
+        coordinate_kind: value.coordinate_kind,
+        coordinate: to_object(value.coordinate),
+        coordinate_hash: value.coordinate_hash,
+        parent_derived_region_id: value.parent_derived_region_id.map(|id| id.0.to_string()),
     }
 }

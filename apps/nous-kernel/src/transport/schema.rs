@@ -64,7 +64,7 @@ fn schema_content(value: p::CognitiveSchemaContent) -> Result<SchemaContent> {
     })
 }
 
-fn schema_view(value: SchemaView) -> p::CognitiveSchema {
+pub(super) fn schema_view(value: SchemaView) -> p::CognitiveSchema {
     let revision = &value.revision;
     p::CognitiveSchema {
         schema_id: value.schema.schema_id.0.to_string(),

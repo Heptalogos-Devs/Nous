@@ -144,7 +144,7 @@ impl KernelService {
             "satisfied" => MaintenanceDisposition::Satisfied,
             "obsolete" => MaintenanceDisposition::Obsolete,
             "pending" => MaintenanceDisposition::Pending {
-                due_at: required(time(input.next_due)?, "next_due")?,
+                due_at: time(input.next_due)?,
                 problem_code: input.problem_code,
             },
             "blocked" => MaintenanceDisposition::Blocked {

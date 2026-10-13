@@ -36,6 +36,15 @@ export class NousError extends Error {
   readonly details: readonly unknown[];
   readonly candidates: readonly unknown[];
 
+  get codeName(): string {
+    return (
+      this.domainCode ??
+      (Code[this.code] ?? "Unknown")
+        .replace(/([a-z])([A-Z])/gu, "$1_$2")
+        .toUpperCase()
+    );
+  }
+
   constructor(error: ConnectError) {
     super(error.rawMessage, { cause: error });
     this.name = "NousError";

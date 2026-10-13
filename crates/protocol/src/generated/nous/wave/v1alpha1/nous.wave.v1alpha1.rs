@@ -764,7 +764,7 @@ pub struct QueryRequest {
     #[prost(message, optional, tag="8")]
     pub capabilities: ::core::option::Option<QueryCapabilities>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PreparedQueryResponse {
     #[prost(string, tag="1")]
     pub bound_query: ::prost::alloc::string::String,
@@ -784,6 +784,10 @@ pub struct PreparedQueryResponse {
     pub concept_enrichment_requirement: ::prost::alloc::string::String,
     #[prost(bool, tag="9")]
     pub historical_view: bool,
+    #[prost(message, optional, tag="10")]
+    pub result: ::core::option::Option<QueryResponse>,
+    #[prost(string, optional, tag="11")]
+    pub validation_ticket: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Evidence {
@@ -2627,6 +2631,49 @@ pub struct ResourceMaterialization {
     #[prost(string, tag="4")]
     pub media_type: ::prost::alloc::string::String,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MaterialLineageRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="2")]
+    pub roots: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(uint32, tag="3")]
+    pub max_nodes: u32,
+    #[prost(uint32, tag="4")]
+    pub max_bytes: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MaterialLineageNode {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(oneof="material_lineage_node::Value", tags="2, 3, 4, 5, 6")]
+    pub value: ::core::option::Option<material_lineage_node::Value>,
+}
+/// Nested message and enum types in `MaterialLineageNode`.
+pub mod material_lineage_node {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        #[prost(message, tag="2")]
+        Occurrence(super::Occurrence),
+        #[prost(message, tag="3")]
+        Artifact(super::Artifact),
+        #[prost(message, tag="4")]
+        SourceRegion(super::SourceRegion),
+        #[prost(message, tag="5")]
+        Representation(super::DerivedRepresentation),
+        #[prost(message, tag="6")]
+        DerivedRegion(super::DerivedRegion),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MaterialLineage {
+    #[prost(message, repeated, tag="1")]
+    pub nodes: ::prost::alloc::vec::Vec<MaterialLineageNode>,
+    #[prost(bool, tag="2")]
+    pub truncated: bool,
+    #[prost(bool, tag="3")]
+    pub payloads_truncated: bool,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FormationRequest {
     #[prost(string, tag="1")]
@@ -2684,6 +2731,51 @@ pub struct PrepareEmbeddingsResponse {
     pub committed: u32,
     #[prost(message, repeated, tag="2")]
     pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CognitionTraceRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(uint32, tag="3")]
+    pub max_nodes: u32,
+    #[prost(uint32, tag="4")]
+    pub max_bytes: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CognitionTraceNode {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(oneof="cognition_trace_node::Content", tags="2, 3, 4, 5")]
+    pub content: ::core::option::Option<cognition_trace_node::Content>,
+}
+/// Nested message and enum types in `CognitionTraceNode`.
+pub mod cognition_trace_node {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Content {
+        #[prost(message, tag="2")]
+        Memory(super::Memory),
+        #[prost(message, tag="3")]
+        Schema(super::CognitiveSchema),
+        #[prost(message, tag="4")]
+        Episode(super::EpisodeRevision),
+        #[prost(message, tag="5")]
+        Journal(super::JournalRevision),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CognitionTrace {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(message, repeated, tag="2")]
+    pub nodes: ::prost::alloc::vec::Vec<CognitionTraceNode>,
+    #[prost(message, optional, tag="3")]
+    pub lineage: ::core::option::Option<MaterialLineage>,
+    #[prost(message, repeated, tag="4")]
+    pub producers: ::prost::alloc::vec::Vec<ProducerSignature>,
+    #[prost(bool, tag="5")]
+    pub truncated: bool,
 }
 include!("nous.wave.v1alpha1.tonic.rs");
 // @@protoc_insertion_point(module)

@@ -9,9 +9,14 @@ pub(crate) struct DenseManifest {
     pub records: Vec<VectorRecord>,
 }
 
-pub(super) struct TextDocuments {
-    watermarks: nous_persistence::ProjectionWatermarks,
-    documents: std::sync::Arc<Vec<LexicalDocument>>,
+pub(crate) struct TextDocuments {
+    pub(crate) watermarks: nous_persistence::ProjectionWatermarks,
+    pub(crate) documents: std::sync::Arc<Vec<LexicalDocument>>,
+    embeddings: Option<std::sync::Arc<Vec<(usize, QuerySemanticEmbedding)>>>,
+    pub(crate) vcp: Option<(
+        OwnedTopologyProjection,
+        std::collections::HashMap<CognitiveRef, std::collections::HashSet<String>>,
+    )>,
 }
 
 impl ServingService {
@@ -31,17 +36,37 @@ impl ServingService {
             .tempdir_in(&self.options.root)
             .map_err(io)?;
         let id = ServingGenerationId::new();
-        if matches!(family, "lexical" | "dense") && text_documents.is_none() {
+        let vcp = family == "topology"
+            && matches!(
+                snapshot.get(nous_runtime::COGNITIVE_PROFILE)?,
+                nous_runtime::CognitiveProfile::VcpDtsc
+                    | nous_runtime::CognitiveProfile::VcpRiverMemo
+            );
+        if (matches!(family, "lexical" | "dense") || vcp) && text_documents.is_none() {
             let budget = snapshot.get(crate::EPISODE_SYNOPSIS)?;
-            let input = self
-                .store
-                .text_projection_input(subject, capabilities.memory, budget, view)
-                .await?;
+            let (watermarks, sources, topology) = if vcp {
+                let input = self
+                    .vcp_projection_input(subject, capabilities.memory, budget, space, view)
+                    .await?;
+                (
+                    input.watermarks,
+                    input.sources,
+                    Some((input.topology, input.evidence_roots)),
+                )
+            } else {
+                let input = self
+                    .store
+                    .text_projection_input(subject, capabilities.memory, budget, view)
+                    .await?;
+                (input.watermarks, input.sources, None)
+            };
             *text_documents = Some(TextDocuments {
-                watermarks: input.watermarks,
+                watermarks,
                 documents: std::sync::Arc::new(
-                    self.documents(subject, input.sources, budget, view).await?,
+                    self.documents(subject, sources, budget, view).await?,
                 ),
+                embeddings: None,
+                vcp: topology,
             });
         }
         let watermark = match super::family::AssetFamily::parse(family)? {
@@ -54,6 +79,7 @@ impl ServingService {
                     capabilities,
                     view,
                     serving,
+                    text_documents.as_mut(),
                 )
                 .await?
             }
@@ -69,7 +95,7 @@ impl ServingService {
                     staging.path(),
                     serving,
                     text_documents
-                        .as_ref()
+                        .as_mut()
                         .ok_or_else(|| Error::Infrastructure("text projection missing".into()))?,
                 )
                 .await?
@@ -139,6 +165,10 @@ impl ServingService {
         Ok(input.watermarks.desired("lexical", ""))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "consumes the captured build input and destination without a parallel context wrapper"
+    )]
     async fn build_topology(
         &self,
         subject: SubjectId,
@@ -148,6 +178,7 @@ impl ServingService {
         capabilities: ProjectionCapabilities,
         view: Option<&HistoricalAuthoritySnapshot>,
         serving: &ServingSnapshot,
+        text_documents: Option<&mut TextDocuments>,
     ) -> Result<i64> {
         let profile = snapshot.get(nous_runtime::COGNITIVE_PROFILE)?;
         if matches!(
@@ -155,7 +186,12 @@ impl ServingService {
             nous_runtime::CognitiveProfile::VcpDtsc | nous_runtime::CognitiveProfile::VcpRiverMemo
         ) {
             let material = self
-                .vcp_projection_material_in_view(subject, snapshot, view, serving, capabilities)
+                .vcp_projection_material(
+                    subject,
+                    text_documents
+                        .ok_or_else(|| Error::Infrastructure("VCP projection missing".into()))?,
+                    serving,
+                )
                 .await?;
             let watermark = material.authority_watermark;
             let policy = snapshot.get(crate::VCP_ASSETS)?;
@@ -265,25 +301,19 @@ impl ServingService {
         }
         Ok(projected)
     }
-    async fn build_dense(
+    pub(crate) async fn embedded_documents(
         &self,
         subject: SubjectId,
-        id: ServingGenerationId,
-        space_key: &str,
-        dir: &std::path::Path,
+        input: &mut TextDocuments,
         serving: &ServingSnapshot,
-        input: &TextDocuments,
-    ) -> Result<i64> {
+    ) -> Result<std::sync::Arc<Vec<(usize, QuerySemanticEmbedding)>>> {
+        if let Some(outputs) = &input.embeddings {
+            return Ok(outputs.clone());
+        }
         let provider = self
             .embedding()
             .ok_or_else(|| Error::Unavailable("text embedding provider is unavailable".into()))?;
         let space = provider.space();
-        if space_key != space.space_hash {
-            return Err(Error::Unavailable(
-                "embedding space has no configured provider".into(),
-            ));
-        }
-        let documents = &input.documents;
         let concepts = serving.concept.iter().find(|generation| {
             generation
                 .space
@@ -294,23 +324,48 @@ impl ServingService {
                     .as_ref()
                     .is_some_and(|p| p.signature_hash == provider.producer().signature_hash)
         });
-        let mut vectors = Vec::new();
-        for (index, output) in self
-            .embed_documents(
+        let outputs = std::sync::Arc::new(
+            self.embed_documents(
                 subject,
-                documents,
+                &input.documents,
                 concepts.map(AsRef::as_ref),
                 provider.as_ref(),
             )
-            .await?
-        {
-            let document = &documents[index];
+            .await?,
+        );
+        input.embeddings = Some(outputs.clone());
+        Ok(outputs)
+    }
+
+    async fn build_dense(
+        &self,
+        subject: SubjectId,
+        id: ServingGenerationId,
+        space_key: &str,
+        dir: &std::path::Path,
+        serving: &ServingSnapshot,
+        input: &mut TextDocuments,
+    ) -> Result<i64> {
+        let provider = self
+            .embedding()
+            .ok_or_else(|| Error::Unavailable("text embedding provider is unavailable".into()))?;
+        let space = provider.space();
+        if space_key != space.space_hash {
+            return Err(Error::Unavailable(
+                "embedding space has no configured provider".into(),
+            ));
+        }
+        let embedded = self.embedded_documents(subject, input, serving).await?;
+        let documents = &input.documents;
+        let mut vectors = Vec::new();
+        for (index, output) in embedded.iter() {
+            let document = &documents[*index];
             let record = VectorRecord {
                 serving_doc_id: document.serving_doc_id,
                 reference: document.reference.clone(),
-                producer_signature: output.producer.signature_hash,
+                producer_signature: output.producer.signature_hash.clone(),
             };
-            vectors.push((record, output.vector));
+            vectors.push((record, output.vector.clone()));
         }
         let directory = dir.to_path_buf();
         tokio::task::spawn_blocking(move || {

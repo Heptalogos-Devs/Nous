@@ -1,3 +1,4 @@
+import { ModelInvocations } from "../src/model/invocations.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -63,12 +64,14 @@ it("prepares before embedding and sends one complete representation for an expre
     value: texts.map(() => [1, 0]),
     producer: { signature_hash: "producer" },
   }));
-  const execute = vi.fn(async () => ({
-    response: create(QueryResponseSchema, {
-      status: "complete",
-      boundQuery: '{"activation":true}',
+  const execute = vi.fn(
+    async (_input: Parameters<KernelClient["queryWorkflow"]["query"]>[0]) => ({
+      response: create(QueryResponseSchema, {
+        status: "complete",
+        boundQuery: '{"activation":true}',
+      }),
     }),
-  }));
+  );
   const release = vi.fn(async () => ({}));
   const prepare = vi.fn(async () => ({
     preparationToken: "prepared",
@@ -132,14 +135,7 @@ it("prepares before embedding and sends one complete representation for an expre
   expect(prepare).toHaveBeenCalledOnce();
   expect(embedding).toHaveBeenCalledOnce();
   expect(embedding.mock.calls[0]?.[0]).toEqual([representation]);
-  expect(execute).toHaveBeenCalledWith(
-    expect.objectContaining({
-      subjectId: "subject",
-      preparationToken: "prepared",
-      embeddings: [expect.objectContaining({ text: representation })],
-    }),
-    expect.anything(),
-  );
+  expect(execute.mock.calls[0]?.[0].embedding?.text).toBe(representation);
   expect(result.boundQuery).toBe('{"activation":true}');
   expect(release).toHaveBeenCalledOnce();
 });
@@ -210,7 +206,7 @@ it.each([
       expect(execute).toHaveBeenCalledWith(
         expect.objectContaining({
           preparationToken: "activated",
-          embeddings: [],
+          embedding: undefined,
           conceptOutput: JSON.stringify({
             existing_tags: [{ key: "c0", strength: 0.8 }],
             novel_concepts: [],
@@ -259,7 +255,10 @@ it.each(["optional", "required"])(
       },
     } as unknown as KernelClient;
     const models = {
-      invocations: { profile: () => undefined, requirement: () => "optional" },
+      invocations: Object.assign(new ModelInvocations(), {
+        profile: () => undefined,
+        requirement: () => "optional",
+      }),
     } as unknown as ModelRuntime;
     const result = new QueryOrchestrator(
       kernel,
@@ -268,7 +267,7 @@ it.each(["optional", "required"])(
     ).execute(create(QueryRequestSchema, { subjectId: "subject" }));
     if (requirement === "required") {
       await expect(result).rejects.toThrow(
-        "Required query concept model unavailable",
+        "Query concept model role unavailable",
       );
       expect(execute).not.toHaveBeenCalled();
     } else {

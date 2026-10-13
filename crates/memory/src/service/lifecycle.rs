@@ -157,16 +157,14 @@ impl MemoryService {
             cognition_revisions_in(mutation.tx(), subject, kind, id).await?;
         let mut workflow_refs = revisions.clone();
         workflow_refs.push(id.to_string());
-        AuthorityStore::purge_workflows_in(mutation.tx(), subject, &workflow_refs).await?;
+        AuthorityStore::purge_model_results_in(mutation.tx(), subject, &workflow_refs).await?;
         self.cognition
             .purge_cognition_refs_in(mutation.tx(), subject, revision_kind, &revisions)
             .await?;
-        if matches!(kind, "memory" | "schema") {
-            sqlx::query("UPDATE cognitive_schema_evidence_links SET revoked_at=COALESCE(revoked_at,$4) WHERE subject_id=$1 AND basis_kind=$2 AND basis_ref=ANY($3::text[]) AND revoked_at IS NULL")
+        sqlx::query("UPDATE cognitive_schema_evidence_links SET revoked_at=COALESCE(revoked_at,$4) WHERE subject_id=$1 AND basis_kind=$2 AND basis_ref=ANY($3::text[]) AND revoked_at IS NULL")
                 .bind(subject.0).bind(revision_kind).bind(&revisions).bind(self.cognition.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?;
-            sqlx::query("DELETE FROM association_evidence WHERE subject_id=$1 AND ((from_ref_kind=$2 AND from_ref=ANY($3::text[])) OR (to_ref_kind=$2 AND to_ref=ANY($3::text[])) OR association_evidence_id IN (SELECT association_evidence_id FROM association_evidence_basis WHERE basis_kind=$2 AND basis_ref=ANY($3::text[])))")
+        sqlx::query("DELETE FROM association_evidence WHERE subject_id=$1 AND ((from_ref_kind=$2 AND from_ref=ANY($3::text[])) OR (to_ref_kind=$2 AND to_ref=ANY($3::text[])) OR association_evidence_id IN (SELECT association_evidence_id FROM association_evidence_basis WHERE basis_kind=$2 AND basis_ref=ANY($3::text[])))")
                 .bind(subject.0).bind(revision_kind).bind(&revisions).execute(&mut **mutation.tx()).await.map_err(db)?;
-        }
         let delete = match kind {
             "memory" => "DELETE FROM memory_objects WHERE subject_id=$1 AND memory_id=$2",
             "schema" => "DELETE FROM cognitive_schemas WHERE subject_id=$1 AND schema_id=$2",

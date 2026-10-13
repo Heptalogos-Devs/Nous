@@ -5,15 +5,20 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
-import { timestampFromDate, TimestampSchema } from "@bufbuild/protobuf/wkt";
+import {
+  timestampFromDate,
+  TimestampSchema,
+  ValueSchema,
+} from "@bufbuild/protobuf/wkt";
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { connectNous } from "@nous-wave/client/node";
 import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { KernelClient } from "../../apps/nous-core/src/kernel-client.js";
 import { createCore } from "../../apps/nous-core/src/server.js";
+import { parseEffectiveConfiguration } from "../../apps/nous-core/src/configuration/schema.js";
+import { ConfigExposure } from "@nous-wave/client";
 import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
-import { modelConfigurationSchema } from "../../apps/nous-core/src/model/configuration.js";
 import {
   episodePartitionSchema,
   journalSynthesisSchema,
@@ -33,9 +38,17 @@ function proposalModels() {
       ),
   });
   const calls = { episode: 0, journal: 0, consolidation: 0 };
-  models.invocations.snapshot = (role) => ({
+  models.invocations.profile = (role) =>
+    [
+      "episode_segmentation",
+      "journal_synthesis",
+      "memory_consolidation",
+    ].includes(role)
+      ? ({} as NonNullable<ReturnType<typeof models.invocations.profile>>)
+      : undefined;
+  models.invocations.prepare = (role) => ({
     role,
-    configuration: modelConfigurationSchema.parse({}),
+    routes: [],
     configDigest: "b".repeat(64),
   });
   const producerMetadata = {
@@ -206,12 +219,30 @@ async function scenario(endpoint: string, token: string) {
     return JSON.parse(response.value) as { endpoint?: string };
   };
   const { models, calls } = proposalModels();
-  let app = await createCore({
-    kernel: KernelClient.connect(endpoint, token),
-    token,
-    consumers: [],
-    models,
-  });
+  async function openCore(kernelEndpoint: string) {
+    let kernel = KernelClient.connect(kernelEndpoint, token);
+    const snapshot = await kernel.configuration.getConfiguration({
+      exposureCeiling: ConfigExposure.DEVELOPER,
+    });
+    const effective = parseEffectiveConfiguration(
+      Object.fromEntries(
+        snapshot.entries.map((entry) => [
+          entry.path,
+          entry.value ? toJson(ValueSchema, entry.value) : null,
+        ]),
+      ),
+    );
+    kernel = KernelClient.connect(kernelEndpoint, token, effective.execution);
+    return createCore({
+      kernel,
+      token,
+      consumers: [],
+      models,
+      execution: effective.execution,
+      maxUploadBytes: effective.maxUploadBytes,
+    });
+  }
+  let app = await openCore(endpoint);
   let publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
   let client = connectNous(publicEndpoint, token);
   const subjectId = randomUUID();
@@ -224,6 +255,10 @@ async function scenario(endpoint: string, token: string) {
       maxModelCalls,
       maxElapsedMs: 10000,
     });
+    assert(
+      !result.results.some((item) => item.status === "internal_failure"),
+      "maintenance returned an internal failure",
+    );
     for (const operation of result.results)
       assert(
         operation.status !== "rejected_invalid" &&
@@ -330,12 +365,7 @@ async function scenario(endpoint: string, token: string) {
     await app.close();
     const restarted = await control({ command: "restart" });
     assert(restarted.endpoint);
-    app = await createCore({
-      kernel: KernelClient.connect(restarted.endpoint, token),
-      token,
-      consumers: [],
-      models,
-    });
+    app = await openCore(restarted.endpoint);
     publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
     client = connectNous(publicEndpoint, token);
     assert.equal(

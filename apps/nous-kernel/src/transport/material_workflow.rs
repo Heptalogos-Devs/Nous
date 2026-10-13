@@ -189,7 +189,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                 .collect::<Result<Vec<_>>>()?;
             let operation = input
                 .operation_identity
-                .map(super::workflow_convert::identity)
+                .map(super::model_result_codec::identity)
                 .transpose()?;
             let representation = self
                 .0

@@ -6,7 +6,7 @@ use nous_core::*;
 pub(super) fn fence(
     query: &mut CognitiveQuery,
     context: &mut Option<WorkContextView>,
-    sources: &mut Vec<(CognitiveRef, String)>,
+    sources: &mut Vec<super::QuerySource>,
     view: Option<&HistoricalAuthoritySnapshot>,
 ) -> Vec<Degradation> {
     let Some(view) = view else {
@@ -20,10 +20,10 @@ pub(super) fn fence(
     };
     let excluded = sources
         .iter()
-        .filter(|(reference, _)| !visible(reference))
-        .map(|(reference, _)| reference.to_string())
+        .filter(|source| !visible(&source.reference))
+        .map(|source| source.reference.to_string())
         .collect::<std::collections::BTreeSet<_>>();
-    sources.retain(|(reference, _)| visible(reference));
+    sources.retain(|source| visible(&source.reference));
     query.situation.current_refs.retain(visible);
     if let Some(context) = context {
         context.cognition_anchors.retain(visible);

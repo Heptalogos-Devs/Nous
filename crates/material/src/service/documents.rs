@@ -6,6 +6,39 @@ use nous_persistence::database_error as db;
 use std::collections::HashSet;
 
 impl MaterialService {
+    pub async fn query_descriptors(
+        &self,
+        subject: SubjectId,
+        refs: &[CognitiveRef],
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<Vec<QueryDescriptor>> {
+        if refs.len() > 256 || view.is_some_and(|v| v.subject != subject) {
+            return Err(Error::Invalid("Material descriptor scope exceeded".into()));
+        }
+        let (kinds, values): (Vec<_>, Vec<_>) = refs.iter().map(reference_parts).unzip();
+        let rows = sqlx::query(r#"
+WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), catalog AS (
+ SELECT r.kind,r.value,left(d.payload_text,2048) text FROM requested r JOIN derived_representations d ON r.kind='derived_representation' AND d.derived_representation_id::text=r.value WHERE d.subject_id=$1 AND ($4::timestamptz IS NULL OR d.created_at<=$4) AND d.payload_text IS NOT NULL
+ UNION ALL
+ SELECT r.kind,r.value,'Observation ('||o.source_class||', observed '||to_char(o.observed_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS')||' UTC)'||CASE WHEN $4::timestamptz IS NULL THEN ': '||COALESCE(description.text,'content descriptor unavailable') ELSE '' END
+ FROM requested r JOIN observation_occurrences o ON r.kind='occurrence' AND o.occurrence_id::text=r.value
+ LEFT JOIN LATERAL (SELECT left(d.payload_text,1536) text FROM derived_representations d WHERE $4::timestamptz IS NULL AND d.subject_id=$1 AND d.payload_text IS NOT NULL AND EXISTS(SELECT 1 FROM representation_source_regions($1,d.derived_representation_id) roots JOIN source_regions region USING(source_region_id) WHERE region.artifact_id=o.artifact_id) ORDER BY d.created_at DESC,d.derived_representation_id LIMIT 1) description ON true
+ WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4)
+) SELECT DISTINCT kind,value,text FROM catalog ORDER BY kind,value
+"#).bind(subject.0).bind(kinds).bind(values).bind(view.map(|v| v.as_of)).fetch_all(self.store.pool()).await.map_err(db)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(QueryDescriptor {
+                    reference: parse_reference(
+                        &row.try_get::<String, _>("kind").map_err(db)?,
+                        &row.try_get::<String, _>("value").map_err(db)?,
+                    )?,
+                    text: row.try_get("text").map_err(db)?,
+                })
+            })
+            .collect()
+    }
+
     pub async fn document_text_views(
         &self,
         subject: SubjectId,

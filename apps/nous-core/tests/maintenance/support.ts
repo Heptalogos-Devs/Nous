@@ -3,15 +3,12 @@
 
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import {
-  WorkflowSnapshotSchema,
-  WorkflowPayloadSchema,
-  type WorkflowSnapshot,
-  type WorkflowPayload,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
-import {
-  StartOperationRequestSchema,
-  SaveOperationRequestSchema,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
+  ModelResultContextSchema,
+  ResultPayloadSchema,
+  type ModelResultContext,
+  type ResultPayload,
+} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_results_pb.js";
+import { SaveOperationRequestSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import { coreExecutionSchema } from "../../src/configuration/catalog.js";
 
 import { vi } from "vitest";
@@ -25,7 +22,7 @@ import { type KernelClient } from "../../src/kernel-client.js";
 
 import { ModelRuntime } from "../../src/model/runtime.js";
 
-import { type ModelRoleSnapshot } from "../../src/model/execution/snapshot.js";
+import { type PreparedModelRole } from "../../src/model/execution/binding.js";
 
 export const subject = "10000000-0000-4000-8000-000000000001";
 export const revision = "20000000-0000-4000-8000-000000000001";
@@ -70,14 +67,17 @@ export function admitStub<T>(value: T) {
 }
 export function fixture() {
   const models = new ModelRuntime();
-  vi.spyOn(models.invocations, "snapshot").mockImplementation(
-    (role) => ({ role }) as ModelRoleSnapshot,
+  vi.spyOn(models.invocations, "profile").mockReturnValue(
+    {} as NonNullable<ReturnType<typeof models.invocations.profile>>,
+  );
+  vi.spyOn(models.invocations, "prepare").mockImplementation(
+    (role) => ({ role }) as PreparedModelRole,
   );
   const synthesize = vi.fn(
     async (
       _input: string,
       _signal?: AbortSignal,
-      _snapshot?: ModelRoleSnapshot,
+      _snapshot?: PreparedModelRole,
       beforeAttempt?: () => void,
     ) => {
       beforeAttempt?.();
@@ -129,13 +129,13 @@ export function fixture() {
       synthesize(
         request.content as string,
         options.signal,
-        options.snapshot,
+        options.prepared,
         options.beforeAttempt,
       ),
   );
-  let snapshot: WorkflowSnapshot | undefined;
-  let proposal: WorkflowPayload | undefined;
-  let outcome: WorkflowPayload | undefined;
+  let context: ModelResultContext | undefined;
+  let proposal: ResultPayload | undefined;
+  let outcome: ResultPayload | undefined;
   const commit = vi.fn(
     async (
       _input: Parameters<KernelClient["maintenance"]["commitJournal"]>[0],
@@ -150,28 +150,20 @@ export function fixture() {
       commitJournal: commit,
       refreshMaintenance: refresh,
     },
-    modelWorkflow: {
+    modelResults: {
       readOperation: vi.fn(async () => ({
-        snapshot,
+        context,
         proposal,
         outcome,
       })),
-      startOperation: vi.fn(
-        async (input: MessageInitShape<typeof StartOperationRequestSchema>) => {
-          snapshot ??= create(WorkflowSnapshotSchema, input.snapshot);
-          return {
-            snapshot,
-            proposal,
-            outcome,
-          };
-        },
-      ),
       saveOperation: vi.fn(
         async (input: MessageInitShape<typeof SaveOperationRequestSchema>) => {
+          if (input.context)
+            context ??= create(ModelResultContextSchema, input.context);
           if (input.proposal)
-            proposal = create(WorkflowPayloadSchema, input.proposal);
+            proposal = create(ResultPayloadSchema, input.proposal);
           if (input.outcome)
-            outcome = create(WorkflowPayloadSchema, input.outcome);
+            outcome = create(ResultPayloadSchema, input.outcome);
           return {};
         },
       ),

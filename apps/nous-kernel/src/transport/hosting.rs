@@ -6,7 +6,7 @@ use nous_protocol::kernel::kernel_configuration_service_server::KernelConfigurat
 use nous_protocol::kernel::{
     artifact_stream_service_server::ArtifactStreamServiceServer,
     kernel_material_workflow_service_server::KernelMaterialWorkflowServiceServer,
-    kernel_model_workflow_service_server::KernelModelWorkflowServiceServer,
+    kernel_model_results_service_server::KernelModelResultsServiceServer,
 };
 use nous_protocol::public::configuration_service_server::ConfigurationServiceServer;
 
@@ -79,8 +79,8 @@ pub async fn router(runtime: NousRuntime, token: String) -> tonic::transport::se
         .add_service(nous_protocol::kernel::kernel_projection_service_server::KernelProjectionServiceServer::with_interceptor(service.clone(),auth.clone()))
         .add_service(tonic::service::interceptor::InterceptedService::new(
             KernelMaterialWorkflowServiceServer::new(service.clone())
-                .max_decoding_message_size(nous_persistence::WORKFLOW_VALUE_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES)
-                .max_encoding_message_size(nous_persistence::WORKFLOW_VALUE_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES),
+                .max_decoding_message_size(nous_persistence::MODEL_RESULT_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES)
+                .max_encoding_message_size(nous_persistence::MODEL_RESULT_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES),
             auth.clone(),
         ))
         .add_service(ConfigurationServiceServer::with_interceptor(
@@ -88,12 +88,12 @@ pub async fn router(runtime: NousRuntime, token: String) -> tonic::transport::se
             auth.clone(),
         ))
         .add_service(tonic::service::interceptor::InterceptedService::new(
-            KernelModelWorkflowServiceServer::new(service.clone())
+            KernelModelResultsServiceServer::new(service.clone())
                 .max_decoding_message_size(
-                    nous_persistence::WORKFLOW_VALUE_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES,
+                    nous_persistence::MODEL_RESULT_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES,
                 )
                 .max_encoding_message_size(
-                    nous_persistence::WORKFLOW_VALUE_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES,
+                    nous_persistence::MODEL_RESULT_MAX_BYTES + WORKFLOW_PROTOCOL_ENVELOPE_BYTES,
                 ),
             auth.clone(),
         ))

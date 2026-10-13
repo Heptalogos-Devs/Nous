@@ -72,72 +72,64 @@ export class ProjectionPlanner {
     let refined = optional;
     const degradation = [...batch.degradation];
     if (policy.materialize && optional.some((source) => source.text)) {
-      if (!this.models.invocations.profile("projection_steward")) {
+      try {
+        const output = (
+          await this.models.invocations.generate(
+            "projection_steward",
+            {
+              content: JSON.stringify(
+                optional.map((s) => ({
+                  id: s.segmentId,
+                  role: s.semanticRole,
+                  text: s.text,
+                })),
+              ),
+            },
+            { signal },
+          )
+        ).value;
+        const ids = new Set(optional.map((s) => s.segmentId));
+        if (
+          new Set(output.selectedIds).size !== output.selectedIds.length ||
+          output.selectedIds.some((id) => !ids.has(id))
+        )
+          throw new Error("Steward proposed invalid source IDs");
+        const selected = new Set(output.selectedIds);
+        refined = optional.filter((s) => selected.has(s.segmentId));
+        if (output.summary) {
+          if (!refined.length)
+            throw new Error("A Steward summary requires selected sources");
+          const revision = canonicalDigest([
+            this.models.invocations.identity("projection_steward"),
+            refined.map(({ segmentId: _contributionId, ...source }) => source),
+            output.summary,
+          ]);
+          refined = [
+            create(ContextSegmentSchema, {
+              segmentId: `steward:${revision}`,
+              text: output.summary,
+              semanticRole: "steward_synthesis",
+              sourceRefs: refined.flatMap((s) => s.sourceRefs),
+              evidence: refined.flatMap((s) => s.evidence),
+              authority: "interpretation",
+              stability: "EPOCH_STABLE",
+              sourceRevision: revision,
+            }),
+          ];
+        }
+      } catch (error) {
+        this.models.invocations.allowDegradation(
+          error,
+          signal,
+          "projection_steward",
+        );
+        refined = optional;
         degradation.push(
           create(DegradationSchema, {
-            code: "steward_not_configured",
-            detail: "Deterministic projection",
+            code: "steward_rejected",
+            detail: error instanceof Error ? error.message : "Invalid proposal",
           }),
         );
-      } else {
-        try {
-          const output = (
-            await this.models.invocations.generate(
-              "projection_steward",
-              {
-                content: JSON.stringify(
-                  optional.map((s) => ({
-                    id: s.segmentId,
-                    role: s.semanticRole,
-                    text: s.text,
-                  })),
-                ),
-              },
-              { signal },
-            )
-          ).value;
-          const ids = new Set(optional.map((s) => s.segmentId));
-          if (
-            new Set(output.selectedIds).size !== output.selectedIds.length ||
-            output.selectedIds.some((id) => !ids.has(id))
-          )
-            throw new Error("Steward proposed invalid source IDs");
-          const selected = new Set(output.selectedIds);
-          refined = optional.filter((s) => selected.has(s.segmentId));
-          if (output.summary) {
-            if (!refined.length)
-              throw new Error("A Steward summary requires selected sources");
-            const revision = canonicalDigest([
-              this.models.invocations.identity("projection_steward"),
-              refined.map(
-                ({ segmentId: _contributionId, ...source }) => source,
-              ),
-              output.summary,
-            ]);
-            refined = [
-              create(ContextSegmentSchema, {
-                segmentId: `steward:${revision}`,
-                text: output.summary,
-                semanticRole: "steward_synthesis",
-                sourceRefs: refined.flatMap((s) => s.sourceRefs),
-                evidence: refined.flatMap((s) => s.evidence),
-                authority: "interpretation",
-                stability: "EPOCH_STABLE",
-                sourceRevision: revision,
-              }),
-            ];
-          }
-        } catch (error) {
-          if (signal?.aborted) throw signal.reason;
-          refined = optional;
-          degradation.push(
-            create(DegradationSchema, {
-              code: "steward_rejected",
-              detail:
-                error instanceof Error ? error.message : "Invalid proposal",
-            }),
-          );
-        }
       }
     }
     const segments = budget(

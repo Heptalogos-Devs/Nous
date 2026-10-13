@@ -20,11 +20,11 @@ impl KernelService {
             .configuration
             .snapshot_for_subject(subject)?
             .get(nous_runtime::MEMBER_TEXT_MAX_BYTES)?;
-        let sequence = self.0.store.authority_seq(subject).await?;
         let memory = self.require_memory()?;
         if selected.kind == "concept_maintenance" {
             return self.concept_maintenance_plan(&selected).await;
         }
+        let sequence = self.0.store.authority_seq(subject).await?;
         let scope = match selected.kind.as_str() {
             "episode_resegment" => {
                 memory
@@ -116,7 +116,6 @@ impl KernelService {
         selected: &nous_runtime::MaintenanceNeed,
     ) -> Result<k::MaintenancePlan> {
         let subject = selected.subject_id;
-        let sequence = self.0.store.authority_seq(subject).await?;
         let memory = self.require_memory()?;
         {
             let focus = parse_reference(&selected.scope_kind, &selected.scope_ref)?;
@@ -125,7 +124,7 @@ impl KernelService {
                 Err(Error::NotFound(_)) => {
                     return Ok(k::MaintenancePlan {
                         subject_id: subject.0.to_string(),
-                        authority_seq: sequence,
+                        authority_seq: self.0.store.authority_seq(subject).await?,
                         status: "obsolete".into(),
                         ..Default::default()
                     });

@@ -25,54 +25,46 @@ impl KernelService {
                 .collect(),
         })
     }
-    fn query_materials(
+    fn query_embedding(
         &self,
         bound: &nous_runtime::BoundQuery,
-        inputs: Vec<k::QueryEmbedding>,
+        input: Option<k::QueryEmbedding>,
     ) -> Result<Option<QuerySemanticEmbedding>> {
-        if bound.activation.frozen && !inputs.is_empty() {
+        if bound.activation.frozen && input.is_some() {
             return Err(Error::Invalid(
                 "frozen query activation cannot replace its embedding".into(),
             ));
         }
-        if inputs.len() > 1 {
+        let Some(material) = input else {
+            return Ok(None);
+        };
+        let provider = self
+            .0
+            .serving
+            .embedding()
+            .ok_or_else(|| Error::Unavailable("embedding space not configured".into()))?;
+        let space = provider.space();
+        let producer = provider
+            .producers()
+            .into_iter()
+            .find(|p| p.signature_hash == material.producer_hash)
+            .ok_or_else(|| Error::Invalid("query embedding producer is not authorized".into()))?;
+        if material.text != bound.representation.text
+            || material.text.len() > 131072
+            || material.space_hash != space.space_hash
+            || material.producer_hash != producer.signature_hash
+            || material.vector.len() != space.dimension as usize
+            || material.vector.iter().any(|v| !v.is_finite())
+        {
             return Err(Error::Invalid(
-                "one prepared query accepts at most one embedding".into(),
+                "query embedding is incompatible with selected space/producer".into(),
             ));
         }
-        let mut prepared = None;
-        for material in inputs {
-            let provider = self
-                .0
-                .serving
-                .embedding()
-                .ok_or_else(|| Error::Unavailable("embedding space not configured".into()))?;
-            let space = provider.space();
-            let producer = provider
-                .producers()
-                .into_iter()
-                .find(|p| p.signature_hash == material.producer_hash)
-                .ok_or_else(|| {
-                    Error::Invalid("query embedding producer is not authorized".into())
-                })?;
-            if material.text != bound.representation.text
-                || material.text.len() > 131072
-                || material.space_hash != space.space_hash
-                || material.producer_hash != producer.signature_hash
-                || material.vector.len() != space.dimension as usize
-                || material.vector.iter().any(|v| !v.is_finite())
-            {
-                return Err(Error::Invalid(
-                    "query embedding is incompatible with selected space/producer".into(),
-                ));
-            }
-            prepared = Some(QuerySemanticEmbedding {
-                vector: material.vector,
-                space,
-                producer,
-            });
-        }
-        Ok(prepared)
+        Ok(Some(QuerySemanticEmbedding {
+            vector: material.vector,
+            space,
+            producer,
+        }))
     }
     pub(super) async fn activate_query_with_material(
         &self,
@@ -96,7 +88,7 @@ impl KernelService {
                 "query concept model activity is not permitted".into(),
             ));
         }
-        bound.activation.embedding = self.query_materials(bound, input.embeddings)?;
+        bound.activation.embedding = self.query_embedding(bound, input.embedding)?;
 
         let plan = nous_runtime::QueryPlan::for_bound_query(bound);
         use nous_runtime::SharedLaneProvider;
@@ -170,7 +162,7 @@ impl KernelService {
             id(&input.preparation_token)?,
         )?;
         let (mut bound, lease) = reservation.into_parts();
-        if let Some(embedding) = self.query_materials(&bound, input.embeddings)? {
+        if let Some(embedding) = self.query_embedding(&bound, input.embedding)? {
             bound.activation.embedding = Some(embedding);
         }
         self.apply_query_concept_output(
@@ -189,14 +181,14 @@ impl KernelService {
 }
 
 pub(super) fn workflow_json(value: &str) -> Result<serde_json::Value> {
-    if value.len() > nous_persistence::WORKFLOW_VALUE_MAX_BYTES {
+    if value.len() > nous_persistence::MODEL_RESULT_MAX_BYTES {
         return Err(Error::Invalid("workflow value exceeds bound".into()));
     }
     serde_json::from_str(value).map_err(|_| Error::Invalid("workflow JSON is invalid".into()))
 }
 
-pub(super) fn private_workflow_owner(owner: &str) -> Result<()> {
-    nous_persistence::WorkflowOwner::new(owner)?;
+pub(super) fn private_result_owner(owner: &str) -> Result<()> {
+    nous_persistence::ModelResultOwner::new(owner)?;
     if ["memory", "material"].contains(&owner) {
         Ok(())
     } else {

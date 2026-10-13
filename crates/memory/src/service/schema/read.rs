@@ -27,11 +27,21 @@ impl MemoryService {
         schema_id: CognitiveSchemaId,
         revision: Option<CognitiveSchemaRevisionId>,
     ) -> Result<SchemaView> {
-        let row = sqlx::query("SELECT s.schema_id,s.subject_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.created_at,r.schema_revision_id,r.schema_id AS revision_schema_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.structural_claim,r.applicability_description,r.aboutness,r.tags,r.boundary_definition,r.formation_kind,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id AND r.schema_revision_id=COALESCE($3,s.current_revision_id) WHERE s.subject_id=$1 AND s.schema_id=$2")
-            .bind(subject.0).bind(schema_id.0).bind(revision.map(|id| id.0)).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(||Error::NotFound("CognitiveSchema not found".into()))?;
-        let revision = CognitiveSchemaRevisionId(row.try_get("schema_revision_id").map_err(db)?);
-        let links = self.schema_links(subject, revision).await?;
-        decode_schema_view(&row, subject, links)
+        let mut tx = self.store.read_view().await?;
+        let revisions = revision.map(|id| vec![id.0]).unwrap_or_default();
+        let objects = if revision.is_none() {
+            vec![schema_id.0]
+        } else {
+            vec![]
+        };
+        let views = self
+            .schema_views_in(&mut tx, subject, &revisions, &objects)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        views
+            .into_values()
+            .find(|view| view.schema.schema_id == schema_id)
+            .ok_or_else(|| Error::NotFound("CognitiveSchema not found".into()))
     }
 
     pub(in crate::service) async fn schema_revision_views(
@@ -40,15 +50,35 @@ impl MemoryService {
         revisions: &[CognitiveSchemaRevisionId],
     ) -> Result<Vec<SchemaView>> {
         let ids = revisions.iter().map(|id| id.0).collect::<Vec<_>>();
-        let mut tx = self.store.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        let rows = sqlx::query("SELECT s.schema_id,s.subject_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.created_at,r.schema_revision_id,r.schema_id AS revision_schema_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.structural_claim,r.applicability_description,r.aboutness,r.tags,r.boundary_definition,r.formation_kind,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND r.schema_revision_id=ANY($2::uuid[])")
-            .bind(subject.0).bind(&ids).fetch_all(&mut *tx).await.map_err(db)?;
+        let mut tx = self.store.read_view().await?;
+        let mut views = self.schema_views_in(&mut tx, subject, &ids, &[]).await?;
+        let result = revisions
+            .iter()
+            .map(|id| {
+                views
+                    .remove(&id.0)
+                    .ok_or_else(|| Error::NotFound("CognitiveSchema revision not found".into()))
+            })
+            .collect();
+        tx.commit().await.map_err(db)?;
+        result
+    }
+
+    pub(in crate::service) async fn schema_views_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        ids: &[Uuid],
+        objects: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, SchemaView>> {
+        let rows = sqlx::query("SELECT s.schema_id,s.subject_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.created_at,r.schema_revision_id,r.schema_id AS revision_schema_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.structural_claim,r.applicability_description,r.aboutness,r.tags,r.boundary_definition,r.formation_kind,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND (r.schema_revision_id=ANY($2::uuid[]) OR (s.schema_id=ANY($3) AND r.schema_revision_id=s.current_revision_id))")
+            .bind(subject.0).bind(ids).bind(objects).fetch_all(&mut **tx).await.map_err(db)?;
+        let selected = rows
+            .iter()
+            .map(|row| row.try_get::<Uuid, _>("schema_revision_id").map_err(db))
+            .collect::<Result<Vec<_>>>()?;
         let link_rows = sqlx::query("SELECT * FROM cognitive_schema_evidence_links WHERE subject_id=$1 AND schema_revision_id=ANY($2::uuid[]) AND revoked_at IS NULL ORDER BY schema_revision_id,link_id")
-            .bind(subject.0).bind(&ids).fetch_all(&mut *tx).await.map_err(db)?;
+            .bind(subject.0).bind(&selected).fetch_all(&mut **tx).await.map_err(db)?;
         let mut links = std::collections::HashMap::<Uuid, Vec<SchemaEvidenceLink>>::new();
         for row in link_rows {
             let link = decode_schema_evidence_link(row)?;
@@ -65,24 +95,7 @@ impl MemoryService {
                 decode_schema_view(&row, subject, links.remove(&revision).unwrap_or_default())?,
             );
         }
-        let result = revisions
-            .iter()
-            .map(|id| {
-                views
-                    .remove(&id.0)
-                    .ok_or_else(|| Error::NotFound("CognitiveSchema revision not found".into()))
-            })
-            .collect();
-        tx.commit().await.map_err(db)?;
-        result
-    }
-
-    pub(crate) async fn schema_links(
-        &self,
-        subject: SubjectId,
-        revision: CognitiveSchemaRevisionId,
-    ) -> Result<Vec<SchemaEvidenceLink>> {
-        self.schema_links_in_view(subject, revision, None).await
+        Ok(views)
     }
 
     pub(in crate::service) async fn schema_links_in_view(

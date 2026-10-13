@@ -704,8 +704,18 @@ try {
   );
   await cli("query", "protocol continuity $return(memory) $limit(5)");
   const trace = await cli("trace", `memory_revision:${memory.revisionId}`);
-  assert(Array.isArray(trace.sources) && trace.sources.length === 1);
-  assert(Array.isArray(trace.derivations) && trace.derivations.length >= 2);
+  const lineage = trace.lineage as {
+    nodes?: { reference?: { kind?: string; value?: string } }[];
+    truncated?: boolean;
+  };
+  assert(lineage.nodes?.some((node) => node.reference?.kind === "occurrence"));
+  assert(
+    lineage.nodes?.some(
+      (node) => node.reference?.value === extracted.selectedRepresentationId,
+    ),
+  );
+  assert(lineage.nodes?.some((node) => node.reference?.kind === "artifact"));
+  assert.equal(lineage.truncated, false);
   await cli("use", `memory_revision:${memory.revisionId}`);
   const file = join(dataRoot, "source.txt");
   await writeFile(file, "Streaming artifact consumer wiring.");

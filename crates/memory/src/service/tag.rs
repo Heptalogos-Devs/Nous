@@ -485,17 +485,6 @@ impl MemoryService {
         decode_tag_view(row)
     }
 
-    pub(in crate::service) async fn canonical_tag_view(
-        &self,
-        subject: SubjectId,
-        tag: TagId,
-    ) -> Result<TagView> {
-        let row = sqlx::query("SELECT t.tag_id,t.current_revision_id,r.tag_revision_id revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.tag_id=canonical_tag($1,$2) AND t.status='active'")
-            .bind(subject.0).bind(tag.0).fetch_optional(self.store.pool()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("active canonical Tag not found".into()))?;
-        decode_tag_view(row)
-    }
-
     pub async fn tag_views(
         &self,
         subject: SubjectId,

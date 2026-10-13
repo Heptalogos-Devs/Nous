@@ -119,12 +119,12 @@ CREATE UNIQUE INDEX maintenance_active_scope ON maintenance_needs(subject_id,kin
 CREATE INDEX maintenance_due ON maintenance_needs(subject_id,due_at,priority DESC)
     WHERE state IN ('pending');
 
-CREATE TABLE model_workflow_operations (
+CREATE TABLE model_results (
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
     owner text NOT NULL CHECK (owner ~ '^[a-z][a-z0-9_]{0,63}$'),
     operation_key text NOT NULL CHECK (length(operation_key) BETWEEN 1 AND 256),
     semantic_digest text NOT NULL CHECK (length(semantic_digest) BETWEEN 1 AND 128),
-    snapshot jsonb NOT NULL,
+    context jsonb NULL,
     proposal jsonb NULL,
     outcome jsonb NULL,
     execution_telemetry jsonb NULL,
@@ -137,7 +137,7 @@ CREATE TABLE model_workflow_operations (
     PRIMARY KEY(subject_id,owner,operation_key)
 );
 
-CREATE INDEX maintenance_workflows ON model_workflow_operations(maintenance_need_id) WHERE maintenance_need_id IS NOT NULL;
+CREATE INDEX maintenance_model_results ON model_results(maintenance_need_id) WHERE maintenance_need_id IS NOT NULL;
 
 CREATE TABLE experience_items (
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
@@ -319,3 +319,13 @@ CREATE TRIGGER episode_state_history AFTER INSERT OR UPDATE ON episode_objects F
 CREATE TRIGGER journal_state_history AFTER INSERT OR UPDATE ON journal_objects FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('journal','journal_id');
 CREATE TRIGGER tag_state_history AFTER INSERT OR UPDATE ON tags FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('tag','tag_id');
 CREATE TRIGGER lexical_state_history AFTER INSERT OR UPDATE ON lexical_visibility FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('lexical_visibility','lexical_ref');
+
+-- Runtime owns draft reservations and experience ordering; cognition applies its own membership rules.
+CREATE FUNCTION runtime_available_experience(p_subject uuid,p_through bigint)
+RETURNS TABLE(occurrence_id uuid,recorded_seq bigint,observed_at timestamptz)
+LANGUAGE sql STABLE AS $$
+  SELECT e.occurrence_id,e.recorded_seq,e.observed_at FROM experience_items e
+  WHERE e.subject_id=p_subject AND e.recorded_seq<=p_through
+    AND NOT EXISTS(SELECT 1 FROM episode_draft_members m JOIN episode_drafts d USING(draft_id)
+      WHERE m.occurrence_id=e.occurrence_id AND d.state IN ('open','ready'))
+$$;

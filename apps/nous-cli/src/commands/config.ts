@@ -23,10 +23,13 @@ export async function configCommands(
   const path = required(argument, "Configuration path");
   if (action === "describe")
     return client.configuration.getConfigDescriptor({ path: path });
+  const subjectId = values.subject
+    ? (await env.resolveReference(values.subject, "subject")).value
+    : undefined;
   if (action === "get")
     return client.configuration.getConfiguration({
       paths: [path],
-      subjectId: values.subject,
+      subjectId,
       view: values.desired
         ? ConfigurationView.DESIRED
         : ConfigurationView.ACTIVE,
@@ -34,27 +37,28 @@ export async function configCommands(
   if (action !== "set" && action !== "clear")
     throw new Error("Use config list|describe|get|set|clear");
   const operationId = values["operation-id"] ?? crypto.randomUUID();
-  const suppliedRevision = required(
-    values["expected-revision"],
-    "--expected-revision from config get --desired",
-  );
-  if (!/^(0|[1-9][0-9]*)$/.test(suppliedRevision))
+  const suppliedRevision = values["expected-revision"];
+  if (
+    suppliedRevision !== undefined &&
+    !/^(0|[1-9][0-9]*)$/.test(suppliedRevision)
+  )
     throw new Error("Expected revision must be a nonnegative integer");
-  const expectedRevision = BigInt(suppliedRevision);
-  if (expectedRevision > 9223372036854775807n)
+  const expectedRevision =
+    suppliedRevision === undefined ? undefined : BigInt(suppliedRevision);
+  if (expectedRevision !== undefined && expectedRevision > 9223372036854775807n)
     throw new Error("Expected revision exceeds int64");
   if (action === "set") {
     const value = fromJson(
       ValueSchema,
       JSON.parse(required(positionals[3], "JSON value")) as JsonValue,
     );
-    return values.subject
+    return subjectId
       ? client.configuration.setSubjectOverride({
           operationId,
           path,
           expectedRevision,
           value,
-          subjectId: values.subject,
+          subjectId,
         })
       : client.configuration.setSystemOverride({
           operationId,
@@ -64,12 +68,12 @@ export async function configCommands(
         });
   }
   if (action === "clear")
-    return values.subject
+    return subjectId
       ? client.configuration.clearSubjectOverride({
           operationId,
           path,
           expectedRevision,
-          subjectId: values.subject,
+          subjectId,
         })
       : client.configuration.clearSystemOverride({
           operationId,

@@ -19,7 +19,7 @@ import {
 import { subject, need, fixture } from "./support.js";
 
 describe("bounded maintenance grants", () => {
-  it("does not select model work without executable roles or model budget", async () => {
+  it("selects work before checking generation budgets and defers it once per grant", async () => {
     const state = fixture();
     let attempts = 0;
     const select = vi.fn(async (input: { allowedKinds: string[] }) => {
@@ -43,27 +43,42 @@ describe("bounded maintenance grants", () => {
       maxModelCalls: 1,
       maxElapsedMs: 1000,
     };
-    await grantMaintenance(state.kernel, state.models, input);
-    expect(attempts).toBe(0);
+    vi.spyOn(state.models.invocations, "profile").mockReturnValueOnce(
+      undefined,
+    );
+    const unavailable = await grantMaintenance(
+      state.kernel,
+      state.models,
+      input,
+    );
+    expect(unavailable.results[0]).toMatchObject({
+      status: "deferred",
+      problemCode: "model_unavailable",
+    });
+    expect(attempts).toBe(1);
     vi.spyOn(state.models.invocations, "capabilities", "get").mockReturnValue([
       { name: "model.journal_synthesis", state: "READY", detail: "Configured" },
     ]);
-    await grantMaintenance(state.kernel, state.models, {
+    const exhausted = await grantMaintenance(state.kernel, state.models, {
       ...input,
       maxModelCalls: 0,
     });
-    expect(attempts).toBe(0);
+    expect(exhausted.results[0]).toMatchObject({
+      status: "deferred",
+      problemCode: "model_budget_exhausted",
+    });
+    expect(attempts).toBe(2);
     expect(state.synthesize).not.toHaveBeenCalled();
   });
   it("defers unfinished work when the granted opportunity actually expires", async () => {
     const state = fixture();
-    const originalSave = state.kernel.modelWorkflow.saveOperation;
+    const originalSave = state.kernel.modelResults.saveOperation;
     const save = vi.fn(async (...args: Parameters<typeof originalSave>) => {
       expect(args[1]?.signal?.aborted).toBe(false);
       await new Promise((resolve) => setTimeout(resolve, 10));
       return originalSave(...args);
     });
-    state.kernel.modelWorkflow.saveOperation = save;
+    state.kernel.modelResults.saveOperation = save;
     const finish = vi.fn(
       async (_input: { nextDue?: { seconds: bigint } }) => ({}),
     );
@@ -125,7 +140,7 @@ describe("bounded maintenance grants", () => {
         }),
         expect.anything(),
       );
-      expect(typeof finish.mock.calls[0]?.[0].nextDue?.seconds).toBe("bigint");
+      expect(finish.mock.calls[0]?.[0].nextDue).toBeUndefined();
       const saved = save.mock.calls[0];
       expect(saved![0].executionTelemetry).toMatchObject({
         attempts: [{ status: "unknown" }],

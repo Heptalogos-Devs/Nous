@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nous_core::{EntityRef, OperationId, Result, SubjectId};
+use nous_core::{CognitiveRef, EntityRef, OperationId, Result, SubjectId};
 use nous_memory::ExplicitMemoryInput;
 use nous_memory::{MemoryView, ReviseMemoryInput};
 
@@ -96,6 +96,97 @@ fn memory_content(content: p::MemoryContent) -> Result<nous_memory::MemoryConten
 }
 
 impl KernelService {
+    pub(super) async fn trace(&self, input: p::CognitionTraceRequest) -> Result<p::CognitionTrace> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let reference = from_ref(required(input.reference, "reference")?)?;
+        let max_nodes = if input.max_nodes == 0 {
+            64
+        } else {
+            input.max_nodes as usize
+        };
+        let max_bytes = if input.max_bytes == 0 {
+            65536
+        } else {
+            input.max_bytes as usize
+        };
+        let trace = self
+            .0
+            .require_memory()?
+            .trace(subject, reference.clone(), max_nodes, max_bytes)
+            .await?;
+        let remaining_nodes = max_nodes.saturating_sub(trace.nodes.len());
+        let remaining_bytes = max_bytes.saturating_sub(trace.text_bytes);
+        let has_material = !trace.material_roots.is_empty();
+        let lineage = if has_material && remaining_nodes > 0 && remaining_bytes > 0 {
+            Some(
+                self.read_lineage(p::MaterialLineageRequest {
+                    subject_id: subject.0.to_string(),
+                    roots: trace.material_roots.into_iter().map(to_ref).collect(),
+                    max_nodes: remaining_nodes as u32,
+                    max_bytes: remaining_bytes as u32,
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
+        let producers = self
+            .0
+            .material
+            .producer_signatures(&trace.producers)
+            .await?
+            .into_iter()
+            .map(evidence::producer)
+            .collect();
+        let nodes = trace
+            .nodes
+            .into_iter()
+            .map(|node| {
+                use nous_memory::CognitionContent as N;
+                use p::cognition_trace_node::Content as C;
+                let (reference, content) = match node {
+                    N::Memory(v) => (
+                        CognitiveRef::MemoryRevision(v.revision.memory_revision_id),
+                        C::Memory(view(v)),
+                    ),
+                    N::Schema(v) => (
+                        CognitiveRef::CognitiveSchemaRevision(v.revision.schema_revision_id),
+                        C::Schema(super::schema::schema_view(v)),
+                    ),
+                    N::Episode(v) => (
+                        CognitiveRef::EpisodeRevision(v.revision.episode_revision_id),
+                        C::Episode(super::episode::revision(
+                            v.revision,
+                            v.members,
+                            v.basis,
+                            v.relations,
+                        )),
+                    ),
+                    N::Journal(v) => (
+                        CognitiveRef::JournalRevision(v.revision.journal_revision_id),
+                        C::Journal(super::journal::journal_revision_proto(v)),
+                    ),
+                    N::Tag { .. } => unreachable!("trace has only exact cognition revisions"),
+                };
+                p::CognitionTraceNode {
+                    reference: Some(to_ref(reference)),
+                    content: Some(content),
+                }
+            })
+            .collect();
+        Ok(p::CognitionTrace {
+            reference: Some(to_ref(reference)),
+            nodes,
+            producers,
+            truncated: trace.truncated
+                || (has_material && lineage.is_none())
+                || lineage
+                    .as_ref()
+                    .is_some_and(|l| l.truncated || l.payloads_truncated),
+            lineage,
+        })
+    }
+
     pub(super) async fn set_accessibility(
         &self,
         input: p::SetAccessibilityRequest,

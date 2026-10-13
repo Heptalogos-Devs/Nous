@@ -54,7 +54,7 @@ export class CoreCognition {
     return this.kernel.queryWorkflow.prepareQuery(
       {
         query: await this.bindQueryInput(request, calls),
-        reserveExecution: false,
+        executeQuery: false,
       },
       calls,
     );
@@ -165,7 +165,7 @@ export class CoreCognition {
           consumerId: projection.consumerId,
           workContextId: projection.activeWorkContextId,
         },
-        `${policy.revision}:${input.maxItems}:${input.maxTextBytes}`,
+        policy.revision,
         projection,
         request.knownCursor,
       ),

@@ -2,6 +2,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+mod descriptors;
+
 use crate::proquint::{decode_proquint, encode_proquint};
 use crate::*;
 use nous_core::{CognitiveRef, parse_reference, reference_parts};

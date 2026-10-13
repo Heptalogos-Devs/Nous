@@ -105,7 +105,7 @@ impl CognitiveContributor for MemoryService {
             .await?;
         let mut drops = BTreeMap::new();
         let source_objects = self
-            .source_objects_for_revisions(subject, &revision_ids)
+            .source_objects_for_views(subject, &views, bound.historical_authority.as_deref())
             .await?;
         let mut hits = Vec::new();
         for reference in &memory_references {
@@ -273,13 +273,13 @@ async fn temporal_lane(
                 start: "oc.occurred_time_start",
                 end: "oc.occurred_time_end",
             },
-            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id)",
+            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN LATERAL material_occurrence_facts(o.subject_id,NULL,NULL) oc USING(occurrence_id)",
             "r.memory_revision_id",
         ),
         (
             constraints.observed,
             TimeColumns::Instant("oc.observed_at"),
-            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id)",
+            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN LATERAL material_occurrence_facts(o.subject_id,NULL,NULL) oc USING(occurrence_id)",
             "r.memory_revision_id",
         ),
         (

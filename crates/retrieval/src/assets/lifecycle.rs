@@ -256,9 +256,6 @@ impl ServingService {
             }
             requested.push(("concept", space));
         }
-        if need.lexical && self.options.lexical {
-            requested.push(("lexical", String::new()));
-        }
         if need.topology && self.options.topology {
             let space = if matches!(
                 config.get(nous_runtime::COGNITIVE_PROFILE)?,
@@ -275,6 +272,9 @@ impl ServingService {
                 String::new()
             };
             requested.push(("topology", space));
+        }
+        if need.lexical && self.options.lexical {
+            requested.push(("lexical", String::new()));
         }
         if need.dense && self.options.dense {
             if let Some(provider) = self.embedding() {

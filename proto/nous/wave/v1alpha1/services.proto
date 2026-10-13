@@ -4,6 +4,7 @@
 syntax = "proto3";
 package nous.wave.v1alpha1;
 import "nous/wave/v1alpha1/journal.proto";
+import "nous/wave/v1alpha1/presentation.proto";
 import "google/protobuf/empty.proto";
 import "nous/wave/v1alpha1/management.proto";
 import "nous/wave/v1alpha1/types.proto";
@@ -32,7 +33,11 @@ service CognitionService {
   rpc BuildProjection(ProjectionRequest) returns (Projection);
   rpc BuildManagedContext(ManagedContextRequest) returns (ManagedContextResponse);
 }
+message CognitionTraceRequest { string subject_id = 1 [(reference_kind) = "subject"]; CognitiveRef reference = 2; uint32 max_nodes = 3; uint32 max_bytes = 4; }
+message CognitionTraceNode { CognitiveRef reference = 1; oneof content { Memory memory = 2; CognitiveSchema schema = 3; EpisodeRevision episode = 4; JournalRevision journal = 5; } }
+message CognitionTrace { CognitiveRef reference = 1; repeated CognitionTraceNode nodes = 2; MaterialLineage lineage = 3; repeated ProducerSignature producers = 4; bool truncated = 5; }
 service MemoryService {
+  rpc Trace(CognitionTraceRequest) returns (CognitionTrace);
   rpc GetJournal(ObjectRequest) returns (JournalResponse);
   rpc GetJournalRevision(ObjectRequest) returns (JournalRevision);
   rpc ListJournals(ListRequest) returns (ListJournalsResponse);
@@ -68,4 +73,4 @@ service MemoryService {
   rpc ReacceptEpisode(EpisodeMutationRequest) returns (EpisodeResponse);
   rpc PurgeEpisode(EpisodeMutationRequest) returns (google.protobuf.Empty);
 }
-service MaterialService { rpc Clean(google.protobuf.Empty) returns (MaterialCleanup); rpc ListOccurrences(OccurrenceListRequest) returns (OccurrenceListResponse); rpc GetDerivedRegion(ObjectRequest) returns (DerivedRegion); rpc GetProducer(ObjectRequest) returns (ProducerSignature); rpc ListDerivedRepresentations(RepresentationListRequest) returns (RepresentationListResponse); rpc GetLimits(google.protobuf.Empty) returns (MaterialLimits); rpc GetOccurrence(ObjectRequest) returns (Occurrence); rpc GetSourceRegion(ObjectRequest) returns (SourceRegion); rpc GetDerivedRepresentation(ObjectRequest) returns (DerivedRepresentation); rpc GetArtifact(ObjectRequest) returns (Artifact); rpc ListArtifacts(ListRequest) returns (ListArtifactsResponse); rpc MaterializeEvidence(MaterializeRequest) returns (MaterializedEvidence); }
+service MaterialService { rpc ReadLineage(MaterialLineageRequest) returns (MaterialLineage); rpc Clean(google.protobuf.Empty) returns (MaterialCleanup); rpc ListOccurrences(OccurrenceListRequest) returns (OccurrenceListResponse); rpc GetDerivedRegion(ObjectRequest) returns (DerivedRegion); rpc GetProducer(ObjectRequest) returns (ProducerSignature); rpc ListDerivedRepresentations(RepresentationListRequest) returns (RepresentationListResponse); rpc GetLimits(google.protobuf.Empty) returns (MaterialLimits); rpc GetOccurrence(ObjectRequest) returns (Occurrence); rpc GetSourceRegion(ObjectRequest) returns (SourceRegion); rpc GetDerivedRepresentation(ObjectRequest) returns (DerivedRepresentation); rpc GetArtifact(ObjectRequest) returns (Artifact); rpc ListArtifacts(ListRequest) returns (ListArtifactsResponse); rpc MaterializeEvidence(MaterializeRequest) returns (MaterializedEvidence); }

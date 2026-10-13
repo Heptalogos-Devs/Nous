@@ -8,11 +8,11 @@ Core owns model and Resource host calls; Material owns Artifact/Observation/Deri
 
 ## 持久操作
 
-共享合同位于 [workflow envelope Proto](../../../../proto/nous/wave/kernel/v1alpha1/workflow_envelope.proto)。Core 在同一 Kernel client 下按 Subject、owner 和 operation key 串行执行完整准备、生成和提交路径；等待者随后读取已保存结果。调用者取消只取消自己的等待或执行，不取消其他调用者。
+共享合同位于 [模型结果 Proto](../../../../proto/nous/wave/kernel/v1alpha1/model_results.proto)。Core 在同一 Kernel client 下按 Subject、owner 和 operation key 串行执行完整准备、生成和提交路径；等待者随后读取已保存结果。调用者取消只取消自己的等待或执行，不取消其他调用者。
 
-Private operation store 保存不可变 semantic digest、snapshot、proposal、outcome 和有界 execution telemetry；read/start/save 使用同一 OperationIdentity，没有 child lease、busy token 或 release RPC。相同身份不同输入返回 conflict，已完成或 purged 记录不可重写。snapshot 将领域 payload、认知形成时间与 maintenance trigger snapshot 分开。保存 proposal 后重试只继续 owner 提交，不重新调用模型。
+`model_results` 保存不可变 semantic digest、实际 proposal/outcome 和有界 execution telemetry；只有 read/save，没有执行前 start、child lease、busy token 或 release。相同身份不同输入返回 conflict，已完成或 purged 记录不可重写。生成后的提案保存必要输入、依赖与实际 producer；认知形成时间和 maintenance trigger 是结果元数据。没有成果的执行重新规划，不保存恢复 snapshot。后续显式调用复用 proposal 继续 owner 提交，不重新调用模型。
 
-引用依赖来自 canonical Proto 的 typed refs，opaque 用户 JSON 和普通正文不产生依赖。Core 在 canonical mutation 前登记稳定 operation ID；领域 owner 在同一 Authority 事务发布实际结果依赖。Material derivation 直接携带 operation identity，selected Resource Observation 通过注册的 request ID 发布依赖，覆盖提交已成功但 Core 尚未保存 outcome 的窗口。Purge 清空保存内容并留下 terminal marker，迟到 save 不可恢复内容。Telemetry 保留最早 64 次 attempt 和省略计数；缺失 usage 保持未知。Fresh schema 直接定义 envelope、dependencies 和 mutation operations；不提供旧记录转换。
+引用依赖来自 canonical Proto 的 typed refs，opaque 用户 JSON 和普通正文不产生依赖。保存实际提案时附带稳定 mutation operation ID；领域 owner 在同一 Authority 事务发布实际结果依赖。Material derivation 直接携带 operation identity，selected Resource Observation 通过注册的 request ID 发布依赖，覆盖提交已成功但 Core 尚未保存 outcome 的窗口。Purge 清空保存内容并留下 terminal marker，迟到 save 不可恢复内容。Telemetry 保留最早 64 次 attempt 和省略计数；缺失 usage 保持未知。Fresh schema 直接定义 envelope、dependencies 和 mutation operations；不提供旧记录转换。
 
 ## Schema 与来源
 
@@ -30,7 +30,7 @@ description_only 提交自由描述。direct_structured 给模型 invocation-loc
 
 `$current` 是 scoped current-authority 约束，随 expression 进入冻结 leaf action；父级 required 不能被子级 none/prefer 放宽。Model rerank 在 bound query 含正文本意图且配置了 rerank role 时运行；Resource action 独立 finalize，因此 rerank 未运行时仍可完成 Resource 续接。
 
-Selected materialization 的内容上限为 1 MiB UTF-8；query records 的 aggregate bound 为 2 MiB。workflow JSON 上限为 8 MiB，private ModelMaterial transport 额外保留 64 KiB envelope。Artifact 上传上限由 `object_store.max_upload_bytes` 单独控制。
+Selected materialization 的内容上限为 1 MiB UTF-8；query records 的 aggregate bound 为 2 MiB。结果 JSON 上限为 8 MiB，private ModelMaterial transport 额外保留 64 KiB envelope。Artifact 上传上限由 `object_store.max_upload_bytes` 单独控制。
 
 本地材料通过 Artifact/SourceRegion/DerivedRepresentation 与原生 Serving 处理；宿主在启动时显式提供 ExternalResourceAdapter。普通 Core 默认没有外部 provider。LocalDocuments 研究宿主复用相同的生产 Core、公共 Resource descriptor 和 selected materialization 路径。
 
