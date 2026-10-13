@@ -10,7 +10,8 @@ export async function resourceCommands(
   action?: string,
   ref?: string,
 ) {
-  const { client, subjectId } = env;
+  const { client } = env;
+  const subjectId = await env.subjectId;
   if (action === "list")
     return client.resourceRegistry.listResources({
       subjectId,

@@ -117,6 +117,76 @@ impl MaterialService {
         Ok(results)
     }
 
+    /// Select exact formation evidence and resolved mentions in one captured read.
+    pub async fn formation_input(
+        &self,
+        subject: SubjectId,
+        occurrence: OccurrenceId,
+        representation: Option<DerivedRepresentationId>,
+        audio_description: bool,
+        include_mentions: bool,
+        max_bytes: u64,
+    ) -> Result<(MaterializedEvidence, Vec<(Uuid, String, EntityRef)>)> {
+        if max_bytes == 0 || max_bytes > self.max_upload_bytes {
+            return Err(Error::Invalid(
+                "formation source byte bound exceeded".into(),
+            ));
+        }
+        let mut tx = self.store.read_view().await?;
+        let row = sqlx::query("SELECT o.artifact_id,a.media_type FROM observation_occurrences o LEFT JOIN artifacts a USING(artifact_id) WHERE o.subject_id=$1 AND o.occurrence_id=$2")
+            .bind(subject.0).bind(occurrence.0).fetch_optional(&mut *tx).await.map_err(db)?
+            .ok_or_else(|| Error::NotFound("formation Occurrence not found".into()))?;
+        let artifact: Option<Uuid> = row.try_get("artifact_id").map_err(db)?;
+        let representation = if representation.is_some() {
+            representation
+        } else {
+            let media: Option<String> = row.try_get("media_type").map_err(db)?;
+            let kind = match media.as_deref().map(media_modality) {
+                Some(Modality::Image) => "image_description",
+                Some(Modality::Audio) if audio_description => "audio_description",
+                Some(Modality::Audio) => "transcript",
+                Some(Modality::Video) => "scene_description",
+                _ => "extracted_text",
+            };
+            sqlx::query_scalar::<_,Uuid>("SELECT d.derived_representation_id FROM derived_representations d WHERE d.subject_id=$1 AND d.representation_kind=$2 AND EXISTS(SELECT 1 FROM representation_source_regions($1,d.derived_representation_id) roots JOIN source_regions s USING(source_region_id) WHERE s.artifact_id=$3) AND NOT EXISTS(SELECT 1 FROM derived_representations newer WHERE newer.supersedes=d.derived_representation_id) ORDER BY d.derived_representation_id DESC LIMIT 1")
+                .bind(subject.0).bind(kind).bind(artifact).fetch_optional(&mut *tx).await.map_err(db)?.map(DerivedRepresentationId)
+        };
+        let reference = representation.map_or(
+            CognitiveRef::Occurrence(occurrence),
+            CognitiveRef::DerivedRepresentation,
+        );
+        let input = self
+            .read_inputs_in(&mut tx, subject, std::slice::from_ref(&reference), None)
+            .await?
+            .remove(&reference)
+            .ok_or_else(|| Error::Unavailable("formation source unavailable".into()))?;
+        if representation.is_some()
+            && artifact.is_none_or(|id| !input.source_artifacts.contains(&id))
+        {
+            return Err(Error::Invalid(
+                "formation representation does not derive from the Occurrence's Artifact".into(),
+            ));
+        }
+        let mentions = if include_mentions {
+            self.resolved_mentions_in(&mut tx, subject, occurrence)
+                .await?
+        } else {
+            vec![]
+        };
+        tx.commit().await.map_err(db)?;
+        let source = self
+            .materialize_payload(
+                MaterializeRequest {
+                    reference,
+                    byte_range: None,
+                    max_bytes,
+                },
+                input.payload?,
+            )
+            .await?;
+        Ok((source, mentions))
+    }
+
     pub async fn materialize(
         &self,
         subject: SubjectId,

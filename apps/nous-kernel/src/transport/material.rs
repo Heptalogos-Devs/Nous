@@ -29,7 +29,9 @@ fn materialize_request(input: p::MaterializeRequest) -> Result<(SubjectId, Mater
     ))
 }
 
-fn materialized_evidence(result: nous_material::MaterializedEvidence) -> p::MaterializedEvidence {
+pub(super) fn materialized_evidence(
+    result: nous_material::MaterializedEvidence,
+) -> p::MaterializedEvidence {
     p::MaterializedEvidence {
         reference: Some(to_ref(result.reference)),
         media_type: result.media_type,

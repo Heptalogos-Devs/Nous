@@ -44,11 +44,11 @@ export async function subjectCommands(
   }
   if (action === "seed")
     return client.subjects.getCognitiveSeed({
-      subjectId: required(env.subjectId, "Selected Subject"),
+      subjectId: required(await env.subjectId, "Selected Subject"),
     });
   if (action === "adopt-seed")
     return client.subjects.adoptCognitiveSeed({
-      subjectId: required(env.subjectId, "Selected Subject"),
+      subjectId: required(await env.subjectId, "Selected Subject"),
       operationId: operationId(env),
       kind: env.values.kind ?? "import",
       seed: await content(env, CognitiveSeedSchema),

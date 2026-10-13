@@ -33,24 +33,34 @@ export class QueryOrchestrator {
     private readonly models: ModelRuntime,
     private readonly resources: ResourceRegistry,
   ) {}
+  prepare(
+    input: QueryRequest,
+    options: ExecutionOptions = {},
+    leaseSeconds = 0,
+  ) {
+    return this.kernel.queryWorkflow.prepareQuery(
+      {
+        query: input,
+        executeQuery: leaseSeconds > 0,
+        leaseSeconds,
+        host: this.models.invocations.queryCapabilities,
+      },
+      options,
+    );
+  }
   async execute(input: QueryRequest, options: ExecutionOptions = {}) {
     const calls = executionOptions(this.kernel.execution.opportunity, options);
     options = calls;
     const { opportunity } = calls;
     let material: QueryEmbedding | undefined;
     let failure: string | undefined;
-    const preparation = await this.kernel.queryWorkflow.prepareQuery(
-      {
-        query: input,
-        executeQuery: true,
-        leaseSeconds:
-          Math.ceil(
-            (opportunity.remainingWorkMs +
-              opportunity.policy.cleanup_timeout_ms) /
-              1000,
-          ) + 1,
-      },
+    const preparation = await this.prepare(
+      input,
       options,
+      Math.ceil(
+        (opportunity.remainingWorkMs + opportunity.policy.cleanup_timeout_ms) /
+          1000,
+      ) + 1,
     );
     if (!preparation.preparationToken && !preparation.result)
       throw new ConnectError("Prepared query token missing", Code.Internal);
@@ -201,23 +211,10 @@ export class QueryOrchestrator {
       }
       const intent = input.expression ? positiveIntent(input.expression) : "";
       const rerankAllowed = preparation.rerankRequirement !== "forbidden";
-      const rerankRequired =
-        rerankAllowed &&
-        (preparation.rerankRequirement === "required" ||
-          this.models.invocations.requirement("query_rerank") === "required");
+      const rerankRequired = preparation.rerankRequirement === "required";
       const profile = rerankAllowed
         ? this.models.invocations.profile("query_rerank")
         : undefined;
-      if (intent && !profile && rerankRequired)
-        throw domainError(
-          "Required query rerank role unavailable",
-          Code.FailedPrecondition,
-          {
-            code: DomainErrorCode.CAPABILITY_UNAVAILABLE,
-            recovery: ErrorRecovery.CHECK_CONFIGURATION,
-            context: { capability: "model.query_rerank" },
-          },
-        );
       const prepared = preparation.result
         ? {
             response: preparation.result,

@@ -80,7 +80,6 @@ function required(value: string | undefined, name: string): string {
 }
 export async function createEnvironment(
   values: CliValues,
-  needs: { selection: "none" | "subject" | "context"; receipts: boolean },
   connect = connectNousInstance,
   input?: AsyncIterable<string | Uint8Array>,
 ) {
@@ -123,11 +122,12 @@ export async function createEnvironment(
       );
     })());
   }
-  const selected: Selection =
-    needs.selection === "none" || !values["instance-root"]
-      ? { format: "nous.consumer.selection" }
-      : await (await local()).selection();
-  let savedBaseline = selected;
+  let baseline: Promise<Selection> | undefined;
+  const selection = () =>
+    (baseline ??= values["instance-root"]
+      ? local().then((state) => state.selection())
+      : Promise.resolve({ format: "nous.consumer.selection" } as Selection));
+  let savedBaseline: Selection | undefined;
   async function bindReference(text: string, kind: string, subject: string) {
     if (kind && /^[0-9a-f-]{36}$/i.test(text))
       return { kind, value: text.toLowerCase() };
@@ -167,44 +167,34 @@ export async function createEnvironment(
   async function addressId(kind: string, text: string, subject: string) {
     return (await bindReference(text, kind, subject)).value;
   }
-  const selectedSubject =
-    needs.selection !== "none" && values.subject
-      ? await addressId("subject", values.subject, "")
-      : selected.subjectId;
-  if (needs.selection !== "none")
-    values = {
-      ...values,
-      ...(values.subject ? { subject: selectedSubject } : {}),
-      ...(needs.selection === "context" && values.session
-        ? {
-            session: await addressId(
-              "session",
-              values.session,
-              selectedSubject ?? "",
-            ),
-          }
-        : {}),
-      ...(needs.selection === "context" && values["work-context"]
-        ? {
-            "work-context": await addressId(
-              "work_context",
-              values["work-context"],
-              selectedSubject ?? "",
-            ),
-          }
-        : {}),
-    };
-  const sameSubject = !values.subject || values.subject === selected.subjectId;
-  const state: Selection = {
-    format: "nous.consumer.selection",
-    ...(sameSubject ? selected : { lastQuery: selected.lastQuery }),
-    subjectId: values.subject ?? selected.subjectId,
-    sessionId: values.session ?? (sameSubject ? selected.sessionId : undefined),
-    workContextId:
-      values["work-context"] ??
-      (sameSubject ? selected.workContextId : undefined),
-  };
-  const subjectId = state.subjectId ?? "";
+  let subject: Promise<string> | undefined;
+  const selectedSubject = () =>
+    (subject ??= values.subject
+      ? addressId("subject", values.subject, "")
+      : selection().then((state) => state.subjectId ?? ""));
+  let stateView: Promise<Selection> | undefined;
+  async function selectedState(): Promise<Selection> {
+    return (stateView ??= (async () => {
+      const selected = await selection();
+      const subjectId = await selectedSubject();
+      return {
+        format: "nous.consumer.selection" as const,
+        ...(subjectId === selected.subjectId
+          ? selected
+          : { lastQuery: selected.lastQuery }),
+        subjectId,
+      };
+    })());
+  }
+  async function contextId(
+    kind: "session" | "work_context",
+    flag: "session" | "work-context",
+    field: "sessionId" | "workContextId",
+  ) {
+    return values[flag]
+      ? addressId(kind, values[flag], await selectedSubject())
+      : (await selectedState())[field];
+  }
   const notices: { code: string; message: string; receipt?: string }[] = [];
   async function executeReceipt(
     id: string,
@@ -229,16 +219,8 @@ export async function createEnvironment(
       return result;
     } catch (error) {
       const rejected =
-        error instanceof NousError
-          ? ["STALE_REVISION", "OPERATION_ID_CONFLICT"].includes(
-              error.domainCode ?? "",
-            ) ||
-            [
-              "INVALID_ARGUMENT",
-              "PERMISSION_DENIED",
-              "UNAUTHENTICATED",
-            ].includes(error.codeName)
-          : error instanceof CliError && error.code === "INVALID_ARGUMENT";
+        error instanceof NousError &&
+        error.context.commit_status === "rejected";
       if (rejected) {
         await (await local()).removeReceipt(id).catch(() =>
           notices.push({
@@ -262,7 +244,7 @@ export async function createEnvironment(
     }
   }
   const client = { ...original };
-  if (needs.receipts) {
+  {
     for (const [domain, service] of Object.entries(serviceDescriptors)) {
       const source = original[
         domain as keyof typeof original
@@ -291,7 +273,8 @@ export async function createEnvironment(
   async function resolveReference(text: string, kind = "") {
     const resultNumber = /^result:(\d+)$/.exec(text);
     if (resultNumber) {
-      if (state.lastQuery?.subjectId !== subjectId)
+      const state = await selectedState();
+      if (state.lastQuery?.subjectId !== (await selectedSubject()))
         throw new CliError(
           "RESULT_SUBJECT_MISMATCH",
           "Result belongs to another Subject or no query is saved",
@@ -309,7 +292,11 @@ export async function createEnvironment(
         );
       return ref;
     }
-    return bindReference(text, kind, subjectId);
+    return bindReference(
+      text,
+      kind,
+      kind === "subject" ? "" : await selectedSubject(),
+    );
   }
   async function readText(path: string, maximum = 65536) {
     let text = "";
@@ -338,8 +325,18 @@ export async function createEnvironment(
   return {
     client,
     values,
-    state,
-    subjectId,
+    get state() {
+      return selectedState();
+    },
+    get subjectId() {
+      return selectedSubject();
+    },
+    get sessionId() {
+      return contextId("session", "session", "sessionId");
+    },
+    get workContextId() {
+      return contextId("work_context", "work-context", "workContextId");
+    },
     notices,
     required,
     resolveReference,
@@ -347,7 +344,7 @@ export async function createEnvironment(
     readText,
     async save(this: void, value: Selection) {
       try {
-        await (await local()).save(value, savedBaseline);
+        await (await local()).save(value, savedBaseline ?? (await selection()));
         savedBaseline = value;
       } catch (error) {
         notices.push({
@@ -368,7 +365,7 @@ export async function createEnvironment(
       if (
         receipt.name !== "subjects.createSubject" &&
         receipt.subjectId &&
-        receipt.subjectId !== subjectId
+        receipt.subjectId !== (await selectedSubject())
       )
         throw new CliError(
           "RESULT_SUBJECT_MISMATCH",

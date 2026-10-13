@@ -16,8 +16,8 @@ export async function projectionCommands(env: CliEnvironment, action?: string) {
       })
     : {};
   const projection = {
-    subjectId: env.subjectId,
-    sessionId: env.required(env.state.sessionId, "Selected Session"),
+    subjectId: await env.subjectId,
+    sessionId: env.required(await env.sessionId, "Selected Session"),
     consumerId: env.required(env.values.consumer, "--consumer"),
     maxItems: boundedInteger(
       env.values["max-items"] ?? "16",

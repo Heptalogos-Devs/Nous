@@ -14,7 +14,8 @@ export async function schemaCommands(
   action?: string,
   ref?: string,
 ) {
-  const { client, subjectId } = env;
+  const { client } = env;
+  const subjectId = await env.subjectId;
   if (action === "create")
     return client.concepts.createCognitiveSchema({
       subjectId,

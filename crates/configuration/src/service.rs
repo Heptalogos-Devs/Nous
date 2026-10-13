@@ -359,6 +359,7 @@ impl ConfigurationService {
                 )
                 .with_context("operation_id", operation_id.0)
                 .with_context("path", key)
+                .with_context("commit_status", "rejected")
                 .into());
             }
             let outcome = ConfigChangeOutcome {
@@ -379,7 +380,7 @@ impl ConfigurationService {
         .await
         .map_err(db)?
         .ok_or_else(|| DomainError::new(DomainErrorCode::StaleRevision, "Configuration revision changed; read the current desired policy before replacing it")
-            .with_context("path", key))?;
+            .with_context("path", key).with_context("commit_status", "rejected"))?;
         match (subject, value.as_ref()) {
             (Some(subject), Some(value)) => {
                 sqlx::query("INSERT INTO subject_configuration_overrides(subject_id,key,value,revision,updated_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(subject_id,key) DO UPDATE SET value=excluded.value,revision=excluded.revision,updated_at=excluded.updated_at")

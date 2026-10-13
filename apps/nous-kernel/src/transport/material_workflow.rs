@@ -35,28 +35,40 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         .await;
         result.map(Response::new).map_err(status)
     }
-    async fn get_resolved_mentions(
+    async fn prepare_formation(
         &self,
-        request: Request<k::ResolvedMentionsRequest>,
-    ) -> std::result::Result<Response<k::ResolvedMentionsResponse>, Status> {
+        request: Request<k::PrepareFormationRequest>,
+    ) -> std::result::Result<Response<k::PreparedFormation>, Status> {
         let input = request.into_inner();
         let result: Result<_> = async {
-            let candidates = self
+            let (source, mentions) = self
                 .0
                 .material
-                .resolved_mentions(
+                .formation_input(
                     SubjectId(id(&input.subject_id)?),
                     nous_core::OccurrenceId(id(&input.occurrence_id)?),
+                    input
+                        .representation_id
+                        .as_deref()
+                        .map(id)
+                        .transpose()?
+                        .map(nous_core::DerivedRepresentationId),
+                    input.audio_description,
+                    input.resolved_mentions,
+                    input.max_bytes,
                 )
-                .await?
-                .into_iter()
-                .map(|(key, surface, entity_ref)| k::ResolvedMention {
-                    key: key.to_string(),
-                    surface,
-                    entity_ref: entity_ref.as_str().to_owned(),
-                })
-                .collect();
-            Ok(k::ResolvedMentionsResponse { candidates })
+                .await?;
+            Ok(k::PreparedFormation {
+                source: Some(super::material::materialized_evidence(source)),
+                candidates: mentions
+                    .into_iter()
+                    .map(|(key, surface, entity)| k::ResolvedMention {
+                        key: key.to_string(),
+                        surface,
+                        entity_ref: entity.as_str().to_owned(),
+                    })
+                    .collect(),
+            })
         }
         .await;
         result.map(Response::new).map_err(status)

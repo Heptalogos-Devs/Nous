@@ -519,6 +519,21 @@ pub struct QueryEmbedding {
     #[prost(float, repeated, tag="4")]
     pub vector: ::prost::alloc::vec::Vec<f32>,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryHostCapabilities {
+    #[prost(bool, tag="1")]
+    pub embedding_available: bool,
+    #[prost(bool, tag="2")]
+    pub embedding_required: bool,
+    #[prost(bool, tag="3")]
+    pub enrichment_available: bool,
+    #[prost(bool, tag="4")]
+    pub enrichment_required: bool,
+    #[prost(bool, tag="5")]
+    pub rerank_available: bool,
+    #[prost(bool, tag="6")]
+    pub rerank_required: bool,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrepareQueryRequest {
     #[prost(message, optional, tag="1")]
@@ -527,6 +542,8 @@ pub struct PrepareQueryRequest {
     pub execute_query: bool,
     #[prost(uint32, tag="3")]
     pub lease_seconds: u32,
+    #[prost(message, optional, tag="4")]
+    pub host: ::core::option::Option<QueryHostCapabilities>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KernelQueryRequest {
@@ -724,11 +741,19 @@ pub struct SaveOperationRequest {
     pub context: ::core::option::Option<ModelResultContext>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ResolvedMentionsRequest {
+pub struct PrepareFormationRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
     pub occurrence_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="3")]
+    pub representation_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag="4")]
+    pub audio_description: bool,
+    #[prost(bool, tag="5")]
+    pub resolved_mentions: bool,
+    #[prost(uint64, tag="6")]
+    pub max_bytes: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResolvedMention {
@@ -740,8 +765,10 @@ pub struct ResolvedMention {
     pub entity_ref: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ResolvedMentionsResponse {
-    #[prost(message, repeated, tag="1")]
+pub struct PreparedFormation {
+    #[prost(message, optional, tag="1")]
+    pub source: ::core::option::Option<super::super::v1alpha1::MaterializedEvidence>,
+    #[prost(message, repeated, tag="2")]
     pub candidates: ::prost::alloc::vec::Vec<ResolvedMention>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

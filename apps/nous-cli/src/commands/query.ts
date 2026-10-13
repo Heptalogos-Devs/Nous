@@ -17,7 +17,9 @@ export async function queryCommands(
   argument?: string,
   positionals: string[] = [],
 ) {
-  const { client, state, subjectId, values, required, save } = env;
+  const { client, values, required, save } = env;
+  const subjectId = await env.subjectId;
+  const state = await env.state;
   const preparing = action === "prepare" || action === "inspect";
   const nousql = values["query-file"]
     ? await env.readText(values["query-file"], 32768)
@@ -33,8 +35,8 @@ export async function queryCommands(
     throw new CliError("INVALID_ARGUMENT", "NousQL exceeds 32 KiB");
   const request = {
     subjectId,
-    sessionId: state.sessionId,
-    workContextId: state.workContextId,
+    sessionId: await env.sessionId,
+    workContextId: await env.workContextId,
     nousql,
   };
   if (preparing) {
@@ -46,7 +48,12 @@ export async function queryCommands(
     };
   }
   // A failed new query must not leave result:N pointing at an unrelated old answer.
-  await save({ ...state, lastQuery: undefined });
+  await save({
+    ...state,
+    sessionId: request.sessionId,
+    workContextId: request.workContextId,
+    lastQuery: undefined,
+  });
   const response = await client.cognition.query(request);
   const refs = response.hits.map((hit) => hit.revision ?? hit.reference);
   if (refs.some((ref) => !ref))
@@ -56,6 +63,8 @@ export async function queryCommands(
     );
   await save({
     ...state,
+    sessionId: request.sessionId,
+    workContextId: request.workContextId,
     lastQuery: {
       subjectId,
       queryId: response.queryId,
@@ -112,7 +121,8 @@ export async function queryCommands(
   };
 }
 export async function showCommands(env: CliEnvironment, reference?: string) {
-  const { client, subjectId, required, resolveReference } = env;
+  const { client, required, resolveReference } = env;
+  const subjectId = await env.subjectId;
   const ref = await resolveReference(
     required(reference, "Exact reference or result:N"),
   );
@@ -179,7 +189,7 @@ export async function readCommands(env: CliEnvironment, reference?: string) {
     );
   if (ref.kind === "artifact" && env.values.output) {
     const artifact = await env.client.material.getArtifact({
-      subjectId: env.subjectId,
+      subjectId: await env.subjectId,
       id: ref.value,
     });
     const outputPath = resolve(env.values.output);
@@ -187,7 +197,7 @@ export async function readCommands(env: CliEnvironment, reference?: string) {
     let failed = false;
     try {
       const source = await env.client.artifacts.download(
-        env.subjectId,
+        await env.subjectId,
         ref.value,
       );
       await pipeline(source.content, file.createWriteStream());
@@ -207,7 +217,7 @@ export async function readCommands(env: CliEnvironment, reference?: string) {
     };
   }
   const material = await env.client.material.materializeEvidence({
-    subjectId: env.subjectId,
+    subjectId: await env.subjectId,
     reference: ref,
     maxBytes: BigInt(
       boundedInteger(

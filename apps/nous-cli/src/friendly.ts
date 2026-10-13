@@ -12,7 +12,11 @@ export async function friendlyOutput(
   env: CliEnvironment,
 ): Promise<unknown> {
   const result = structuredClone(input);
-  const slots = referenceSlots(result, undefined, env.subjectId);
+  const slots = referenceSlots(result);
+  if (slots.some((slot) => !slot.subjectId && slot.kind !== "subject")) {
+    const subjectId = await env.subjectId;
+    for (const slot of slots) if (!slot.subjectId) slot.subjectId = subjectId;
+  }
   const addresses = new Map<string, string>();
   const query = input as
     | {
@@ -25,7 +29,7 @@ export async function friendlyOutput(
   for (const hit of query?.results ?? [])
     if (hit.ref && hit.lexicalRef)
       addresses.set(
-        targetKey({ subjectId: env.subjectId, canonical: hit.ref }),
+        targetKey({ subjectId: await env.subjectId, canonical: hit.ref }),
         hit.lexicalRef,
       );
   const targets = new Map<string, Target>();

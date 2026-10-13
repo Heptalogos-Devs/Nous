@@ -128,55 +128,9 @@ export async function runCli(
         }
         const env = await createEnvironment(
           values,
-          {
-            selection:
-              family === "config" ||
-              (family === "material" &&
-                ["limits", "clean"].includes(action ?? ctx.args._[0] ?? ""))
-                ? "none"
-                : [
-                      "status",
-                      "trace",
-                      "memory",
-                      "schema",
-                      "episode",
-                      "journal",
-                      "tag",
-                      "association",
-                      "identity",
-                      "read",
-                      "show",
-                      "material",
-                    ].includes(family)
-                  ? "subject"
-                  : "context",
-            receipts:
-              family === "config"
-                ? ["set", "clear"].includes(action ?? ctx.args._[0] ?? "")
-                : ![
-                    "status",
-                    "query",
-                    "prepare",
-                    "inspect",
-                    "read",
-                    "show",
-                    "trace",
-                    "material",
-                    "projection",
-                    "maintenance",
-                  ].includes(family),
-          },
           connection ? async () => connection! : connect,
           input,
         );
-        if (
-          !["config", "status", "subject", "retry"].includes(family) &&
-          !(family === "material" && ["limits", "clean"].includes(action ?? ""))
-        )
-          env.required(
-            env.subjectId,
-            "Selected Subject (run subject create/use)",
-          );
         result =
           family === "status"
             ? await statusCommands(env, snapshot)

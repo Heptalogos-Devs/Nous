@@ -112,65 +112,27 @@ async function formObservationOnce(
     replay,
     generate: async () => {
       const model = models.invocations.prepare("memory_formation");
-      const occurrence = await kernel.material.getOccurrence(
-        { subjectId: r.subjectId, id: r.occurrenceId },
-        options,
-      );
-      let representationId = r.representationId;
-      if (!representationId && occurrence.artifactId) {
-        const artifact = await kernel.material.getArtifact(
-          { subjectId: r.subjectId, id: occurrence.artifactId },
-          options,
-        );
-        const mime = artifact.mediaType.split(";")[0]!.trim().toLowerCase();
-        const kind = mime.startsWith("image/")
-          ? "image_description"
-          : mime.startsWith("audio/")
-            ? models.configuration.audio.input_mode === "direct"
-              ? "audio_description"
-              : "transcript"
-            : mime.startsWith("video/")
-              ? "scene_description"
-              : "extracted_text";
-        const available = await kernel.material.listDerivedRepresentations(
-          {
-            subjectId: r.subjectId,
-            artifactId: occurrence.artifactId,
-            kind,
-            limit: 1,
-          },
-          options,
-        );
-        representationId = available.items[0]?.representationId;
-      }
-      const candidates =
-        mode === "select_from_resolved_mentions"
-          ? (
-              await kernel.materialWorkflow.getResolvedMentions(
-                { subjectId: r.subjectId, occurrenceId: r.occurrenceId },
-                options,
-              )
-            ).candidates.map((candidate) => ({
-              key: candidate.key,
-              surface: candidate.surface,
-              entityRef: candidate.entityRef,
-            }))
-          : [];
-      const source = await kernel.material.materializeEvidence(
+      const prepared = await kernel.materialWorkflow.prepareFormation(
         {
           subjectId: r.subjectId,
-          reference: representationId
-            ? {
-                kind: "derived_representation",
-                value: representationId,
-              }
-            : { kind: "occurrence", value: r.occurrenceId },
+          occurrenceId: r.occurrenceId,
+          representationId: r.representationId,
+          audioDescription: models.configuration.audio.input_mode === "direct",
+          resolvedMentions: mode === "select_from_resolved_mentions",
           maxBytes: BigInt(
             models.configuration.material_inputs.formation_source_max_bytes,
           ),
         },
         options,
       );
+      const source = prepared.source;
+      if (!source?.reference)
+        throw new ConnectError("Formation source unavailable", Code.Internal);
+      const representationId =
+        source.reference.kind === "derived_representation"
+          ? source.reference.value
+          : undefined;
+      const candidates = prepared.candidates;
       if (source.partial)
         throw new ConnectError(
           "Formation source is too large; select a bounded representation",

@@ -10,10 +10,11 @@ export async function observeCommands(
   action: string | undefined,
   argument?: string,
 ) {
-  const { client, values, state, subjectId, required, mediaType } = env;
+  const { client, values, required, mediaType } = env;
+  const subjectId = await env.subjectId;
   const input = {
     subjectId,
-    sessionId: state.sessionId,
+    sessionId: await env.sessionId,
     requestId: crypto.randomUUID(),
     ...(values.source ? webSource(values.source) : { sourceClass: "file" }),
     observedAt: {

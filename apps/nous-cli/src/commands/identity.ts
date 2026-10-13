@@ -10,7 +10,8 @@ export async function identityCommands(
   env: CliEnvironment,
   action: string | undefined,
 ) {
-  const { client, values, subjectId, required } = env;
+  const { client, values, required } = env;
+  const subjectId = await env.subjectId;
   if (action === "rebind")
     return client.identity.rebindEntity({
       ...(await content(env, RebindEntityRequestSchema)),

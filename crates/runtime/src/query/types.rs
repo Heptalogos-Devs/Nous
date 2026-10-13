@@ -103,7 +103,91 @@ impl From<&CognitiveHit> for CandidateStamp {
     }
 }
 
+#[derive(Default)]
+pub struct QueryHostCapabilities {
+    pub embedding_available: bool,
+    pub embedding_required: bool,
+    pub enrichment_available: bool,
+    pub enrichment_required: bool,
+    pub rerank_available: bool,
+    pub rerank_required: bool,
+}
+
 impl BoundQuery {
+    pub fn host_work(&mut self, host: &QueryHostCapabilities) -> Result<(bool, bool)> {
+        let query = &self.source_query;
+        let embedding = query.capabilities.text_embedding != RequirementStrength::Forbidden
+            && !self.representation.text.is_empty()
+            && (self.concept_enrichment != super::ConceptEnrichment::Off
+                || self.enabled_lanes.iter().any(|lane| {
+                    *lane == EvidenceFamily::Dense
+                        || (*lane == EvidenceFamily::TopologyWave
+                            && self
+                                .retrieval_policy
+                                .cognitive_profile
+                                .requirements()
+                                .query_embedding)
+                }));
+        let enrichment = self.concept_enrichment == super::ConceptEnrichment::Model
+            && query.capabilities.query_concept_enrichment != RequirementStrength::Forbidden;
+        let mut nodes = vec![&query.expression];
+        let mut intent = false;
+        while let Some(node) = nodes.pop() {
+            intent |= node.cues.iter().any(|cue| match cue {
+                Cue::Text(c) => !c.text.trim().is_empty(),
+                Cue::Concept(c) => !c.text.trim().is_empty(),
+                _ => false,
+            });
+            nodes.extend(&node.children);
+        }
+        let rerank = !query.is_exact_read()
+            && intent
+            && query.capabilities.rerank != RequirementStrength::Forbidden;
+        for (needed, available, required, role, requirement) in [
+            (
+                embedding,
+                host.embedding_available,
+                host.embedding_required,
+                "query_embedding",
+                query.capabilities.text_embedding,
+            ),
+            (
+                enrichment,
+                host.enrichment_available,
+                host.enrichment_required,
+                "query_concept_enrichment",
+                query.capabilities.query_concept_enrichment,
+            ),
+            (
+                rerank,
+                host.rerank_available,
+                host.rerank_required,
+                "query_rerank",
+                query.capabilities.rerank,
+            ),
+        ] {
+            if needed && !available && (required || requirement == RequirementStrength::Required) {
+                return Err(DomainError::new(
+                    DomainErrorCode::CapabilityUnavailable,
+                    format!("Required model.{role} is unavailable"),
+                )
+                .with_context("capability", format!("model.{role}"))
+                .with_context("requirement", "required")
+                .into());
+            }
+        }
+        if enrichment && !host.enrichment_available {
+            self.concept_enrichment = super::ConceptEnrichment::Existing;
+            self.activation.degradation.push(Degradation {code: "query_concept_model_unavailable".into(), detail: Some("Host has no executable query_concept_enrichment role; existing concepts remain available".into())});
+        }
+        Ok((
+            embedding && host.embedding_available,
+            embedding && host.embedding_available
+                || enrichment && host.enrichment_available
+                || rerank && host.rerank_available,
+        ))
+    }
+
     pub fn runtime_sources(&self) -> impl Iterator<Item = &super::QuerySource> {
         self.context_snapshot
             .source_refs

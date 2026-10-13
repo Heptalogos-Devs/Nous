@@ -151,6 +151,22 @@ export class ModelInvocations {
       detail: this.roles.get(role)?.detail ?? "Role has no binding",
     }));
   }
+  get queryCapabilities() {
+    const available = (name: ModelRole) =>
+      this.capabilities.some(
+        (capability) =>
+          capability.name === `model.${name}` && capability.state === "READY",
+      );
+    return {
+      embeddingAvailable: available("query_embedding"),
+      embeddingRequired: this.requirement("query_embedding") === "required",
+      enrichmentAvailable: available("query_concept_enrichment"),
+      enrichmentRequired:
+        this.requirement("query_concept_enrichment") === "required",
+      rerankAvailable: available("query_rerank"),
+      rerankRequired: this.requirement("query_rerank") === "required",
+    };
+  }
   profile(role: ModelRole) {
     return this.roles.get(role)?.prepared?.routes.find((route) => route.ready)
       ?.ready?.profile;

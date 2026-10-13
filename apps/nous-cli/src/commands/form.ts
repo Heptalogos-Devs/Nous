@@ -7,7 +7,8 @@ export async function formCommands(
   env: CliEnvironment,
   action: string | undefined,
 ) {
-  const { client, values, subjectId, required, resolveReference } = env;
+  const { client, values, required, resolveReference } = env;
+  const subjectId = await env.subjectId;
   const operationId = values["operation-id"] ?? crypto.randomUUID();
   const result = await client.model.formFromObservation({
     subjectId,

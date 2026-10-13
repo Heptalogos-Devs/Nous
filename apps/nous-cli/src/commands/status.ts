@@ -10,13 +10,14 @@ export async function statusCommands(
   const kernelReady = status.components.some(
     (component) => component.name === "kernel" && component.state === "READY",
   );
+  const subjectId = kernelReady ? await env.subjectId : "";
   return {
     status,
-    ...(env.subjectId && kernelReady
+    ...(subjectId && kernelReady
       ? {
-          subjectId: env.subjectId,
+          subjectId,
           serving: await env.client.system.getProjectionStatus({
-            subjectId: env.subjectId,
+            subjectId,
           }),
         }
       : {}),

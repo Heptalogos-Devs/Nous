@@ -10,7 +10,8 @@ export async function episodeCommands(
   action?: string,
   ref?: string,
 ) {
-  const { client, subjectId } = env;
+  const { client } = env;
+  const subjectId = await env.subjectId;
   if (action === "list")
     return client.memory.listEpisodes({
       subjectId,
@@ -76,7 +77,8 @@ export async function journalCommands(
   action?: string,
   ref?: string,
 ) {
-  const { client, subjectId } = env;
+  const { client } = env;
+  const subjectId = await env.subjectId;
   if (action === "list")
     return client.memory.listJournals({
       subjectId,

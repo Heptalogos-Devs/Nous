@@ -17,8 +17,8 @@ export async function contextCommands(
   action?: string,
   argument?: string,
 ) {
-  const { client, state, subjectId, values, required, save, resolveReference } =
-    env;
+  const { client, values, required, save, resolveReference } = env;
+  const subjectId = await env.subjectId;
   const operationId = values["operation-id"] ?? crypto.randomUUID();
   async function text() {
     let value = values.text;
@@ -31,6 +31,7 @@ export async function contextCommands(
       page: page(env),
     });
   if (action === "create") {
+    const state = await env.state;
     const result = await client.runtime.createWorkContext(
       env.values["request-file"]
         ? {
@@ -50,7 +51,7 @@ export async function contextCommands(
     return result.workContext;
   }
   if (action === "foreground") {
-    const sessionId = required(state.sessionId, "Selected Session");
+    const sessionId = required(await env.sessionId, "Selected Session");
     const session = await client.runtime.getSession({
       subjectId,
       id: sessionId,
@@ -63,13 +64,13 @@ export async function contextCommands(
         ? undefined
         : argument
           ? (await resolveReference(argument, "work_context")).value
-          : required(state.workContextId, "WorkContext"),
+          : required(await env.workContextId, "WorkContext"),
       operationId,
     });
   }
   const id = argument
     ? (await resolveReference(argument, "work_context")).value
-    : required(state.workContextId, "WorkContext");
+    : required(await env.workContextId, "WorkContext");
   const expected = values["expected-revision"];
   const current =
     expected === undefined || action === "show" || action === "select"
@@ -82,6 +83,7 @@ export async function contextCommands(
   )
     throw new CliError("NOT_FOUND", "WorkContext not found");
   if (action === "select") {
+    const state = await env.state;
     await save({ ...state, workContextId: id });
     return current;
   }

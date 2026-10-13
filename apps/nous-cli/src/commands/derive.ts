@@ -7,7 +7,8 @@ export async function deriveCommands(
   env: CliEnvironment,
   action: string | undefined,
 ) {
-  const { client, values, subjectId, required } = env;
+  const { client, values, required } = env;
+  const subjectId = await env.subjectId;
   return client.model.deriveMaterial({
     subjectId,
     sourceRegionId: (

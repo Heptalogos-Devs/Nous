@@ -9,7 +9,7 @@ export async function traceCommands(
   action: string | undefined,
 ) {
   return env.client.memory.trace({
-    subjectId: env.subjectId,
+    subjectId: await env.subjectId,
     reference: await env.resolveReference(env.required(action, "Reference")),
     maxNodes: boundedInteger(env.values["max-nodes"], 1, 512, "--max-nodes"),
     maxBytes: boundedInteger(

@@ -10,7 +10,8 @@ export async function sessionCommands(
   action: string | undefined,
   reference?: string,
 ) {
-  const { client, state, subjectId, save, required } = env;
+  const { client, save, required } = env;
+  const subjectId = await env.subjectId;
   if (action === "list")
     return client.runtime.listSessions({
       subjectId,
@@ -25,7 +26,7 @@ export async function sessionCommands(
   if (action === "show") {
     const id =
       reference === undefined
-        ? required(state.sessionId, "Selected Session (run session open)")
+        ? required(await env.sessionId, "Selected Session (run session open)")
         : (
             await env.resolveReference(
               required(reference, "Session reference"),
@@ -35,11 +36,16 @@ export async function sessionCommands(
     return client.runtime.getSession({ subjectId, id });
   }
   if (action === "open") {
+    const state = await env.state;
     const session = await client.runtime.openSession({ subjectId });
     await save({ ...state, sessionId: session.sessionId });
     return session;
   }
-  const id = required(state.sessionId, "Selected Session (run session open)");
+  const state = await env.state;
+  const id = required(
+    await env.sessionId,
+    "Selected Session (run session open)",
+  );
   if (action === "close") {
     const session = await client.runtime.closeSession({ subjectId, id });
     await save({ ...state, sessionId: undefined });

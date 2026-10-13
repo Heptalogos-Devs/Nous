@@ -19,7 +19,8 @@ export async function tagCommands(
   action: string | undefined,
   argument?: string,
 ) {
-  const { client, values, subjectId, required, resolveReference } = env;
+  const { client, values, required, resolveReference } = env;
+  const subjectId = await env.subjectId;
   const operationId = values["operation-id"] ?? crypto.randomUUID();
   if (action === "create")
     return client.concepts.createTag({

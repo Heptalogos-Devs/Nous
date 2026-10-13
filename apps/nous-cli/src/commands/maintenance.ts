@@ -5,7 +5,8 @@ import { boundedInteger } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 
 export async function maintenanceCommands(env: CliEnvironment) {
-  const { client, values, subjectId } = env;
+  const { client, values } = env;
+  const subjectId = await env.subjectId;
   const result = await client.cognition.grantMaintenance({
     subjectId,
     maxOperations: boundedInteger(
@@ -31,7 +32,7 @@ export async function maintenanceCommands(env: CliEnvironment) {
     ...result,
     ...(result.disposition === "disabled_by_policy"
       ? {
-          next: `config get maintenance.enabled --desired --subject ${subjectId}; then config set maintenance.enabled true --subject ${subjectId} --expected-revision <configurationRevision>`,
+          next: `config set maintenance.enabled true --subject ${subjectId}`,
         }
       : {}),
   };

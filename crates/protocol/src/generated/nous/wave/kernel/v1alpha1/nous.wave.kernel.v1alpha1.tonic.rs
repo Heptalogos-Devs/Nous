@@ -764,11 +764,11 @@ pub mod kernel_material_workflow_service_server {
             tonic::Response<super::DescriptionSegments>,
             tonic::Status,
         >;
-        async fn get_resolved_mentions(
+        async fn prepare_formation(
             &self,
-            request: tonic::Request<super::ResolvedMentionsRequest>,
+            request: tonic::Request<super::PrepareFormationRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::ResolvedMentionsResponse>,
+            tonic::Response<super::PreparedFormation>,
             tonic::Status,
         >;
         async fn get_embedding_config(
@@ -928,27 +928,27 @@ pub mod kernel_material_workflow_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/nous.wave.kernel.v1alpha1.KernelMaterialWorkflowService/GetResolvedMentions" => {
+                "/nous.wave.kernel.v1alpha1.KernelMaterialWorkflowService/PrepareFormation" => {
                     #[allow(non_camel_case_types)]
-                    struct GetResolvedMentionsSvc<T: KernelMaterialWorkflowService>(
+                    struct PrepareFormationSvc<T: KernelMaterialWorkflowService>(
                         pub Arc<T>,
                     );
                     impl<
                         T: KernelMaterialWorkflowService,
-                    > tonic::server::UnaryService<super::ResolvedMentionsRequest>
-                    for GetResolvedMentionsSvc<T> {
-                        type Response = super::ResolvedMentionsResponse;
+                    > tonic::server::UnaryService<super::PrepareFormationRequest>
+                    for PrepareFormationSvc<T> {
+                        type Response = super::PreparedFormation;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::ResolvedMentionsRequest>,
+                            request: tonic::Request<super::PrepareFormationRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as KernelMaterialWorkflowService>::get_resolved_mentions(
+                                <T as KernelMaterialWorkflowService>::prepare_formation(
                                         &inner,
                                         request,
                                     )
@@ -963,7 +963,7 @@ pub mod kernel_material_workflow_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = GetResolvedMentionsSvc(inner);
+                        let method = PrepareFormationSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

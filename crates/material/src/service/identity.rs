@@ -47,13 +47,14 @@ impl MaterialService {
 }
 
 impl MaterialService {
-    pub async fn resolved_mentions(
+    pub(super) async fn resolved_mentions_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         occurrence: OccurrenceId,
     ) -> Result<Vec<(Uuid, String, EntityRef)>> {
         let rows = sqlx::query("SELECT m.mention_id,m.surface,b.entity_ref FROM entity_mentions m JOIN LATERAL (SELECT entity_ref,binding_state FROM entity_binding_revisions WHERE mention_id=m.mention_id ORDER BY revision_no DESC LIMIT 1) b ON b.binding_state='bound' AND b.entity_ref IS NOT NULL WHERE m.subject_id=$1 AND m.occurrence_id=$2 ORDER BY m.mention_id LIMIT 129")
-            .bind(subject.0).bind(occurrence.0).fetch_all(self.store.pool()).await.map_err(db)?;
+            .bind(subject.0).bind(occurrence.0).fetch_all(&mut **tx).await.map_err(db)?;
         if rows.len() > 128 {
             return Err(Error::Invalid(
                 "resolved mention candidate bound exceeded".into(),

@@ -8,9 +8,10 @@ export async function materialCommands(
   action?: string,
   ref?: string,
 ) {
-  const { client, subjectId } = env;
+  const { client } = env;
   if (action === "clean") return client.material.clean({});
   if (action === "limits") return client.material.getLimits({});
+  const subjectId = await env.subjectId;
   if (action === "artifacts")
     return client.material.listArtifacts({ subjectId, page: page(env) });
   if (action === "producer")

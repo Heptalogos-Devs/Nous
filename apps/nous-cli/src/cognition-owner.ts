@@ -34,7 +34,7 @@ export async function revisionLink(
     relation: string;
   };
   return {
-    subjectId: env.subjectId,
+    subjectId: await env.subjectId,
     operationId: operationId(env),
     fromRevisionId: await target(env, file.from, kind),
     toRevisionId: await target(env, file.to, kind),

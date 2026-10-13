@@ -51,11 +51,8 @@ export class CoreCognition {
   }
 
   async prepareQuery(request: QueryRequest, calls: Execution) {
-    return this.kernel.queryWorkflow.prepareQuery(
-      {
-        query: await this.bindQueryInput(request, calls),
-        executeQuery: false,
-      },
+    return this.queries.prepare(
+      await this.bindQueryInput(request, calls),
       calls,
     );
   }

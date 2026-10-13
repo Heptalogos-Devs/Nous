@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nous_core::{EvidenceFamily, RequirementStrength, Result};
+use nous_core::{RequirementStrength, Result};
 
 #[tonic::async_trait]
 impl k::kernel_query_service_server::KernelQueryService for KernelService {
@@ -35,47 +35,34 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
             bound.selected_embedding_space =
                 self.0.serving.embedding().map(|provider| provider.space());
             let embedding_text = bound.representation.text.clone();
-            let embedding_required = bound.source_query.capabilities.text_embedding
-                != RequirementStrength::Forbidden
-                && !embedding_text.is_empty()
-                && (bound.concept_enrichment != nous_runtime::ConceptEnrichment::Off
-                    || bound.enabled_lanes.iter().any(|lane| {
-                        *lane == EvidenceFamily::Dense
-                            || (*lane == EvidenceFamily::TopologyWave
-                                && bound
-                                    .retrieval_policy
-                                    .cognitive_profile
-                                    .requirements()
-                                    .query_embedding)
-                    }));
+            let host = input.host.unwrap_or_default();
+            let (embedding_required, needs_host) =
+                bound.host_work(&nous_runtime::QueryHostCapabilities {
+                    embedding_available: host.embedding_available,
+                    embedding_required: host.embedding_required,
+                    enrichment_available: host.enrichment_available,
+                    enrichment_required: host.enrichment_required,
+                    rerank_available: host.rerank_available,
+                    rerank_required: host.rerank_required,
+                })?;
             let inspection = super::query::inspect_bound_query(&bound)?;
             let text_embedding_requirement =
                 enum_name(bound.source_query.capabilities.text_embedding);
             let rerank_requirement = enum_name(if bound.source_query.is_exact_read() {
                 RequirementStrength::Forbidden
             } else {
-                bound.source_query.capabilities.rerank
+                if host.rerank_required
+                    && bound.source_query.capabilities.rerank != RequirementStrength::Forbidden
+                {
+                    RequirementStrength::Required
+                } else {
+                    bound.source_query.capabilities.rerank
+                }
             });
             let concept_enrichment_mode = enum_name(bound.concept_enrichment);
             let concept_enrichment_requirement =
                 enum_name(bound.source_query.capabilities.query_concept_enrichment);
             let historical_view = bound.historical_authority.is_some();
-            let rerank_configured = bound
-                .config_snapshot
-                .json("models")
-                .and_then(|models| models.pointer("/roles/query_rerank/routes"))
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|routes| !routes.is_empty());
-            let needs_host = embedding_required
-                || (bound.concept_enrichment == nous_runtime::ConceptEnrichment::Model
-                    && bound.source_query.capabilities.query_concept_enrichment
-                        != RequirementStrength::Forbidden)
-                || (!bound.source_query.is_exact_read()
-                    && !embedding_text.is_empty()
-                    && (bound.source_query.capabilities.rerank == RequirementStrength::Required
-                        || (bound.source_query.capabilities.rerank
-                            != RequirementStrength::Forbidden
-                            && rerank_configured)));
             let (token, execution) = if input.execute_query {
                 let lease = nous_runtime::QueryLease::new(std::time::Duration::from_secs(
                     u64::from(input.lease_seconds),

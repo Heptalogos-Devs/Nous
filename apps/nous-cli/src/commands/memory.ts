@@ -9,7 +9,8 @@ export async function memoryCommands(
   action?: string,
   ref?: string,
 ) {
-  const { client, subjectId, values } = env;
+  const { client, values } = env;
+  const subjectId = await env.subjectId;
   if (action === "list")
     return client.memory.listMemories({
       subjectId,
