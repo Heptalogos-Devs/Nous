@@ -10,7 +10,6 @@ use nous_core::{
     RepresentationKind,
 };
 use nous_material::{DerivationInput, DerivedRepresentation};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 
 #[tokio::test]
 #[expect(
@@ -20,22 +19,7 @@ use nous_subject::{CognitiveSeedInput, CreateSubject};
 async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     let (root, url, _postgres) = test_support::database().await;
     let runtime = test_support::open_runtime(&url, &root).await;
-    let subject = runtime
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: nous_core::OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&runtime).await;
     let observed = test_support::observation(&runtime, subject, "source facts").await;
     let repeated = test_support::observation(&runtime, subject, "source facts").await;
     let artifact = observed.artifact.as_ref().unwrap().artifact_id;

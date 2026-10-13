@@ -9,7 +9,6 @@ use nous_memory::{
     CreateTagRequest, MergeTagsInput, SplitTagInput, TagContent, TagExpectation,
 };
 use nous_protocol::nous::wave::v1alpha1 as p;
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use p::concept_service_server::ConceptService;
 use p::runtime_service_server::RuntimeService;
 use test_support::*;
@@ -37,22 +36,7 @@ fn expectation(tag: &nous_memory::TagView) -> TagExpectation {
 async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_serving() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime(&url, &root).await;
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let owner = rt.require_memory().unwrap();
     let mut tags = Vec::new();
     for label in [
@@ -637,22 +621,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
 async fn lexical_allocation_retries_unique_conflicts_and_rolls_back_exhaustion() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime(&url, &root).await;
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let reference = |value| CognitiveRef::Entity(EntityRef::new(value).unwrap());
     let resident = rt
         .store

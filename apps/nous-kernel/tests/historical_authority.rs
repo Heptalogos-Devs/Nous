@@ -14,7 +14,6 @@ use nous_core::*;
 use nous_memory::{AssociationBasis, AssociationBasisClass, AssociationPolarity};
 use nous_memory::{CreateTagRequest, ReviseTagInput, TagContent, TagExpectation};
 use nous_runtime::ManualCognitiveClock;
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use std::sync::Arc;
 use test_support::*;
 #[tokio::test]
@@ -32,22 +31,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     )
     .await
     .unwrap();
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let source = observation(&rt, subject, "original authority fact").await;
     let owner = rt.require_memory().unwrap();
     let tag = owner
@@ -396,22 +380,7 @@ async fn historical_material_query_runs_without_memory_micro_system() {
     let (root, url, _pg) = database().await;
     let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:nous_retrieval::ServingOptions {root:root.path().join("serving"),lexical:true,dense:false,topology:false,memory_enabled:false},embedding:None,stored_embedding:None,configuration: nous_kernel::configuration_catalog(vec![]).unwrap().deployment(&serde_json::json!({"capabilities":{"process":{"memory":false},"subject_defaults":{"memory":false}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":false},"topology":{"enabled":false}}})).unwrap()}).await.unwrap();
     assert!(rt.memory.is_none());
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let old = observation(&rt, subject, "material archival chronicle").await;
     let cut = rt.cognition.now(subject);
     let future = observation(&rt, subject, "future material archival chronicle").await;

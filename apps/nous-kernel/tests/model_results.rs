@@ -4,29 +4,13 @@
 #[path = "test_support/mod.rs"]
 mod test_support;
 use nous_core::{MaintenanceTrigger, ModelResultContext, OperationId};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::result_payload as payload;
 
 #[tokio::test]
 async fn model_operation_identity_conflict_proposal_resume_and_outcome_replay() {
     let (root, url, _postgres) = test_support::database().await;
     let runtime = test_support::open_runtime(&url, &root).await;
-    let subject = runtime
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&runtime).await;
     let key = OperationId::new().0.to_string();
     let identity = test_support::model_operation_identity(subject, "memory", &key, "same input");
     assert!(

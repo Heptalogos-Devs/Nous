@@ -10,8 +10,7 @@ use nous_core::{
 };
 use nous_memory::{BasisRole, EvidenceLocator, EvidenceRef, FormationMode, RevisionBasis};
 use nous_runtime::{QueryPlan, UseFeedback, UseFeedbackEvent, UseKind};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
-use test_support::query::{query, subject};
+use test_support::query::query;
 use test_support::{database, form_input, observation, open_runtime, open_runtime_with_serving};
 
 #[tokio::test]
@@ -22,7 +21,7 @@ use test_support::{database, form_input, observation, open_runtime, open_runtime
 async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
-    let subject = subject(&runtime).await;
+    let subject = test_support::query::subject(&runtime).await;
     let source = observation(&runtime, subject, "shared source").await;
     let entity = EntityRef::new("entity:cohort").unwrap();
     let mut cohort = Vec::new();
@@ -241,7 +240,7 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
 async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
-    let subject = subject(&runtime).await;
+    let subject = test_support::query::subject(&runtime).await;
     let observation = observation(&runtime, subject, "fenced fact").await;
     let memory = runtime
         .require_memory()
@@ -441,24 +440,7 @@ async fn subject_profiles_change_new_queries_and_preserve_inflight_preparation()
     let runtime = open_runtime_with_serving(&url, &root, true, false, true).await;
     let mut subjects = Vec::new();
     for _ in 0..2 {
-        subjects.push(
-            runtime
-                .subjects
-                .create_subject(CreateSubject {
-                    subject_id: None,
-                    operation_id: OperationId::new(),
-                    cognitive_seed: CognitiveSeedInput {
-                        text: "schema_version = 1".into(),
-                        format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                        provenance: serde_json::json!({}),
-                    },
-                    metadata: serde_json::json!({}),
-                    capabilities: None,
-                })
-                .await
-                .unwrap()
-                .subject_id,
-        );
+        subjects.push(test_support::query::subject(&runtime).await);
     }
     runtime
         .configuration

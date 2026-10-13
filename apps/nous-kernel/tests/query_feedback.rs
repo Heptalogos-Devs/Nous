@@ -5,7 +5,6 @@ use nous_core::*;
 use nous_runtime::{
     ManualCognitiveClock, QUERY_FEEDBACK_RETENTION, UseFeedback, UseFeedbackEvent, UseKind,
 };
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use sqlx::Row;
 use std::sync::Arc;
 use test_support::*;
@@ -32,23 +31,6 @@ fn query(subject: SubjectId, reference: CognitiveRef) -> CognitiveQuery {
         capabilities: Default::default(),
         diagnostics: Default::default(),
     }
-}
-async fn subject(rt: &nous_kernel::NousRuntime) -> SubjectId {
-    rt.subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id
 }
 async fn memory(rt: &nous_kernel::NousRuntime, subject: SubjectId, text: &str) -> CognitiveRef {
     let occurrence = observation(rt, subject, text).await;
@@ -100,8 +82,8 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     )
     .await
     .unwrap();
-    let subject_a = subject(&rt).await;
-    let subject_b = subject(&rt).await;
+    let subject_a = test_support::query::subject(&rt).await;
+    let subject_b = test_support::query::subject(&rt).await;
     let a = memory(
         &rt,
         subject_a,

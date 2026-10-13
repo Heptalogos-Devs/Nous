@@ -11,7 +11,6 @@ use nous_material::{
     RuntimeDirective,
 };
 use nous_runtime::{ResidentAdmission, ResidentState};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::{database, observation, open_runtime};
 use uuid::Uuid;
 
@@ -32,30 +31,11 @@ async fn admit(
     Ok(result)
 }
 
-async fn subject(runtime: &nous_kernel::NousRuntime) -> nous_core::SubjectId {
-    runtime
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .expect("subject")
-        .subject_id
-}
-
 #[tokio::test]
 async fn observation_admission_is_a_single_idempotent_runtime_batch() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
-    let subject = subject(&runtime).await;
+    let subject = test_support::query::subject(&runtime).await;
     let session = runtime
         .cognition
         .open_session(subject, serde_json::json!({"consumer":"a"}))
@@ -178,8 +158,8 @@ async fn observation_admission_is_a_single_idempotent_runtime_batch() {
 async fn resident_batch_is_atomic_and_invalid_persisted_refs_are_visible() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
-    let subject_a = subject(&runtime).await;
-    let subject_b = subject(&runtime).await;
+    let subject_a = test_support::query::subject(&runtime).await;
+    let subject_b = test_support::query::subject(&runtime).await;
     let session = runtime
         .cognition
         .open_session(subject_a, serde_json::json!({}))
@@ -232,7 +212,7 @@ async fn resident_batch_is_atomic_and_invalid_persisted_refs_are_visible() {
 async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision() {
     let (root, url, _postgres) = database().await;
     let mut runtime = open_runtime(&url, &root).await;
-    let subject = subject(&runtime).await;
+    let subject = test_support::query::subject(&runtime).await;
     let session = runtime
         .cognition
         .open_session(subject, serde_json::json!({}))
@@ -392,7 +372,7 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
 async fn projection_materializes_supported_memory_within_the_text_budget() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
-    let subject = subject(&runtime).await;
+    let subject = test_support::query::subject(&runtime).await;
     let source = observation(&runtime, subject, "Grounded projection content").await;
     let memory = runtime
         .require_memory()

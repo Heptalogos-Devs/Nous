@@ -4,7 +4,6 @@
 mod test_support;
 use nous_core::*;
 use nous_memory::CreateTagRequest;
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::*;
 
 fn query(subject: SubjectId) -> CognitiveQuery {
@@ -38,22 +37,7 @@ fn query(subject: SubjectId) -> CognitiveQuery {
 async fn preparation_captures_work_context_exact_sources_and_frozen_policy_without_serving() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
-    let subject = runtime
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&runtime).await;
     let entity = EntityRef::new("entity:alice-opaque").unwrap();
     runtime
         .store
