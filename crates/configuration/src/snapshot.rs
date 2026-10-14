@@ -41,11 +41,8 @@ impl ConfigSnapshot {
         subject_id: Option<SubjectId>,
         revision: i64,
         registry: ConfigRegistry,
-        mut values: BTreeMap<String, ResolvedConfigValue>,
+        values: BTreeMap<String, ResolvedConfigValue>,
     ) -> Result<Self> {
-        for (path, value) in &mut values {
-            value.json = registry.normalize(path, &value.json)?;
-        }
         let digest_input = values
             .iter()
             .map(|(key, value)| serde_json::json!({"key": key, "value": value.json}))
@@ -136,7 +133,7 @@ impl ConfigSnapshot {
         }
         let value =
             serde_json::to_value(value).map_err(|error| Error::Invalid(error.to_string()))?;
-        self.registry.validate(key.path(), &value)?;
+        let value = self.registry.normalize(key.path(), &value)?;
         let mut values = self.values.as_ref().clone();
         values.insert(
             key.path().into(),

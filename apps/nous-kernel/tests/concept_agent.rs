@@ -9,7 +9,6 @@ use nous_memory::{
     CreateTagRequest,
 };
 use nous_protocol::nous::wave::v1alpha1 as p;
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use p::concept_service_server::ConceptService;
 use test_support::*;
 use tonic::Request;
@@ -22,22 +21,7 @@ use tonic::Request;
 async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime(&url, &root).await;
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let memory = rt.require_memory().unwrap();
     let producer = ProducerSignature {
         model_role: None,
@@ -67,9 +51,11 @@ async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
                 CreateTagRequest {
                     producer: Some(producer.clone()),
                     operation_id: OperationId::new(),
-                    label: label.into(),
-                    description: None,
-                    kind_hint: Some("topic".into()),
+                    content: nous_memory::TagContent {
+                        label: label.into(),
+                        description: None,
+                        kind_hint: Some("topic".into()),
+                    },
                     origin: "concept_maintenance".into(),
                 },
             )

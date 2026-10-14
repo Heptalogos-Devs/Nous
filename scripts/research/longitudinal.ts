@@ -127,30 +127,23 @@ async function run() {
   const input =
     captured?.messages[1]!.content ??
     JSON.stringify(toJson(MaintenancePlanSchema, plan!));
-  const snapshot = models.invocations.snapshot(role!);
-  let result;
-  if (captured) {
-    result = await models.invocations.generate(
-      role!,
-      { content: input },
-      { signal: signal.signal, snapshot: snapshot },
-    );
-  } else if (role === "episode_segmentation") {
-    result = await models.segmentEpisode(input, signal.signal, snapshot);
+  const snapshot = models.invocations.prepare(role!);
+  const result = await models.invocations.generate(
+    role!,
+    { content: input },
+    { signal: signal.signal, prepared: snapshot },
+  );
+  if (!captured && role === "episode_segmentation") {
     partitionIndices(
       episodePartitionSchema.parse(result.value),
       plan!.members.map((member) => member.key),
     );
-  } else if (role === "journal_synthesis") {
-    result = await models.synthesizeJournal(input, signal.signal, snapshot);
+  } else if (!captured && role === "journal_synthesis") {
     journalBasisKeys(
       journalSynthesisSchema.parse(result.value),
       new Set(plan!.basis.map((basis) => basis.key)),
     );
-  } else {
-    result = await models.consolidate(input, signal.signal, snapshot);
-    consolidationSchema.parse(result.value);
-  }
+  } else if (!captured) consolidationSchema.parse(result.value);
   await mkdir(dirname(resolve(values.output)), { recursive: true });
   await writeFile(
     resolve(values.output),

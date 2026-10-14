@@ -5,12 +5,12 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 import {
   DegradationSchema,
+  ContextSegmentSchema,
   ProjectionSchema,
   type Projection,
   type ContextSegment as Segment,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { ConsumerPolicy } from "../domain.js";
-import { refKey } from "../domain.js";
 import { ModelRuntime } from "../model/runtime.js";
 import { canonicalDigest } from "../digest.js";
 
@@ -26,13 +26,13 @@ function family(segment: Segment): "memory" | "runtime" | "resource" {
       "episode_revision",
       "journal",
       "journal_revision",
+      "tag",
     ].includes(kind)
     ? "memory"
     : kind === "resource"
       ? "resource"
       : "runtime";
 }
-const tiers = { REQUIRED: 0, PREFERRED: 1, OPTIONAL: 2, FORBIDDEN: 3 };
 export class ProjectionPlanner {
   constructor(
     readonly policies: ReadonlyMap<string, ConsumerPolicy>,
@@ -47,9 +47,9 @@ export class ProjectionPlanner {
   async build(
     batch: Projection,
     requested: { maxItems: number; maxTextBytes: number },
+    policy: ConsumerPolicy,
     signal?: AbortSignal,
   ): Promise<Projection> {
-    const policy = this.policy(batch.consumerId);
     const items = Math.min(
       requested.maxItems || policy.maxItems,
       policy.maxItems,
@@ -63,22 +63,77 @@ export class ProjectionPlanner {
         "Projection budget must be positive",
         Code.InvalidArgument,
       );
-    const seen = new Set<string>();
-    const candidates = batch.segments
-      .filter((segment) => {
-        if (policy[family(segment)] === "FORBIDDEN") return false;
-        const key = segment.sourceRefs.map(refKey).join("\n");
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .sort((a, b) => tiers[policy[family(a)]] - tiers[policy[family(b)]]);
-    const bounded = budget(candidates, items, bytes, policy.materialize);
-    const required = bounded.filter((s) => policy[family(s)] === "REQUIRED");
-    const optional = bounded.filter((s) => policy[family(s)] !== "REQUIRED");
-    const refined = await this.models.refine(optional, signal);
+    const required = batch.segments.filter(
+      (s) => policy[family(s)] === "REQUIRED",
+    );
+    const optional = batch.segments.filter(
+      (s) => policy[family(s)] !== "REQUIRED",
+    );
+    let refined = optional;
+    const degradation = [...batch.degradation];
+    if (policy.materialize && optional.some((source) => source.text)) {
+      try {
+        const output = (
+          await this.models.invocations.generate(
+            "projection_steward",
+            {
+              content: JSON.stringify(
+                optional.map((s) => ({
+                  id: s.segmentId,
+                  role: s.semanticRole,
+                  text: s.text,
+                })),
+              ),
+            },
+            { signal },
+          )
+        ).value;
+        const ids = new Set(optional.map((s) => s.segmentId));
+        if (
+          new Set(output.selectedIds).size !== output.selectedIds.length ||
+          output.selectedIds.some((id) => !ids.has(id))
+        )
+          throw new Error("Steward proposed invalid source IDs");
+        const selected = new Set(output.selectedIds);
+        refined = optional.filter((s) => selected.has(s.segmentId));
+        if (output.summary) {
+          if (!refined.length)
+            throw new Error("A Steward summary requires selected sources");
+          const revision = canonicalDigest([
+            this.models.invocations.identity("projection_steward"),
+            refined.map(({ segmentId: _contributionId, ...source }) => source),
+            output.summary,
+          ]);
+          refined = [
+            create(ContextSegmentSchema, {
+              segmentId: `steward:${revision}`,
+              text: output.summary,
+              semanticRole: "steward_synthesis",
+              sourceRefs: refined.flatMap((s) => s.sourceRefs),
+              evidence: refined.flatMap((s) => s.evidence),
+              authority: "interpretation",
+              stability: "EPOCH_STABLE",
+              sourceRevision: revision,
+            }),
+          ];
+        }
+      } catch (error) {
+        this.models.invocations.allowDegradation(
+          error,
+          signal,
+          "projection_steward",
+        );
+        refined = optional;
+        degradation.push(
+          create(DegradationSchema, {
+            code: "steward_rejected",
+            detail: error instanceof Error ? error.message : "Invalid proposal",
+          }),
+        );
+      }
+    }
     const segments = budget(
-      [...required, ...refined.segments],
+      [...required, ...refined],
       items,
       bytes,
       policy.materialize,
@@ -88,7 +143,6 @@ export class ProjectionPlanner {
       const { segmentId: _contributionId, ...content } = segment;
       return { ...content, segmentId: canonicalDigest([1, content]) };
     });
-    const degradation = [...batch.degradation, ...refined.degradation];
     for (const f of ["memory", "runtime", "resource"] as const) {
       if (policy[f] === "REQUIRED" && !segments.some((s) => family(s) === f))
         degradation.push(
@@ -118,11 +172,11 @@ function budget(
   for (const source of segments) {
     if (result.length >= items) break;
     let text = materialize ? source.text : "";
-    while (Buffer.byteLength(text) > maxBytes - bytes) {
-      const encoded = Buffer.from(text).subarray(0, maxBytes - bytes);
-      text = new TextDecoder("utf-8", { fatal: false })
-        .decode(encoded)
-        .replace(/\uFFFD$/u, "");
+    if (Buffer.byteLength(text) > maxBytes - bytes) {
+      const encoded = Buffer.from(text);
+      let end = maxBytes - bytes;
+      while ((encoded[end]! & 0xc0) === 0x80) end--;
+      text = encoded.toString("utf-8", 0, end);
     }
     if (source.text && materialize && !text) continue;
     bytes += Buffer.byteLength(text);

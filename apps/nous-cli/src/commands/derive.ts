@@ -7,7 +7,8 @@ export async function deriveCommands(
   env: CliEnvironment,
   action: string | undefined,
 ) {
-  const { client, values, subjectId, required } = env;
+  const { client, values, required } = env;
+  const subjectId = await env.subjectId;
   return client.model.deriveMaterial({
     subjectId,
     sourceRegionId: (
@@ -17,7 +18,13 @@ export async function deriveCommands(
       )
     ).value,
     strategy: values.strategy,
-    target: values.target,
-    supersedes: values.supersedes,
+    supersedes: values.supersedes
+      ? (
+          await env.resolveReference(
+            values.supersedes,
+            "derived_representation",
+          )
+        ).value
+      : undefined,
   });
 }

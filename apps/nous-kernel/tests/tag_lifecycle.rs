@@ -9,8 +9,8 @@ use nous_memory::{
     CreateTagRequest, MergeTagsInput, SplitTagInput, TagContent, TagExpectation,
 };
 use nous_protocol::nous::wave::v1alpha1 as p;
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use p::concept_service_server::ConceptService;
+use p::runtime_service_server::RuntimeService;
 use test_support::*;
 use tonic::Request;
 
@@ -21,7 +21,7 @@ fn content(label: &str) -> TagContent {
         kind_hint: Some("procedure".into()),
     }
 }
-fn expectation(tag: &nous_memory::Tag) -> TagExpectation {
+fn expectation(tag: &nous_memory::TagView) -> TagExpectation {
     TagExpectation {
         tag_id: tag.tag_id,
         expected_revision_id: tag.current_revision_id,
@@ -36,22 +36,7 @@ fn expectation(tag: &nous_memory::Tag) -> TagExpectation {
 async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_serving() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime(&url, &root).await;
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let owner = rt.require_memory().unwrap();
     let mut tags = Vec::new();
     for label in [
@@ -66,9 +51,11 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
                     CreateTagRequest {
                         producer: None,
                         operation_id: OperationId::new(),
-                        label: label.into(),
-                        description: None,
-                        kind_hint: None,
+                        content: nous_memory::TagContent {
+                            label: label.into(),
+                            description: None,
+                            kind_hint: None,
+                        },
                         origin: "host_explicit".into(),
                     },
                 )
@@ -83,6 +70,90 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .unwrap();
     let old_lexical = old_binding[0].lexical_ref.clone();
     let service = KernelService(rt.clone());
+    let session = RuntimeService::open_session(
+        &service,
+        Request::new(p::SubjectRequest {
+            subject_id: subject.0.to_string(),
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner();
+    let context = RuntimeService::create_work_context(
+        &service,
+        Request::new(p::CreateWorkContextRequest {
+            operation_id: OperationId::new().0.to_string(),
+            subject_id: subject.0.to_string(),
+            purpose: "Review release concepts".into(),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .work_context
+    .unwrap();
+    RuntimeService::update_work_context(
+        &service,
+        Request::new(p::UpdateWorkContextRequest {
+            operation_id: OperationId::new().0.to_string(),
+            subject_id: subject.0.to_string(),
+            work_context_id: context.work_context_id.clone(),
+            expected_revision: context.revision,
+            intent: Some(p::update_work_context_request::Intent::Pin(
+                p::WorkContextAnchors {
+                    tag_anchors: vec![tags[0].tag_id.0.to_string(), tags[1].tag_id.0.to_string()],
+                    ..Default::default()
+                },
+            )),
+        }),
+    )
+    .await
+    .unwrap();
+    RuntimeService::set_active_work_context(
+        &service,
+        Request::new(p::SetActiveWorkContextRequest {
+            operation_id: OperationId::new().0.to_string(),
+            subject_id: subject.0.to_string(),
+            session_id: session.session_id.clone(),
+            expected_runtime_revision: session.runtime_revision,
+            work_context_id: Some(context.work_context_id.clone()),
+        }),
+    )
+    .await
+    .unwrap();
+    let projection_request = p::ProjectionRequest {
+        subject_id: subject.0.to_string(),
+        session_id: session.session_id,
+        active_work_context_id: Some(context.work_context_id),
+        consumer_id: "default".into(),
+        max_items: 8,
+        max_text_bytes: 4096,
+        memory_requirement: "REQUIRED".into(),
+        runtime_requirement: "OPTIONAL".into(),
+        resource_requirement: "FORBIDDEN".into(),
+        materialize: true,
+        ..Default::default()
+    };
+    let original_projection = service
+        .build_contribution_batch(projection_request.clone())
+        .await
+        .unwrap();
+    let original_tag = original_projection
+        .segments
+        .iter()
+        .find(|segment| {
+            segment.source_refs.iter().any(|reference| {
+                reference.kind == "tag" && reference.value == tags[0].tag_id.0.to_string()
+            })
+        })
+        .unwrap();
+    assert_eq!(original_tag.text, "Concept:\nDeployment approval");
+    assert_eq!(original_tag.authority, "subject_cognition");
+    assert_eq!(
+        original_tag.source_revision,
+        Some(tags[0].revision_id.to_string())
+    );
     let revise = p::ReviseTagRequest {
         producer: None,
         operation_id: OperationId::new().0.to_string(),
@@ -105,6 +176,28 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         revised.current_revision_id,
         tags[0].current_revision_id.to_string()
     );
+    let revised_projection = service
+        .build_contribution_batch(projection_request.clone())
+        .await
+        .unwrap();
+    let revised_tag = revised_projection
+        .segments
+        .iter()
+        .find(|segment| {
+            segment.source_refs.iter().any(|reference| {
+                reference.kind == "tag" && reference.value == tags[0].tag_id.0.to_string()
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        revised_tag.text,
+        "Concept:\nRelease approval\n\nDescription:\nApproval before rollout\n\nKind:\nprocedure"
+    );
+    assert_eq!(
+        revised_tag.source_revision.as_deref(),
+        Some(revised.revision_id.as_str())
+    );
+    assert_ne!(revised_tag.source_revision, original_tag.source_revision);
     let replay = ConceptService::revise_tag(&service, Request::new(revise.clone()))
         .await
         .unwrap()
@@ -131,9 +224,10 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .await
         .unwrap()
         .into_inner();
+    assert_eq!(exact_replay.revision_id, revised.revision_id);
     assert_eq!(
         exact_replay.current_revision_id,
-        revised.current_revision_id
+        later_revision.current_revision_id
     );
     assert_eq!(exact_replay.description, revised.description);
     let mut stale = revise.clone();
@@ -167,7 +261,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             OperationId::new(),
             text,
         );
-        input.tags = vec![tags[1].tag_id];
+        input.content.tags = vec![tags[1].tag_id];
         revisions.push(
             owner
                 .form_memory(input)
@@ -213,6 +307,68 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     };
     owner.merge_tags(subject, merge.clone()).await.unwrap();
     owner.merge_tags(subject, merge).await.unwrap();
+    let merged_projection = service
+        .build_contribution_batch(projection_request.clone())
+        .await
+        .unwrap();
+    let projected_tags: Vec<_> = merged_projection
+        .segments
+        .iter()
+        .filter(|segment| {
+            segment
+                .source_refs
+                .iter()
+                .any(|reference| reference.kind == "tag")
+        })
+        .collect();
+    assert_eq!(projected_tags.len(), 1);
+    assert_eq!(
+        projected_tags[0].source_refs[0].value,
+        tags[0].tag_id.0.to_string()
+    );
+    assert_eq!(
+        projected_tags[0].source_revision,
+        Some(tags[0].current_revision_id.to_string())
+    );
+    assert!(
+        projected_tags[0]
+            .text
+            .contains("Approval before a controlled rollout")
+    );
+    let bounded = service
+        .build_contribution_batch(p::ProjectionRequest {
+            max_text_bytes: 12,
+            ..projection_request.clone()
+        })
+        .await
+        .unwrap();
+    assert!(
+        bounded
+            .segments
+            .iter()
+            .map(|segment| segment.text.len())
+            .sum::<usize>()
+            <= 12
+    );
+    let forbidden = service
+        .build_contribution_batch(p::ProjectionRequest {
+            memory_requirement: "FORBIDDEN".into(),
+            ..projection_request
+        })
+        .await
+        .unwrap();
+    assert!(!forbidden.segments.iter().any(|segment| {
+        segment
+            .source_refs
+            .iter()
+            .any(|reference| reference.kind == "tag")
+    }));
+    let (merged, _) = owner
+        .tag_views(subject, "", "merged", 50, None)
+        .await
+        .unwrap();
+    assert_eq!(merged[0].tag_id, tags[1].tag_id);
+    assert_eq!(merged[0].canonical_tag_id, Some(tags[0].tag_id));
     let occurrence = observation(&rt, subject, "Explicit concept formation after merge").await;
     let mut explicit = form_input(
         subject,
@@ -220,7 +376,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         OperationId::new(),
         "Explicit concept formation after merge",
     );
-    explicit.tags = vec![tags[1].tag_id, tags[0].tag_id, tags[1].tag_id];
+    explicit.content.tags = vec![tags[1].tag_id, tags[0].tag_id, tags[1].tag_id];
     let formed = owner.form_memory(explicit.clone()).await.unwrap();
     assert_eq!(formed.tags, vec![tags[0].tag_id]);
     assert_eq!(
@@ -238,7 +394,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         OperationId::new(),
         "Unknown concept",
     );
-    invalid.tags = vec![TagId::new()];
+    invalid.content.tags = vec![TagId::new()];
     assert!(owner.form_memory(invalid).await.is_err());
 
     for name in [
@@ -307,7 +463,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     assert_eq!(evidence_endpoint, tags[1].tag_id.0.to_string());
     let projection = rt
         .store
-        .topology_projection_input(subject, true)
+        .topology_projection_input(subject, true, None)
         .await
         .unwrap();
     assert!(
@@ -338,32 +494,35 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     );
     let bound = rt
         .cognition
-        .bind_query(CognitiveQuery {
-            subject,
-            projection: Default::default(),
-            temporal_frame: Default::default(),
+        .bind_query(
+            CognitiveQuery {
+                subject,
+                projection: Default::default(),
+                temporal_frame: Default::default(),
 
-            work_context: None,
-            session: None,
-            situation: Default::default(),
-            expression: CognitiveQueryExpr {
-                cues: vec![
-                    Cue::Text(TextCue {
-                        text: "release approval".into(),
-                    }),
-                    Cue::Tag(TagCue {
-                        tag: tags[1].tag_id,
-                    }),
-                ],
-                ..Default::default()
+                work_context: None,
+                session: None,
+                situation: Default::default(),
+                expression: CognitiveQueryExpr {
+                    cues: vec![
+                        Cue::Text(TextCue {
+                            text: "release approval".into(),
+                        }),
+                        Cue::Tag(TagCue {
+                            tag: tags[1].tag_id,
+                        }),
+                    ],
+                    ..Default::default()
+                },
+                exploration: Default::default(),
+                resources: Default::default(),
+                result_need: Default::default(),
+                effort: Default::default(),
+                capabilities: Default::default(),
+                diagnostics: Default::default(),
             },
-            exploration: Default::default(),
-            resources: Default::default(),
-            result_need: Default::default(),
-            effort: Default::default(),
-            capabilities: Default::default(),
-            diagnostics: Default::default(),
-        })
+            &rt,
+        )
         .await
         .unwrap();
     assert!(
@@ -398,7 +557,32 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         basis: vec![basis[0].clone()],
     };
     let children = owner.split_tag(subject, split.clone()).await.unwrap();
+    assert_eq!(
+        children
+            .iter()
+            .map(|child| child.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Approval policy", "Rollout procedure"]
+    );
+    owner
+        .revise_tag(
+            subject,
+            nous_memory::ReviseTagInput {
+                operation_id: OperationId::new(),
+                target: TagExpectation {
+                    tag_id: children[0].tag_id,
+                    expected_revision_id: children[0].current_revision_id,
+                },
+                content: content("Revised approval policy"),
+                producer: None,
+            },
+        )
+        .await
+        .unwrap();
     let replay = owner.split_tag(subject, split.clone()).await.unwrap();
+    assert_eq!(replay[0].revision_id, children[0].revision_id);
+    assert_eq!(replay[0].label, "Approval policy");
+    assert_eq!(replay[1].label, "Rollout procedure");
     assert_eq!(
         children.iter().map(|t| t.tag_id).collect::<Vec<_>>(),
         replay.iter().map(|t| t.tag_id).collect::<Vec<_>>()
@@ -437,22 +621,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
 async fn lexical_allocation_retries_unique_conflicts_and_rolls_back_exhaustion() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime(&url, &root).await;
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let reference = |value| CognitiveRef::Entity(EntityRef::new(value).unwrap());
     let resident = rt
         .store

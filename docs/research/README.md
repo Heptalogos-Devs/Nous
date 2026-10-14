@@ -10,7 +10,7 @@
 
 [Research Corpus](corpus/README.md) 记录当前来源、语料、oracle 与结果文件。[实验方法](retrieval-media-methods.md) 描述查询 track、provenance relevance 和指标；[观测结果](observations.md) 保存实际检索与媒体结论。
 
-[Core Cognition Semantic Qualification](core-cognition-semantic.md) 定义真实来源、formation-first 校准与 sealed qualification 的执行合同。
+[Core Cognition Semantic Qualification](core-cognition-semantic.md) 保留已退役实验的真实来源、formation-first 校准与 sealed qualification 方法。
 [2026-10-07 实际结果](core-cognition-2026-10-07.md)记录 calibration grounding/query closure blockers、已执行 slices 与未执行 sealed packs。
 
 [2026-10-08 v2 实际结果](core-cognition-2026-10-08.md)记录 fresh cognition trajectory、Context/Role/retrieval 对照及已完成 Rust/Kafka sealed；[稳定 metadata](corpus/core-cognition/results-2026-10-08.json)保留来源、调用、费用与 exact identities。

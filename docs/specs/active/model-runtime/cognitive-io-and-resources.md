@@ -8,11 +8,11 @@ Core owns model and Resource host calls; Material owns Artifact/Observation/Deri
 
 ## 持久操作
 
-共享合同位于 [workflow envelope Proto](../../../../proto/nous/wave/kernel/v1alpha1/workflow_envelope.proto)：租约包含 Subject、owner、operation key 和 token；snapshot 将领域 payload、认知形成时间与 maintenance claim 分开；proposal/outcome 显式声明依赖引用和 purged 状态。领域 payload 由对应 owner 校验，Persistence 不读取其内部键。Core 的 `durable-operation.ts` 共用 reservation、proposal/outcome 保存、失败 telemetry 和有界释放，领域流程保留自己的提交与拒绝语义。
+共享合同位于 [模型结果 Proto](../../../../proto/nous/wave/kernel/v1alpha1/model_results.proto)。Core 在同一 Kernel client 下按 Subject、owner 和 operation key 串行执行完整准备、生成和提交路径；等待者随后读取已保存结果。调用者取消只取消自己的等待或执行，不取消其他调用者。
 
-引用依赖从 canonical Proto 的 `reference_kind` 与 `CognitiveRef` 提取，opaque 用户 JSON 和普通正文不产生依赖。Core 在调用 canonical mutation 前登记其稳定 operation ID；领域 owner 在同一 Authority 事务中发布实际结果依赖。Purge 因此覆盖 Authority 已提交、Host 尚未保存 outcome 的窗口。Telemetry 使用正式的 attempts、usage 和省略计数；缺失 usage 保持未知，累积只保留最早 64 次 attempt。
+`model_results` 保存不可变 semantic digest、实际 proposal/outcome 和有界 execution telemetry；只有 read/save，没有执行前 start、child lease、busy token 或 release。相同身份不同输入返回 conflict，已完成或 purged 记录不可重写。生成后的提案保存必要输入、依赖与实际 producer；认知形成时间和 maintenance trigger 是结果元数据。没有成果的执行重新规划，不保存恢复 snapshot。后续显式调用复用 proposal 继续 owner 提交，不重新调用模型。
 
-数据库升级由 `0005_workflow_envelope.sql` 一次性转换已保存的 snapshot/proposal/outcome，保留领域 payload、认知时间、maintenance 绑定和 telemetry。旧 Schema split 回执仅保存 parent 时，只有一个已记录 split 的来源可恢复其存续 child revisions，按 revision ID 返回；多次历史 split 的归属无法从旧回执唯一确定时，迁移拒绝，须先提供精确 child batch。新 split 回执保存原始结果次序。该转换不保留旧 wire 或运行时 JSON 猜测路径。
+引用依赖来自 canonical Proto 的 typed refs，opaque 用户 JSON 和普通正文不产生依赖。保存实际提案时附带稳定 mutation operation ID；领域 owner 在同一 Authority 事务发布实际结果依赖。Material derivation 直接携带 operation identity，selected Resource Observation 通过注册的 request ID 发布依赖，覆盖提交已成功但 Core 尚未保存 outcome 的窗口。Purge 清空保存内容并留下 terminal marker，迟到 save 不可恢复内容。Telemetry 保留最早 64 次 attempt 和省略计数；缺失 usage 保持未知。Fresh schema 直接定义 envelope、dependencies 和 mutation operations；不提供旧记录转换。
 
 ## Schema 与来源
 
@@ -30,7 +30,7 @@ description_only 提交自由描述。direct_structured 给模型 invocation-loc
 
 `$current` 是 scoped current-authority 约束，随 expression 进入冻结 leaf action；父级 required 不能被子级 none/prefer 放宽。Model rerank 在 bound query 含正文本意图且配置了 rerank role 时运行；Resource action 独立 finalize，因此 rerank 未运行时仍可完成 Resource 续接。
 
-Selected materialization 的内容上限为 1 MiB UTF-8；query records 的 aggregate bound 为 2 MiB。workflow JSON 上限为 8 MiB，private ModelMaterial transport 额外保留 64 KiB envelope。Artifact 上传上限由 `object_store.max_upload_bytes` 单独控制。
+Selected materialization 的内容上限为 1 MiB UTF-8；query records 的 aggregate bound 为 2 MiB。结果 JSON 上限为 8 MiB，private ModelMaterial transport 额外保留 64 KiB envelope。Artifact 上传上限由 `object_store.max_upload_bytes` 单独控制。
 
 本地材料通过 Artifact/SourceRegion/DerivedRepresentation 与原生 Serving 处理；宿主在启动时显式提供 ExternalResourceAdapter。普通 Core 默认没有外部 provider。LocalDocuments 研究宿主复用相同的生产 Core、公共 Resource descriptor 和 selected materialization 路径。
 
@@ -42,4 +42,4 @@ Public QueryResponse 将 resource_records 与 cognitive hits 分开；resource_a
 
 Kernel 将单条 record 限制为 1 MiB、每次 query 的总序列化 record 限制为 2 MiB。Authority policies 为 none/prefer/required；query results 保留各 record 的版本与访问判断。
 
-Resource query returns candidates as records. Selecting a record runs bounded materialize → Artifact/SourceRegion → distinct ObservationOccurrence; `external_object_ref` preserves stable external identity, and each observation retains its occurrence identity. Memory formation then uses that Observation. 接纳前核验实际 adapter/profile identity、当前版本与访问，包括恢复已保存但尚未接纳的 proposal。已成功接纳的 operation 回放复用原快照；外部版本变化或权限撤销不清除该已接纳材料，其清除仍由 Material 管理操作决定。
+Resource query returns candidates as records. Selecting a record runs bounded materialize → Artifact/SourceRegion → distinct ObservationOccurrence; `external_object_ref` preserves stable external identity, and each observation retains its occurrence identity. Memory formation then uses that Observation. 接纳前核验实际 adapter/profile identity、当前版本与访问。首次 materialize 使用同次读取返回的版本和访问判断；恢复已保存但尚未接纳的 proposal 时重新检查版本和访问。已成功接纳的 operation 回放复用原快照；外部版本变化或权限撤销不清除该已接纳材料，其清除仍由 Material 管理操作决定。

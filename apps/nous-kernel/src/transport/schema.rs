@@ -3,11 +3,75 @@
 
 use super::*;
 use nous_core::{CognitiveSchemaId, EntityRef, OperationId, Result, SubjectId, TagId};
-use nous_memory::schema::{SchemaLifecycleAction, SchemaView};
+use nous_memory::LifecycleAction;
+use nous_memory::schema::SchemaView;
 use nous_memory::{
     CreateSchemaInput, ReviseSchemaInput, SchemaContent, SchemaEvidenceLinkInput,
     SchemaFormationKind, SchemaScope,
 };
+
+impl KernelService {
+    pub(super) async fn list_cognitive_schemas(
+        &self,
+        input: p::ListRequest,
+    ) -> Result<p::ListSchemasResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let scope = format!("schemas:{}:{}", subject.0, input.status);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .schema_page(subject, None, &input.status, limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                items.last().expect("nonempty page").schema.schema_id.0,
+            )
+        } else {
+            String::new()
+        };
+        Ok(p::ListSchemasResponse {
+            items: items.into_iter().map(schema_view).collect(),
+            next_page_token,
+        })
+    }
+    pub(super) async fn list_cognitive_schema_revisions(
+        &self,
+        input: p::CognitionHistoryRequest,
+    ) -> Result<p::ListSchemasResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let nous_core::CognitiveRef::CognitiveSchema(schema) =
+            from_ref(required(input.object, "Schema")?)?
+        else {
+            return Err(Error::Invalid(
+                "Schema history requires a Schema object".into(),
+            ));
+        };
+        let scope = format!("schema-history:{}:{}", subject.0, schema.0);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .schema_page(subject, Some(schema), "", limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                items
+                    .last()
+                    .expect("nonempty page")
+                    .revision
+                    .schema_revision_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
+        Ok(p::ListSchemasResponse {
+            items: items.into_iter().map(schema_view).collect(),
+            next_page_token,
+        })
+    }
+}
 
 fn schema_input(
     subject: SubjectId,
@@ -63,17 +127,21 @@ fn schema_content(value: p::CognitiveSchemaContent) -> Result<SchemaContent> {
     })
 }
 
-fn schema_view(value: SchemaView) -> p::CognitiveSchema {
+pub(super) fn schema_view(value: SchemaView) -> p::CognitiveSchema {
     let revision = &value.revision;
     p::CognitiveSchema {
         schema_id: value.schema.schema_id.0.to_string(),
         subject_id: value.schema.subject_id.0.to_string(),
         current_revision_id: value.schema.current_revision_id.0.to_string(),
+        revision_id: revision.schema_revision_id.0.to_string(),
         object_epoch: value.schema.object_epoch,
+        created_at: Some(timestamp(value.schema.created_at)),
+        revision_no: revision.revision_no,
+        parent_revision_id: revision.parent_revision_id.map(|id| id.0.to_string()),
+        revision_intent: revision.revision_intent.map(enum_name),
         acceptance_state: enum_name(value.schema.acceptance_state),
         integrity_state: enum_name(value.schema.integrity_state),
         suppression_state: enum_name(value.schema.suppression_state),
-        purge_state: enum_name(value.schema.purge_state),
         title: revision.title.clone().unwrap_or_default(),
         structural_claim: revision.structural_claim.clone(),
         applicability_scope: Some(p::SchemaScope {
@@ -100,6 +168,9 @@ fn schema_view(value: SchemaView) -> p::CognitiveSchema {
                 link_id: link.link_id.0.to_string(),
                 role: enum_name(link.role),
                 basis: Some(basis_proto(link.basis)),
+                producer_signature_id: link.producer_signature_id.map(|id| id.to_string()),
+                created_at: Some(timestamp(link.created_at)),
+                revoked_at: link.revoked_at.map(timestamp),
             })
             .collect(),
         formed_at: Some(timestamp(revision.formed_at)),
@@ -113,7 +184,7 @@ impl KernelService {
     async fn schema_lifecycle(
         &self,
         input: p::CognitiveSchemaMutationRequest,
-        action: SchemaLifecycleAction,
+        action: LifecycleAction,
     ) -> Result<p::CognitiveSchema> {
         Ok(schema_view(
             self.require_memory()?
@@ -132,28 +203,27 @@ impl KernelService {
         &self,
         input: p::CognitiveSchemaMutationRequest,
     ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Suppress)
+        self.schema_lifecycle(input, LifecycleAction::Suppress)
             .await
     }
     pub(super) async fn restore_cognitive_schema(
         &self,
         input: p::CognitiveSchemaMutationRequest,
     ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Restore)
-            .await
+        self.schema_lifecycle(input, LifecycleAction::Restore).await
     }
     pub(super) async fn withdraw_cognitive_schema(
         &self,
         input: p::CognitiveSchemaMutationRequest,
     ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Withdraw)
+        self.schema_lifecycle(input, LifecycleAction::Withdraw)
             .await
     }
     pub(super) async fn reaccept_cognitive_schema(
         &self,
         input: p::CognitiveSchemaMutationRequest,
     ) -> Result<p::CognitiveSchema> {
-        self.schema_lifecycle(input, SchemaLifecycleAction::Reaccept)
+        self.schema_lifecycle(input, LifecycleAction::Reaccept)
             .await
     }
     pub(super) async fn purge_cognitive_schema(

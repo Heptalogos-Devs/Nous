@@ -1,15 +1,12 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { conceptMaintenanceSchema } from "../model/schemas/concept-maintenance.js";
-
-import { consolidationSchema } from "../model/schemas/consolidation.js";
-
 import { Code, ConnectError } from "@connectrpc/connect";
 import { type ExecutionOptions } from "../execution.js";
-import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
+import { create, toJson } from "@bufbuild/protobuf";
 
 import {
+  MaintenancePlanSchema,
   ApplyEpisodePartitionRequestSchema,
   CommitJournalRequestSchema,
   type MaintenanceNeed,
@@ -17,68 +14,66 @@ import {
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 
 import { type ModelRuntime } from "../model/runtime.js";
-import { type ModelRoleSnapshot } from "../model/execution/snapshot.js";
-import { type ExecutionTelemetry } from "../model/execution/routes.js";
+import {
+  attachExecutionTelemetry,
+  type ExecutionTelemetry,
+} from "../model/execution/routes.js";
 import {
   partitionIndices,
   journalBasisKeys,
-  episodePartitionSchema,
-  journalSynthesisSchema,
 } from "../model/schemas/longitudinal.js";
+
+import type { ModelGenerationOutput } from "../model/schemas/contracts.js";
 
 import { modelProducer } from "../model/producer.js";
 
 import { type MaintenancePlan } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
-import {
-  type MaintenanceSnapshot,
-  type MaintenanceProposal,
-} from "./records.js";
+import { type MaintenanceProposal } from "./records.js";
 
-/** Builds and validates a proposal from one frozen owner plan; commits remain in workflow. */
+/** Builds and validates a proposal from one frozen owner plan; commits remain with the owning maintenance operation. */
 export async function buildMaintenanceProposal({
   models,
   need,
   plan,
-  snapshot,
+  model,
   operationId,
   options,
   reserveModelCall,
-  recordExecution,
 }: {
   models: ModelRuntime;
   need: MaintenanceNeed;
   plan: MaintenancePlan;
-  snapshot: MaintenanceSnapshot;
+  model: import("../model/execution/binding.js").PreparedModelRole;
   operationId: string;
   options: ExecutionOptions;
   reserveModelCall: () => void;
-  recordExecution: (value: ExecutionTelemetry) => Promise<void>;
-}): Promise<MaintenanceProposal> {
-  let proposed: MaintenanceProposal;
-  if (plan.status === "withdraw") {
-    if (!plan.target)
-      throw new ConnectError(
-        "Journal withdrawal requires a bound target",
-        Code.InvalidArgument,
-      );
-    proposed = {
-      action: "withdraw",
-      journalId: plan.target.journalId,
-      epoch: plan.target.expectedEpoch.toString(),
-    };
-  } else {
+}): Promise<{ proposal: MaintenanceProposal; execution: ExecutionTelemetry }> {
+  const input = toJson(MaintenancePlanSchema, plan);
+  if (
+    need.kind === "concept_maintenance" &&
+    (!plan.conceptCatalog || !plan.conceptModelInputJson)
+  )
+    throw new ConnectError("Missing concept catalog", Code.InvalidArgument);
+  const content =
+    need.kind === "concept_maintenance"
+      ? plan.conceptModelInputJson!
+      : JSON.stringify(input);
+  const result = await models.invocations.generate(
+    model.role,
+    { content },
+    {
+      signal: options.signal ?? undefined,
+      prepared: model,
+      beforeAttempt: reserveModelCall,
+    },
+  );
+  try {
+    let proposed: MaintenanceProposal;
     if (need.kind === "episode_resegment") {
-      const result = await models.segmentEpisode(
-        JSON.stringify(snapshot.plan),
-        options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
-        reserveModelCall,
-      );
-      await recordExecution(result.execution);
       let segments;
       try {
         segments = partitionIndices(
-          episodePartitionSchema.parse(result.value),
+          result.value as ModelGenerationOutput<"episode_segmentation">,
           plan.members.map((member) => member.key),
         );
       } catch {
@@ -111,6 +106,10 @@ export async function buildMaintenanceProposal({
               operationId,
               subjectId: need.subjectId,
               expectedAuthoritySeq: plan.authoritySeq,
+              producer: modelProducer(
+                result.producerMetadata,
+                "episode_segmentation_text",
+              ),
               sources: plan.sources,
               orderedOccurrences: plan.members.map(
                 (member) => member.occurrenceId,
@@ -123,30 +122,12 @@ export async function buildMaintenanceProposal({
             }),
           }
         : { action: "no_change" };
-      if (proposed.action === "partition") {
-        const request = fromJson(
-          ApplyEpisodePartitionRequestSchema,
-          proposed.request as JsonValue,
-        );
-        request.producer = create(
-          ProducerSignatureSchema,
-          modelProducer(result.producerMetadata, "episode_segmentation_text"),
-        );
-        proposed.request = toJson(ApplyEpisodePartitionRequestSchema, request);
-      }
     } else if (need.kind === "concept_maintenance") {
-      if (!plan.conceptCatalog || !plan.conceptModelInputJson)
-        throw new ConnectError("Missing concept catalog", Code.InvalidArgument);
-      const result = await models.maintainConcepts(
-        plan.conceptModelInputJson,
-        options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
-        reserveModelCall,
-      );
-      await recordExecution(result.execution);
-      const proposal = conceptMaintenanceSchema.parse(result.value);
+      const proposal =
+        result.value as ModelGenerationOutput<"concept_maintenance">;
       proposed = {
         action: "concept",
+        input: input,
         proposal,
         producer: toJson(
           ProducerSignatureSchema,
@@ -155,19 +136,12 @@ export async function buildMaintenanceProposal({
             modelProducer(result.producerMetadata, "concept_maintenance_text"),
           ),
         ),
-        progress: [],
       };
     } else if (need.kind === "memory_consolidate") {
-      const result = await models.consolidate(
-        JSON.stringify(snapshot.plan),
-        options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
-        reserveModelCall,
-      );
-      await recordExecution(result.execution);
       proposed = {
         action: "consolidation",
-        proposal: consolidationSchema.parse(result.value),
+        input: input,
+        proposal: result.value as ModelGenerationOutput<"memory_consolidation">,
         producer: toJson(
           ProducerSignatureSchema,
           create(
@@ -175,17 +149,10 @@ export async function buildMaintenanceProposal({
             modelProducer(result.producerMetadata, "memory_consolidation_text"),
           ),
         ),
-        progress: [],
       };
     } else {
-      const result = await models.synthesizeJournal(
-        JSON.stringify(snapshot.plan),
-        options.signal ?? undefined,
-        snapshot.model as ModelRoleSnapshot,
-        reserveModelCall,
-      );
-      await recordExecution(result.execution);
-      const proposal = journalSynthesisSchema.parse(result.value);
+      const proposal =
+        result.value as ModelGenerationOutput<"journal_synthesis">;
       try {
         journalBasisKeys(
           proposal,
@@ -244,6 +211,8 @@ export async function buildMaintenanceProposal({
         };
       }
     }
+    return { proposal: proposed, execution: result.execution };
+  } catch (error) {
+    throw attachExecutionTelemetry(error, result.execution);
   }
-  return proposed;
 }

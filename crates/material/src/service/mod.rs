@@ -3,20 +3,26 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+mod artifact;
+pub use artifact::ArtifactRegistration;
 mod derivation;
 mod documents;
 mod historical;
 mod identity;
 mod lineage;
+mod lineage_view;
 pub use documents::text_content_identity;
+pub use lineage_view::{MaterialLineage, MaterialLineageNode};
 mod materialization;
 mod observation;
 mod query;
+mod read;
 mod segmentation;
 mod structured;
 pub use segmentation::DescriptionSegment;
 mod types;
 pub use materialization::{ByteRange, MaterialTextView, MaterializeRequest, MaterializedEvidence};
+pub use read::MaterialReadInput;
 pub use types::*;
 
 use crate::*;
@@ -32,9 +38,9 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct MaterialService {
-    pub store: AuthorityStore,
-    pub objects: ObjectStore,
-    pub cognition: CognitiveRuntimeService,
+    pub(crate) store: AuthorityStore,
+    pub(crate) objects: ObjectStore,
+    pub(crate) cognition: CognitiveRuntimeService,
     pub max_upload_bytes: u64,
 }
 

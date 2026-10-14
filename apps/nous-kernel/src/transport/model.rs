@@ -3,7 +3,7 @@
 
 use super::*;
 use nous_core::Result;
-use nous_retrieval::{QueryEmbedding, TextEmbeddingOutput};
+use nous_runtime::QuerySemanticEmbedding;
 
 impl KernelService {
     pub(super) fn embedding_config(&self) -> Result<k::EmbeddingConfig> {
@@ -25,52 +25,46 @@ impl KernelService {
                 .collect(),
         })
     }
-    fn query_materials(
+    fn query_embedding(
         &self,
         bound: &nous_runtime::BoundQuery,
-        inputs: Vec<k::QueryEmbedding>,
-    ) -> Result<Vec<QueryEmbedding>> {
-        if inputs.len() > 1 {
+        input: Option<k::QueryEmbedding>,
+    ) -> Result<Option<QuerySemanticEmbedding>> {
+        if bound.activation.frozen && input.is_some() {
             return Err(Error::Invalid(
-                "one prepared query accepts at most one embedding".into(),
+                "frozen query activation cannot replace its embedding".into(),
             ));
         }
-        let mut materials = vec![];
-        for material in inputs {
-            let provider = self
-                .0
-                .serving
-                .embedding()
-                .ok_or_else(|| Error::Unavailable("embedding space not configured".into()))?;
-            let space = provider.space();
-            let producer = provider
-                .producers()
-                .into_iter()
-                .find(|p| p.signature_hash == material.producer_hash)
-                .ok_or_else(|| {
-                    Error::Invalid("query embedding producer is not authorized".into())
-                })?;
-            if material.text != bound.representation.text
-                || material.text.len() > 131072
-                || material.space_hash != space.space_hash
-                || material.producer_hash != producer.signature_hash
-                || material.vector.len() != space.dimension as usize
-                || material.vector.iter().any(|v| !v.is_finite())
-            {
-                return Err(Error::Invalid(
-                    "query embedding is incompatible with selected space/producer".into(),
-                ));
-            }
-            materials.push(QueryEmbedding {
-                text: material.text,
-                output: TextEmbeddingOutput {
-                    vector: material.vector,
-                    space,
-                    producer,
-                },
-            });
+        let Some(material) = input else {
+            return Ok(None);
+        };
+        let provider = self
+            .0
+            .serving
+            .embedding()
+            .ok_or_else(|| Error::Unavailable("embedding space not configured".into()))?;
+        let space = provider.space();
+        let producer = provider
+            .producers()
+            .into_iter()
+            .find(|p| p.signature_hash == material.producer_hash)
+            .ok_or_else(|| Error::Invalid("query embedding producer is not authorized".into()))?;
+        if material.text != bound.representation.text
+            || material.text.len() > 131072
+            || material.space_hash != space.space_hash
+            || material.producer_hash != producer.signature_hash
+            || material.vector.len() != space.dimension as usize
+            || material.vector.iter().any(|v| !v.is_finite())
+        {
+            return Err(Error::Invalid(
+                "query embedding is incompatible with selected space/producer".into(),
+            ));
         }
-        Ok(materials)
+        Ok(Some(QuerySemanticEmbedding {
+            vector: material.vector,
+            space,
+            producer,
+        }))
     }
     pub(super) async fn activate_query_with_material(
         &self,
@@ -94,22 +88,18 @@ impl KernelService {
                 "query concept model activity is not permitted".into(),
             ));
         }
-        let materials = self.query_materials(bound, input.embeddings)?;
+        bound.activation.embedding = self.query_embedding(bound, input.embedding)?;
+
         let plan = nous_runtime::QueryPlan::for_bound_query(bound);
         use nous_runtime::SharedLaneProvider;
-        let (projection, view, activation) =
-            nous_retrieval::with_query_material(materials, async {
-                let (projection, view) = self.0.serving.prepare_query(bound, &plan).await?;
-                let activation = view.activate(bound).await?;
-                Ok::<_, Error>((projection, view, activation))
-            })
-            .await?;
+        let (projection, view) = self.0.serving.prepare_query(bound, &plan).await?;
+        let activation = view.activate(bound).await?;
         bound.activation = activation;
         bound.activation.degradation.extend(projection.degradation);
         bound.activation.frozen = true;
         bound.activation_view = Some(view);
         let catalog = bound.activation.concept_catalog.iter().map(|candidate| serde_json::json!({"key":candidate.key,"semantic_text":candidate.semantic_text,"strength":candidate.strength})).collect::<Vec<_>>();
-        let model_input = serde_json::json!({"query_representation":bound.representation,"existing_tags":catalog,"temporal_frame":bound.source_query.temporal_frame}).to_string();
+        let model_input = serde_json::json!({"query_representation":bound.representation.as_ref(),"existing_tags":catalog,"temporal_frame":bound.source_query.temporal_frame}).to_string();
         let token = self.0.cognition.retain_prepared_query(reservation)?;
         Ok(k::QueryActivationResponse {
             preparation_token: token.to_string(),
@@ -172,34 +162,33 @@ impl KernelService {
             id(&input.preparation_token)?,
         )?;
         let (mut bound, lease) = reservation.into_parts();
-        let materials = self.query_materials(&bound, input.embeddings)?;
+        if let Some(embedding) = self.query_embedding(&bound, input.embedding)? {
+            bound.activation.embedding = Some(embedding);
+        }
         self.apply_query_concept_output(
             &mut bound,
             input.concept_output,
             input.concept_failure,
             input.concept_model_calls,
         )?;
-        nous_retrieval::with_query_material(
-            materials,
-            self.query(
-                bound,
-                lease,
-                input.validated_candidate_limit.map(|limit| limit as usize),
-            ),
+        self.query(
+            bound,
+            lease,
+            input.validated_candidate_limit.map(|limit| limit as usize),
         )
         .await
     }
 }
 
 pub(super) fn workflow_json(value: &str) -> Result<serde_json::Value> {
-    if value.len() > nous_persistence::WORKFLOW_VALUE_MAX_BYTES {
+    if value.len() > nous_persistence::MODEL_RESULT_MAX_BYTES {
         return Err(Error::Invalid("workflow value exceeds bound".into()));
     }
     serde_json::from_str(value).map_err(|_| Error::Invalid("workflow JSON is invalid".into()))
 }
 
-pub(super) fn private_workflow_owner(owner: &str) -> Result<()> {
-    nous_persistence::WorkflowOwner::new(owner)?;
+pub(super) fn private_result_owner(owner: &str) -> Result<()> {
+    nous_persistence::ModelResultOwner::new(owner)?;
     if ["memory", "material"].contains(&owner) {
         Ok(())
     } else {

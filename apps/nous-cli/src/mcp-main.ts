@@ -10,7 +10,6 @@ try {
   const { values } = parseArgs({
     options: {
       "run-root": { type: "string" },
-      "instance-root": { type: "string" },
       "state-root": { type: "string" },
       consumer: { type: "string" },
     },

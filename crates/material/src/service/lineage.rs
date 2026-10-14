@@ -1,80 +1,159 @@
+//! Material owns exact locator qualification and source independence in bounded batches.
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
-
 use super::*;
 use nous_persistence::database_error as db;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
+
+pub(super) fn evidence_reference(evidence: &EvidenceRef) -> CognitiveRef {
+    match evidence.locator {
+        EvidenceLocator::WholeOccurrence => CognitiveRef::Occurrence(evidence.occurrence_id),
+        EvidenceLocator::SourceRegion(id) => CognitiveRef::SourceRegion(id),
+        EvidenceLocator::DerivedRepresentation(id) => CognitiveRef::DerivedRepresentation(id),
+        EvidenceLocator::DerivedRegion(id) => CognitiveRef::DerivedRegion(id),
+    }
+}
+
+struct Lineage {
+    roots: BTreeSet<EvidenceRoot>,
+    artifacts: Vec<Uuid>,
+}
+
+const LINEAGE_READ: &str = r#"
+WITH RECURSIVE requested AS (SELECT kind,id,ordinality FROM unnest($2::text[],$3::uuid[]) WITH ORDINALITY AS r(kind,id,ordinality)),
+resolved AS (
+ SELECT r.*,o.source_class,o.external_object_ref,
+ o.occurrence_id IS NOT NULL OR a.artifact_id IS NOT NULL OR sr.source_region_id IS NOT NULL OR d.derived_representation_id IS NOT NULL OR dr.derived_region_id IS NOT NULL AS present,
+ coalesce(o.artifact_id,a.artifact_id,sr.artifact_id) AS artifact_id,coalesce(d.derived_representation_id,dr.derived_representation_id) AS derived_id
+ FROM requested r
+ LEFT JOIN observation_occurrences o ON r.kind='occurrence' AND o.subject_id=$1 AND o.occurrence_id=r.id AND ($4::timestamptz IS NULL OR o.created_at<=$4)
+ LEFT JOIN artifacts a ON r.kind='artifact' AND a.subject_id=$1 AND a.artifact_id=r.id
+ LEFT JOIN source_regions sr ON r.kind='source_region' AND sr.subject_id=$1 AND sr.source_region_id=r.id AND ($4::timestamptz IS NULL OR sr.created_at<=$4)
+ LEFT JOIN derived_representations d ON r.kind='derived_representation' AND d.subject_id=$1 AND d.derived_representation_id=r.id
+ LEFT JOIN derived_regions dr ON r.kind='derived_region' AND dr.subject_id=$1 AND dr.derived_region_id=r.id
+), sources AS (
+ SELECT ordinality,artifact_id FROM resolved WHERE artifact_id IS NOT NULL
+ UNION SELECT r.ordinality,sr.artifact_id FROM resolved r CROSS JOIN LATERAL representation_source_regions($1,r.derived_id) roots JOIN source_regions sr USING(source_region_id)
+ WHERE sr.subject_id=$1 AND ($4::timestamptz IS NULL OR sr.created_at<=$4)
+), lineage AS (
+ SELECT s.artifact_id AS origin,o.occurrence_id,o.artifact_id,o.source_class,o.external_object_ref FROM (SELECT DISTINCT artifact_id FROM sources) s
+ JOIN observation_occurrences o ON o.subject_id=$1 AND o.artifact_id=s.artifact_id AND ($4::timestamptz IS NULL OR o.created_at<=$4)
+ UNION SELECT p.origin,o.occurrence_id,o.artifact_id,o.source_class,o.external_object_ref FROM lineage p
+ JOIN observation_occurrences o ON (o.artifact_id IS NOT NULL AND o.artifact_id=p.artifact_id) OR (o.external_object_ref IS NOT NULL AND o.external_object_ref=p.external_object_ref AND o.source_class=p.source_class)
+ WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4)
+), external_roots AS (
+ SELECT origin,MIN('external:'||source_class||':'||external_object_ref) AS root FROM lineage WHERE external_object_ref IS NOT NULL GROUP BY origin
+)
+SELECT r.ordinality,r.present,r.derived_id,r.source_class,r.external_object_ref,
+ ARRAY(SELECT DISTINCT s.artifact_id FROM sources s WHERE s.ordinality=r.ordinality) AS artifacts,
+ ARRAY(SELECT DISTINCT coalesce(e.root,'artifact:'||s.artifact_id) FROM sources s LEFT JOIN external_roots e ON e.origin=s.artifact_id WHERE s.ordinality=r.ordinality) AS roots
+FROM resolved r
+"#;
 
 impl MaterialService {
-    /// Material owns source independence; cognition owners combine these roots.
-    pub async fn evidence_roots(
+    /// External object origins are source facts, separate from independence-root grouping.
+    pub async fn source_objects_batch(
         &self,
         subject: SubjectId,
-        evidence: &EvidenceRef,
+        references: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<BTreeSet<EvidenceRoot>> {
-        self.require_lineage_view(
-            subject,
-            &CognitiveRef::Occurrence(evidence.occurrence_id),
-            view,
-        )?;
-        self.store
-            .validate_reference(subject, &CognitiveRef::Occurrence(evidence.occurrence_id))
-            .await?;
-        match evidence.locator {
-            EvidenceLocator::SourceRegion(id) => {
-                self.lineage_roots(subject, &CognitiveRef::SourceRegion(id), view)
-                    .await
-            }
-            EvidenceLocator::DerivedRepresentation(id) => {
-                self.lineage_roots(subject, &CognitiveRef::DerivedRepresentation(id), view)
-                    .await
-            }
-            EvidenceLocator::DerivedRegion(id) => {
-                self.lineage_roots(subject, &CognitiveRef::DerivedRegion(id), view)
-                    .await
-            }
-            _ => Ok(BTreeSet::from([self
-                .occurrence_root(subject, evidence.occurrence_id, view)
-                .await?])),
+    ) -> Result<HashMap<CognitiveRef, Vec<CognitiveRef>>> {
+        if references.len() > 256 || view.is_some_and(|v| v.subject != subject) {
+            return Err(Error::Invalid("source object batch scope exceeded".into()));
         }
+        let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
+        let rows = sqlx::query(r#"
+WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), origins AS (
+ SELECT r.kind,r.value,o.external_object_ref FROM requested r JOIN observation_occurrences o ON r.kind='occurrence' AND o.occurrence_id::text=r.value WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4)
+ UNION
+ SELECT r.kind,r.value,o.external_object_ref FROM requested r
+ LEFT JOIN derived_regions g ON r.kind='derived_region' AND g.derived_region_id::text=r.value AND g.subject_id=$1
+ JOIN derived_representations d ON d.subject_id=$1 AND ((r.kind='derived_representation' AND d.derived_representation_id::text=r.value) OR d.derived_representation_id=g.derived_representation_id)
+ CROSS JOIN LATERAL representation_source_regions($1,d.derived_representation_id) roots JOIN source_regions s USING(source_region_id)
+ JOIN observation_occurrences o ON o.subject_id=$1 AND o.artifact_id=s.artifact_id
+ WHERE ($4::timestamptz IS NULL OR (d.created_at<=$4 AND s.created_at<=$4 AND o.created_at<=$4))
+) SELECT DISTINCT kind,value,external_object_ref FROM origins WHERE external_object_ref IS NOT NULL ORDER BY kind,value,external_object_ref
+"#).bind(subject.0).bind(kinds).bind(values).bind(view.map(|v| v.as_of)).fetch_all(self.store.pool()).await.map_err(db)?;
+        let mut result = HashMap::<CognitiveRef, Vec<CognitiveRef>>::new();
+        for row in rows {
+            let reference = parse_reference(
+                &row.try_get::<String, _>("kind").map_err(db)?,
+                &row.try_get::<String, _>("value").map_err(db)?,
+            )?;
+            result
+                .entry(reference)
+                .or_default()
+                .push(CognitiveRef::ExternalObject(ObjectRef::new(
+                    row.try_get::<String, _>("external_object_ref")
+                        .map_err(db)?,
+                )?));
+        }
+        Ok(result)
     }
 
-    pub async fn lineage_roots(
+    /// Qualify each locator against its actual occurrence artifact and resolve all roots once.
+    pub async fn evidence_roots_batch_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        evidence: &[EvidenceRef],
+        view: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<Vec<BTreeSet<EvidenceRoot>>> {
+        if evidence.len() > 256 {
+            return Err(Error::Invalid(
+                "evidence root batch exceeds 256 references".into(),
+            ));
+        }
+        let occurrences = self
+            .occurrences_in(
+                tx,
+                subject,
+                &evidence
+                    .iter()
+                    .map(|evidence| evidence.occurrence_id)
+                    .collect::<Vec<_>>(),
+                view,
+            )
+            .await?;
+        let references: Vec<_> = evidence.iter().map(evidence_reference).collect();
+        let roots = self
+            .lineage_entries_in(tx, subject, &references, view)
+            .await?;
+        evidence
+            .iter()
+            .zip(references)
+            .map(|(evidence, reference)| {
+                let entry = &roots[&reference];
+                let occurrence = &occurrences[&evidence.occurrence_id];
+                if !matches!(evidence.locator, EvidenceLocator::WholeOccurrence)
+                    && !occurrence
+                        .artifact_id
+                        .is_some_and(|artifact| entry.artifacts.contains(&artifact.0))
+                {
+                    return Err(Error::Invalid(
+                        "evidence locator source does not match occurrence".into(),
+                    ));
+                }
+                Ok(entry.roots.clone())
+            })
+            .collect()
+    }
+
+    pub async fn lineage_roots_batch(
         &self,
         subject: SubjectId,
-        reference: &CognitiveRef,
+        references: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<BTreeSet<EvidenceRoot>> {
-        self.require_lineage_view(subject, reference, view)?;
-        self.store.validate_reference(subject, reference).await?;
-        match reference {
-            CognitiveRef::Occurrence(id) => Ok(BTreeSet::from([self
-                .occurrence_root(subject, *id, view)
-                .await?])),
-            CognitiveRef::Artifact(id) => Ok(BTreeSet::from([self
-                .artifact_root(subject, id.0, view)
-                .await?])),
-            CognitiveRef::SourceRegion(id) => {
-                let artifact: Uuid = sqlx::query_scalar("SELECT artifact_id FROM source_regions WHERE subject_id=$1 AND source_region_id=$2")
-                    .bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-                Ok(BTreeSet::from([self
-                    .artifact_root(subject, artifact, view)
-                    .await?]))
-            }
-            CognitiveRef::DerivedRepresentation(id) => {
-                self.representation_roots(subject, id.0, view).await
-            }
-            CognitiveRef::DerivedRegion(id) => {
-                let representation: Uuid = sqlx::query_scalar("SELECT derived_representation_id FROM derived_regions WHERE subject_id=$1 AND derived_region_id=$2")
-                    .bind(subject.0).bind(id.0).fetch_one(self.store.pool()).await.map_err(db)?;
-                self.representation_roots(subject, representation, view)
-                    .await
-            }
-            _ => Err(Error::Invalid(
-                "lineage requires a Material reference".into(),
-            )),
-        }
+    ) -> Result<HashMap<CognitiveRef, BTreeSet<EvidenceRoot>>> {
+        let mut tx = self.store.read_view().await?;
+        let roots = self
+            .lineage_entries_in(&mut tx, subject, references, view)
+            .await?
+            .into_iter()
+            .map(|(reference, lineage)| (reference, lineage.roots))
+            .collect();
+        tx.commit().await.map_err(db)?;
+        Ok(roots)
     }
 
     pub(super) fn require_lineage_view(
@@ -91,65 +170,89 @@ impl MaterialService {
         Ok(())
     }
 
-    async fn occurrence_root(
+    async fn lineage_entries_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
-        occurrence: OccurrenceId,
+        references: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<EvidenceRoot> {
-        let row = sqlx::query("SELECT source_class,external_object_ref,artifact_id FROM observation_occurrences WHERE subject_id=$1 AND occurrence_id=$2 AND ($3::timestamptz IS NULL OR created_at<=$3)")
-            .bind(subject.0).bind(occurrence.0).bind(view.map(|v|v.as_of)).fetch_optional(self.store.pool()).await.map_err(db)?
-            .ok_or_else(|| Error::Invalid("evidence occurrence is outside Subject/view".into()))?;
-        if let Some(artifact) = row.try_get::<Option<Uuid>, _>("artifact_id").map_err(db)? {
-            return self.artifact_root(subject, artifact, view).await;
-        }
-        if let Some(external) = row
-            .try_get::<Option<String>, _>("external_object_ref")
-            .map_err(db)?
-        {
-            let class: String = row.try_get("source_class").map_err(db)?;
-            return Ok(EvidenceRoot {
-                root_key: format!("external:{class}:{external}"),
-                certainty: EvidenceRootCertainty::Known,
-            });
-        }
-        Ok(EvidenceRoot {
-            root_key: format!("occurrence:{}", occurrence.0),
-            certainty: EvidenceRootCertainty::OccurrenceOnly,
-        })
-    }
-
-    async fn representation_roots(
-        &self,
-        subject: SubjectId,
-        representation: Uuid,
-        view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<BTreeSet<EvidenceRoot>> {
-        let artifacts: Vec<Uuid> = sqlx::query_scalar("SELECT DISTINCT sr.artifact_id FROM representation_source_regions($1,$2) roots JOIN source_regions sr USING(source_region_id) WHERE sr.subject_id=$1 AND ($3::timestamptz IS NULL OR sr.created_at<=$3)")
-            .bind(subject.0).bind(representation).bind(view.map(|v|v.as_of)).fetch_all(self.store.pool()).await.map_err(db)?;
-        if artifacts.is_empty() {
+    ) -> Result<HashMap<CognitiveRef, Lineage>> {
+        if references.len() > 256 {
             return Err(Error::Invalid(
-                "derived evidence has no valid source roots".into(),
+                "Material lineage batch exceeds 256 references".into(),
             ));
         }
-        let mut roots = BTreeSet::new();
-        for artifact in artifacts {
-            roots.insert(self.artifact_root(subject, artifact, view).await?);
+        if references.is_empty() {
+            return Ok(HashMap::new());
         }
-        Ok(roots)
-    }
-
-    async fn artifact_root(
-        &self,
-        subject: SubjectId,
-        artifact: Uuid,
-        view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<EvidenceRoot> {
-        let external: Option<String> = sqlx::query_scalar("WITH RECURSIVE lineage AS (SELECT occurrence_id,artifact_id,source_class,external_object_ref FROM observation_occurrences WHERE subject_id=$1 AND artifact_id=$2 AND ($3::timestamptz IS NULL OR created_at<=$3) UNION SELECT o.occurrence_id,o.artifact_id,o.source_class,o.external_object_ref FROM observation_occurrences o JOIN lineage p ON (o.artifact_id IS NOT NULL AND o.artifact_id=p.artifact_id) OR (o.external_object_ref IS NOT NULL AND o.external_object_ref=p.external_object_ref AND o.source_class=p.source_class) WHERE o.subject_id=$1 AND ($3::timestamptz IS NULL OR o.created_at<=$3)) SELECT MIN('external:' || source_class || ':' || external_object_ref) FROM lineage WHERE external_object_ref IS NOT NULL")
-            .bind(subject.0).bind(artifact).bind(view.map(|v|v.as_of)).fetch_one(self.store.pool()).await.map_err(db)?;
-        Ok(EvidenceRoot {
-            root_key: external.unwrap_or_else(|| format!("artifact:{artifact}")),
-            certainty: EvidenceRootCertainty::Known,
-        })
+        let references: Vec<_> = references
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let mut kinds = Vec::new();
+        let mut ids = Vec::new();
+        for reference in &references {
+            self.require_lineage_view(subject, reference, view)?;
+            let (kind, id) = super::read::material_reference(reference)?;
+            kinds.push(kind);
+            ids.push(id);
+        }
+        let rows = sqlx::query(LINEAGE_READ)
+            .bind(subject.0)
+            .bind(kinds)
+            .bind(ids)
+            .bind(view.map(|view| view.as_of))
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(db)?;
+        let mut result = HashMap::new();
+        for row in rows {
+            let ordinal: i64 = row.try_get("ordinality").map_err(db)?;
+            let reference = &references[ordinal as usize - 1];
+            if !row.try_get::<bool, _>("present").map_err(db)? {
+                return Err(Error::NotFound(
+                    "Material lineage reference is outside Subject/view".into(),
+                ));
+            }
+            let artifacts: Vec<Uuid> = row.try_get("artifacts").map_err(db)?;
+            let keys: Vec<String> = row.try_get("roots").map_err(db)?;
+            let mut roots: BTreeSet<_> = keys
+                .into_iter()
+                .map(|root_key| EvidenceRoot {
+                    root_key,
+                    certainty: EvidenceRootCertainty::Known,
+                })
+                .collect();
+            if roots.is_empty() {
+                if row
+                    .try_get::<Option<Uuid>, _>("derived_id")
+                    .map_err(db)?
+                    .is_some()
+                {
+                    return Err(Error::Invalid(
+                        "derived evidence has no valid source roots".into(),
+                    ));
+                }
+                let external: Option<String> = row.try_get("external_object_ref").map_err(db)?;
+                let root = match external {
+                    Some(external) => EvidenceRoot {
+                        root_key: format!(
+                            "external:{}:{external}",
+                            row.try_get::<String, _>("source_class").map_err(db)?
+                        ),
+                        certainty: EvidenceRootCertainty::Known,
+                    },
+                    None => EvidenceRoot {
+                        root_key: format!("occurrence:{}", reference_parts(reference).1),
+                        certainty: EvidenceRootCertainty::OccurrenceOnly,
+                    },
+                };
+                roots.insert(root);
+            }
+            result.insert(reference.clone(), Lineage { roots, artifacts });
+        }
+        Ok(result)
     }
 }

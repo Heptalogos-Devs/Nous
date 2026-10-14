@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::resolve_retrieval_policy;
-use super::types::{AccessibilityQueryPolicy, BoundQuery, ExactBinding, RevisionPolicy};
+use super::types::{BoundQuery, ExactBinding, RevisionPolicy};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
+
+type ReferenceBindings = HashMap<CognitiveRef, (CognitiveRef, Option<i64>, bool)>;
 
 pub fn planned_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
     if query.is_exact_read() {
@@ -45,7 +47,10 @@ fn local_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
     {
         return vec![EvidenceFamily::Exact];
     }
-    if query.session.is_some() || !query.situation.current_refs.is_empty() {
+    if query.session.is_some()
+        || query.work_context.is_some()
+        || !query.situation.current_refs.is_empty()
+    {
         lanes.push(EvidenceFamily::Runtime);
     }
     if query
@@ -138,14 +143,14 @@ fn local_lanes(query: &CognitiveQuery) -> Vec<EvidenceFamily> {
 fn include_concept_lane(
     query: &CognitiveQuery,
     enrichment: super::ConceptEnrichment,
-    runtime_refs: &[CognitiveRef],
+    sources: &[super::QuerySource],
     lanes: &mut Vec<EvidenceFamily>,
 ) {
     if !query.is_exact_read()
         && (enrichment != super::ConceptEnrichment::Off
-            || runtime_refs
+            || sources
                 .iter()
-                .any(|reference| matches!(reference, CognitiveRef::Tag(_))))
+                .any(|source| matches!(source.reference, CognitiveRef::Tag(_))))
     {
         lanes.push(EvidenceFamily::TagDirect);
         lanes.sort();
@@ -214,10 +219,36 @@ fn budget_values(
 }
 
 impl CognitiveRuntimeService {
+    async fn prepared_reference(
+        &self,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+        view: Option<&HistoricalAuthoritySnapshot>,
+        bindings: &mut ReferenceBindings,
+    ) -> Result<(CognitiveRef, Option<i64>, bool)> {
+        if let Some(binding) = bindings.get(reference) {
+            return Ok(binding.clone());
+        }
+        let binding = self
+            .store
+            .bind_reference_in_view(subject, reference, view)
+            .await?;
+        bindings.insert(reference.clone(), binding.clone());
+        // Tag canonicalization rewrites query cues. Revision refs keep their
+        // own immutable binding semantics rather than inheriting head epochs.
+        if matches!(binding.0, CognitiveRef::Tag(_)) {
+            bindings
+                .entry(binding.0.clone())
+                .or_insert_with(|| binding.clone());
+        }
+        Ok(binding)
+    }
+
     async fn canonicalize_query_tags(
         &self,
         query: &mut CognitiveQuery,
         view: Option<&HistoricalAuthoritySnapshot>,
+        bindings: &mut ReferenceBindings,
     ) -> Result<()> {
         let mut tag_ids = HashSet::new();
         visit_expression_tags(&mut query.expression, &mut |tag| {
@@ -226,8 +257,7 @@ impl CognitiveRuntimeService {
         let mut canonical_tags = std::collections::HashMap::new();
         for tag in tag_ids {
             let (canonical, _, _) = self
-                .store
-                .bind_reference_in_view(query.subject, &CognitiveRef::Tag(tag), view)
+                .prepared_reference(query.subject, &CognitiveRef::Tag(tag), view, bindings)
                 .await?;
             let CognitiveRef::Tag(canonical) = canonical else {
                 return Err(Error::Internal("invalid canonical Tag binding".into()));
@@ -249,6 +279,7 @@ impl CognitiveRuntimeService {
         &self,
         query: &CognitiveQuery,
         view: Option<&HistoricalAuthoritySnapshot>,
+        bindings: &mut ReferenceBindings,
     ) -> Result<(Vec<ExactBinding>, HashSet<CognitiveRef>)> {
         let mut exact_bindings = Vec::new();
         let mut allowed_revision_refs = HashSet::new();
@@ -257,8 +288,7 @@ impl CognitiveRuntimeService {
                 continue;
             };
             let (bound_ref, epoch, mutable_object) = self
-                .store
-                .bind_reference_in_view(query.subject, reference, view)
+                .prepared_reference(query.subject, reference, view, bindings)
                 .await?;
             if !mutable_object
                 && matches!(
@@ -281,102 +311,57 @@ impl CognitiveRuntimeService {
 
         Ok((exact_bindings, allowed_revision_refs))
     }
-    async fn bind_runtime_sources(
+    async fn bind_sources(
         &self,
         subject: SubjectId,
-        sources: &[(CognitiveRef, String)],
+        sources: &mut Vec<super::QuerySource>,
         view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<(Vec<CognitiveRef>, Vec<(CognitiveRef, String)>)> {
-        let mut cache = std::collections::HashMap::<CognitiveRef, CognitiveRef>::new();
-        let mut resolved = Vec::new();
-        for (reference, source) in sources {
-            let canonical = if let Some(canonical) = cache.get(reference) {
-                canonical.clone()
-            } else {
-                let (canonical, _, _) = self
-                    .store
-                    .bind_reference_in_view(subject, reference, view)
-                    .await?;
-                cache.insert(reference.clone(), canonical.clone());
-                canonical
-            };
-            resolved.push((canonical, source.clone()));
+        bindings: &mut ReferenceBindings,
+    ) -> Result<()> {
+        for source in sources.iter_mut() {
+            source.reference = self
+                .prepared_reference(subject, &source.requested_ref, view, bindings)
+                .await?
+                .0;
         }
-        let mut refs = cache.into_values().collect::<Vec<_>>();
-        refs.sort_by_key(ToString::to_string);
-        refs.dedup();
-        resolved.sort_by_key(|(reference, source)| (reference.to_string(), source.clone()));
-        resolved.dedup();
-        Ok((refs, resolved))
+        sources.sort_by_key(|source| {
+            (
+                source.reference.to_string(),
+                source.origin.clone(),
+                source.requested_ref.to_string(),
+            )
+        });
+        sources.dedup_by(|a, b| a.reference == b.reference && a.origin == b.origin);
+        Ok(())
     }
-    async fn bind_structural_query_refs(
+    pub async fn bind_query(
         &self,
-        query: &CognitiveQuery,
-        view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<Vec<(CognitiveRef, String)>> {
-        let mut topology_seed_refs = Vec::new();
-        for target in query.scopes().into_iter().flat_map(|node| &node.targets) {
-            if let QueryTarget::SchemaNeighborhood { schema } = target {
-                let (bound_ref, _, _) = self
-                    .store
-                    .bind_reference_in_view(
-                        query.subject,
-                        &CognitiveRef::CognitiveSchema(*schema),
-                        view,
-                    )
-                    .await?;
-                topology_seed_refs.push((bound_ref, "explicit_schema".into()));
-            }
-        }
-        for cue in query.scopes().into_iter().flat_map(|node| &node.cues) {
-            match cue {
-                Cue::Schema(value) => {
-                    let (bound_ref, _, _) = self
-                        .store
-                        .bind_reference_in_view(
-                            query.subject,
-                            &CognitiveRef::CognitiveSchema(value.schema),
-                            view,
-                        )
-                        .await?;
-                    topology_seed_refs.push((bound_ref, "explicit_schema".into()));
-                }
-                Cue::Relation(value) => {
-                    for reference in [&value.from, &value.to] {
-                        let (bound_ref, _, _) = self
-                            .store
-                            .bind_reference_in_view(query.subject, reference, view)
-                            .await?;
-                        topology_seed_refs.push((bound_ref, "relation_cue".into()));
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Ok(topology_seed_refs)
-    }
-    pub async fn bind_query(&self, query: CognitiveQuery) -> Result<BoundQuery> {
+        query: CognitiveQuery,
+        resolver: &dyn crate::ContextResolver,
+    ) -> Result<BoundQuery> {
         let snapshot = self.configuration.snapshot_for_subject(query.subject)?;
-        self.bind_query_with_snapshot(query, snapshot).await
+        self.bind_query_with_snapshot(query, snapshot, resolver)
+            .await
     }
     pub async fn bind_query_with_snapshot(
         &self,
         query: CognitiveQuery,
         config_snapshot: nous_configuration::ConfigSnapshot,
+        resolver: &dyn crate::ContextResolver,
     ) -> Result<BoundQuery> {
-        self.bind_query_with_authority_view(query, config_snapshot, None)
+        self.bind_query_with_authority_view(query, config_snapshot, None, resolver)
             .await
     }
     #[expect(
         clippy::too_many_lines,
-        reason = "binding closes one Authority/config/context snapshot before planning exact reads or discovery"
+        reason = "one binding owns source admission, canonical identity and frozen inputs"
     )]
     pub async fn bind_query_with_authority_view(
         &self,
         mut query: CognitiveQuery,
         config_snapshot: nous_configuration::ConfigSnapshot,
         historical_authority: Option<std::sync::Arc<HistoricalAuthoritySnapshot>>,
+        resolver: &dyn crate::ContextResolver,
     ) -> Result<BoundQuery> {
         self.capture_query_clock(&mut query);
         super::historical_context::validate_view(&query, historical_authority.as_deref())?;
@@ -388,28 +373,53 @@ impl CognitiveRuntimeService {
             validate_hard_constraints(&scoped)?;
         }
         self.require_subject(query.subject).await?;
-        self.canonicalize_query_tags(&mut query, view).await?;
-        let retrieval_policy = resolve_retrieval_policy(&config_snapshot)?;
-        if let Some(session) = query.session {
-            self.require_session(query.subject, session).await?;
-        }
-
-        let context_snapshot = self.prepare_query_context(&mut query, view).await?;
-        let mut representation_sources = context_snapshot.source_refs.clone();
-        let context_degradation = context_snapshot.history_exclusions.clone();
-        let (exact_bindings, mut allowed_revision_refs) =
-            self.bind_exact_targets(&query, view).await?;
-        let (runtime_refs, runtime_sources) = self
-            .bind_runtime_sources(query.subject, &representation_sources, view)
+        let authored_sources = expression_sources(&query);
+        let mut bindings = ReferenceBindings::new();
+        self.canonicalize_query_tags(&mut query, view, &mut bindings)
             .await?;
-        let mut topology_seed_refs = self.bind_structural_query_refs(&query, view).await?;
-        topology_seed_refs.extend(
-            runtime_sources
-                .iter()
-                .filter(|(_, s)| s == "work_context")
-                .cloned(),
-        );
-
+        let retrieval_policy = resolve_retrieval_policy(&config_snapshot)?;
+        let mut context_snapshot = self.prepare_query_context(&mut query, view).await?;
+        let (exact_bindings, mut allowed_revision_refs) =
+            self.bind_exact_targets(&query, view, &mut bindings).await?;
+        context_snapshot.source_refs.extend(authored_sources);
+        self.bind_sources(
+            query.subject,
+            &mut context_snapshot.source_refs,
+            view,
+            &mut bindings,
+        )
+        .await?;
+        // Captured owner views retain their object/revision semantics. Merged Tags have
+        // only one canonical identity in the frozen input, including its raw anchors.
+        let canonical_tag = |reference: &mut CognitiveRef| {
+            if matches!(reference, CognitiveRef::Tag(_))
+                && let Some((canonical, _, _)) = bindings.get(reference)
+            {
+                *reference = canonical.clone();
+            }
+        };
+        for reference in &mut query.situation.current_refs {
+            canonical_tag(reference);
+        }
+        if let Some(session) = &mut context_snapshot.session {
+            for resident in &mut session.resident {
+                canonical_tag(&mut resident.reference);
+            }
+        }
+        if let Some(context) = &mut context_snapshot.work_context {
+            for anchor in &mut context.cognition_anchors {
+                canonical_tag(anchor);
+            }
+            for tag in &mut context.tag_anchors {
+                let mut reference = CognitiveRef::Tag(*tag);
+                canonical_tag(&mut reference);
+                if let CognitiveRef::Tag(canonical) = reference {
+                    *tag = canonical;
+                }
+            }
+            context.tag_anchors.sort();
+            context.tag_anchors.dedup();
+        }
         if let Some(view) = view {
             allowed_revision_refs.extend(
                 view.cognition
@@ -433,7 +443,7 @@ impl CognitiveRuntimeService {
         include_concept_lane(
             &query,
             concept_enrichment,
-            &runtime_refs,
+            &context_snapshot.source_refs,
             &mut enabled_lanes,
         );
         if enabled_lanes.is_empty() && !query.requests_resources() {
@@ -441,62 +451,44 @@ impl CognitiveRuntimeService {
         }
         let lane_budgets = budget_values(&query, &enabled_lanes, &retrieval_policy);
         let bound_at_authority_seq = self.store.authority_seq(query.subject).await?;
-        let exact_target_bypasses_auto_level = !exact_bindings.is_empty();
-        representation_sources.extend(
-            exact_bindings
-                .iter()
-                .map(|binding| (binding.bound_ref.clone(), "explicit_exact".into())),
-        );
-        representation_sources.extend(
-            runtime_refs
-                .iter()
-                .cloned()
-                .map(|reference| (reference, "runtime_context".into())),
-        );
         let representation = self
             .resolve_query_representation(
                 &query,
                 context_snapshot.work_context.clone(),
-                representation_sources,
+                context_snapshot.source_refs.clone(),
                 &config_snapshot,
                 view,
+                resolver,
             )
             .await?;
         let mut activation = super::QueryActivation::prepared(
             &query,
             representation.sha256.clone(),
             exact_bindings.iter().map(|b| b.bound_ref.clone()).collect(),
-            runtime_refs.clone(),
-            &topology_seed_refs,
+            &context_snapshot.source_refs,
         );
-        activation.degradation.extend(context_degradation);
+        activation
+            .degradation
+            .extend(context_snapshot.history_exclusions.clone());
         Ok(BoundQuery {
             context_snapshot: std::sync::Arc::new(context_snapshot),
             historical_authority,
             activation_view: None,
             activation,
             concept_enrichment,
-            representation,
+            representation: std::sync::Arc::new(representation),
             query_id: Uuid::now_v7(),
             bound_at: self.now(query.subject),
             source_query: query.clone(),
             bound_at_authority_seq,
             revision_policy,
             exact_bindings,
-            runtime_refs,
-            runtime_sources,
-            topology_seed_refs,
             enabled_lanes: enabled_lanes.clone(),
             lane_budgets,
-            accessibility_policy: AccessibilityQueryPolicy {
-                effort: query.effort,
-                exact_target_bypasses_auto_level,
-            },
             selected_embedding_space: None,
             topology_required: !query.is_exact_read()
                 && explicit_topology(&query)
                 && retrieval_policy.cognitive_profile.requirements().topology,
-            fusion_version: "rrf-v1".into(),
             config_snapshot,
             retrieval_policy,
         })
@@ -515,7 +507,7 @@ impl BoundQuery {
         include_concept_lane(
             &bound.source_query,
             bound.concept_enrichment,
-            &bound.runtime_refs,
+            &bound.context_snapshot.source_refs,
             &mut bound.enabled_lanes,
         );
         bound.lane_budgets = budget_values(
@@ -530,14 +522,48 @@ impl BoundQuery {
     }
 }
 
+pub(super) fn expression_sources(query: &CognitiveQuery) -> Vec<super::QuerySource> {
+    let mut sources = Vec::new();
+    for scope in query.scopes() {
+        for target in &scope.targets {
+            let (reference, origin) = match target {
+                QueryTarget::Exact { reference } => (reference.clone(), "exact_target"),
+                QueryTarget::SchemaNeighborhood { schema } => {
+                    (CognitiveRef::CognitiveSchema(*schema), "explicit_schema")
+                }
+                QueryTarget::EntityNeighborhood { entity_ref } => {
+                    (CognitiveRef::Entity(entity_ref.clone()), "entity_cue")
+                }
+            };
+            sources.push(super::QuerySource::new(reference, origin));
+        }
+        for cue in &scope.cues {
+            let (reference, origin) = match cue {
+                Cue::Entity(v) => (CognitiveRef::Entity(v.entity_ref.clone()), "entity_cue"),
+                Cue::Tag(v) => (CognitiveRef::Tag(v.tag), "tag_cue"),
+                Cue::Schema(v) => (CognitiveRef::CognitiveSchema(v.schema), "explicit_schema"),
+                Cue::Resource(v) => (CognitiveRef::Resource(v.resource.clone()), "explicit_cue"),
+                Cue::Object(v) => (
+                    CognitiveRef::ExternalObject(v.object_ref.clone()),
+                    "explicit_cue",
+                ),
+                Cue::Artifact(v) => (CognitiveRef::Artifact(v.artifact), "explicit_cue"),
+                Cue::MediaRegion(v) => (v.region.clone(), "explicit_cue"),
+                Cue::Relation(v) => {
+                    sources.push(super::QuerySource::new(v.from.clone(), "relation_cue"));
+                    (v.to.clone(), "relation_cue")
+                }
+                _ => continue,
+            };
+            sources.push(super::QuerySource::new(reference, origin));
+        }
+    }
+    sources
+}
+
 fn visit_expression_tags(expression: &mut CognitiveQueryExpr, visit: &mut impl FnMut(&mut TagId)) {
     for cue in &mut expression.cues {
         visit_cue_tags(cue, visit);
-    }
-    for target in &mut expression.targets {
-        if let QueryTarget::Exact { reference } = target {
-            visit_ref_tag(reference, visit);
-        }
     }
     for preference in &mut expression.preferences {
         match &mut preference.operand {

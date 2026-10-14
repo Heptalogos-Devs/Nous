@@ -1,89 +1,68 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { CliError, boundedInteger, uniqueReference } from "../agent.js";
-import {
-  reviseInput,
-  mergeInput,
-  splitInput,
-  attachmentInput,
-  tagTarget,
-  tagContent,
-  revisionBasis,
-  associationBasis,
-} from "../mutation-input.js";
+import { create } from "@bufbuild/protobuf";
+import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { CliError, uniqueReference } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
+import {
+  TagContentSchema,
+  ReviseTagRequestSchema,
+  MergeTagsRequestSchema,
+  SplitTagRequestSchema,
+  AssociationSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
+import { content, page } from "../content.js";
 
 export async function tagCommands(
   env: CliEnvironment,
   action: string | undefined,
   argument?: string,
 ) {
-  const {
-    client,
-    values,
-    subjectId,
-    required,
-    resolveReference,
-    requestPayload,
-  } = env;
+  const { client, values, required, resolveReference } = env;
+  const subjectId = await env.subjectId;
   const operationId = values["operation-id"] ?? crypto.randomUUID();
+  if (action === "history")
+    return client.concepts.listTagRevisions({
+      subjectId,
+      object: await resolveReference(
+        required(argument, "Tag reference"),
+        "tag",
+      ),
+      page: page(env),
+    });
   if (action === "create")
     return client.concepts.createTag({
       subjectId,
       operationId,
-      tag: {
-        label: required(values.name, "--name"),
-        description: values.description,
-        kindHint: values["kind-hint"],
-        origin: "host_explicit",
-      },
+      content: values["request-file"]
+        ? await content(env, TagContentSchema)
+        : {
+            label: required(values.name, "--name"),
+            description: values.description,
+            kindHint: values["kind-hint"],
+          },
     });
-  if (action === "revise") {
-    const input = reviseInput.parse(
-      await requestPayload(values["request-file"]),
-    );
+  if (action === "revise")
     return client.concepts.reviseTag({
+      ...(await content(env, ReviseTagRequestSchema)),
       subjectId,
       operationId,
-      target: await tagTarget(env, input.target),
-      content: tagContent(input),
     });
-  }
-  if (action === "merge") {
-    const input = mergeInput.parse(
-      await requestPayload(values["request-file"]),
-    );
+  if (action === "merge")
     return client.concepts.mergeTags({
+      ...(await content(env, MergeTagsRequestSchema)),
       subjectId,
       operationId,
-      survivor: await tagTarget(env, input.survivor),
-      retired: await Promise.all(
-        input.retired.map((text) => tagTarget(env, text)),
-      ),
-      basis: await Promise.all(
-        input.basis.map((entry) => revisionBasis(env, entry)),
-      ),
     });
-  }
-  if (action === "split") {
-    const input = splitInput.parse(
-      await requestPayload(values["request-file"]),
-    );
+  if (action === "split")
     return client.concepts.splitTag({
+      ...(await content(env, SplitTagRequestSchema)),
       subjectId,
       operationId,
-      parent: await tagTarget(env, input.parent),
-      children: input.children.map(tagContent),
-      basis: await Promise.all(
-        input.basis.map((entry) => revisionBasis(env, entry)),
-      ),
     });
-  }
   if (action === "attach") {
-    const input = attachmentInput.parse(
-      await requestPayload(values["association-file"]),
-    );
+    const association = await content(env, AssociationSchema);
     const to = await resolveReference(
       required(values.tag?.[0], "--tag"),
       "tag",
@@ -103,36 +82,35 @@ export async function tagCommands(
         "REFERENCE_TYPE_MISMATCH",
         "Attachment requires an exact cognition revision",
       );
-    return client.concepts.associate({
+    return client.concepts.createAssociation({
       subjectId,
       operationId,
       association: {
-        from,
-        to,
+        ...association,
+        from: create(CognitiveRefSchema, from),
+        to: create(CognitiveRefSchema, to),
         relationKind: "tag_attachment",
         polarity: "positive",
         basisClass: "host_explicit",
-        basis: await Promise.all(
-          input.basis.map((entry) => associationBasis(env, entry)),
-        ),
       },
     });
   }
   if (action === "list" || action === "search") {
-    const page = {
-      pageToken: values["page-token"],
-      pageSize: boundedInteger(values["page-size"], 1, 200, "--page-size"),
-    };
+    const pagination = page(env);
     return action === "list"
-      ? client.concepts.listTags({ subjectId, page })
+      ? client.concepts.listTags({
+          subjectId,
+          status: values.status,
+          page: pagination,
+        })
       : client.concepts.searchTags({
           subjectId,
           text: required(argument, "Search text"),
-          page,
+          page: pagination,
         });
   }
   if (action === "resolve") {
-    const result = await client.identity.resolve({
+    const result = await client.identity.resolveIdentity({
       subjectId,
       kind: "tag",
       locator: { case: "name", value: required(argument, "Tag name") },

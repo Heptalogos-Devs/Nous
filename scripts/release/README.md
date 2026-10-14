@@ -28,7 +28,7 @@ corepack pnpm assemble:portable
 
 `build-kernel.ps1` 编译 `x86_64-pc-windows-gnullvm` release Kernel，复制私有 C++ runtime DLL 并 strip debug 信息。默认工具链目录为 `data/tools/llvm-mingw-windows/llvm-mingw-20260922-ucrt-x86_64`。
 
-`release:notices` 准备应用 bundle 和依赖/运行时 license notices，需要网络。`assemble:portable` 消费这些缓存、release Kernel 和 packs，离线生成 `data/releases/windows-x64/current/` 与 `current.zip`，替换当前输出。包不包含开发配置或文档示例。`just release-prepare` 与 `just release` 分别封装准备和组装阶段。
+应用 bundle 每次清空并重建 `data/cache/release/application/program/` 的五个实际入口，不生成源码 digest 目录或 packages.json 检查点。`release:notices` 将实际依赖/运行时 license notices 与 native closure 准备到 `data/cache/release/notices/current/`，公开 URL 文本缓存可复用；该准备阶段需要网络。`assemble:portable` 消费这些缓存、release Kernel 和 packs，离线生成 `data/releases/windows-x64/current/` 与 `current.zip`，替换当前输出。离线组装校对当前 bundle 的 npm inventory 与 Kernel 的实际 Cargo closure，runtime 内容由 pack inventory 校验。包不包含开发配置或文档示例。`just release-prepare` 与 `just release` 分别封装准备和组装阶段。
 
 `release:notices --runtime-root <packs/catalog 根目录>` 与 `assemble:portable --runtime-root <同一目录>` 可显式选择独立的 shipping packs；该目录包含 `manifest/runtimes.json` 与 `packs/`。默认仍为 `data/runtime/`。开发与 shipping runtime 内容不同时，应使用独立 catalog，避免更换正在运行实例所依赖的 manifest identity；组装只将选中的 catalog 与 runtime 放进发布包。
 
@@ -38,6 +38,6 @@ corepack pnpm release:verify --bundle data/releases/windows-x64/current.zip --la
 corepack pnpm release:verify --bundle data/releases/windows-x64/current.zip --layout locator --relocate
 ```
 
-验证会在 `data/temp/portable/` 下的隔离目录解包并启动 portable Core，通过分发的 Client 操作实例。layout 默认 `home`，也支持 `colocated`、`locator`；`--relocate` 移动独立实例后重新启动，不能和 colocated 合用。`just release-verify` 调用以上三种布局。
+验证会在 `data/temp/portable/` 下的隔离目录解包并启动 portable Core，通过分发的 Client 操作实例。layout 默认 `home`，也支持 `colocated`、`locator`；`--relocate` 移动独立实例后重新启动，不能和 colocated 合用。`just release-verify` 调用以上三种布局。通过后停止实例并删除本次临时目录；失败目录保留，供直接检查。
 
 `corepack pnpm release:archive` 将现有 current.zip 保存到 `data/releases/archive/windows-x64/<source-head>-<digest>.zip`，不会重新组装，同名归档已存在时报错。`zip.ps1` 是 pack/assembler 共用 ZIP helper，无需单独调用。

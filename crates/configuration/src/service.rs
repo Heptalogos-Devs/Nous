@@ -11,7 +11,7 @@ use nous_persistence::{AuthorityStore, database_error as db};
 use serde_json::Value;
 use sqlx::Row;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, RwLock},
 };
 use tokio::sync::Mutex;
@@ -38,7 +38,6 @@ struct Inner {
     mutation: Mutex<()>,
 }
 
-#[derive(Clone)]
 struct ConfigurationState {
     revision: i64,
     active_system: BTreeMap<String, Value>,
@@ -48,12 +47,11 @@ struct ConfigurationState {
 }
 
 impl ConfigurationService {
-    pub async fn open(
-        store: AuthorityStore,
-        registry: ConfigRegistry,
-        deployment: Value,
-    ) -> Result<Self> {
-        let deployment = registry.deployment_values(&deployment)?;
+    pub async fn open(store: AuthorityStore, deployment: crate::ConfigDeployment) -> Result<Self> {
+        let crate::ConfigDeployment {
+            registry,
+            values: deployment,
+        } = deployment;
         let revision = sqlx::query_scalar::<_, i64>(
             "SELECT revision FROM configuration_state WHERE singleton=TRUE",
         )
@@ -69,7 +67,7 @@ impl ConfigurationService {
         for row in system_rows {
             let key: String = row.try_get("key").map_err(db)?;
             let value: Value = row.try_get("value").map_err(db)?;
-            validate_persisted(&registry, &key, &value, false)?;
+            let value = normalize_persisted(&registry, &key, &value, false)?;
             system.insert(key, value);
         }
         let subject_rows = sqlx::query(
@@ -83,7 +81,7 @@ impl ConfigurationService {
             let subject = SubjectId(row.try_get("subject_id").map_err(db)?);
             let key: String = row.try_get("key").map_err(db)?;
             let value: Value = row.try_get("value").map_err(db)?;
-            validate_persisted(&registry, &key, &value, true)?;
+            let value = normalize_persisted(&registry, &key, &value, true)?;
             subjects.entry(subject).or_default().insert(key, value);
         }
         Ok(Self {
@@ -119,17 +117,46 @@ impl ConfigurationService {
         self.snapshot(Some(subject), false)
     }
 
-    pub fn desired_snapshot_for_subject(&self, subject: SubjectId) -> Result<ConfigSnapshot> {
-        self.snapshot(Some(subject), true)
-    }
-
     fn snapshot(&self, subject: Option<SubjectId>, desired: bool) -> Result<ConfigSnapshot> {
         let state = self
             .inner
             .state
             .read()
             .map_err(|_| Error::Internal("configuration state lock poisoned".into()))?;
-        self.snapshot_from_state(&state, subject, desired)
+        self.snapshot_from_state(&state, subject, desired, None)
+    }
+
+    /// Read one complete view and compare only the entries being returned.
+    pub fn view(
+        &self,
+        subject: Option<SubjectId>,
+        desired: bool,
+        paths: &[String],
+    ) -> Result<(ConfigSnapshot, BTreeSet<String>)> {
+        let state = self
+            .inner
+            .state
+            .read()
+            .map_err(|_| Error::Internal("configuration state lock poisoned".into()))?;
+        let snapshot = self.snapshot_from_state(&state, subject, desired, None)?;
+        let mut pending = BTreeSet::new();
+        for path in paths {
+            let descriptor = self
+                .inner
+                .registry
+                .descriptor(path)
+                .ok_or_else(|| Error::Invalid(format!("unknown configuration path: {path}")))?;
+            if snapshot.json(path)
+                != Some(
+                    &self
+                        .resolve_value(&state, subject, !desired, descriptor, None)
+                        .json,
+                )
+            {
+                pending.insert(path.clone());
+            }
+        }
+        Ok((snapshot, pending))
     }
 
     fn snapshot_from_state(
@@ -137,7 +164,30 @@ impl ConfigurationService {
         state: &ConfigurationState,
         subject: Option<SubjectId>,
         desired: bool,
+        change: Option<(&str, Option<&Value>)>,
     ) -> Result<ConfigSnapshot> {
+        let values = self
+            .inner
+            .registry
+            .descriptors()
+            .map(|descriptor| {
+                (
+                    descriptor.path.clone(),
+                    self.resolve_value(state, subject, desired, descriptor, change),
+                )
+            })
+            .collect();
+        ConfigSnapshot::new(subject, state.revision, self.inner.registry.clone(), values)
+    }
+
+    fn resolve_value(
+        &self,
+        state: &ConfigurationState,
+        subject: Option<SubjectId>,
+        desired: bool,
+        descriptor: &crate::ConfigDescriptor,
+        change: Option<(&str, Option<&Value>)>,
+    ) -> crate::ResolvedConfigValue {
         let system = if desired {
             &state.desired_system
         } else {
@@ -150,48 +200,35 @@ impl ConfigurationService {
                 state.active_subject.get(&id)
             }
         });
-        let mut values = BTreeMap::new();
-        for descriptor in self.inner.registry.descriptors() {
-            let (value, source) = if let Some(value) = subject_values
-                .and_then(|values| values.get(&descriptor.path))
-                .filter(|_| descriptor.scope_policy == ConfigScopePolicy::SubjectOverrideAllowed)
-            {
-                (value.clone(), ConfigSource::PersistedSubject)
-            } else if let Some(value) = system.get(&descriptor.path) {
-                (value.clone(), ConfigSource::PersistedSystem)
-            } else if let Some(value) = self.inner.deployment.get(&descriptor.path) {
-                (value.clone(), ConfigSource::DeploymentFile)
-            } else {
-                (
-                    descriptor.reference_default.clone(),
-                    ConfigSource::ReferenceDefault,
-                )
-            };
-            values.insert(
-                descriptor.path.clone(),
-                crate::ResolvedConfigValue {
-                    json: value,
-                    source,
-                },
-            );
+        let changed = change.filter(|(key, _)| *key == descriptor.path);
+        let subject_value = if subject.is_some() && changed.is_some() {
+            changed.and_then(|(_, value)| value)
+        } else {
+            subject_values.and_then(|values| values.get(&descriptor.path))
+        };
+        let system_value = if subject.is_none() && changed.is_some() {
+            changed.and_then(|(_, value)| value)
+        } else {
+            system.get(&descriptor.path)
+        };
+        let (value, source) = if let Some(value) = subject_value
+            .filter(|_| descriptor.scope_policy == ConfigScopePolicy::SubjectOverrideAllowed)
+        {
+            (value, ConfigSource::PersistedSubject)
+        } else if let Some(value) = system_value {
+            (value, ConfigSource::PersistedSystem)
+        } else if let Some(value) = self.inner.deployment.get(&descriptor.path) {
+            (value, ConfigSource::DeploymentFile)
+        } else {
+            (
+                &descriptor.reference_default,
+                ConfigSource::ReferenceDefault,
+            )
+        };
+        crate::ResolvedConfigValue {
+            json: value.clone(),
+            source,
         }
-        ConfigSnapshot::new(subject, state.revision, self.inner.registry.clone(), values)
-    }
-
-    fn scoped_digests(
-        &self,
-        state: &ConfigurationState,
-        subject: Option<SubjectId>,
-    ) -> Result<(String, String)> {
-        let active = self
-            .snapshot_from_state(state, subject, false)?
-            .effective_digest
-            .clone();
-        let desired = self
-            .snapshot_from_state(state, subject, true)?
-            .effective_digest
-            .clone();
-        Ok((active, desired))
     }
 
     pub async fn set_system_override(
@@ -257,35 +294,48 @@ impl ConfigurationService {
         expected_revision: Option<i64>,
     ) -> Result<ConfigChangeOutcome> {
         let _mutation = self.inner.mutation.lock().await;
-        if expected_revision.is_some_and(|revision| revision < 0) {
-            return Err(Error::Invalid(
-                "expected configuration revision must be nonnegative".into(),
-            ));
-        }
-        if operation_id.0.is_nil() {
-            return Err(Error::Invalid(
-                "configuration operation_id is required".into(),
-            ));
-        }
-        let descriptor = self
-            .inner
-            .registry
-            .descriptor(key)
-            .ok_or_else(|| Error::Invalid(format!("unknown configuration key: {key}")))?;
-        if descriptor.storage_policy == ConfigStoragePolicy::DeploymentOnly {
-            return Err(Error::Invalid(format!(
-                "configuration path is deployment-only: {key}"
-            )));
-        }
-        let value = value
-            .map(|value| self.inner.registry.normalize(key, &value))
-            .transpose()?;
-        if subject.is_some() && descriptor.scope_policy != ConfigScopePolicy::SubjectOverrideAllowed
-        {
-            return Err(Error::Invalid(format!(
-                "configuration key is system-only: {key}"
-            )));
-        }
+        let (descriptor, value) = (|| {
+            if expected_revision.is_some_and(|revision| revision < 0) {
+                return Err(Error::Invalid(
+                    "expected configuration revision must be nonnegative".into(),
+                ));
+            }
+            if operation_id.0.is_nil() {
+                return Err(Error::Invalid(
+                    "configuration operation_id is required".into(),
+                ));
+            }
+            let descriptor = self
+                .inner
+                .registry
+                .descriptor(key)
+                .ok_or_else(|| Error::Invalid(format!("unknown configuration key: {key}")))?;
+            if descriptor.storage_policy == ConfigStoragePolicy::DeploymentOnly {
+                return Err(Error::Invalid(format!(
+                    "configuration path is deployment-only: {key}"
+                )));
+            }
+            let value = value
+                .map(|value| self.inner.registry.normalize(key, &value))
+                .transpose()?;
+            if subject.is_some()
+                && descriptor.scope_policy != ConfigScopePolicy::SubjectOverrideAllowed
+            {
+                return Err(Error::Invalid(format!(
+                    "configuration key is system-only: {key}"
+                )));
+            }
+            Ok((descriptor, value))
+        })()
+        .map_err(|error| match error {
+            Error::Invalid(message) => {
+                DomainError::new(DomainErrorCode::InvalidConfiguration, message)
+                    .with_context("path", key)
+                    .with_context("commit_status", "rejected")
+                    .into()
+            }
+            error => error,
+        })?;
         let action = if value.is_some() { "set" } else { "clear" };
         let request = serde_json::json!({
             "subject_id": subject.map(|value| value.0),
@@ -301,12 +351,6 @@ impl ConfigurationService {
         )
         .to_hex()
         .to_string();
-        let mut next_state = self
-            .inner
-            .state
-            .read()
-            .map_err(|_| Error::Internal("configuration state lock poisoned".into()))?
-            .clone();
         let mut tx = self.inner.store.begin().await?;
         let existing = sqlx::query(
             "SELECT request_digest,revision,apply_mode,pending_restart,active_digest,desired_digest FROM configuration_mutation_receipts WHERE operation_id=$1 FOR UPDATE",
@@ -324,6 +368,7 @@ impl ConfigurationService {
                 )
                 .with_context("operation_id", operation_id.0)
                 .with_context("path", key)
+                .with_context("commit_status", "rejected")
                 .into());
             }
             let outcome = ConfigChangeOutcome {
@@ -344,7 +389,7 @@ impl ConfigurationService {
         .await
         .map_err(db)?
         .ok_or_else(|| DomainError::new(DomainErrorCode::StaleRevision, "Configuration revision changed; read the current desired policy before replacing it")
-            .with_context("path", key))?;
+            .with_context("path", key).with_context("commit_status", "rejected"))?;
         match (subject, value.as_ref()) {
             (Some(subject), Some(value)) => {
                 sqlx::query("INSERT INTO subject_configuration_overrides(subject_id,key,value,revision,updated_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(subject_id,key) DO UPDATE SET value=excluded.value,revision=excluded.revision,updated_at=excluded.updated_at")
@@ -373,15 +418,22 @@ impl ConfigurationService {
             }
         }
         let pending_restart = descriptor.apply_mode == ConfigApplyMode::RestartProcess;
-        apply_mutation_to_state(
-            &mut next_state,
-            subject,
-            key,
-            value.clone(),
-            pending_restart,
-        );
-        next_state.revision = revision;
-        let (active_digest, desired_digest) = self.scoped_digests(&next_state, subject)?;
+        let (active_digest, desired_digest) = {
+            let state = self
+                .inner
+                .state
+                .read()
+                .map_err(|_| Error::Internal("configuration state lock poisoned".into()))?;
+            let change = Some((key, value.as_ref()));
+            let active = self.snapshot_from_state(
+                &state,
+                subject,
+                false,
+                if pending_restart { None } else { change },
+            )?;
+            let desired = self.snapshot_from_state(&state, subject, true, change)?;
+            (active.effective_digest, desired.effective_digest)
+        };
         sqlx::query("INSERT INTO configuration_mutation_receipts(operation_id,request_digest,subject_id,key,action,revision,apply_mode,pending_restart,active_digest,desired_digest,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
             .bind(operation_id.0).bind(&digest).bind(subject.map(|value| value.0)).bind(key).bind(action).bind(revision).bind(format_apply_mode(descriptor.apply_mode)).bind(pending_restart).bind(&active_digest).bind(&desired_digest).bind(Utc::now()).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
@@ -391,7 +443,8 @@ impl ConfigurationService {
                 .state
                 .write()
                 .map_err(|_| Error::Internal("configuration state lock poisoned".into()))?;
-            *state = next_state;
+            apply_mutation_to_state(&mut state, subject, key, value, pending_restart);
+            state.revision = revision;
         }
         Ok(ConfigChangeOutcome {
             revision,
@@ -426,12 +479,12 @@ fn apply_mutation_to_state(
     }
 }
 
-fn validate_persisted(
+fn normalize_persisted(
     registry: &ConfigRegistry,
     key: &str,
     value: &Value,
     subject: bool,
-) -> Result<()> {
+) -> Result<Value> {
     let descriptor = registry.descriptor(key).ok_or_else(|| {
         Error::Infrastructure(format!("persisted unknown configuration key: {key}"))
     })?;
@@ -445,7 +498,7 @@ fn validate_persisted(
             "persisted deployment-only override: {key}"
         )));
     }
-    registry.validate(key, value)
+    registry.normalize(key, value)
 }
 
 fn apply_map(map: &mut BTreeMap<String, Value>, key: &str, value: Option<Value>) {

@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 mod test_support;
 use chrono::{Duration, SubsecRound, Utc};
+use futures::TryStreamExt;
 use nous_core::*;
 use nous_material::{
-    ByteRange, DerivationInput, DerivedRegion, DerivedRepresentation, MaterializeRequest,
-    ObservationMaterial,
+    ByteRange, DerivationInput, DerivedRepresentation, MaterializeRequest, ObservationMaterial,
 };
 use nous_memory::{
     AssociationBasis, AssociationBasisClass, AssociationPolarity, CreateAssociationRequest,
@@ -48,49 +48,44 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         insert_source_region(&rt, subject, artifact, cobalt_start, body.len() as u64).await;
     let representation = rt
         .material
-        .persist_derived_representation(DerivedRepresentation {
-            derived_representation_id: DerivedRepresentationId::new(),
-            subject_id: subject,
-            inputs: sources
-                .iter()
-                .enumerate()
-                .map(|(ordinal, source)| DerivationInput {
-                    ordinal: ordinal as u32,
-                    reference: CognitiveRef::SourceRegion(
-                        source.source_region.as_ref().unwrap().source_region_id,
-                    ),
-                    role: "source".into(),
-                })
-                .collect(),
-            strategy: "deterministic-test".into(),
-            representation_kind: RepresentationKind::ExtractedText,
-            producer: consolidation_producer(),
-            revision: 1,
-            payload_text: Some(body.into()),
-            payload_json: None,
-            payload_artifact_id: None,
-            quality: serde_json::json!({}),
-            created_at: clock.now(subject),
-            supersedes: None,
-        })
+        .persist_derived_representation(
+            DerivedRepresentation {
+                derived_representation_id: DerivedRepresentationId::new(),
+                subject_id: subject,
+                inputs: sources
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, source)| DerivationInput {
+                        ordinal: ordinal as u32,
+                        reference: CognitiveRef::SourceRegion(
+                            source.source_region.as_ref().unwrap().source_region_id,
+                        ),
+                        role: "source".into(),
+                    })
+                    .collect(),
+                strategy: "deterministic-test".into(),
+                representation_kind: RepresentationKind::ExtractedText,
+                producer: consolidation_producer(),
+                revision: 1,
+                payload_text: Some(body.replace(' ', "\n")),
+                payload_json: None,
+                payload_artifact_id: None,
+                quality: serde_json::json!({}),
+                created_at: clock.now(subject),
+                supersedes: None,
+            },
+            None,
+        )
         .await
         .unwrap();
-    let derived_amber = derived_region(
-        &rt,
-        subject,
-        representation.derived_representation_id,
-        0,
-        "amberα".len() as u64,
-    )
-    .await;
-    let derived_cobalt = derived_region(
-        &rt,
-        subject,
-        representation.derived_representation_id,
-        cobalt_start,
-        body.len() as u64,
-    )
-    .await;
+    let segments = rt
+        .material
+        .segment_description(subject, representation.derived_representation_id)
+        .await
+        .unwrap();
+    assert_eq!(segments.len(), 2);
+    let derived_amber = segments[0].region.derived_region_id;
+    let derived_cobalt = segments[1].region.derived_region_id;
     let occurrence = sources[0].occurrence.occurrence_id;
     let evidence = EvidenceRef {
         occurrence_id: occurrence,
@@ -105,8 +100,8 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         OperationId::new(),
         "A joint material fact",
     );
-    input.epistemic_class = EpistemicClass::Derived;
-    input.basis = vec![RevisionBasis::Evidence(evidence.clone())];
+    input.content.epistemic_class = EpistemicClass::Derived;
+    input.content.basis = vec![RevisionBasis::Evidence(evidence.clone())];
     let memory = owner.form_memory(input).await.unwrap();
     let memory_ref = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
     let target = owner
@@ -149,15 +144,20 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         CognitiveRef::DerivedRegion(derived_amber),
         CognitiveRef::DerivedRegion(derived_cobalt),
     ];
-    let expected = ["amberα", "cobalt蓝", "amberα", "cobalt蓝"];
+    let expected = ["amberα", "cobalt蓝", "amberα\n", "cobalt蓝"];
     for selected_view in [None, Some(&view)] {
+        let selected_text = rt
+            .material
+            .text_excerpts(
+                subject,
+                &region_refs,
+                rt.material.max_upload_bytes,
+                selected_view,
+            )
+            .await
+            .unwrap();
         for (reference, text) in region_refs.iter().zip(expected) {
-            let selected = rt
-                .material
-                .text_view(subject, reference, selected_view)
-                .await
-                .unwrap()
-                .unwrap();
+            let selected = &selected_text[reference];
             assert_eq!(selected.text, text);
             assert_eq!(
                 selected.content_identity,
@@ -171,14 +171,34 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
                         reference: reference.clone(),
                         byte_range: None,
                         max_bytes: 64,
-                        resource_handle: None,
-                        resource: None,
                     },
                     selected_view,
                 )
                 .await
                 .unwrap();
             assert_eq!(exact.bytes, text.as_bytes());
+            assert!(
+                !exact.partial,
+                "complete selected regions are not budget truncations"
+            );
+            let (header, stream) = rt
+                .material
+                .materialize_stream(
+                    subject,
+                    MaterializeRequest {
+                        reference: reference.clone(),
+                        byte_range: None,
+                        max_bytes: 64,
+                    },
+                    selected_view,
+                )
+                .await
+                .unwrap();
+            assert!(!header.partial);
+            assert_eq!(
+                stream.try_collect::<Vec<_>>().await.unwrap().concat(),
+                text.as_bytes()
+            );
             assert_eq!(
                 (exact.byte_range.start, exact.byte_range.end),
                 (selected.selection.start, selected.selection.end)
@@ -207,7 +227,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         );
         let projection = rt
             .serving
-            .projection_input(
+            .vcp_projection_input(
                 subject,
                 true,
                 rt.configuration
@@ -217,6 +237,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
                         nous_persistence::EpisodeTextBudget,
                     >::new("episode.synopsis"))
                     .unwrap(),
+                "",
                 selected_view,
             )
             .await
@@ -285,8 +306,6 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
                     reference: region_refs[0].clone(),
                     byte_range: Some(ByteRange { start: 6, end: 7 }),
                     max_bytes: 64,
-                    resource_handle: None,
-                    resource: None
                 }
             )
             .await,
@@ -327,13 +346,16 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
     let first = page.needs.first().unwrap();
     let provider = rt.serving.embedding().unwrap();
     rt.serving
-        .commit_embedding(
+        .commit_embeddings(
             subject,
-            first.reference.clone(),
-            first.text.clone(),
-            &provider.space().space_hash,
-            &provider.producer().signature_hash,
-            vec![1.0, 0.0],
+            vec![nous_retrieval::EmbeddingSubmission {
+                reference: first.reference.clone(),
+                text: first.text.clone(),
+                space: (provider.space().space_hash).clone(),
+                producer: (provider.producer().signature_hash).clone(),
+                vector: vec![1.0, 0.0],
+            }],
+            None,
         )
         .await
         .unwrap();
@@ -345,25 +367,31 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
     assert!(cached.needs.is_empty());
     assert!(cached.next_cursor.is_some());
     rt.serving
-        .commit_embedding(
+        .commit_embeddings(
             subject,
-            need.reference.clone(),
-            need.text.clone(),
-            &provider.space().space_hash,
-            &provider.producer().signature_hash,
-            vec![1.0, 0.0],
+            vec![nous_retrieval::EmbeddingSubmission {
+                reference: need.reference.clone(),
+                text: need.text.clone(),
+                space: (provider.space().space_hash).clone(),
+                producer: (provider.producer().signature_hash).clone(),
+                vector: vec![1.0, 0.0],
+            }],
+            None,
         )
         .await
         .unwrap();
     assert!(
         rt.serving
-            .commit_embedding(
+            .commit_embeddings(
                 subject,
-                need.reference,
-                format!("{} changed", need.text),
-                &provider.space().space_hash,
-                &provider.producer().signature_hash,
-                vec![1.0, 0.0]
+                vec![nous_retrieval::EmbeddingSubmission {
+                    reference: need.reference,
+                    text: format!("{} changed", need.text),
+                    space: (provider.space().space_hash).clone(),
+                    producer: (provider.producer().signature_hash).clone(),
+                    vector: vec![1.0, 0.0]
+                }],
+                None
             )
             .await
             .is_err()
@@ -397,26 +425,4 @@ async fn insert_source_region(
     .unwrap();
     tx.commit().await.unwrap();
     region
-}
-async fn derived_region(
-    rt: &nous_kernel::NousRuntime,
-    subject: SubjectId,
-    representation: DerivedRepresentationId,
-    start: u64,
-    end: u64,
-) -> DerivedRegionId {
-    rt.material
-        .persist_derived_region(DerivedRegion {
-            derived_region_id: DerivedRegionId::new(),
-            subject_id: subject,
-            derived_representation_id: representation,
-            coordinate_kind: "text_span".into(),
-            coordinate: serde_json::json!({"start":start,"end":end}),
-            coordinate_hash: format!("{start}:{end}"),
-            parent_derived_region_id: None,
-            created_at: rt.cognition.now(subject),
-        })
-        .await
-        .unwrap()
-        .derived_region_id
 }

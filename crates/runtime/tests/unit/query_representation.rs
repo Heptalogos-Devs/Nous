@@ -41,8 +41,8 @@ fn explicit_and_pinned_descriptors_precede_work_and_resident_background() {
         },
     ];
     let mut sources = vec![
-        (tag, "work_context".into()),
-        (exact, "explicit_exact".into()),
+        QuerySource::new(tag, "work_context"),
+        QuerySource::new(exact, "exact_target"),
     ];
     for index in 0..16 {
         let reference = CognitiveRef::MemoryRevision(MemoryRevisionId::new());
@@ -50,7 +50,7 @@ fn explicit_and_pinned_descriptors_precede_work_and_resident_background() {
             reference: reference.clone(),
             text: format!("Resident {index}: {}", "background ".repeat(60)),
         });
-        sources.push((reference, "runtime_resident".into()));
+        sources.push(QuerySource::new(reference, "runtime_resident"));
     }
     let now = chrono::Utc::now();
     let context = WorkContextView {
@@ -156,5 +156,4 @@ fn representation_is_semantic_deterministic_and_bounded() {
         raw.text,
         "Intent:\nWhat did I discuss yesterday?\n\nCurrent objects:\nNous Wave issue triage"
     );
-    assert_eq!(raw.representation_version, "cognitive-query-v2");
 }

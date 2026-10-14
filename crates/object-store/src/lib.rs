@@ -4,7 +4,7 @@
 use futures::{Stream, StreamExt};
 use nous_core::{Error, Result};
 use opendal::{Operator, services::Fs};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Clone)]
 pub struct ObjectStore {
@@ -49,7 +49,7 @@ impl ObjectStore {
             match entry {
                 Ok(entry) => {
                     let hash = entry.path().rsplit('/').next().unwrap_or("");
-                    if Self::key(hash).is_ok() {
+                    if Self::storage_key(hash).is_ok() {
                         Some(Ok(hash.to_string()))
                     } else {
                         None
@@ -72,7 +72,8 @@ impl ObjectStore {
         Ok(Self { operator, root })
     }
 
-    fn key(hash: &str) -> Result<String> {
+    /// Canonical physical layout for a validated content digest.
+    pub fn storage_key(hash: &str) -> Result<String> {
         if hash.len() != 64
             || !hash
                 .bytes()
@@ -81,15 +82,6 @@ impl ObjectStore {
             return Err(Error::Invalid("invalid BLAKE3 digest".into()));
         }
         Ok(format!("{}/{}", &hash[..2], hash))
-    }
-
-    pub async fn put(&self, bytes: Vec<u8>) -> Result<String> {
-        let hash = blake3::hash(&bytes).to_hex().to_string();
-        self.operator
-            .write(&Self::key(&hash)?, bytes)
-            .await
-            .map_err(storage_error)?;
-        Ok(hash)
     }
 
     /// Stream an object into a staging file, hashing and enforcing the bound
@@ -141,7 +133,7 @@ impl ObjectStore {
         drop(file);
 
         let hash = hasher.finalize().to_hex().to_string();
-        let key = Self::key(&hash)?;
+        let key = Self::storage_key(&hash)?;
         let target = self.root.join(&key);
         if let Some(parent) = target.parent() {
             tokio::fs::create_dir_all(parent)
@@ -170,7 +162,7 @@ impl ObjectStore {
     pub async fn get(&self, hash: &str) -> Result<Vec<u8>> {
         let bytes = self
             .operator
-            .read(&Self::key(hash)?)
+            .read(&Self::storage_key(hash)?)
             .await
             .map_err(storage_error)?
             .to_vec();
@@ -190,51 +182,54 @@ impl ObjectStore {
             return Ok(Vec::new());
         }
         self.operator
-            .read_with(&Self::key(hash)?)
+            .read_with(&Self::storage_key(hash)?)
             .range(start..end)
             .await
             .map(|value| value.to_vec())
             .map_err(storage_error)
     }
 
-    /// Keep complete UTF-8 characters when a bounded read ends inside a character.
-    pub async fn read_text_prefix(
-        &self,
-        hash: &str,
-        byte_length: u64,
-        limit: u64,
-    ) -> Result<Option<String>> {
-        let bytes = self.read_range(hash, 0, byte_length.min(limit)).await?;
-        let text = match std::str::from_utf8(&bytes) {
-            Ok(text) => text,
-            Err(error) if byte_length > limit && error.error_len().is_none() => {
-                std::str::from_utf8(&bytes[..error.valid_up_to()])
-                    .map_err(|error| Error::Invalid(error.to_string()))?
-            }
-            Err(_) => return Ok(None),
-        };
-        Ok(Some(text.to_owned()))
-    }
-
-    /// Read CAS bytes in bounded chunks and verify integrity at end of stream.
+    /// Raw byte ranges never impose text boundaries; full reads verify CAS integrity at EOF.
     pub async fn stream(
         &self,
         hash: &str,
+        range: Option<std::ops::Range<u64>>,
     ) -> Result<impl Stream<Item = Result<Vec<u8>>> + Send + use<>> {
-        let file = tokio::fs::File::open(self.root.join(Self::key(hash)?))
+        let mut file = tokio::fs::File::open(self.root.join(Self::storage_key(hash)?))
             .await
             .map_err(|e| Error::Infrastructure(e.to_string()))?;
-        let expected = hash.to_owned();
+        let remaining = if let Some(range) = &range {
+            if range.end < range.start {
+                return Err(Error::Invalid("invalid byte range".into()));
+            }
+            file.seek(std::io::SeekFrom::Start(range.start))
+                .await
+                .map_err(|e| Error::Infrastructure(e.to_string()))?;
+            Some(range.end - range.start)
+        } else {
+            None
+        };
+        let expected = range.is_none().then(|| hash.to_owned());
         Ok(futures::stream::try_unfold(
-            (file, blake3::Hasher::new(), expected),
-            |(mut file, mut hasher, expected)| async move {
-                let mut chunk = vec![0; 1024 * 1024];
+            (file, blake3::Hasher::new(), expected, remaining),
+            |(mut file, mut hasher, expected, remaining)| async move {
+                if remaining == Some(0) {
+                    return Ok(None);
+                }
+                let mut chunk = vec![0; remaining.unwrap_or(262_144).min(262_144) as usize];
                 let size = file
                     .read(&mut chunk)
                     .await
                     .map_err(|e| Error::Infrastructure(e.to_string()))?;
                 if size == 0 {
-                    if hasher.finalize().to_hex().as_str() != expected {
+                    if remaining.is_some() {
+                        return Err(Error::Infrastructure(
+                            "artifact is shorter than requested range".into(),
+                        ));
+                    }
+                    if let Some(expected) = expected
+                        && hasher.finalize().to_hex().as_str() != expected
+                    {
                         return Err(Error::Infrastructure(
                             "artifact content hash mismatch".into(),
                         ));
@@ -242,8 +237,18 @@ impl ObjectStore {
                     return Ok(None);
                 }
                 chunk.truncate(size);
-                hasher.update(&chunk);
-                Ok(Some((chunk, (file, hasher, expected))))
+                if expected.is_some() {
+                    hasher.update(&chunk);
+                }
+                Ok(Some((
+                    chunk,
+                    (
+                        file,
+                        hasher,
+                        expected,
+                        remaining.map(|left| left - size as u64),
+                    ),
+                )))
             },
         ))
     }
@@ -251,9 +256,47 @@ impl ObjectStore {
     /// The canonical owner must first establish that no retained reference exists.
     pub async fn delete_unreferenced(&self, hash: &str) -> Result<()> {
         self.operator
-            .delete(&Self::key(hash)?)
+            .delete(&Self::storage_key(hash)?)
             .await
             .map_err(storage_error)
+    }
+
+    /// The caller holds the exclusive reference guard and supplies all retained Authority hashes.
+    pub async fn reclaim(
+        &self,
+        retained: &std::collections::HashSet<String>,
+    ) -> Result<(u64, u64)> {
+        let mut objects = 0;
+        let mut hashes = Box::pin(self.hashes().await?);
+        while let Some(hash) = hashes.next().await {
+            let hash = hash?;
+            if !retained.contains(&hash) {
+                self.delete_unreferenced(&hash).await?;
+                objects += 1;
+            }
+        }
+        let mut staging = 0;
+        let mut entries = tokio::fs::read_dir(&self.root)
+            .await
+            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|error| Error::Infrastructure(error.to_string()))?
+        {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .strip_prefix(".staging-")
+                .is_some_and(|suffix| uuid::Uuid::parse_str(suffix).is_ok())
+            {
+                tokio::fs::remove_file(entry.path())
+                    .await
+                    .map_err(|error| Error::Infrastructure(error.to_string()))?;
+                staging += 1;
+            }
+        }
+        Ok((objects, staging))
     }
 
     pub async fn check(&self) -> Result<()> {

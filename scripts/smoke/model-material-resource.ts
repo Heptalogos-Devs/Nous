@@ -1,7 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { CONFIG_REVISION } from "../../apps/nous-core/src/configuration/schema.js";
 import { connectNousInstance } from "@nous-wave/client/node";
 import { NousError } from "@nous-wave/client";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -28,6 +27,7 @@ const configPath = join(dataRoot, "bootstrap.toml");
 // Deterministic local provider contract wiring, never live-model or corpus evidence.
 let structuredEnabled = false;
 let providerCalls = 0;
+let stewardCalls = 0;
 let resourceContent = "LocalDocuments external material contract marker.";
 let formationEnabled = false;
 const documentsPath = join(dataRoot, "local-documents.json");
@@ -74,12 +74,50 @@ const provider = createServer((request, response) => {
       return;
     }
     const body = JSON.parse(Buffer.concat(chunks).toString()) as {
-      messages: unknown;
+      messages: { role: string; content: string }[];
       response_format: {
         type: string;
         json_schema: { strict: boolean; schema: { required: string[] } };
       };
     };
+    if (
+      body.response_format.json_schema.schema.required.includes("selectedIds")
+    ) {
+      stewardCalls++;
+      const input = body.messages.find((message) => message.role === "user");
+      assert(input);
+      const segments = JSON.parse(input.content) as {
+        id: string;
+        text: string;
+      }[];
+      assert(
+        segments.some((segment) =>
+          segment.text.includes("Foreground Steward continuity marker"),
+        ),
+      );
+      response.end(
+        JSON.stringify({
+          id: "steward",
+          created: 1,
+          model: "local-contract",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  selectedIds: segments.map((segment) => segment.id),
+                  summary: segments.map((segment) => segment.text).join("\n"),
+                }),
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      );
+      return;
+    }
     if (body.response_format.json_schema.schema.required.includes("text")) {
       if (!formationEnabled) {
         response.writeHead(503);
@@ -173,7 +211,7 @@ if (!providerAddress || typeof providerAddress === "string")
 await mkdir(join(dataRoot, "config"));
 await writeFile(
   join(dataRoot, "config", "nous.toml"),
-  `config_revision = ${CONFIG_REVISION}\n[host]\nkernel_executable = ${JSON.stringify(kernel)}\nport = 0\n[object_store]\nmax_upload_bytes = 1048576\n[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.smoke]\nbase_url = "http://127.0.0.1:${providerAddress.port}/v1"\ncredential_env = "NOUS_SMOKE_GATEWAY"\n[models.model_profiles.local]\ngateway = "smoke"\nprotocol = "openai-chat"\nmodel = "local-contract"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.material_structuring]\nmodel = "local"\n[models.roles.material_structuring]\nroutes = ["material_structuring"]\n`,
+  `[host]\nkernel_executable = ${JSON.stringify(kernel)}\nport = 0\n[object_store]\nmax_upload_bytes = 1048576\n[[consumers]]\nconsumer_id = "default"\n[[consumers]]\nconsumer_id = "refs-only"\nmaterialize = false\n[models.gateway_profiles.smoke]\nbase_url = "http://127.0.0.1:${providerAddress.port}/v1"\ncredential_env = "NOUS_SMOKE_GATEWAY"\n[models.model_profiles.local]\ngateway = "smoke"\nprotocol = "openai-chat"\nmodel = "local-contract"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.material_structuring]\nmodel = "local"\n[models.roles.material_structuring]\nroutes = ["material_structuring"]\n[models.execution_profiles.projection_steward]\nmodel = "local"\n[models.roles.projection_steward]\nroutes = ["projection_steward"]\n`,
 );
 const runtimeRoot = process.env.NOUS_WAVE_POSTGRES_RUNTIME
   ? dirname(process.env.NOUS_WAVE_POSTGRES_RUNTIME)
@@ -183,6 +221,7 @@ await writeFile(
   `[paths]\nprogram = ${JSON.stringify(root)}\nruntime = ${JSON.stringify(runtimeRoot)}\n`,
 );
 let core: ChildProcess | undefined;
+let coreErrors = "";
 async function boot() {
   core = spawn(
     process.execPath,
@@ -206,13 +245,13 @@ async function boot() {
     },
   );
   const child = core;
-  let errors = "";
+  coreErrors = "";
   child.stderr!.on("data", (chunk: Buffer) => {
-    if (errors.length < 8192) errors += chunk.toString();
+    coreErrors = (coreErrors + chunk.toString()).slice(-8192);
   });
   await new Promise<void>((done, fail) => {
     const timer = setTimeout(
-      () => fail(new Error(`Core boot timed out: ${errors}`)),
+      () => fail(new Error(`Core boot timed out: ${coreErrors}`)),
       120_000,
     );
     const cleanup = () => {
@@ -223,7 +262,7 @@ async function boot() {
     };
     const exited = (code: number | null) => {
       cleanup();
-      fail(new Error(`Core exited during boot (${code}): ${errors}`));
+      fail(new Error(`Core exited during boot (${code}): ${coreErrors}`));
     };
     const errored = (error: Error) => {
       cleanup();
@@ -369,7 +408,7 @@ try {
   assert.equal(twoStage.representations.length, 2);
   const structured = twoStage.representations[1]!;
   assert.equal(twoStage.selectedRepresentationId, structured.representationId);
-  const persisted = await client.material.representation({
+  const persisted = await client.material.getDerivedRepresentation({
     subjectId,
     id: structured.representationId,
   });
@@ -379,7 +418,7 @@ try {
     basis_refs: { kind: string; value: string }[];
   }[];
   assert.equal(observations[0]!.basis_refs[0]!.kind, "derived_region");
-  const segment = await client.material.derivedRegion({
+  const segment = await client.material.getDerivedRegion({
     subjectId,
     id: observations[0]!.basis_refs[0]!.value,
   });
@@ -388,7 +427,7 @@ try {
     twoStage.representations[0]!.representationId,
   );
   assert.equal(segment.coordinateKind, "description_segment");
-  const segmentMaterial = await client.material.materialize({
+  const segmentMaterial = await client.material.materializeEvidence({
     subjectId,
     reference: { kind: "derived_region", value: segment.derivedRegionId },
     maxBytes: 4096n,
@@ -406,7 +445,7 @@ try {
   });
   assert.equal(replay.selectedRepresentationId, structured.representationId);
   assert.equal(providerCalls, beforeReplay);
-  const resourceDescriptor = await client.resources.put({
+  const resourceDescriptor = await client.resourceRegistry.putResource({
     subjectId,
     descriptor: {
       resourceRef: "resource:smoke",
@@ -420,10 +459,11 @@ try {
     },
   });
   assert.equal(resourceDescriptor.providerProfile, "dogfooding");
-  const resourceResult = await client.cognition.recall(
-    subjectId,
-    "Retrieve external chunk $current(required) $return(memory,resource) $limit(2)",
-  );
+  const resourceResult = await client.cognition.query({
+    subjectId: subjectId,
+    nousql:
+      "Retrieve external chunk $current(required) $return(memory,resource) $limit(2)",
+  });
   assert.equal(resourceResult.resourceActions.length, 0);
   assert.equal(resourceResult.resourceRecords.length, 1);
   assert.equal(
@@ -446,11 +486,11 @@ try {
     reference: selectedRef,
     observedAt,
   };
-  const selected = await client.resources.materialize(selectedRequest);
+  const selected = await client.resources.materializeResource(selectedRequest);
   assert(
     selected.observation?.artifactId && selected.observation.sourceRegionId,
   );
-  const selectedOccurrence = await client.material.occurrence({
+  const selectedOccurrence = await client.material.getOccurrence({
     subjectId,
     id: selected.observation.occurrenceId,
   });
@@ -459,7 +499,35 @@ try {
     selectedOccurrence.externalObjectRef!,
     /^object:resource-entry:[a-f0-9]{64}$/,
   );
-  const selectedSource = await client.material.materialize({
+  await client.identity.bindIdentity({
+    subjectId,
+    canonical: {
+      kind: "external_object",
+      value: selectedOccurrence.externalObjectRef!,
+    },
+    displayName: "Named external source marker",
+    aliases: ["External alias marker"],
+  });
+  const externalPrepared = await client.cognition.prepareQuery({
+    subjectId,
+    expression: {
+      operation: "atom",
+      cues: [
+        { cue: { case: "text", value: "Recall named external source" } },
+        {
+          cue: {
+            case: "externalObjectRef",
+            value: selectedOccurrence.externalObjectRef!,
+          },
+        },
+      ],
+    },
+  });
+  assert(
+    externalPrepared.embeddingText.includes("Named external source marker"),
+  );
+  assert(externalPrepared.embeddingText.includes("External alias marker"));
+  const selectedSource = await client.material.materializeEvidence({
     subjectId,
     reference: {
       kind: "source_region",
@@ -471,12 +539,13 @@ try {
     new TextDecoder().decode(selectedSource.content),
     "LocalDocuments external material contract marker.",
   );
-  const duplicateSelected = await client.resources.materialize(selectedRequest);
+  const duplicateSelected =
+    await client.resources.materializeResource(selectedRequest);
   assert.equal(
     duplicateSelected.observation?.occurrenceId,
     selected.observation.occurrenceId,
   );
-  const secondExposure = await client.resources.materialize({
+  const secondExposure = await client.resources.materializeResource({
     ...selectedRequest,
     operationId: crypto.randomUUID(),
   });
@@ -490,7 +559,7 @@ try {
   );
   await publishDocuments("2");
   await assert.rejects(
-    client.resources.materialize({
+    client.resources.materializeResource({
       ...selectedRequest,
       operationId: crypto.randomUUID(),
     }),
@@ -498,13 +567,13 @@ try {
   );
   await publishDocuments("1", false);
   await assert.rejects(
-    client.resources.materialize({
+    client.resources.materializeResource({
       ...selectedRequest,
       operationId: crypto.randomUUID(),
     }),
     /denied/,
   );
-  const retained = await client.material.materialize({
+  const retained = await client.material.materializeEvidence({
     subjectId,
     reference: {
       kind: "source_region",
@@ -517,7 +586,7 @@ try {
     "LocalDocuments external material contract marker.",
   );
   await publishDocuments();
-  assert.equal((await client.material.limits({})).maxUploadBytes, 1048576n);
+  assert.equal((await client.material.getLimits({})).maxUploadBytes, 1048576n);
   for (const boundedContent of [
     "x".repeat(1048576),
     "\u0001".repeat(1048576),
@@ -536,9 +605,11 @@ try {
           .digest("hex"),
       },
     };
-    const largeSelected = await client.resources.materialize(largeRequest);
+    const largeSelected =
+      await client.resources.materializeResource(largeRequest);
     assert.equal(largeSelected.content, boundedContent);
-    const largeReplay = await client.resources.materialize(largeRequest);
+    const largeReplay =
+      await client.resources.materializeResource(largeRequest);
     assert.equal(largeReplay.content, boundedContent);
     assert.equal(
       largeReplay.observation?.occurrenceId,
@@ -547,7 +618,7 @@ try {
   }
   resourceContent = "LocalDocuments external material contract marker.";
   await publishDocuments();
-  await client.resources.put({
+  await client.resourceRegistry.putResource({
     subjectId,
     descriptor: {
       ...resourceDescriptor,
@@ -555,10 +626,51 @@ try {
       providerProfile: "unconfigured",
     },
   });
-  const unavailableResource = await client.cognition.recall(
-    subjectId,
-    "external chunk $return(resource) $limit(2)",
+  assert.deepEqual(
+    await client.resourceRegistry.getResource({
+      subjectId,
+      id: resourceDescriptor.resourceRef,
+    }),
+    resourceDescriptor,
   );
+  const firstResourcePage = await client.resourceRegistry.listResources({
+    subjectId,
+    status: "ready",
+    page: { pageSize: 1 },
+  });
+  assert.equal(firstResourcePage.items[0]?.resourceRef, "resource:smoke");
+  assert(firstResourcePage.nextPageToken);
+  const secondResourcePage = await client.resourceRegistry.listResources({
+    subjectId,
+    status: "ready",
+    page: { pageSize: 1, pageToken: firstResourcePage.nextPageToken },
+  });
+  assert.equal(
+    secondResourcePage.items[0]?.resourceRef,
+    "resource:unavailable_fixture",
+  );
+  assert.equal(secondResourcePage.nextPageToken, "");
+  assert.equal(
+    (
+      await client.resourceRegistry.listResources({
+        subjectId,
+        status: "unavailable",
+      })
+    ).items.length,
+    0,
+  );
+  await assert.rejects(
+    client.resourceRegistry.listResources({
+      subjectId,
+      status: "unavailable",
+      page: { pageToken: firstResourcePage.nextPageToken },
+    }),
+    /page token belongs to another request/,
+  );
+  const unavailableResource = await client.cognition.query({
+    subjectId: subjectId,
+    nousql: "external chunk $return(resource) $limit(2)",
+  });
   assert.equal(unavailableResource.resourceRecords.length, 1);
   assert.equal(unavailableResource.resourceActions.length, 1);
   await assert.rejects(
@@ -567,9 +679,10 @@ try {
     }),
     /instance limit/,
   );
-  const memory = await client.memory.form({
+  const memory = await client.memory.formMemory({
     subjectId,
     operationId: crypto.randomUUID(),
+    cognitiveRole: "declarative",
     input: {
       producer: {
         providerClass: "deterministic-local-smoke",
@@ -579,7 +692,6 @@ try {
         preprocessingRevision: "1",
         configDigest: "local-wiring-v1",
       },
-      cognitiveRole: "declarative",
       formationMode: "grounded",
       groundingOccurrenceId: occurrenceId,
       semanticRole: "fact",
@@ -603,12 +715,12 @@ try {
       ],
     },
   });
-  const response = await client.cognition.recall(
-    subjectId,
-    "protocol continuity $return(memory) $limit(5)",
-  );
+  const response = await client.cognition.query({
+    subjectId: subjectId,
+    nousql: "protocol continuity $return(memory) $limit(5)",
+  });
   assert(memory.producerSignatureId);
-  const producer = await client.material.producer({
+  const producer = await client.material.getProducer({
     subjectId,
     id: memory.producerSignatureId,
   });
@@ -620,8 +732,18 @@ try {
   );
   await cli("query", "protocol continuity $return(memory) $limit(5)");
   const trace = await cli("trace", `memory_revision:${memory.revisionId}`);
-  assert(Array.isArray(trace.sources) && trace.sources.length === 1);
-  assert(Array.isArray(trace.derivations) && trace.derivations.length >= 2);
+  const lineage = trace.lineage as {
+    nodes?: { reference?: { kind?: string; value?: string } }[];
+    truncated?: boolean;
+  };
+  assert(lineage.nodes?.some((node) => node.reference?.kind === "occurrence"));
+  assert(
+    lineage.nodes?.some(
+      (node) => node.reference?.value === extracted.selectedRepresentationId,
+    ),
+  );
+  assert(lineage.nodes?.some((node) => node.reference?.kind === "artifact"));
+  assert.equal(lineage.truncated, false);
   await cli("use", `memory_revision:${memory.revisionId}`);
   const file = join(dataRoot, "source.txt");
   await writeFile(file, "Streaming artifact consumer wiring.");
@@ -670,10 +792,10 @@ routes = ["memory_formation"]
     limit: 1,
   });
   assert(prepared.committed > 0 && prepared.degradation.length === 0);
-  const recall = await restarted.cognition.recall(
-    subjectId,
-    "protocol continuity $return(memory) $limit(5)",
-  );
+  const recall = await restarted.cognition.query({
+    subjectId: subjectId,
+    nousql: "protocol continuity $return(memory) $limit(5)",
+  });
   assert(recall.hits.some((hit) => hit.revision?.value === memory.revisionId));
   const formationRequest = {
     subjectId,
@@ -694,16 +816,24 @@ routes = ["memory_formation"]
   );
   assert(!JSON.stringify(unavailableFormation).includes("fixture-secret"));
   formationEnabled = true;
-  const recoveredFormation =
-    await restarted.model.formFromObservation(formationRequest);
+  const callsBeforeFormation = providerCalls;
+  const [recoveredFormation, concurrentFormation] = await Promise.all([
+    restarted.model.formFromObservation(formationRequest),
+    restarted.model.formFromObservation(formationRequest),
+  ]);
+  assert.equal(providerCalls, callsBeforeFormation + 1);
+  assert.equal(
+    concurrentFormation.memory?.revisionId,
+    recoveredFormation.memory?.revisionId,
+  );
   assert(
     recoveredFormation.memory && recoveredFormation.degradation.length === 0,
   );
-  const formationProducer = await restarted.material.producer({
+  const formationProducer = await restarted.material.getProducer({
     subjectId,
     id: recoveredFormation.memory.producerSignatureId!,
   });
-  assert.match(formationProducer.implementation, /^ai-sdk:[a-f0-9]{64}$/);
+  assert.equal(formationProducer.implementation, "ai-sdk");
   await cli("session", "show");
   await assert.rejects(
     restarted.model.formFromObservation({
@@ -718,10 +848,10 @@ routes = ["memory_formation"]
       error.context.operation_key === formationRequest.operationId,
   );
   await assert.rejects(
-    restarted.cognition.recall(
-      subjectId,
-      'binding check @e("absent-smoke-identity")',
-    ),
+    restarted.cognition.query({
+      subjectId: subjectId,
+      nousql: 'binding check @e("absent-smoke-identity")',
+    }),
     (error: unknown) =>
       error instanceof NousError &&
       error.domainCode === "UNKNOWN_REFERENCE" &&
@@ -729,7 +859,104 @@ routes = ["memory_formation"]
       error.context.reference === "absent-smoke-identity",
   );
   const sessionId = String(session.sessionId);
-  await restarted.cognition.closeSession({ subjectId, id: sessionId });
+  const foreground = await restarted.runtime.createWorkContext({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    purpose: "Foreground Steward continuity marker.",
+    contextText: "Foreground Steward continuity marker: actual task body.",
+  });
+  assert(foreground.workContext);
+  const currentSession = await restarted.runtime.getSession({
+    subjectId,
+    id: sessionId,
+  });
+  await restarted.runtime.setActiveWorkContext({
+    subjectId,
+    sessionId,
+    operationId: crypto.randomUUID(),
+    expectedRuntimeRevision: currentSession.runtimeRevision,
+    workContextId: foreground.workContext.workContextId,
+  });
+  const projection = {
+    subjectId,
+    sessionId,
+    consumerId: "default",
+    maxItems: 8,
+    maxTextBytes: 4096,
+  };
+  const beforeSteward = providerCalls;
+  const managed = await restarted.cognition.buildManagedContext({ projection });
+  assert(managed.cursor && managed.projection);
+  assert.equal(providerCalls, beforeSteward + 1);
+  assert.equal(stewardCalls, 1);
+  const summary = managed.projection.segments.find(
+    (entry) => entry.semanticRole === "steward_synthesis",
+  );
+  assert(summary?.sourceRevision);
+  assert(summary.text.includes("Foreground Steward continuity marker"));
+  const managedAgain = await restarted.cognition.buildManagedContext({
+    projection,
+    knownCursor: managed.cursor,
+  });
+  assert.equal(providerCalls, beforeSteward + 2);
+  assert.equal(stewardCalls, 2);
+  assert.equal(managedAgain.kind, "APPEND");
+  assert.deepEqual(managedAgain.cursor, managed.cursor);
+  assert.equal(managedAgain.projection?.segments.length, 0);
+  const unchanged = await restarted.cognition.buildProjection(projection);
+  assert.equal(
+    unchanged.segments.find(
+      (entry) => entry.semanticRole === "steward_synthesis",
+    )?.sourceRevision,
+    summary.sourceRevision,
+  );
+  const beforeRefs = providerCalls;
+  const references = await restarted.cognition.buildManagedContext({
+    projection: {
+      ...projection,
+      consumerId: "refs-only",
+      situationRefs: [
+        { kind: "derived_representation", value: structured.representationId },
+      ],
+    },
+  });
+  assert.equal(providerCalls, beforeRefs);
+  assert(references.projection?.segments.length);
+  assert(references.projection.segments.every((entry) => !entry.text));
+  assert(
+    references.projection.segments.some((entry) =>
+      entry.sourceRefs.some(
+        (ref) =>
+          ref.kind === "derived_representation" &&
+          ref.value === structured.representationId,
+      ),
+    ),
+  );
+  const missingArtifact = crypto.randomUUID();
+  const mixed = await restarted.cognition.buildProjection({
+    ...projection,
+    maxItems: 32,
+    situationRefs: [
+      { kind: "occurrence", value: occurrenceId },
+      { kind: "artifact", value: missingArtifact },
+    ],
+  });
+  assert(
+    mixed.segments.some(
+      (contextPart) =>
+        contextPart.sourceRefs.some(
+          (ref) => ref.kind === "occurrence" && ref.value === occurrenceId,
+        ) && contextPart.text.includes("protocol continuity"),
+    ),
+  );
+  assert(
+    mixed.degradation.some(
+      (problem) =>
+        problem.code === "projection_source_unavailable" &&
+        problem.detail?.includes(missingArtifact),
+    ),
+  );
+  await restarted.runtime.closeSession({ subjectId, id: sessionId });
   await assert.rejects(
     restarted.cognition.query({
       subjectId,
@@ -749,6 +976,7 @@ routes = ["memory_formation"]
       result: "FAIL",
       stage: "real-consumer-local",
       error: error instanceof Error ? error.message : "Unknown failure",
+      coreErrors,
       stack: error instanceof Error ? error.stack : undefined,
     }),
   );

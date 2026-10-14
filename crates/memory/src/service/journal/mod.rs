@@ -4,7 +4,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-mod lifecycle;
 mod mutations;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,7 +69,6 @@ pub struct JournalObject {
     pub acceptance_state: AcceptanceState,
     pub integrity_state: IntegrityState,
     pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
     pub created_at: DateTime<Utc>,
 }
 
@@ -105,81 +103,118 @@ impl MemoryService {
         journal: JournalId,
         revision: Option<JournalRevisionId>,
     ) -> Result<JournalView> {
-        let row = sqlx::query("SELECT o.*,r.journal_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end,r.narrative,r.formed_at,r.recorded_at,r.producer_signature_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id AND r.journal_revision_id=COALESCE($3,o.current_revision_id) WHERE o.subject_id=$1 AND o.journal_id=$2")
-            .bind(subject.0).bind(journal.0).bind(revision.map(|id| id.0)).fetch_optional(self.store.pool()).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("Journal not found".into()))?;
-        let revision = JournalRevisionId(row.try_get("journal_revision_id").map_err(db)?);
-        let point_rows = sqlx::query("SELECT p.ordinal,p.role,p.text,COALESCE(jsonb_agg(s.basis ORDER BY s.basis_no) FILTER(WHERE s.basis_no IS NOT NULL),'[]') AS basis FROM journal_revision_points p LEFT JOIN journal_point_basis s USING(journal_revision_id,ordinal) WHERE p.journal_revision_id=$1 GROUP BY p.ordinal,p.role,p.text ORDER BY p.ordinal")
-            .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)?;
-        let points = point_rows
-            .into_iter()
+        let mut tx = self.store.read_view().await?;
+        let revisions = revision.map(|id| vec![id.0]).unwrap_or_default();
+        let objects = if revision.is_none() {
+            vec![journal.0]
+        } else {
+            vec![]
+        };
+        let views = self
+            .journal_views_in(&mut tx, subject, &revisions, &objects)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        views
+            .into_values()
+            .find(|view| view.object.journal_id == journal)
+            .ok_or_else(|| Error::NotFound("Journal not found".into()))
+    }
+
+    async fn journal_views(
+        &self,
+        subject: SubjectId,
+        revisions: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, JournalView>> {
+        let mut tx = self.store.read_view().await?;
+        let result = self
+            .journal_views_in(&mut tx, subject, revisions, &[])
+            .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(result)
+    }
+
+    pub(in crate::service) async fn journal_views_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        revisions: &[Uuid],
+        objects: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, JournalView>> {
+        use std::collections::HashMap;
+        let rows = sqlx::query("SELECT o.*,r.journal_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end,r.narrative,r.formed_at,r.recorded_at,r.producer_signature_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id WHERE o.subject_id=$1 AND (r.journal_revision_id=ANY($2) OR (o.journal_id=ANY($3) AND r.journal_revision_id=o.current_revision_id))").bind(subject.0).bind(revisions).bind(objects).fetch_all(&mut **tx).await.map_err(db)?;
+        let selected = rows
+            .iter()
+            .map(|row| row.try_get::<Uuid, _>("journal_revision_id").map_err(db))
+            .collect::<Result<Vec<_>>>()?;
+        let mut points: HashMap<Uuid, Vec<JournalPoint>> = HashMap::new();
+        for row in sqlx::query("SELECT p.journal_revision_id,p.ordinal,p.role,p.text,COALESCE(jsonb_agg(s.basis ORDER BY s.basis_no) FILTER(WHERE s.basis_no IS NOT NULL),'[]') AS basis FROM journal_revision_points p LEFT JOIN journal_point_basis s USING(journal_revision_id,ordinal) WHERE p.journal_revision_id=ANY($1) GROUP BY p.journal_revision_id,p.ordinal,p.role,p.text ORDER BY p.journal_revision_id,p.ordinal")
+            .bind(&selected).fetch_all(&mut **tx).await.map_err(db)? {
+            points.entry(row.try_get("journal_revision_id").map_err(db)?).or_default().push(JournalPoint {
+                role: parse_enum(row.try_get("role").map_err(db)?, "Journal point role")?,
+                text: row.try_get("text").map_err(db)?,
+                basis: serde_json::from_value(row.try_get("basis").map_err(db)?).map_err(|error| Error::Infrastructure(error.to_string()))?,
+            });
+        }
+        let mut sources: HashMap<Uuid, Vec<CognitiveRef>> = HashMap::new();
+        for row in sqlx::query("SELECT journal_revision_id,ref_kind,ref_value FROM journal_revision_sources WHERE journal_revision_id=ANY($1) ORDER BY journal_revision_id,ref_kind,ref_value")
+            .bind(&selected).fetch_all(&mut **tx).await.map_err(db)? {
+            sources.entry(row.try_get("journal_revision_id").map_err(db)?).or_default().push(parse_reference(&row.try_get::<String,_>("ref_kind").map_err(db)?, &row.try_get::<String,_>("ref_value").map_err(db)?)?);
+        }
+        rows.into_iter()
             .map(|row| {
-                Ok(JournalPoint {
-                    role: parse_enum(row.try_get("role").map_err(db)?, "Journal point role")?,
-                    text: row.try_get("text").map_err(db)?,
-                    basis: serde_json::from_value(row.try_get("basis").map_err(db)?)
-                        .map_err(|error| Error::Infrastructure(error.to_string()))?,
+                let journal = JournalId(row.try_get("journal_id").map_err(db)?);
+                let revision = JournalRevisionId(row.try_get("journal_revision_id").map_err(db)?);
+                Ok(JournalView {
+                    object: JournalObject {
+                        journal_id: journal,
+                        subject_id: subject,
+                        current_revision_id: JournalRevisionId(
+                            row.try_get("current_revision_id").map_err(db)?,
+                        ),
+                        object_epoch: row.try_get("object_epoch").map_err(db)?,
+                        acceptance_state: parse_enum(
+                            row.try_get("acceptance_state").map_err(db)?,
+                            "acceptance state",
+                        )?,
+                        integrity_state: parse_enum(
+                            row.try_get("integrity_state").map_err(db)?,
+                            "integrity state",
+                        )?,
+                        suppression_state: parse_enum(
+                            row.try_get("suppression_state").map_err(db)?,
+                            "suppression state",
+                        )?,
+                        created_at: row.try_get("created_at").map_err(db)?,
+                    },
+                    revision: JournalRevision {
+                        journal_revision_id: revision,
+                        journal_id: journal,
+                        subject_id: subject,
+                        revision_no: row.try_get("revision_no").map_err(db)?,
+                        parent_revision_id: row
+                            .try_get::<Option<Uuid>, _>("parent_revision_id")
+                            .map_err(db)?
+                            .map(JournalRevisionId),
+                        revision_intent: row.try_get("revision_intent").map_err(db)?,
+                        title: row.try_get("title").map_err(db)?,
+                        temporal_scope: temporal_from_columns(
+                            row.try_get("temporal_scope_kind").map_err(db)?,
+                            row.try_get("temporal_scope_start").map_err(db)?,
+                            row.try_get("temporal_scope_end").map_err(db)?,
+                        )?,
+                        narrative: row.try_get("narrative").map_err(db)?,
+                        formed_at: row.try_get("formed_at").map_err(db)?,
+                        recorded_at: row.try_get("recorded_at").map_err(db)?,
+                        producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
+                    },
+                    points: points.remove(&revision.0).unwrap_or_default(),
+                    sources: sources.remove(&revision.0).unwrap_or_default(),
                 })
             })
-            .collect::<Result<Vec<_>>>()?;
-        let source_rows = sqlx::query("SELECT ref_kind,ref_value FROM journal_revision_sources WHERE journal_revision_id=$1 ORDER BY ref_kind,ref_value")
-            .bind(revision.0).fetch_all(self.store.pool()).await.map_err(db)?;
-        let sources = source_rows
-            .into_iter()
-            .map(|row| {
-                parse_reference(
-                    &row.get::<String, _>("ref_kind"),
-                    &row.get::<String, _>("ref_value"),
-                )
+            .map(|result: Result<JournalView>| {
+                result.map(|view| (view.revision.journal_revision_id.0, view))
             })
-            .collect::<Result<_>>()?;
-        Ok(JournalView {
-            object: JournalObject {
-                journal_id: journal,
-                subject_id: subject,
-                current_revision_id: JournalRevisionId(
-                    row.try_get("current_revision_id").map_err(db)?,
-                ),
-                object_epoch: row.try_get("object_epoch").map_err(db)?,
-                acceptance_state: parse_enum(
-                    row.try_get("acceptance_state").map_err(db)?,
-                    "acceptance state",
-                )?,
-                integrity_state: parse_enum(
-                    row.try_get("integrity_state").map_err(db)?,
-                    "integrity state",
-                )?,
-                suppression_state: parse_enum(
-                    row.try_get("suppression_state").map_err(db)?,
-                    "suppression state",
-                )?,
-                purge_state: parse_enum(row.try_get("purge_state").map_err(db)?, "purge state")?,
-                created_at: row.try_get("created_at").map_err(db)?,
-            },
-            revision: JournalRevision {
-                journal_revision_id: revision,
-                journal_id: journal,
-                subject_id: subject,
-                revision_no: row.try_get("revision_no").map_err(db)?,
-                parent_revision_id: row
-                    .try_get::<Option<Uuid>, _>("parent_revision_id")
-                    .map_err(db)?
-                    .map(JournalRevisionId),
-                revision_intent: row.try_get("revision_intent").map_err(db)?,
-                title: row.try_get("title").map_err(db)?,
-                temporal_scope: temporal_from_columns(
-                    row.try_get("temporal_scope_kind").map_err(db)?,
-                    row.try_get("temporal_scope_start").map_err(db)?,
-                    row.try_get("temporal_scope_end").map_err(db)?,
-                )?,
-                narrative: row.try_get("narrative").map_err(db)?,
-                formed_at: row.try_get("formed_at").map_err(db)?,
-                recorded_at: row.try_get("recorded_at").map_err(db)?,
-                producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
-            },
-            points,
-            sources,
-        })
+            .collect()
     }
 
     pub async fn journal_revision(
@@ -187,14 +222,10 @@ impl MemoryService {
         subject: SubjectId,
         revision: JournalRevisionId,
     ) -> Result<JournalView> {
-        let id: Option<Uuid> = sqlx::query_scalar("SELECT journal_id FROM journal_revisions WHERE subject_id=$1 AND journal_revision_id=$2")
-            .bind(subject.0).bind(revision.0).fetch_optional(self.store.pool()).await.map_err(db)?;
-        self.journal(
-            subject,
-            JournalId(id.ok_or_else(|| Error::NotFound("Journal revision not found".into()))?),
-            Some(revision),
-        )
-        .await
+        self.journal_views(subject, &[revision.0])
+            .await?
+            .remove(&revision.0)
+            .ok_or_else(|| Error::NotFound("Journal revision not found".into()))
     }
 
     pub async fn journal_page(
@@ -208,63 +239,42 @@ impl MemoryService {
         if !(1..=201).contains(&limit) {
             return Err(Error::Invalid("Journal page limit is out of bounds".into()));
         }
-        if !["", "accepted", "withdrawn"].contains(&status) {
+        if !matches!(status, "" | "accepted" | "withdrawn") {
             return Err(Error::Invalid("invalid Journal status filter".into()));
         }
         self.store.require_subject(subject).await?;
-        if let Some(journal) = journal {
-            let ids: Vec<Uuid> = sqlx::query_scalar("SELECT journal_revision_id FROM journal_revisions WHERE subject_id=$1 AND journal_id=$2 AND ($3::uuid IS NULL OR journal_revision_id>$3) ORDER BY journal_revision_id LIMIT $4")
-                .bind(subject.0).bind(journal.0).bind(last).bind(limit).fetch_all(self.store.pool()).await.map_err(db)?;
-            let mut views = Vec::with_capacity(ids.len());
-            for revision in ids {
-                views.push(
-                    self.journal(subject, journal, Some(JournalRevisionId(revision)))
-                        .await?,
-                );
-            }
-            Ok(views)
+        let mut tx = self.store.read_view().await?;
+        let ids: Vec<Uuid> = if let Some(journal) = journal {
+            self.store
+                .validate_reference(subject, &CognitiveRef::Journal(journal))
+                .await?;
+            let after_no = if let Some(last) = last {
+                Some(sqlx::query_scalar::<_, i32>("SELECT revision_no FROM journal_revisions WHERE subject_id=$1 AND journal_id=$2 AND journal_revision_id=$3")
+                    .bind(subject.0).bind(journal.0).bind(last).fetch_optional(&mut *tx).await.map_err(db)?
+                    .ok_or_else(|| Error::Invalid("invalid Journal history cursor".into()))?)
+            } else {
+                None
+            };
+            sqlx::query_scalar("SELECT journal_revision_id FROM journal_revisions WHERE subject_id=$1 AND journal_id=$2 AND ($3::int IS NULL OR revision_no>$3) ORDER BY revision_no LIMIT $4")
+                .bind(subject.0).bind(journal.0).bind(after_no).bind(limit).fetch_all(&mut *tx).await.map_err(db)?
         } else {
-            let ids: Vec<Uuid> = sqlx::query_scalar("SELECT journal_id FROM journal_objects WHERE subject_id=$1 AND ($2::uuid IS NULL OR journal_id>$2) AND ($4='' OR acceptance_state=$4) ORDER BY journal_id LIMIT $3")
-                .bind(subject.0).bind(last).bind(limit).bind(status).fetch_all(self.store.pool()).await.map_err(db)?;
-            let mut views = Vec::with_capacity(ids.len());
-            for journal in ids {
-                views.push(self.journal(subject, JournalId(journal), None).await?);
-            }
-            Ok(views)
-        }
-    }
-
-    pub async fn list_journals(&self, subject: SubjectId) -> Result<Vec<JournalView>> {
-        self.store.require_subject(subject).await?;
-        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT journal_id FROM journal_objects WHERE subject_id=$1 ORDER BY created_at,journal_id LIMIT 256")
-            .bind(subject.0).fetch_all(self.store.pool()).await.map_err(db)?;
-        let mut views = Vec::with_capacity(ids.len());
-        for id in ids {
-            views.push(self.journal(subject, JournalId(id), None).await?);
-        }
-        Ok(views)
-    }
-
-    pub async fn journal_history(
-        &self,
-        subject: SubjectId,
-        journal: JournalId,
-    ) -> Result<Vec<JournalView>> {
-        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT journal_revision_id FROM journal_revisions WHERE subject_id=$1 AND journal_id=$2 ORDER BY revision_no LIMIT 256")
-            .bind(subject.0).bind(journal.0).fetch_all(self.store.pool()).await.map_err(db)?;
-        let mut views = Vec::with_capacity(ids.len());
-        for id in ids {
-            views.push(
-                self.journal(subject, journal, Some(JournalRevisionId(id)))
-                    .await?,
-            );
-        }
-        Ok(views)
+            sqlx::query_scalar("SELECT current_revision_id FROM journal_objects WHERE subject_id=$1 AND ($2::uuid IS NULL OR journal_id>$2) AND ($4='' OR acceptance_state=$4) ORDER BY journal_id LIMIT $3")
+                .bind(subject.0).bind(last).bind(limit).bind(status).fetch_all(&mut *tx).await.map_err(db)?
+        };
+        let mut views = self.journal_views_in(&mut tx, subject, &ids, &[]).await?;
+        tx.commit().await.map_err(db)?;
+        ids.into_iter()
+            .map(|id| {
+                views
+                    .remove(&id)
+                    .ok_or_else(|| Error::NotFound("Journal page changed while reading".into()))
+            })
+            .collect()
     }
 }
 
 impl MemoryService {
-    async fn wake_journal_revalidation_in(
+    pub(in crate::service) async fn wake_journal_revalidation_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,

@@ -11,7 +11,7 @@ impl AuthorityStore {
         focus: &str,
         texts: &[String],
     ) -> Result<Vec<Option<f64>>> {
-        if texts.len() > 32 {
+        if texts.len() > 256 {
             return Err(Error::Invalid("semantic catalog exceeded".into()));
         }
         let digest = blake3::hash(focus.as_bytes()).to_hex().to_string();

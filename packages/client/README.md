@@ -2,14 +2,16 @@
 
 [返回目录](../../INDEX.md)
 
-`@nous-wave/client` is the official typed TypeScript Client for the public Core API. It wraps Connect transport and generated Protobuf types; it is not a separate domain Authority.
+`@nous-wave/client` is the official typed TypeScript Client for the public Core API. 它直接公开各 canonical service 的 generated Connect client 方法，不保留别名或独立 domain Authority。Runtime Session/Observation/UseEvent/WorkContext 属于 `runtime`，Cognition Query/maintenance/projection 属于 `cognition`；Resource Registry CRUD 属于 `resourceRegistry`，外部内容执行属于 `resources`。
 
 - [Package manifest](package.json)
 - [Current API reference](../../docs/reference/NOUSQL.md)
 - [Administrative operations and required vocabulary](../../docs/reference/CLIENT.md)
 - [Protobuf source](../../proto/README.md)
 
-Node consumers use `connectNousInstance({ runRoot })` from `@nous-wave/client/node` for authenticated local discovery. The returned client includes `artifacts.uploadFile(subjectId, path, { mediaType })` and `artifacts.uploadBytes(subjectId, bytes, { mediaType })`. File upload streams with backpressure and an exact multipart length; credentials stay inside the transport. Request options support cancellation and an upload timeout (default 300 seconds).
+Client returns generated canonical Protobuf messages directly. Decode configuration `Value` fields explicitly with `toJson(ValueSchema, value)`; use `messageData` from `@nous-wave/protocol/messages` at text/JSON output boundaries. Freeform JSON leaves remain opaque.
+
+Node consumers use `connectNousInstance({ runRoot })` from `@nous-wave/client/node` for authenticated local discovery. The returned client includes `artifacts.uploadFile(subjectId, path, { mediaType })` and `artifacts.uploadBytes(subjectId, bytes, { mediaType })`. `artifacts.download(subjectId, artifactId, options?)` returns the admitted media type and a backpressured content stream for complete downloads. File upload streams with backpressure and an exact multipart length; credentials stay inside the transport. Request options support cancellation and an upload timeout (default 300 seconds).
 
 Model-backed operations derive their response deadline from active `core_execution.opportunity`: work time plus cleanup, acknowledgement and response margin. A maintenance grant uses its requested `maxElapsedMs` as the work budget with the same configured confirmation envelope. Ordinary Node reads retain the 30-second transport default. A shorter caller `timeoutMs` or cancellation bounds the operation; cancellation reaches Core and providers. Callers resume unfinished maintenance needs with another bounded opportunity rather than replaying an imaginary batch receipt.
 
@@ -24,3 +26,5 @@ QueryRequest 的 typed `capabilities` 传递 text embedding、multimodal interpr
 Tag owner 操作使用 `concepts.reviseTag/mergeTags/splitTag`。所有 target 带 `tagId/expectedRevisionId`，mutation 带 `operationId/subjectId`；merge/split 带 exact cognition `RevisionBasis`。Tag 响应包含 `currentRevisionId/status/canonicalTagId`。merge 保持 survivor，split 返回 child Tags；历史关联不会被批量改写。
 
 Concept maintenance 的 model suggestion list 由 Core 逐项调用 canonical Tag/Association owner APIs；Client 没有 batch concept/consolidation envelope。Tag lineage basis 接受 owner 验证的 Evidence 或 cognition revision；create/revise/split/association 可携带 structured ProducerSignature。每项 mutation 的稳定 operation ID 保证恢复时精确 replay 已提交结果。
+
+配置读取使用 `configuration.getConfiguration({ paths, ... })`，descriptor 使用 `getConfigDescriptor({ path })`；override 使用 canonical `setSystemOverride/setSubjectOverride`，value 在调用者的 JSON 输入边界通过 `fromJson(ValueSchema, value)` 编码。字段保持 generated request 形状。普通 RPC 与模型 deadline 使用一个方法 decorator 保留 typed NousError、显式 CallOptions 和取消；传入的 Transport 不要求重建。

@@ -2,12 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-mod lifecycle;
 mod lineage;
 mod mutation;
 mod read;
-
-pub use lifecycle::SchemaLifecycleAction;
 
 use nous_persistence::database_error as db;
 
@@ -51,58 +48,13 @@ async fn active_schema_link_inputs(
         .fetch_all(&mut **tx)
         .await
         .map_err(db)?;
-    rows.into_iter().map(decode_schema_link_input).collect()
+    rows.iter().map(decode_schema_link_input).collect()
 }
 
-fn decode_schema_link_input(row: sqlx::postgres::PgRow) -> Result<SchemaEvidenceLinkInput> {
-    let basis_kind: String = row.try_get("basis_kind").map_err(db)?;
-    let basis_role = parse_enum(row.try_get("basis_role").map_err(db)?, "schema basis role")?;
-    let basis = if basis_kind == "evidence" {
-        let locator = match (
-            row.try_get::<Option<Uuid>, _>("source_region_id")
-                .map_err(db)?,
-            row.try_get::<Option<Uuid>, _>("derived_representation_id")
-                .map_err(db)?,
-            row.try_get::<Option<Uuid>, _>("derived_region_id")
-                .map_err(db)?,
-        ) {
-            (Some(id), None, None) => EvidenceLocator::SourceRegion(nous_core::SourceRegionId(id)),
-            (None, Some(id), None) => {
-                EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(id))
-            }
-            (None, None, Some(id)) => {
-                EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(id))
-            }
-            (None, None, None) => EvidenceLocator::WholeOccurrence,
-            _ => {
-                return Err(Error::Infrastructure(
-                    "schema evidence locator is invalid".into(),
-                ));
-            }
-        };
-        RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
-            locator,
-            basis_role,
-        })
-    } else {
-        RevisionBasis::CognitionDependency(CognitionDependency {
-            epistemic_relation: parse_epistemic_relation(
-                row.try_get("epistemic_relation").map_err(db)?,
-            )?,
-            target_revision: parse_reference(
-                &basis_kind,
-                &row.try_get::<String, _>("basis_ref").map_err(db)?,
-            )?,
-            basis_role,
-        })
-    };
+fn decode_schema_link_input(row: &sqlx::postgres::PgRow) -> Result<SchemaEvidenceLinkInput> {
     Ok(SchemaEvidenceLinkInput {
         role: parse_enum(row.try_get("role").map_err(db)?, "schema evidence role")?,
-        basis,
+        basis: basis_from_row(row)?,
     })
 }
 
@@ -119,6 +71,7 @@ pub(super) struct SchemaRevisionWrite {
 impl MemoryService {
     pub(super) async fn validate_schema_formation(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         content: &SchemaContent,
     ) -> Result<()> {
@@ -133,13 +86,12 @@ impl MemoryService {
                 "Schema revision requires evidence links".into(),
             ));
         }
-        for basis in &basis {
-            validate_exact_basis(std::slice::from_ref(basis))?;
-        }
-        self.validate_basis_for_subject(subject, &basis).await?;
+        validate_exact_basis(&basis)?;
+        let summary = self
+            .provenance_summary_in(tx, subject, &basis, None, &mut Default::default())
+            .await?;
         if content.formation_kind == SchemaFormationKind::Synthesized {
-            self.validate_formation_semantics(subject, FormationMode::Synthesized, &basis)
-                .await?;
+            Self::validate_synthesized_summary(&summary)?;
         }
         Ok(())
     }
@@ -160,7 +112,7 @@ impl MemoryService {
             .map(|link| link.basis.clone())
             .collect();
         self.validate_basis_in_tx(tx, input.subject, &basis).await?;
-        sqlx::query("INSERT INTO cognitive_schemas(schema_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,1,'accepted','valid','normal','normal',$4)")
+        sqlx::query("INSERT INTO cognitive_schemas(schema_id,subject_id,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,1,'accepted','valid','normal',$4)")
             .bind(schema_id.0).bind(input.subject.0).bind(revision_id.0).bind(now).execute(&mut **tx).await.map_err(db)?;
         self.write_schema_revision_in(
             tx,

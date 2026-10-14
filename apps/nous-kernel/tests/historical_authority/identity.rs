@@ -69,17 +69,26 @@ pub(crate) async fn check_permission_fence(
     assert_eq!(drops["current_permission_denied"], 1);
     let projected = rt
         .store
-        .historical_projection_input(
-            view,
+        .text_projection_input(
+            subject,
+            false,
             rt.configuration
                 .snapshot_for_subject(subject)
                 .unwrap()
                 .get(nous_configuration::ConfigKey::new("episode.synopsis"))
                 .unwrap(),
+            Some(view),
         )
         .await
         .unwrap();
-    assert!(projected.concepts.tags.is_empty());
+    assert!(
+        rt.store
+            .concept_projection_input(subject, false, Some(view))
+            .await
+            .unwrap()
+            .tags
+            .is_empty()
+    );
     assert!(
         !projected
             .sources

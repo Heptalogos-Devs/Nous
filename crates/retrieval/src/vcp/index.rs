@@ -75,12 +75,6 @@ impl VcpServingGeneration {
             tags,
         })
     }
-    pub fn search_candidates(&self, vector: &[f32], limit: usize) -> Result<Vec<DenseMatch>> {
-        if self.candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.candidates.search(vector, limit)
-    }
     pub fn search_candidates_for_projection(
         &self,
         vector: &[f32],
@@ -156,10 +150,7 @@ fn records(assets: &VcpGeneration, tags_only: bool) -> Result<Vec<VectorRecord>>
             Ok(VectorRecord {
                 serving_doc_id: *id as u64,
                 reference: assets.identities.reference(*id)?.clone(),
-                embedding_space: assets.space.clone(),
                 producer_signature: assets.producer.signature_hash.clone(),
-                representation_kind: if tags_only { "tag" } else { "vcp_candidate" }.into(),
-                source_region: None,
             })
         })
         .collect()

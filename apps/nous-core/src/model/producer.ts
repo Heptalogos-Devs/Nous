@@ -3,7 +3,7 @@
 
 import { create } from "@bufbuild/protobuf";
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import { type ModelProducerMetadata } from "./execution/snapshot.js";
+import { type ModelProducerMetadata } from "./execution/binding.js";
 
 /** The actual successful execution supplies the producer fields for every model owner. */
 export function modelProducer(

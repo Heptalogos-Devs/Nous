@@ -885,7 +885,6 @@ pub mod resource_registry_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with ResourceRegistryServiceServer.
     #[async_trait]
     pub trait ResourceRegistryService: std::marker::Send + std::marker::Sync + 'static {
-        ///
         async fn put_resource(
             &self,
             request: tonic::Request<super::PutResourceRequest>,
@@ -893,7 +892,6 @@ pub mod resource_registry_service_server {
             tonic::Response<super::ResourceDescriptor>,
             tonic::Status,
         >;
-        ///
         async fn get_resource(
             &self,
             request: tonic::Request<super::ObjectRequest>,
@@ -901,7 +899,6 @@ pub mod resource_registry_service_server {
             tonic::Response<super::ResourceDescriptor>,
             tonic::Status,
         >;
-        ///
         async fn list_resources(
             &self,
             request: tonic::Request<super::ListRequest>,
@@ -909,13 +906,11 @@ pub mod resource_registry_service_server {
             tonic::Response<super::ListResourcesResponse>,
             tonic::Status,
         >;
-        ///
         async fn remove_resource(
             &self,
             request: tonic::Request<super::ObjectRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status>;
     }
-    ///
     #[derive(Debug)]
     pub struct ResourceRegistryServiceServer<T> {
         inner: Arc<T>,
@@ -1242,7 +1237,6 @@ pub mod resource_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with ResourceServiceServer.
     #[async_trait]
     pub trait ResourceService: std::marker::Send + std::marker::Sync + 'static {
-        ///
         async fn materialize_resource(
             &self,
             request: tonic::Request<super::MaterializeResourceRequest>,
@@ -1251,7 +1245,6 @@ pub mod resource_service_server {
             tonic::Status,
         >;
     }
-    ///
     #[derive(Debug)]
     pub struct ResourceServiceServer<T> {
         inner: Arc<T>,
@@ -1431,6 +1424,43 @@ pub mod concept_service_server {
     #[async_trait]
     pub trait ConceptService: std::marker::Send + std::marker::Sync + 'static {
         ///
+        async fn list_associations(
+            &self,
+            request: tonic::Request<super::ListRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListAssociationsResponse>,
+            tonic::Status,
+        >;
+        ///
+        async fn list_cognitive_schemas(
+            &self,
+            request: tonic::Request<super::ListRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListSchemasResponse>,
+            tonic::Status,
+        >;
+        ///
+        async fn list_cognitive_schema_revisions(
+            &self,
+            request: tonic::Request<super::CognitionHistoryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListSchemasResponse>,
+            tonic::Status,
+        >;
+        ///
+        async fn list_tag_revisions(
+            &self,
+            request: tonic::Request<super::CognitionHistoryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListTagsResponse>,
+            tonic::Status,
+        >;
+        ///
+        async fn get_association(
+            &self,
+            request: tonic::Request<super::ObjectRequest>,
+        ) -> std::result::Result<tonic::Response<super::Association>, tonic::Status>;
+        ///
         async fn create_tag(
             &self,
             request: tonic::Request<super::CreateTagRequest>,
@@ -1474,17 +1504,14 @@ pub mod concept_service_server {
             tonic::Response<super::SplitTagResponse>,
             tonic::Status,
         >;
-        ///
         async fn create_association(
             &self,
             request: tonic::Request<super::CreateAssociationRequest>,
         ) -> std::result::Result<tonic::Response<super::Association>, tonic::Status>;
-        ///
         async fn revoke_association(
             &self,
             request: tonic::Request<super::RevokeAssociationRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status>;
-        ///
         async fn get_neighborhood(
             &self,
             request: tonic::Request<super::NeighborhoodRequest>,
@@ -1492,32 +1519,26 @@ pub mod concept_service_server {
             tonic::Response<super::NeighborhoodResponse>,
             tonic::Status,
         >;
-        ///
         async fn create_cognitive_schema(
             &self,
             request: tonic::Request<super::CreateCognitiveSchemaRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn get_cognitive_schema(
             &self,
             request: tonic::Request<super::GetCognitiveSchemaRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn get_cognitive_schema_revision(
             &self,
             request: tonic::Request<super::ObjectRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn add_schema_evidence(
             &self,
             request: tonic::Request<super::AddSchemaEvidenceRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn revise_cognitive_schema(
             &self,
             request: tonic::Request<super::ReviseCognitiveSchemaRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn split_cognitive_schema(
             &self,
             request: tonic::Request<super::SplitCognitiveSchemaRequest>,
@@ -1525,32 +1546,26 @@ pub mod concept_service_server {
             tonic::Response<super::SplitCognitiveSchemaResponse>,
             tonic::Status,
         >;
-        ///
         async fn merge_cognitive_schemas(
             &self,
             request: tonic::Request<super::MergeCognitiveSchemasRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn suppress_cognitive_schema(
             &self,
             request: tonic::Request<super::CognitiveSchemaMutationRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn restore_cognitive_schema(
             &self,
             request: tonic::Request<super::CognitiveSchemaMutationRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn withdraw_cognitive_schema(
             &self,
             request: tonic::Request<super::CognitiveSchemaMutationRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn reaccept_cognitive_schema(
             &self,
             request: tonic::Request<super::CognitiveSchemaMutationRequest>,
         ) -> std::result::Result<tonic::Response<super::CognitiveSchema>, tonic::Status>;
-        ///
         async fn purge_cognitive_schema(
             &self,
             request: tonic::Request<super::CognitiveSchemaMutationRequest>,
@@ -1633,6 +1648,244 @@ pub mod concept_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/nous.wave.v1alpha1.ConceptService/ListAssociations" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListAssociationsSvc<T: ConceptService>(pub Arc<T>);
+                    impl<
+                        T: ConceptService,
+                    > tonic::server::UnaryService<super::ListRequest>
+                    for ListAssociationsSvc<T> {
+                        type Response = super::ListAssociationsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ConceptService>::list_associations(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListAssociationsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.v1alpha1.ConceptService/ListCognitiveSchemas" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListCognitiveSchemasSvc<T: ConceptService>(pub Arc<T>);
+                    impl<
+                        T: ConceptService,
+                    > tonic::server::UnaryService<super::ListRequest>
+                    for ListCognitiveSchemasSvc<T> {
+                        type Response = super::ListSchemasResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ConceptService>::list_cognitive_schemas(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListCognitiveSchemasSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.v1alpha1.ConceptService/ListCognitiveSchemaRevisions" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListCognitiveSchemaRevisionsSvc<T: ConceptService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ConceptService,
+                    > tonic::server::UnaryService<super::CognitionHistoryRequest>
+                    for ListCognitiveSchemaRevisionsSvc<T> {
+                        type Response = super::ListSchemasResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CognitionHistoryRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ConceptService>::list_cognitive_schema_revisions(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListCognitiveSchemaRevisionsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.v1alpha1.ConceptService/ListTagRevisions" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListTagRevisionsSvc<T: ConceptService>(pub Arc<T>);
+                    impl<
+                        T: ConceptService,
+                    > tonic::server::UnaryService<super::CognitionHistoryRequest>
+                    for ListTagRevisionsSvc<T> {
+                        type Response = super::ListTagsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CognitionHistoryRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ConceptService>::list_tag_revisions(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListTagRevisionsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.v1alpha1.ConceptService/GetAssociation" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetAssociationSvc<T: ConceptService>(pub Arc<T>);
+                    impl<
+                        T: ConceptService,
+                    > tonic::server::UnaryService<super::ObjectRequest>
+                    for GetAssociationSvc<T> {
+                        type Response = super::Association;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ObjectRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ConceptService>::get_association(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetAssociationSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/nous.wave.v1alpha1.ConceptService/CreateTag" => {
                     #[allow(non_camel_case_types)]
                     struct CreateTagSvc<T: ConceptService>(pub Arc<T>);
@@ -2731,17 +2984,17 @@ pub mod system_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with SystemServiceServer.
     #[async_trait]
     pub trait SystemService: std::marker::Send + std::marker::Sync + 'static {
-        ///
+        async fn reclaim_serving(
+            &self,
+            request: tonic::Request<super::SubjectRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ServingReclamation>,
+            tonic::Status,
+        >;
         async fn get_status(
             &self,
             request: tonic::Request<()>,
         ) -> std::result::Result<tonic::Response<super::SystemStatus>, tonic::Status>;
-        ///
-        async fn get_capabilities(
-            &self,
-            request: tonic::Request<()>,
-        ) -> std::result::Result<tonic::Response<super::SystemStatus>, tonic::Status>;
-        ///
         async fn get_projection_status(
             &self,
             request: tonic::Request<super::SubjectRequest>,
@@ -2750,7 +3003,6 @@ pub mod system_service_server {
             tonic::Status,
         >;
     }
-    ///
     #[derive(Debug)]
     pub struct SystemServiceServer<T> {
         inner: Arc<T>,
@@ -2827,6 +3079,51 @@ pub mod system_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/nous.wave.v1alpha1.SystemService/ReclaimServing" => {
+                    #[allow(non_camel_case_types)]
+                    struct ReclaimServingSvc<T: SystemService>(pub Arc<T>);
+                    impl<
+                        T: SystemService,
+                    > tonic::server::UnaryService<super::SubjectRequest>
+                    for ReclaimServingSvc<T> {
+                        type Response = super::ServingReclamation;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SubjectRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SystemService>::reclaim_serving(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ReclaimServingSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/nous.wave.v1alpha1.SystemService/GetStatus" => {
                     #[allow(non_camel_case_types)]
                     struct GetStatusSvc<T: SystemService>(pub Arc<T>);
@@ -2852,47 +3149,6 @@ pub mod system_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetStatusSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/nous.wave.v1alpha1.SystemService/GetCapabilities" => {
-                    #[allow(non_camel_case_types)]
-                    struct GetCapabilitiesSvc<T: SystemService>(pub Arc<T>);
-                    impl<T: SystemService> tonic::server::UnaryService<()>
-                    for GetCapabilitiesSvc<T> {
-                        type Response = super::SystemStatus;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as SystemService>::get_capabilities(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = GetCapabilitiesSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -4564,7 +4820,6 @@ pub mod cognition_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with CognitionServiceServer.
     #[async_trait]
     pub trait CognitionService: std::marker::Send + std::marker::Sync + 'static {
-        ///
         async fn grant_maintenance(
             &self,
             request: tonic::Request<super::MaintenanceGrantRequest>,
@@ -4572,7 +4827,6 @@ pub mod cognition_service_server {
             tonic::Response<super::MaintenanceGrantResponse>,
             tonic::Status,
         >;
-        ///
         async fn prepare_query(
             &self,
             request: tonic::Request<super::QueryRequest>,
@@ -4580,17 +4834,14 @@ pub mod cognition_service_server {
             tonic::Response<super::PreparedQueryResponse>,
             tonic::Status,
         >;
-        ///
         async fn query(
             &self,
             request: tonic::Request<super::QueryRequest>,
         ) -> std::result::Result<tonic::Response<super::QueryResponse>, tonic::Status>;
-        ///
         async fn build_projection(
             &self,
             request: tonic::Request<super::ProjectionRequest>,
         ) -> std::result::Result<tonic::Response<super::Projection>, tonic::Status>;
-        ///
         async fn build_managed_context(
             &self,
             request: tonic::Request<super::ManagedContextRequest>,
@@ -4961,6 +5212,11 @@ pub mod memory_service_server {
     #[async_trait]
     pub trait MemoryService: std::marker::Send + std::marker::Sync + 'static {
         ///
+        async fn trace(
+            &self,
+            request: tonic::Request<super::CognitionTraceRequest>,
+        ) -> std::result::Result<tonic::Response<super::CognitionTrace>, tonic::Status>;
+        ///
         async fn get_journal(
             &self,
             request: tonic::Request<super::ObjectRequest>,
@@ -5226,6 +5482,51 @@ pub mod memory_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/nous.wave.v1alpha1.MemoryService/Trace" => {
+                    #[allow(non_camel_case_types)]
+                    struct TraceSvc<T: MemoryService>(pub Arc<T>);
+                    impl<
+                        T: MemoryService,
+                    > tonic::server::UnaryService<super::CognitionTraceRequest>
+                    for TraceSvc<T> {
+                        type Response = super::CognitionTrace;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CognitionTraceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as MemoryService>::trace(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = TraceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/nous.wave.v1alpha1.MemoryService/GetJournal" => {
                     #[allow(non_camel_case_types)]
                     struct GetJournalSvc<T: MemoryService>(pub Arc<T>);
@@ -6833,6 +7134,16 @@ pub mod material_service_server {
     #[async_trait]
     pub trait MaterialService: std::marker::Send + std::marker::Sync + 'static {
         ///
+        async fn read_lineage(
+            &self,
+            request: tonic::Request<super::MaterialLineageRequest>,
+        ) -> std::result::Result<tonic::Response<super::MaterialLineage>, tonic::Status>;
+        ///
+        async fn clean(
+            &self,
+            request: tonic::Request<()>,
+        ) -> std::result::Result<tonic::Response<super::MaterialCleanup>, tonic::Status>;
+        ///
         async fn list_occurrences(
             &self,
             request: tonic::Request<super::OccurrenceListRequest>,
@@ -6983,6 +7294,91 @@ pub mod material_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/nous.wave.v1alpha1.MaterialService/ReadLineage" => {
+                    #[allow(non_camel_case_types)]
+                    struct ReadLineageSvc<T: MaterialService>(pub Arc<T>);
+                    impl<
+                        T: MaterialService,
+                    > tonic::server::UnaryService<super::MaterialLineageRequest>
+                    for ReadLineageSvc<T> {
+                        type Response = super::MaterialLineage;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::MaterialLineageRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as MaterialService>::read_lineage(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ReadLineageSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.v1alpha1.MaterialService/Clean" => {
+                    #[allow(non_camel_case_types)]
+                    struct CleanSvc<T: MaterialService>(pub Arc<T>);
+                    impl<T: MaterialService> tonic::server::UnaryService<()>
+                    for CleanSvc<T> {
+                        type Response = super::MaterialCleanup;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as MaterialService>::clean(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CleanSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/nous.wave.v1alpha1.MaterialService/ListOccurrences" => {
                     #[allow(non_camel_case_types)]
                     struct ListOccurrencesSvc<T: MaterialService>(pub Arc<T>);

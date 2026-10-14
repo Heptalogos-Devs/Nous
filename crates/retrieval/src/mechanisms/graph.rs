@@ -5,24 +5,10 @@ use crate::*;
 use nous_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WaveNodeKind {
-    Memory,
-    Tag,
-    Schema,
-    Entity,
-    Resource,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WaveNode {
     pub serving_id: u32,
     pub reference: CognitiveRef,
-    pub node_kind: WaveNodeKind,
-    pub embedding_key: Option<u64>,
-    pub posting_key: Option<u64>,
-    pub intrinsic_residual_gain: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,10 +272,6 @@ mod tests {
         WaveNode {
             serving_id,
             reference: id,
-            node_kind: WaveNodeKind::Memory,
-            embedding_key: None,
-            posting_key: None,
-            intrinsic_residual_gain: None,
         }
     }
 

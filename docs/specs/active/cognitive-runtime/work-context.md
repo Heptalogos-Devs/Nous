@@ -21,7 +21,8 @@ WorkContext 是 Runtime owner 的 Subject 级 durable checkpoint。它可以跨 
 Typed public RPCs are `CreateWorkContext`、`GetWorkContext`、`ListWorkContexts`、`UpdateWorkContext`、`PauseWorkContext`、`ResumeWorkContext`、`EndWorkContext`、`SetActiveWorkContext`。
 
 - Create starts at revision 1 and uses the existing durable operation receipt.
-- Update is complete replacement with expected revision; refs are validated in the same transaction.
+- Update 只接受一个 typed intent：设置提供的字段、pin anchors、unpin anchors，或清空文本/anchors/两者。未提供的字段保持不变；空文本、空列表和空对象明确覆盖对应字段。Runtime 在锁内核验 expected revision、应用意图并验证 refs。
+- List 采用 WorkContextId 升序的有界 keyset 分页；cursor 绑定 Subject，返回实际 next_page_token。
 - Pause/end lock the WorkContext and all affected Sessions in deterministic order, clear bindings, and increment each affected Session runtime revision atomically.
 - Resume only changes paused→open; it never foregrounds a Session.
 - Foreground requires an open Session, same Subject, open WorkContext, and expected runtime revision.

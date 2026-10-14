@@ -35,45 +35,6 @@ impl UseKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CognitiveUseEvent {
-    pub query_id: Option<uuid::Uuid>,
-    pub event_id: UseEventId,
-    pub subject_id: SubjectId,
-    pub session_id: Option<SessionId>,
-    pub reference: CognitiveRef,
-    pub use_kind: UseKind,
-    pub consumer_ref: String,
-    pub occurred_at: DateTime<Utc>,
-    pub recorded_at: DateTime<Utc>,
-    pub context: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CognitiveSession {
-    pub session_id: SessionId,
-    pub subject_id: SubjectId,
-    pub opened_at: DateTime<Utc>,
-    pub last_activity_at: DateTime<Utc>,
-    pub last_meaningful_use_at: Option<DateTime<Utc>>,
-    pub closed_at: Option<DateTime<Utc>>,
-    pub runtime_revision: i64,
-    pub active_work_context_id: Option<uuid::Uuid>,
-    pub metadata: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResidentRef {
-    pub session_id: SessionId,
-    pub reference: CognitiveRef,
-    pub entered_at: DateTime<Utc>,
-    pub entry_reason: String,
-    pub last_meaningful_use_at: Option<DateTime<Utc>>,
-    pub hold_until: Option<DateTime<Utc>>,
-    pub state: ResidentState,
-    pub metadata: serde_json::Value,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResidentState {
@@ -96,6 +57,7 @@ impl ResidentState {
 pub struct ResidentAdmission {
     pub reference: CognitiveRef,
     pub reason: String,
+    pub last_meaningful_use_at: Option<DateTime<Utc>>,
     pub hold_until: Option<DateTime<Utc>>,
     pub state: ResidentState,
 }

@@ -10,8 +10,7 @@ use nous_core::{
 };
 use nous_memory::{BasisRole, EvidenceLocator, EvidenceRef, FormationMode, RevisionBasis};
 use nous_runtime::{QueryPlan, UseFeedback, UseFeedbackEvent, UseKind};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
-use test_support::query::{query, subject};
+use test_support::query::query;
 use test_support::{database, form_input, observation, open_runtime, open_runtime_with_serving};
 
 #[tokio::test]
@@ -22,7 +21,7 @@ use test_support::{database, form_input, observation, open_runtime, open_runtime
 async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
-    let subject = subject(&runtime).await;
+    let subject = test_support::query::subject(&runtime).await;
     let source = observation(&runtime, subject, "shared source").await;
     let entity = EntityRef::new("entity:cohort").unwrap();
     let mut cohort = Vec::new();
@@ -36,7 +35,7 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
             operation,
             &format!("candidate {index}"),
         );
-        input.aboutness = vec![entity.clone()];
+        input.content.aboutness = vec![entity.clone()];
         cohort.push(
             runtime
                 .require_memory()
@@ -66,7 +65,7 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
             .cognition
             .finalize_query(
                 subject,
-                expired_ticket.unwrap(),
+                expired_ticket,
                 Vec::new(),
                 Vec::new(),
                 nous_runtime::CognitiveContributors {
@@ -83,28 +82,31 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
         .cognition
         .retain_query(execution, test_support::query_lease())
         .unwrap();
-    let ticket = ticket.expect("validated query snapshot should be retained");
     let first = &cohort[0];
     runtime
         .require_memory()
         .unwrap()
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject,
             memory_id: first.object.memory_id,
             expected_object_epoch: first.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "replacement candidate".into(),
-            title: None,
-            basis: first.basis.clone(),
-            aboutness: first.aboutness.clone(),
-            valid_time: TemporalExtent::Unknown,
 
-            epistemic_class: EpistemicClass::Observed,
+            content: nous_memory::MemoryContent {
+                producer: None,
+                formation_mode: FormationMode::Grounded,
+                grounding_occurrence_id: Some(source.occurrence.occurrence_id),
+                semantic_role: "fact".into(),
+                representation_text: "replacement candidate".into(),
+                title: None,
+                basis: first.basis.clone(),
+                aboutness: first.aboutness.clone(),
+                valid_time: TemporalExtent::Unknown,
+
+                epistemic_class: EpistemicClass::Observed,
+                tags: Vec::new(),
+            },
         })
         .await
         .unwrap();
@@ -112,41 +114,40 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
     runtime
         .require_memory()
         .unwrap()
-        .suppress(
+        .mutate_memory_lifecycle(
             subject,
             second.object.memory_id,
             OperationId::new(),
             second.object.object_epoch,
+            nous_memory::LifecycleAction::Suppress,
         )
         .await
         .unwrap();
     let third = &cohort[2];
     let key = operations[2].0.to_string();
-    let reservation = runtime
+    runtime
         .store
-        .reserve_model_workflow(
-            subject,
-            "memory",
-            &key,
-            "semantic input",
-            &nous_core::WorkflowSnapshot {
-                content: nous_core::WorkflowPayload {
-                    payload: serde_json::json!({"model":"frozen"}),
-                    dependencies: vec![nous_core::CognitiveRef::Memory(third.object.memory_id)],
-                    ..Default::default()
-                },
+        .save_model_operation(
+            &test_support::model_operation_identity(subject, "memory", &key, "semantic input"),
+            Some(&nous_core::ModelResultContext {
+                dependencies: vec![nous_core::CognitiveRef::Memory(third.object.memory_id)],
                 ..Default::default()
-            },
-            360,
+            }),
+            Some(&test_support::result_payload(
+                serde_json::json!({"action":"no_change"}),
+            )),
+            None,
+            None,
+            &[],
         )
         .await
         .unwrap();
-    let lease = reservation.lease.as_ref().unwrap().token;
     runtime
         .store
-        .save_model_workflow(
-            &test_support::workflow_lease(subject, "memory", &key, lease),
-            Some(&test_support::workflow_payload(
+        .save_model_operation(
+            &test_support::model_operation_identity(subject, "memory", &key, "semantic input"),
+            None,
+            Some(&test_support::result_payload(
                 serde_json::json!({"text":"private-cognitive-marker"}),
             )),
             None,
@@ -167,18 +168,15 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
         .await
         .unwrap();
     use sqlx::Row;
-    let row = sqlx::query("SELECT snapshot,proposal,outcome FROM model_workflow_operations WHERE subject_id=$1 AND owner='memory' AND operation_key=$2").bind(subject.0).bind(&key).fetch_one(runtime.store.pool()).await.unwrap();
-    assert_eq!(
-        row.get::<serde_json::Value, _>("snapshot"),
-        serde_json::to_value(nous_core::WorkflowSnapshot::default()).unwrap()
-    );
+    let row = sqlx::query("SELECT context,proposal,outcome FROM model_results WHERE subject_id=$1 AND owner='memory' AND operation_key=$2").bind(subject.0).bind(&key).fetch_one(runtime.store.pool()).await.unwrap();
+    assert!(row.get::<Option<serde_json::Value>, _>("context").is_none());
     assert!(
         row.get::<Option<serde_json::Value>, _>("proposal")
             .is_none()
     );
     assert_eq!(
         row.get::<serde_json::Value, _>("outcome"),
-        serde_json::to_value(nous_core::WorkflowPayload {
+        serde_json::to_value(nous_core::ResultPayload {
             purged: true,
             ..Default::default()
         })
@@ -187,14 +185,15 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
     assert!(
         runtime
             .store
-            .save_model_workflow(
-                &test_support::workflow_lease(subject, "memory", &key, lease),
-                Some(&test_support::workflow_payload(
+            .save_model_operation(
+                &test_support::model_operation_identity(subject, "memory", &key, "semantic input"),
+                None,
+                Some(&test_support::result_payload(
                     serde_json::json!({"text":"resurrect"})
                 )),
                 None,
                 None,
-                &[],
+                &[]
             )
             .await
             .is_err()
@@ -241,7 +240,7 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
 async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
-    let subject = subject(&runtime).await;
+    let subject = test_support::query::subject(&runtime).await;
     let observation = observation(&runtime, subject, "fenced fact").await;
     let memory = runtime
         .require_memory()
@@ -313,30 +312,38 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
     asof_request.temporal_frame.authority_view = nous_core::AuthorityView::AsOf(Utc::now());
     let mut head_request = request.clone();
     head_request.temporal_frame.revision_view = nous_core::RevisionView::History;
-    let bound = runtime.cognition.bind_query(request).await.expect("bind");
+    let bound = runtime
+        .cognition
+        .bind_query(request, &runtime)
+        .await
+        .expect("bind");
     let plan = QueryPlan::for_bound_query(&bound);
     let revision = nous_memory::ReviseMemoryInput {
-        producer: None,
         operation_id: OperationId::new(),
         subject,
         memory_id: memory.object.memory_id,
         expected_object_epoch: memory.object.object_epoch,
         intent: nous_memory::RevisionIntent::Correct,
-        formation_mode: FormationMode::Grounded,
-        grounding_occurrence_id: Some(observation.occurrence.occurrence_id),
-        semantic_role: "fact".into(),
-        representation_text: "new fenced fact".into(),
-        title: None,
-        basis: vec![RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: None,
-            occurrence_id: observation.occurrence.occurrence_id,
-            locator: EvidenceLocator::WholeOccurrence,
-            basis_role: BasisRole::Direct,
-        })],
-        aboutness: Vec::new(),
-        valid_time: Default::default(),
 
-        epistemic_class: EpistemicClass::Observed,
+        content: nous_memory::MemoryContent {
+            producer: None,
+            formation_mode: FormationMode::Grounded,
+            grounding_occurrence_id: Some(observation.occurrence.occurrence_id),
+            semantic_role: "fact".into(),
+            representation_text: "new fenced fact".into(),
+            title: None,
+            basis: vec![RevisionBasis::Evidence(EvidenceRef {
+                epistemic_relation: None,
+                occurrence_id: observation.occurrence.occurrence_id,
+                locator: EvidenceLocator::WholeOccurrence,
+                basis_role: BasisRole::Direct,
+            })],
+            aboutness: Vec::new(),
+            valid_time: Default::default(),
+
+            epistemic_class: EpistemicClass::Observed,
+            tags: Vec::new(),
+        },
     };
     let _current = runtime
         .require_memory()
@@ -347,7 +354,7 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
     let memory_service = runtime.require_memory().unwrap();
     let result = runtime
         .cognition
-        .query_with_plan(
+        .execute_query_with_plan(
             bound,
             nous_runtime::CognitiveContributors {
                 material: Some(&runtime.material),
@@ -355,9 +362,11 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
                 memory: Some(memory_service as &dyn nous_runtime::CognitiveContributor),
             },
             plan,
+            None,
         )
         .await
-        .expect("stale exact query");
+        .expect("stale exact query")
+        .result;
     assert!(result.results.is_empty());
     assert_eq!(
         result
@@ -431,24 +440,7 @@ async fn subject_profiles_change_new_queries_and_preserve_inflight_preparation()
     let runtime = open_runtime_with_serving(&url, &root, true, false, true).await;
     let mut subjects = Vec::new();
     for _ in 0..2 {
-        subjects.push(
-            runtime
-                .subjects
-                .create_subject(CreateSubject {
-                    subject_id: None,
-                    operation_id: OperationId::new(),
-                    cognitive_seed: CognitiveSeedInput {
-                        text: "schema_version = 1".into(),
-                        format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                        provenance: serde_json::json!({}),
-                    },
-                    metadata: serde_json::json!({}),
-                    capabilities: None,
-                })
-                .await
-                .unwrap()
-                .subject_id,
-        );
+        subjects.push(test_support::query::subject(&runtime).await);
     }
     runtime
         .configuration
@@ -482,12 +474,12 @@ async fn subject_profiles_change_new_queries_and_preserve_inflight_preparation()
     };
     let frozen = runtime
         .cognition
-        .bind_query(prepared_query(subjects[0]))
+        .bind_query(prepared_query(subjects[0]), &runtime)
         .await
         .unwrap();
     let second = runtime
         .cognition
-        .bind_query(prepared_query(subjects[1]))
+        .bind_query(prepared_query(subjects[1]), &runtime)
         .await
         .unwrap();
     assert_eq!(
@@ -511,12 +503,12 @@ async fn subject_profiles_change_new_queries_and_preserve_inflight_preparation()
         .unwrap();
     let changed = runtime
         .cognition
-        .bind_query(prepared_query(subjects[0]))
+        .bind_query(prepared_query(subjects[0]), &runtime)
         .await
         .unwrap();
     let unchanged = runtime
         .cognition
-        .bind_query(prepared_query(subjects[1]))
+        .bind_query(prepared_query(subjects[1]), &runtime)
         .await
         .unwrap();
     assert_eq!(

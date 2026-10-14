@@ -51,11 +51,8 @@ export class CoreCognition {
   }
 
   async prepareQuery(request: QueryRequest, calls: Execution) {
-    return this.kernel.queryWorkflow.prepareQuery(
-      {
-        query: await this.bindQueryInput(request, calls),
-        reserveExecution: false,
-      },
+    return this.queries.prepare(
+      await this.bindQueryInput(request, calls),
       calls,
     );
   }
@@ -111,27 +108,10 @@ export class CoreCognition {
   async buildProjection(input: ProjectionRequest, calls: Execution) {
     const policy = this.planner.policy(input.consumerId);
     const request = create(ProjectionRequestSchema, input);
-    const snapshot = await this.kernel.runtime.getSession(
-      { subjectId: request.subjectId, id: request.sessionId },
-      calls,
-    );
-    if (
-      request.activeWorkContextId &&
-      request.activeWorkContextId !== snapshot.activeWorkContextId
-    )
-      throw domainError(
-        "Projection WorkContext is not active",
-        Code.FailedPrecondition,
-        {
-          code: DomainErrorCode.STALE_CONTEXT,
-          recovery: ErrorRecovery.REFRESH_STATE,
-          context: {
-            session_id: request.sessionId,
-            work_context_id: request.activeWorkContextId,
-          },
-        },
-      );
-    request.activeWorkContextId ??= snapshot.activeWorkContextId;
+    request.memoryRequirement = policy.memory;
+    request.runtimeRequirement = policy.runtime;
+    request.resourceRequirement = policy.resource;
+    request.materialize = policy.materialize;
     request.maxItems = Math.min(
       request.maxItems || policy.maxItems,
       policy.maxItems,
@@ -161,22 +141,7 @@ export class CoreCognition {
       calls,
     );
     batch.degradation.push(...queryDegradation);
-    const projection = await this.planner.build(batch, request, calls.signal);
-    const after = await this.kernel.runtime.getSession(
-      { subjectId: request.subjectId, id: request.sessionId },
-      calls,
-    );
-    if (after.runtimeRevision !== snapshot.runtimeRevision)
-      throw domainError("Session changed during projection", Code.Aborted, {
-        code: DomainErrorCode.STALE_CONTEXT,
-        recovery: ErrorRecovery.REFRESH_STATE,
-        context: {
-          session_id: request.sessionId,
-          expected_revision: snapshot.runtimeRevision.toString(),
-          actual_revision: after.runtimeRevision.toString(),
-        },
-      });
-    return projection;
+    return this.planner.build(batch, request, policy, calls.signal);
   }
 
   async buildManagedContext(request: ManagedContextRequest, calls: Execution) {
@@ -187,36 +152,17 @@ export class CoreCognition {
       );
     const input = request.projection;
     const projection = await this.buildProjection(input, calls);
-    const session = await this.kernel.runtime.getSession(
-      { subjectId: input.subjectId, id: input.sessionId },
-      calls,
-    );
-    if (session.runtimeRevision !== projection.sourceRuntimeRevision)
-      throw domainError(
-        "Session changed before context synchronization",
-        Code.Aborted,
-        {
-          code: DomainErrorCode.STALE_CONTEXT,
-          recovery: ErrorRecovery.REFRESH_STATE,
-          context: {
-            session_id: input.sessionId,
-            expected_revision: projection.sourceRuntimeRevision.toString(),
-            actual_revision: session.runtimeRevision.toString(),
-          },
-        },
-      );
     const policy = this.planner.policy(input.consumerId);
     return create(
       ManagedContextResponseSchema,
       this.contexts.compile(
         {
-          subjectId: input.subjectId,
-          sessionId: input.sessionId,
-          consumerId: input.consumerId,
-          workContextId:
-            input.activeWorkContextId ?? session.activeWorkContextId,
+          subjectId: projection.subjectId,
+          sessionId: projection.sessionId,
+          consumerId: projection.consumerId,
+          workContextId: projection.activeWorkContextId,
         },
-        `${policy.revision}:${input.maxItems}:${input.maxTextBytes}`,
+        policy.revision,
         projection,
         request.knownCursor,
       ),

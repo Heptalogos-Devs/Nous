@@ -4,9 +4,7 @@
 use crate::*;
 use chrono::{DateTime, Utc};
 use nous_core::{CognitiveRef, OperationId, SubjectId};
-use nous_persistence::{
-    MutationReceipt, check_receipt, commit_receipt, database_error as db, lock_operation,
-};
+use nous_persistence::{MutationEnvelope, MutationReceipt, MutationStart, database_error as db};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::collections::BTreeSet;
@@ -22,16 +20,6 @@ pub enum WorkContextState {
     Open,
     Paused,
     Ended,
-}
-
-impl WorkContextState {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Paused => "paused",
-            Self::Ended => "ended",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +40,30 @@ pub struct WorkContextView {
     pub context_text: String,
     pub entity_anchors: Vec<EntityRef>,
     pub tag_anchors: Vec<TagId>,
+}
+
+impl WorkContextView {
+    pub(crate) fn task_text(&self) -> String {
+        let mut text = format!(
+            "{}\n{}\n{}",
+            self.purpose,
+            self.unresolved_questions.join("\n"),
+            self.context_text
+        );
+        for (label, value) in [
+            ("Constraints", &self.constraints),
+            ("Task budget summary", &self.budget_summary),
+        ] {
+            if !value.is_null() && value.as_object().is_none_or(|object| !object.is_empty()) {
+                text.push_str(&format!("\n{label}: {value}"));
+            }
+        }
+        if !self.resume_conditions.is_empty() {
+            text.push_str("\nResume conditions:\n");
+            text.push_str(&self.resume_conditions.join("\n"));
+        }
+        text
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,15 +92,39 @@ pub struct UpdateWorkContextInput {
     pub subject: SubjectId,
     pub work_context_id: Uuid,
     pub expected_revision: i64,
-    pub purpose: String,
-    pub unresolved_questions: Vec<String>,
-    pub constraints: serde_json::Value,
-    pub resume_conditions: Vec<String>,
-    pub budget_summary: serde_json::Value,
+    pub intent: WorkContextIntent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WorkContextIntent {
+    Fields(WorkContextFields),
+    Pin(WorkContextAnchors),
+    Unpin(WorkContextAnchors),
+    Clear(WorkContextClearScope),
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkContextFields {
+    pub purpose: Option<String>,
+    pub unresolved_questions: Option<Vec<String>>,
+    pub constraints: Option<serde_json::Value>,
+    pub resume_conditions: Option<Vec<String>>,
+    pub budget_summary: Option<serde_json::Value>,
+    pub context_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkContextAnchors {
     pub cognition_anchors: Vec<CognitiveRef>,
-    pub context_text: String,
     pub entity_anchors: Vec<EntityRef>,
     pub tag_anchors: Vec<TagId>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum WorkContextClearScope {
+    Text,
+    Anchors,
+    All,
 }
 
 fn parse_state(value: String) -> Result<WorkContextState> {
@@ -170,11 +206,6 @@ fn validate_text_array(name: &str, values: &[String]) -> Result<()> {
     Ok(())
 }
 pub(super) fn replay_context(receipt: MutationReceipt) -> Result<Uuid> {
-    if receipt.state != "committed" {
-        return Err(Error::Unavailable(
-            "WorkContext operation is already in progress".into(),
-        ));
-    }
     receipt
         .result_ref
         .ok_or_else(|| Error::Infrastructure("WorkContext receipt has no result".into()))?

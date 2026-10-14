@@ -1,18 +1,21 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
+import { claimInstance } from "../src/discovery.js";
 import { resolveLocations } from "../src/locations.js";
 import { initializeConfiguration } from "../src/configuration/file.js";
-import {
-  CONFIG_REVISION,
-  parseConfiguration,
-  parseEffectiveConfiguration,
-  loadConfig,
-} from "../src/configuration/schema.js";
+import { parseConfiguration, loadConfig } from "../src/configuration/schema.js";
 import { checkConfiguration } from "../src/configuration/check.js";
 
 it("resolves split roots relative to the locator while installation and instance remain independent", async () => {
@@ -60,7 +63,9 @@ it("initializes a portable instance once and preserves operator edits byte for b
     const config = await loadConfig(locations);
     expect(config.deployment).toBe("portable");
     expect(
-      config.bundle.core_descriptors.some((d) => d.path === "models"),
+      config.kernelBootstrap.configuration.core_descriptors.some(
+        (d) => d.path === "models",
+      ),
     ).toBe(true);
 
     const development = await loadConfig(locations, true);
@@ -72,7 +77,7 @@ it("initializes a portable instance once and preserves operator edits byte for b
         process.platform === "win32" ? "nous-kernel.exe" : "nous-kernel",
       ),
     );
-    const edited = `# operator configuration\r\nconfig_revision = ${CONFIG_REVISION}\r\n[host]\r\nport = 12345\r\n[[consumers]]\r\nconsumer_id = "custom"\r\n`;
+    const edited = `# operator configuration\r\n[host]\r\nport = 12345\r\n[[consumers]]\r\nconsumer_id = "custom"\r\n`;
     await writeFile(results[0]!.path, edited);
     expect((await initializeConfiguration(locations)).created).toBe(false);
     expect(await readFile(results[0]!.path, "utf8")).toBe(edited);
@@ -81,22 +86,12 @@ it("initializes a portable instance once and preserves operator edits byte for b
   }
 });
 
-it("rejects stale configuration semantics and checks examples and explicit references offline", async () => {
+it("checks current configuration examples and explicit references offline", async () => {
   const example = await readFile(
     join(process.cwd(), "docs/reference/examples/nous.toml"),
     "utf8",
   );
-  expect(parseConfiguration(example).config.config_revision).toBe(
-    CONFIG_REVISION,
-  );
-  expect(() =>
-    parseConfiguration(
-      example.replace("config_revision = 2", "config_revision = 0"),
-    ),
-  ).toThrow("Expected configuration revision 2");
-  expect(() =>
-    parseConfiguration(example.replace("config_revision = 2", "")),
-  ).toThrow("Expected configuration revision 2");
+  expect(parseConfiguration(example).config.host.port).toBe(9470);
 
   const root = await mkdtemp(join(tmpdir(), "nous-config-check-"));
   try {
@@ -106,7 +101,7 @@ it("rejects stale configuration semantics and checks examples and explicit refer
       programRoot: process.cwd(),
     });
     const initialized = await initializeConfiguration(locations);
-    const text = `config_revision = ${CONFIG_REVISION}\n[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.local]\nbase_url = "http://127.0.0.1:3000/v1"\ncredential_env = "NOUS_OFFLINE_CHECK_TOKEN"\n[models.model_profiles.local]\ngateway = "local"\nprotocol = "openai-chat"\nmodel = "local"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.local]\nmodel = "local"\n[models.roles.memory_formation]\nroutes = ["local"]\nprompt = "config-prompts/missing.md"\n`;
+    const text = `[[consumers]]\nconsumer_id = "default"\n[models.gateway_profiles.local]\nbase_url = "http://127.0.0.1:3000/v1"\ncredential_env = "NOUS_OFFLINE_CHECK_TOKEN"\n[models.model_profiles.local]\ngateway = "local"\nprotocol = "openai-chat"\nmodel = "local"\ncapabilities = ["text", "structured_output"]\n[models.execution_profiles.local]\nmodel = "local"\n[models.roles.memory_formation]\nroutes = ["local"]\nprompt = "config-prompts/missing.md"\n`;
     const missingKernel = `\n[host]\nkernel_executable = ${JSON.stringify(join(root, "missing-kernel"))}\n`;
     await writeFile(initialized.path, text + missingKernel);
     const result = await checkConfiguration(locations, true);
@@ -129,35 +124,40 @@ it("rejects stale configuration semantics and checks examples and explicit refer
   }
 });
 
-it("retains Kernel-resolved execution profiles in the effective model configuration", () => {
-  const effective = parseEffectiveConfiguration({
-    models: {
-      gateway_profiles: {
-        local: {
-          base_url: "http://127.0.0.1:3000/v1",
-          credential_env: "TOKEN",
-        },
-      },
-      model_profiles: {
-        local: {
-          gateway: "local",
-          protocol: "openai-chat",
-          model: "local",
-          capabilities: ["text", "structured_output"],
-          reasoning_levels: ["high"],
-        },
-      },
-      execution_profiles: {
-        precise: { model: "local", reasoning: "high", max_output_tokens: 256 },
-      },
-      roles: {
-        memory_formation: { routes: ["precise"], requirement: "required" },
-      },
-    },
-  });
-  expect(effective.models.execution_profiles.precise).toMatchObject({
-    model: "local",
-    reasoning: "high",
-    max_output_tokens: 256,
-  });
+it("releases a failed identity claim and atomically publishes split-root discovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nous-discovery-"));
+  try {
+    const locations = await resolveLocations({
+      home: root,
+      installationHome: root,
+    });
+    await mkdir(locations.instance, { recursive: true });
+    const identity = join(locations.instance, "instance.json");
+    await writeFile(identity, "invalid-json");
+    await expect(claimInstance(locations)).rejects.toThrow();
+    await expect(
+      stat(join(locations.instance, "instance.lock")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await rm(identity);
+    const instance = await claimInstance(locations);
+    try {
+      await instance.publish("http://127.0.0.1:12345", "fixture");
+      expect(JSON.parse(await readFile(instance.path, "utf8"))).toMatchObject({
+        endpoint: "http://127.0.0.1:12345",
+        pid: process.pid,
+      });
+      await expect(stat(`${instance.path}.tmp`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(claimInstance(locations)).rejects.toThrow("already owns");
+    } finally {
+      await instance.release();
+    }
+    await expect(stat(instance.path)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      stat(join(locations.instance, "instance.lock")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

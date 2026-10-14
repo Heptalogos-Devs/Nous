@@ -13,7 +13,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { runCli } from "./support/client.js";
 import { cliErrorPayload } from "../src/agent.js";
-import { workspaceTemp } from "../../../scripts/workspace.js";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { workspacePaths, workspaceTemp } from "../../../scripts/workspace.js";
 
 const exec = promisify(execFile);
 it("invalidates result indices when the next query fails", async () => {
@@ -48,8 +50,9 @@ it("invalidates result indices when the next query fails", async () => {
   const revision = vi.fn();
   const reportUse = vi.fn().mockResolvedValue({ acceptedCount: 1 });
   const client = {
-    cognition: { query, reportUse },
-    memory: { revision },
+    cognition: { query },
+    runtime: { reportUse },
+    memory: { getMemoryRevision: revision },
   } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   const connect = vi.fn().mockResolvedValue(client);
   const globals = [
@@ -117,9 +120,9 @@ it("reads source text through its Material owner with explicit byte bounds", asy
     evidence: [],
     degradation: [],
   });
-  const client = { material: { materialize } } as unknown as Awaited<
-    ReturnType<typeof connectNousInstance>
-  >;
+  const client = {
+    material: { materializeEvidence: materialize },
+  } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   const result = await runCli(
     [
       "read",
@@ -148,8 +151,8 @@ it("continues canonical Material references returned by observe and trace", asyn
     .mockResolvedValue({ items: [], truncated: false });
   const resolve = vi.fn();
   const client = {
-    material: { sourceRegion, occurrences },
-    identity: { resolve },
+    material: { getSourceRegion: sourceRegion, listOccurrences: occurrences },
+    identity: { resolveIdentity: resolve },
   } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   const result = await runCli(
     [
@@ -172,7 +175,7 @@ it("continues canonical Material references returned by observe and trace", asyn
   expect(resolve).not.toHaveBeenCalled();
 });
 describe("Agent CLI protocol", () => {
-  it("prepares with explicit context and summarizes the frozen inspection", async () => {
+  it("prepares with explicit context and returns the frozen owner inspection", async () => {
     const prepared = {
       boundQuery: '{"representation":{"sha256":"digest"}}',
       embeddingText: "complete intent",
@@ -194,7 +197,7 @@ describe("Agent CLI protocol", () => {
     }));
     const client = {
       cognition: { prepareQuery, query },
-      identity: { resolve },
+      identity: { resolveIdentity: resolve },
     } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
     const connect = vi.fn().mockResolvedValue(client);
     const result = await runCli(
@@ -218,8 +221,8 @@ describe("Agent CLI protocol", () => {
     expect(result).toMatchObject({
       schemaVersion: "nous.cli.v1",
       data: {
-        intent: "decision $return(memory)",
-        representation: { sha256: "digest", chars: 15 },
+        embeddingText: "complete intent",
+        boundQuery: { representation: { sha256: "digest" } },
       },
     });
     expect(prepareQuery).toHaveBeenCalledWith({
@@ -240,7 +243,7 @@ describe("Agent CLI protocol", () => {
       ],
     };
     const client = {
-      identity: { resolve: vi.fn().mockResolvedValue(result) },
+      identity: { resolveIdentity: vi.fn().mockResolvedValue(result) },
     } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
     await expect(
       runCli(
@@ -281,7 +284,7 @@ describe("Agent CLI protocol", () => {
     ).toMatchObject({ code: "ABORTED" });
     for (const code of [
       DomainErrorCode.OPERATION_ID_CONFLICT,
-      DomainErrorCode.OPERATION_IN_PROGRESS,
+      DomainErrorCode.STALE_REVISION,
     ]) {
       expect(
         cliErrorPayload(
@@ -291,7 +294,7 @@ describe("Agent CLI protocol", () => {
               recovery:
                 code === DomainErrorCode.OPERATION_ID_CONFLICT
                   ? ErrorRecovery.NEW_OPERATION
-                  : ErrorRecovery.RETRY_OPERATION,
+                  : ErrorRecovery.REFRESH_STATE,
             }),
           ),
         ),
@@ -331,12 +334,12 @@ describe("Agent CLI protocol", () => {
       details: [],
       candidates: [],
     });
-  });
+  }, 15_000);
 });
 
 it("uses exact typed revisions and caller-stable feedback identity", async () => {
   const reportUse = vi.fn().mockResolvedValue({ acceptedCount: 1 });
-  const client = { cognition: { reportUse } } as unknown as Awaited<
+  const client = { runtime: { reportUse } } as unknown as Awaited<
     ReturnType<typeof connectNousInstance>
   >;
   const connect = vi.fn().mockResolvedValue(client);
@@ -393,4 +396,146 @@ it("uses exact typed revisions and caller-stable feedback identity", async () =>
       connect,
     ),
   ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+});
+
+it("routes semantic Memory correction through the owner with frozen epoch and source basis", async () => {
+  const root = await mkdtemp(join(workspacePaths.temporary, "memory-command-"));
+  const memory = "33333333-3333-4333-8333-333333333333";
+  const occurrence = "44444444-4444-4444-8444-444444444444";
+  const file = join(root, "correction.toml");
+  await writeFile(
+    file,
+    `text = "Corrected source statement"\nsemantic_role = "reported_fact"\nepistemic_class = "reported"\nformation_mode = "grounded"\ngrounding_occurrence_id = "occurrence:${occurrence}"\n[[basis]]\n[basis.evidence]\noccurrence_id = "occurrence:${occurrence}"\nwhole_occurrence = true\nbasis_role = "direct"\n`,
+  );
+  const requests: unknown[] = [];
+  const get = vi.fn().mockResolvedValue({ objectEpoch: 7n });
+  let lost = true;
+  const revise = vi.fn(async (request) => {
+    requests.push(request);
+    if (lost) {
+      lost = false;
+      throw new Error("response lost");
+    }
+    return { memoryId: memory, objectEpoch: 8n };
+  });
+  const connect = async () =>
+    ({
+      memory: { getMemory: get, reviseMemory: revise },
+    }) as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
+  const flags = [
+    "--run-root",
+    root,
+    "--instance-root",
+    root,
+    "--subject",
+    "subject",
+  ];
+  try {
+    const failure = (await runCli(
+      [
+        "memory",
+        "revise",
+        `memory:${memory}`,
+        "--kind",
+        "correct",
+        "--request-file",
+        file,
+        ...flags,
+      ],
+      connect,
+    ).catch((error: unknown) => error)) as { receipt: string };
+    expect(requests[0]).toMatchObject({
+      subjectId: "subject",
+      memoryId: memory,
+      expectedObjectEpoch: 7n,
+      intent: "correct",
+      input: {
+        text: "Corrected source statement",
+        groundingOccurrenceId: occurrence,
+        basis: [
+          { basis: { case: "evidence", value: { occurrenceId: occurrence } } },
+        ],
+      },
+    });
+    get.mockResolvedValue({ objectEpoch: 99n });
+    await runCli(["retry", failure.receipt, ...flags], connect);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(requests[1]).toEqual(requests[0]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("reports the host snapshot without configuration or presentation dependencies when Kernel is unavailable", async () => {
+  const status = vi.fn().mockResolvedValue({
+    components: [
+      { name: "core", state: "READY" },
+      { name: "kernel", state: "UNAVAILABLE" },
+    ],
+  });
+  const configuration = vi
+    .fn()
+    .mockRejectedValue(new Error("Kernel unavailable"));
+  const connection = {
+    system: { getStatus: status },
+    configuration: { getConfiguration: configuration },
+  } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
+  expect(
+    await runCli(["status", "--run-root", "/tmp/nous"], async () => connection),
+  ).toMatchObject({
+    data: {
+      status: {
+        components: [
+          { name: "core", state: "READY" },
+          { name: "kernel", state: "UNAVAILABLE" },
+        ],
+      },
+    },
+  });
+  expect(status).toHaveBeenCalledTimes(1);
+  expect(configuration).not.toHaveBeenCalled();
+});
+
+it("exports complete Artifact bytes through streaming download without preview truncation or overwrite", async () => {
+  const { Readable } = await import("node:stream");
+  const { readFile } = await import("node:fs/promises");
+  const root = await mkdtemp(
+    join(workspacePaths.temporary, "artifact-export-"),
+  );
+  const output = join(root, "artifact.bin");
+  const bytes = Buffer.alloc(1024 * 1024 + 7, 81);
+  const materialize = vi.fn();
+  const connection = {
+    material: {
+      getArtifact: async () => ({
+        mediaType: "application/octet-stream",
+        byteLength: BigInt(bytes.byteLength),
+      }),
+      materializeEvidence: materialize,
+    },
+    artifacts: { download: async () => ({ content: Readable.from([bytes]) }) },
+  } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
+  const args = [
+    "read",
+    "artifact:33333333-3333-4333-8333-333333333333",
+    "--output",
+    output,
+    "--run-root",
+    root,
+    "--subject",
+    "subject",
+  ];
+  try {
+    expect(await runCli(args, async () => connection)).toMatchObject({
+      data: { outputPath: output, partial: false },
+    });
+    expect((await readFile(output)).equals(bytes)).toBe(true);
+    expect(materialize).not.toHaveBeenCalled();
+    await expect(runCli(args, async () => connection)).rejects.toMatchObject({
+      code: "EEXIST",
+    });
+    expect((await readFile(output)).equals(bytes)).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

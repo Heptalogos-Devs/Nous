@@ -1,6 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+use super::artifact::decode_artifact;
 use super::*;
 use nous_persistence::database_error as db;
 
@@ -19,29 +20,6 @@ fn temporal_columns(
 }
 
 impl MaterialService {
-    /// An Artifact may have multiple independent observations; never choose one implicitly.
-    pub async fn occurrence_ids_for_artifact(
-        &self,
-        subject: SubjectId,
-        artifact: ArtifactId,
-        limit: u32,
-    ) -> Result<(Vec<OccurrenceId>, bool)> {
-        if !(1..=200).contains(&limit) {
-            return Err(Error::Invalid("occurrence limit must be 1..200".into()));
-        }
-        self.store
-            .validate_reference(subject, &CognitiveRef::Artifact(artifact))
-            .await?;
-        let mut ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT occurrence_id FROM observation_occurrences WHERE subject_id=$1 AND artifact_id=$2 ORDER BY observed_at DESC,occurrence_id DESC LIMIT $3",
-        )
-        .bind(subject.0).bind(artifact.0).bind(i64::from(limit)+1)
-        .fetch_all(self.store.pool()).await.map_err(db)?;
-        let truncated = ids.len() > limit as usize;
-        ids.truncate(limit as usize);
-        Ok((ids.into_iter().map(OccurrenceId).collect(), truncated))
-    }
-
     pub async fn record_observation(&self, input: ObservationInput) -> Result<AcceptedObservation> {
         self.record_observation_once(input, None).await
     }
@@ -57,11 +35,6 @@ impl MaterialService {
         request_id: Option<Uuid>,
     ) -> Result<AcceptedObservation> {
         self.store.require_subject(input.subject).await?;
-        if let Some(session) = input.session {
-            self.cognition
-                .require_session(input.subject, session)
-                .await?;
-        }
         let mut tx = self.store.begin().await?;
         let request_digest = blake3::hash(
             &serde_json::to_vec(&input).map_err(|error| Error::Invalid(error.to_string()))?,
@@ -84,27 +57,25 @@ impl MaterialService {
                 let accepted: AcceptedObservation = serde_json::from_value(row.try_get("accepted").map_err(db)?)
                     .map_err(|error| Error::Infrastructure(error.to_string()))?;
                 tx.commit().await.map_err(db)?;
-                self.admit_observation(&input, accepted.occurrence.occurrence_id).await?;
                 return Ok(accepted);
             }
         }
         let now = self.cognition.now(input.subject);
         let object_guard = if matches!(
             &input.material,
-            ObservationMaterial::InlineText { .. } | ObservationMaterial::StructuredJson { .. }
+            ObservationMaterial::InlineText { .. }
+                | ObservationMaterial::StructuredJson { .. }
+                | ObservationMaterial::ArtifactRef { .. }
         ) {
             Some(self.objects.reference_guard(false).await?)
         } else {
             None
         };
-        let (artifact, _) = self
-            .material_to_artifact(input.subject, &input.material, now)
+        let artifact = self
+            .material_to_artifact(&mut tx, input.subject, &input.material, now)
             .await?;
-        if let Some(artifact) = &artifact {
-            artifact.validate()?;
-        }
         let occurrence_id = OccurrenceId::new();
-        let mut occurrence = ObservationOccurrence {
+        let occurrence = ObservationOccurrence {
             occurrence_id,
             subject_id: input.subject,
             artifact_id: artifact.as_ref().map(|artifact| artifact.artifact_id),
@@ -131,37 +102,13 @@ impl MaterialService {
         if let Some(object) = &occurrence.external_object_ref {
             ObjectRef::new(object.as_str())?;
         }
-        let artifact = if let Some(mut artifact) = artifact {
-            let existing = sqlx::query("SELECT artifact_id,byte_length,storage_key,created_at,metadata FROM artifacts WHERE subject_id=$1 AND content_hash=$2")
-                .bind(input.subject.0).bind(&artifact.content_hash).fetch_optional(&mut *tx).await.map_err(db)?;
-            if let Some(row) = existing {
-                artifact.artifact_id = ArtifactId(row.try_get("artifact_id").map_err(db)?);
-                artifact.byte_length = row.try_get::<i64, _>("byte_length").map_err(db)? as u64;
-                artifact.storage_key = row.try_get("storage_key").map_err(db)?;
-                artifact.created_at = row.try_get("created_at").map_err(db)?;
-                artifact.metadata = row.try_get("metadata").map_err(db)?;
-            } else {
-                sqlx::query("INSERT INTO artifacts(artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
-                    .bind(artifact.artifact_id.0).bind(artifact.subject_id.0).bind(&artifact.content_hash).bind(artifact.byte_length as i64).bind(&artifact.media_type).bind(&artifact.storage_key).bind(artifact.created_at).bind(&artifact.metadata).execute(&mut *tx).await.map_err(db)?;
-            }
-            Some(artifact)
-        } else {
-            None
-        };
-        occurrence.artifact_id = artifact.as_ref().map(|artifact| artifact.artifact_id);
         let (occurred_kind, occurred_start, occurred_end) =
             temporal_columns(&occurrence.occurred_time);
         sqlx::query("INSERT INTO observation_occurrences(occurrence_id,subject_id,artifact_id,source_class,external_object_ref,occurred_time_kind,occurred_time_start,occurred_time_end,observed_at,conversation_ref,actor_entity_ref,context,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
             .bind(occurrence.occurrence_id.0).bind(occurrence.subject_id.0).bind(occurrence.artifact_id.map(|id| id.0)).bind(occurrence.source_class.as_str()).bind(occurrence.external_object_ref.as_ref().map(ObjectRef::as_str)).bind(occurred_kind).bind(occurred_start).bind(occurred_end).bind(occurrence.observed_at).bind(&occurrence.conversation_ref).bind(occurrence.actor_entity_ref.as_ref().map(EntityRef::as_str)).bind(&occurrence.context).bind(occurrence.created_at).execute(&mut *tx).await.map_err(db)?;
         let source_region = if let Some(artifact) = &artifact {
             let coordinate = serde_json::json!({});
-            let coordinate_hash = blake3::hash(
-                serde_json::to_string(&coordinate)
-                    .unwrap_or_default()
-                    .as_bytes(),
-            )
-            .to_hex()
-            .to_string();
+            let coordinate_hash = blake3::hash(b"{}").to_hex().to_string();
             let existing = sqlx::query("SELECT source_region_id,created_at FROM source_regions WHERE subject_id=$1 AND artifact_id=$2 AND coordinate_kind='whole_artifact' AND coordinate_hash=$3")
                 .bind(input.subject.0).bind(artifact.artifact_id.0).bind(&coordinate_hash).fetch_optional(&mut *tx).await.map_err(db)?;
             let (id, region_created_at) = if let Some(row) = existing {
@@ -185,7 +132,6 @@ impl MaterialService {
                 parent_source_region_id: None,
                 created_at: region_created_at,
             };
-            region.validate()?;
             Some(region)
         } else {
             None
@@ -269,24 +215,35 @@ impl MaterialService {
             .ensure_identity_addresses_in(&mut tx, input.subject, &addresses, "")
             .await?;
         if let Some(request_id) = request_id {
+            AuthorityStore::add_model_result_dependencies_in(
+                &mut tx,
+                input.subject,
+                "material",
+                nous_core::OperationId(request_id),
+                &addresses,
+            )
+            .await?;
             sqlx::query("INSERT INTO observation_request_bindings(request_id,subject_id,request_digest,occurrence_id,accepted) VALUES($1,$2,$3,$4,$5)")
                 .bind(request_id).bind(input.subject.0).bind(request_digest).bind(occurrence_id.0)
                 .bind(serde_json::to_value(&accepted).map_err(|error| Error::Infrastructure(error.to_string()))?)
                 .execute(&mut *tx).await.map_err(db)?;
         }
+        self.admit_observation_in(&mut tx, &input, occurrence_id)
+            .await?;
         tx.commit().await.map_err(db)?;
         drop(object_guard);
-        self.admit_observation(&input, occurrence_id).await?;
         Ok(accepted)
     }
 
-    async fn admit_observation(
+    async fn admit_observation_in(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         input: &ObservationInput,
         occurrence_id: OccurrenceId,
     ) -> Result<()> {
         if let Some(session) = input.session.filter(|_| input.runtime.admit) {
             let mut admissions = vec![ResidentAdmission {
+                last_meaningful_use_at: None,
                 reference: CognitiveRef::Occurrence(occurrence_id),
                 reason: "observed".into(),
                 hold_until: input.runtime.hold_until,
@@ -295,6 +252,7 @@ impl MaterialService {
             for mention in &input.entities {
                 if let Some(entity) = &mention.entity_ref {
                     admissions.push(ResidentAdmission {
+                        last_meaningful_use_at: None,
                         reference: CognitiveRef::Entity(entity.clone()),
                         reason: "observed".into(),
                         hold_until: input.runtime.hold_until,
@@ -305,6 +263,7 @@ impl MaterialService {
             if let ObservationMaterial::ResourceAvailability { resource } = &input.material {
                 ResourceRef::new(resource.as_str())?;
                 admissions.push(ResidentAdmission {
+                    last_meaningful_use_at: None,
                     reference: CognitiveRef::Resource(resource.clone()),
                     reason: "resource_awareness".into(),
                     hold_until: input.runtime.hold_until,
@@ -312,7 +271,7 @@ impl MaterialService {
                 });
             }
             self.cognition
-                .admit_batch(input.subject, session, admissions)
+                .admit_batch_in(tx, input.subject, session, admissions)
                 .await?;
         }
         Ok(())
@@ -320,68 +279,39 @@ impl MaterialService {
 
     async fn material_to_artifact(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         material: &ObservationMaterial,
         now: DateTime<Utc>,
-    ) -> Result<(Option<Artifact>, Option<Vec<u8>>)> {
-        match material {
+    ) -> Result<Option<Artifact>> {
+        let (bytes, media_type) = match material {
             ObservationMaterial::InlineText { text, media_type } => {
-                let bytes = text.as_bytes().to_vec();
-                self.bytes_to_artifact(subject, bytes, media_type, serde_json::json!({}), now)
-                    .await
+                (text.as_bytes().to_vec(), media_type.as_str())
             }
-            ObservationMaterial::StructuredJson { value } => {
-                let bytes =
-                    serde_json::to_vec(value).map_err(|error| Error::Invalid(error.to_string()))?;
-                self.bytes_to_artifact(
-                    subject,
-                    bytes,
-                    "application/json",
-                    serde_json::json!({}),
-                    now,
-                )
-                .await
-            }
+            ObservationMaterial::StructuredJson { value } => (
+                serde_json::to_vec(value).map_err(|error| Error::Invalid(error.to_string()))?,
+                "application/json",
+            ),
             ObservationMaterial::ArtifactRef { artifact_id } => {
-                let artifact = self.artifact(subject, *artifact_id).await?;
-                Ok((Some(artifact), None))
+                return self.artifact(subject, *artifact_id).await.map(Some);
             }
             ObservationMaterial::ExternalObjectRef { .. }
-            | ObservationMaterial::ResourceAvailability { .. } => Ok((None, None)),
-        }
-    }
-
-    async fn bytes_to_artifact(
-        &self,
-        subject: SubjectId,
-        bytes: Vec<u8>,
-        media_type: &str,
-        metadata: serde_json::Value,
-        now: DateTime<Utc>,
-    ) -> Result<(Option<Artifact>, Option<Vec<u8>>)> {
-        if bytes.len() as u64 > self.max_upload_bytes {
-            return Err(Error::Invalid(
-                "material exceeds configured byte bound".into(),
-            ));
-        }
-        let (hash, size) = self
-            .objects
-            .put_chunks(
-                futures::stream::iter([Ok::<Vec<u8>, Error>(bytes.clone())]),
-                self.max_upload_bytes,
-            )
-            .await?;
-        let artifact = Artifact {
-            artifact_id: ArtifactId::new(),
-            subject_id: subject,
-            content_hash: hash.clone(),
-            byte_length: size,
-            media_type: media_type.to_owned(),
-            storage_key: hash,
-            created_at: now,
-            metadata,
+            | ObservationMaterial::ResourceAvailability { .. } => return Ok(None),
         };
-        Ok((Some(artifact), Some(bytes)))
+        ArtifactRegistration::new(self.store.clone(), self.objects.clone())
+            .write_in(
+                tx,
+                subject,
+                UploadMetadata {
+                    media_type: media_type.into(),
+                    metadata: serde_json::json!({}),
+                },
+                futures::stream::iter([Ok(bytes)]),
+                self.max_upload_bytes,
+                now,
+            )
+            .await
+            .map(Some)
     }
 
     pub async fn upload_stream<S>(
@@ -395,64 +325,61 @@ impl MaterialService {
     {
         self.store.require_subject(subject).await?;
         let guard = self.objects.reference_guard(false).await?;
-        let (hash, size) = self
-            .objects
-            .put_chunks(chunks, self.max_upload_bytes)
-            .await?;
-        let now = self.cognition.now(subject);
-        if !self.store.subject_exists(subject).await? {
-            drop(guard);
-            return Err(Error::NotFound("subject not found".into()));
-        }
-        let proposed_artifact_id = ArtifactId::new();
         let mut tx = self.store.begin().await?;
-        sqlx::query("INSERT INTO artifacts(artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(subject_id,content_hash) DO NOTHING")
-            .bind(proposed_artifact_id.0).bind(subject.0).bind(&hash).bind(size as i64).bind(&metadata.media_type).bind(&hash).bind(now).bind(&metadata.metadata)
-            .execute(&mut *tx).await.map_err(db)?;
-        let artifact_id = sqlx::query_scalar::<_, Uuid>(
-            "SELECT artifact_id FROM artifacts WHERE subject_id=$1 AND content_hash=$2",
-        )
-        .bind(subject.0)
-        .bind(&hash)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
-        self.store
-            .ensure_identity_addresses_in(
+        let artifact = ArtifactRegistration::new(self.store.clone(), self.objects.clone())
+            .write_in(
                 &mut tx,
                 subject,
-                &[CognitiveRef::Artifact(ArtifactId(artifact_id))],
-                "",
+                metadata,
+                chunks,
+                self.max_upload_bytes,
+                self.cognition.now(subject),
             )
             .await?;
         tx.commit().await.map_err(db)?;
-        let artifact = self.artifact(subject, ArtifactId(artifact_id)).await?;
         drop(guard);
         Ok(artifact)
     }
 
     pub async fn artifact(&self, subject: SubjectId, artifact: ArtifactId) -> Result<Artifact> {
-        let row = sqlx::query("SELECT artifact_id,subject_id,content_hash,byte_length,media_type,storage_key,created_at,metadata FROM artifacts WHERE subject_id=$1 AND artifact_id=$2")
+        let row = sqlx::query("SELECT artifact_id,subject_id,content_hash,byte_length,media_type,created_at,metadata FROM artifacts WHERE subject_id=$1 AND artifact_id=$2")
             .bind(subject.0).bind(artifact.0).fetch_optional(self.store.pool()).await.map_err(db)?.ok_or_else(||Error::NotFound("artifact not found".into()))?;
-        Ok(Artifact {
-            artifact_id: ArtifactId(row.try_get("artifact_id").map_err(db)?),
-            subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),
-            content_hash: row.try_get("content_hash").map_err(db)?,
-            byte_length: row.try_get::<i64, _>("byte_length").map_err(db)? as u64,
-            media_type: row.try_get("media_type").map_err(db)?,
-            storage_key: row.try_get("storage_key").map_err(db)?,
-            created_at: row.try_get("created_at").map_err(db)?,
-            metadata: row.try_get("metadata").map_err(db)?,
-        })
+        decode_artifact(row)
+    }
+
+    pub async fn artifacts(
+        &self,
+        subject: SubjectId,
+        limit: i64,
+        after: Option<Uuid>,
+    ) -> Result<(Vec<Artifact>, bool)> {
+        self.store.require_subject(subject).await?;
+        let mut rows = sqlx::query("SELECT * FROM artifacts WHERE subject_id=$1 AND ($2::uuid IS NULL OR artifact_id>$2) ORDER BY artifact_id LIMIT $3")
+            .bind(subject.0).bind(after).bind(limit+1).fetch_all(self.store.pool()).await.map_err(db)?;
+        let more = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        Ok((
+            rows.into_iter()
+                .map(decode_artifact)
+                .collect::<Result<_>>()?,
+            more,
+        ))
     }
 
     pub async fn artifact_stream(
         &self,
         subject: SubjectId,
         artifact: ArtifactId,
-    ) -> Result<(Artifact, impl Stream<Item = Result<Vec<u8>>> + Send + use<>)> {
+        start: Option<u64>,
+        end: Option<u64>,
+    ) -> Result<impl Stream<Item = Result<Vec<u8>>> + Send + use<>> {
         let artifact = self.artifact(subject, artifact).await?;
-        let stream = self.objects.stream(&artifact.content_hash).await?;
-        Ok((artifact, stream))
+        let start = start.unwrap_or(0);
+        let end = end.unwrap_or(artifact.byte_length);
+        if start > end || end > artifact.byte_length {
+            return Err(Error::Invalid("invalid byte range".into()));
+        }
+        let selected = (start != 0 || end != artifact.byte_length).then_some(start..end);
+        self.objects.stream(&artifact.content_hash, selected).await
     }
 }

@@ -45,8 +45,12 @@ impl Server {
                 },
                 embedding: None,
                 stored_embedding: None,
-                core_descriptors: configuration.core_descriptors.clone(),
-                deployment_document: configuration.deployment_document.clone(),
+                configuration: nous_kernel::configuration_catalog(
+                    configuration.core_descriptors.clone(),
+                )
+                .unwrap()
+                .deployment(&configuration.deployment_document.clone())
+                .unwrap(),
             },
             clock,
         )
@@ -83,7 +87,14 @@ impl Server {
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 enum Control {
-    Advance { subject: SubjectId, seconds: i64 },
+    Advance {
+        subject: SubjectId,
+        seconds: i64,
+    },
+    Prioritize {
+        subject: SubjectId,
+        references: Vec<nous_core::MemoryRevisionId>,
+    },
     Restart,
     Done,
 }
@@ -147,6 +158,30 @@ async fn run_smoke() {
                     .advance_by(subject, Duration::seconds(seconds))
                     .unwrap();
                 serde_json::json!({"advanced":true})
+            }
+            Control::Prioritize {
+                subject,
+                references,
+            } => {
+                let seq = server.runtime.store.authority_seq(subject).await.unwrap();
+                for revision in references {
+                    let reference = nous_core::CognitiveRef::MemoryRevision(revision);
+                    server
+                        .runtime
+                        .cognition
+                        .enqueue_maintenance(nous_runtime::MaintenanceRequest {
+                            subject,
+                            kind: "concept_maintenance".into(),
+                            scope_kind: reference.kind().into(),
+                            scope_ref: nous_core::reference_parts(&reference).1,
+                            trigger_authority_seq: seq,
+                            due_at: server.runtime.cognition.now(subject),
+                            priority: 100,
+                        })
+                        .await
+                        .unwrap();
+                }
+                serde_json::json!({"prioritized":true})
             }
             Control::Restart => {
                 server.close().await;

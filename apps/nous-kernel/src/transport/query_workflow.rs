@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nous_core::{EvidenceFamily, RequirementStrength, Result};
+use nous_core::{RequirementStrength, Result};
 
 #[tonic::async_trait]
 impl k::kernel_query_service_server::KernelQueryService for KernelService {
@@ -35,45 +35,58 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
             bound.selected_embedding_space =
                 self.0.serving.embedding().map(|provider| provider.space());
             let embedding_text = bound.representation.text.clone();
-            let embedding_required = bound.source_query.capabilities.text_embedding
-                != RequirementStrength::Forbidden
-                && !embedding_text.is_empty()
-                && (bound.concept_enrichment != nous_runtime::ConceptEnrichment::Off
-                    || bound.enabled_lanes.iter().any(|lane| {
-                        *lane == EvidenceFamily::Dense
-                            || (*lane == EvidenceFamily::TopologyWave
-                                && bound
-                                    .retrieval_policy
-                                    .cognitive_profile
-                                    .requirements()
-                                    .query_embedding)
-                    }));
+            let host = input.host.unwrap_or_default();
+            let (embedding_required, needs_host) =
+                bound.host_work(&nous_runtime::QueryHostCapabilities {
+                    embedding_available: host.embedding_available,
+                    embedding_required: host.embedding_required,
+                    enrichment_available: host.enrichment_available,
+                    enrichment_required: host.enrichment_required,
+                    rerank_available: host.rerank_available,
+                    rerank_required: host.rerank_required,
+                })?;
             let inspection = super::query::inspect_bound_query(&bound)?;
             let text_embedding_requirement =
                 enum_name(bound.source_query.capabilities.text_embedding);
             let rerank_requirement = enum_name(if bound.source_query.is_exact_read() {
                 RequirementStrength::Forbidden
             } else {
-                bound.source_query.capabilities.rerank
+                if host.rerank_required
+                    && bound.source_query.capabilities.rerank != RequirementStrength::Forbidden
+                {
+                    RequirementStrength::Required
+                } else {
+                    bound.source_query.capabilities.rerank
+                }
             });
             let concept_enrichment_mode = enum_name(bound.concept_enrichment);
             let concept_enrichment_requirement =
                 enum_name(bound.source_query.capabilities.query_concept_enrichment);
             let historical_view = bound.historical_authority.is_some();
-            let token = if input.reserve_execution {
+            let (token, execution) = if input.execute_query {
                 let lease = nous_runtime::QueryLease::new(std::time::Duration::from_secs(
                     u64::from(input.lease_seconds),
                 ))?;
-                let reservation = nous_runtime::QueryReservation::new(bound, lease)?;
-                Some(
-                    self.0
-                        .cognition
-                        .retain_prepared_query(reservation)?
-                        .to_string(),
-                )
+                if needs_host {
+                    let reservation = nous_runtime::QueryReservation::new(bound, lease)?;
+                    (
+                        Some(
+                            self.0
+                                .cognition
+                                .retain_prepared_query(reservation)?
+                                .to_string(),
+                        ),
+                        None,
+                    )
+                } else {
+                    (None, Some(Box::pin(self.query(bound, lease, None)).await?))
+                }
             } else {
-                None
+                (None, None)
             };
+            let (result, validation_ticket) = execution
+                .map(|value| (value.response, value.validation_ticket))
+                .unwrap_or_default();
             Ok(p::PreparedQueryResponse {
                 bound_query: inspection,
                 preparation_token: token,
@@ -84,6 +97,8 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
                 concept_enrichment_mode,
                 concept_enrichment_requirement,
                 historical_view,
+                result,
+                validation_ticket,
             })
         }
         .await;

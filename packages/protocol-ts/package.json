@@ -5,7 +5,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
-    "./*": "./src/generated/*"
+    "./*": "./src/generated/*",
+    "./messages": "./src/messages.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0"

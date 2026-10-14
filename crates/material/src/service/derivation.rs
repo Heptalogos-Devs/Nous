@@ -37,7 +37,15 @@ impl MaterialService {
     pub async fn persist_derived_representation(
         &self,
         mut representation: DerivedRepresentation,
+        operation: Option<&nous_persistence::ModelOperationIdentity>,
     ) -> Result<DerivedRepresentation> {
+        if operation.is_some_and(|identity| {
+            identity.subject != representation.subject_id || identity.owner != "material"
+        }) {
+            return Err(Error::Invalid(
+                "derivation operation belongs to another owner or Subject".into(),
+            ));
+        }
         representation.validate()?;
         representation.producer = AuthorityStore::canonical_producer(&representation.producer)?;
         let (input_digest, key) = derivation_identity(&representation)?;
@@ -47,50 +55,8 @@ impl MaterialService {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        // All inputs must already exist. Together with immutable edges and a new
-        // representation identity, this admits no backwards edge or DAG cycle.
-        for input in &representation.inputs {
-            let (query, id) = match input.reference {
-                CognitiveRef::SourceRegion(id) => (
-                    "SELECT subject_id FROM source_regions WHERE source_region_id=$1 FOR SHARE",
-                    id.0,
-                ),
-                CognitiveRef::DerivedRepresentation(id) => (
-                    "SELECT subject_id FROM derived_representations WHERE derived_representation_id=$1 FOR SHARE",
-                    id.0,
-                ),
-                CognitiveRef::DerivedRegion(id) => (
-                    "SELECT subject_id FROM derived_regions WHERE derived_region_id=$1 FOR SHARE",
-                    id.0,
-                ),
-                _ => return Err(Error::Invalid("invalid derivation input kind".into())),
-            };
-            let owner: Option<Uuid> = sqlx::query_scalar(query)
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
-            if owner != Some(representation.subject_id.0) {
-                return Err(Error::Invalid(
-                    "derivation input is missing or outside Subject".into(),
-                ));
-            }
-        }
-        self.validate_field_basis(&mut tx, &representation).await?;
-        if let Some(artifact) = representation.payload_artifact_id {
-            let owner: Option<Uuid> = sqlx::query_scalar(
-                "SELECT subject_id FROM artifacts WHERE artifact_id=$1 FOR SHARE",
-            )
-            .bind(artifact.0)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
-            if owner != Some(representation.subject_id.0) {
-                return Err(Error::Invalid(
-                    "derived payload artifact is outside Subject".into(),
-                ));
-            }
-        }
+        self.validate_derivation_inputs_in(&mut tx, &representation)
+            .await?;
         representation.revision = if let Some(previous) = representation.supersedes {
             let revision: Option<i32> = sqlx::query_scalar("SELECT revision FROM derived_representations WHERE subject_id=$1 AND derived_representation_id=$2 FOR SHARE").bind(representation.subject_id.0).bind(previous.0).fetch_optional(&mut *tx).await.map_err(db)?;
             revision
@@ -120,6 +86,14 @@ impl MaterialService {
             representation.quality = row.try_get("quality").map_err(db)?;
             representation.created_at = row.try_get("created_at").map_err(db)?;
             representation.revision = row.try_get("revision").map_err(db)?;
+            if let Some(identity) = operation {
+                AuthorityStore::publish_material_result_in(
+                    &mut tx,
+                    identity,
+                    CognitiveRef::DerivedRepresentation(representation.derived_representation_id),
+                )
+                .await?;
+            }
             tx.commit().await.map_err(db)?;
             return Ok(representation);
         }
@@ -155,87 +129,98 @@ impl MaterialService {
                 "",
             )
             .await?;
+        if let Some(identity) = operation {
+            AuthorityStore::publish_material_result_in(
+                &mut tx,
+                identity,
+                CognitiveRef::DerivedRepresentation(representation.derived_representation_id),
+            )
+            .await?;
+        }
         tx.commit().await.map_err(db)?;
         Ok(representation)
     }
-    pub async fn persist_derived_region(&self, mut region: DerivedRegion) -> Result<DerivedRegion> {
-        region.validate()?;
-        let mut tx = self.store.begin().await?;
-        region.derived_region_id = self.insert_derived_region_in_tx(&mut tx, &region).await?;
-        region.created_at = sqlx::query_scalar(
-            "SELECT created_at FROM derived_regions WHERE derived_region_id=$1 AND subject_id=$2",
-        )
-        .bind(region.derived_region_id.0)
-        .bind(region.subject_id.0)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
-        nous_persistence::AuthorityStore::invalidate_in(
-            &mut tx,
-            region.subject_id,
-            ProjectionInvalidation::text(),
-        )
-        .await?;
-        tx.commit().await.map_err(db)?;
-        Ok(region)
-    }
-
-    pub(super) async fn insert_derived_region_in_tx(
+    async fn validate_derivation_inputs_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        region: &DerivedRegion,
-    ) -> Result<DerivedRegionId> {
-        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM derived_representations WHERE subject_id=$1 AND derived_representation_id=$2)")
-            .bind(region.subject_id.0)
-            .bind(region.derived_representation_id.0)
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(db)?;
-        if !valid
-            || region.coordinate_kind.trim().is_empty()
-            || region.coordinate_hash.trim().is_empty()
-        {
-            return Err(Error::Invalid(
-                "derived region is invalid or outside Subject".into(),
-            ));
-        }
-        if let Some(parent) = region.parent_derived_region_id {
-            let parent_valid: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM derived_regions WHERE subject_id=$1 AND derived_region_id=$2 AND derived_representation_id=$3)",
-            )
-            .bind(region.subject_id.0)
-            .bind(parent.0)
-            .bind(region.derived_representation_id.0)
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(db)?;
-            if !parent_valid {
-                return Err(Error::Invalid(
-                    "derived region parent is outside the representation".into(),
-                ));
+        representation: &DerivedRepresentation,
+    ) -> Result<()> {
+        // Lock each admitted input relation in bulk; immutable existing edges cannot create a backwards cycle.
+        let mut sources = Vec::new();
+        let mut derived = Vec::new();
+        let mut regions = Vec::new();
+        for input in &representation.inputs {
+            match input.reference {
+                CognitiveRef::SourceRegion(id) => sources.push(id.0),
+                CognitiveRef::DerivedRepresentation(id) => derived.push(id.0),
+                CognitiveRef::DerivedRegion(id) => regions.push(id.0),
+                _ => return Err(Error::Invalid("invalid derivation input kind".into())),
             }
         }
-        let actual_id: Uuid = sqlx::query_scalar("INSERT INTO derived_regions(derived_region_id,subject_id,derived_representation_id,coordinate_kind,coordinate,coordinate_hash,parent_derived_region_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(derived_representation_id,coordinate_kind,coordinate_hash) DO UPDATE SET coordinate_hash=excluded.coordinate_hash RETURNING derived_region_id")
-            .bind(region.derived_region_id.0)
-            .bind(region.subject_id.0)
-            .bind(region.derived_representation_id.0)
-            .bind(&region.coordinate_kind)
-            .bind(&region.coordinate)
-            .bind(&region.coordinate_hash)
-            .bind(region.parent_derived_region_id.map(|id| id.0))
-            .bind(self.cognition.now(region.subject_id))
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(db)?;
-        let actual_id = DerivedRegionId(actual_id);
+        let locked: i64 = sqlx::query_scalar(r#"
+WITH sources AS (SELECT source_region_id FROM source_regions WHERE subject_id=$1 AND source_region_id=ANY($2::uuid[]) FOR SHARE),
+representations AS (SELECT derived_representation_id FROM derived_representations WHERE subject_id=$1 AND derived_representation_id=ANY($3::uuid[]) FOR SHARE),
+regions AS (SELECT derived_region_id FROM derived_regions WHERE subject_id=$1 AND derived_region_id=ANY($4::uuid[]) FOR SHARE),
+payload AS (SELECT artifact_id FROM artifacts WHERE subject_id=$1 AND artifact_id=$5 FOR SHARE)
+SELECT (SELECT count(*) FROM sources)+(SELECT count(*) FROM representations)+(SELECT count(*) FROM regions)+(SELECT count(*) FROM payload)
+"#).bind(representation.subject_id.0).bind(&sources).bind(&derived).bind(&regions)
+            .bind(representation.payload_artifact_id.map(|id|id.0)).fetch_one(&mut **tx).await.map_err(db)?;
+        if locked as usize
+            != representation.inputs.len()
+                + usize::from(representation.payload_artifact_id.is_some())
+        {
+            return Err(Error::Invalid(
+                "derivation input or payload is missing or outside Subject".into(),
+            ));
+        }
+        self.validate_field_basis(tx, representation).await?;
+        Ok(())
+    }
+
+    /// Callers establish parent ownership once; segmentation already holds the parent row.
+    pub(super) async fn insert_derived_regions_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        regions: &[DerivedRegion],
+    ) -> Result<Vec<DerivedRegion>> {
+        if regions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let subject = regions[0].subject_id;
+        let requested =
+            serde_json::to_value(regions).map_err(|error| Error::Invalid(error.to_string()))?;
+        let written = sqlx::query(r#"
+INSERT INTO derived_regions(derived_region_id,subject_id,derived_representation_id,coordinate_kind,coordinate,coordinate_hash,parent_derived_region_id,created_at)
+SELECT derived_region_id,subject_id,derived_representation_id,coordinate_kind,coordinate,coordinate_hash,parent_derived_region_id,$2
+FROM jsonb_to_recordset($1) r(derived_region_id uuid,subject_id uuid,derived_representation_id uuid,coordinate_kind text,coordinate jsonb,coordinate_hash text,parent_derived_region_id uuid)
+ON CONFLICT(derived_representation_id,coordinate_kind,coordinate_hash) DO NOTHING
+"#).bind(&requested).bind(self.cognition.now(subject)).execute(&mut **tx).await.map_err(db)?.rows_affected();
+        let values: Vec<serde_json::Value> = sqlx::query_scalar(r#"
+SELECT to_jsonb(d) FROM jsonb_array_elements($1) WITH ORDINALITY AS input(value,ordinal)
+CROSS JOIN LATERAL jsonb_to_record(input.value) AS r(derived_representation_id uuid,coordinate_kind text,coordinate_hash text)
+JOIN derived_regions d USING(derived_representation_id,coordinate_kind,coordinate_hash) ORDER BY input.ordinal
+"#).bind(requested).fetch_all(&mut **tx).await.map_err(db)?;
+        let regions = values
+            .into_iter()
+            .map(|value| {
+                serde_json::from_value::<DerivedRegion>(value)
+                    .map_err(|error| Error::Infrastructure(error.to_string()))
+            })
+            .collect::<Result<Vec<_>>>()?;
         self.store
             .ensure_identity_addresses_in(
                 tx,
-                region.subject_id,
-                &[CognitiveRef::DerivedRegion(actual_id)],
+                subject,
+                &regions
+                    .iter()
+                    .map(|region| CognitiveRef::DerivedRegion(region.derived_region_id))
+                    .collect::<Vec<_>>(),
                 "",
             )
             .await?;
-        Ok(actual_id)
+        if written > 0 {
+            AuthorityStore::invalidate_in(tx, subject, ProjectionInvalidation::text()).await?;
+        }
+        Ok(regions)
     }
 }

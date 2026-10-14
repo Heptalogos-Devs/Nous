@@ -4,7 +4,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { domainErrorDetail, ErrorRecovery } from "@nous-wave/client/errors";
 
-/** Classify a rejected supplied Authority action; leases and identity conflicts escape. */
+/** Classify a rejected supplied Authority action; identity conflicts and runtime failures escape. */
 export function authorityRejection(error: unknown) {
   if (!(error instanceof ConnectError)) return undefined;
   const detail = domainErrorDetail(error);

@@ -4,7 +4,8 @@
 import type { CliEnvironment } from "../runtime.js";
 
 export async function embeddingsCommands(env: CliEnvironment) {
-  const { client, values, subjectId } = env;
+  const { client, values } = env;
+  const subjectId = await env.subjectId;
   const budget = Number(values["max-batches"]);
   if (!Number.isInteger(budget) || budget < 1 || budget > 10_000)
     throw new Error("--max-batches must be 1..10000");

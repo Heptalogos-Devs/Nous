@@ -28,9 +28,9 @@ Capabilities 包括 text、image_input、audio_input、video_input、structured_
 
 Embedding profile 显式声明 dimension、weights revision、task、input representation、preprocessing identity/revision、normalization 与 output semantics。Core 据此形成 EmbeddingSpaceSignature；Kernel 持久化 producer identity 并以 embedding-space identity 隔离 Serving generations。
 
-Model profiles 与 Prompt 在 Core 启动时解析；配置变更在 Core restart 后生效。SDK automatic retry 关闭；有序 execution fallback 处理基础设施、JSON/schema 和 generation input/output 合同错误，领域 Authority 的语义拒绝不触发另一轮生成。固定 snapshot 使用唯一 nous.model.execution format，只保存该角色的有序 routes、依赖资源、规范 controls、Prompt、provider implementation digest 与 output schema digest；无关 profile 或 media policy 不改变该角色身份。当前进程在 admission 前拒绝其他实现或输出合同的执行 snapshot。每个 outbound 调用计入 maintenance 预算。保存 proposal 后基础设施重试不得重新生成。
+Model profiles 与 Prompt 在 Core 启动时解析；配置变更在 Core restart 后生效。SDK automatic retry 关闭；有序 execution fallback 处理基础设施、JSON/schema 和 generation input/output 合同错误，领域 Authority 的语义拒绝不触发另一轮生成。执行期间固定该角色的 routes、规范 controls、Prompt 与配置身份；无关 profile 或 media policy 不改变该角色身份。形成、派生、维护和 Resource 接纳共用 Core 的结果操作：先读已有 outcome/proposal，真正需要生成时才准备输入和调用 provider；提案、必要输入、依赖与成功 telemetry 一次保存，再由 owner 提交并保存结果。未产生结果的执行不登记恢复 snapshot；实际失败调用可以单独保存 telemetry。确定性 Journal 撤回直接使用 Memory 的操作回执。保存的提案可在后续显式机会和零模型预算下提交，已有结果重放不要求角色 READY。不设置源码版本门禁或跨部署恢复承诺。
 
-资源 schemas/types 由 profiles owner 提供；invocations 持有冻结 routes、admission 和 attempt 记录；protocols 负责 SDK/HTTP 调用且不依赖 ModelRole；Material interpretation owner 构造媒体输入并解释生成输出。每次调用先依据实际 physical input 过滤 route，再发送实际通道访问声明并校验输出。Source startup 与 Portable assembly 对 owning implementation 文件及实际依赖版本计算相同摘要，bundle 内嵌该值，不在 Portable 读取源码。Catalog 呈现身份与这些执行身份保持独立。
+资源 schemas/types 由 profiles owner 提供；invocations 在启动时解析 routes 并直接复用可执行绑定，route execution 持有 admission 和 attempt 记录；protocols 负责 SDK/HTTP 调用且不依赖 ModelRole；Material interpretation owner 构造媒体输入并解释生成输出。每次调用先依据实际 physical input 过滤 route，再发送实际通道访问声明并校验输出。Producer implementation 使用实际成功的 adapter 名称；源码哈希不属于执行 admission 条件。Catalog 呈现身份与这些执行身份保持独立。
 
 Attempt 区分 succeeded、failed、skipped 与 unknown；输入或资源不满足的 route 为 skipped，不发出请求。取消保留已经发生的请求与已知 usage；已传输而响应不可确认的请求记录 unknown，不记成成功或零成本。Provider response 与错误内容只在本地合同检查，公开失败分类不携带 credential 或原始 response body。
 
@@ -52,11 +52,11 @@ Formation 使用 evidenceText、resolvedEntityCandidates、aboutnessMode envelop
 
 ## Producer identity
 
-ProducerSignature 标识实际 adapter/protocol、operation、model identifier/revision、Prompt logical id/digest、实际成功 execution、ModelRole、ModelProfile、inference controls digest、RolePolicy digest、strategy 与 frozen configuration digest。Formation、Material 和维护使用模型 owner 的同一 metadata 映射，implementation 来自实际成功 adapter 的 owning code identity，不另写 SDK 版本常量。Credential、token 与 provider response body 不属于 producer identity。
+ProducerSignature 标识实际 adapter/protocol、operation、model identifier/revision、Prompt logical id/digest、实际成功 execution、ModelRole、ModelProfile、inference controls digest、RolePolicy digest、strategy 与 frozen configuration digest。Formation、Material 和维护使用模型 owner 的同一 metadata 映射，implementation 来自实际成功 adapter 名称；实际模型、Prompt、输出 schema 与 controls 的签名仍随结果保存。Credential、token 与 provider response body 不属于 producer identity。
 
 模型输出形成派生表示或带来源的候选提案；Material 与认知领域 owner 验证并提交，由领域 Authority 持有认知身份与修订。
 
-Core 的 formation、derivation 与 embedding preparation 共用 `core_execution.opportunity` 的 work budget；各 route timeout 限制单次 provider attempt，不能重置外层工作机会。ModelWorkflow private reservation 的 lease 由同一执行机会传入；取消后的 telemetry/save/release 使用剩余 cleanup budget。官方 Client 从 active Configuration 派生响应等待，较短 caller deadline 保留。维护机会与父 claim 语义见 [纵向认知](../cognitive-runtime/longitudinal-cognition.md)。
+Core 的 formation、derivation 与 embedding preparation 共用 `core_execution.opportunity` 的 work budget；各 route timeout 限制单次 provider attempt，不能重置外层工作机会。Private operation records 不建立 child lease；Core 按 operation identity 串行执行，取消后的 telemetry/proposal/outcome save 使用剩余 cleanup budget；已返回的 paid result 可以保存，但取消不授权继续 owner mutation。官方 Client 从 active Configuration 派生响应等待，较短 caller deadline 保留。维护机会与 trigger acknowledgement 语义见 [纵向认知](../cognitive-runtime/longitudinal-cognition.md)。
 
 音频、视频和结构化 Material 的输入模式与提交语义见 [Material Derivation](material-derivation.md)；rerank 的候选、预算与 Authority revalidation 见 [Query/Rerank](../retrieval/rerank.md)。
 
@@ -64,4 +64,6 @@ Core 的 formation、derivation 与 embedding preparation 共用 `core_execution
 
 `query_concept_enrichment` 是独立 structured role，使用 `prompts/query/concept-enrichment.md` 与严格 catalog-key/novel-text schema。它不复用 formation 或 concept-maintenance prompt，不创建 Tag，不用无支持的 inferred concept 充当事实证据。Existing match/query embedding 与 dense/Native/VCP 共享 Concept asset；reference default enrichment off，capability forbidden 不调用 role。
 
-历史 Query 执行可在 embedding 许可下通过同一 prepared token 发现、生成、提交截点 Owner-selected 文本的 cache miss，继续使用既有 embedding_materials/content digest。提交不得把 current Tag description 当作旧文本验证；有界 batch 不足或模型不可用按 required/optional 合同报告。Query prepare 只检查 captured representation/config/capabilities，不调用 provider。
+历史 Query 执行可在 embedding 许可下通过同一 prepared token 发现、生成、提交截点 Owner-selected 文本的 cache miss，继续使用既有 embedding_materials/content digest。提交不得把 current Tag description 当作旧文本验证；有界 batch 不足或模型不可用按 required/optional 合同报告。公开 PrepareQuery 只检查 captured representation/config/capabilities，不调用 provider。执行查询时，Kernel 根据同一计划决定是否需要 Host：无需模型时连续检索并返回，需要模型时才保存 continuation；外部 Resource 工作在得到实际 action 后保留核验 ticket。私有合同每次只接受一个可选 query embedding。
+
+Query embedding 的空间身份由 profiles owner 的统一参数投影产生；配置 admission 与 ProducerSignature 使用相同投影。max_batch_size 只影响执行分批，不改变向量空间；dimension、normalization、输入表示与 media policy 改变空间身份。

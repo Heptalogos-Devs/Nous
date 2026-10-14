@@ -8,9 +8,9 @@ use test_support::query::{query, subject};
 use test_support::{database, form_input, observation, open_runtime_with_serving};
 
 #[tokio::test]
-async fn serving_reuse_reads_the_typed_implementation_identity() {
+async fn serving_reuse_checks_effective_policy_identity() {
     let (root, url, _postgres) = database().await;
-    let runtime = open_runtime_with_serving(&url, &root, true, false, false).await;
+    let runtime = open_runtime_with_serving(&url, &root, true, false, true).await;
     let subject = subject(&runtime).await;
     observation(&runtime, subject, "Retain this original material").await;
     let need = ServingNeed {
@@ -26,14 +26,12 @@ async fn serving_reuse_reads_the_typed_implementation_identity() {
         .into_iter()
         .find(|record| record.family == "lexical")
         .unwrap();
-    // The record is the owner of identity. A stale metadata copy must not authorize reuse.
-    sqlx::query(
-        "UPDATE serving_generations SET implementation_revision='outdated' WHERE generation_id=$1",
-    )
-    .bind(original.generation_id.0)
-    .execute(runtime.store.pool())
-    .await
-    .unwrap();
+    // A cache with different effective builder policy cannot authorize reuse.
+    sqlx::query("UPDATE serving_generations SET config_digest='outdated' WHERE generation_id=$1")
+        .bind(original.generation_id.0)
+        .execute(runtime.store.pool())
+        .await
+        .unwrap();
     let status = runtime.serving.prepare(subject, need).await.unwrap();
     assert!(status.rebuilt.contains(&"lexical".to_owned()));
     let replacement = runtime
@@ -49,47 +47,40 @@ async fn serving_reuse_reads_the_typed_implementation_identity() {
         replacement.authority_watermark,
         original.authority_watermark
     );
-    assert_eq!(replacement.implementation_revision.len(), 64);
-    for key in ["implementation", "implementation_revision", "config_digest"] {
-        assert!(replacement.metadata.get(key).is_none());
-    }
-    // An existing superseded cache must leave current without losing a research pin.
-    let mut obsolete = replacement.clone();
-    obsolete.generation_id = nous_core::ServingGenerationId::new();
-    obsolete.family = "exact".into();
-    obsolete.artifact_location = root
-        .path()
-        .join("serving")
-        .join(obsolete.generation_id.0.to_string())
-        .to_string_lossy()
-        .into_owned();
-    obsolete.metadata = serde_json::json!({"research_pinned":true});
-    std::fs::create_dir_all(&obsolete.artifact_location).unwrap();
-    std::fs::write(
-        std::path::Path::new(&obsolete.artifact_location).join("postings.json"),
-        b"{}",
-    )
-    .unwrap();
-    let obsolete = runtime.store.publish_generation(obsolete).await.unwrap();
+    assert_eq!(
+        runtime
+            .serving
+            .family_status(subject)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|family| family.name == "lexical")
+            .unwrap()
+            .config_digest
+            .as_deref(),
+        Some(replacement.config_digest.as_str())
+    );
+    // Retired real assets retain a research pin until explicitly released.
+    runtime
+        .serving
+        .pin_research_generation(original.generation_id, true)
+        .await
+        .unwrap();
     let report = runtime
         .serving
         .reclaim_retired(subject, std::time::Duration::ZERO)
         .await
         .unwrap();
-    assert!(!report.reclaimed.contains(&obsolete.generation_id));
-    assert!(std::path::Path::new(&obsolete.artifact_location).exists());
+    assert!(!report.reclaimed.contains(&original.generation_id));
     assert!(
         runtime
-            .store
-            .serving_current(subject)
-            .await
-            .unwrap()
-            .iter()
-            .all(|record| record.family != "exact")
+            .serving
+            .artifact_directory(original.generation_id)
+            .exists()
     );
     runtime
         .serving
-        .pin_research_generation(obsolete.generation_id, false)
+        .pin_research_generation(original.generation_id, false)
         .await
         .unwrap();
     let report = runtime
@@ -97,7 +88,116 @@ async fn serving_reuse_reads_the_typed_implementation_identity() {
         .reclaim_retired(subject, std::time::Duration::ZERO)
         .await
         .unwrap();
-    assert!(report.reclaimed.contains(&obsolete.generation_id));
+    assert!(report.reclaimed.contains(&original.generation_id));
+
+    assert_native_projection_boundaries(&runtime, subject).await;
+}
+
+async fn assert_native_projection_boundaries(
+    runtime: &nous_kernel::NousRuntime,
+    subject: nous_core::SubjectId,
+) {
+    // Native structure follows its own inputs, rather than every Subject write.
+    let topology_need = ServingNeed {
+        topology: true,
+        ..Default::default()
+    };
+    runtime
+        .serving
+        .prepare(subject, topology_need)
+        .await
+        .unwrap();
+    let topology = runtime
+        .store
+        .serving_current(subject)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|record| record.family == "topology" && record.space.is_empty())
+        .unwrap();
+    let source = observation(runtime, subject, "Text alone changes no native graph node").await;
+    assert!(runtime.store.authority_seq(subject).await.unwrap() > topology.authority_watermark);
+    let families = runtime.serving.family_status(subject).await.unwrap();
+    let native = families
+        .iter()
+        .find(|family| family.name == "topology" && family.space_signature.is_empty())
+        .unwrap();
+    assert_eq!(native.state, nous_runtime::LaneStatus::Ready);
+    assert_eq!(native.desired_authority_seq, topology.authority_watermark);
+    assert!(
+        runtime
+            .store
+            .promote_generation(topology.generation_id)
+            .await
+            .unwrap()
+    );
+    let reused = runtime
+        .serving
+        .prepare(subject, topology_need)
+        .await
+        .unwrap();
+    assert!(!reused.rebuilt.contains(&"topology".to_owned()));
+    assert_eq!(reused.generations["topology"], topology.generation_id);
+
+    let memory = runtime
+        .require_memory()
+        .unwrap()
+        .form_memory(form_input(
+            subject,
+            source.occurrence.occurrence_id,
+            OperationId::new(),
+            "Recall relevant cognition with a real native graph node",
+        ))
+        .await
+        .unwrap();
+    let families = runtime.serving.family_status(subject).await.unwrap();
+    let native = families
+        .iter()
+        .find(|family| family.name == "topology" && family.space_signature.is_empty())
+        .unwrap();
+    assert_eq!(native.state, nous_runtime::LaneStatus::Stale);
+    assert!(
+        !runtime
+            .store
+            .promote_generation(topology.generation_id)
+            .await
+            .unwrap()
+    );
+    let updated = runtime
+        .serving
+        .prepare(subject, topology_need)
+        .await
+        .unwrap();
+    assert!(updated.rebuilt.contains(&"topology".to_owned()));
+    assert_ne!(updated.generations["topology"], topology.generation_id);
+    let reference = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
+    assert!(
+        runtime
+            .store
+            .topology_projection_input(subject, true, None)
+            .await
+            .unwrap()
+            .nodes
+            .contains(&reference)
+    );
+    assert!(
+        runtime
+            .query(query(subject))
+            .await
+            .unwrap()
+            .results
+            .iter()
+            .any(|hit| hit.reference == reference)
+    );
+    let families = runtime.serving.family_status(subject).await.unwrap();
+    assert_eq!(
+        families
+            .iter()
+            .find(|family| family.name == "topology" && family.space_signature.is_empty())
+            .unwrap()
+            .state,
+        nous_runtime::LaneStatus::Ready
+    );
 }
 
 #[tokio::test]
@@ -149,7 +249,6 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
         .cognition
         .retain_query(held, test_support::query_lease())
         .unwrap();
-    let ticket = ticket.expect("held validation ticket");
     let next = runtime
         .require_memory()
         .unwrap()
@@ -179,7 +278,12 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
         .unwrap();
     assert!(busy.readers_active);
     assert!(!busy.reclaimed.contains(&old.generation_id));
-    assert!(std::path::Path::new(&old.artifact_location).exists());
+    assert!(
+        runtime
+            .serving
+            .artifact_directory(old.generation_id)
+            .exists()
+    );
     runtime.cognition.release_query(subject, ticket).unwrap();
     let reclaimed = runtime
         .serving
@@ -187,7 +291,12 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
         .await
         .unwrap();
     assert!(reclaimed.reclaimed.contains(&old.generation_id));
-    assert!(!std::path::Path::new(&old.artifact_location).exists());
+    assert!(
+        !runtime
+            .serving
+            .artifact_directory(old.generation_id)
+            .exists()
+    );
     let watermark = runtime.store.authority_seq(subject).await.unwrap();
     drop(runtime);
     let reopened = reopen_without_serving_cache(&url, &root).await;
@@ -203,15 +312,6 @@ async fn cache_loss_rebuilds_at_the_same_watermark_and_retired_readers_are_prote
     assert_eq!(
         reopened.store.authority_seq(subject).await.unwrap(),
         watermark
-    );
-    assert!(
-        reopened
-            .store
-            .serving_current(subject)
-            .await
-            .unwrap()
-            .iter()
-            .all(|record| std::path::Path::new(&record.artifact_location).exists())
     );
 }
 

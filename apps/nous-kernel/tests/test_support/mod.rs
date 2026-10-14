@@ -91,18 +91,20 @@ pub(crate) async fn open_memory_only_runtime(url: &str, root: &TempDir) -> NousR
         },
         embedding: None,
         stored_embedding: None,
-        core_descriptors: vec![],
-        deployment_document: serde_json::json!({
-                "capabilities": {
-                    "process": { "memory": true },
-                    "subject_defaults": { "memory": true }
-                },
-                "serving": {
-                    "lexical": { "enabled": false },
-                    "dense": { "enabled": false },
-                    "topology": { "enabled": false }
-                }
-        }),
+        configuration: nous_kernel::configuration_catalog(vec![])
+            .unwrap()
+            .deployment(&serde_json::json!({
+                    "capabilities": {
+                        "process": { "memory": true },
+                        "subject_defaults": { "memory": true }
+                    },
+                    "serving": {
+                        "lexical": { "enabled": false },
+                        "dense": { "enabled": false },
+                        "topology": { "enabled": false }
+                    }
+            }))
+            .unwrap(),
     })
     .await
     .expect("open memory-only runtime")
@@ -115,7 +117,19 @@ pub(crate) async fn open_runtime_with_serving(
     dense: bool,
     topology: bool,
 ) -> NousRuntime {
-    NousRuntime::open(RuntimeOptions {
+    NousRuntime::open(runtime_options(url, root, lexical, dense, topology))
+        .await
+        .expect("open runtime")
+}
+
+pub(crate) fn runtime_options(
+    url: &str,
+    root: &TempDir,
+    lexical: bool,
+    dense: bool,
+    topology: bool,
+) -> RuntimeOptions {
+    RuntimeOptions {
         postgres_url: url.into(),
         max_connections: 4,
         acquire_timeout_ms: 15000,
@@ -129,21 +143,21 @@ pub(crate) async fn open_runtime_with_serving(
         },
         embedding: None,
         stored_embedding: None,
-        core_descriptors: vec![],
-        deployment_document: serde_json::json!({
-                "capabilities": {
-                    "process": { "memory": true },
-                    "subject_defaults": { "memory": true }
-                },
-                "serving": {
-                    "lexical": { "enabled": lexical },
-                    "dense": { "enabled": dense },
-                    "topology": { "enabled": topology }
-                }
-        }),
-    })
-    .await
-    .expect("open runtime")
+        configuration: nous_kernel::configuration_catalog(vec![])
+            .unwrap()
+            .deployment(&serde_json::json!({
+                    "capabilities": {
+                        "process": { "memory": true },
+                        "subject_defaults": { "memory": true }
+                    },
+                    "serving": {
+                        "lexical": { "enabled": lexical },
+                        "dense": { "enabled": dense },
+                        "topology": { "enabled": topology }
+                    }
+            }))
+            .unwrap(),
+    }
 }
 
 pub(crate) async fn observation(
@@ -278,26 +292,29 @@ pub(crate) fn form_input(
     text: &str,
 ) -> ExplicitMemoryInput {
     ExplicitMemoryInput {
-        producer: None,
         operation_id,
         subject,
         cognitive_role: CognitiveRole::Declarative,
-        formation_mode: FormationMode::Grounded,
-        grounding_occurrence_id: Some(occurrence),
-        semantic_role: "fact".into(),
-        representation_text: text.into(),
-        title: None,
-        basis: vec![RevisionBasis::Evidence(EvidenceRef {
-            epistemic_relation: None,
-            occurrence_id: occurrence,
-            locator: EvidenceLocator::WholeOccurrence,
-            basis_role: BasisRole::Direct,
-        })],
-        aboutness: Vec::new(),
-        tags: Vec::new(),
-        valid_time: TemporalExtent::Unknown,
 
-        epistemic_class: EpistemicClass::Observed,
+        content: nous_memory::MemoryContent {
+            producer: None,
+            formation_mode: FormationMode::Grounded,
+            grounding_occurrence_id: Some(occurrence),
+            semantic_role: "fact".into(),
+            representation_text: text.into(),
+            title: None,
+            basis: vec![RevisionBasis::Evidence(EvidenceRef {
+                epistemic_relation: None,
+                occurrence_id: occurrence,
+                locator: EvidenceLocator::WholeOccurrence,
+                basis_role: BasisRole::Direct,
+            })],
+            aboutness: Vec::new(),
+            tags: Vec::new(),
+            valid_time: TemporalExtent::Unknown,
+
+            epistemic_class: EpistemicClass::Observed,
+        },
     }
 }
 
@@ -344,8 +361,8 @@ impl nous_retrieval::TextEmbeddingProvider for LongitudinalEmbedding {
     async fn embed(
         &self,
         _request: nous_retrieval::TextEmbeddingRequest,
-    ) -> nous_core::Result<nous_retrieval::TextEmbeddingOutput> {
-        Ok(nous_retrieval::TextEmbeddingOutput {
+    ) -> nous_core::Result<nous_runtime::QuerySemanticEmbedding> {
+        Ok(nous_runtime::QuerySemanticEmbedding {
             vector: vec![1.0, 0.0],
             space: self.space(),
             producer: self.producer(),
@@ -361,31 +378,23 @@ pub(crate) fn query_reservation(bound: nous_runtime::BoundQuery) -> nous_runtime
 }
 
 #[allow(dead_code)]
-pub(crate) fn workflow_payload(payload: serde_json::Value) -> nous_core::WorkflowPayload {
-    nous_core::WorkflowPayload {
+pub(crate) fn result_payload(payload: serde_json::Value) -> nous_core::ResultPayload {
+    nous_core::ResultPayload {
         payload,
         ..Default::default()
     }
 }
 #[allow(dead_code)]
-pub(crate) fn workflow_snapshot(payload: serde_json::Value) -> nous_core::WorkflowSnapshot {
-    nous_core::WorkflowSnapshot {
-        content: workflow_payload(payload),
-        ..Default::default()
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn workflow_lease(
+pub(crate) fn model_operation_identity(
     subject: nous_core::SubjectId,
     owner: &str,
     key: &str,
-    token: uuid::Uuid,
-) -> nous_persistence::WorkflowLease {
-    nous_persistence::WorkflowLease {
+    digest: &str,
+) -> nous_persistence::ModelOperationIdentity {
+    nous_persistence::ModelOperationIdentity {
         subject,
-        owner: nous_persistence::WorkflowOwner::new(owner).unwrap(),
+        owner: owner.into(),
         operation_key: key.into(),
-        token,
+        semantic_digest: digest.into(),
     }
 }

@@ -18,10 +18,7 @@ import {
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { KernelClient } from "../../src/kernel-client.js";
 import { conceptMaintenanceSchema } from "../../src/model/schemas/concept-maintenance.js";
-import {
-  executeConceptMaintenance,
-  type ConceptActionResult,
-} from "../../src/maintenance/concept-maintenance.js";
+import { executeConceptMaintenance } from "../../src/maintenance/concept-maintenance.js";
 const content = {
   label: "Release approval",
   description: "Reviewer signoff before rollout",
@@ -118,10 +115,6 @@ function fixture() {
       splitTag: split,
     },
   } as unknown as KernelClient;
-  let progress: ConceptActionResult[] = [];
-  const save = vi.fn(async (results: ConceptActionResult[]) => {
-    progress = [...results];
-  });
   const run = (actions: unknown[]) =>
     executeConceptMaintenance(
       kernel,
@@ -130,10 +123,6 @@ function fixture() {
       workflow,
       producer,
       {},
-      progress,
-      save,
-
-      (_id, commit) => commit(),
     );
   return {
     kernel,
@@ -141,9 +130,7 @@ function fixture() {
     association,
     revise,
     split,
-    save,
     run,
-    progress: () => progress,
   };
 }
 it("creates a concept and attaches its returned identity through typed owner APIs", async () => {
@@ -163,7 +150,6 @@ it("creates a concept and attaches its returned identity through typed owner API
   expect(f.createTag.mock.calls[0]?.[0].operationId).not.toBe(
     f.association.mock.calls[0]?.[0].operationId,
   );
-  expect(f.progress()).toHaveLength(2);
 });
 it("keeps independent commits and skips only dependencies of an invalid creation", async () => {
   const f = fixture();
@@ -199,16 +185,18 @@ it("keeps independent commits and skips only dependencies of an invalid creation
   expect(f.association).not.toHaveBeenCalled();
   expect(f.revise).toHaveBeenCalledTimes(1);
 });
-it("resumes saved results with stable IDs after a transport failure without recreating the Tag", async () => {
+it("rebuilds temporary Tag bindings from owner replay after a transport failure", async () => {
   const f = fixture();
   f.association.mockRejectedValueOnce(
     new ConnectError("Response lost", Code.Unavailable),
   );
   await expect(f.run([createTag, attach])).rejects.toThrow("Response lost");
-  expect(f.progress()).toHaveLength(1);
   const result = await f.run([createTag, attach]);
   expect(result.status).toBe("committed");
-  expect(f.createTag).toHaveBeenCalledTimes(1);
+  expect(f.createTag).toHaveBeenCalledTimes(2);
+  expect(f.createTag.mock.calls[1]?.[0]).toEqual(
+    f.createTag.mock.calls[0]?.[0],
+  );
   expect(f.association).toHaveBeenCalledTimes(2);
   expect(f.association.mock.calls[0]?.[0].operationId).toBe(
     f.association.mock.calls[1]?.[0].operationId,
@@ -265,5 +253,4 @@ it("continues after a stale item and exposes owner invariant failure", async () 
   );
   await expect(fatal.run([createTag, attach])).rejects.toThrow("Invariant");
   expect(fatal.association).not.toHaveBeenCalled();
-  expect(fatal.progress()).toHaveLength(0);
 });

@@ -25,7 +25,7 @@ impl VcpQueryObservation {
         generation: &VcpServingGeneration,
         bound: &BoundQuery,
         plan: &QueryPlan,
-        embedding: &TextEmbeddingOutput,
+        embedding: &QuerySemanticEmbedding,
         signals: Option<&crate::PreparedQuerySignals>,
     ) -> Result<Self> {
         if bound.source_query.capabilities.text_embedding == RequirementStrength::Forbidden {
@@ -134,9 +134,6 @@ impl VcpQueryObservation {
     pub fn policy(&self) -> &VcpQueryPolicy {
         &self.policy
     }
-    pub fn core_tag_ids(&self) -> &[i64] {
-        &self.core_tag_ids
-    }
     pub fn route_seed(&self, id: i64) -> Option<serde_json::Value> {
         self.query_seeds.iter().find(|seed| seed.id == id).map(|seed| serde_json::json!({"id":seed.id,"energy":seed.energy,"source":"query_activation"}))
             .or_else(|| self.numerical.gating.tags.iter().find(|seed| seed.id == id).map(|seed| serde_json::json!(seed)))
@@ -157,7 +154,7 @@ impl VcpQueryObservation {
 
 fn pipeline_input(
     generation: &VcpServingGeneration,
-    embedding: &TextEmbeddingOutput,
+    embedding: &QuerySemanticEmbedding,
     policy: &VcpQueryPolicy,
     core_tag_ids: &[i64],
 ) -> ReferencePipelineInput {

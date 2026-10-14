@@ -3,8 +3,6 @@
 
 use super::*;
 use nous_core::Result;
-use nous_persistence::database_error as db;
-use sqlx::Row;
 #[tonic::async_trait]
 impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService for KernelService {
     async fn segment_description(
@@ -37,17 +35,42 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         .await;
         result.map(Response::new).map_err(status)
     }
-    async fn get_resolved_mentions(
+    async fn prepare_formation(
         &self,
-        request: Request<k::ResolvedMentionsRequest>,
-    ) -> std::result::Result<Response<k::ResolvedMentionsResponse>, Status> {
+        request: Request<k::PrepareFormationRequest>,
+    ) -> std::result::Result<Response<k::PreparedFormation>, Status> {
         let input = request.into_inner();
-        let result:Result<_>=async {
-            let rows=sqlx::query("SELECT m.mention_id,m.surface,b.entity_ref FROM entity_mentions m JOIN LATERAL (SELECT entity_ref,binding_state FROM entity_binding_revisions WHERE mention_id=m.mention_id ORDER BY revision_no DESC LIMIT 1) b ON b.binding_state='bound' AND b.entity_ref IS NOT NULL WHERE m.subject_id=$1 AND m.occurrence_id=$2 ORDER BY m.mention_id LIMIT 129").bind(id(&input.subject_id)?).bind(id(&input.occurrence_id)?).fetch_all(self.0.store.pool()).await.map_err(db)?;
-            if rows.len()>128{return Err(Error::Invalid("resolved mention candidate bound exceeded".into()));}
-            let candidates=rows.into_iter().map(|row| Ok(k::ResolvedMention{key:row.try_get::<uuid::Uuid,_>("mention_id").map_err(db)?.to_string(),surface:row.try_get("surface").map_err(db)?,entity_ref:row.try_get("entity_ref").map_err(db)?})).collect::<Result<Vec<_>>>()?;
-            Ok(k::ResolvedMentionsResponse{candidates})
-        }.await;
+        let result: Result<_> = async {
+            let (source, mentions) = self
+                .0
+                .material
+                .formation_input(
+                    SubjectId(id(&input.subject_id)?),
+                    nous_core::OccurrenceId(id(&input.occurrence_id)?),
+                    input
+                        .representation_id
+                        .as_deref()
+                        .map(id)
+                        .transpose()?
+                        .map(nous_core::DerivedRepresentationId),
+                    input.audio_description,
+                    input.resolved_mentions,
+                    input.max_bytes,
+                )
+                .await?;
+            Ok(k::PreparedFormation {
+                source: Some(super::material::materialized_evidence(source)),
+                candidates: mentions
+                    .into_iter()
+                    .map(|(key, surface, entity)| k::ResolvedMention {
+                        key: key.to_string(),
+                        surface,
+                        entity_ref: entity.as_str().to_owned(),
+                    })
+                    .collect(),
+            })
+        }
+        .await;
         result.map(Response::new).map_err(status)
     }
     async fn get_embedding_config(
@@ -111,30 +134,41 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
         .await;
         result.map(Response::new).map_err(status)
     }
-    async fn commit_embedding(
+    async fn commit_embeddings(
         &self,
-        request: Request<k::CommitEmbeddingRequest>,
-    ) -> std::result::Result<Response<()>, Status> {
+        request: Request<k::CommitEmbeddingsRequest>,
+    ) -> std::result::Result<Response<k::CommitEmbeddingsResponse>, Status> {
         let input = request.into_inner();
         let result: Result<_> = async {
-            let material = required(input.material, "material")?;
             let subject = SubjectId(id(&input.subject_id)?);
             let bound =
                 self.embedding_prepared_view(subject, input.preparation_token.as_deref())?;
-            self.0
+            let items = input
+                .items
+                .into_iter()
+                .map(|item| -> Result<_> {
+                    let material = required(item.material, "material")?;
+                    Ok(nous_retrieval::EmbeddingSubmission {
+                        reference: from_ref(required(item.reference, "reference")?)?,
+                        text: material.text,
+                        space: material.space_hash,
+                        producer: material.producer_hash,
+                        vector: material.vector,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let committed = self
+                .0
                 .serving
-                .commit_embedding_in_view(
-                    SubjectId(id(&input.subject_id)?),
-                    from_ref(required(input.reference, "reference")?)?,
-                    material.text,
-                    &material.space_hash,
-                    &material.producer_hash,
-                    material.vector,
+                .commit_embeddings(
+                    subject,
+                    items,
                     bound
                         .as_ref()
-                        .and_then(|b| b.historical_authority.as_deref()),
+                        .and_then(|bound| bound.historical_authority.as_deref()),
                 )
-                .await
+                .await?;
+            Ok(k::CommitEmbeddingsResponse { committed })
         }
         .await;
         result.map(Response::new).map_err(status)
@@ -165,35 +199,38 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let operation = input
+                .operation_identity
+                .map(super::model_result_codec::identity)
+                .transpose()?;
             let representation = self
                 .0
                 .material
-                .persist_derived_representation(nous_material::DerivedRepresentation {
-                    derived_representation_id: nous_core::DerivedRepresentationId::new(),
-                    subject_id: subject,
-                    inputs,
-                    strategy: input.strategy,
-                    representation_kind: kind,
-                    producer,
-                    revision: 1,
-                    payload_text: Some(input.text),
-                    payload_json: input.structured_payload.map(|value| object(Some(value))),
-                    payload_artifact_id: None,
-                    quality: object(input.quality),
-                    created_at: self.0.cognition.now(subject),
-                    supersedes: input
-                        .supersedes
-                        .as_deref()
-                        .map(id)
-                        .transpose()?
-                        .map(nous_core::DerivedRepresentationId),
-                })
+                .persist_derived_representation(
+                    nous_material::DerivedRepresentation {
+                        derived_representation_id: nous_core::DerivedRepresentationId::new(),
+                        subject_id: subject,
+                        inputs,
+                        strategy: input.strategy,
+                        representation_kind: kind,
+                        producer,
+                        revision: 1,
+                        payload_text: Some(input.text),
+                        payload_json: input.structured_payload.map(|value| object(Some(value))),
+                        payload_artifact_id: None,
+                        quality: object(input.quality),
+                        created_at: self.0.cognition.now(subject),
+                        supersedes: input
+                            .supersedes
+                            .as_deref()
+                            .map(id)
+                            .transpose()?
+                            .map(nous_core::DerivedRepresentationId),
+                    },
+                    operation.as_ref(),
+                )
                 .await?;
-            self.get_derived_representation(p::ObjectRequest {
-                subject_id: subject.0.to_string(),
-                id: representation.derived_representation_id.0.to_string(),
-            })
-            .await
+            Ok(evidence::representation(representation))
         }
         .await;
         result.map(Response::new).map_err(status)

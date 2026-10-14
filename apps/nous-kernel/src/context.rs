@@ -3,193 +3,123 @@
 
 use crate::NousRuntime;
 use nous_core::*;
-use nous_material::MaterializeRequest;
-use nous_runtime::{ContextResolver, ContextSource, bounded_text, modality};
+use nous_runtime::{ContextResolver, ContextSource};
 
 #[async_trait::async_trait]
 impl ContextResolver for NousRuntime {
-    #[expect(
-        clippy::unnecessary_filter_map,
-        reason = "context evidence selection preserves owner-specific support variants"
-    )]
-    async fn context_source(
+    async fn query_descriptors(
+        &self,
+        query: &CognitiveQuery,
+        sources: &[nous_runtime::QuerySource],
+        configuration: &nous_configuration::ConfigSnapshot,
+        historical: Option<&HistoricalAuthoritySnapshot>,
+    ) -> Result<Vec<QueryDescriptor>> {
+        let (cognition, other): (Vec<_>, Vec<_>) = sources
+            .iter()
+            .cloned()
+            .partition(|source| nous_memory::MemoryService::owns_content(&source.reference));
+        let mut descriptors = if cognition.is_empty() {
+            vec![]
+        } else {
+            self.require_memory()?
+                .query_descriptors(
+                    query.subject,
+                    &cognition
+                        .iter()
+                        .map(|s| {
+                            (
+                                s.reference.clone(),
+                                !s.is_runtime() || s.origin == "work_context",
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    query.effort,
+                    query.temporal_frame.clock_now,
+                    configuration,
+                    historical,
+                )
+                .await?
+        };
+        let (material, identities): (Vec<_>, Vec<_>) = other
+            .into_iter()
+            .map(|s| s.reference)
+            .partition(|reference| {
+                nous_runtime::CognitiveContributor::owns(&self.material, reference)
+            });
+        descriptors.extend(
+            self.material
+                .query_descriptors(query.subject, &material, historical)
+                .await?,
+        );
+        descriptors.extend(
+            self.store
+                .identity_descriptors(query.subject, &identities, historical)
+                .await?,
+        );
+        Ok(descriptors)
+    }
+
+    async fn context_sources(
         &self,
         subject: SubjectId,
-        reference: &CognitiveRef,
+        references: &[(CognitiveRef, bool)],
         max_bytes: usize,
-        explicit: bool,
-    ) -> Result<ContextSource> {
-        let memory = match reference {
-            CognitiveRef::Memory(id) => {
-                Some(self.require_memory()?.memory(subject, *id, None).await?)
-            }
-            CognitiveRef::MemoryRevision(id) => {
-                Some(self.require_memory()?.revision(subject, *id).await?)
-            }
-            _ => None,
-        };
-        if let Some(memory) = memory {
-            if !matches!(
-                memory.object.acceptance_state,
-                nous_memory::AcceptanceState::Accepted
-            ) || !matches!(
-                memory.object.integrity_state,
-                nous_memory::IntegrityState::Valid
-            ) || !matches!(
-                memory.object.suppression_state,
-                nous_memory::SuppressionState::Normal
-            ) || !matches!(memory.object.purge_state, nous_memory::PurgeState::Normal)
-            {
-                return Err(Error::Unavailable("Memory is suppressed".into()));
-            }
-            let level = self
+        now: chrono::DateTime<chrono::Utc>,
+        configuration: &nous_configuration::ConfigSnapshot,
+    ) -> Result<Vec<Result<ContextSource>>> {
+        let mut result = (0..references.len())
+            .map(|_| Err(Error::NotFound("context source not found".into())))
+            .collect::<Vec<_>>();
+        let (cognition, other): (Vec<_>, Vec<_>) = references
+            .iter()
+            .enumerate()
+            .partition(|(_, (reference, _))| nous_memory::MemoryService::owns_content(reference));
+        if !cognition.is_empty() {
+            let policy = nous_memory::resolve_accessibility_policy(configuration)?;
+            let sources = self
                 .require_memory()?
-                .accessibility_level(
+                .context_sources(
                     subject,
-                    memory.object.memory_id,
-                    self.cognition.now(subject),
+                    &cognition
+                        .iter()
+                        .map(|(_, r)| (*r).clone())
+                        .collect::<Vec<_>>(),
+                    &policy,
+                    now,
+                    max_bytes,
                 )
                 .await?;
-            if !nous_memory::accessibility_eligible(level, CognitiveEffort::Normal, explicit) {
-                return Err(Error::Unavailable(
-                    "Memory accessibility requires deeper or explicit recall".into(),
-                ));
+            for ((index, _), source) in cognition.into_iter().zip(sources) {
+                result[index] = source;
             }
-
-            let evidence = memory
-                .basis
-                .iter()
-                .filter_map(|item| match item {
-                    nous_memory::RevisionBasis::Evidence(value) => Some(EvidenceHandle {
-                        epistemic_relation: value.epistemic_relation,
-                        reference: value.cognitive_ref(),
-                        basis_role: value.basis_role.as_str().into(),
-                    }),
-                    nous_memory::RevisionBasis::CognitionDependency(value) => {
-                        Some(EvidenceHandle {
-                            epistemic_relation: value.epistemic_relation,
-                            reference: value.target_revision.clone(),
-                            basis_role: value.basis_role.as_str().into(),
-                        })
-                    }
-                    nous_memory::RevisionBasis::Seed(value) => Some(EvidenceHandle {
-                        epistemic_relation: None,
-                        reference: CognitiveRef::CognitiveSeedVersion(value.seed_version_id),
-                        basis_role: "seed".into(),
-                    }),
-                })
-                .collect::<Vec<_>>();
-            return Ok(ContextSource {
-                source_revision: Some(memory.revision.memory_revision_id),
-                media_type: "text/plain".into(),
-                text: (max_bytes > 0)
-                    .then(|| bounded_text(memory.revision.representation_text, max_bytes)),
-                authority: AuthorityClass::SubjectCognition,
-                provenance: ProvenanceSummary {
-                    source_count: evidence.len(),
-                    producer_signatures: Vec::new(),
-                    note: None,
-                },
-                evidence,
-            });
         }
-        if let CognitiveRef::Resource(resource) = reference {
-            let descriptor = self
+        let (material, other): (Vec<_>, Vec<_>) =
+            other.into_iter().partition(|(_, (reference, _))| {
+                matches!(reference, CognitiveRef::ExternalObject(_))
+                    || nous_runtime::CognitiveContributor::owns(&self.material, reference)
+            });
+        if !material.is_empty() {
+            let sources = self
+                .material
+                .context_sources(
+                    subject,
+                    &material
+                        .iter()
+                        .map(|(_, (r, _))| r.clone())
+                        .collect::<Vec<_>>(),
+                    max_bytes,
+                )
+                .await?;
+            for ((index, _), source) in material.into_iter().zip(sources) {
+                result[index] = source;
+            }
+        }
+        for (index, (reference, _)) in other {
+            result[index] = self
                 .cognition
-                .list_resources(subject)
-                .await?
-                .into_iter()
-                .find(|view| view.descriptor.resource_ref == *resource)
-                .ok_or_else(|| Error::NotFound("Resource not found".into()))?
-                .descriptor;
-            return Ok(ContextSource {
-                source_revision: None,
-                media_type: "text/plain".into(),
-                text: (max_bytes > 0).then(|| {
-                    bounded_text(
-                        descriptor
-                            .display_label
-                            .unwrap_or_else(|| resource.as_str().to_owned()),
-                        max_bytes,
-                    )
-                }),
-                authority: AuthorityClass::ResourceDescriptor,
-                evidence: Vec::new(),
-                provenance: ProvenanceSummary {
-                    source_count: 0,
-                    producer_signatures: Vec::new(),
-                    note: Some("resource awareness".into()),
-                },
-            });
+                .runtime_context_source(subject, reference, max_bytes)
+                .await;
         }
-        let material = self
-            .material
-            .materialize(
-                subject,
-                MaterializeRequest {
-                    reference: reference.clone(),
-                    byte_range: None,
-                    max_bytes: (max_bytes.max(1) as u64).min(self.material.max_upload_bytes),
-                    resource_handle: None,
-                    resource: None,
-                },
-            )
-            .await?;
-        material_context(material, max_bytes)
+        Ok(result)
     }
-}
-
-fn material_context(
-    material: nous_material::MaterializedEvidence,
-    max_bytes: usize,
-) -> Result<ContextSource> {
-    let text = if max_bytes > 0
-        && matches!(
-            modality(&material.media_type),
-            Modality::Text | Modality::Structured
-        ) {
-        let end = match std::str::from_utf8(&material.bytes) {
-            Ok(_) => material.bytes.len(),
-            Err(error) => error.valid_up_to(),
-        };
-        Some(
-            String::from_utf8(material.bytes[..end].to_vec())
-                .map_err(|e| Error::Infrastructure(e.to_string()))?,
-        )
-    } else {
-        None
-    };
-    let evidence = material
-        .provenance
-        .into_iter()
-        .map(|reference| EvidenceHandle {
-            epistemic_relation: None,
-            reference,
-            basis_role: "source".into(),
-        })
-        .collect::<Vec<_>>();
-    Ok(ContextSource {
-        source_revision: None,
-        media_type: material.media_type,
-        text,
-        authority: if material.producer.is_some() {
-            AuthorityClass::Interpretation
-        } else {
-            AuthorityClass::Evidence
-        },
-        provenance: ProvenanceSummary {
-            source_count: evidence.len(),
-            producer_signatures: material
-                .producer
-                .and_then(|p| {
-                    p.get("signature_hash")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_owned)
-                })
-                .into_iter()
-                .collect(),
-            note: None,
-        },
-        evidence,
-    })
 }

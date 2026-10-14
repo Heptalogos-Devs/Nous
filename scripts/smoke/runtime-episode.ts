@@ -3,6 +3,8 @@
 
 import { boot, stop, prepare, type Boot } from "./support.js";
 import { create } from "@bufbuild/protobuf";
+import { NousError } from "@nous-wave/client";
+import { runCli } from "../../apps/nous-cli/src/commands/index.js";
 import { TimestampSchema } from "@bufbuild/protobuf/wkt";
 import {
   CognitiveRefSchema,
@@ -27,8 +29,9 @@ import {
   TemporalExtentSchema,
   UpdateWorkContextRequestSchema,
   WorkContextMutationRequestSchema,
+  WorkContextClearScope,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { workspaceTemp } from "../workspace.js";
 
 const subjectId = "00000000-0000-0000-0000-000000009901";
@@ -72,7 +75,7 @@ async function main() {
   try {
     current = await boot(configPath);
     const client = current.client;
-    await client.subjects.create(
+    await client.subjects.createSubject(
       create(CreateSubjectRequestSchema, {
         subjectId,
         operationId: "00000000-0000-0000-0000-000000009902",
@@ -83,10 +86,10 @@ async function main() {
         capabilities: create(SubjectCapabilitiesSchema, { memory: true }),
       }),
     );
-    const sessionA = await client.cognition.openSession(
+    const sessionA = await client.runtime.openSession(
       create(SubjectRequestSchema, { subjectId }),
     );
-    const observed = await client.cognition.observe(
+    const observed = await client.runtime.recordObservation(
       create(ObservationInputSchema, {
         subjectId,
         sessionId: sessionA.sessionId,
@@ -103,12 +106,12 @@ async function main() {
         },
       }),
     );
-    const memory = await client.memory.form(
+    const memory = await client.memory.formMemory(
       create(FormMemoryRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009904",
         subjectId,
+        cognitiveRole: "declarative",
         input: create(MemoryContentSchema, {
-          cognitiveRole: "declarative",
           formationMode: "grounded",
           groundingOccurrenceId: observed.occurrenceId,
           semanticRole: "fact",
@@ -120,7 +123,7 @@ async function main() {
         }),
       }),
     );
-    let context = await client.cognition.createWorkContext(
+    let context = await client.runtime.createWorkContext(
       create(CreateWorkContextRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009905",
         subjectId,
@@ -135,6 +138,293 @@ async function main() {
     );
     const contextId = context.workContext?.workContextId;
     if (!contextId) throw new Error("WorkContext identity missing");
+    const createdRevision = context.workContext!.revision;
+    context = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: contextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: createdRevision,
+      intent: {
+        case: "fields",
+        value: {
+          contextText: "continuity background",
+          constraints: { mode: "bounded" },
+          unresolvedQuestions: { values: ["next step"] },
+        },
+      },
+    });
+    if (
+      context.workContext?.purpose !== "continue the runtime task" ||
+      context.workContext.contextText !== "continuity background"
+    )
+      throw new Error("WorkContext fields did not preserve omitted purpose");
+    let staleRejected = false;
+    try {
+      await client.runtime.updateWorkContext({
+        subjectId,
+        workContextId: contextId,
+        operationId: crypto.randomUUID(),
+        expectedRevision: createdRevision,
+        intent: { case: "fields", value: { purpose: "stale update" } },
+      });
+    } catch (error) {
+      staleRejected =
+        error instanceof NousError && error.domainCode === "STALE_REVISION";
+    }
+    if (!staleRejected)
+      throw new Error("WorkContext accepted a stale mutation");
+    context = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: contextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: context.workContext!.revision,
+      intent: {
+        case: "fields",
+        value: {
+          contextText: "",
+          unresolvedQuestions: { values: [] },
+          constraints: {},
+        },
+      },
+    });
+    if (
+      context.workContext?.contextText !== "" ||
+      context.workContext.unresolvedQuestions.length ||
+      Object.keys(context.workContext.constraints ?? {}).length
+    )
+      throw new Error("WorkContext did not apply explicit empty fields");
+    context = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: contextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: context.workContext!.revision,
+      intent: {
+        case: "unpin",
+        value: {
+          cognitionAnchors: [
+            { kind: "memory_revision", value: memory.revisionId },
+          ],
+        },
+      },
+    });
+    if (context.workContext?.cognitionAnchors.length)
+      throw new Error("WorkContext unpin failed");
+    context = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: contextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: context.workContext!.revision,
+      intent: {
+        case: "pin",
+        value: {
+          cognitionAnchors: [
+            { kind: "memory_revision", value: memory.revisionId },
+          ],
+        },
+      },
+    });
+    if (context.workContext?.cognitionAnchors.length !== 1)
+      throw new Error("WorkContext pin failed");
+    const disposable = await client.runtime.createWorkContext({
+      subjectId,
+      operationId: crypto.randomUUID(),
+      purpose: "clear and pagination",
+      contextText: "to clear",
+      cognitionAnchors: [{ kind: "memory_revision", value: memory.revisionId }],
+    });
+    const cleared = await client.runtime.updateWorkContext({
+      subjectId,
+      workContextId: disposable.workContext!.workContextId,
+      operationId: crypto.randomUUID(),
+      expectedRevision: disposable.workContext!.revision,
+      intent: { case: "clear", value: WorkContextClearScope.ALL },
+    });
+    if (
+      cleared.workContext?.contextText !== "" ||
+      cleared.workContext.cognitionAnchors.length ||
+      cleared.workContext.purpose !== "clear and pagination"
+    )
+      throw new Error("WorkContext clear did not preserve purpose");
+    const firstContexts = await client.runtime.listWorkContexts({
+      subjectId,
+      page: { pageSize: 1 },
+    });
+    if (firstContexts.items.length !== 1 || !firstContexts.nextPageToken)
+      throw new Error("WorkContext pagination did not emit cursor");
+    const nextContexts = await client.runtime.listWorkContexts({
+      subjectId,
+      page: { pageSize: 1, pageToken: firstContexts.nextPageToken },
+    });
+    if (
+      nextContexts.items.length !== 1 ||
+      nextContexts.items[0]!.workContextId ===
+        firstContexts.items[0]!.workContextId ||
+      nextContexts.nextPageToken
+    )
+      throw new Error("WorkContext pagination repeated or lost a context");
+    const cliFlags = [
+      "--run-root",
+      `${root}/run`,
+      "--instance-root",
+      `${root}/instance`,
+      "--subject",
+      subjectId,
+      "--session",
+      sessionA.sessionId,
+      "--consumer",
+      "consumer:smoke:cognitive-runtime-episode",
+    ];
+    const createOperation = crypto.randomUUID();
+    const createdSubject = (await runCli([
+      "subject",
+      "create",
+      "--operation-id",
+      createOperation,
+      ...cliFlags,
+    ])) as { data: { subjectId: string } };
+    const replayedSubject = (await runCli([
+      "subject",
+      "create",
+      "--operation-id",
+      createOperation,
+      ...cliFlags,
+    ])) as { data: { subjectId: string } };
+    if (replayedSubject.data.subjectId !== createdSubject.data.subjectId)
+      throw new Error("CLI Subject create replay allocated another Subject");
+    const changedCreation = `${root}/changed-subject.toml`;
+    await writeFile(
+      changedCreation,
+      '[cognitive_seed]\ntext = "schema_version = 1"\nformat = "application/vnd.nous-wave.cognitive-seed+toml;version=1"\n[capabilities]\nmemory = true\n[metadata]\nnote = "changed input"\n',
+    );
+    let createConflict = false;
+    try {
+      await runCli([
+        "subject",
+        "create",
+        "--operation-id",
+        createOperation,
+        "--request-file",
+        changedCreation,
+        ...cliFlags,
+      ]);
+    } catch (error) {
+      createConflict =
+        error instanceof NousError &&
+        error.domainCode === "OPERATION_ID_CONFLICT";
+    }
+    if (!createConflict)
+      throw new Error(
+        "CLI Subject create changed-input retry did not conflict",
+      );
+    const createdSeed = await client.subjects.getCognitiveSeed({
+      subjectId: createdSubject.data.subjectId,
+    });
+    if (
+      !createdSubject.data.subjectId ||
+      createdSeed.operationId !== createOperation
+    )
+      throw new Error("CLI Subject create ignored operation identity");
+    const cliCreated = (await runCli([
+      "context",
+      "create",
+      "--purpose",
+      "local selection only",
+      ...cliFlags,
+    ])) as { data: { workContextId: string } };
+    await runCli(["projection", "build", ...cliFlags]);
+    await runCli(["context", "select", contextId, ...cliFlags]);
+    await runCli(["projection", "managed", ...cliFlags]);
+    const unforegrounded = await client.runtime.getSession({
+      subjectId,
+      id: sessionA.sessionId,
+    });
+    if (unforegrounded.activeWorkContextId || !cliCreated.data.workContextId)
+      throw new Error("CLI local selection foregrounded a WorkContext");
+    const acceptedMemories = (await runCli([
+      "memory",
+      "list",
+      "--status",
+      "accepted",
+      ...cliFlags,
+    ])) as { data: { items: { memoryId: string }[] } };
+    const withdrawnMemories = (await runCli([
+      "memory",
+      "list",
+      "--status",
+      "withdrawn",
+      ...cliFlags,
+    ])) as { data: { items: unknown[] } };
+    if (
+      !acceptedMemories.data.items.some(
+        (item) => item.memoryId === memory.memoryId,
+      ) ||
+      withdrawnMemories.data.items.length
+    )
+      throw new Error("CLI Memory list did not apply status");
+    const fencedMemory = (await runCli([
+      "memory",
+      "accessibility",
+      `memory:${memory.memoryId}`,
+      "--kind",
+      "normal",
+      "--expected-object-epoch",
+      String(memory.objectEpoch),
+      ...cliFlags,
+    ])) as { data: { objectEpoch: bigint } };
+    if (fencedMemory.data.objectEpoch <= memory.objectEpoch)
+      throw new Error("CLI mutation did not advance the object epoch");
+    let staleObjectEpoch = false;
+    try {
+      await runCli([
+        "memory",
+        "accessibility",
+        `memory:${memory.memoryId}`,
+        "--kind",
+        "auto",
+        "--expected-object-epoch",
+        String(memory.objectEpoch),
+        ...cliFlags,
+      ]);
+    } catch (error) {
+      staleObjectEpoch =
+        error instanceof NousError && error.domainCode === "STALE_REVISION";
+    }
+    if (!staleObjectEpoch)
+      throw new Error(
+        "CLI replaced the caller's stale object epoch with current state",
+      );
+    const closedSessions = (await runCli([
+      "session",
+      "list",
+      "--status",
+      "closed",
+      ...cliFlags,
+    ])) as { data: { items: unknown[] } };
+    if (closedSessions.data.items.length)
+      throw new Error("CLI Session list did not apply status");
+    await runCli(["episode", "list", "--status", "withdrawn", ...cliFlags]);
+    await runCli(["journal", "list", "--status", "withdrawn", ...cliFlags]);
+    await runCli(["resource", "list", "--status", "unavailable", ...cliFlags]);
+    const cleanedMaterial = (await runCli([
+      "material",
+      "clean",
+      "--run-root",
+      `${root}/run`,
+      "--instance-root",
+      `${root}/cleanup-consumer`,
+    ])) as { data: { objectsDeleted: bigint; stagingDeleted: bigint } };
+    if (
+      typeof cleanedMaterial.data.objectsDeleted !== "bigint" ||
+      typeof cleanedMaterial.data.stagingDeleted !== "bigint" ||
+      cleanedMaterial.data.objectsDeleted < 0n ||
+      cleanedMaterial.data.stagingDeleted < 0n
+    )
+      throw new Error("Material cleanup returned invalid counts");
+    const seedAfterCleanup = await client.subjects.getCognitiveSeed({
+      subjectId: createdSubject.data.subjectId,
+    });
+    if (seedAfterCleanup.artifactId !== createdSeed.artifactId)
+      throw new Error("Material cleanup lost another Subject's Artifact");
     const foregroundRequest = create(SetActiveWorkContextRequestSchema, {
       operationId: "00000000-0000-0000-0000-000000009906",
       subjectId,
@@ -143,9 +433,9 @@ async function main() {
       workContextId: contextId,
     });
     const foreground =
-      await client.cognition.setActiveWorkContext(foregroundRequest);
+      await client.runtime.setActiveWorkContext(foregroundRequest);
     const foregroundReplay =
-      await client.cognition.setActiveWorkContext(foregroundRequest);
+      await client.runtime.setActiveWorkContext(foregroundRequest);
     if (foreground.runtimeRevision !== foregroundReplay.runtimeRevision)
       throw new Error("foreground replay changed Runtime revision");
     const activeQuery = await client.cognition.query(
@@ -157,7 +447,7 @@ async function main() {
       throw new Error(
         "active WorkContext did not surface exact MemoryRevision",
       );
-    context = await client.cognition.pauseWorkContext(
+    context = await client.runtime.pauseWorkContext(
       create(WorkContextMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009907",
         subjectId,
@@ -165,7 +455,7 @@ async function main() {
         expectedRevision: context.workContext?.revision,
       }),
     );
-    const pausedSession = await client.cognition.getSession({
+    const pausedSession = await client.runtime.getSession({
       subjectId,
       id: sessionA.sessionId,
     });
@@ -173,10 +463,10 @@ async function main() {
       throw new Error("pause did not clear foreground binding");
     await stop(current);
     current = await boot(configPath);
-    const sessionB = await current.client.cognition.openSession(
+    const sessionB = await current.client.runtime.openSession(
       create(SubjectRequestSchema, { subjectId }),
     );
-    context = await current.client.cognition.resumeWorkContext(
+    context = await current.client.runtime.resumeWorkContext(
       create(WorkContextMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009908",
         subjectId,
@@ -184,7 +474,7 @@ async function main() {
         expectedRevision: context.workContext?.revision,
       }),
     );
-    await current.client.cognition.setActiveWorkContext(
+    await current.client.runtime.setActiveWorkContext(
       create(SetActiveWorkContextRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009909",
         subjectId,
@@ -208,19 +498,21 @@ async function main() {
         operationId: "00000000-0000-0000-0000-000000009910",
         subjectId,
         trackKey: "interaction",
-        boundaryExplanation: "one bounded interaction",
-        experienceTime: create(TemporalExtentSchema, {}),
+        content: {
+          boundaryExplanation: "one bounded interaction",
+          experienceTime: create(TemporalExtentSchema, {}),
 
-        members: [
-          create(EpisodeMemberSchema, {
-            reference: create(CognitiveRefSchema, {
-              kind: "occurrence",
-              value: observed.occurrenceId,
+          members: [
+            create(EpisodeMemberSchema, {
+              reference: create(CognitiveRefSchema, {
+                kind: "occurrence",
+                value: observed.occurrenceId,
+              }),
+              role: "member",
             }),
-            role: "member",
-          }),
-        ],
-        basis: [evidence(observed.occurrenceId)],
+          ],
+          basis: [evidence(observed.occurrenceId)],
+        },
       }),
     );
     const episodeValue = episode.episode;
@@ -234,19 +526,21 @@ async function main() {
       episodeId,
       expectedObjectEpoch: episodeValue.objectEpoch,
       intent: "resegment",
-      boundaryExplanation: "resegmented interaction",
-      experienceTime: create(TemporalExtentSchema, {}),
+      content: {
+        boundaryExplanation: "resegmented interaction",
+        experienceTime: create(TemporalExtentSchema, {}),
 
-      members: [
-        create(EpisodeMemberSchema, {
-          reference: create(CognitiveRefSchema, {
-            kind: "occurrence",
-            value: observed.occurrenceId,
+        members: [
+          create(EpisodeMemberSchema, {
+            reference: create(CognitiveRefSchema, {
+              kind: "occurrence",
+              value: observed.occurrenceId,
+            }),
+            role: "member",
           }),
-          role: "member",
-        }),
-      ],
-      basis: [evidence(observed.occurrenceId)],
+        ],
+        basis: [evidence(observed.occurrenceId)],
+      },
     });
     const history = await current.client.memory.listEpisodeRevisions({
       subjectId,
@@ -270,23 +564,23 @@ async function main() {
     if (!revisedEpisode || !currentRevision)
       throw new Error("current Episode revision missing");
 
-    context = await current.client.cognition.updateWorkContext(
+    context = await current.client.runtime.updateWorkContext(
       create(UpdateWorkContextRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009912",
         subjectId,
         workContextId: contextId,
         expectedRevision: context.workContext?.revision,
-        purpose: "continue the runtime task with an Episode",
-        cognitionAnchors: [
-          create(CognitiveRefSchema, {
-            kind: "memory_revision",
-            value: memory.revisionId,
-          }),
-          create(CognitiveRefSchema, {
-            kind: "episode_revision",
-            value: currentRevision,
-          }),
-        ],
+        intent: {
+          case: "pin",
+          value: {
+            cognitionAnchors: [
+              create(CognitiveRefSchema, {
+                kind: "episode_revision",
+                value: currentRevision,
+              }),
+            ],
+          },
+        },
       }),
     );
     const episodeRuntimeQuery = await current.client.cognition.query(
@@ -317,7 +611,7 @@ async function main() {
     )
       throw new Error("restart lost WorkContext EpisodeRevision recall");
 
-    await current.client.cognition.endWorkContext(
+    await current.client.runtime.endWorkContext(
       create(WorkContextMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009918",
         subjectId,
@@ -325,7 +619,7 @@ async function main() {
         expectedRevision: context.workContext?.revision,
       }),
     );
-    const endedSession = await current.client.cognition.getSession({
+    const endedSession = await current.client.runtime.getSession({
       subjectId,
       id: sessionB.sessionId,
     });

@@ -4,18 +4,17 @@
 import { webSource } from "@nous-wave/client";
 import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
-import { restoreProtocolData, clientDataSchemas } from "@nous-wave/client/data";
-const { AcceptedObservationSchema, ArtifactSchema } = clientDataSchemas;
 
 export async function observeCommands(
   env: CliEnvironment,
   action: string | undefined,
   argument?: string,
 ) {
-  const { client, values, state, subjectId, required, mediaType } = env;
+  const { client, values, required, mediaType } = env;
+  const subjectId = await env.subjectId;
   const input = {
     subjectId,
-    sessionId: state.sessionId,
+    sessionId: await env.sessionId,
     requestId: crypto.randomUUID(),
     ...(values.source ? webSource(values.source) : { sourceClass: "file" }),
     observedAt: {
@@ -25,7 +24,7 @@ export async function observeCommands(
     admit: true,
   };
   if (action === "text")
-    return client.cognition.observe({
+    return client.runtime.recordObservation({
       ...input,
       material: {
         case: "inlineText",
@@ -40,17 +39,11 @@ export async function observeCommands(
     const artifact = await client.artifacts.uploadFile(subjectId, path, {
       mediaType: mediaType(path),
     });
-    const observation = await client.cognition.observe({
+    const observation = await client.runtime.recordObservation({
       ...input,
       material: { case: "artifactId", value: artifact.artifactId },
     });
-    return restoreProtocolData(
-      {
-        artifact: restoreProtocolData(artifact, ArtifactSchema),
-        ...observation,
-      },
-      AcceptedObservationSchema,
-    );
+    return { artifact, ...observation };
   }
 
   throw new CliError("INVALID_ARGUMENT", "Unknown observe command");

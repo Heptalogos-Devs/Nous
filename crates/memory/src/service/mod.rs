@@ -8,12 +8,15 @@ mod accretion;
 mod batch;
 mod concept_maintenance;
 mod consolidation_context;
+mod content;
+mod context;
 mod dependencies;
 mod episode;
 mod historical;
 mod historical_query;
 mod journal;
 mod lane;
+mod lifecycle;
 mod longitudinal_policy;
 mod longitudinal_query;
 mod maintenance_planning;
@@ -27,22 +30,23 @@ mod schema_lane;
 mod source_classes;
 mod source_facts;
 mod state;
+mod support;
 mod tag;
 mod topology;
+mod trace;
 
 use crate::*;
 use chrono::{DateTime, Utc};
 use nous_core::*;
-use nous_object_store::ObjectStore;
 use nous_persistence::{
     AuthorityStore, MutationEnvelope, MutationStart, OwnerLock, ProjectionInvalidation,
     database_error as db,
 };
-pub use nous_runtime::{ResidentView, ResourceUpsert, ResourceView, SessionView};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sqlx::Row;
+pub use state::LifecycleAction;
 use state::{fence_epoch, require_transition};
-use std::sync::Arc;
+use support::basis_from_row;
 use uuid::Uuid;
 
 pub use crate::{CognitiveRole, FormationMode};
@@ -52,24 +56,25 @@ pub use accessibility::{
 };
 pub use accretion::{ACCRETION, AccretionPolicy, AccretionSignal};
 pub use concept_maintenance::*;
+pub use consolidation_context::ConsolidationMetadata;
 pub use episode::*;
 pub use journal::*;
 pub use longitudinal_policy::{
     CONSOLIDATION_CONTEXT, CONSOLIDATION_MAX_ACTIONS, ConsolidationContextPolicy, EPISODE_SYNOPSIS,
 };
-pub use maintenance_planning::MaintenanceScope;
+pub use maintenance_planning::{MaintenanceMember, MaintenanceScope};
 pub use nous_core::TopologyRelation;
 pub use nous_core::{CognitiveQuery, CognitiveQueryResult};
 pub use tag::*;
+pub use trace::CognitionContent;
+pub use trace::CognitionTrace;
 
 #[derive(Clone)]
 pub struct MemoryService {
-    pub configuration: nous_configuration::ConfigurationService,
-    pub store: AuthorityStore,
-    pub objects: ObjectStore,
-    pub material: nous_material::MaterialService,
-    pub cognition: nous_runtime::CognitiveRuntimeService,
-    capabilities: Arc<Vec<CapabilityDescriptor>>,
+    pub(crate) configuration: nous_configuration::ConfigurationService,
+    pub(crate) store: AuthorityStore,
+    pub(crate) material: nous_material::MaterialService,
+    pub(crate) cognition: nous_runtime::CognitiveRuntimeService,
 }
 
 impl MemoryService {
@@ -99,13 +104,6 @@ impl MemoryService {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeStatus {
-    pub ready: bool,
-    pub authority: String,
-    pub capabilities: Vec<CapabilityStatus>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryView {
     pub object: MemoryObject,
     pub revision: MemoryRevision,
@@ -122,32 +120,19 @@ pub struct MemoryView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviseMemoryInput {
-    #[serde(default)]
-    pub producer: Option<ProducerSignature>,
     pub operation_id: OperationId,
     pub subject: SubjectId,
     pub memory_id: MemoryId,
     pub expected_object_epoch: i64,
     pub intent: RevisionIntent,
-    pub formation_mode: FormationMode,
-    pub grounding_occurrence_id: Option<OccurrenceId>,
-    pub semantic_role: String,
-    pub representation_text: String,
-    pub title: Option<String>,
-    pub basis: Vec<RevisionBasis>,
-    pub aboutness: Vec<EntityRef>,
-    pub valid_time: TemporalExtent,
-
-    pub epistemic_class: EpistemicClass,
+    pub content: MemoryContent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTagRequest {
     pub producer: Option<ProducerSignature>,
     pub operation_id: OperationId,
-    pub label: String,
-    pub description: Option<String>,
-    pub kind_hint: Option<String>,
+    pub content: TagContent,
     #[serde(default = "default_explicit_origin")]
     pub origin: String,
 }
@@ -221,7 +206,7 @@ impl MemoryService {
         operation: OperationId,
         started_at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>> {
-        Ok(AuthorityStore::workflow_cognitive_time_in(
+        Ok(AuthorityStore::model_result_cognitive_time_in(
             tx,
             subject,
             "memory",
@@ -232,41 +217,16 @@ impl MemoryService {
     }
 
     pub fn new(
+        store: AuthorityStore,
+        cognition: nous_runtime::CognitiveRuntimeService,
         material: nous_material::MaterialService,
         configuration: nous_configuration::ConfigurationService,
     ) -> Self {
         Self {
             configuration,
-            store: material.store.clone(),
-            objects: material.objects.clone(),
-            cognition: material.cognition.clone(),
+            store,
+            cognition,
             material,
-            capabilities: Arc::new(Vec::new()),
-        }
-    }
-
-    pub fn with_capabilities(mut self, capabilities: Vec<CapabilityDescriptor>) -> Self {
-        self.capabilities = Arc::new(capabilities);
-        self
-    }
-
-    pub async fn status(&self) -> RuntimeStatus {
-        RuntimeStatus {
-            ready: true,
-            authority: "postgresql".into(),
-            capabilities: self
-                .capabilities
-                .iter()
-                .map(|capability| CapabilityStatus {
-                    capability_id: capability.operation.as_str().into(),
-                    status: match capability.readiness {
-                        CapabilityReadiness::Ready => Readiness::Ready,
-                        CapabilityReadiness::Degraded => Readiness::Degraded,
-                        CapabilityReadiness::Unavailable => Readiness::Unavailable,
-                    },
-                    reason: None,
-                })
-                .collect(),
         }
     }
 }

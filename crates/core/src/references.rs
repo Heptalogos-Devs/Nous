@@ -3,141 +3,70 @@
 
 use crate::*;
 
-pub fn reference_parts(reference: &CognitiveRef) -> (String, String) {
-    match reference {
-        CognitiveRef::Memory(id) => ("memory".into(), id.0.to_string()),
-        CognitiveRef::MemoryRevision(id) => ("memory_revision".into(), id.0.to_string()),
-        CognitiveRef::Episode(id) => ("episode".into(), id.0.to_string()),
-        CognitiveRef::EpisodeRevision(id) => ("episode_revision".into(), id.0.to_string()),
-        CognitiveRef::Journal(id) => ("journal".into(), id.0.to_string()),
-        CognitiveRef::JournalRevision(id) => ("journal_revision".into(), id.0.to_string()),
-        CognitiveRef::CognitiveSchema(id) => ("cognitive_schema".into(), id.0.to_string()),
-        CognitiveRef::CognitiveSchemaRevision(id) => {
-            ("cognitive_schema_revision".into(), id.0.to_string())
+// Declare each reference once: its native type, wire kind, UUID access and formatting agree.
+macro_rules! cognitive_refs {
+    ($($variant:ident($id:ident) = $kind:literal),*; $($opaque:ident($oid:ident) = $okind:literal),*) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(tag = "kind", content = "id")]
+        pub enum CognitiveRef {
+            $(#[serde(rename = $kind)] $variant($id),)*
+            $(#[serde(rename = $okind)] $opaque($oid),)*
         }
-        CognitiveRef::CognitiveSeedVersion(id) => {
-            ("cognitive_seed_version".into(), id.0.to_string())
+        impl CognitiveRef {
+            pub fn kind(&self) -> &'static str {
+                match self { $(Self::$variant(_) => $kind,)* $(Self::$opaque(_) => $okind,)* }
+            }
+            pub fn uuid(&self) -> Option<Uuid> {
+                match self { $(Self::$variant(id) => Some(id.0),)* $(Self::$opaque(_) => None,)* }
+            }
         }
-        CognitiveRef::Artifact(id) => ("artifact".into(), id.0.to_string()),
-        CognitiveRef::SourceRegion(id) => ("source_region".into(), id.0.to_string()),
-        CognitiveRef::DerivedRepresentation(id) => {
-            ("derived_representation".into(), id.0.to_string())
+        pub fn reference_parts(reference: &CognitiveRef) -> (String, String) {
+            let value = match reference {
+                $(CognitiveRef::$variant(id) => id.0.to_string(),)*
+                $(CognitiveRef::$opaque(id) => id.as_str().to_owned(),)*
+            };
+            (reference.kind().to_owned(), value)
         }
-        CognitiveRef::DerivedRegion(id) => ("derived_region".into(), id.0.to_string()),
-        CognitiveRef::Entity(id) => ("entity".into(), id.as_str().into()),
-        CognitiveRef::Tag(id) => ("tag".into(), id.0.to_string()),
-        CognitiveRef::Resource(id) => ("resource".into(), id.as_str().into()),
-        CognitiveRef::ExternalObject(id) => ("external_object".into(), id.as_str().into()),
-        CognitiveRef::Occurrence(id) => ("occurrence".into(), id.0.to_string()),
-        CognitiveRef::Session(id) => ("session".into(), id.0.to_string()),
-        CognitiveRef::Subject(id) => ("subject".into(), id.0.to_string()),
-        CognitiveRef::WorkContext(id) => ("work_context".into(), id.0.to_string()),
-        CognitiveRef::Association(id) => ("association".into(), id.0.to_string()),
-    }
+        pub fn parse_reference(kind: &str, value: &str) -> Result<CognitiveRef> {
+            Ok(match kind {
+                $($kind => CognitiveRef::$variant($id(value.parse()
+                    .map_err(|_| Error::Invalid(format!("invalid {kind} reference")))?)),)*
+                $($okind => CognitiveRef::$opaque($oid::new(value)?),)*
+                _ => return Err(Error::Invalid("unknown reference kind".into())),
+            })
+        }
+        impl std::fmt::Display for CognitiveRef {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    $(Self::$variant(id) => write!(f, "{}:{}", $kind, id.0),)*
+                    $(Self::$opaque(id) => f.write_str(id.as_str()),)*
+                }
+            }
+        }
+    };
 }
 
-pub fn parse_reference(kind: &str, value: &str) -> Result<CognitiveRef> {
-    Ok(match kind {
-        "memory" => CognitiveRef::Memory(MemoryId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid memory ref".into()))?,
-        )),
-        "memory_revision" => CognitiveRef::MemoryRevision(MemoryRevisionId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid memory revision ref".into()))?,
-        )),
-        "episode" => CognitiveRef::Episode(EpisodeId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid episode ref".into()))?,
-        )),
-        "episode_revision" => CognitiveRef::EpisodeRevision(EpisodeRevisionId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid episode revision ref".into()))?,
-        )),
-        "journal" => CognitiveRef::Journal(JournalId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid Journal ref".into()))?,
-        )),
-        "journal_revision" => CognitiveRef::JournalRevision(JournalRevisionId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid Journal revision ref".into()))?,
-        )),
-        "cognitive_schema" => CognitiveRef::CognitiveSchema(CognitiveSchemaId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid CognitiveSchema ref".into()))?,
-        )),
-        "cognitive_schema_revision" => {
-            CognitiveRef::CognitiveSchemaRevision(CognitiveSchemaRevisionId(
-                value
-                    .parse()
-                    .map_err(|_| Error::Invalid("invalid CognitiveSchema revision ref".into()))?,
-            ))
-        }
-        "cognitive_seed_version" => CognitiveRef::CognitiveSeedVersion(CognitiveSeedVersionId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid Cognitive Seed version ref".into()))?,
-        )),
-        "artifact" => CognitiveRef::Artifact(ArtifactId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid artifact ref".into()))?,
-        )),
-        "source_region" => CognitiveRef::SourceRegion(SourceRegionId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid source region ref".into()))?,
-        )),
-        "derived_representation" => CognitiveRef::DerivedRepresentation(DerivedRepresentationId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid derived ref".into()))?,
-        )),
-        "derived_region" => CognitiveRef::DerivedRegion(DerivedRegionId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid derived region ref".into()))?,
-        )),
-        "entity" => CognitiveRef::Entity(EntityRef::new(value)?),
-        "tag" => CognitiveRef::Tag(TagId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid tag ref".into()))?,
-        )),
-        "resource" => CognitiveRef::Resource(ResourceRef::new(value)?),
-        "external_object" => CognitiveRef::ExternalObject(ObjectRef::new(value)?),
-        "occurrence" => CognitiveRef::Occurrence(OccurrenceId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid occurrence ref".into()))?,
-        )),
-        "session" => CognitiveRef::Session(SessionId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid session ref".into()))?,
-        )),
-        "subject" => CognitiveRef::Subject(SubjectId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid Subject ref".into()))?,
-        )),
-        "work_context" => CognitiveRef::WorkContext(WorkContextId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid WorkContext ref".into()))?,
-        )),
-        "association" => CognitiveRef::Association(AssociationEvidenceId(
-            value
-                .parse()
-                .map_err(|_| Error::Invalid("invalid Association ref".into()))?,
-        )),
-        _ => return Err(Error::Invalid("unknown reference kind".into())),
-    })
+cognitive_refs! {
+    Memory(MemoryId) = "memory",
+    MemoryRevision(MemoryRevisionId) = "memory_revision",
+    Episode(EpisodeId) = "episode",
+    EpisodeRevision(EpisodeRevisionId) = "episode_revision",
+    Journal(JournalId) = "journal",
+    JournalRevision(JournalRevisionId) = "journal_revision",
+    CognitiveSchema(CognitiveSchemaId) = "cognitive_schema",
+    CognitiveSchemaRevision(CognitiveSchemaRevisionId) = "cognitive_schema_revision",
+    CognitiveSeedVersion(CognitiveSeedVersionId) = "cognitive_seed_version",
+    Artifact(ArtifactId) = "artifact",
+    SourceRegion(SourceRegionId) = "source_region",
+    DerivedRepresentation(DerivedRepresentationId) = "derived_representation",
+    DerivedRegion(DerivedRegionId) = "derived_region",
+    Tag(TagId) = "tag",
+    Occurrence(OccurrenceId) = "occurrence",
+    Session(SessionId) = "session",
+    Subject(SubjectId) = "subject",
+    WorkContext(WorkContextId) = "work_context",
+    Association(AssociationEvidenceId) = "association";
+    Entity(EntityRef) = "entity",
+    Resource(ResourceRef) = "resource",
+    ExternalObject(ObjectRef) = "external_object"
 }

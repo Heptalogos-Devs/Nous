@@ -10,7 +10,7 @@ use nous_core::{OperationId, SubjectId};
 mod test_support;
 
 #[tokio::test]
-async fn mutation_envelope_merges_families_and_replays_checkpoints() {
+async fn mutation_envelope_rolls_back_merges_families_and_replays() {
     let (root, url, _postgres) = test_support::database().await;
     let rt = test_support::open_runtime(&url, &root).await;
     let subject = envelope_subject(&rt).await;
@@ -64,49 +64,11 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
             .unwrap(),
         sequence
     );
-    mutation.checkpoint().await.unwrap();
-    let MutationStart::Replay(receipt) = MutationEnvelope::begin(
-        &rt.store,
-        subject,
-        operation,
-        "test_mutation",
-        &digest,
-        owner,
-    )
-    .await
-    .unwrap() else {
-        panic!("checkpoint must replay");
-    };
-    assert_eq!(receipt.state, "in_progress");
-    assert!(matches!(
-        MutationEnvelope::resume(
-            &rt.store,
-            subject,
-            operation,
-            "test_mutation",
-            "different",
-            owner
-        )
-        .await,
-        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::OperationIdConflict
-    ));
-    let MutationStart::Active(mutation) = MutationEnvelope::resume(
-        &rt.store,
-        subject,
-        operation,
-        "test_mutation",
-        &digest,
-        owner,
-    )
-    .await
-    .unwrap() else {
-        panic!("checkpoint must resume");
-    };
     mutation
         .commit("test_result", Some("result"), None, Some(1))
         .await
         .unwrap();
-    let MutationStart::Replay(receipt) = MutationEnvelope::resume(
+    let MutationStart::Replay(receipt) = MutationEnvelope::begin(
         &rt.store,
         subject,
         operation,
@@ -118,7 +80,10 @@ async fn mutation_envelope_merges_families_and_replays_checkpoints() {
     .unwrap() else {
         panic!("terminal result must replay");
     };
-    assert_eq!(receipt.state, "committed");
+    assert!(
+        matches!(MutationEnvelope::begin(&rt.store, subject, operation, "test_mutation", "different", owner).await,
+        Err(nous_core::Error::Domain(error)) if error.code == nous_core::DomainErrorCode::OperationIdConflict)
+    );
     assert_eq!(receipt.result_ref.as_deref(), Some("result"));
     assert_eq!(rt.store.authority_seq(subject).await.unwrap(), sequence);
     let families: Vec<(String, String, i64)> = sqlx::query_as("SELECT family,space_signature,desired_authority_seq FROM projection_watermarks WHERE subject_id=$1 AND desired_authority_seq=$2 ORDER BY family")
@@ -149,4 +114,158 @@ async fn envelope_subject(rt: &nous_kernel::NousRuntime) -> SubjectId {
         .await
         .unwrap()
         .subject_id
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one real CAS/Authority lifecycle checks shared admission, failed transactions and instance-wide reclamation"
+)]
+async fn seed_adoption_shares_artifact_registration_and_rolls_back_on_failure() {
+    use nous_material::{ObservationMaterial, UploadMetadata};
+    use nous_subject::{COGNITIVE_SEED_FORMAT, CognitiveSeedInput, SeedAdoptionKind};
+    let (root, url, _postgres) = test_support::database().await;
+    let rt = test_support::open_runtime(&url, &root).await;
+    let subject = envelope_subject(&rt).await;
+    let original = rt.subjects.cognitive_seed(subject, None).await.unwrap();
+    let artifact = rt
+        .material
+        .artifact(subject, original.version.artifact_id)
+        .await
+        .unwrap();
+    let uploaded = rt
+        .material
+        .upload_stream(
+            subject,
+            UploadMetadata {
+                media_type: "text/plain".into(),
+                metadata: serde_json::json!({"later": true}),
+            },
+            futures::stream::iter([Ok(original.text.as_bytes().to_vec())]),
+        )
+        .await
+        .unwrap();
+    let observed = test_support::observation(&rt, subject, &original.text).await;
+    let observed_artifact = observed.artifact.unwrap();
+    assert_eq!(uploaded.artifact_id, artifact.artifact_id);
+    assert_eq!(observed_artifact.artifact_id, artifact.artifact_id);
+    assert_eq!(uploaded.media_type, artifact.media_type);
+    assert_eq!(observed_artifact.media_type, artifact.media_type);
+    assert_eq!(uploaded.metadata, artifact.metadata);
+    let operation = OperationId::new();
+    let seed = CognitiveSeedInput {
+        text: original.text.clone(),
+        format: COGNITIVE_SEED_FORMAT.into(),
+        provenance: serde_json::json!({"import": true}),
+    };
+    let imported = rt
+        .subjects
+        .adopt_cognitive_seed(subject, operation, seed.clone(), SeedAdoptionKind::Import)
+        .await
+        .unwrap();
+    let replay = rt
+        .subjects
+        .adopt_cognitive_seed(subject, operation, seed, SeedAdoptionKind::Import)
+        .await
+        .unwrap();
+    assert_eq!(imported.version.artifact_id, artifact.artifact_id);
+    assert_eq!(
+        imported.version.seed_version_id,
+        original.version.seed_version_id
+    );
+    assert_eq!(imported.adoption.adoption_id, replay.adoption.adoption_id);
+    assert_ne!(original.adoption.adoption_id, imported.adoption.adoption_id);
+    let other = envelope_subject(&rt).await;
+    let retained = rt
+        .material
+        .upload_stream(
+            other,
+            UploadMetadata {
+                media_type: "text/plain".into(),
+                metadata: serde_json::json!({}),
+            },
+            futures::stream::iter([Ok(b"retained in another Subject".to_vec())]),
+        )
+        .await
+        .unwrap();
+    let before = rt.store.authority_seq(subject).await.unwrap();
+    // Reject the final adoption insert after CAS, Artifact and version work have run.
+    sqlx::raw_sql("CREATE FUNCTION reject_seed_adoption() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test adoption failure'; END $$; CREATE TRIGGER reject_seed_adoption BEFORE INSERT ON subject_seed_adoptions FOR EACH ROW EXECUTE FUNCTION reject_seed_adoption();")
+        .execute(rt.store.pool()).await.unwrap();
+    let failed_text = "schema_version = 1\nname = 'rollback'";
+    assert!(
+        rt.subjects
+            .adopt_cognitive_seed(
+                subject,
+                OperationId::new(),
+                CognitiveSeedInput {
+                    text: failed_text.into(),
+                    format: COGNITIVE_SEED_FORMAT.into(),
+                    provenance: serde_json::json!({}),
+                },
+                SeedAdoptionKind::Import
+            )
+            .await
+            .is_err()
+    );
+    let hash = blake3::hash(failed_text.as_bytes()).to_hex().to_string();
+    let absent: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM artifacts WHERE subject_id=$1 AND content_hash=$2),(SELECT count(*) FROM cognitive_seed_versions WHERE subject_id=$1 AND content_hash=$2)")
+        .bind(subject.0).bind(&hash).fetch_one(rt.store.pool()).await.unwrap();
+    assert_eq!(absent, (0, 0));
+    assert_eq!(rt.store.authority_seq(subject).await.unwrap(), before);
+    assert_eq!(
+        rt.subjects
+            .cognitive_seed(subject, Some(imported.adoption.adoption_id))
+            .await
+            .unwrap()
+            .text,
+        original.text
+    );
+    // Observation admission rolls Artifact work back with a later semantic failure too.
+    let mut input = test_support::longitudinal::observation(subject, None);
+    input.material = ObservationMaterial::InlineText {
+        text: failed_text.into(),
+        media_type: "text/plain".into(),
+    };
+    input.entities.push(nous_material::ResolvedEntityMention {
+        surface: "".into(),
+        semantic_role: None,
+        entity_ref: None,
+    });
+    assert!(rt.material.record_observation(input).await.is_err());
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM artifacts WHERE subject_id=$1 AND content_hash=$2",
+    )
+    .bind(subject.0)
+    .bind(hash)
+    .fetch_one(rt.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+    let abandoned = root
+        .path()
+        .join("objects")
+        .join(format!(".staging-{}", uuid::Uuid::now_v7()));
+    tokio::fs::write(&abandoned, b"abandoned upload")
+        .await
+        .unwrap();
+    assert_eq!(rt.material.clean().await.unwrap(), (1, 1));
+    assert!(!abandoned.exists());
+    assert_eq!(rt.material.clean().await.unwrap(), (0, 0));
+    let stream = rt
+        .material
+        .artifact_stream(other, retained.artifact_id, None, None)
+        .await
+        .unwrap();
+    use futures::TryStreamExt;
+    let chunks = stream.try_collect::<Vec<_>>().await.unwrap();
+    assert_eq!(chunks.concat(), b"retained in another Subject");
+    assert_eq!(
+        rt.subjects
+            .cognitive_seed(subject, Some(imported.adoption.adoption_id))
+            .await
+            .unwrap()
+            .text,
+        original.text
+    );
 }

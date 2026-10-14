@@ -10,7 +10,7 @@ Nous Core is the TypeScript host process. It loads local configuration, starts t
 
 The Core does not own canonical PostgreSQL state or the internal semantics of Rust domain owners.
 
-Implementation is grouped by owner. [configuration](src/configuration/catalog.ts) normalizes and hosts the current configuration graph; [model execution snapshots](src/model/execution/snapshot.ts) resolve bindings for both startup and frozen recovery, and [route execution](src/model/execution/routes.ts) owns fallback, cancellation, attempts and usage. Model invocations compose those owners with provider operations. Resource, Query, NousQL, Cognition and Maintenance retain their own directories. Tests live in `tests/` under the affected feature; shared maintenance fixtures stay there, outside production.
+实现按能力归属组织。[configuration](src/configuration/catalog.ts) 规范化并托管配置；[模型绑定](src/model/execution/binding.ts) 在启动时解析可执行路由，[routes](src/model/execution/routes.ts) 直接执行这些绑定并记录 fallback、取消和 usage，不重建配置。[结果操作](src/operation-results.ts) 读取已有结果、保存实际提案并记录 owner 提交结果；没有成果时不登记恢复 snapshot。Resource、Query、NousQL、Cognition 与 Maintenance 保持自己的能力目录；测试和维护 fixtures 位于 `tests/`。
 
 Use `corepack pnpm dev` from the repository root for the platform-neutral development path. Public smoke uses normal Core startup and the official Client.
 

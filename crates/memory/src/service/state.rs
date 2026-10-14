@@ -25,3 +25,22 @@ pub(super) fn require_transition(current: &str, from: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum LifecycleAction {
+    Suppress,
+    Restore,
+    Withdraw,
+    Reaccept,
+}
+
+impl LifecycleAction {
+    pub(super) fn transition(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Suppress => ("suppression_state", "normal", "suppressed"),
+            Self::Restore => ("suppression_state", "suppressed", "normal"),
+            Self::Withdraw => ("acceptance_state", "accepted", "withdrawn"),
+            Self::Reaccept => ("acceptance_state", "withdrawn", "accepted"),
+        }
+    }
+}

@@ -82,7 +82,7 @@ impl HistoricalAuthoritySnapshot {
     pub fn refresh_digest(&mut self) -> Result<()> {
         // Owners finish assembly before capture; any builder mutation refreshes both identities.
         self.lookup.take();
-        let identities=self.cognition.iter().map(|state|serde_json::json!({"object":state.object,"head":state.head,"revisions":state.revisions,"acceptance":state.state["acceptance_state"],"integrity":state.state["integrity_state"],"suppression":state.state["suppression_state"],"purge":state.state["purge_state"],"accessibility":state.state["accessibility_mode"]})).collect::<Vec<_>>();
+        let identities=self.cognition.iter().map(|state|serde_json::json!({"object":state.object,"head":state.head,"revisions":state.revisions,"acceptance":state.state["acceptance_state"],"integrity":state.state["integrity_state"],"suppression":state.state["suppression_state"],"accessibility":state.state["accessibility_mode"]})).collect::<Vec<_>>();
         let value = serde_json::json!({"subject":self.subject,"revision_view":self.revision_view,"cognition":identities,"tags":self.tags,"associations":self.associations,"schema_evidence_links":self.schema_evidence_links,"entity_bindings":self.entity_bindings,"material":self.material_visibility,"material_documents":self.material_documents,"lexical":self.lexical_visibility});
         self.snapshot_digest = blake3::hash(
             &serde_json::to_vec(&value)

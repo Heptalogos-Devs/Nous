@@ -1,3 +1,4 @@
+use nous_core::UseEventRef;
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +11,7 @@ use nous_core::{
 use nous_memory::{
     AssociationBasis, AssociationBasisClass, AssociationPolarity, BasisRole, CreateSchemaInput,
     EvidenceLocator, EvidenceRef, FormationMode, RevisionBasis, SchemaEvidenceLinkInput,
-    SchemaEvidenceRole, SchemaFormationKind, SchemaScope, UseEventRef,
+    SchemaEvidenceRole, SchemaFormationKind, SchemaScope,
 };
 use nous_runtime::{UseFeedback, UseFeedbackEvent, UseKind};
 use test_support::query::{query, subject};
@@ -35,29 +36,34 @@ async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
     let sequence = runtime.store.authority_seq(subject).await.unwrap();
     let result = owner
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject,
             memory_id: original.object.memory_id,
             expected_object_epoch: original.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "A revised source fact".into(),
-            title: None,
-            basis: vec![RevisionBasis::CognitionDependency(
-                nous_core::CognitionDependency {
-                    epistemic_relation: None,
-                    target_revision: CognitiveRef::MemoryRevision(
-                        original.revision.memory_revision_id,
-                    ),
-                    basis_role: BasisRole::Direct,
-                },
-            )],
-            aboutness: vec![],
-            valid_time: TemporalExtent::Unknown,
-            epistemic_class: EpistemicClass::Observed,
+
+            content: nous_memory::MemoryContent {
+                producer: None,
+                formation_mode: FormationMode::Grounded,
+                grounding_occurrence_id: Some(source.occurrence.occurrence_id),
+                semantic_role: "fact".into(),
+                representation_text: "A revised source fact".into(),
+                title: None,
+                basis: vec![
+                    original.basis[0].clone(),
+                    RevisionBasis::CognitionDependency(nous_core::CognitionDependency {
+                        epistemic_relation: None,
+                        target_revision: CognitiveRef::MemoryRevision(
+                            original.revision.memory_revision_id,
+                        ),
+                        basis_role: BasisRole::Direct,
+                    }),
+                ],
+                aboutness: vec![],
+                valid_time: TemporalExtent::Unknown,
+                epistemic_class: EpistemicClass::Observed,
+                tags: Vec::new(),
+            },
         })
         .await;
     assert!(
@@ -84,7 +90,7 @@ async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
     reason = "one temporary Schema cohort checks visibility and replay across lifecycle changes and irreversible purge without redundant database setup"
 )]
 async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
-    use nous_memory::schema::SchemaLifecycleAction as Action;
+    use nous_memory::LifecycleAction as Action;
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
     let subject = subject(&runtime).await;
@@ -139,7 +145,7 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
     let use_input = UseFeedback {
         subject,
         session_id: None,
-        consumer_ref: "consumer:test:schema-cleanup".into(),
+        consumer_ref: "default".into(),
         events: vec![UseFeedbackEvent {
             query_id: None,
             event_id: UseEventId::new(),
@@ -306,7 +312,7 @@ async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
         OperationId::new(),
         "Alice identity matter",
     );
-    input.aboutness = vec![alice.clone()];
+    input.content.aboutness = vec![alice.clone()];
     let memory = runtime
         .require_memory()
         .unwrap()
@@ -319,27 +325,31 @@ async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
         OperationId::new(),
         "Bob disjoint matter",
     );
-    revision.aboutness = vec![bob.clone()];
+    revision.content.aboutness = vec![bob.clone()];
     let rejected = runtime
         .require_memory()
         .unwrap()
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
             operation_id: revision.operation_id,
             subject,
             memory_id: memory.object.memory_id,
             expected_object_epoch: memory.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: revision.formation_mode,
-            grounding_occurrence_id: revision.grounding_occurrence_id,
-            semantic_role: revision.semantic_role,
-            representation_text: revision.representation_text,
-            title: revision.title,
-            basis: revision.basis,
-            aboutness: revision.aboutness,
-            valid_time: revision.valid_time,
 
-            epistemic_class: revision.epistemic_class,
+            content: nous_memory::MemoryContent {
+                producer: None,
+                formation_mode: revision.content.formation_mode,
+                grounding_occurrence_id: revision.content.grounding_occurrence_id,
+                semantic_role: revision.content.semantic_role,
+                representation_text: revision.content.representation_text,
+                title: revision.content.title,
+                basis: revision.content.basis,
+                aboutness: revision.content.aboutness,
+                valid_time: revision.content.valid_time,
+
+                epistemic_class: revision.content.epistemic_class,
+                tags: Vec::new(),
+            },
         })
         .await;
     assert!(matches!(
@@ -365,7 +375,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
         OperationId::new(),
         "association memory",
     );
-    input.aboutness = vec![entity.clone()];
+    input.content.aboutness = vec![entity.clone()];
     let memory = runtime
         .require_memory()
         .unwrap()
@@ -444,7 +454,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
     assert_eq!(association.basis.len(), 1);
     let topology = runtime
         .serving
-        .projection_input(
+        .vcp_projection_input(
             subject,
             true,
             runtime
@@ -453,6 +463,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
                 .unwrap()
                 .get(nous_memory::EPISODE_SYNOPSIS)
                 .unwrap(),
+            "",
             None,
         )
         .await
@@ -467,7 +478,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
     };
     let cognitive = runtime
         .serving
-        .projection_input(subject, true, projection_budget, None)
+        .vcp_projection_input(subject, true, projection_budget, "", None)
         .await
         .expect("coherent cognitive projection");
     assert_eq!(cognitive.authority_watermark, topology.authority_watermark);
@@ -488,7 +499,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
     );
     let forbidden = runtime
         .serving
-        .projection_input(subject, false, projection_budget, None)
+        .vcp_projection_input(subject, false, projection_budget, "", None)
         .await
         .expect("cognitive projection without memory capability");
     assert!(
@@ -506,4 +517,49 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
             .any(|root| !root.starts_with("unknown-dependency:"))
     );
     assert!(!forbidden.evidence_roots.contains_key(&memory_reference));
+}
+
+#[tokio::test]
+async fn memory_pages_continue_past_the_old_256_item_cap() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = subject(&runtime).await;
+    let source = observation(&runtime, subject, "Shared admitted source").await;
+    let owner = runtime.require_memory().unwrap();
+    let mut expected = std::collections::BTreeSet::new();
+    for index in 0..257 {
+        let memory = owner
+            .form_memory(form_input(
+                subject,
+                source.occurrence.occurrence_id,
+                OperationId::new(),
+                &format!("Fact {index}"),
+            ))
+            .await
+            .unwrap();
+        expected.insert(memory.object.memory_id.0);
+    }
+    let (first, more) = owner
+        .memories(subject, "accepted", 200, None)
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 200);
+    assert!(more);
+    let (second, more) = owner
+        .memories(
+            subject,
+            "accepted",
+            200,
+            first.last().map(|memory| memory.object.memory_id.0),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 57);
+    assert!(!more);
+    let actual = first
+        .into_iter()
+        .chain(second)
+        .map(|memory| memory.object.memory_id.0)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(actual, expected);
 }

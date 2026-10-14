@@ -9,34 +9,31 @@ mod mutations;
 pub use mutations::{
     MutationEnvelope, MutationReceipt, MutationStart, OwnerLock, check_receipt, commit_receipt,
 };
-mod model_workflow;
-pub use model_workflow::{
-    WORKFLOW_VALUE_MAX_BYTES, WorkflowLease, WorkflowOwner, WorkflowReservation,
+mod model_results;
+pub use model_results::{
+    MODEL_RESULT_MAX_BYTES, ModelOperationIdentity, ModelResultOwner, ModelResultRecord,
 };
 mod episode_text;
 pub use episode_text::EpisodeTextBudget;
 mod historical;
-pub use historical::projection::HistoricalProjectionInput;
 pub use historical::*;
 mod producer;
 mod projection;
 pub use projection::concept::{ConceptProjectionInput, ConceptProjectionTag};
-mod query_descriptors;
 mod query_time;
 pub use query_time::{TimeColumns, push_time_predicate};
 mod references;
 pub use identity::{
     IdentityAddress, IdentityAddressTarget, IdentityBinding, lexical_prefix, validate_lexical,
 };
-pub use query_descriptors::QueryDescriptor;
 mod semantic_catalog;
 mod serving;
 mod tags;
 pub use projection::text::{TextProjectionFragment, TextProjectionInput, TextProjectionSource};
 pub use projection::topology::{
-    CognitiveProjectionRows, ProjectionEdgeProvenance, TopologyEdgeSource, TopologyProjectionInput,
+    ProjectionEdgeProvenance, TopologyEdgeSource, TopologyProjectionInput, VcpProjectionRows,
 };
-pub use projection::{DenseInvalidation, ProjectionInvalidation};
+pub use projection::{DenseInvalidation, ProjectionInvalidation, ProjectionWatermarks};
 pub use serving::{ServingRecord, ServingView};
 
 use nous_core::{Error, OperationId, Result, SubjectId};
@@ -62,17 +59,6 @@ pub struct AuthorityStore {
 }
 
 impl AuthorityStore {
-    pub async fn active_subjects(&self) -> Result<Vec<SubjectId>> {
-        Ok(sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT subject_id FROM subjects WHERE status='active' ORDER BY subject_id",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(database_error)?
-        .into_iter()
-        .map(SubjectId)
-        .collect())
-    }
     pub async fn connect(
         url: &str,
         max_connections: u32,
@@ -126,6 +112,15 @@ impl AuthorityStore {
         self.pool.begin().await.map_err(database_error)
     }
 
+    pub async fn read_view(&self) -> Result<Transaction<'_, Postgres>> {
+        let mut tx = self.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(database_error)?;
+        Ok(tx)
+    }
+
     pub async fn close(&self) {
         self.pool.close().await;
     }
@@ -142,6 +137,11 @@ pub fn database_error(error: sqlx::Error) -> Error {
         sqlx::Error::Database(e) if e.is_check_violation() || e.is_foreign_key_violation() => {
             Error::Invalid(error.to_string())
         }
+        sqlx::Error::Database(e) => Error::Infrastructure(format!(
+            "database SQLSTATE {}: {}",
+            e.code().as_deref().unwrap_or("unknown"),
+            e.message()
+        )),
         _ => Error::Infrastructure(error.to_string()),
     }
 }

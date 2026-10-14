@@ -159,7 +159,7 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
         .cognition
         .finalize_query(
             subject,
-            ticket.unwrap(),
+            ticket,
             Vec::new(),
             Vec::new(),
             nous_runtime::CognitiveContributors {
@@ -241,44 +241,47 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
     );
     let derived = runtime
         .material
-        .persist_derived_representation(DerivedRepresentation {
-            derived_representation_id: nous_core::DerivedRepresentationId::new(),
-            subject_id: subject,
-            inputs: vec![DerivationInput {
-                ordinal: 0,
-                reference: source.clone(),
-                role: "source".into(),
-            }],
-            strategy: "deterministic-test".into(),
-            representation_kind: nous_core::RepresentationKind::ExtractedText,
-            producer: nous_core::ProducerSignature {
-                model_role: None,
-                model_profile: None,
-                execution_profile: None,
-                inference_controls_digest: None,
-                role_policy_digest: None,
-                prompt_id: None,
-                prompt_digest: None,
+        .persist_derived_representation(
+            DerivedRepresentation {
+                derived_representation_id: nous_core::DerivedRepresentationId::new(),
+                subject_id: subject,
+                inputs: vec![DerivationInput {
+                    ordinal: 0,
+                    reference: source.clone(),
+                    role: "source".into(),
+                }],
+                strategy: "deterministic-test".into(),
+                representation_kind: nous_core::RepresentationKind::ExtractedText,
+                producer: nous_core::ProducerSignature {
+                    model_role: None,
+                    model_profile: None,
+                    execution_profile: None,
+                    inference_controls_digest: None,
+                    role_policy_digest: None,
+                    prompt_id: None,
+                    prompt_digest: None,
 
-                signature_hash: String::new(),
-                provider_class: "local-test".into(),
-                operation: nous_core::CapabilityOperation::TextInterpretation,
-                implementation: "joint-time-test".into(),
-                model_identity: None,
-                model_revision: None,
-                output_schema_digest: None,
-                preprocessing_identity: "utf8".into(),
-                preprocessing_revision: "1".into(),
-                config_digest: "test".into(),
+                    signature_hash: String::new(),
+                    provider_class: "local-test".into(),
+                    operation: nous_core::CapabilityOperation::TextInterpretation,
+                    implementation: "joint-time-test".into(),
+                    model_identity: None,
+                    model_revision: None,
+                    output_schema_digest: None,
+                    preprocessing_identity: "utf8".into(),
+                    preprocessing_revision: "1".into(),
+                    config_digest: "test".into(),
+                },
+                revision: 1,
+                payload_text: Some("the same jointly observed source".into()),
+                payload_json: None,
+                payload_artifact_id: None,
+                quality: serde_json::json!({}),
+                created_at: early,
+                supersedes: None,
             },
-            revision: 1,
-            payload_text: Some("the same jointly observed source".into()),
-            payload_json: None,
-            payload_artifact_id: None,
-            quality: serde_json::json!({}),
-            created_at: early,
-            supersedes: None,
-        })
+            None,
+        )
         .await
         .unwrap();
     let derived_ref = CognitiveRef::DerivedRepresentation(derived.derived_representation_id);

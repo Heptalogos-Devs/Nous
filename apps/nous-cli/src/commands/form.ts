@@ -7,7 +7,8 @@ export async function formCommands(
   env: CliEnvironment,
   action: string | undefined,
 ) {
-  const { client, values, subjectId, required, resolveReference } = env;
+  const { client, values, required, resolveReference } = env;
+  const subjectId = await env.subjectId;
   const operationId = values["operation-id"] ?? crypto.randomUUID();
   const result = await client.model.formFromObservation({
     subjectId,
@@ -15,7 +16,11 @@ export async function formCommands(
     aboutnessMode:
       values["aboutness-mode"] ??
       (values.aboutness?.length ? "explicit" : undefined),
-    explicitAboutness: values.aboutness,
+    explicitAboutness: await Promise.all(
+      (values.aboutness ?? []).map(
+        async (text) => (await resolveReference(text, "entity")).value,
+      ),
+    ),
     explicitTags: await Promise.all(
       (values.tag ?? []).map(
         async (text) => (await resolveReference(text, "tag")).value,

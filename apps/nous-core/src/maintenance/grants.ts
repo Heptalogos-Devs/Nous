@@ -15,31 +15,17 @@ import type { MaintenancePolicy } from "@nous-wave/protocol/nous/wave/kernel/v1a
 import type { KernelClient } from "../kernel-client.js";
 import type { ModelRuntime } from "../model/runtime.js";
 import { canonicalDigest } from "../digest.js";
-import { GenerationFailure } from "../model/execution/routes.js";
+import {
+  GenerationFailure,
+  failedExecutionTelemetry,
+} from "../model/execution/routes.js";
+import { serializeOperation } from "../operation-results.js";
+import { authorityRejection } from "./rejection.js";
 import { runModelMaintenance } from "./workflow.js";
-import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { executionOptions } from "../execution.js";
 
-const roles = {
-  episode_resegment: "episode_segmentation",
-  journal_review: "journal_synthesis",
-  journal_revalidate: "journal_synthesis",
-  memory_consolidate: "memory_consolidation",
-  concept_maintenance: "concept_maintenance",
-} as const;
-function allowedKinds(models: ModelRuntime, modelBudget: number) {
-  const ready = new Set(
-    models.invocations.capabilities
-      .filter((role) => role.state === "READY")
-      .map((role) => role.name),
-  );
-  return [
-    "episode_segment",
-    ...Object.entries(roles)
-      .filter(([, role]) => modelBudget > 0 && ready.has(`model.${role}`))
-      .map(([kind]) => kind),
-  ];
-}
+import { maintenanceRoles } from "./records.js";
+
 function problemClass(error: unknown) {
   const detail = domainErrorDetail(error);
   if (detail?.code && DomainErrorCode[detail.code])
@@ -94,6 +80,33 @@ export async function grantMaintenance(
       "Invalid maintenance opportunity envelope",
       Code.InvalidArgument,
     );
+  const calls = executionOptions(
+    kernel.execution.opportunity,
+    options,
+    input.maxElapsedMs,
+  );
+  return serializeOperation(
+    kernel,
+    `maintenance:${input.subjectId.toLowerCase()}`,
+    calls.signal,
+    () =>
+      grantMaintenanceOnce(
+        kernel,
+        models,
+        input,
+        calls,
+        options.signal ?? undefined,
+      ),
+  );
+}
+
+async function grantMaintenanceOnce(
+  kernel: KernelClient,
+  models: ModelRuntime,
+  input: MaintenanceGrantRequest,
+  options: import("../execution.js").ExecutionOptions,
+  callerSignal?: AbortSignal,
+) {
   const started = performance.now();
   const calls = executionOptions(
     kernel.execution.opportunity,
@@ -112,158 +125,205 @@ export async function grantMaintenance(
       disposition: "disabled_by_policy",
       results,
       modelCalls,
+      operationsConsumed: 0,
       elapsedMs: Math.round(performance.now() - started),
     };
   const limit = Math.min(input.maxOperations, policy.maxOperations);
-  for (let index = 0; index < limit && !signal.aborted; index++) {
-    const needs = await kernel.maintenance.claimMaintenance(
-      {
-        subjectId: input.subjectId,
-        allowedKinds: allowedKinds(models, input.maxModelCalls - modelCalls),
-        modelExecutionDigest: canonicalDigest(
-          Object.fromEntries(
-            Object.values(roles)
-              .filter((role) =>
-                models.invocations.capabilities.some(
-                  (capability) =>
-                    capability.name === `model.${role}` &&
-                    capability.state === "READY",
-                ),
-              )
-              .map((role) => [
-                role,
-                models.invocations.snapshot(role).configDigest,
-              ]),
-          ),
-        ),
-        limit: 1,
-        leaseSeconds: Math.max(
-          policy.workerLeaseSeconds,
-          opportunity.leaseSeconds,
-        ),
-      },
-      calls,
-    );
-    const need = needs.needs[0];
-    if (!need) break;
-    let status: string;
-    let problemCode: string | undefined;
-    let nextDue;
+  const readyRoles = new Set(
+    models.invocations.capabilities
+      .filter((capability) => capability.state === "READY")
+      .map((capability) => capability.name),
+  );
+  const modelExecutionDigest = canonicalDigest(
+    Object.fromEntries(
+      [...new Set(Object.values(maintenanceRoles))]
+        .filter((role) => readyRoles.has(`model.${role}`))
+        .map((role) => [role, models.invocations.prepare(role).configDigest]),
+    ),
+  );
+  let operations = 0;
+  const visited = new Set<string>();
+  let after:
+    | import("@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js").MaintenanceNeed
+    | undefined;
+  let stop = false;
+  const modelLimit = Math.min(input.maxModelCalls, policy.maxModelCalls);
+  while (operations < limit && !signal.aborted && !stop) {
+    let needs;
     try {
-      if (need.kind === "episode_segment") {
-        const organized = await kernel.maintenance.organizeExperience(
-          {
-            subjectId: need.subjectId,
-            limit: policy.experienceBatchSize,
-            close: false,
-          },
-          calls,
-        );
-        nextDue = organized.nextDue;
-        status = nextDue
-          ? "deferred"
-          : organized.episodes.length
-            ? "committed"
-            : "no_change";
-      } else {
-        const outcome = await runModelMaintenance(
-          kernel,
-          models,
-          need,
-          calls,
-          () => {
-            if (modelCalls >= input.maxModelCalls)
-              throw new ConnectError(
-                "Maintenance model call budget exhausted",
-                Code.ResourceExhausted,
-              );
-            modelCalls++;
-          },
-        );
-        status = outcome.status;
-        problemCode =
-          "problemCode" in outcome ? outcome.problemCode : undefined;
-        nextDue = "nextDue" in outcome ? outcome.nextDue : undefined;
-      }
-    } catch (error) {
-      if (signal.aborted) {
-        // Host opportunity exhaustion leaves the durable need available to the next grant.
-        status = "deferred";
-        nextDue = timestampFromDate(new Date());
-        problemCode = options.signal?.aborted
-          ? "opportunity_canceled"
-          : "opportunity_budget_exhausted";
-      } else if (
-        error instanceof ConnectError &&
-        error.code === Code.InvalidArgument
-      ) {
-        status = "rejected_invalid";
-        problemCode = "proposal_invalid";
-      } else {
-        const retryable =
-          domainErrorDetail(error)?.recovery ===
-            ErrorRecovery.RETRY_OPERATION ||
-          error instanceof GenerationFailure ||
-          (error instanceof ConnectError &&
-            [
-              Code.Unavailable,
-              Code.DeadlineExceeded,
-              Code.Canceled,
-              Code.ResourceExhausted,
-            ].includes(error.code));
-        status = retryable ? "retry" : "internal_failure";
-        problemCode = problemClass(error);
-        reportFailure(
-          need.subjectId,
-          "execute",
-          need.kind,
-          problemCode,
-          status === "internal_failure"
-            ? "stop"
-            : need.retryCount + 1 >= policy.retryMaxAttempts
-              ? "blocked"
-              : "retry",
-        );
-      }
-    }
-    if (status === "retry" && need.retryCount + 1 >= policy.retryMaxAttempts) {
-      status = "blocked_dependency";
-      problemCode = "maintenance_retry_exhausted";
-    }
-    try {
-      await kernel.maintenance.finishMaintenance(
+      needs = await kernel.maintenance.selectMaintenance(
         {
-          claimed: need,
-          disposition:
-            status === "deferred"
-              ? "pending"
-              : status === "retry"
-                ? "retry"
-                : status === "blocked_dependency" ||
-                    status === "internal_failure"
-                  ? "blocked"
-                  : status === "obsolete"
-                    ? "obsolete"
-                    : "satisfied",
-          nextDue,
-          problemCode,
-          retryDelaySeconds:
-            status === "retry" ? retryDelay(policy, need.retryCount + 1) : 0,
+          subjectId: input.subjectId,
+          allowedKinds: ["episode_segment", ...Object.keys(maintenanceRoles)],
+          modelExecutionDigest,
+          limit: 128,
+          after,
         },
-        opportunity.acknowledge(),
+        calls,
       );
     } catch (error) {
-      reportFailure(
-        need.subjectId,
-        "acknowledge",
-        need.kind,
-        problemClass(error),
-        "lease_recovery",
-      );
+      if (signal.aborted) break;
       throw error;
     }
-    results.push({ needId: need.needId, kind: need.kind, status, problemCode });
-    if (status === "internal_failure") break;
+    if (!needs.needs.length) break;
+    for (const need of needs.needs) {
+      if (operations >= limit || signal.aborted) break;
+      after = need;
+      if (visited.has(need.needId)) continue;
+      visited.add(need.needId);
+      let status: string;
+      let problemCode: string | undefined;
+      let errorDetail: MaintenanceOperationResult["errorDetail"];
+      let nextDue;
+      try {
+        if (need.kind === "episode_segment") {
+          const organized = await kernel.maintenance.organizeExperience(
+            {
+              subjectId: need.subjectId,
+              limit: policy.experienceBatchSize,
+              close: false,
+            },
+            calls,
+          );
+          nextDue = organized.nextDue;
+          status = nextDue
+            ? "deferred"
+            : organized.episodes.length
+              ? "committed"
+              : "no_change";
+        } else {
+          const outcome = await runModelMaintenance(
+            kernel,
+            models,
+            need,
+            calls,
+            modelLimit - modelCalls,
+            () => {
+              if (modelCalls >= modelLimit)
+                throw new ConnectError(
+                  "Maintenance model call budget exhausted",
+                  Code.ResourceExhausted,
+                );
+              modelCalls++;
+            },
+          );
+          status = outcome.status;
+          problemCode =
+            "problemCode" in outcome ? outcome.problemCode : undefined;
+          nextDue = "nextDue" in outcome ? outcome.nextDue : undefined;
+        }
+      } catch (error) {
+        if (signal.aborted) {
+          // Host opportunity exhaustion leaves the durable need available to the next grant.
+          status = "deferred";
+          problemCode = callerSignal?.aborted
+            ? "opportunity_canceled"
+            : "opportunity_budget_exhausted";
+        } else if (authorityRejection(error) === "stale") {
+          status = "obsolete";
+          problemCode = "maintenance_trigger_changed";
+        } else if (
+          error instanceof ConnectError &&
+          error.code === Code.InvalidArgument
+        ) {
+          status = "rejected_invalid";
+          problemCode = "proposal_invalid";
+        } else if (
+          domainErrorDetail(error)?.code ===
+          DomainErrorCode.CAPABILITY_UNAVAILABLE
+        ) {
+          errorDetail = domainErrorDetail(error);
+          status = failedExecutionTelemetry(error)?.attempts.some(
+            (a) => a.status !== "skipped",
+          )
+            ? "retry"
+            : "blocked_dependency";
+          problemCode = "capability_unavailable";
+        } else {
+          const retryable =
+            domainErrorDetail(error)?.recovery ===
+              ErrorRecovery.RETRY_OPERATION ||
+            error instanceof GenerationFailure ||
+            (error instanceof ConnectError &&
+              [
+                Code.Unavailable,
+                Code.DeadlineExceeded,
+                Code.Canceled,
+                Code.ResourceExhausted,
+              ].includes(error.code));
+          status = retryable ? "retry" : "internal_failure";
+          problemCode = problemClass(error);
+          reportFailure(
+            need.subjectId,
+            "execute",
+            need.kind,
+            problemCode,
+            status === "internal_failure"
+              ? "stop"
+              : need.retryCount + 1 >= policy.retryMaxAttempts
+                ? "blocked"
+                : "retry",
+          );
+        }
+      }
+      if (
+        problemCode === "model_unavailable" ||
+        problemCode === "model_budget_exhausted"
+      )
+        continue;
+      operations++;
+      if (
+        status === "retry" &&
+        need.retryCount + 1 >= policy.retryMaxAttempts
+      ) {
+        status = "blocked_dependency";
+        problemCode = "maintenance_retry_exhausted";
+      }
+      try {
+        await kernel.maintenance.finishMaintenance(
+          {
+            selected: need,
+            disposition:
+              status === "deferred"
+                ? "pending"
+                : status === "retry"
+                  ? "retry"
+                  : status === "blocked_dependency" ||
+                      status === "internal_failure"
+                    ? "blocked"
+                    : status === "obsolete"
+                      ? "obsolete"
+                      : "satisfied",
+            nextDue,
+            problemCode,
+            retryDelaySeconds:
+              status === "retry" ? retryDelay(policy, need.retryCount + 1) : 0,
+          },
+          opportunity.acknowledge(),
+        );
+      } catch (error) {
+        reportFailure(
+          need.subjectId,
+          "acknowledge",
+          need.kind,
+          problemClass(error),
+          "pending_work",
+        );
+        throw error;
+      }
+      results.push({
+        needId: need.needId,
+        kind: need.kind,
+        status,
+        problemCode,
+        errorDetail,
+      });
+      if (status === "internal_failure") {
+        stop = true;
+        break;
+      }
+    }
+    if (needs.needs.length < 128) break;
   }
   return {
     disposition: signal.aborted
@@ -273,6 +333,7 @@ export async function grantMaintenance(
         : "no_eligible_work",
     results,
     modelCalls,
+    operationsConsumed: operations,
     elapsedMs: Math.round(performance.now() - started),
   };
 }
@@ -364,7 +425,7 @@ export class SubjectMaintenanceScheduler {
           },
           { signal: tickSignal },
         );
-        operations -= result.results.length;
+        operations -= result.operationsConsumed;
         modelCalls -= result.modelCalls;
         this.failures = 0;
       } catch (error) {
@@ -372,7 +433,7 @@ export class SubjectMaintenanceScheduler {
         if (error instanceof ConnectError && error.code === Code.NotFound)
           continue;
         this.report(error, "subject_opportunity");
-        operations--; // Failed execution also consumes this tick's opportunity.
+        break; // A failed RPC cannot report its need consumption; stop this tick.
       }
     }
     this.subject = undefined;

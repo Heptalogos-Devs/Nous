@@ -1,5 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { resolve } from "node:path";
+import type { SystemStatus } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import {
   defineCommand,
   runCommand,
@@ -35,13 +37,19 @@ import { useCommands } from "./use.js";
 import { traceCommands } from "./trace.js";
 import { contextCommands } from "./context.js";
 import { queryCommands, showCommands, readCommands } from "./query.js";
+import { materialCommands } from "./material.js";
+import { memoryCommands } from "./memory.js";
+import { schemaCommands } from "./schema.js";
+import { episodeCommands, journalCommands } from "./longitudinal.js";
+import { resourceCommands } from "./resource.js";
+import { projectionCommands } from "./projection.js";
 const argsDef: ArgsDef = Object.fromEntries<ArgDef>([
   ...stringFlags.map((name) => [name, { type: "string" }] as const),
   ...listFlags.map((name) => [name, { type: "string" }] as const),
   ...booleanFlags.map((name) => [name, { type: "boolean" }] as const),
 ]);
 const defaults: CliValues = {
-  consumer: "consumer:nous-cli:default",
+  consumer: "default",
   "max-operations": "1",
   "max-model-calls": "1",
   "max-elapsed-ms": "30000",
@@ -95,18 +103,43 @@ export async function runCli(
       args: argsDef,
       async run(ctx) {
         const values = { ...globals, ...valuesOf(ctx) };
-        const env = await createEnvironment(values, connect, input);
-        if (!["config", "status", "subject", "retry"].includes(family))
-          env.required(
-            env.subjectId,
-            "Selected Subject (run subject create/use)",
-          );
-        result = await handler(
-          env,
-          action ?? ctx.args._[0],
-          action ? ctx.args._[0] : ctx.args._[1],
-          [family, ...(action ? [action] : []), ...ctx.args._],
+        let snapshot: SystemStatus | undefined;
+        let connection: Awaited<ReturnType<typeof connect>> | undefined;
+        if (family === "status") {
+          if (!values["run-root"])
+            throw new CliError(
+              "INVALID_ARGUMENT",
+              "--run-root or nous launcher required",
+            );
+          connection = await connect({ runRoot: resolve(values["run-root"]) });
+          snapshot = await connection.system.getStatus({});
+          if (
+            !snapshot.components.some(
+              (component) =>
+                component.name === "kernel" && component.state === "READY",
+            )
+          ) {
+            result = values.raw
+              ? { status: snapshot }
+              : semanticOutput("status", { status: snapshot });
+            completed = true;
+            return;
+          }
+        }
+        const env = await createEnvironment(
+          values,
+          connection ? async () => connection! : connect,
+          input,
         );
+        result =
+          family === "status"
+            ? await statusCommands(env, snapshot)
+            : await handler(
+                env,
+                action ?? ctx.args._[0],
+                action ? ctx.args._[0] : ctx.args._[1],
+                [family, ...(action ? [action] : []), ...ctx.args._],
+              );
         if (present && !values.raw && !values.json && !values.developer) {
           try {
             result = await present(result, env);
@@ -195,7 +228,13 @@ export async function runCli(
     },
     subCommands: {
       help,
-      status: leaf("status", statusCommands),
+      serving: family(
+        "serving",
+        async (env) =>
+          env.client.system.reclaimServing({ subjectId: await env.subjectId }),
+        ["clean"],
+      ),
+      status: leaf("status", (env) => statusCommands(env)),
       config: family("config", configCommands, [
         "list",
         "describe",
@@ -203,15 +242,31 @@ export async function runCli(
         "set",
         "clear",
       ]),
-      subject: family("subject", subjectCommands, ["create", "list", "use"]),
-      session: family("session", sessionCommands, ["open", "show", "close"]),
+      subject: family("subject", subjectCommands, [
+        "create",
+        "list",
+        "use",
+        "seed",
+        "adopt-seed",
+      ]),
+      session: family("session", sessionCommands, [
+        "open",
+        "show",
+        "list",
+        "close",
+      ]),
       observe: family("observe", observeCommands, ["text", "file"]),
       derive: leaf("derive", deriveCommands),
       form: leaf("form", formCommands),
       embeddings: family("embeddings", embeddingsCommands, ["prepare"]),
-      identity: family("identity", identityCommands, ["bind", "resolve"]),
+      identity: family("identity", identityCommands, [
+        "bind",
+        "resolve",
+        "rebind",
+      ]),
       maintenance: family("maintenance", maintenanceCommands, ["grant"]),
       tag: family("tag", tagCommands, [
+        "history",
         "create",
         "get",
         "list",
@@ -223,9 +278,86 @@ export async function runCli(
         "attach",
       ]),
       association: family("association", associationCommands, [
+        "list",
+        "get",
         "create",
         "revoke",
         "neighborhood",
+      ]),
+      material: family("material", materialCommands, [
+        "clean",
+        "limits",
+        "artifacts",
+        "occurrences",
+        "representations",
+        "producer",
+      ]),
+      memory: family("memory", memoryCommands, [
+        "form",
+        "get",
+        "list",
+        "revision",
+        "history",
+        "revise",
+        "accessibility",
+        "link",
+        "suppress",
+        "restore",
+        "withdraw",
+        "reaccept",
+        "purge",
+      ]),
+      schema: family("schema", schemaCommands, [
+        "list",
+        "history",
+        "create",
+        "get",
+        "revision",
+        "evidence",
+        "revise",
+        "split",
+        "merge",
+        "suppress",
+        "restore",
+        "withdraw",
+        "reaccept",
+        "purge",
+      ]),
+      episode: family("episode", episodeCommands, [
+        "create",
+        "get",
+        "list",
+        "revision",
+        "history",
+        "revise",
+        "link",
+        "suppress",
+        "restore",
+        "withdraw",
+        "reaccept",
+        "purge",
+      ]),
+      journal: family("journal", journalCommands, [
+        "get",
+        "list",
+        "revision",
+        "history",
+        "suppress",
+        "restore",
+        "withdraw",
+        "reaccept",
+        "purge",
+      ]),
+      resource: family("resource", resourceCommands, [
+        "put",
+        "get",
+        "list",
+        "remove",
+        "materialize",
+      ]),
+      projection: family("projection", projectionCommands, [
+        "build",
+        "managed",
       ]),
       query,
       use: leaf("use", useCommands),
@@ -246,8 +378,10 @@ export async function runCli(
         "select",
         "foreground",
       ]),
-      retry: leaf("retry", (env, id) =>
-        env.retry(env.required(id, "Receipt ID")),
+      retry: leaf("retry", (env, id, argument) =>
+        id === "forget"
+          ? env.forget(env.required(argument, "Saved request ID"))
+          : env.retry(env.required(id, "Saved request ID")),
       ),
     },
     run() {

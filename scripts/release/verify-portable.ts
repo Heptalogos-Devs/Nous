@@ -4,7 +4,7 @@
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { promisify, parseArgs } from "node:util";
 import { once } from "node:events";
-import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
@@ -217,6 +217,7 @@ async function cli(...args: string[]) {
   assert.equal(envelope.schemaVersion, "nous.cli.v1");
   return envelope.data;
 }
+let passed = false;
 try {
   await boot();
   const status = await cli("status");
@@ -242,11 +243,11 @@ try {
     sourceRegionId: String(observation.sourceRegionId),
     strategy: "description_only",
   });
-  const memory = await client.memory.form({
+  const memory = await client.memory.formMemory({
     subjectId,
     operationId: crypto.randomUUID(),
+    cognitiveRole: "declarative",
     input: {
-      cognitiveRole: "declarative",
       formationMode: "grounded",
       groundingOccurrenceId: occurrenceId,
       semanticRole: "fact",
@@ -270,10 +271,10 @@ try {
       ],
     },
   });
-  const response = await client.cognition.recall(
-    subjectId,
-    "stable source identity $return(memory) $limit(5)",
-  );
+  const response = await client.cognition.query({
+    subjectId: subjectId,
+    nousql: "stable source identity $return(memory) $limit(5)",
+  });
   assert(
     response.hits.some(
       (hit: { revision?: { value: string } }) =>
@@ -299,10 +300,10 @@ try {
   const restarted = await clientModule.connectNousInstance({
     runRoot,
   });
-  const recalled = await restarted.cognition.recall(
-    subjectId,
-    "stable source identity $return(memory) $limit(5)",
-  );
+  const recalled = await restarted.cognition.query({
+    subjectId: subjectId,
+    nousql: "stable source identity $return(memory) $limit(5)",
+  });
   assert(
     recalled.hits.some(
       (hit: { revision?: { value: string } }) =>
@@ -343,6 +344,7 @@ try {
   } finally {
     await rename(hiddenPack, postgresPack);
   }
+  passed = true;
   console.log(
     JSON.stringify({
       result: "PASS",
@@ -365,4 +367,5 @@ try {
   );
 } finally {
   await stop();
+  if (passed) await rm(verificationRoot, { recursive: true, force: true });
 }

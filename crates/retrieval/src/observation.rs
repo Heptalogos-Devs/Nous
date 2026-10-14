@@ -82,9 +82,6 @@ impl QueryObservation {
     pub fn profile_digest(&self) -> &str {
         &self.profile_digest
     }
-    pub fn topology_generation_id(&self) -> ServingGenerationId {
-        self.topology_generation_id
-    }
     pub fn config_subset_digest(&self) -> &str {
         &self.config_subset_digest
     }

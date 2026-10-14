@@ -1,5 +1,9 @@
 use super::*;
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario checks captured canonical identities and historical revisions"
+)]
 pub(crate) async fn check_historical_binding(
     rt: &nous_kernel::NousRuntime,
     subject: SubjectId,
@@ -63,14 +67,31 @@ pub(crate) async fn check_historical_binding(
     let config = rt.configuration.snapshot_for_subject(subject).unwrap();
     let bound = rt
         .cognition
-        .bind_query_with_authority_view(query.clone(), config.clone(), Some(Arc::new(view.clone())))
+        .bind_query_with_authority_view(
+            query.clone(),
+            config.clone(),
+            Some(Arc::new(view.clone())),
+            rt,
+        )
         .await
         .unwrap();
     assert_eq!(bound.exact_bindings[0].bound_ref, old);
     check_historical_identity(rt, view, tag).await;
-    assert!(bound.runtime_refs.contains(&old));
-    assert!(!bound.runtime_refs.contains(&future));
-    assert!(!bound.runtime_refs.contains(&CognitiveRef::Tag(future_tag)));
+    assert!(
+        bound
+            .runtime_sources()
+            .any(|source| source.reference == old)
+    );
+    assert!(
+        !bound
+            .runtime_sources()
+            .any(|source| source.reference == future)
+    );
+    assert!(
+        !bound
+            .runtime_sources()
+            .any(|source| source.reference == CognitiveRef::Tag(future_tag))
+    );
     assert!(bound.representation.text.contains("PAST_DESCRIPTION"));
     assert!(
         bound
@@ -122,7 +143,7 @@ pub(crate) async fn check_historical_binding(
         .push(Cue::Tag(TagCue { tag: future_tag }));
     assert!(matches!(
         rt.cognition
-            .bind_query_with_authority_view(future_query, config, Some(Arc::new(view.clone())))
+            .bind_query_with_authority_view(future_query, config, Some(Arc::new(view.clone())), rt)
             .await,
         Err(Error::NotFound(_))
     ));
@@ -136,7 +157,7 @@ pub(super) async fn check_historical_execution(
 ) {
     let execution = rt.execute_query(query, None).await.unwrap();
     assert!(
-        execution.read_lease.is_none(),
+        execution.bound.activation_view.is_none(),
         "exact historical reads do not acquire Serving generations"
     );
     assert!(
@@ -166,13 +187,20 @@ pub(super) async fn check_historical_serving(
     let view = bound.historical_authority.as_deref().unwrap();
     let input = rt
         .store
-        .historical_projection_input(
-            view,
+        .text_projection_input(
+            view.subject,
+            true,
             bound
                 .config_snapshot
                 .get(nous_configuration::ConfigKey::new("episode.synopsis"))
                 .unwrap(),
+            Some(view),
         )
+        .await
+        .unwrap();
+    let concepts = rt
+        .store
+        .concept_projection_input(view.subject, true, Some(view))
         .await
         .unwrap();
     assert!(
@@ -182,7 +210,7 @@ pub(super) async fn check_historical_serving(
             .any(|s| &s.reference == old && s.text.as_deref() == Some("original authority fact"))
     );
     assert!(!input.sources.iter().any(|s| &s.reference == future));
-    let concept = input.concepts.tags.iter().find(|t| t.tag == tag).unwrap();
+    let concept = concepts.tags.iter().find(|t| t.tag == tag).unwrap();
     assert!(concept.semantic.text.contains("PAST_DESCRIPTION"));
     assert!(concept.attachments.contains(old));
     assert!(!concept.attachments.contains(future));

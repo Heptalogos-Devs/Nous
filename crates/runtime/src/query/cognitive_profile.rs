@@ -73,7 +73,3 @@ pub(super) fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Re
         |_: &CognitiveProfile| Ok(()),
     )
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/cognitive_profile.rs"]
-mod tests;

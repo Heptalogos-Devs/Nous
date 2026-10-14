@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { parse, stringify } from "smol-toml";
 import { workspaceTemp } from "../workspace.js";
 import { boot, prepare, stop, type Boot } from "./support.js";
+import { hostSchema } from "../../apps/nous-core/src/configuration/catalog.js";
 import { resolveLocations } from "../../apps/nous-core/src/locations.js";
 
 // Controlled HTTP outputs test route admission and persisted access, not media quality.
@@ -138,7 +139,7 @@ try {
     const client = current.client;
     if (!subjectId) {
       subjectId = (
-        await client.subjects.create({
+        await client.subjects.createSubject({
           operationId: randomUUID(),
           cognitiveSeed: {
             text: "schema_version = 1",
@@ -149,7 +150,7 @@ try {
       const artifact = await client.artifacts.uploadFile(subjectId, videoPath, {
         mediaType: "video/mp4",
       });
-      const observed = await client.cognition.observe({
+      const observed = await client.runtime.recordObservation({
         subjectId,
         requestId: randomUUID(),
         sourceClass: "file",
@@ -174,7 +175,7 @@ try {
     } else {
       assert.equal(result.degradation.length, 0);
       const representationId = result.selectedRepresentationId!;
-      const persisted = await client.material.representation({
+      const persisted = await client.material.getDerivedRepresentation({
         subjectId,
         id: representationId,
       });
@@ -195,6 +196,25 @@ try {
       });
       assert.equal(replay.selectedRepresentationId, representationId);
       assert.equal(calls.length, beforeReplay);
+      const shutdown = AbortSignal.timeout(
+        hostSchema.parse(undefined).kernel_shutdown_timeout_ms,
+      );
+      await Promise.race([
+        stop(current),
+        new Promise<never>((_resolve, reject) =>
+          shutdown.addEventListener(
+            "abort",
+            () =>
+              reject(
+                new Error(
+                  "Header-only replay left Core alive beyond its shutdown budget",
+                ),
+              ),
+            { once: true },
+          ),
+        ),
+      ]);
+      current = undefined;
     }
   }
   await stop(current);
@@ -216,7 +236,7 @@ try {
     videoPath,
     { mediaType: "video/mp4" },
   );
-  const timedSource = await current.client.cognition.observe({
+  const timedSource = await current.client.runtime.recordObservation({
     subjectId,
     requestId: randomUUID(),
     sourceClass: "file",
@@ -252,7 +272,7 @@ try {
     "fallback",
   ]);
   console.log(
-    "MEDIA_ROUTES public_core=true persisted_access=true opposite_capabilities=true successful_replay_no_provider=true work_deadline_cleanup_resume=true",
+    "MEDIA_ROUTES public_core=true persisted_access=true opposite_capabilities=true successful_replay_no_provider=true header_only_replay_shutdown_bounded=true work_deadline_cleanup_resume=true",
   );
   verified = true;
 } finally {

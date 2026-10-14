@@ -21,7 +21,7 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import { ArtifactStreamService } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/kernel_pb.js";
 import { Health } from "@nous-wave/protocol/grpc/health/v1/health_pb.js";
 import {
-  KernelModelWorkflowService,
+  KernelModelResultsService,
   KernelMaterialWorkflowService,
 } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 
@@ -31,7 +31,7 @@ import { KernelConfigurationService } from "@nous-wave/protocol/nous/wave/kernel
 const MAX_WORKFLOW_RPC_BYTES = 8 * 1024 * 1024 + 65536;
 
 export class KernelClient {
-  readonly modelWorkflow;
+  readonly modelResults;
   readonly materialWorkflow;
   readonly hostRuntime;
   readonly projection;
@@ -62,7 +62,7 @@ export class KernelClient {
     this.queryWorkflow = createClient(KernelQueryService, transport);
     this.maintenance = createClient(KernelMaintenanceService, transport);
     this.projection = createClient(KernelProjectionService, transport);
-    this.modelWorkflow = createClient(KernelModelWorkflowService, transport);
+    this.modelResults = createClient(KernelModelResultsService, transport);
     this.materialWorkflow = createClient(
       KernelMaterialWorkflowService,
       transport,

@@ -122,8 +122,13 @@ impl CognitiveRuntimeService {
             .map(|action| (action.action_id, action))
             .collect();
         validate_results(&actions, &incoming)?;
+        let references = result
+            .resource_actions
+            .iter()
+            .map(|action| action.resource.clone())
+            .collect::<Vec<_>>();
         let current = self
-            .list_resources(subject)
+            .resource_views(subject, Some(&references), "", None, None)
             .await?
             .into_iter()
             .map(|resource| {

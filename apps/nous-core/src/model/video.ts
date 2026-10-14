@@ -26,48 +26,11 @@ export async function sampleVideo(
 ) {
   if (bytes.byteLength > policy.max_source_bytes)
     throw new Error("Video source exceeds configured byte bound");
-  const executable = policy.ffmpeg_executable;
-  if (!executable)
-    throw new Error(
-      "FFmpeg runtime is unavailable; use nous runtime install ffmpeg or configure an executable",
-    );
+  const sampling = await videoSampling(policy, secretNames, signal);
+  const { run, version } = sampling;
   await mkdir(tempRoot, { recursive: true });
   const root = await mkdtemp(join(tempRoot, "nous-video-"));
-  const secretSet = new Set(secretNames.map((name) => name.toUpperCase()));
-  const env: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(process.env))
-    if (!secretSet.has(name.toUpperCase())) env[name] = value;
-  const run = (
-    phase: "version" | "metadata" | "frame" | "audio",
-    args: string[],
-  ) =>
-    new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      execFile(
-        executable,
-        args,
-        {
-          windowsHide: true,
-          env,
-          timeout: policy.process_timeout_ms,
-          maxBuffer: 65536,
-          signal,
-        },
-        (error, stdout, stderr) => {
-          if (error)
-            reject(
-              new Error(
-                `FFmpeg ${phase} execution unavailable, failed or exceeded bounds`,
-              ),
-            );
-          else resolve({ stdout, stderr });
-        },
-      );
-    });
   try {
-    const version =
-      (await run("version", ["-version"])).stdout.split(/\r?\n/)[0] ?? "";
-    if (!version.startsWith("ffmpeg version "))
-      throw new Error("Configured executable is not FFmpeg");
     const input = join(root, "source.media");
     await writeFile(input, bytes);
     const inputArgs = [
@@ -214,13 +177,73 @@ export async function sampleVideo(
         sampled_duration_seconds: bounded,
         truncated: duration > bounded,
       },
-      preprocessingDigest: canonicalDigest({
-        version,
-        policy,
-        videoFrameInputIdentity,
-      }),
+      preprocessingDigest: sampling.preprocessingDigest,
     };
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+/** Resolve the actual sampling implementation before reading or transforming source bytes. */
+async function videoSampling(
+  policy: Policy,
+  secretNames: readonly string[],
+  signal?: AbortSignal,
+) {
+  const executable = policy.ffmpeg_executable;
+  if (!executable)
+    throw new Error(
+      "FFmpeg runtime is unavailable; use nous runtime install ffmpeg or configure an executable",
+    );
+  const secretSet = new Set(secretNames.map((name) => name.toUpperCase()));
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(process.env))
+    if (!secretSet.has(name.toUpperCase())) env[name] = value;
+  const run = (
+    phase: "version" | "metadata" | "frame" | "audio",
+    args: string[],
+  ) =>
+    new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      execFile(
+        executable,
+        args,
+        {
+          windowsHide: true,
+          env,
+          timeout: policy.process_timeout_ms,
+          maxBuffer: 65536,
+          signal,
+        },
+        (error, stdout, stderr) => {
+          if (error)
+            reject(
+              new Error(
+                `FFmpeg ${phase} execution unavailable, failed or exceeded bounds`,
+              ),
+            );
+          else resolve({ stdout, stderr });
+        },
+      );
+    });
+  const version =
+    (await run("version", ["-version"])).stdout.split(/\r?\n/)[0] ?? "";
+  if (!version.startsWith("ffmpeg version "))
+    throw new Error("Configured executable is not FFmpeg");
+  return {
+    run,
+    version,
+    preprocessingDigest: videoSamplingIdentity(policy),
+  };
+}
+
+/** Cache identity describes requested sampling; runtime facts are recorded with produced results. */
+export function videoSamplingIdentity(policy: Policy) {
+  return canonicalDigest({
+    videoFrameInputIdentity,
+    max_frames: policy.max_frames,
+    max_frame_bytes: policy.max_frame_bytes,
+    max_audio_bytes: policy.max_audio_bytes,
+    max_video_seconds: policy.max_video_seconds,
+    frame_end_margin_seconds: policy.frame_end_margin_seconds,
+  });
 }

@@ -26,7 +26,7 @@ it("recovers an unknown context mutation using the exact saved identity and expe
   const updates: unknown[] = [];
   let lost = true;
   const client = {
-    cognition: {
+    runtime: {
       getWorkContext: async () => ({ workContext: context }),
       updateWorkContext: async (request: unknown) => {
         updates.push(request);
@@ -64,15 +64,28 @@ it("recovers an unknown context mutation using the exact saved identity and expe
     const receipt = (failure as { receipt: string }).receipt;
     expect(typeof receipt).toBe("string");
     context.revision = 7n;
-    await runCli(["retry", receipt, ...flags], connect);
+    const recovered = await runCli(
+      ["retry", receipt, ...flags],
+      connect,
+      async () => {
+        throw new Error("directory unavailable");
+      },
+    );
+    expect(recovered).toMatchObject({
+      data: { workContext: { revision: 2n, contextText: "new task" } },
+      notices: [{ code: "PRESENTATION_UNAVAILABLE" }],
+    });
+    await expect(
+      runCli(["retry", receipt, ...flags], connect),
+    ).rejects.toMatchObject({ code: "ENOENT" });
     expect(updates).toHaveLength(2);
     expect(updates[1]).toEqual(updates[0]);
     expect(updates[1]).toMatchObject({
       expectedRevision: 1n,
-      purpose: "Review deployment",
-      contextText: "new task",
-      unresolvedQuestions: ["Approval?"],
+      intent: { case: "fields", value: { contextText: "new task" } },
     });
+    expect(updates[1]).not.toHaveProperty("purpose");
+    expect(updates[1]).not.toHaveProperty("unresolvedQuestions");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -101,7 +114,7 @@ it("retains exact query result revisions for continuation and rejects another Su
         ],
       }),
     },
-    memory: { revision: read },
+    memory: { getMemoryRevision: read },
   } as unknown as Awaited<ReturnType<typeof connectNousInstance>>;
   const connect = vi.fn().mockResolvedValue(client);
   const flags = [
@@ -165,7 +178,7 @@ it("freezes semantic TOML targets and input before a recoverable mutation", asyn
   try {
     await writeFile(
       path,
-      `target = "tag:${tagId}"\nlabel = "Release planning"\n`,
+      `[target]\ntag_id = "tag:${tagId}"\nexpected_revision_id = "original-revision"\n[content]\nlabel = "Release planning"\n`,
     );
     let receipt = "";
     try {
@@ -179,10 +192,10 @@ it("freezes semantic TOML targets and input before a recoverable mutation", asyn
     expect(receipt).toBeTruthy();
     await writeFile(
       path,
-      'target = "tag:changed"\nlabel = "Changed after admission"\n',
+      '[target]\ntag_id = "tag:changed"\nexpected_revision_id = "changed-revision"\n[content]\nlabel = "Changed after admission"\n',
     );
     await runCli(["retry", receipt, ...flags], connect);
-    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).not.toHaveBeenCalled();
     expect(revise.mock.calls[1]).toEqual(revise.mock.calls[0]);
     expect(revise.mock.calls[0]?.[0]).toMatchObject({
       target: { tagId, expectedRevisionId: "original-revision" },
@@ -213,13 +226,16 @@ it("renders Evidence/Resource and mixed hits while preserving each owner continu
   const reportUse = vi.fn();
   const query = vi.fn();
   const connect = vi.fn().mockResolvedValue({
-    cognition: { query, reportUse },
+    cognition: { query },
+    runtime: { reportUse },
     material: {
-      sourceRegion,
-      occurrences: vi.fn().mockResolvedValue({ items: [], truncated: false }),
+      getSourceRegion: sourceRegion,
+      listOccurrences: vi
+        .fn()
+        .mockResolvedValue({ items: [], truncated: false }),
     },
-    memory: { revision: readRevision },
-    resources: { get: getResource },
+    memory: { getMemoryRevision: readRevision },
+    resourceRegistry: { getResource: getResource },
   });
   const flags = [
     "--run-root",
@@ -283,15 +299,15 @@ it("reads a returned closed Session reference without selecting or opening a Ses
     sessionId,
     subjectId: "subject",
     runtimeRevision: 2n,
-    closed: true,
-    residentRefs: [],
+    closedAt: { seconds: 1n, nanos: 0 },
+    resident: [],
   });
   const open = vi.fn();
   const close = vi.fn();
   const client = {
-    cognition: { getSession: read, openSession: open, closeSession: close },
+    runtime: { getSession: read, openSession: open, closeSession: close },
     identity: {
-      resolve: vi
+      resolveIdentity: vi
         .fn()
         .mockImplementation(
           async (request: { locator: { value: string }; kind: string }) => ({
@@ -321,7 +337,7 @@ it("reads a returned closed Session reference without selecting or opening a Ses
       connect,
     );
     expect(result).toMatchObject({
-      data: { closed: true, runtimeRevision: 2n },
+      data: { closedAt: { seconds: 1n, nanos: 0 }, runtimeRevision: 2n },
     });
     expect(read).toHaveBeenCalledWith({ subjectId: "subject", id: sessionId });
     expect(open).not.toHaveBeenCalled();

@@ -9,10 +9,9 @@ import { configurationBundle, coreConfigurationValues } from "./catalog.js";
 import { join, resolve } from "node:path";
 import { stat, mkdir, writeFile, rm } from "node:fs/promises";
 import {
-  CONFIG_REVISION,
   ConfigurationError,
   readConfiguration,
-  parseEffectiveConfiguration,
+  parseModelConfiguration,
   kernelExecutable,
 } from "./schema.js";
 import type { RuntimeLocations } from "../locations.js";
@@ -33,16 +32,21 @@ export async function checkConfiguration(
       locations,
       development,
     );
-    const { models } = parseEffectiveConfiguration(
-      coreConfigurationValues(document),
-    );
+    const models = parseModelConfiguration(coreConfigurationValues(document));
     const prompts = new PromptRegistry(
       join(locations.program, "prompts"),
       join(locations.config, "prompts"),
     );
     for (const role of roleNames) {
       const binding = models.roles[role];
-      if (!binding) continue;
+      if (!binding) {
+        diagnostics.push({
+          role,
+          state: "NOT_CONFIGURED",
+          detail: `Configure models.roles.${role}`,
+        });
+        continue;
+      }
       for (const executionName of binding.routes) {
         const execution = models.execution_profiles[executionName];
         const profile = execution
@@ -153,7 +157,6 @@ export async function checkConfiguration(
   }
   return {
     valid: issues.length === 0,
-    config_revision: CONFIG_REVISION,
     configuration,
     issues,
     diagnostics,

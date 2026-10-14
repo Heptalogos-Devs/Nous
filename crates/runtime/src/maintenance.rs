@@ -1,4 +1,4 @@
-//! Durable work obligations and execution leases for host-granted maintenance.
+//! Durable work obligations and trigger-fenced acknowledgement for host-granted maintenance.
 
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
@@ -29,9 +29,6 @@ pub struct MaintenanceNeed {
     pub due_at: DateTime<Utc>,
     pub priority: i32,
     pub state: String,
-    pub lease_token: Option<Uuid>,
-    pub lease_until: Option<DateTime<Utc>>,
-    pub attempt_count: i32,
     pub retry_count: u32,
     pub last_problem_code: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -61,7 +58,7 @@ pub enum MaintenanceDisposition {
         problem_code: String,
     },
     Pending {
-        due_at: DateTime<Utc>,
+        due_at: Option<DateTime<Utc>>,
         problem_code: Option<String>,
     },
 }
@@ -90,7 +87,7 @@ impl CognitiveRuntimeService {
             return Err(Error::Invalid("invalid maintenance scope or policy".into()));
         }
         sqlx::query_scalar(
-            "INSERT INTO maintenance_needs(need_id,subject_id,kind,scope_kind,scope_ref,trigger_authority_seq,due_at,priority,state,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$9) ON CONFLICT(subject_id,kind,scope_kind,scope_ref) WHERE state IN ('pending','leased','blocked') DO UPDATE SET trigger_revision=maintenance_needs.trigger_revision+CASE WHEN maintenance_needs.state IN ('blocked','leased') OR excluded.trigger_authority_seq>maintenance_needs.trigger_authority_seq THEN 1 ELSE 0 END,state=CASE WHEN maintenance_needs.state='blocked' THEN 'pending' ELSE maintenance_needs.state END,retry_not_before=NULL,retry_count=0,blocked_config_digest=NULL, trigger_authority_seq=GREATEST(maintenance_needs.trigger_authority_seq,excluded.trigger_authority_seq),due_at=LEAST(maintenance_needs.due_at,excluded.due_at),priority=GREATEST(maintenance_needs.priority,excluded.priority),updated_at=excluded.updated_at RETURNING need_id",
+            "INSERT INTO maintenance_needs(need_id,subject_id,kind,scope_kind,scope_ref,trigger_authority_seq,due_at,priority,state,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$9) ON CONFLICT(subject_id,kind,scope_kind,scope_ref) WHERE state IN ('pending','blocked') DO UPDATE SET trigger_revision=maintenance_needs.trigger_revision+1,state=CASE WHEN maintenance_needs.state='blocked' THEN 'pending' ELSE maintenance_needs.state END,retry_not_before=NULL,retry_count=0,blocked_config_digest=NULL, trigger_authority_seq=GREATEST(maintenance_needs.trigger_authority_seq,excluded.trigger_authority_seq),due_at=LEAST(maintenance_needs.due_at,excluded.due_at),priority=GREATEST(maintenance_needs.priority,excluded.priority),updated_at=excluded.updated_at RETURNING need_id",
         )
         .bind(Uuid::now_v7())
         .bind(request.subject.0)
@@ -116,13 +113,13 @@ impl CognitiveRuntimeService {
         Ok(())
     }
 
-    pub async fn lease_maintenance(
+    pub async fn select_maintenance(
         &self,
         subject: SubjectId,
         allowed_kinds: &[String],
         limit: u32,
-        lease_seconds: u32,
         model_execution_digest: Option<&str>,
+        after: Option<&MaintenanceNeed>,
     ) -> Result<Vec<MaintenanceNeed>> {
         self.require_subject(subject).await?;
         if model_execution_digest.is_some_and(|digest| {
@@ -133,32 +130,34 @@ impl CognitiveRuntimeService {
         }) {
             return Err(Error::Invalid("invalid model execution digest".into()));
         }
-        if limit == 0
+        if after.is_some_and(|a| a.subject_id != subject || !(0..=100).contains(&a.priority))
+            || limit == 0
             || limit > 128
-            || lease_seconds == 0
-            || lease_seconds > 3600
             || allowed_kinds
                 .iter()
                 .any(|kind| !MAINTENANCE_KINDS.contains(&kind.as_str()))
         {
-            return Err(Error::Invalid("invalid maintenance claim envelope".into()));
+            return Err(Error::Invalid(
+                "invalid maintenance selection envelope".into(),
+            ));
         }
         let mut tx = self.store.begin().await?;
         let now = self.now(subject);
         let blocked_digest = self.maintenance_block_digest(subject)?;
-        sqlx::query("UPDATE maintenance_needs SET state='pending',trigger_revision=trigger_revision+1,blocked_config_digest=NULL,retry_not_before=NULL,retry_count=0 WHERE subject_id=$1 AND state='blocked' AND (blocked_config_digest IS DISTINCT FROM $2 OR (last_problem_code='maintenance_retry_exhausted' AND $3::text IS NOT NULL AND model_execution_digest IS DISTINCT FROM $3))")
+        sqlx::query("UPDATE maintenance_needs SET state='pending',trigger_revision=trigger_revision+1,blocked_config_digest=NULL,retry_not_before=NULL,retry_count=0 WHERE subject_id=$1 AND state='blocked' AND (blocked_config_digest IS DISTINCT FROM $2 OR (last_problem_code IN ('maintenance_retry_exhausted','capability_unavailable') AND $3::text IS NOT NULL AND model_execution_digest IS DISTINCT FROM $3))")
             .bind(subject.0).bind(blocked_digest).bind(model_execution_digest).execute(&mut *tx).await.map_err(db)?;
         self.cleanup_maintenance_in(&mut tx, subject).await?;
         let rows = sqlx::query(
-            "WITH due AS (SELECT need_id FROM maintenance_needs WHERE subject_id=$1 AND kind=ANY($2::text[]) AND EXISTS(SELECT 1 FROM subjects s WHERE s.subject_id=maintenance_needs.subject_id AND s.status='active') AND due_at<=$3 AND (retry_not_before IS NULL OR retry_not_before<=clock_timestamp()) AND (state='pending' OR (state='leased' AND lease_until<=clock_timestamp())) ORDER BY priority DESC,due_at,need_id LIMIT $4 FOR UPDATE SKIP LOCKED) UPDATE maintenance_needs n SET state='leased',model_execution_digest=$7,lease_token=$5,lease_until=clock_timestamp()+make_interval(secs=>$6),attempt_count=attempt_count+1,updated_at=$3 FROM due WHERE n.need_id=due.need_id RETURNING n.*",
+            "WITH due AS (SELECT need_id FROM maintenance_needs WHERE subject_id=$1 AND kind=ANY($2::text[]) AND state='pending' AND EXISTS(SELECT 1 FROM subjects s WHERE s.subject_id=maintenance_needs.subject_id AND s.status='active') AND due_at<=$3 AND ($6::int IS NULL OR priority<$6 OR (priority=$6 AND (due_at,need_id)>($7,$8))) AND (retry_not_before IS NULL OR retry_not_before<=clock_timestamp()) ORDER BY priority DESC,due_at,need_id LIMIT $4), selected AS (UPDATE maintenance_needs n SET model_execution_digest=$5 FROM due WHERE n.need_id=due.need_id RETURNING n.*) SELECT * FROM selected ORDER BY priority DESC,due_at,need_id",
         )
         .bind(subject.0)
         .bind(allowed_kinds)
         .bind(now)
         .bind(i64::from(limit))
-        .bind(Uuid::now_v7())
-        .bind(f64::from(lease_seconds))
         .bind(model_execution_digest)
+        .bind(after.map(|a| a.priority))
+        .bind(after.map(|a| a.due_at))
+        .bind(after.map(|a| a.need_id))
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
@@ -172,17 +171,14 @@ impl CognitiveRuntimeService {
 
     pub async fn acknowledge_maintenance(
         &self,
-        claimed: &MaintenanceNeed,
+        selected: &MaintenanceNeed,
         disposition: MaintenanceDisposition,
     ) -> Result<()> {
-        let token = claimed
-            .lease_token
-            .ok_or_else(|| Error::Invalid("need is not leased".into()))?;
         let retry_delay = match &disposition {
             MaintenanceDisposition::Retry { delay_seconds, .. } => {
                 let maximum = self
                     .configuration
-                    .snapshot_for_subject(claimed.subject_id)?
+                    .snapshot_for_subject(selected.subject_id)?
                     .get(RETRY_MAX)?;
                 if *delay_seconds == 0 || u64::from(*delay_seconds) > maximum {
                     return Err(Error::Invalid(
@@ -195,61 +191,30 @@ impl CognitiveRuntimeService {
         };
         let (state, due, problem) = match disposition {
             MaintenanceDisposition::Blocked { problem_code } => {
-                ("blocked", claimed.due_at, Some(problem_code))
+                ("blocked", selected.due_at, Some(problem_code))
             }
             MaintenanceDisposition::Retry { problem_code, .. } => {
-                ("pending", claimed.due_at, Some(problem_code))
+                ("pending", selected.due_at, Some(problem_code))
             }
-            MaintenanceDisposition::Satisfied => ("satisfied", claimed.due_at, None),
-            MaintenanceDisposition::Obsolete => ("obsolete", claimed.due_at, None),
+            MaintenanceDisposition::Satisfied => ("satisfied", selected.due_at, None),
+            MaintenanceDisposition::Obsolete => ("obsolete", selected.due_at, None),
             MaintenanceDisposition::Pending {
                 due_at,
                 problem_code,
-            } => ("pending", due_at, problem_code),
+            } => ("pending", due_at.unwrap_or(selected.due_at), problem_code),
         };
-        let digest = canonical_request_digest(
-            "maintenance_ack",
-            claimed.subject_id,
-            &serde_json::json!({"need":claimed.need_id,"token":token,"trigger":claimed.trigger_authority_seq,"trigger_revision":claimed.trigger_revision,"state":state,"due":due,"problem":problem,"retry":retry_delay}),
-        )?;
-        // A trigger arriving during execution survives acknowledgement as pending work.
+        // The captured trigger is the acknowledgement fence; new work remains pending.
         let mut tx = self.store.begin().await?;
-        let updated = sqlx::query(
-            "UPDATE maintenance_needs SET state=CASE WHEN (trigger_authority_seq>$4 OR trigger_revision>$12) THEN 'pending' ELSE $5 END,due_at=CASE WHEN (trigger_authority_seq>$4 OR trigger_revision>$12) THEN due_at ELSE $6 END,lease_token=NULL,lease_until=NULL,last_problem_code=$7,updated_at=$8,last_ack_token=$3,last_ack_digest=$9,retry_count=CASE WHEN (trigger_authority_seq>$4 OR trigger_revision>$12) OR $10::double precision IS NULL THEN 0 ELSE retry_count+1 END,retry_not_before=CASE WHEN (trigger_authority_seq>$4 OR trigger_revision>$12) OR $10::double precision IS NULL THEN NULL ELSE clock_timestamp()+make_interval(secs=>$10) END,terminal_at=CASE WHEN (trigger_authority_seq<=$4 AND trigger_revision<=$12) AND $5 IN ('satisfied','obsolete') THEN clock_timestamp() ELSE NULL END,blocked_config_digest=CASE WHEN (trigger_authority_seq<=$4 AND trigger_revision<=$12) AND $5='blocked' THEN $11 ELSE NULL END WHERE subject_id=$1 AND need_id=$2 AND state='leased' AND lease_token=$3 AND lease_until>clock_timestamp()",
-        )
-        .bind(claimed.subject_id.0)
-        .bind(claimed.need_id)
-        .bind(token)
-        .bind(claimed.trigger_authority_seq)
-        .bind(state)
-        .bind(due)
-        .bind(problem)
-        .bind(self.now(claimed.subject_id))
-        .bind(&digest)
-        .bind(retry_delay)
-        .bind(self.maintenance_block_digest(claimed.subject_id)?)
-        .bind(claimed.trigger_revision as i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        if updated.rows_affected() == 0 {
-            let replay: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM maintenance_needs WHERE subject_id=$1 AND need_id=$2 AND last_ack_token=$3 AND last_ack_digest=$4)")
-                .bind(claimed.subject_id.0).bind(claimed.need_id).bind(token).bind(&digest).fetch_one(&mut *tx).await.map_err(db)?;
-            if replay {
-                tx.commit().await.map_err(db)?;
-                return Ok(());
-            }
-            return Err(nous_core::DomainError::new(
-                nous_core::DomainErrorCode::LeaseLost,
-                "Maintenance lease expired or replaced",
-            )
-            .with_context("need_id", claimed.need_id)
-            .into());
-        }
+        sqlx::query("UPDATE maintenance_needs SET state=$5,due_at=$6,last_problem_code=$7,updated_at=$8,retry_count=CASE WHEN $9::double precision IS NULL THEN 0 ELSE retry_count+1 END,retry_not_before=CASE WHEN $9::double precision IS NULL THEN NULL ELSE clock_timestamp()+make_interval(secs=>$9) END,terminal_at=CASE WHEN $5 IN ('satisfied','obsolete') THEN clock_timestamp() ELSE NULL END,blocked_config_digest=CASE WHEN $5='blocked' THEN $10 ELSE NULL END WHERE subject_id=$1 AND need_id=$2 AND state='pending' AND trigger_authority_seq=$3 AND trigger_revision=$4")
+            .bind(selected.subject_id.0).bind(selected.need_id)
+            .bind(selected.trigger_authority_seq).bind(selected.trigger_revision as i64)
+            .bind(state).bind(due).bind(problem).bind(self.now(selected.subject_id))
+            .bind(retry_delay).bind(self.maintenance_block_digest(selected.subject_id)?)
+            .execute(&mut *tx).await.map_err(db)?;
         // Only maintenance-bound completed workflows lose their runtime purpose after ack.
-        sqlx::query("DELETE FROM model_workflow_operations WHERE subject_id=$1 AND maintenance_need_id=$2 AND outcome IS NOT NULL")
-            .bind(claimed.subject_id.0).bind(claimed.need_id).execute(&mut *tx).await.map_err(db)?;
-        self.cleanup_maintenance_in(&mut tx, claimed.subject_id)
+        sqlx::query("DELETE FROM model_results WHERE subject_id=$1 AND maintenance_need_id=$2 AND maintenance_trigger_revision=$3 AND outcome IS NOT NULL")
+            .bind(selected.subject_id.0).bind(selected.need_id).bind(selected.trigger_revision as i64).execute(&mut *tx).await.map_err(db)?;
+        self.cleanup_maintenance_in(&mut tx, selected.subject_id)
             .await?;
         tx.commit().await.map_err(db)?;
         Ok(())
@@ -267,7 +232,7 @@ impl CognitiveRuntimeService {
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
     ) -> Result<()> {
-        sqlx::query("DELETE FROM model_workflow_operations w USING maintenance_needs n WHERE w.subject_id=$1 AND w.maintenance_need_id=n.need_id AND w.maintenance_trigger_revision<n.trigger_revision AND (w.outcome IS NOT NULL OR w.lease_until IS NULL OR w.lease_until<=clock_timestamp())")
+        sqlx::query("DELETE FROM model_results w USING maintenance_needs n WHERE w.subject_id=$1 AND w.maintenance_need_id=n.need_id AND w.maintenance_trigger_revision<n.trigger_revision")
             .bind(subject.0).execute(&mut **tx).await.map_err(db)?;
         let retention = self
             .configuration
@@ -280,7 +245,7 @@ impl CognitiveRuntimeService {
 
     pub async fn maintenance_needs(&self, subject: SubjectId) -> Result<Vec<MaintenanceNeed>> {
         self.require_subject(subject).await?;
-        sqlx::query("SELECT * FROM maintenance_needs WHERE subject_id=$1 AND state IN ('pending','leased','blocked') ORDER BY priority DESC,due_at,need_id LIMIT 128")
+        sqlx::query("SELECT * FROM maintenance_needs WHERE subject_id=$1 AND state IN ('pending','blocked') ORDER BY priority DESC,due_at,need_id LIMIT 128")
             .bind(subject.0)
             .fetch_all(self.store.pool())
             .await
@@ -311,9 +276,6 @@ fn need_from_row(row: sqlx::postgres::PgRow) -> Result<MaintenanceNeed> {
         due_at: row.try_get("due_at").map_err(db)?,
         priority: row.try_get("priority").map_err(db)?,
         state: row.try_get("state").map_err(db)?,
-        lease_token: row.try_get("lease_token").map_err(db)?,
-        lease_until: row.try_get("lease_until").map_err(db)?,
-        attempt_count: row.try_get("attempt_count").map_err(db)?,
         retry_count: row.try_get::<i32, _>("retry_count").map_err(db)? as u32,
         last_problem_code: row.try_get("last_problem_code").map_err(db)?,
         created_at: row.try_get("created_at").map_err(db)?,

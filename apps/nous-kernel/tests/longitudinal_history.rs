@@ -28,7 +28,7 @@ async fn historical_schema_episode_journal_use_past_heads_and_history_documents(
     let episode = historical_episode_text(&rt, subject, &episode, "archival past episode").await;
     let owner = rt.require_memory().unwrap();
     let mut memory_input = consolidation_memory(&episode);
-    memory_input.representation_text = "archival past memory".into();
+    memory_input.content.representation_text = "archival past memory".into();
     let memory = owner.form_memory(memory_input).await.unwrap();
     let mut schema_input = consolidation_schema(&episode);
     schema_input.content.structural_claim = "archival past schema".into();
@@ -234,20 +234,23 @@ async fn historical_episode_text(
             episode_id: episode.object.episode_id,
             expected_object_epoch: episode.object.object_epoch,
             intent: "reinterpret".into(),
-            title: None,
-            parent_episode_revision_id: None,
-            experience_time: episode.revision.experience_time.clone(),
-            boundary_explanation: text.into(),
-            producer_signature_id: None,
-            members: episode
-                .members
-                .iter()
-                .map(|member| nous_memory::EpisodeMemberInput {
-                    reference: member.reference.clone(),
-                    role: member.role.clone(),
-                })
-                .collect(),
-            basis: episode.basis.clone(),
+
+            content: nous_memory::EpisodeContent {
+                title: None,
+                parent_episode_revision_id: None,
+                experience_time: episode.revision.experience_time.clone(),
+                boundary_explanation: text.into(),
+                producer_signature_id: None,
+                members: episode
+                    .members
+                    .iter()
+                    .map(|member| nous_memory::EpisodeMemberInput {
+                        reference: member.reference.clone(),
+                        role: member.role.clone(),
+                    })
+                    .collect(),
+                basis: episode.basis.clone(),
+            },
         })
         .await
         .unwrap()
@@ -295,7 +298,7 @@ async fn episode_media_synopsis_tracks_ready_derivation_without_revising_authori
         && basis.basis_role == "interpretation"));
     let fragments = rt
         .store
-        .episode_member_text_input(
+        .episode_member_text_input_in_view(
             subject,
             &[episode.revision.episode_revision_id.0],
             rt.configuration
@@ -303,6 +306,7 @@ async fn episode_media_synopsis_tracks_ready_derivation_without_revising_authori
                 .unwrap()
                 .get(nous_memory::EPISODE_SYNOPSIS)
                 .unwrap(),
+            None,
         )
         .await
         .unwrap();
@@ -463,25 +467,28 @@ async fn persist_media_synopsis(
     producer.implementation = "longitudinal-media-test".into();
     producer.model_revision = Some(model_revision.into());
     rt.material
-        .persist_derived_representation(nous_material::DerivedRepresentation {
-            derived_representation_id: nous_core::DerivedRepresentationId::new(),
-            subject_id: subject,
-            inputs: vec![nous_material::DerivationInput {
-                ordinal: 0,
-                reference: nous_core::CognitiveRef::SourceRegion(region),
-                role: "source".into(),
-            }],
-            strategy: "direct_multimodal".into(),
-            representation_kind: nous_core::RepresentationKind::ImageDescription,
-            producer,
-            revision: 1,
-            payload_text: Some(text.into()),
-            payload_json: None,
-            payload_artifact_id: None,
-            quality: serde_json::json!({}),
-            created_at: Utc::now(),
-            supersedes,
-        })
+        .persist_derived_representation(
+            nous_material::DerivedRepresentation {
+                derived_representation_id: nous_core::DerivedRepresentationId::new(),
+                subject_id: subject,
+                inputs: vec![nous_material::DerivationInput {
+                    ordinal: 0,
+                    reference: nous_core::CognitiveRef::SourceRegion(region),
+                    role: "source".into(),
+                }],
+                strategy: "direct_multimodal".into(),
+                representation_kind: nous_core::RepresentationKind::ImageDescription,
+                producer,
+                revision: 1,
+                payload_text: Some(text.into()),
+                payload_json: None,
+                payload_artifact_id: None,
+                quality: serde_json::json!({}),
+                created_at: Utc::now(),
+                supersedes,
+            },
+            None,
+        )
         .await
         .unwrap()
         .derived_representation_id

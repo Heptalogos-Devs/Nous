@@ -12,15 +12,17 @@ Artifact、ObservationOccurrence、SourceRegion、DerivedRepresentation 与 Deri
 
 DerivedRepresentation 保存 ordered exact inputs、strategy、representation kind、ProducerSignature、revision、payload 与 quality。Inputs 可引用 SourceRegion、DerivedRepresentation 或 DerivedRegion，必须属于同一 Subject，不得重复、自引用或形成 cycle。已提交 input set 不可修改。Supersedes 表示显式 refinement lineage，不属于 derivation inputs。
 
-成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。
+成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。Core 对相同 source region 的派生执行串行处理；已保存的 paid proposal/outcome 不重新读取媒体。原始 bytes 按需要加载，frames mode 按源引用、采样参数、模型/Prompt 与转写配置直接读取保存成果，proposal 保存正式 CommitInterpretationRequest；命中时不读取原 bytes、不探测 FFmpeg、不抽帧或调用模型。实际 FFmpeg version 在生成分支解析并随成果及 Producer 保存，不作为复用前置条件。
 
 ## Selected text 与 Serving
 
-Material 对 Occurrence、Artifact、SourceRegion、DerivedRepresentation 和 DerivedRegion 提供有界文本视图。视图包含 exact reference、实际读取的 UTF-8 byte selection、总 byte 数、所选文本的 BLAKE3 content identity，以及历史 Authority snapshot digest。显式坐标必须位于合法 UTF-8 边界；读取预算截断只保留完整字符。精确读取、Serving 文档与 embedding preparation 共用这一读取实现，Region 的索引正文只包含所选片段。
+Material 对 Occurrence、Artifact、SourceRegion、DerivedRepresentation 和 DerivedRegion 提供有界文本视图。视图包含 exact reference、实际读取的 UTF-8 byte selection、总 byte 数、所选文本的 BLAKE3 content identity，以及历史 Authority snapshot digest。显式坐标必须位于合法 UTF-8 边界；读取预算截断只保留完整字符。精确读取、Serving 文档与 embedding preparation 共用这一读取实现，Region 的索引正文只包含所选片段。Material 同时提供元数据头与字节流；`partial` 表示未完整读取所请求来源的选区，完整有界 Region 不因其不是整份 Artifact 而标为截断。`range_start/end` 与 `total_bytes` 保留实际 payload 坐标与大小。
 
 普通 Serving 使用有效 representation；superseded representation 仍可精确回读，并按 captured historical view 决定过去的有效文档。Material 拥有 Artifact／外部来源 lineage 与多来源派生根，Memory 组合 cognition basis；Serving 消费相同的 current/as-of provenance contribution。Meaningful Use 可以支持关联，但不会凭空成为独立事实来源。
 
-Embedding discovery 先选择至多 256 个 candidate refs，再通过共同文档合同读取正文，并批量判定兼容缓存缺口。返回的 continuation 绑定 Subject、当前内容 watermark 或历史 view digest；空 needs page 仍可能有 continuation。提交仅回读指定 exact reference，核对文本 content identity 和 view，并在 Authority fence 内发布缓存。Serving build、discovery 和 commit 使用相同正文格式。模型 batch admission 与文档候选 page 是不同预算；宿主遵守调用者的总提交上限。
+Projection 的材料批量读取按输入次序返回逐项结果；单个对象缺失、不可读或选区无效不终止其他来源，数据库连接与查询执行错误仍使整次读取失败。精确读取继续传播所选来源的错误。引用模式只读取身份、authority 和 provenance 所需元数据，SQL 不返回 `payload_text`，也不读取 ObjectStore 正文字节。
+
+Embedding discovery 先选择至多 256 个 candidate refs，再通过共同文档合同读取正文，并批量判定兼容缓存缺口。返回的 continuation 绑定 Subject、当前内容 watermark 或历史 view digest；空 needs page 仍可能有 continuation。提交批量读取指定 exact references，核对各文本 content identity 和 view，并在 Authority fence 内发布缓存；provider batch 不拆成逐项 owner RPC/事务。Serving build、discovery 和 commit 使用相同正文格式。模型 batch admission 与文档候选 page 是不同预算；宿主遵守调用者的总提交上限。
 
 材料与 Resource 的其他读取边界见 [Cognitive IO](cognitive-io-and-resources.md)。
 
@@ -40,16 +42,18 @@ description segmentation 以 UTF-8 byte coordinates 建立稳定 DerivedRegion�
 
 Video MIME 本身不授予音频证据能力；direct mode 每次 attempt 根据该冻结 route 的 audio_input 能力与实际发送的媒体建立访问方式，不能借用首选 profile 的能力评价 fallback。不可执行的 route 在预算 admission 和 HTTP 前过滤；模型取得同一实际访问声明。frames mode 的音频通道由实际提供的 Transcript 决定。第二阶段从已提交 description 的 quality 取得通道，再转为 representation，不重新读取首选模型能力。
 
-语义校验与文本投影共用 Material owning implementation identity；其内容摘要及实际依赖版本进入 workflow reuse 与 ProducerSignature，修改实现不依赖手工版本常量。源码启动和 Portable build 使用同一 owning 文件摘要，Portable 将值嵌入 bundle。结构化生成合同校验在固定 routes 内完成，无效输出可按明确 fallback 继续；领域提交拒绝不发起另一轮生成。所有 route 失败仍保留成功前序 description 和 degradation。
+语义校验与文本投影由 Material 的正式结构化内容合同拥有。产生提案后保存可直接提交的内容、来源与成功 telemetry，ProducerSignature 记录实际成功的 model/profile/Prompt、输出 schema 和预处理条件；不扫描 owning source 或依赖生成实现摘要，Portable 不注入另一份实现 marker。代码升级不提供隐式跨部署恢复保证。结构化生成合同校验在固定 routes 内完成，无效输出可按明确 fallback 继续；领域提交拒绝不发起另一轮生成。所有 route 失败仍保留成功前序 description 和 degradation。
 
 description segments 使用 `material.description_segment_bytes` 的稳定 UTF-8 范围，默认 2,048 bytes，并优先在换行处分段。region coordinates 保存 segmentation policy digest。Text segmentation 输入上限为 1 MiB，最多 512 个 DerivedRegion。Video frames mode 使用 FFmpeg 作有界抽帧；实验观测归 [Research](../../../research/README.md)。
 
 ## Memory formation
 
-`formFromObservation` 使用调用方提供的稳定 operation_id。初次执行固定 model/profile/Prompt/config snapshot，并将语义输入绑定到 operation identity；相同 operation 与相同输入重放原 outcome，相同 operation 携带不同输入返回 conflict。
+`formFromObservation` 使用调用方提供的稳定 operation_id。语义输入绑定到 operation identity；已有结果直接重放，已有提案直接提交，只有生成时才准备 model/profile/Prompt 与来源。未产生结果时不保存执行 snapshot；相同 operation 与相同输入重放原 outcome，相同 operation 携带不同输入返回 conflict。
 
-调用方可指定 exact representation_id。未指定时，Core 按 Artifact modality 和配置选择可用 representation：text 用 ExtractedText，image 用 ImageDescription，audio 用 AudioDescription 或 Transcript，video 用 SceneDescription。没有可用 textual representation 的 binary input 返回 `material_representation_required`。
+调用方可指定 exact representation_id。Core 向 Material 表达 Occurrence、显式表示、音频直接描述偏好及字节边界；Material 在同次读取中选择表示、解析 payload metadata 与所需 mentions，返回实际 exact 来源和有界内容。未指定表示时，text 用 ExtractedText，image 用 ImageDescription，audio 按偏好用 AudioDescription 或 Transcript，video 用 SceneDescription。没有可用 textual representation 的 binary input 返回 `material_representation_required`。
 
 Aboutness 支持 explicit、select_from_resolved_mentions 与 none。select 模式使用 Kernel 已解析的 mention candidate keys，由 Model 选择子集；显式引用由 owner 验证。Actor identity 单独保存在 Observation。
 
 形成结果引用实际使用的 occurrence 与 DerivedRepresentation。Material read/materialize 可按 SourceRegion、DerivedRegion 或 representation 精确回读来源链。普通 recall 不重新解释媒体。
+
+Required role 的失败使用正式 CAPABILITY_UNAVAILABLE 错误保留 requirement 与实际调用 telemetry，外层继续传播。帧路径按真实音轨决定转写工作；已有付费结果可以直接使用，确实需要新转写时才调用 role，optional 失败由派生 owner 返回有效降级结果。

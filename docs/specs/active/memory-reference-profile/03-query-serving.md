@@ -4,7 +4,6 @@
 
 长期寻址、Query preparation、概念维护和 owner materialization 语义依据 [Architecture-Vault `5b96c63`](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/5b96c63da34b0a4c697b6961ae10ba6aa4de3ee1/docs/Nous-Wave/TARGET_DESIGN.md)。
 
-
 ## Owner
 
 Runtime (crates/runtime) owns QueryPlan, lane budgets, fusion and result contracts. Retrieval (crates/retrieval) implements serving lanes and generations; Core performs model/resource host actions; Memory and Material validate and materialize their own final Authority.
@@ -21,7 +20,7 @@ Query 在 candidate generation 前绑定 Subject、exact object/revision、Curre
 
 ## Historical Serving 与 Concept plane
 
-Memory、Material 各自投影 Owner historical semantics；Persistence 只读取 canonical chronology/immutable rows。mutable header/lexical metadata 保存在既有 Authority 数据库的 chronology，认知正文与 Tag revisions 不复制。ServingRecord 的 typed view descriptor 记录 current/historical、snapshot digest、as_of、revision view；historical generations 不发布到 serving_current，按 effective-state digest/config/space 复用，并由同一 read lease/grace/reclamation 保护。
+Memory、Material 各自投影 Owner historical semantics；Persistence 只读取 canonical chronology/immutable rows。mutable header/lexical metadata 保存在既有 Authority 数据库的 chronology，认知正文与 Tag revisions 不复制。ServingRecord 的 typed view descriptor 记录 current/historical、snapshot digest、as_of、revision view；historical generations 不发布到 serving_current，按 effective-state digest/config/space 复用，并由同一 reader、grace 和显式 reclamation 保护。
 
 共享 lexical/dense/concept/Native/VCP builders 在 candidate generation 前选择历史 corpus。Future dense documents、Tag meanings、attachments、Associations、Schema links 与 Entity bindings 不进入历史资产。Material 的历史 effective derivations 用于 Episode interpretation fragments。当前权限撤销/purge 不能由 as-of 绕过。
 
@@ -46,7 +45,7 @@ Retrieval 在同一 bound leaf 内先准备 `PreparedQuerySignals`：query text�
 
 `retrieval.cognitive.profile` 是 Developer/SubjectOverrideAllowed 的 typed fixed registry，使用 Live / QueryPolicy。四个 ID 为 `baseline-rrf`、`nous-node-potential-v1`、`vcp-dtsc-v9.2.1-adapter-v1`、`vcp-rivermemo-v3.1-adapter-v1`。Profile 在 BoundQuery/QueryPlan 中冻结；baseline 不产生 topology lane。当前 native topology readout 默认绑定 `nous-node-potential-v1`，机制为已冻结的 `experimental-node-potential-v1`。`QueryObservation` 以 query ID、bound time、topology generation、profile/config subset digest、source seeds 与五轴时间约束标识本次观测，只持有一份 QueryRiver。候选排名由 readout 计算，不写回 observation；普通 diagnostics 只报告 profile、seed/node/edge 数、实际最大 hop、完整性和 discarded mass。
 
-Wave 的普通边必须支付 `normal_edge_cost`，预算不足时停止；合流状态合并能量和全部 origin，provenance 输出有稳定顺序。这些约束由实际传播执行，不依赖诊断层推断。当前默认数值行为由 frozen golden 保护。Profile 在 query 开始时冻结。DTSC 与 RiverMemo 共用同一 VCP immutable asset，asset digest 绑定 Authority watermark、embedding space/producer、asset policy 与 implementation revision；readout profile 不进入该 digest。Native graph 使用独立 asset contract。prepare 搜索 current 与 retired compatible artifacts，切回相同内容可重新 promote。VCP profile 的 embedding requirement 与 Dense 共用一次 preparation；FORBIDDEN 保持无调用。两个 VCP reference kernel/adapters 已接入 Authority-fenced query lane。
+Wave 的普通边必须支付 `normal_edge_cost`，预算不足时停止；合流状态合并能量和全部 origin，provenance 输出有稳定顺序。这些约束由实际传播执行，不依赖诊断层推断。当前默认数值行为由 frozen golden 保护。Profile 在 query 开始时冻结。DTSC 与 RiverMemo 共用同一 VCP immutable asset，asset digest 绑定 Authority watermark、embedding space/producer 与实际 asset policy；readout profile 不进入该 digest。Native graph 使用独立 asset contract。prepare 搜索 current 与 retired compatible artifacts，切回相同内容可重新 promote。VCP profile 的 embedding requirement 与 Dense 共用一次 preparation；FORBIDDEN 保持无调用。两个 VCP reference kernel/adapters 已接入 Authority-fenced query lane。
 
 ## Final authority
 
@@ -60,11 +59,13 @@ Episode/Journal 使用 current lifecycle 与适用的 hard constraints，不参�
 
 ## Serving
 
-物理 Serving family 只有 lexical、dense、topology 与 concept；Exact lane 直接使用 frozen exact bindings / owner SQL，不建立 postings 资产。旧的非当前 family generation 由 Serving 回收流程退出 current，保留原有 reader、research pin 与 grace 保护。
+物理 Serving family 只有 lexical、dense、topology 与 concept；Exact lane 直接使用 frozen exact bindings / owner SQL，不建立 postings 资产。Generation 回收在显式 Serving refresh / maintenance refresh 执行；reader、research pin 与 grace 保护实际 current/history 资产，query 不扫描整个 Serving 目录。
 
 每类 projection 使用 immutable generation，绑定 authority watermark、producer/build identity、configuration digest、artifact checksum 和 vector-space identity。Authority 提交只使 generation 失效；重建生成新的 generation id，但语义结果必须仍指向同一 Authority identity/revision。watermark race 不得发布过期快照为 current。
 
-复用包含artifact可读性/checksum验证。Serving owner拒绝缺失或损坏generation后，Persistence在同一family/space publication锁下标记该精确generation failed、仅删除仍指向它的current指针。相同watermark/config的重建不能再次复用失效current并删除新artifact。并发已发布的另一个current不被清除；Authority认知不随cache失效改写。failed artifact同样受read lease/grace保护并进入回收。
+Desired watermark 按资产实际依赖统一计算，状态、prepare、build stamp、promotion 和 publication 共用它。Native topology 使用空 space，只依赖真实 topology invalidation；VCP 使用 `vcp:<embedding space hash>`，聚合 topology、lexical 与所用 dense/concept space 的 invalidation。Text-only 变化不会刷新 native，Episode/Journal 的组织和生命周期改变会推进 topology。Publication 在已有 family/space 锁和 Subject 行锁内核对 desired 并安装 current，避免核对后 Authority 提交的竞态；不增加查询恢复流程。
+
+复用包含artifact可读性/checksum验证。Serving owner拒绝缺失或损坏generation后，Persistence在同一family/space publication锁下标记该精确generation failed、仅删除仍指向它的current指针。相同watermark/config的重建不能再次复用失效current并删除新artifact。并发已发布的另一个current不被清除；Authority认知不随cache失效改写。failed artifact同样受reader/grace保护并进入回收。
 
 Episode/Journal 的文本 projection 支持 exact、lexical、dense；显式 topology projection 使用其真实 cognition members、sources 和 exact supports，具体边合同见下文。
 
@@ -72,14 +73,13 @@ Episode canonical text 包含 title、boundary explanation、experience time，�
 
 Journal canonical text 包含 title、narrative 和按序 points；查询正文最多 64 KiB，截断保持完整 UTF-8 字符。
 
-
-Topology/Wave/Residual/EPA 只作为显式实验 lane；默认 Reference Query 不因 effort 自动开启 topology。实验结果不改变 baseline fusion、Authority eligibility 或 lifecycle。
+Native Wave 与 VCP 由显式检索 profile 启用；默认 Reference Query 不因 effort 自动开启 topology。EPA/Residual 数值研究保留，但独立 residual sensing 尚未接入生产查询，required 请求明确失败。Dense 不再构建未被查询消费的 EPA basis。实验结果不改变 baseline fusion、Authority eligibility 或 lifecycle。
 
 ## Serving 复用与回收
 
-Kernel 固定 request-scoped immutable Serving view；并发 profile 切换不替换在途视图。QueryExecution 持有 opaque read lease，retained validation ticket 沿用该 lease；finalize/release/expiry 释放它，Runtime 不依赖 concrete Retrieval。
+Kernel 固定 request-scoped immutable Serving view；并发 profile 切换不替换在途视图。BoundQuery 的 activation view 持有同一 Arc 查询视图，retained validation ticket 沿用它；finalize/release/expiry 释放最后一个持有者后，Retrieval 的弱 reader 注册不再保护该 generation。QueryExecution 不保存另一份 read lease，Runtime 不依赖 concrete Retrieval。
 
-Query 进入 Serving prepare 前检查 retired collection。`serving.retired_grace_seconds` 为 Developer/SystemOnly/Live，默认 300 秒，范围 0..604800。当前 generation、active query readers/tickets 和显式 research pins 不回收；collection 只跳过被 active reader/ticket 引用的 generation；无关 retired generation 仍可回收，避免持续流量阻塞全部 collection。过 grace 的 unpinned retired artifact 删除物理目录并压缩 metadata 为 checksum/reclaimed audit summary。该 pass 同时清理 owner root 下超过 grace 的未引用 UUID generation 和 orphan staging。配置/watermark 不兼容时不复用；重复并发 publication 复用已发布的相同内容身份并删除多余目录。
+Retired collection 由显式 Serving refresh 和维护触发，普通 query prepare 不扫描整个资产目录。`serving.retired_grace_seconds` 为 Developer/SystemOnly/Live，默认 300 秒，范围 0..604800。当前 generation、active query readers/tickets 和显式 research pins 不回收；collection 只跳过被 active reader/ticket 引用的 generation；无关 retired generation 仍可回收。过 grace 的 unpinned retired artifact 删除物理目录与对应 catalog row，不保留 reclaimed audit/tombstone。该 pass 同时清理 owner root 下超过 grace 的未引用 UUID generation 和 orphan staging。配置/watermark 不兼容时不复用；重复并发 publication 复用已发布的相同内容身份并删除多余目录。
 
 ## Prepared Query 与 Query Representation
 
@@ -95,7 +95,7 @@ Representation 顺序固定：Intent、Temporal orientation、Entities、Concept
 
 `retrieval.query.representation` 是 typed Developer/SubjectOverrideAllowed/Live policy：配置只有 `total_chars=8192` 与 `max_context_items=16`；durable context_text 上限 64 KiB，total_chars 默认 8192、可配置到 32768；Current work 不再固定 1024 上限，必需 intent 超界拒绝而不截断。预算按 Intent → 显式时间/selector/semantic cue → WorkContext Entity/Tag → Current work purpose/questions/text → pinned cognition → ResidentSet/旁路背景分配，随后按固定 section 顺序渲染。同一 descriptor 取其最高输入优先级；截断同时报告 section 和受影响的输入来源类别。`sha256` 对实际 representation text 计算。
 
-Core 查询先取得一次冻结 BoundQuery 的 bounded preparation token，再为完整 representation 生成最多一份 embedding，Kernel 直接消费该 token，保持 ConfigSnapshot 与 context 一致。Runtime 的 QueryReservation 将不可变 BoundQuery 与 infrastructure QueryLease 分开；Core 从同一执行机会传入剩余 lease，激活后的 preparation 和 execution/validation ticket 继承该原始截止时间，不重新开始计时，也不另读一个 Query lease 默认值。Tickets 共用 query slots，single-use、Subject-bound，并在 failure/finalize/release/expiry 清理；最终 validation 在使用和反馈发布前仍须有效。Dense、EPA/VCP sensing 与 expression leaves 共享 request embedding（包括 provider failure），lexical leaf 仍使用该 leaf intent；All/Any 的集合语义保持不变。Rerank 接收同一完整 representation 和原 validated candidates。
+Core 查询先取得一次冻结 BoundQuery 的 bounded preparation token，再为完整 representation 生成最多一份 embedding，Kernel 直接消费该 token，保持 ConfigSnapshot 与 context 一致。Runtime 的 QueryReservation 将不可变 BoundQuery 与 infrastructure QueryLease 分开；Core 从同一执行机会传入剩余 lease，激活后的 preparation 和 execution/validation ticket 继承该原始截止时间，不重新开始计时，也不另读一个 Query lease 默认值。Tickets 共用 query slots，single-use、Subject-bound，并在 failure/finalize/release/expiry 清理；最终 validation 在使用和反馈发布前仍须有效。Dense、VCP sensing 与 expression leaves 显式共享同一 typed request embedding；受控 provider fallback 在 request 内复用成功或失败结果，lexical leaf 仍使用该 leaf intent；All/Any 的集合语义保持不变。Rerank 接收同一完整 representation 和原 validated candidates。
 
 Core 的意图编译、prepared Query、embedding/concept/rerank/Resource 调用与 projection 共用 `core_execution.opportunity` work clock；最后 release 使用其有界 cleanup。官方 Client 的 Query、recall、prepareQuery、projection 与 managedContext 从 active Configuration 派生响应等待，较短 caller deadline/signal 保留。单个 provider timeout 与候选/算法预算各自保持 owning contract，不能重置该外层机会。
 
@@ -105,12 +105,9 @@ QueryRequest 的 typed `capabilities` 传递 text embedding、multimodal interpr
 
 内部算法比较使用 `BoundQuery::for_profile` 从同一 prepared/context snapshot 生成只读 readout plan。Configuration 的 `query_override` 只允许 Live QueryPolicy，记录 OperationOverride 来源并计算独立 digest；不改变 active/desired/persisted 配置。Serving 根据对应 asset contract 复用 shared artifacts。
 
-
 Native seed preparation first uses closed exact/context/Entity/Tag/relation anchors that map into the current graph. When no anchor maps into that graph, already prepared ready/truncated lexical and dense lanes can supply weak seeds: at most four distinct graph members per lane, bounded by the graph neighbour budget, with configured `lexical_promoted`/`dense_promoted` weight divided by lane rank. Out-of-generation references and rank zero are excluded. The fallback consumes the shared query signal; it makes no additional embedding request and does not change Wave propagation. Direct graph anchors remain authoritative for explicitly associative queries. Seed origin and weight are included in readout; a promoted direct hit is not a multi-hop witness.
 
-
-Topology projection includes every current accepted/valid/unsuppressed Memory, Episode, Journal and CognitiveSchema revision when Memory capability is enabled. Existing Episode cognition members/exact supports, Journal sources, Memory dependencies and active supporting Schema evidence links supply `cognition_basis` edges in both traversal directions, with one shared exact structure identity. These are source/organization adjacency, not causal or independently learned associations. Historical, withdrawn or suppressed endpoints, revoked Schema evidence, counterexamples and contradiction supports do not create positive source edges. Explicit AssociationEvidence to inactive cognition is excluded from the current graph. Native/VCP assets carry versioned implementation and config digests; incompatible assets rebuild while compatible shared vectors remain reusable.
-
+Native current/history topology 共用所选 Authority 视图的结构读取，不加载 Material 正文或从材料文本构造 cognition graph。Topology projection includes every current accepted/valid/unsuppressed Memory, Episode, Journal and CognitiveSchema revision when Memory capability is enabled. Existing Episode cognition members/exact supports, Journal sources, Memory dependencies and active supporting Schema evidence links supply `cognition_basis` edges in both traversal directions, with one shared exact structure identity. These are source/organization adjacency, not causal or independently learned associations. Historical, withdrawn or suppressed endpoints, revoked Schema evidence, counterexamples and contradiction supports do not create positive source edges. Explicit AssociationEvidence to inactive cognition is excluded from the current graph. Native/VCP assets bind their actual policy, vector space and content identities; incompatible assets rebuild while compatible shared vectors remain reusable. There is no source-code or dependency hash upgrade check.
 
 Material owner validates and materializes Artifact/Occurrence/SourceRegion/DerivedRepresentation/DerivedRegion in bounded Subject-scoped batches, including rerank final validation. Runtime groups candidate refs by semantic owner and does not interpret Material lineage or time through Persistence. Occurrence times come from the actual Observation; SourceRegion and derived evidence follow their real source artifacts/representation roots. An eligible source row must jointly satisfy requested occurred/observed/recorded predicates; multiple origins cannot satisfy separate predicates by mixing rows. Recorded time belongs to the returned object, and interpretation formation time is distinct from source observation. Unknown time does not satisfy a requested temporal axis, and evidence has no inferred world-valid claim. Initial owner materialization and final validation both enforce these predicates and publish known freshness. Schema owner materialization also applies all five axes and follows exact source lineage, including Memory evidence/dependencies, for occurred/observed metadata.
 
@@ -119,3 +116,7 @@ Material owner validates and materializes Artifact/Occurrence/SourceRegion/Deriv
 Host query concept role 只能选择 bounded catalog key 或提出 ephemeral hypotheses；模型不能构造 Tag identity/写 Authority。Required/optional/forbidden 分别沿既有能力合同处理。Historical embedding discovery/commit 使用同一 prepared token 的 frozen Owner view，复用 existing material cache；query embedding 不因 lane/profile 再生成。
 
 Runtime 保存有界 query feedback record：prepared/activation digest、bounded signals、实际返回的 exact revision refs、expiry，默认七天；不保存检索正文。ReportUse 的 query_id 必须同 Subject、未过期且属于 returned membership。稳定 duplicate 可在 record expiry 后重试，accepted UseEvent 不随 feedback 清理删除。Presented 不触发概念 review；refutation 不是 positive reinforcement。Maintenance planner 消费 bounded signals，但只有 Host grant 才可调用模型和提交 canonical Concept mutations。
+
+Serving cache 不承担跨 build 的隐式升级或迁移。资产身份由当前 Authority view/watermark、实际 policy、vector space 与 artifact content checksum 表达；打开时执行真实格式/数值 validation。代码或依赖升级需要显式清理可重建 Serving cache；不扫描源码生成版本 marker。每类 durable generation identity 同时用于 diagnostics 与 read pin，不另分配 process-local generation counter。
+
+Generation 文件位置由当前 ServingRoot + generation UUID 派生，不把绝对 operator 路径写入持久 catalog。显式 reclamation 在 current、research pin、grace 与 live read 检查后删除物理 cache 与对应 catalog row，不保留无 consumer 的 reclaimed tombstone。跨中断不提供独立 cache repair protocol；残留 owner staging/UUID 目录可由下次显式 cleanup 清理，认知 Authority 不受影响。

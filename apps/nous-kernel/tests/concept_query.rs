@@ -8,22 +8,22 @@ mod concept_query {
     pub(super) mod model;
 }
 use concept_query::{
-    configuration::check_activation_configuration, historical::check_historical_profiles,
+    configuration::{check_activation_configuration, check_topology_asset_dependencies},
+    historical::check_historical_profiles,
     model::check_model_catalog_activity,
 };
 use nous_core::*;
 use nous_kernel::{NousRuntime, RuntimeOptions};
 use nous_memory::{CreateTagRequest, ReviseTagInput, TagContent, TagExpectation};
-use nous_retrieval::{
-    ServingOptions, TextEmbeddingOutput, TextEmbeddingProvider, TextEmbeddingRequest,
-};
+use nous_retrieval::{ServingOptions, TextEmbeddingProvider, TextEmbeddingRequest};
+use nous_runtime::QuerySemanticEmbedding;
 use nous_runtime::{COGNITIVE_PROFILE, CONCEPT_ENRICHMENT};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use std::sync::{Arc, Mutex};
 use test_support::*;
 #[derive(Default)]
 struct Probe {
     calls: Mutex<Vec<(bool, String)>>,
+    material_unavailable: std::sync::atomic::AtomicBool,
 }
 #[async_trait::async_trait]
 impl TextEmbeddingProvider for Probe {
@@ -63,7 +63,16 @@ impl TextEmbeddingProvider for Probe {
             config_digest: "test".into(),
         }
     }
-    async fn embed(&self, request: TextEmbeddingRequest) -> Result<TextEmbeddingOutput> {
+    async fn embed(&self, request: TextEmbeddingRequest) -> Result<QuerySemanticEmbedding> {
+        if !request.query
+            && self
+                .material_unavailable
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(Error::Unavailable(
+                "document embedding material unavailable".into(),
+            ));
+        }
         let vector = if request.text.contains("orthogonal policy probe") {
             vec![0.0, 1.0]
         } else {
@@ -73,7 +82,7 @@ impl TextEmbeddingProvider for Probe {
             .lock()
             .unwrap()
             .push((request.query, request.text));
-        Ok(TextEmbeddingOutput {
+        Ok(QuerySemanticEmbedding {
             vector,
             space: self.space(),
             producer: self.producer(),
@@ -117,36 +126,23 @@ fn query(subject: SubjectId, mut cues: Vec<Cue>) -> CognitiveQuery {
 async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_profiles() {
     let (root, url, _pg) = database().await;
     let probe = Arc::new(Probe::default());
-    let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:ServingOptions {root:root.path().join("serving"),lexical:true,dense:true,topology:true,memory_enabled:true},embedding:Some(probe.clone()),stored_embedding:None,core_descriptors:vec![],deployment_document:serde_json::json!({"capabilities":{"process":{"memory":true},"subject_defaults":{"memory":true}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":true},"topology":{"enabled":true}}})}).await.unwrap();
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:ServingOptions {root:root.path().join("serving"),lexical:true,dense:true,topology:true,memory_enabled:true},embedding:Some(probe.clone()),stored_embedding:None,configuration: nous_kernel::configuration_catalog(vec![]).unwrap().deployment(&serde_json::json!({"capabilities":{"process":{"memory":true},"subject_defaults":{"memory":true}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":true},"topology":{"enabled":true}}})).unwrap()}).await.unwrap();
+    let subject = test_support::query::subject(&rt).await;
     let owner = rt.require_memory().unwrap();
     let tag = owner
         .create_tag(
             subject,
             CreateTagRequest {
-                operation_id: OperationId::new(),
-                label: "reader reclamation".into(),
-                description: Some(
-                    "Wait for all active readers before freeing the old generation".into(),
-                ),
-                kind_hint: Some("procedure".into()),
-                origin: "host_explicit".into(),
                 producer: None,
+                operation_id: OperationId::new(),
+                content: nous_memory::TagContent {
+                    label: "reader reclamation".into(),
+                    description: Some(
+                        "Wait for all active readers before freeing the old generation".into(),
+                    ),
+                    kind_hint: Some("procedure".into()),
+                },
+                origin: "host_explicit".into(),
             },
         )
         .await
@@ -163,7 +159,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         OperationId::new(),
         "Reader lease retirement safely frees generation assets",
     );
-    input.tags = vec![tag.tag_id];
+    input.content.tags = vec![tag.tag_id];
     let memory = owner.form_memory(input).await.unwrap();
     let revision = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
     let text = Cue::Text(TextCue {
@@ -193,13 +189,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .enabled_lanes
             .contains(&EvidenceFamily::TopologyWave)
     );
-    assert!(
-        rt.serving
-            .publisher
-            .snapshot_for(subject)
-            .concept
-            .is_empty()
-    );
+    assert!(current_concepts(&rt, subject).await.is_empty());
     let mut direct = query(subject, vec![Cue::Tag(TagCue { tag: tag.tag_id })]);
     direct.capabilities.text_embedding = RequirementStrength::Forbidden;
     let direct = rt.execute_query(direct, None).await.unwrap();
@@ -225,6 +215,33 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .iter()
             .all(|(_, text)| !text.starts_with("Concept:"))
     );
+    let raw_id = current_concepts(&rt, subject).await[0].generation_id;
+    probe
+        .material_unavailable
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let fallback = rt
+        .serving
+        .prepare(
+            subject,
+            ServingNeed {
+                concept: true,
+                concept_vectors: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(fallback.generations.get("concept"), Some(&raw_id));
+    assert!(fallback.rebuilt.is_empty());
+    assert!(
+        fallback
+            .degradation
+            .iter()
+            .any(|d| d.code == "concept_projection_unavailable")
+    );
+    probe
+        .material_unavailable
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     rt.configuration
         .set_subject_override(
             OperationId::new(),
@@ -270,7 +287,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     let calls_before_prepare = probe.calls.lock().unwrap().len();
     let prepared = rt
         .cognition
-        .bind_query(query(subject, vec![text.clone()]))
+        .bind_query(query(subject, vec![text.clone()]), &rt)
         .await
         .unwrap();
     assert_eq!(probe.calls.lock().unwrap().len(), calls_before_prepare);
@@ -323,14 +340,29 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
                 .enabled_lanes
                 .contains(&EvidenceFamily::TopologyWave)
         );
-        let snapshot = rt.serving.publisher.snapshot_for(subject);
+        let snapshot = current_concepts(&rt, subject).await;
         let concept = snapshot
-            .concept
             .iter()
             .find(|generation| generation.space.is_some())
             .unwrap();
         assert_eq!(concept.generation_id, concept_id);
-        if let Some(vcp) = &snapshot.vcp {
+        if let Some(record) = rt
+            .store
+            .serving_current(subject)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|record| record.family == "topology" && record.space.starts_with("vcp:"))
+        {
+            let vcp: nous_retrieval::VcpGeneration = serde_json::from_slice(
+                &std::fs::read(
+                    rt.serving
+                        .artifact_directory(record.generation_id)
+                        .join("vcp.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
             let id = vcp.identities.id(&CognitiveRef::Tag(tag.tag_id)).unwrap();
             assert_eq!(
                 vcp.vectors.iter().find(|(key, _)| *key == id).unwrap().1,
@@ -348,7 +380,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
             .count(),
         1
     );
-    let old_snapshot = rt.serving.publisher.snapshot_for(subject);
+    let old_snapshot = current_concepts(&rt, subject).await;
     let historical_cut = rt.cognition.now(subject);
     let revised = owner
         .revise_tag(
@@ -380,9 +412,8 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         updated.bound.activation.concept_generation,
         Some(concept_id)
     );
-    let snapshot = rt.serving.publisher.snapshot_for(subject);
+    let snapshot = current_concepts(&rt, subject).await;
     let concept = snapshot
-        .concept
         .iter()
         .find(|g| g.generation_id == updated.bound.activation.concept_generation.unwrap())
         .unwrap();
@@ -400,7 +431,6 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     );
     assert!(
         old_snapshot
-            .concept
             .iter()
             .find(|g| g.generation_id == concept_id)
             .unwrap()
@@ -468,5 +498,30 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
     );
     check_model_catalog_activity(&rt, subject, tag.tag_id, &probe).await;
     check_historical_profiles(&rt, subject, tag.tag_id, &revision, historical_cut).await;
+    check_topology_asset_dependencies(&rt, subject).await;
     Box::pin(check_activation_configuration(&rt, subject)).await;
+}
+
+async fn current_concepts(
+    rt: &NousRuntime,
+    subject: SubjectId,
+) -> Vec<nous_retrieval::ConceptGeneration> {
+    rt.store
+        .serving_current(subject)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|record| record.family == "concept")
+        .map(|record| {
+            serde_json::from_slice(
+                &std::fs::read(
+                    rt.serving
+                        .artifact_directory(record.generation_id)
+                        .join("concept.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        })
+        .collect()
 }

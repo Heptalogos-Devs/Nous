@@ -23,7 +23,7 @@ async fn authority_lanes_reach_matches_beyond_first_n_objects() {
         let memory_id = Uuid::now_v7();
         let revision_id = Uuid::now_v7();
         let valid = index == 9_999;
-        sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,accessibility_mode,created_at) VALUES($1,$2,'declarative',$3,1,'accepted','valid','normal','normal','auto',now())")
+        sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,accessibility_mode,created_at) VALUES($1,$2,'declarative',$3,1,'accepted','valid','normal','auto',now())")
             .bind(memory_id)
             .bind(subject.0)
             .bind(revision_id)

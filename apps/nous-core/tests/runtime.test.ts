@@ -92,25 +92,6 @@ describe("managed context synchronization", () => {
   });
 });
 describe("projection authority boundaries", () => {
-  it("applies the cognition consumer policy to Schema contributions", async () => {
-    const planner = new ProjectionPlanner(
-      new Map([["test", { ...policy, memory: "FORBIDDEN" } as ConsumerPolicy]]),
-    );
-    const input = create(ContextSegmentSchema, {
-      ...segment("schema", "supported pattern"),
-      sourceRefs: [
-        create(CognitiveRefSchema, {
-          kind: "cognitive_schema_revision",
-          value: "schema revision",
-        }),
-      ],
-    });
-    const result = await planner.build(projection(input), {
-      maxItems: 5,
-      maxTextBytes: 20,
-    });
-    expect(result.segments).toEqual([]);
-  });
   it("keeps projected segment identity stable across fresh contribution IDs and resets on evidence drift", async () => {
     let batch = projection();
     const execution = coreExecutionSchema.parse(undefined);
@@ -192,13 +173,22 @@ describe("projection authority boundaries", () => {
   it("rejects invented model refs and preserves deterministic source selection", async () => {
     const model = new ModelRuntime();
     vi.spyOn(model.invocations, "profile").mockReturnValue({} as never);
-    vi.spyOn(model.invocations, "generate").mockResolvedValue({
+    const generate = vi.spyOn(model.invocations, "generate").mockResolvedValue({
       value: { selectedIds: ["invented"] },
     } as never);
-    const result = await new ProjectionPlanner(
-      new Map([["test", policy]]),
-      model,
-    ).build(projection(segment("a")), { maxItems: 5, maxTextBytes: 20 });
+    const planner = new ProjectionPlanner(new Map([["test", policy]]), model);
+    const refsOnly = await planner.build(
+      projection(segment("a")),
+      { maxItems: 5, maxTextBytes: 20 },
+      { ...policy, materialize: false },
+    );
+    expect(refsOnly.segments[0]?.text).toBe("");
+    expect(generate).not.toHaveBeenCalled();
+    const result = await planner.build(
+      projection(segment("a")),
+      { maxItems: 5, maxTextBytes: 20 },
+      policy,
+    );
     expect(result.segments.map((s) => s.sourceRefs)).toEqual([
       [create(CognitiveRefSchema, { kind: "memory", value: "a" })],
     ]);
@@ -210,11 +200,21 @@ describe("projection authority boundaries", () => {
       new Map([["test", required]]),
       new ModelRuntime(),
     );
-    const result = await planner.build(projection(segment("a", "中文中文")), {
-      maxItems: 1,
-      maxTextBytes: 5,
-    });
+    const result = await planner.build(
+      projection(segment("a", "中文中文")),
+      {
+        maxItems: 1,
+        maxTextBytes: 5,
+      },
+      required,
+    );
     expect(result.segments[0]?.text).toBe("中");
     expect(result.segments).toHaveLength(1);
+    const replacement = await planner.build(
+      projection(segment("a", "�X")),
+      { maxItems: 1, maxTextBytes: 3 },
+      required,
+    );
+    expect(replacement.segments[0]?.text).toBe("�");
   });
 });

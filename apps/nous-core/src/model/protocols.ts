@@ -14,7 +14,11 @@ import {
 } from "ai";
 import { z } from "zod";
 import { getStreamAsArrayBuffer } from "get-stream";
-import type { ModelProfile, ExecutionProfile } from "./profiles.js";
+import type {
+  ModelProfile,
+  ExecutionProfile,
+  GatewayProfile,
+} from "./profiles.js";
 import type { PromptAsset } from "./prompts.js";
 import { directAudioFormats, type DirectMedia } from "./input.js";
 
@@ -22,7 +26,7 @@ export type ProviderExecution = {
   profile: ModelProfile;
   binding: ExecutionProfile;
   prompt?: PromptAsset;
-  baseURL: string;
+  gateway: GatewayProfile;
   credential: string;
   timeout: number;
 };
@@ -70,7 +74,7 @@ class MediaProtocolError extends ProviderFailure {}
 class ModelOutputError extends ProviderFailure {}
 function provider(role: ProviderExecution) {
   return createOpenAI({
-    baseURL: role.baseURL,
+    baseURL: role.gateway.base_url,
     apiKey: role.credential,
     name: "standard-gateway",
     fetch: (destination, init) =>
@@ -164,44 +168,47 @@ export async function generateProvider(
             video_url: { url: `data:${media.mediaType};base64,${encoded}` },
           };
       mediaStage = "transport";
-      const response = await fetch(`${role.baseURL}/chat/completions`, {
-        method: "POST",
-        redirect: "error",
-        signal: providerSignal(role, signal),
-        headers: {
-          Authorization: `Bearer ${role.credential}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: role.profile.model,
-          stream: false,
-          messages: [
-            { role: "system", content: role.prompt?.text ?? "" },
-            {
-              role: "user",
-              content: [{ type: "text", text: content }, part],
-            },
-          ],
-          temperature: role.binding.temperature,
-          top_p: role.binding.top_p,
-          max_tokens: role.binding.max_output_tokens,
-          ...(role.binding.reasoning === "provider-default"
-            ? {}
-            : { reasoning_effort: role.binding.reasoning }),
-          ...(schema
-            ? {
-                response_format: {
-                  type: "json_schema",
-                  json_schema: {
-                    name: output!.providerName,
-                    strict: true,
-                    schema: output!.providerSchema,
+      const response = await fetch(
+        `${role.gateway.base_url}/chat/completions`,
+        {
+          method: "POST",
+          redirect: "error",
+          signal: providerSignal(role, signal),
+          headers: {
+            Authorization: `Bearer ${role.credential}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: role.profile.model,
+            stream: false,
+            messages: [
+              { role: "system", content: role.prompt?.text ?? "" },
+              {
+                role: "user",
+                content: [{ type: "text", text: content }, part],
+              },
+            ],
+            temperature: role.binding.temperature,
+            top_p: role.binding.top_p,
+            max_tokens: role.binding.max_output_tokens,
+            ...(role.binding.reasoning === "provider-default"
+              ? {}
+              : { reasoning_effort: role.binding.reasoning }),
+            ...(schema
+              ? {
+                  response_format: {
+                    type: "json_schema",
+                    json_schema: {
+                      name: output!.providerName,
+                      strict: true,
+                      schema: output!.providerSchema,
+                    },
                   },
-                },
-              }
-            : {}),
-        }),
-      });
+                }
+              : {}),
+          }),
+        },
+      );
       if (!response.ok || !response.body) {
         await response.body?.cancel();
         throw new MediaProtocolError(
@@ -268,7 +275,7 @@ export async function generateProvider(
         `output_incomplete_${result.finishReason}`,
         result.totalUsage,
       );
-    const value = schema ? schema.parse(result.output) : result.text;
+    const value = schema ? result.output : result.text;
     return {
       value,
       usage: result.totalUsage,
@@ -400,7 +407,7 @@ export async function rerankProvider(
   )
     throw new Error("Rerank request exceeds bounds");
   try {
-    const response = await fetch(`${role.baseURL}/rerank`, {
+    const response = await fetch(`${role.gateway.base_url}/rerank`, {
       method: "POST",
       redirect: "error",
       signal: providerSignal(role, signal),
@@ -418,7 +425,7 @@ export async function rerankProvider(
     });
     if (!response.ok || !response.body) {
       await response.body?.cancel();
-      throw new Error("Rerank gateway failure");
+      throw new ProviderFailure(`gateway_http_${response.status}`);
     }
     const bytes = await getStreamAsArrayBuffer(response.body, {
       maxBuffer: 1048576,
@@ -431,10 +438,16 @@ export async function rerankProvider(
       value: result.results,
       adapter: "rerank-v1",
     };
-  } catch {
+  } catch (error) {
     if (signal?.aborted) throw signal.reason;
-    throw new Error(
-      "Rerank invocation failed or response violated candidate mapping",
+    if (error instanceof ProviderFailure) throw error;
+    const failure = safeProviderFailure(error);
+    throw new ProviderFailure(
+      failure,
+      undefined,
+      ["validation_or_transport", "timeout_or_cancellation"].includes(failure)
+        ? "unknown"
+        : "failed",
     );
   }
 }

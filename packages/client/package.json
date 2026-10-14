@@ -7,7 +7,6 @@
   "exports": {
     ".": "./src/index.ts",
     "./node": "./src/node.ts",
-    "./data": "./src/data.ts",
     "./errors": "./src/errors.ts",
     "./consumer-policy": "./src/policy/consumer.ts",
     "./execution-policy": "./src/policy/execution.ts"

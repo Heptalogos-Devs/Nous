@@ -5,7 +5,6 @@ import { z } from "zod";
 import { structuredOutputContract } from "./provider.js";
 import type { JsonObject } from "@bufbuild/protobuf";
 import { channelAccessSchema, type ChannelAccess } from "../input.js";
-import { modelImplementations } from "../implementation.js";
 
 const coverage = z
   .enum(["not_available", "observed", "reported", "limited", "uncertain"])
@@ -163,7 +162,6 @@ export type MaterialInterpretation = z.infer<
 >;
 const contract = structuredOutputContract(materialInterpretationSchema);
 export const materialInterpretationSchemaDigest = contract.digest;
-export const materialInterpretationIdentity = modelImplementations.material;
 type InterpretationInput = {
   access: ChannelAccess;
   basisKeys: ReadonlySet<string>;
@@ -212,7 +210,7 @@ export function structuredMaterialResult(
     text: `Evidence access: ${Object.entries(context.access)
       .map(([channel, mode]) => `${channel}=${mode}`)
       .join("; ")}\n${projectMaterialInterpretation(output)}`,
-    structuredPayload: JSON.parse(JSON.stringify(payload)) as JsonObject,
+    structuredPayload: payload as JsonObject,
   };
 }
 

@@ -10,7 +10,6 @@ use nous_core::*;
 use nous_kernel::NousRuntime;
 use nous_memory::*;
 use nous_runtime::{CognitiveProfile, MaintenanceDisposition, MaintenanceNeed};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::*;
 fn producer() -> ProducerSignature {
     ProducerSignature {
@@ -34,9 +33,9 @@ fn producer() -> ProducerSignature {
         config_digest: "b".repeat(64),
     }
 }
-async fn claim(rt: &NousRuntime, subject: SubjectId) -> MaintenanceNeed {
+async fn select_need(rt: &NousRuntime, subject: SubjectId) -> MaintenanceNeed {
     rt.cognition
-        .lease_maintenance(subject, &["concept_maintenance".into()], 1, 120, None)
+        .select_maintenance(subject, &["concept_maintenance".into()], 1, None, None)
         .await
         .unwrap()
         .pop()
@@ -79,22 +78,7 @@ async fn assert_subject_producer(rt: &NousRuntime, subject: SubjectId, implement
 async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_commit() {
     let (root, url, _postgres) = database().await;
     let rt = open_runtime_with_serving(&url, &root, true, false, true).await;
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let owner = rt.require_memory().unwrap();
     let entity = CognitiveRef::Entity(EntityRef::new("entity:fixture:release-engineer").unwrap());
     assert!(
@@ -143,7 +127,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             view.revision.memory_revision_id,
         ));
     }
-    let first = claim(&rt, subject).await;
+    let first = select_need(&rt, subject).await;
     catalog::assert_wire_catalog(&rt, subject, &revisions, &first).await;
     let initial = owner
         .plan_concepts(subject, revisions[0].clone())
@@ -165,9 +149,11 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             CreateTagRequest {
                 producer: Some(producer()),
                 operation_id: OperationId::new(),
-                label: "Reviewer approval".into(),
-                description: None,
-                kind_hint: None,
+                content: nous_memory::TagContent {
+                    label: "Reviewer approval".into(),
+                    description: None,
+                    kind_hint: None,
+                },
                 origin: "concept_maintenance".into(),
             },
         )
@@ -258,7 +244,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         .acknowledge_maintenance(&first, MaintenanceDisposition::Satisfied)
         .await
         .unwrap();
-    let second = claim(&rt, subject).await;
+    let second = select_need(&rt, subject).await;
     rt.cognition
         .acknowledge_maintenance(&second, MaintenanceDisposition::Satisfied)
         .await
@@ -274,11 +260,35 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             .unwrap();
     assert_eq!(historical_tags, 0);
     episode_relations(&rt, subject, &revisions).await;
-    let episode_need = claim(&rt, subject).await;
+    let episode_need = select_need(&rt, subject).await;
     rt.cognition
         .acknowledge_maintenance(&episode_need, MaintenanceDisposition::Satisfied)
         .await
         .unwrap();
+    let snapshot = rt.configuration.snapshot_for_subject(subject).unwrap();
+    let reverse = revisions
+        .iter()
+        .rev()
+        .map(|r| (r.clone(), true))
+        .collect::<Vec<_>>();
+    let descriptors = owner
+        .query_descriptors(
+            subject,
+            &reverse,
+            CognitiveEffort::Maximum,
+            rt.cognition.now(subject),
+            &snapshot,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        descriptors
+            .into_iter()
+            .map(|d| d.reference)
+            .collect::<Vec<_>>(),
+        revisions.iter().rev().cloned().collect::<Vec<_>>()
+    );
     let before = owner
         .accretion_signal(subject, &tag)
         .await
@@ -369,7 +379,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
     assert_eq!(truth, "observed");
     let queued:i64=sqlx::query_scalar("SELECT count(*) FROM maintenance_needs WHERE subject_id=$1 AND kind='concept_maintenance' AND state='pending'").bind(subject.0).fetch_one(rt.store.pool()).await.unwrap();
     assert_eq!(queued, 1);
-    let review = claim(&rt, subject).await;
+    let review = select_need(&rt, subject).await;
     rt.cognition
         .acknowledge_maintenance(&review, MaintenanceDisposition::Satisfied)
         .await
@@ -454,6 +464,57 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             .max_suggestions,
         2
     );
+    // Three asymmetric cached vectors make the first-member baseline observable.
+    rt.configuration
+        .clear_subject_override(OperationId::new(), subject, ACCRETION.path(), None)
+        .await
+        .unwrap();
+    let source = observation(&rt, subject, "Another recorded approval fact").await;
+    let mut input = form_input(
+        subject,
+        source.occurrence.occurrence_id,
+        OperationId::new(),
+        "Another recorded approval fact",
+    );
+    input.content.tags = vec![concept.tag_id];
+    let third = owner.form_memory(input).await.unwrap();
+    let mut ordered = revisions.clone();
+    ordered.push(CognitiveRef::MemoryRevision(
+        third.revision.memory_revision_id,
+    ));
+    let snapshot = rt.configuration.snapshot_for_subject(subject).unwrap();
+    let descriptors = owner
+        .query_descriptors(
+            subject,
+            &ordered
+                .iter()
+                .map(|r| (r.clone(), true))
+                .collect::<Vec<_>>(),
+            CognitiveEffort::Maximum,
+            rt.cognition.now(subject),
+            &snapshot,
+            None,
+        )
+        .await
+        .unwrap();
+    for (descriptor, vector) in
+        descriptors
+            .iter()
+            .zip([vec![1.0f32, 0.0], vec![0.0, 1.0], vec![0.0, -1.0]])
+    {
+        sqlx::query("INSERT INTO embedding_materials(subject_id,content_digest,space_hash,producer_hash,vector) VALUES($1,$2,$3,$4,$5)")
+            .bind(subject.0).bind(blake3::hash(descriptor.text.as_bytes()).to_hex().to_string())
+            .bind("a".repeat(64)).bind("b".repeat(64)).bind(vector).execute(rt.store.pool()).await.unwrap();
+    }
+    for _ in 0..3 {
+        let signal = owner
+            .accretion_signal(subject, &tag)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(signal.member_refs, ordered);
+        assert_eq!(signal.semantic_coherence, Some(0.0));
+    }
 }
 async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[CognitiveRef]) {
     let owner = rt.require_memory().unwrap();
@@ -462,35 +523,38 @@ async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[Co
             operation_id: OperationId::new(),
             subject,
             track_key: "relation-witness".into(),
-            title: Some("Recorded approval sequence".into()),
-            parent_episode_revision_id: None,
-            experience_time: TemporalExtent::Unknown,
-            boundary_explanation: "Both exact members recorded in order".into(),
-            producer_signature_id: None,
-            members: revisions
-                .iter()
-                .enumerate()
-                .map(|(index, reference)| EpisodeMemberInput {
-                    reference: reference.clone(),
-                    role: if index == 0 { "procedure" } else { "outcome" }.into(),
-                })
-                .collect(),
-            basis: revisions
-                .iter()
-                .map(|reference| {
-                    RevisionBasis::CognitionDependency(CognitionDependency {
-                        epistemic_relation: None,
-                        target_revision: reference.clone(),
-                        basis_role: BasisRole::Direct,
+
+            content: nous_memory::EpisodeContent {
+                title: Some("Recorded approval sequence".into()),
+                parent_episode_revision_id: None,
+                experience_time: TemporalExtent::Unknown,
+                boundary_explanation: "Both exact members recorded in order".into(),
+                producer_signature_id: None,
+                members: revisions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, reference)| EpisodeMemberInput {
+                        reference: reference.clone(),
+                        role: if index == 0 { "procedure" } else { "outcome" }.into(),
                     })
-                })
-                .collect(),
+                    .collect(),
+                basis: revisions
+                    .iter()
+                    .map(|reference| {
+                        RevisionBasis::CognitionDependency(CognitionDependency {
+                            epistemic_relation: None,
+                            target_revision: reference.clone(),
+                            basis_role: BasisRole::Direct,
+                        })
+                    })
+                    .collect(),
+            },
         })
         .await
         .unwrap();
     let projection = rt
         .store
-        .topology_projection_input(subject, true)
+        .topology_projection_input(subject, true, None)
         .await
         .unwrap();
     let episode_ref = CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id);
@@ -505,7 +569,7 @@ async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[Co
     }
     assert!(
         !rt.store
-            .topology_projection_input(subject, false)
+            .topology_projection_input(subject, false, None)
             .await
             .unwrap()
             .nodes

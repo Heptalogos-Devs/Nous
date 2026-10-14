@@ -4,15 +4,26 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { createInterface } from "node:readline";
-import { timestampFromDate, TimestampSchema } from "@bufbuild/protobuf/wkt";
+import {
+  timestampFromDate,
+  TimestampSchema,
+  ValueSchema,
+} from "@bufbuild/protobuf/wkt";
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { connectNous } from "@nous-wave/client/node";
 import { MaintenancePlanSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
+import { CognitiveRefSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { KernelClient } from "../../apps/nous-core/src/kernel-client.js";
 import { createCore } from "../../apps/nous-core/src/server.js";
-import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
+import { parseEffectiveConfiguration } from "../../apps/nous-core/src/configuration/schema.js";
+import { ConfigExposure } from "@nous-wave/client";
+import { SubjectMaintenanceScheduler } from "../../apps/nous-core/src/maintenance/grants.js";
+import { DomainErrorCode } from "@nous-wave/client/errors";
 import { modelConfigurationSchema } from "../../apps/nous-core/src/model/configuration.js";
+import { GenerationFailure } from "../../apps/nous-core/src/model/execution/routes.js";
+import { ModelRuntime } from "../../apps/nous-core/src/model/runtime.js";
 import {
   episodePartitionSchema,
   journalSynthesisSchema,
@@ -32,14 +43,19 @@ function proposalModels() {
       ),
   });
   const calls = { episode: 0, journal: 0, consolidation: 0 };
-  models.invocations.snapshot = (role) => ({
-    format: "nous.model.execution",
-    implementationDigest: "0".repeat(64),
-    role,
-    configuration: modelConfigurationSchema.parse({}),
-    profileDigest: "a".repeat(64),
-    configDigest: "b".repeat(64),
-  });
+  models.invocations.profile = (role) =>
+    [
+      "episode_segmentation",
+      "journal_synthesis",
+      "memory_consolidation",
+    ].includes(role)
+      ? ({} as NonNullable<ReturnType<typeof models.invocations.profile>>)
+      : undefined;
+  models.invocations.prepare = (role) => {
+    if (!models.invocations.profile(role))
+      throw new GenerationFailure(role, "role_unavailable");
+    return { role, routes: [], configDigest: "b".repeat(64) };
+  };
   const producerMetadata = {
     modelRole: "journal_synthesis" as const,
     modelProfile: "stub",
@@ -57,7 +73,7 @@ function proposalModels() {
   };
   const plan = (input: string) =>
     fromJson(MaintenancePlanSchema, JSON.parse(input) as JsonValue);
-  models.segmentEpisode = async (input, _signal, _snapshot, beforeAttempt) => {
+  const segmentEpisode = async (input: string, beforeAttempt?: () => void) => {
     beforeAttempt?.();
     calls.episode++;
     const source = plan(input);
@@ -86,11 +102,9 @@ function proposalModels() {
       },
     };
   };
-  models.synthesizeJournal = async (
-    input,
-    _signal,
-    _snapshot,
-    beforeAttempt,
+  const synthesizeJournal = async (
+    input: string,
+    beforeAttempt?: () => void,
   ) => {
     beforeAttempt?.();
     calls.journal++;
@@ -129,7 +143,7 @@ function proposalModels() {
       },
     };
   };
-  models.consolidate = async (input, _signal, _snapshot, beforeAttempt) => {
+  const consolidate = async (input: string, beforeAttempt?: () => void) => {
     beforeAttempt?.();
     calls.consolidation++;
     const source = plan(input);
@@ -183,6 +197,20 @@ function proposalModels() {
       },
     };
   };
+  models.invocations.generate = (async (
+    role,
+    input,
+    options?: Parameters<typeof models.invocations.generate>[2],
+  ) => {
+    const content = input.content as string;
+    if (role === "episode_segmentation")
+      return segmentEpisode(content, options?.beforeAttempt);
+    if (role === "journal_synthesis")
+      return synthesizeJournal(content, options?.beforeAttempt);
+    if (role === "memory_consolidation")
+      return consolidate(content, options?.beforeAttempt);
+    throw new Error(`Unexpected smoke role ${role}`);
+  }) as typeof models.invocations.generate;
   return { models, calls };
 }
 
@@ -195,13 +223,32 @@ async function scenario(endpoint: string, token: string) {
     assert(!response.done, "harness control closed");
     return JSON.parse(response.value) as { endpoint?: string };
   };
-  const { models, calls } = proposalModels();
-  let app = await createCore({
-    kernel: KernelClient.connect(endpoint, token),
-    token,
-    consumers: [],
-    models,
-  });
+  let { models, calls } = proposalModels();
+  let recoveryProvider: ReturnType<typeof createServer> | undefined;
+  async function openCore(kernelEndpoint: string) {
+    let kernel = KernelClient.connect(kernelEndpoint, token);
+    const snapshot = await kernel.configuration.getConfiguration({
+      exposureCeiling: ConfigExposure.DEVELOPER,
+    });
+    const effective = parseEffectiveConfiguration(
+      Object.fromEntries(
+        snapshot.entries.map((entry) => [
+          entry.path,
+          entry.value ? toJson(ValueSchema, entry.value) : null,
+        ]),
+      ),
+    );
+    kernel = KernelClient.connect(kernelEndpoint, token, effective.execution);
+    return createCore({
+      kernel,
+      token,
+      consumers: [],
+      models,
+      execution: effective.execution,
+      maxUploadBytes: effective.maxUploadBytes,
+    });
+  }
+  let app = await openCore(endpoint);
   let publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
   let client = connectNous(publicEndpoint, token);
   const subjectId = randomUUID();
@@ -214,6 +261,10 @@ async function scenario(endpoint: string, token: string) {
       maxModelCalls,
       maxElapsedMs: 10000,
     });
+    assert(
+      !result.results.some((item) => item.status === "internal_failure"),
+      "maintenance returned an internal failure",
+    );
     for (const operation of result.results)
       assert(
         operation.status !== "rejected_invalid" &&
@@ -224,7 +275,7 @@ async function scenario(endpoint: string, token: string) {
     return result;
   };
   try {
-    await client.subjects.create({
+    await client.subjects.createSubject({
       subjectId,
       operationId: randomUUID(),
       cognitiveSeed: {
@@ -233,14 +284,17 @@ async function scenario(endpoint: string, token: string) {
         provenance: {},
       },
     });
-    const session = await client.cognition.openSession({ subjectId });
+    const session = await client.runtime.openSession({ subjectId });
+    assert(session.openedAt);
+    assert(session.lastActivityAt);
+    assert.equal(session.closedAt, undefined);
     const observationIds: string[] = [];
     for (const text of [
       "Calibration plan confirmed.",
       "Calibration measurements collected.",
       "Calibration review completed.",
     ]) {
-      const observed = await client.cognition.observe({
+      const observed = await client.runtime.recordObservation({
         subjectId,
         sessionId: session.sessionId,
         sourceClass: "message",
@@ -275,7 +329,8 @@ async function scenario(endpoint: string, token: string) {
     );
     for (let pass = 0; pass < 4; pass++) {
       await advance(400);
-      await maintain();
+      if (pass === 0) await Promise.all([maintain(), maintain()]);
+      else await maintain();
     }
     const episodes = (
       await client.memory.listEpisodes({ subjectId, status: "accepted" })
@@ -284,7 +339,7 @@ async function scenario(endpoint: string, token: string) {
       await client.memory.listJournals({ subjectId, status: "accepted" })
     ).items;
     const memories = (
-      await client.memory.list({ subjectId, status: "accepted" })
+      await client.memory.listMemories({ subjectId, status: "accepted" })
     ).items;
     assert.equal(episodes.length, 1);
     assert.equal(journals.length, 1);
@@ -297,7 +352,8 @@ async function scenario(endpoint: string, token: string) {
     assert(
       journal.currentRevision?.points.every((point) => point.basis.length > 0),
     );
-    assert(calls.episode > 0 && calls.journal > 0 && calls.consolidation > 0);
+    assert.equal(calls.episode, 1);
+    assert(calls.journal > 0 && calls.consolidation > 0);
     const refs = [
       {
         kind: "episode_revision",
@@ -311,16 +367,11 @@ async function scenario(endpoint: string, token: string) {
         kind: "memory_revision",
         value: memory.revisionId,
       },
-    ];
+    ].map((ref) => create(CognitiveRefSchema, ref));
     await app.close();
     const restarted = await control({ command: "restart" });
     assert(restarted.endpoint);
-    app = await createCore({
-      kernel: KernelClient.connect(restarted.endpoint, token),
-      token,
-      consumers: [],
-      models,
-    });
+    app = await openCore(restarted.endpoint);
     publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
     client = connectNous(publicEndpoint, token);
     assert.equal(
@@ -342,11 +393,11 @@ async function scenario(endpoint: string, token: string) {
       refs[1]!.value,
     );
     assert.equal(
-      (await client.memory.revision({ subjectId, id: refs[2]!.value }))
+      (await client.memory.getMemoryRevision({ subjectId, id: refs[2]!.value }))
         .revisionId,
       refs[2]!.value,
     );
-    const continuation = await client.cognition.createWorkContext({
+    const continuation = await client.runtime.createWorkContext({
       operationId: randomUUID(),
       subjectId,
       purpose: "Continue calibration",
@@ -403,12 +454,27 @@ async function scenario(endpoint: string, token: string) {
         context: {},
       })),
     };
-    assert.equal((await client.cognition.reportUse(use)).acceptedCount, 3);
-    assert.equal((await client.cognition.reportUse(use)).duplicateCount, 3);
+    assert.equal((await client.runtime.reportUse(use)).acceptedCount, 3);
+    assert.equal((await client.runtime.reportUse(use)).duplicateCount, 3);
+    const usedSession = await client.runtime.getSession({
+      subjectId,
+      id: session.sessionId,
+    });
+    assert(usedSession.lastMeaningfulUseAt);
+    assert(
+      usedSession.resident.some(
+        (resident) =>
+          resident.reference?.value === refs[0]?.value &&
+          resident.state === "resident" &&
+          resident.entryReason &&
+          resident.enteredAt &&
+          resident.lastMeaningfulUseAt,
+      ),
+    );
     const before = { ...calls };
     await maintain();
     assert.deepEqual(calls, before);
-    const schema = await client.concepts.createSchema({
+    const schema = await client.concepts.createCognitiveSchema({
       operationId: randomUUID(),
       subjectId,
       schema: {
@@ -454,6 +520,11 @@ async function scenario(endpoint: string, token: string) {
         observationIds[0],
       );
     assert(schema.formedAt);
+    assert(schema.createdAt);
+    assert.equal(schema.revisionNo, 1);
+    assert.equal(schema.parentRevisionId, undefined);
+    assert.equal(schema.revisionIntent, undefined);
+    assert(schema.evidenceLinks[0]?.createdAt);
     const exactSchema = {
       subjectId,
       expression: {
@@ -467,7 +538,7 @@ async function scenario(endpoint: string, token: string) {
               case: "reference" as const,
               value: {
                 kind: "cognitive_schema_revision",
-                value: schema.currentRevisionId,
+                value: schema.revisionId,
               },
             },
           },
@@ -537,9 +608,339 @@ async function scenario(endpoint: string, token: string) {
       nousql: `Calibration $return(schema) $time(formed,at="${toJson(TimestampSchema, create(TimestampSchema, schema.formedAt))}")`,
     });
     assert.equal(nousqlPoint.hits.length, 1);
+    const schemas = await client.concepts.listCognitiveSchemas({
+      subjectId,
+      page: { pageSize: 1 },
+    });
+    assert.equal(schemas.items[0]?.schemaId, schema.schemaId);
+    const schemaHistory = await client.concepts.listCognitiveSchemaRevisions({
+      subjectId,
+      object: { kind: "cognitive_schema", value: schema.schemaId },
+      page: { pageSize: 1 },
+    });
+    assert.equal(schemaHistory.items[0]?.revisionId, schema.revisionId);
+    assert(schemaHistory.items[0]?.evidenceLinks.length);
+    const originalEpisode = episode.currentRevision!;
+    const revisedEpisode = await client.memory.reviseEpisode({
+      subjectId,
+      episodeId: episode.episodeId,
+      operationId: randomUUID(),
+      expectedObjectEpoch: episode.objectEpoch,
+      intent: "reinterpret",
+      content: {
+        title: "Calibration sequence clarified",
+        producerSignatureId: originalEpisode.producerSignatureId,
+        experienceTime: originalEpisode.experienceTime,
+        boundaryExplanation: originalEpisode.boundaryExplanation,
+        members: originalEpisode.members,
+        basis: originalEpisode.basis,
+      },
+    });
+    assert(revisedEpisode.episode?.currentRevision);
+    assert.equal(
+      revisedEpisode.episode.currentRevision.producerSignatureId,
+      originalEpisode.producerSignatureId,
+    );
+    const firstHistory = await client.memory.listEpisodeRevisions({
+      subjectId,
+      episodeId: episode.episodeId,
+      page: { pageSize: 1 },
+    });
+    assert.equal(firstHistory.items.length, 1);
+    assert(firstHistory.nextPageToken);
+    const history = [...firstHistory.items];
+    let historyToken = firstHistory.nextPageToken;
+    while (historyToken) {
+      const page = await client.memory.listEpisodeRevisions({
+        subjectId,
+        episodeId: episode.episodeId,
+        page: { pageSize: 1, pageToken: historyToken },
+      });
+      assert.equal(page.items.length, 1);
+      assert(
+        history.length < revisedEpisode.episode.currentRevision.revisionNo,
+      );
+      history.push(...page.items);
+      historyToken = page.nextPageToken;
+    }
+    assert.deepEqual(
+      history.map((item) => item.revisionNo),
+      Array.from({ length: history.length }, (_, index) => index + 1),
+    );
+    assert.equal(
+      history.at(-1)!.episodeRevisionId,
+      revisedEpisode.episode.currentRevision.episodeRevisionId,
+    );
+    const prior = history.find(
+      (item) => item.episodeRevisionId === originalEpisode.episodeRevisionId,
+    )!;
+    assert.deepEqual(prior.members, originalEpisode.members);
+    assert.deepEqual(prior.basis, originalEpisode.basis);
+    const extraEpisode = await client.memory.createEpisode({
+      subjectId,
+      operationId: randomUUID(),
+      trackKey: "pagination-smoke",
+      content: {
+        title: "Alternate calibration track",
+        experienceTime: originalEpisode.experienceTime,
+        boundaryExplanation: originalEpisode.boundaryExplanation,
+        members: originalEpisode.members,
+        basis: originalEpisode.basis,
+      },
+    });
+    assert(extraEpisode.episode);
+    const firstPage = await client.memory.listEpisodes({
+      subjectId,
+      status: "accepted",
+      page: { pageSize: 1 },
+    });
+    assert.equal(firstPage.items.length, 1);
+    assert(firstPage.nextPageToken);
+    const lastPage = await client.memory.listEpisodes({
+      subjectId,
+      status: "accepted",
+      page: { pageSize: 1, pageToken: firstPage.nextPageToken },
+    });
+    assert.equal(lastPage.items.length, 1);
+    assert.equal(lastPage.nextPageToken, "");
+    assert.deepEqual(
+      [firstPage.items[0]!.episodeId, lastPage.items[0]!.episodeId].sort(),
+      [episode.episodeId, extraEpisode.episode.episodeId].sort(),
+    );
+    for (const item of [...firstPage.items, ...lastPage.items]) {
+      assert(item.currentRevision?.members.length);
+      assert(item.currentRevision?.basis.length);
+    }
+    // Real pending cognition fills a complete candidate page before a deterministic withdrawal.
+    const waiting = [];
+    for (let index = 0; index < 130; index++) {
+      const formed = await client.memory.formMemory({
+        subjectId,
+        operationId: randomUUID(),
+        cognitiveRole: "declarative",
+        input: {
+          formationMode: "grounded",
+          groundingOccurrenceId: observationIds[0],
+          semanticRole: "fact",
+          text: `Calibration fact ${index}`,
+          epistemicClass: "observed",
+          basis: [
+            {
+              basis: {
+                case: "evidence",
+                value: {
+                  occurrenceId: observationIds[0],
+                  basisRole: "direct",
+                  locator: { case: "wholeOccurrence", value: true },
+                },
+              },
+            },
+          ],
+        },
+      });
+      waiting.push(formed.revisionId);
+    }
+    await control({
+      command: "prioritize",
+      subject: subjectId,
+      references: waiting,
+    });
+    for (const current of [...firstPage.items, ...lastPage.items]) {
+      const head = await client.memory.getEpisode({
+        subjectId,
+        id: current.episodeId,
+      });
+      await client.memory.withdrawEpisode({
+        subjectId,
+        operationId: randomUUID(),
+        episodeId: head.episode!.episodeId,
+        expectedObjectEpoch: head.episode!.objectEpoch,
+      });
+    }
+    const priorCalls = { ...calls };
+    const deterministic = await client.cognition.grantMaintenance({
+      subjectId,
+      maxOperations: 1,
+      maxModelCalls: 0,
+      maxElapsedMs: 60000,
+    });
+    assert.equal(deterministic.operationsConsumed, 1);
+    assert.equal(deterministic.modelCalls, 0);
+    assert.equal(deterministic.results[0]?.kind, "journal_revalidate");
+    assert.equal(deterministic.results[0]?.status, "committed");
+    assert.equal(
+      (await client.memory.getJournal({ subjectId, id: journal.journalId }))
+        .journal!.acceptanceState,
+      "withdrawn",
+    );
+    assert.deepEqual(calls, priorCalls);
+
+    const secondSubject = "ffffffff-ffff-4fff-bfff-fffffffffff0";
+    await client.subjects.createSubject({
+      subjectId: secondSubject,
+      operationId: randomUUID(),
+      cognitiveSeed: {
+        text: "schema_version = 1",
+        format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
+      },
+      capabilities: { memory: true },
+    });
+    const nextSession = await client.runtime.openSession({
+      subjectId: secondSubject,
+    });
+    await client.runtime.recordObservation({
+      subjectId: secondSubject,
+      sessionId: nextSession.sessionId,
+      requestId: randomUUID(),
+      sourceClass: "message",
+      material: {
+        case: "inlineText",
+        value: { text: "Second Subject experience", mediaType: "text/plain" },
+      },
+    });
+    await control({
+      command: "advance",
+      subject: secondSubject,
+      seconds: 2000,
+    });
+    await client.configuration.setSystemOverride({
+      operationId: randomUUID(),
+      path: "maintenance.max_model_calls_per_tick",
+      value: fromJson(ValueSchema, 0),
+    });
+    const scheduler = new SubjectMaintenanceScheduler(
+      KernelClient.connect(restarted.endpoint, token),
+      models,
+    );
+    await scheduler.poll(new AbortController().signal);
+    assert.equal(
+      (
+        await client.memory.listEpisodes({
+          subjectId: secondSubject,
+          status: "accepted",
+        })
+      ).items.length,
+      1,
+    );
+    assert.deepEqual(calls, priorCalls);
+
+    // A real required role with missing credentials must return its formal diagnostic.
+    await client.configuration.setSystemOverride({
+      operationId: randomUUID(),
+      path: "maintenance.max_model_calls_per_tick",
+      value: fromJson(ValueSchema, 1),
+    });
+    let recoveredCalls = 0;
+    recoveryProvider = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        assert.equal(
+          request.headers.authorization,
+          "Bearer controlled-maintenance-recovery",
+        );
+        recoveredCalls++;
+        response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify({
+            choices: [
+              {
+                index: 0,
+                finish_reason: "stop",
+                message: {
+                  role: "assistant",
+                  content: JSON.stringify({
+                    actions: [{ action: "no_change" }],
+                  }),
+                },
+              },
+            ],
+          }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) =>
+      recoveryProvider!.listen(0, "127.0.0.1", resolve),
+    );
+    const recoveryAddress = recoveryProvider.address();
+    assert(recoveryAddress && typeof recoveryAddress !== "string");
+    const requiredConfig = modelConfigurationSchema.parse({
+      gateway_profiles: {
+        missing: {
+          base_url: `http://127.0.0.1:${recoveryAddress.port}/v1`,
+          credential_env: "NOUS_SMOKE_MISSING_CREDENTIAL",
+        },
+      },
+      model_profiles: {
+        chat: {
+          gateway: "missing",
+          protocol: "openai-chat",
+          model: "unavailable",
+          capabilities: ["text", "structured_output"],
+        },
+      },
+      execution_profiles: { chat: { model: "chat" } },
+      roles: {
+        concept_maintenance: { routes: ["chat"], requirement: "required" },
+      },
+    });
+    delete process.env.NOUS_SMOKE_MISSING_CREDENTIAL;
+    models = await ModelRuntime.fromConfig(requiredConfig);
+    await app.close();
+    app = await openCore(restarted.endpoint);
+    publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
+    client = connectNous(publicEndpoint, token);
+    const required = await client.cognition.grantMaintenance({
+      subjectId,
+      maxOperations: 1,
+      maxModelCalls: 1,
+      maxElapsedMs: 60000,
+    });
+    assert.equal(required.operationsConsumed, 1);
+    assert.equal(required.modelCalls, 0);
+    assert.equal(required.results[0]?.status, "blocked_dependency");
+    assert.equal(
+      required.results[0]?.errorDetail?.code,
+      DomainErrorCode.CAPABILITY_UNAVAILABLE,
+    );
+    assert.equal(
+      required.results[0]?.errorDetail?.context.requirement,
+      "required",
+    );
+    assert.equal(
+      required.results[0]?.errorDetail?.context.capability,
+      "model.concept_maintenance",
+    );
+    assert.equal(recoveredCalls, 0);
+    process.env.NOUS_SMOKE_MISSING_CREDENTIAL =
+      "controlled-maintenance-recovery";
+    models = await ModelRuntime.fromConfig(requiredConfig);
+    await app.close();
+    const recoveredKernel = await control({ command: "restart" });
+    assert(recoveredKernel.endpoint);
+    app = await openCore(recoveredKernel.endpoint);
+    publicEndpoint = await app.listen({ host: "127.0.0.1", port: 0 });
+    client = connectNous(publicEndpoint, token);
+    const recovered = await client.cognition.grantMaintenance({
+      subjectId,
+      maxOperations: 1,
+      maxModelCalls: 1,
+      maxElapsedMs: 60000,
+    });
+    assert.equal(recovered.operationsConsumed, 1);
+    assert.equal(recovered.modelCalls, 1);
+    assert.equal(recoveredCalls, 1);
+    assert.equal(recovered.results[0]?.needId, required.results[0]?.needId);
+    assert.equal(recovered.results[0]?.status, "no_change");
     console.error("Longitudinal smoke passed");
   } finally {
     await app.close();
+    delete process.env.NOUS_SMOKE_MISSING_CREDENTIAL;
+    if (recoveryProvider) {
+      recoveryProvider.closeAllConnections();
+      await new Promise<void>((resolve) =>
+        recoveryProvider!.close(() => resolve()),
+      );
+    }
     channel.close();
     process.stdout.write(JSON.stringify({ command: "done" }) + "\n");
     process.stdin.destroy();

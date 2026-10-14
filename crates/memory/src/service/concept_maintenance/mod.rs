@@ -102,24 +102,4 @@ impl MemoryService {
             .await?;
         Ok(())
     }
-    pub async fn request_concept_review(
-        &self,
-        subject: SubjectId,
-        focus: CognitiveRef,
-    ) -> Result<Uuid> {
-        let (focus, _, _) = self.store.bind_exact_reference(subject, &focus).await?;
-        self.plan_concepts(subject, focus.clone()).await?;
-        let (kind, value) = reference_parts(&focus);
-        self.cognition
-            .enqueue_maintenance(nous_runtime::MaintenanceRequest {
-                subject,
-                kind: "concept_maintenance".into(),
-                scope_kind: kind,
-                scope_ref: value,
-                trigger_authority_seq: self.store.authority_seq(subject).await?,
-                due_at: self.cognition.now(subject),
-                priority: 30,
-            })
-            .await
-    }
 }

@@ -32,8 +32,20 @@ pub struct EpisodePartitionInput {
 impl MemoryService {
     pub async fn apply_episode_partition(
         &self,
-        input: EpisodePartitionInput,
+        mut input: EpisodePartitionInput,
     ) -> Result<Vec<EpisodeView>> {
+        input.producer = input
+            .producer
+            .as_ref()
+            .map(|producer| {
+                if producer.operation != CapabilityOperation::EpisodeSegmentationText {
+                    return Err(Error::Invalid(
+                        "Episode partition requires a segmentation producer".into(),
+                    ));
+                }
+                AuthorityStore::canonical_producer(producer)
+            })
+            .transpose()?;
         validate_partition(&input)?;
         let started = self.cognition.now(input.subject);
         let digest = operation_digest("episode_partition", input.subject, &input)?;
@@ -47,11 +59,6 @@ impl MemoryService {
             .await?
         {
             MutationStart::Replay(receipt) => {
-                if receipt.state != "committed" {
-                    return Err(Error::Unavailable(
-                        "Episode partition is in progress".into(),
-                    ));
-                }
                 let revisions: Vec<EpisodeRevisionId> =
                     serde_json::from_str(&receipt.result_ref.ok_or_else(|| {
                         Error::Infrastructure("partition receipt has no revisions".into())
@@ -77,7 +84,7 @@ impl MemoryService {
         }
         let first = &sources[0];
         let track: String = first.try_get("track_key").map_err(db)?;
-        let occurrences = validate_partition_occurrences(mutation.tx(), &input).await?;
+        let occurrences = validate_partition_occurrences(self, mutation.tx(), &input).await?;
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
             .await?;
@@ -93,7 +100,12 @@ impl MemoryService {
             sqlx::query("UPDATE episode_objects SET acceptance_state='withdrawn',object_epoch=object_epoch+1 WHERE subject_id=$1 AND episode_id=ANY($2::uuid[])")
                 .bind(input.subject.0).bind(&ids).execute(&mut **mutation.tx()).await.map_err(db)?;
         }
-        let producer_id = partition_producer_in(mutation.tx(), input.producer.as_ref()).await?;
+        let producer_id = match &input.producer {
+            Some(producer) => {
+                Some(AuthorityStore::register_producer_in(mutation.tx(), producer).await?)
+            }
+            None => None,
+        };
         let outputs = self
             .write_partition_segments_in(
                 mutation.tx(),
@@ -105,7 +117,7 @@ impl MemoryService {
                 producer_id,
             )
             .await?;
-        let sequence = mutation.invalidate(ProjectionInvalidation::text()).await?;
+        let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
         let source_objects: Vec<Uuid> = sources.iter().map(|row| row.get("episode_id")).collect();
         self.invalidate_object_dependents_in(
             mutation.tx(),
@@ -153,7 +165,7 @@ impl MemoryService {
         let one_to_one = input.sources.len() == 1 && input.segments.len() == 1;
         let mut outputs = Vec::with_capacity(input.segments.len());
         for segment in &input.segments {
-            let mut payload = partition_payload(input, segment, &track, parent, occurrences)?;
+            let mut payload = partition_payload(input, segment, parent, occurrences)?;
             payload.producer_signature_id = producer_id;
             let episode = if one_to_one {
                 EpisodeId(first.try_get("episode_id").map_err(db)?)
@@ -170,7 +182,6 @@ impl MemoryService {
             )
             .await?;
             let revision = EpisodeRevisionId::new();
-            let (kind, time_start, time_end) = temporal_columns(&payload.experience_time);
             let prior_revision =
                 one_to_one.then(|| EpisodeRevisionId(first.get("episode_revision_id")));
             let revision_no = if one_to_one {
@@ -179,23 +190,23 @@ impl MemoryService {
                 1
             };
             if !one_to_one {
-                sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,purge_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','normal',$5)")
+                sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal',$5)")
                     .bind(episode.0).bind(input.subject.0).bind(&track).bind(revision.0).bind(recorded_at).execute(&mut **tx).await.map_err(db)?;
             }
-            insert_episode_revision_with_intent(
+            insert_episode_revision(
                 &self.store,
                 tx,
+                input.subject,
                 &payload,
-                episode,
-                revision,
-                prior_revision,
-                one_to_one.then(|| "resegment".into()),
-                revision_no,
-                kind,
-                time_start,
-                time_end,
-                formed_at,
-                recorded_at,
+                EpisodeRevisionWrite {
+                    episode,
+                    revision,
+                    parent: prior_revision,
+                    intent: one_to_one.then(|| "resegment".into()),
+                    number: revision_no,
+                    formed_at,
+                    recorded_at,
+                },
             )
             .await?;
             if one_to_one {
@@ -224,23 +235,15 @@ impl MemoryService {
         subject: SubjectId,
         revisions: Vec<EpisodeRevisionId>,
     ) -> Result<Vec<EpisodeView>> {
-        let mut views = Vec::with_capacity(revisions.len());
-        for revision in revisions {
-            views.push(self.episode_revision(subject, revision).await?);
-        }
-        Ok(views)
-    }
-}
-
-async fn partition_producer_in(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    producer: Option<&ProducerSignature>,
-) -> Result<Option<Uuid>> {
-    match producer {
-        Some(producer) => Ok(Some(
-            AuthorityStore::register_producer_in(tx, producer).await?,
-        )),
-        None => Ok(None),
+        let ids = revisions.iter().map(|id| id.0).collect::<Vec<_>>();
+        let mut views = self.episode_views(subject, &ids).await?;
+        ids.into_iter()
+            .map(|id| {
+                views
+                    .remove(&id)
+                    .ok_or_else(|| Error::NotFound("Episode partition result not found".into()))
+            })
+            .collect()
     }
 }
 
@@ -321,7 +324,6 @@ async fn lock_sources(
             || row.get::<String, _>("acceptance_state") != "accepted"
             || row.get::<String, _>("integrity_state") != "valid"
             || row.get::<String, _>("suppression_state") != "normal"
-            || row.get::<String, _>("purge_state") != "normal"
         {
             return Err(nous_core::DomainError::new(
                 nous_core::DomainErrorCode::StaleRevision,
@@ -389,28 +391,30 @@ async fn unchanged_partition(
 }
 
 async fn validate_partition_occurrences(
+    service: &MemoryService,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     input: &EpisodePartitionInput,
 ) -> Result<Vec<DateTime<Utc>>> {
-    let ids: Vec<Uuid> = input.ordered_occurrences.iter().map(|id| id.0).collect();
-    let rows = sqlx::query("SELECT o.occurrence_id,o.observed_at FROM observation_occurrences o JOIN experience_items e ON e.occurrence_id=o.occurrence_id AND e.subject_id=o.subject_id WHERE o.subject_id=$1 AND o.occurrence_id=ANY($2::uuid[]) ORDER BY o.observed_at,e.recorded_seq FOR SHARE OF o,e")
-        .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
-    if rows.len() != ids.len() {
+    let times = service
+        .material
+        .lock_occurrences_in(tx, input.subject, &input.ordered_occurrences)
+        .await?;
+    let ordered = service
+        .cognition
+        .lock_experience_order_in(tx, input.subject, &input.ordered_occurrences)
+        .await?;
+    if ordered.len() != input.ordered_occurrences.len() {
         return Err(Error::FailedPrecondition(
-            "partition occurrence is foreign or missing".into(),
+            "partition occurrence has no recorded experience".into(),
         ));
     }
-    let ordered: Vec<Uuid> = rows.iter().map(|row| row.get("occurrence_id")).collect();
-    if ordered != ids {
+    if ordered != input.ordered_occurrences {
         return Err(Error::Invalid(
             "partition members must follow experience chronology".into(),
         ));
     }
-    let times: std::collections::HashMap<Uuid, DateTime<Utc>> = rows
+    ordered
         .into_iter()
-        .map(|row| (row.get("occurrence_id"), row.get("observed_at")))
-        .collect();
-    ids.into_iter()
         .map(|id| {
             times
                 .get(&id)
@@ -423,10 +427,9 @@ async fn validate_partition_occurrences(
 fn partition_payload(
     input: &EpisodePartitionInput,
     segment: &EpisodePartitionSegment,
-    track: &str,
     parent: Option<Uuid>,
     occurrences: &[DateTime<Utc>],
-) -> Result<EpisodeInput> {
+) -> Result<EpisodeContent> {
     let occurrence_members: Vec<OccurrenceId> = segment
         .member_indices
         .iter()
@@ -455,10 +458,7 @@ fn partition_payload(
             end: Some(end),
         }
     };
-    let payload = EpisodeInput {
-        operation_id: input.operation_id,
-        subject: input.subject,
-        track_key: track.to_owned(),
+    let payload = EpisodeContent {
         title: segment.title.clone(),
         parent_episode_revision_id: parent.map(EpisodeRevisionId),
         experience_time,
@@ -483,14 +483,7 @@ fn partition_payload(
             })
             .collect(),
     };
-    validate_episode_input(
-        track,
-        &payload.title,
-        &payload.experience_time,
-        &payload.boundary_explanation,
-        &payload.members,
-        &payload.basis,
-    )?;
+    payload.validate()?;
     Ok(payload)
 }
 

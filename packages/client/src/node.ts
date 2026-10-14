@@ -24,7 +24,7 @@ export function connectNous(baseUrl: string, token: string) {
   return {
     ...client,
     artifacts: artifactUploads(baseUrl, token, (options) =>
-      client.material.limits({}, options),
+      client.material.getLimits({}, options),
     ),
   };
 }

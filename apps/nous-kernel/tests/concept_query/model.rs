@@ -38,7 +38,7 @@ pub(crate) async fn check_model_catalog_activity(
         preparation_token: token,
         ..Default::default()
     };
-    let bound = rt.cognition.bind_query(input.clone()).await.unwrap();
+    let bound = rt.cognition.bind_query(input.clone(), rt).await.unwrap();
     let materials = vec![k::QueryEmbedding {
         text: bound.representation.text.clone(),
         space_hash: probe.space().space_hash,
@@ -58,7 +58,7 @@ pub(crate) async fn check_model_catalog_activity(
         .unwrap();
     let activation = service
         .activate_query(tonic::Request::new(k::KernelQueryRequest {
-            embeddings: materials,
+            embedding: materials.into_iter().next(),
             ..activate(token.to_string())
         }))
         .await
@@ -145,7 +145,7 @@ pub(crate) async fn check_model_catalog_activity(
     let token = rt
         .cognition
         .retain_prepared_query(test_support::query_reservation(
-            rt.cognition.bind_query(input.clone()).await.unwrap(),
+            rt.cognition.bind_query(input.clone(), rt).await.unwrap(),
         ))
         .unwrap();
     let activation = service
@@ -164,7 +164,7 @@ pub(crate) async fn check_model_catalog_activity(
     let token = rt
         .cognition
         .retain_prepared_query(test_support::query_reservation(
-            rt.cognition.bind_query(input.clone()).await.unwrap(),
+            rt.cognition.bind_query(input.clone(), rt).await.unwrap(),
         ))
         .unwrap();
     assert_eq!(

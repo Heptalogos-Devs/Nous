@@ -112,42 +112,34 @@ impl ConfigurationService for KernelService {
             if let Some(subject) = subject {
                 self.0.store.require_subject(subject).await?;
             }
-            let active = match subject {
-                Some(s) => self.0.configuration.snapshot_for_subject(s)?,
-                None => self.0.configuration.active_system_snapshot()?,
-            };
-            let desired = match subject {
-                Some(s) => self.0.configuration.desired_snapshot_for_subject(s)?,
-                None => self.0.configuration.desired_system_snapshot()?,
-            };
-            let snapshot = match p::ConfigurationView::try_from(r.view)
+            let desired = match p::ConfigurationView::try_from(r.view)
                 .map_err(|_| Error::Invalid("invalid configuration view".into()))?
             {
-                p::ConfigurationView::Unspecified | p::ConfigurationView::Active => &active,
-                p::ConfigurationView::Desired => &desired,
+                p::ConfigurationView::Unspecified | p::ConfigurationView::Active => false,
+                p::ConfigurationView::Desired => true,
             };
-            for path in &r.paths {
-                if self.0.configuration.registry().descriptor(path).is_none() {
-                    return Err(Error::Invalid(format!(
-                        "unknown configuration path: {path}"
-                    )));
-                }
-            }
+            let paths = if r.paths.is_empty() {
+                self.0
+                    .configuration
+                    .registry()
+                    .descriptors()
+                    .filter(|d| visible(d, limit, r.owner.as_deref(), r.category.as_deref()))
+                    .map(|d| d.path.clone())
+                    .collect()
+            } else {
+                r.paths
+            };
+            let (snapshot, pending) = self.0.configuration.view(subject, desired, &paths)?;
             let entries = snapshot
                 .descriptors()
-                .filter(|d| {
-                    (r.paths.is_empty()
-                        && visible(d, limit, r.owner.as_deref(), r.category.as_deref()))
-                        || r.paths.contains(&d.path)
-                })
+                .filter(|d| paths.contains(&d.path))
                 .map(|d| p::ConfigurationEntry {
                     path: d.path.clone(),
                     value: snapshot.json(&d.path).cloned().map(value),
                     source: enum_name(snapshot.source(&d.path).expect("resolved source")),
                     owner: d.owner.clone(),
                     apply_mode: enum_name(d.apply_mode),
-                    pending_effect: (active.json(&d.path) != desired.json(&d.path))
-                        .then(|| "restart_required".into()),
+                    pending_effect: pending.contains(&d.path).then(|| "restart_required".into()),
                 })
                 .collect();
             Ok(p::ConfigurationSnapshot {
@@ -172,7 +164,7 @@ impl ConfigurationService for KernelService {
                     OperationId(id(&r.operation_id)?),
                     &r.path,
                     json(required(r.value, "value")?),
-                    Some(required(r.expected_revision, "expected_revision")?),
+                    r.expected_revision,
                 )
                 .await
                 .map(change)
@@ -190,7 +182,7 @@ impl ConfigurationService for KernelService {
                 .clear_system_override(
                     OperationId(id(&r.operation_id)?),
                     &r.path,
-                    Some(required(r.expected_revision, "expected_revision")?),
+                    r.expected_revision,
                 )
                 .await
                 .map(change)
@@ -212,7 +204,7 @@ impl ConfigurationService for KernelService {
                     subject,
                     &r.path,
                     json(required(r.value, "value")?),
-                    Some(required(r.expected_revision, "expected_revision")?),
+                    r.expected_revision,
                 )
                 .await
                 .map(change)
@@ -233,7 +225,7 @@ impl ConfigurationService for KernelService {
                     OperationId(id(&r.operation_id)?),
                     subject,
                     &r.path,
-                    Some(required(r.expected_revision, "expected_revision")?),
+                    r.expected_revision,
                 )
                 .await
                 .map(change)

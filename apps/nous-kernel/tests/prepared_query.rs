@@ -4,7 +4,6 @@
 mod test_support;
 use nous_core::*;
 use nous_memory::CreateTagRequest;
-use nous_subject::{CognitiveSeedInput, CreateSubject};
 use test_support::*;
 
 fn query(subject: SubjectId) -> CognitiveQuery {
@@ -38,22 +37,7 @@ fn query(subject: SubjectId) -> CognitiveQuery {
 async fn preparation_captures_work_context_exact_sources_and_frozen_policy_without_serving() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
-    let subject = runtime
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&runtime).await;
     let entity = EntityRef::new("entity:alice-opaque").unwrap();
     runtime
         .store
@@ -72,7 +56,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         OperationId::new(),
         "Alice plans the Nous Wave release",
     );
-    input.aboutness = vec![entity.clone()];
+    input.content.aboutness = vec![entity.clone()];
     let memory = runtime
         .require_memory()
         .unwrap()
@@ -94,12 +78,14 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         .create_tag(
             subject,
             CreateTagRequest {
-                operation_id: OperationId::new(),
-                label: "Release planning".into(),
-                description: Some("Subject release checkpoint".into()),
-                kind_hint: None,
-                origin: "host_explicit".into(),
                 producer: None,
+                operation_id: OperationId::new(),
+                content: nous_memory::TagContent {
+                    label: "Release planning".into(),
+                    description: Some("Subject release checkpoint".into()),
+                    kind_hint: None,
+                },
+                origin: "host_explicit".into(),
             },
         )
         .await
@@ -112,9 +98,9 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             subject,
             purpose: "Nous Wave release preparation".into(),
             unresolved_questions: vec!["Alice's pending release tasks".into()],
-            constraints: serde_json::json!({}),
-            resume_conditions: vec![],
-            budget_summary: serde_json::json!({}),
+            constraints: serde_json::json!({"review_rule":"Do not deploy without Alice approval"}),
+            resume_conditions: vec!["Continue when Alice has reviewed the release".into()],
+            budget_summary: serde_json::json!({"task_effort":"One release review remains"}),
             context_text: "TASK CONTEXT ".repeat(150),
             entity_anchors: vec![entity.clone()],
             tag_anchors: vec![pinned_tag],
@@ -133,13 +119,116 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         )
         .await
         .unwrap();
+    let (page, more) = runtime
+        .cognition
+        .list_work_contexts(subject, 1, None)
+        .await
+        .unwrap();
+    assert!(!more);
+    assert_eq!(page[0].work_context_id, context.work_context_id);
+    assert_eq!(page[0].cognition_anchors, context.cognition_anchors);
+    assert_eq!(page[0].entity_anchors, context.entity_anchors);
+    assert_eq!(page[0].tag_anchors, context.tag_anchors);
+    let projection = nous_kernel::transport::KernelService(runtime.clone())
+        .build_contribution_batch(nous_protocol::public::ProjectionRequest {
+            subject_id: subject.0.to_string(),
+            session_id: session.session_id.0.to_string(),
+            consumer_id: "default".into(),
+            max_items: 1,
+            max_text_bytes: 256,
+            memory_requirement: "REQUIRED".into(),
+            runtime_requirement: "FORBIDDEN".into(),
+            resource_requirement: "FORBIDDEN".into(),
+            materialize: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        projection.active_work_context_id.as_deref(),
+        Some(context.work_context_id.to_string().as_str())
+    );
+    assert_eq!(projection.segments.len(), 1);
+    assert!(!projection.segments[0].text.is_empty());
+    let service = nous_kernel::transport::KernelService(runtime.clone());
+    let foreground_request = nous_protocol::public::ProjectionRequest {
+        subject_id: subject.0.to_string(),
+        session_id: session.session_id.0.to_string(),
+        consumer_id: "default".into(),
+        max_items: 1,
+        max_text_bytes: 96,
+        memory_requirement: "OPTIONAL".into(),
+        runtime_requirement: "REQUIRED".into(),
+        resource_requirement: "FORBIDDEN".into(),
+        materialize: true,
+        ..Default::default()
+    };
+    let foreground = service
+        .build_contribution_batch(foreground_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(foreground.segments.len(), 1);
+    assert_eq!(foreground.segments[0].source_refs[0].kind, "work_context");
+    assert_eq!(
+        foreground.segments[0].source_refs[0].value,
+        context.work_context_id.to_string()
+    );
+    assert!(
+        foreground.segments[0]
+            .text
+            .contains("Nous Wave release preparation")
+    );
+    assert!(
+        foreground.segments[0]
+            .text
+            .contains("Alice's pending release tasks")
+    );
+    assert!(foreground.segments[0].text.contains("TASK CONTEXT"));
+    assert!(foreground.segments[0].text.len() <= 96);
+    assert_eq!(
+        foreground.segments[0].authority,
+        "external_current_authority"
+    );
+    let mut entity_request = foreground_request;
+    entity_request.max_items = 2;
+    entity_request.max_text_bytes = 4096;
+    let with_entity = service
+        .build_contribution_batch(entity_request)
+        .await
+        .unwrap();
+    assert!(
+        with_entity.segments[0]
+            .text
+            .contains("Do not deploy without Alice approval")
+    );
+    assert!(
+        with_entity.segments[0]
+            .text
+            .contains("One release review remains")
+    );
+    assert!(
+        with_entity.segments[0]
+            .text
+            .contains("Continue when Alice has reviewed the release")
+    );
+    let entity_source = with_entity
+        .segments
+        .iter()
+        .find(|segment| segment.source_refs[0].kind == "entity")
+        .unwrap();
+    assert_eq!(entity_source.text, "Alice (A)");
+    assert_eq!(entity_source.authority, "external_current_authority");
     let mut request = query(subject);
     request.session = Some(session.session_id);
     request
         .expression
         .cues
         .push(Cue::Entity(EntityCue { entity_ref: entity }));
-    let first = runtime.cognition.bind_query(request.clone()).await.unwrap();
+    let first = runtime
+        .cognition
+        .bind_query(request.clone(), &runtime)
+        .await
+        .unwrap();
     assert!(
         first
             .representation
@@ -151,11 +240,33 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         first
             .representation
             .text
+            .contains("Do not deploy without Alice approval")
+    );
+    assert!(
+        first
+            .representation
+            .text
+            .contains("One release review remains")
+    );
+    assert!(
+        first
+            .representation
+            .text
+            .contains("Continue when Alice has reviewed the release")
+    );
+    assert!(
+        first
+            .representation
+            .text
             .contains("Alice plans the Nous Wave release")
     );
     assert!(!first.representation.text.contains("UNRELATED HISTORY"));
     assert!(!first.representation.text.contains("entity:alice-opaque"));
-    assert!(first.runtime_refs.contains(&reference));
+    assert!(
+        first
+            .runtime_sources()
+            .any(|source| source.reference == reference)
+    );
     assert_eq!(
         first
             .context_snapshot
@@ -178,25 +289,17 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
                     && tag.source == nous_runtime::ActivationSource::WorkContext)
         );
         assert_eq!(
-            selected.context_snapshot.digest,
-            first.context_snapshot.digest
+            selected.context_snapshot.source_refs,
+            first.context_snapshot.source_refs
         );
         assert_eq!(selected.representation.sha256, first.representation.sha256);
     }
-    assert_eq!(
-        first.context_snapshot.digest,
-        first
-            .for_profile(nous_runtime::CognitiveProfile::NousNodePotential)
-            .unwrap()
-            .context_snapshot
-            .digest
-    );
     assert!(
         first
-            .representation
+            .context_snapshot
             .source_refs
             .iter()
-            .any(|(r, source)| r == &reference && source == "work_context")
+            .any(|source| source.reference == reference && source.origin == "work_context")
     );
     assert!(
         runtime
@@ -210,7 +313,10 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         .for_profile(nous_runtime::CognitiveProfile::VcpDtsc)
         .unwrap();
     assert_eq!(selected.representation.sha256, first.representation.sha256);
-    assert_eq!(selected.runtime_refs, first.runtime_refs);
+    assert_eq!(
+        selected.context_snapshot.source_refs,
+        first.context_snapshot.source_refs
+    );
     assert_eq!(
         selected
             .config_snapshot
@@ -249,7 +355,11 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         .cognition
         .take_prepared_query(subject, token)
         .unwrap();
-    let timed = runtime.cognition.bind_query(query(subject)).await.unwrap();
+    let timed = runtime
+        .cognition
+        .bind_query(query(subject), &runtime)
+        .await
+        .unwrap();
     let timed_token = runtime
         .cognition
         .retain_prepared_query(
@@ -295,15 +405,11 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             subject,
             work_context_id: context.work_context_id,
             expected_revision: context.revision,
-            purpose: "Nous Wave release stabilization".into(),
-            unresolved_questions: context.unresolved_questions,
-            constraints: context.constraints,
-            resume_conditions: context.resume_conditions,
-            budget_summary: context.budget_summary,
-            context_text: String::new(),
-            entity_anchors: vec![],
-            tag_anchors: vec![],
-            cognition_anchors: context.cognition_anchors,
+            intent: nous_runtime::WorkContextIntent::Fields(nous_runtime::WorkContextFields {
+                purpose: Some("Nous Wave release stabilization".into()),
+                context_text: Some(String::new()),
+                ..Default::default()
+            }),
         })
         .await
         .unwrap();
@@ -323,14 +429,22 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             .contains(&"TASK CONTEXT ".repeat(100))
     );
     assert_eq!(
-        frozen.bound.context_snapshot.digest,
-        first.context_snapshot.digest
+        frozen.bound.context_snapshot.source_refs,
+        first.context_snapshot.source_refs
     );
-    let changed = runtime.cognition.bind_query(request).await.unwrap();
+    let changed = runtime
+        .cognition
+        .bind_query(request, &runtime)
+        .await
+        .unwrap();
     assert_ne!(changed.representation.sha256, first.representation.sha256);
     let mut runtime_query = query(subject);
     runtime_query.session = Some(session.session_id);
-    let frozen_runtime = runtime.cognition.bind_query(runtime_query).await.unwrap();
+    let frozen_runtime = runtime
+        .cognition
+        .bind_query(runtime_query, &runtime)
+        .await
+        .unwrap();
     let newer_source = observation(&runtime, subject, "Bob reports an unrelated task").await;
     let newer = runtime
         .require_memory()
@@ -384,7 +498,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
     assert!(
         runtime
             .cognition
-            .bind_query(raw.clone())
+            .bind_query(raw.clone(), &runtime)
             .await
             .unwrap()
             .representation
@@ -392,5 +506,5 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             .contains("What did I discuss yesterday?")
     );
     raw.session = Some(session.session_id);
-    assert!(runtime.cognition.bind_query(raw).await.is_ok());
+    assert!(runtime.cognition.bind_query(raw, &runtime).await.is_ok());
 }

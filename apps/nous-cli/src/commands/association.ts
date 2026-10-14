@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CliError, boundedInteger } from "../agent.js";
-import { associationInput, associationBasis } from "../mutation-input.js";
+import { CreateAssociationRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
+import { content, page } from "../content.js";
 import type { CliEnvironment } from "../runtime.js";
 
 export async function associationCommands(
@@ -10,14 +11,24 @@ export async function associationCommands(
   action: string | undefined,
   argument?: string,
 ) {
-  const {
-    client,
-    values,
-    subjectId,
-    required,
-    resolveReference,
-    requestPayload,
-  } = env;
+  const { client, values, required, resolveReference } = env;
+  const subjectId = await env.subjectId;
+  if (action === "list")
+    return client.concepts.listAssociations({
+      subjectId,
+      status: env.values.status,
+      page: page(env),
+    });
+  if (action === "get")
+    return client.concepts.getAssociation({
+      subjectId,
+      id: (
+        await resolveReference(
+          required(argument, "Association reference"),
+          "association",
+        )
+      ).value,
+    });
   if (action === "revoke") {
     const operationId = values["operation-id"] ?? crypto.randomUUID();
     const associationId = (
@@ -37,7 +48,7 @@ export async function associationCommands(
     const text = required(argument, "Reference");
     const kind = values.kind ?? "";
     const root = await resolveReference(text, kind);
-    return client.concepts.neighborhood({
+    return client.concepts.getNeighborhood({
       subjectId,
       root,
       maxNodes: boundedInteger(values["max-nodes"], 1, 256, "--max-nodes"),
@@ -45,22 +56,10 @@ export async function associationCommands(
     });
   }
   if (action === "create") {
-    const input = associationInput.parse(
-      await requestPayload(values["association-file"]),
-    );
-    return client.concepts.associate({
+    return client.concepts.createAssociation({
+      ...(await content(env, CreateAssociationRequestSchema)),
       subjectId,
       operationId: values["operation-id"] ?? crypto.randomUUID(),
-      association: {
-        from: await resolveReference(input.from),
-        to: await resolveReference(input.to),
-        relationKind: input.relation,
-        polarity: input.polarity,
-        basisClass: input.basis_class,
-        basis: await Promise.all(
-          input.basis.map((entry) => associationBasis(env, entry)),
-        ),
-      },
     });
   }
 

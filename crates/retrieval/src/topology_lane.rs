@@ -165,7 +165,7 @@ fn source_seeds(graph: &crate::WaveGraphGeneration, bound: &BoundQuery) -> Vec<S
     for seed in &bound.activation.seeds {
         if let Some(node) = graph.node_id(&seed.reference) {
             let default = match seed.origin.as_str() {
-                "runtime_situation" => 0.85,
+                "runtime_situation" | "runtime_resident" => 0.85,
                 "entity_cue" => 0.90,
                 "tag_cue" | "existing_semantic_match" => 0.75,
                 _ => 1.0,
@@ -230,7 +230,7 @@ fn promoted_seeds(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{WaveConfig, WaveGraphGeneration, WaveNode, WaveNodeKind};
+    use crate::{WaveConfig, WaveGraphGeneration, WaveNode};
     use nous_core::{CognitiveRef, MemoryRevisionId};
     #[test]
     fn promotion_uses_only_bounded_current_graph_signals_and_configured_weight() {
@@ -246,10 +246,6 @@ mod tests {
                 .map(|(id, reference)| WaveNode {
                     serving_id: id as u32,
                     reference: reference.clone(),
-                    node_kind: WaveNodeKind::Memory,
-                    embedding_key: None,
-                    posting_key: None,
-                    intrinsic_residual_gain: None,
                 })
                 .collect(),
             &[],

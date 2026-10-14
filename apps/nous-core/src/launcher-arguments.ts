@@ -6,6 +6,7 @@
 const consumerValueOptions = new Set([
   "--run-root",
   "--instance-root",
+  "--state-root",
   "--consumer",
   "--subject",
   "--session",

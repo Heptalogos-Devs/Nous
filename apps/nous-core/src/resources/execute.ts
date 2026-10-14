@@ -5,7 +5,6 @@ import { create } from "@bufbuild/protobuf";
 import { ExternalResourceResultSchema } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_pb.js";
 import {
   ExternalResourceRecordSchema,
-  StableExternalRefSchema,
   type ResourceAction,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { ResourceProviderError } from "./adapter.js";
@@ -56,9 +55,12 @@ export async function executeResourceActions(
       );
       if (action.currentAuthority || action.materialize) {
         for (const record of records) {
-          const material = await adapter.materialize(record.reference, signal);
-          record.versionStatus = material.version.status;
-          record.accessStatus = material.access.status;
+          const [version, access] = await Promise.all([
+            adapter.checkVersion(record.reference, signal),
+            adapter.checkAccess(record.reference, signal),
+          ]);
+          record.versionStatus = version;
+          record.accessStatus = access;
         }
       }
       results.push(
@@ -67,13 +69,7 @@ export async function executeResourceActions(
           resourceRef: action.resourceRef,
           status: "success",
           records: records.map((record) =>
-            create(ExternalResourceRecordSchema, {
-              ...record,
-              reference: create(StableExternalRefSchema, {
-                ...record.reference,
-                entryVersion: record.reference.entryVersion ?? undefined,
-              }),
-            }),
+            create(ExternalResourceRecordSchema, record),
           ),
         }),
       );

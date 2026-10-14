@@ -45,6 +45,21 @@ pub struct DownloadChunk {
     #[prost(bytes="vec", tag="1")]
     pub content: ::prost::alloc::vec::Vec<u8>,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MaterializedChunk {
+    #[prost(oneof="materialized_chunk::Part", tags="1, 2")]
+    pub part: ::core::option::Option<materialized_chunk::Part>,
+}
+/// Nested message and enum types in `MaterializedChunk`.
+pub mod materialized_chunk {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Part {
+        #[prost(message, tag="1")]
+        Header(super::super::super::v1alpha1::MaterializedEvidence),
+        #[prost(bytes, tag="2")]
+        Content(::prost::alloc::vec::Vec<u8>),
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MaintenanceNeed {
     #[prost(string, tag="1")]
@@ -65,12 +80,6 @@ pub struct MaintenanceNeed {
     pub priority: i32,
     #[prost(string, tag="9")]
     pub state: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="10")]
-    pub lease_token: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag="11")]
-    pub lease_until: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(int32, tag="12")]
-    pub attempt_count: i32,
     #[prost(string, optional, tag="13")]
     pub last_problem_code: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="14")]
@@ -83,27 +92,27 @@ pub struct MaintenanceNeed {
     pub trigger_revision: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ClaimMaintenanceRequest {
+pub struct SelectMaintenanceRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
     #[prost(string, repeated, tag="2")]
     pub allowed_kinds: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(uint32, tag="3")]
     pub limit: u32,
-    #[prost(uint32, tag="4")]
-    pub lease_seconds: u32,
     #[prost(string, optional, tag="5")]
     pub model_execution_digest: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="6")]
+    pub after: ::core::option::Option<MaintenanceNeed>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ClaimMaintenanceResponse {
+pub struct SelectMaintenanceResponse {
     #[prost(message, repeated, tag="1")]
     pub needs: ::prost::alloc::vec::Vec<MaintenanceNeed>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FinishMaintenanceRequest {
     #[prost(message, optional, tag="1")]
-    pub claimed: ::core::option::Option<MaintenanceNeed>,
+    pub selected: ::core::option::Option<MaintenanceNeed>,
     #[prost(string, tag="2")]
     pub disposition: ::prost::alloc::string::String,
     #[prost(message, optional, tag="3")]
@@ -209,8 +218,6 @@ pub struct MaintenancePolicy {
     pub poll_interval_seconds: u32,
     #[prost(uint32, tag="3")]
     pub max_operations: u32,
-    #[prost(uint32, tag="4")]
-    pub worker_lease_seconds: u32,
     #[prost(message, optional, tag="5")]
     pub cognitive_now: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(uint32, tag="6")]
@@ -229,7 +236,7 @@ pub struct MaintenancePolicy {
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PlanMaintenanceRequest {
     #[prost(message, optional, tag="1")]
-    pub claimed: ::core::option::Option<MaintenanceNeed>,
+    pub selected: ::core::option::Option<MaintenanceNeed>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ExperienceMember {
@@ -315,7 +322,7 @@ pub struct MaintenancePlan {
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RefreshMaintenanceRequest {
     #[prost(message, optional, tag="1")]
-    pub claimed: ::core::option::Option<MaintenanceNeed>,
+    pub selected: ::core::option::Option<MaintenanceNeed>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConsolidationCandidate {
@@ -425,21 +432,10 @@ pub struct ExpectedCognition {
     #[prost(string, tag="3")]
     pub object_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct WorkflowLease {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub owner: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub operation_key: ::prost::alloc::string::String,
-    #[prost(string, tag="4")]
-    pub token: ::prost::alloc::string::String,
-}
 /// Only the semantic owner interprets payload_json. Dependencies are explicit;
 /// storage and purge never inspect the domain payload for references.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct WorkflowPayload {
+pub struct ResultPayload {
     #[prost(string, tag="1")]
     pub payload_json: ::prost::alloc::string::String,
     #[prost(message, repeated, tag="2")]
@@ -448,24 +444,22 @@ pub struct WorkflowPayload {
     pub purged: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct MaintenanceClaim {
+pub struct MaintenanceTrigger {
     #[prost(string, tag="1")]
     pub need_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub lease_token: ::prost::alloc::string::String,
     #[prost(int64, tag="3")]
     pub trigger_authority_seq: i64,
     #[prost(uint64, tag="4")]
     pub trigger_revision: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct WorkflowSnapshot {
-    #[prost(message, optional, tag="1")]
-    pub content: ::core::option::Option<WorkflowPayload>,
+pub struct ModelResultContext {
+    #[prost(message, repeated, tag="1")]
+    pub dependencies: ::prost::alloc::vec::Vec<super::super::v1alpha1::CognitiveRef>,
     #[prost(message, optional, tag="2")]
     pub cognitive_formed_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="3")]
-    pub maintenance_claim: ::core::option::Option<MaintenanceClaim>,
+    pub maintenance_trigger: ::core::option::Option<MaintenanceTrigger>,
 }
 /// Absent usage is unknown, including for attempts with an unknown outcome.
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
@@ -525,19 +519,36 @@ pub struct QueryEmbedding {
     #[prost(float, repeated, tag="4")]
     pub vector: ::prost::alloc::vec::Vec<f32>,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryHostCapabilities {
+    #[prost(bool, tag="1")]
+    pub embedding_available: bool,
+    #[prost(bool, tag="2")]
+    pub embedding_required: bool,
+    #[prost(bool, tag="3")]
+    pub enrichment_available: bool,
+    #[prost(bool, tag="4")]
+    pub enrichment_required: bool,
+    #[prost(bool, tag="5")]
+    pub rerank_available: bool,
+    #[prost(bool, tag="6")]
+    pub rerank_required: bool,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrepareQueryRequest {
     #[prost(message, optional, tag="1")]
     pub query: ::core::option::Option<super::super::v1alpha1::QueryRequest>,
     #[prost(bool, tag="2")]
-    pub reserve_execution: bool,
+    pub execute_query: bool,
     #[prost(uint32, tag="3")]
     pub lease_seconds: u32,
+    #[prost(message, optional, tag="4")]
+    pub host: ::core::option::Option<QueryHostCapabilities>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KernelQueryRequest {
-    #[prost(message, repeated, tag="2")]
-    pub embeddings: ::prost::alloc::vec::Vec<QueryEmbedding>,
+    #[prost(message, optional, tag="2")]
+    pub embedding: ::core::option::Option<QueryEmbedding>,
     #[prost(uint32, optional, tag="3")]
     pub validated_candidate_limit: ::core::option::Option<u32>,
     #[prost(string, tag="4")]
@@ -635,15 +646,25 @@ pub struct EmbeddingNeedsResponse {
     pub next_cursor: ::core::option::Option<EmbeddingCursor>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CommitEmbeddingRequest {
+pub struct EmbeddingSubmission {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
+    #[prost(message, optional, tag="2")]
+    pub material: ::core::option::Option<QueryEmbedding>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CommitEmbeddingsRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag="2")]
-    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
-    #[prost(message, optional, tag="3")]
-    pub material: ::core::option::Option<QueryEmbedding>,
-    #[prost(string, optional, tag="4")]
+    #[prost(string, optional, tag="2")]
     pub preparation_token: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="3")]
+    pub items: ::prost::alloc::vec::Vec<EmbeddingSubmission>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CommitEmbeddingsResponse {
+    #[prost(uint32, tag="1")]
+    pub committed: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitInterpretationRequest {
@@ -665,6 +686,8 @@ pub struct CommitInterpretationRequest {
     pub quality: ::core::option::Option<::prost_types::Struct>,
     #[prost(message, optional, tag="13")]
     pub structured_payload: ::core::option::Option<::prost_types::Struct>,
+    #[prost(message, optional, tag="14")]
+    pub operation_identity: ::core::option::Option<OperationIdentity>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DescriptionSegment {
@@ -680,8 +703,8 @@ pub struct DescriptionSegments {
     #[prost(message, repeated, tag="1")]
     pub segments: ::prost::alloc::vec::Vec<DescriptionSegment>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ReserveWorkflowRequest {
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OperationIdentity {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
@@ -690,50 +713,47 @@ pub struct ReserveWorkflowRequest {
     pub operation_key: ::prost::alloc::string::String,
     #[prost(string, tag="4")]
     pub semantic_digest: ::prost::alloc::string::String,
-    #[prost(uint32, tag="10")]
-    pub lease_seconds: u32,
-    #[prost(message, optional, tag="11")]
-    pub snapshot: ::core::option::Option<WorkflowSnapshot>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct WorkflowReservation {
-    #[prost(bool, tag="5")]
-    pub busy: bool,
-    #[prost(message, optional, tag="7")]
-    pub snapshot: ::core::option::Option<WorkflowSnapshot>,
-    #[prost(message, optional, tag="8")]
-    pub proposal: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="9")]
-    pub outcome: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="10")]
+pub struct OperationRecord {
+    #[prost(message, optional, tag="1")]
+    pub context: ::core::option::Option<ModelResultContext>,
+    #[prost(message, optional, tag="2")]
+    pub proposal: ::core::option::Option<ResultPayload>,
+    #[prost(message, optional, tag="3")]
+    pub outcome: ::core::option::Option<ResultPayload>,
+    #[prost(message, optional, tag="4")]
     pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
-    #[prost(message, optional, tag="11")]
-    pub lease: ::core::option::Option<WorkflowLease>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SaveWorkflowRequest {
-    #[prost(message, optional, tag="8")]
-    pub proposal: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="9")]
-    pub outcome: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="10")]
+pub struct SaveOperationRequest {
+    #[prost(message, optional, tag="1")]
+    pub identity: ::core::option::Option<OperationIdentity>,
+    #[prost(message, optional, tag="2")]
+    pub proposal: ::core::option::Option<ResultPayload>,
+    #[prost(message, optional, tag="3")]
+    pub outcome: ::core::option::Option<ResultPayload>,
+    #[prost(message, optional, tag="4")]
     pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
-    #[prost(string, repeated, tag="11")]
+    #[prost(string, repeated, tag="5")]
     pub mutation_operations: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(message, optional, tag="12")]
-    pub lease: ::core::option::Option<WorkflowLease>,
+    #[prost(message, optional, tag="6")]
+    pub context: ::core::option::Option<ModelResultContext>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReleaseWorkflowRequest {
-    #[prost(message, optional, tag="5")]
-    pub lease: ::core::option::Option<WorkflowLease>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ResolvedMentionsRequest {
+pub struct PrepareFormationRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
     pub occurrence_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="3")]
+    pub representation_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag="4")]
+    pub audio_description: bool,
+    #[prost(bool, tag="5")]
+    pub resolved_mentions: bool,
+    #[prost(uint64, tag="6")]
+    pub max_bytes: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResolvedMention {
@@ -745,33 +765,11 @@ pub struct ResolvedMention {
     pub entity_ref: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ResolvedMentionsResponse {
-    #[prost(message, repeated, tag="1")]
+pub struct PreparedFormation {
+    #[prost(message, optional, tag="1")]
+    pub source: ::core::option::Option<super::super::v1alpha1::MaterializedEvidence>,
+    #[prost(message, repeated, tag="2")]
     pub candidates: ::prost::alloc::vec::Vec<ResolvedMention>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct FindWorkflowRequest {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub owner: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub operation_key: ::prost::alloc::string::String,
-    #[prost(string, tag="4")]
-    pub semantic_digest: ::prost::alloc::string::String,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct FoundWorkflow {
-    #[prost(bool, tag="1")]
-    pub found: bool,
-    #[prost(message, optional, tag="6")]
-    pub snapshot: ::core::option::Option<WorkflowSnapshot>,
-    #[prost(message, optional, tag="7")]
-    pub proposal: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="8")]
-    pub outcome: ::core::option::Option<WorkflowPayload>,
-    #[prost(message, optional, tag="9")]
-    pub execution_telemetry: ::core::option::Option<ExecutionTelemetry>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct QueryActivationResponse {

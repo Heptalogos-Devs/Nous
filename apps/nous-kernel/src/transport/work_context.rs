@@ -3,7 +3,10 @@
 
 use super::*;
 use nous_core::{EntityRef, OperationId, Result, SessionId, SubjectId, TagId};
-use nous_runtime::{CreateWorkContextInput, UpdateWorkContextInput};
+use nous_runtime::{
+    CreateWorkContextInput, UpdateWorkContextInput, WorkContextAnchors, WorkContextClearScope,
+    WorkContextFields, WorkContextIntent,
+};
 
 fn view(value: nous_runtime::WorkContextView) -> p::WorkContext {
     p::WorkContext {
@@ -101,10 +104,27 @@ impl KernelService {
         input: p::ListWorkContextsRequest,
     ) -> Result<p::ListWorkContextsResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
-        let values = self.0.cognition.list_work_contexts(subject).await?;
+        let scope = format!("work_contexts:{}", subject.0);
+        let (limit, after) = page(input.page, &scope)?;
+        let (values, more) = self
+            .0
+            .cognition
+            .list_work_contexts(subject, limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                values
+                    .last()
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .work_context_id,
+            )
+        } else {
+            String::new()
+        };
         Ok(p::ListWorkContextsResponse {
             items: values.into_iter().map(view).collect(),
-            next_page_token: String::new(),
+            next_page_token,
         })
     }
 
@@ -121,27 +141,39 @@ impl KernelService {
                 subject,
                 work_context_id: id(&input.work_context_id)?,
                 expected_revision: input.expected_revision,
-                purpose: input.purpose,
-                unresolved_questions: input.unresolved_questions,
-                constraints: object(input.constraints),
-                resume_conditions: input.resume_conditions,
-                budget_summary: object(input.budget_summary),
-                context_text: input.context_text,
-                entity_anchors: input
-                    .entity_anchors
-                    .into_iter()
-                    .map(EntityRef::new)
-                    .collect::<Result<_>>()?,
-                tag_anchors: input
-                    .tag_anchors
-                    .into_iter()
-                    .map(|v| Ok(TagId(id(&v)?)))
-                    .collect::<Result<_>>()?,
-                cognition_anchors: input
-                    .cognition_anchors
-                    .into_iter()
-                    .map(from_ref)
-                    .collect::<Result<_>>()?,
+                intent: match input
+                    .intent
+                    .ok_or_else(|| Error::Invalid("WorkContext intent is required".into()))?
+                {
+                    p::update_work_context_request::Intent::Fields(fields) => {
+                        WorkContextIntent::Fields(WorkContextFields {
+                            purpose: fields.purpose,
+                            unresolved_questions: fields.unresolved_questions.map(|v| v.values),
+                            constraints: fields.constraints.map(|v| object(Some(v))),
+                            resume_conditions: fields.resume_conditions.map(|v| v.values),
+                            budget_summary: fields.budget_summary.map(|v| object(Some(v))),
+                            context_text: fields.context_text,
+                        })
+                    }
+                    p::update_work_context_request::Intent::Pin(anchors) => {
+                        WorkContextIntent::Pin(anchor_input(anchors)?)
+                    }
+                    p::update_work_context_request::Intent::Unpin(anchors) => {
+                        WorkContextIntent::Unpin(anchor_input(anchors)?)
+                    }
+                    p::update_work_context_request::Intent::Clear(scope) => {
+                        WorkContextIntent::Clear(match scope {
+                            1 => WorkContextClearScope::Text,
+                            2 => WorkContextClearScope::Anchors,
+                            3 => WorkContextClearScope::All,
+                            _ => {
+                                return Err(Error::Invalid(
+                                    "WorkContext clear scope is required".into(),
+                                ));
+                            }
+                        })
+                    }
+                },
             })
             .await?;
         Ok(p::WorkContextResponse {
@@ -272,4 +304,24 @@ impl KernelService {
                 },
             )
     }
+}
+
+fn anchor_input(input: p::WorkContextAnchors) -> Result<WorkContextAnchors> {
+    Ok(WorkContextAnchors {
+        cognition_anchors: input
+            .cognition_anchors
+            .into_iter()
+            .map(from_ref)
+            .collect::<Result<_>>()?,
+        entity_anchors: input
+            .entity_anchors
+            .into_iter()
+            .map(EntityRef::new)
+            .collect::<Result<_>>()?,
+        tag_anchors: input
+            .tag_anchors
+            .into_iter()
+            .map(|v| Ok(TagId(id(&v)?)))
+            .collect::<Result<_>>()?,
+    })
 }

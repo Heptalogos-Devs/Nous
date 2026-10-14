@@ -8,6 +8,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -16,7 +17,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { BundledPackage } from "./bundle.js";
 const execute = promisify(execFile);
-let repo = "";
 export async function preparedPublicFile(repositoryRoot: string, url: string) {
   const key = createHash("sha256").update(url).digest("hex");
   return readFile(
@@ -28,93 +28,27 @@ export async function preparedPublicFile(repositoryRoot: string, url: string) {
     );
   });
 }
-async function publicFile(url: string) {
+async function publicFile(repositoryRoot: string, url: string) {
   const key = createHash("sha256").update(url).digest("hex");
-  const cache = join(repo, "data", "cache", "licenses", key);
+  const cache = join(repositoryRoot, "data", "cache", "licenses", key);
   const cached = await readFile(cache, "utf8").catch(() => undefined);
   if (cached !== undefined) return cached;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(30000),
-        headers: { connection: "close" },
-      });
-      if (response.status === 404) return undefined;
-      if (!response.ok) throw new Error("Public notice fetch failed");
-      const content = await response.text();
-      await mkdir(dirname(cache), { recursive: true });
-      await writeFile(cache, content);
-      return content;
-    } catch (error) {
-      if (attempt === 1) {
-        const source =
-          /^https:\/\/raw\.githubusercontent\.com\/([^/]+\/[^/]+)\/([^/]+)\/(.+)$/.exec(
-            url,
-          );
-        if (!source) throw error;
-        try {
-          const response = await execute(
-            "gh",
-            [
-              "api",
-              `repos/${source[1]}/contents/${source[3]}?ref=${source[2]}`,
-              "--jq",
-              ".content",
-            ],
-            { windowsHide: true, maxBuffer: 2 * 1024 * 1024 },
-          );
-          const content = Buffer.from(
-            response.stdout.replaceAll(/\s/g, ""),
-            "base64",
-          ).toString("utf8");
-          await mkdir(dirname(cache), { recursive: true });
-          await writeFile(cache, content);
-          return content;
-        } catch (fallback) {
-          if (
-            fallback instanceof Error &&
-            "stderr" in fallback &&
-            String(fallback.stderr).includes("HTTP 404")
-          )
-            return undefined;
-          throw error;
-        }
-      }
-    }
-  }
-  throw new Error("Public notice unavailable");
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  if (response.status === 404) return undefined;
+  if (!response.ok)
+    throw new Error(`Public notice fetch failed: HTTP ${response.status}`);
+  const content = await response.text();
+  await mkdir(dirname(cache), { recursive: true });
+  await writeFile(cache, content);
+  return content;
 }
 
-async function noticeKey(
-  repositoryRoot: string,
-  packages: Map<string, BundledPackage>,
-) {
-  const hash = createHash("sha256");
-  for (const name of [
-    "Cargo.lock",
-    "Cargo.toml",
-    "pnpm-lock.yaml",
-    "LICENSE",
-    "scripts/release/notices.ts",
-    "scripts/release/manifest.ts",
-    "data/runtime/manifest/runtimes.json",
-  ])
-    hash.update(await readFile(join(repositoryRoot, name)));
-  hash.update(
-    JSON.stringify(
-      [...packages.values()]
-        .map(({ name, version, license }) => ({ name, version, license }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    ),
-  );
-  return hash.digest("hex");
-}
 export async function prepareNotices(
   repositoryRoot: string,
   packages: Map<string, BundledPackage>,
   runtimeRoot = workspacePaths.runtime,
 ) {
-  repo = repositoryRoot;
+  const repo = repositoryRoot;
   const catalog = JSON.parse(
     await readFile(join(runtimeRoot, "manifest/runtimes.json"), "utf8"),
   ) as {
@@ -138,17 +72,11 @@ export async function prepareNotices(
     "deps/sqlite/sqlite3.h",
   ])
     await publicFile(
+      repo,
       `https://raw.githubusercontent.com/nodejs/node/v${node.version}/${path}`,
     );
-  const output = join(
-    workspacePaths.cache,
-    "release/notices",
-    await noticeKey(repo, packages),
-  );
-  const existing = await readFile(join(output, "inventory.json"), "utf8").catch(
-    () => undefined,
-  );
-  if (existing) return output;
+  const output = join(workspacePaths.cache, "release/notices/current");
+  await rm(output, { recursive: true, force: true });
   await mkdir(output, { recursive: true });
   await mkdir(join(output, "licenses/npm"), { recursive: true });
   await cp(
@@ -183,11 +111,11 @@ export async function prepareNotices(
         );
       let base = `https://raw.githubusercontent.com/${match[1]}/v${pkg.version}/`;
       let licenseSource = base + "LICENSE";
-      let response = await publicFile(licenseSource);
+      let response = await publicFile(repo, licenseSource);
       if (response === undefined) {
         base = `https://raw.githubusercontent.com/${match[1]}/${encodeURI(pkg.name + "@" + pkg.version)}/`;
         licenseSource = base + "LICENSE";
-        response = await publicFile(licenseSource);
+        response = await publicFile(repo, licenseSource);
       }
       if (response !== undefined)
         await writeFile(join(destination, "LICENSE"), response);
@@ -208,13 +136,13 @@ export async function prepareNotices(
         const url = new URL(linked[1]!);
         url.protocol = "https:";
         licenseSource = url.toString();
-        const license = await publicFile(licenseSource);
+        const license = await publicFile(repo, licenseSource);
         if (license === undefined)
           throw new Error("Publisher license source unavailable: " + pkg.name);
         await writeFile(join(destination, "LICENSE.html"), license);
         await writeFile(join(destination, "README-license-source.md"), readme);
       }
-      const notice = await publicFile(base + "NOTICE");
+      const notice = await publicFile(repo, base + "NOTICE");
       if (notice !== undefined)
         await writeFile(join(destination, "NOTICE"), notice);
       await writeFile(
@@ -283,11 +211,7 @@ export async function loadNotices(
   packages: Map<string, BundledPackage>,
   output: string,
 ) {
-  const cache = join(
-    workspacePaths.cache,
-    "release/notices",
-    await noticeKey(repositoryRoot, packages),
-  );
+  const cache = join(workspacePaths.cache, "release/notices/current");
   const metadata = JSON.parse(
     await readFile(join(cache, "inventory.json"), "utf8").catch(() => {
       throw new Error(
@@ -303,6 +227,33 @@ export async function loadNotices(
       root: string;
     };
   };
+  const expectedNpm = [...packages.values()].map(
+    ({ name, version, license }) => ({ name, version, license }),
+  );
+  const npmIdentity = (
+    items: { name: string; version: string; license: string }[],
+  ) =>
+    JSON.stringify(
+      items.toSorted((a, b) =>
+        `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`),
+      ),
+    );
+  if (npmIdentity(metadata.inventory) !== npmIdentity(expectedNpm))
+    throw new Error(
+      "Prepared npm licenses do not match the bundled dependencies; run release:notices",
+    );
+  const { components, relationships } =
+    await kernelDependencies(repositoryRoot);
+  if (
+    JSON.stringify({ components, relationships }) !==
+    JSON.stringify({
+      components: metadata.kernelClosure.components,
+      relationships: metadata.kernelClosure.relationships,
+    })
+  )
+    throw new Error(
+      "Prepared native licenses do not match the Kernel dependencies; run release:notices",
+    );
   await cp(join(cache, "licenses"), join(output, "licenses"), {
     recursive: true,
   });
@@ -337,8 +288,7 @@ export type Relationship = {
   relatedSpdxElement: string;
 };
 
-/** The release graph excludes test-only edges and records build inputs explicitly. */
-async function kernelInventory(repositoryRoot: string, bundleRoot: string) {
+async function kernelDependencies(repositoryRoot: string) {
   const executeCargo = promisify(execFile);
   const metadata = JSON.parse(
     (
@@ -347,6 +297,7 @@ async function kernelInventory(repositoryRoot: string, bundleRoot: string) {
         [
           "metadata",
           "--locked",
+          "--offline",
           "--format-version",
           "1",
           "--filter-platform",
@@ -391,8 +342,64 @@ async function kernelInventory(repositoryRoot: string, bundleRoot: string) {
   const ids = new Map(
     ordered.map((id, index) => [id, `SPDXRef-cargo-${index}`]),
   );
-  const cargoComponents: Component[] = [];
   const relationships: Relationship[] = [];
+  for (const id of ordered) {
+    for (const dep of nodes.get(id)?.deps ?? []) {
+      if (!selected.has(dep.pkg)) continue;
+      const kinds = new Set(
+        dep.dep_kinds
+          .filter((kind) => kind.kind !== "dev")
+          .map((kind) => kind.kind),
+      );
+      for (const kind of kinds)
+        relationships.push({
+          spdxElementId: ids.get(kind === "build" ? dep.pkg : id)!,
+          relationshipType:
+            kind === "build" ? "BUILD_DEPENDENCY_OF" : "DEPENDS_ON",
+          relatedSpdxElement: ids.get(kind === "build" ? id : dep.pkg)!,
+        });
+    }
+  }
+  const components: Component[] = ordered.map((id) => {
+    const pkg = cargoPackages.get(id);
+    if (!pkg) throw new Error("Release dependency package missing");
+    return {
+      id: ids.get(id)!,
+      name: pkg.name,
+      version: pkg.version,
+      license: pkg.license?.replaceAll(/\s*\/\s*/g, " OR ") ?? "NOASSERTION",
+      source: pkg.source?.startsWith("registry+")
+        ? `https://crates.io/api/v1/crates/${pkg.name}/${pkg.version}/download`
+        : (pkg.source ?? "NOASSERTION"),
+      purpose: buildOnly.has(id)
+        ? "OTHER"
+        : pkg.name === "nous-kernel"
+          ? "APPLICATION"
+          : "LIBRARY",
+    };
+  });
+  return {
+    cargoPackages,
+    nodes,
+    kernel,
+    selected,
+    ordered,
+    ids,
+    components,
+    relationships,
+  };
+}
+
+/** The release graph excludes test-only edges and records build inputs explicitly. */
+async function kernelInventory(repositoryRoot: string, bundleRoot: string) {
+  const {
+    cargoPackages,
+    kernel,
+    ordered,
+    ids,
+    components: cargoComponents,
+    relationships,
+  } = await kernelDependencies(repositoryRoot);
   const missingNotices: string[] = [];
   for (const id of ordered) {
     const pkg = cargoPackages.get(id);
@@ -482,7 +489,7 @@ async function kernelInventory(repositoryRoot: string, bundleRoot: string) {
             "NOTICE",
           ]) {
             const url = `https://raw.githubusercontent.com/${repository}/${revision}/${name}`;
-            const notice = await publicFile(url);
+            const notice = await publicFile(repositoryRoot, url);
             if (notice === undefined) continue;
             const filename = name.replaceAll("/", "_");
             await writeFile(join(destination, filename), notice);
@@ -498,7 +505,7 @@ async function kernelInventory(repositoryRoot: string, bundleRoot: string) {
     if (!notices && pkg.name === "htmlescape" && pkg.version === "0.3.1") {
       // The published crate grants Apache/MIT/MPL alternatives; its old repository is unavailable.
       const source = "https://www.apache.org/licenses/LICENSE-2.0.txt";
-      const license = await publicFile(source);
+      const license = await publicFile(repositoryRoot, source);
       if (!license) throw new Error("Apache license text unavailable");
       await writeFile(join(destination, "LICENSE-APACHE"), license);
       await writeFile(
@@ -511,35 +518,6 @@ async function kernelInventory(repositoryRoot: string, bundleRoot: string) {
       notices++;
     }
     if (!notices) missingNotices.push(pkg.name + "@" + pkg.version);
-    cargoComponents.push({
-      id: ids.get(id)!,
-      name: pkg.name,
-      version: pkg.version,
-      license: pkg.license?.replaceAll(/\s*\/\s*/g, " OR ") ?? "NOASSERTION",
-      source: pkg.source?.startsWith("registry+")
-        ? `https://crates.io/api/v1/crates/${pkg.name}/${pkg.version}/download`
-        : (pkg.source ?? "NOASSERTION"),
-      purpose: buildOnly.has(id)
-        ? "OTHER"
-        : pkg.name === "nous-kernel"
-          ? "APPLICATION"
-          : "LIBRARY",
-    });
-    for (const dep of nodes.get(id)?.deps ?? []) {
-      if (!selected.has(dep.pkg)) continue;
-      const kinds = new Set(
-        dep.dep_kinds
-          .filter((kind) => kind.kind !== "dev")
-          .map((kind) => kind.kind),
-      );
-      for (const kind of kinds)
-        relationships.push({
-          spdxElementId: ids.get(kind === "build" ? dep.pkg : id)!,
-          relationshipType:
-            kind === "build" ? "BUILD_DEPENDENCY_OF" : "DEPENDS_ON",
-          relatedSpdxElement: ids.get(kind === "build" ? id : dep.pkg)!,
-        });
-    }
   }
   return {
     components: cargoComponents,

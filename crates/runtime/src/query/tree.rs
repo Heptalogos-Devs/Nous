@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{BoundQuery, CognitiveContributors, QueryPlan, planned_lanes};
+use super::{BoundQuery, CognitiveContributors, QueryPlan};
 use crate::CognitiveRuntimeService;
 use nous_core::*;
 use std::collections::{BTreeMap, HashMap};
@@ -164,10 +164,6 @@ pub(super) fn combine(
     result
 }
 
-fn allocation(total: usize, index: usize, branches: usize) -> usize {
-    total / branches + usize::from(index < total % branches)
-}
-
 impl CognitiveRuntimeService {
     #[expect(
         clippy::too_many_lines,
@@ -208,7 +204,8 @@ impl CognitiveRuntimeService {
         let mut outputs = Vec::new();
         let mut snapshots = Vec::new();
         for (index, scope) in scopes.into_iter().enumerate() {
-            let validation_budget = allocation(plan.final_validation_budget, index, count);
+            let validation_budget =
+                QueryPlan::allocation(plan.final_validation_budget, index, count);
             if validation_budget == 0 && scope.is_some() {
                 result.status = QueryStatus::Partial;
                 result.degradation.push(Degradation {
@@ -224,6 +221,21 @@ impl CognitiveRuntimeService {
             branch.source_query.expression = scope;
             branch.source_query.expression.preferences.clear();
             branch.exact_bindings.retain(|binding| branch.source_query.expression.targets.iter().any(|target| matches!(target, QueryTarget::Exact { reference } if reference == &binding.requested_ref)));
+            let explicit = super::bind::expression_sources(&branch.source_query);
+            let sources = branch
+                .context_snapshot
+                .source_refs
+                .iter()
+                .filter(|source| {
+                    source.is_runtime()
+                        || explicit.iter().any(|requested| {
+                            (requested.requested_ref == source.requested_ref
+                                || requested.reference == source.reference)
+                                && requested.origin == source.origin
+                        })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
             branch.activation = bound.activation.scoped(
                 &branch.source_query,
                 branch
@@ -231,51 +243,12 @@ impl CognitiveRuntimeService {
                     .iter()
                     .map(|binding| binding.bound_ref.clone())
                     .collect(),
-                &branch.topology_seed_refs,
+                &sources,
             );
-            let mut local = planned_lanes(&branch.source_query);
-            if !branch.source_query.is_exact_read()
-                && bound.concept_enrichment != super::ConceptEnrichment::Off
-            {
-                local.push(EvidenceFamily::TagDirect);
-                local.sort();
-                local.dedup();
-            }
-            branch.lane_budgets = plan
-                .lane_budgets
-                .iter()
-                .map(|(&lane, &total)| {
-                    (
-                        lane,
-                        if local.contains(&lane) {
-                            allocation(total, index, count)
-                        } else {
-                            0
-                        },
-                    )
-                })
-                .collect();
-            branch.enabled_lanes = local
-                .into_iter()
-                .filter(|lane| branch.lane_budget(*lane) > 0)
-                .collect();
+            let branch_plan = plan.for_leaf(&mut branch, index, count);
             if branch.enabled_lanes.is_empty() && !branch.source_query.requests_resources() {
                 outputs.push(Vec::new());
                 continue;
-            }
-            let mut branch_plan = plan.clone();
-            branch_plan.enabled_lanes = branch.enabled_lanes.clone();
-            branch_plan.lane_budgets = branch.lane_budgets.clone();
-            branch_plan.candidate_limit = branch.lane_budgets.values().copied().max().unwrap_or(0);
-            branch_plan.final_validation_budget = validation_budget;
-            branch_plan.topology_nodes = allocation(plan.topology_nodes, index, count);
-            branch_plan.resource_limit = allocation(plan.resource_limit, index, count);
-            branch_plan.expand_topology =
-                branch.enabled_lanes.contains(&EvidenceFamily::TopologyWave);
-            if branch.source_query.is_exact_read() {
-                branch.concept_enrichment = super::ConceptEnrichment::Off;
-                branch_plan.concept_enrichment = super::ConceptEnrichment::Off;
-                branch_plan.sense_cues = false;
             }
             let mut value = self
                 .query_atom_with_plan(
@@ -287,7 +260,8 @@ impl CognitiveRuntimeService {
                 .await?;
             snapshots.push(super::types::BoundLeaf {
                 ordinal: index,
-                bound: branch,
+                expression: branch.source_query.expression,
+                exact_bindings: branch.exact_bindings,
                 hits: value
                     .results
                     .iter()
@@ -335,7 +309,6 @@ impl CognitiveRuntimeService {
         }
         finalize(&bound, &mut result, outputs, output_limit);
         Ok(super::QueryExecution {
-            read_lease: None,
             bound,
             result,
             leaves: snapshots,

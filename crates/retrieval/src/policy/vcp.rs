@@ -58,6 +58,15 @@ impl VcpAssetPolicy {
         let value = serde_json::to_value(self).map_err(|e| Error::Invalid(e.to_string()))?;
         serde_json::from_value::<Self>(value).map_err(|e| Error::Invalid(e.to_string()))?;
         if self.graph.min_reverse_gain > self.graph.max_reverse_gain
+            || self.graph.hub_floor > self.graph.hub_ceiling
+            || self.graph.semantic_sigma <= 0.0
+            || !(0.0..=1.0).contains(&self.graph.outbound_mass)
+            || !(0.0..=1.0).contains(&self.graph.association_reserve_mass)
+            || self.graph.outbound_mass + self.graph.association_reserve_mass > 1.0
+            || self.intrinsic.min_neighbors > self.intrinsic.max_neighbors
+            || self.intrinsic.max_basis == 0
+            || self.intrinsic.semantic_sigma <= 0.0
+            || self.intrinsic.v9_anchor_min > self.intrinsic.v9_anchor_max
             || !(8..=128).contains(&self.epa_anchors)
             || !(1..=128).contains(&self.epa_max_basis)
             || !(4..=128).contains(&self.epa_samples_per_anchor)
@@ -158,6 +167,15 @@ impl VcpQueryPolicy {
             || self.sense.max_safe_hops > 64
             || self.sense.max_propagation_states < 100
             || self.fields.max_iterations == 0
+            || !(0.0..1.0).contains(&self.fields.local_alpha)
+            || !(0.0..1.0).contains(&self.fields.transfer_alpha)
+            || self.fields.local_tolerance <= 0.0
+            || self.fields.transfer_tolerance <= 0.0
+            || !(0.0..=1.0).contains(&self.fields.local_mass_ratio)
+            || !(0.0..=1.0).contains(&self.fields.transfer_mass_ratio)
+            || self.sense.max_neighbors_per_node == 0
+            || !(0.0..=1.0).contains(&self.sense.return_flow_factor)
+            || !(0.0..=1.0).contains(&self.fusion.deduplication_threshold)
         {
             return Err(Error::Invalid("invalid VCP query policy bounds".into()));
         }
@@ -176,6 +194,15 @@ impl VcpReadoutPolicy {
     pub fn validate(&self) -> Result<()> {
         let value = serde_json::to_value(self).map_err(|e| Error::Invalid(e.to_string()))?;
         serde_json::from_value::<Self>(value).map_err(|e| Error::Invalid(e.to_string()))?;
+        if self.dtsc.curve.weak_contact_threshold > self.dtsc.curve.strong_contact_threshold
+            || self.dtsc.curve.min_geo_samples == 0
+            || self.dtsc.sparse.pair_saturation == 0
+            || self.dtsc.field.max_field_neighbors == 0
+            || self.dtsc.field.field_kernel_exponent <= 0.0
+            || !(0.0..=1.0).contains(&self.dtsc.field.field_energy_mass_ratio)
+        {
+            return Err(Error::Invalid("invalid VCP readout policy bounds".into()));
+        }
         Ok(())
     }
 }

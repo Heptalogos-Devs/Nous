@@ -3,9 +3,9 @@
 
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { parseArgs } from "node:util";
 import { repositoryRoot as repo, workspacePaths } from "../workspace.js";
-import { readFile, stat } from "node:fs/promises";
 import { resolveLocations } from "../../apps/nous-core/src/locations.js";
 import { installRuntime } from "../../apps/nous-core/src/runtime-packs.js";
 import {
@@ -13,55 +13,40 @@ import {
   preparePostgresXmlLibrary,
 } from "./postgres-linux.js";
 
-const installation =
-  process.env.NOUS_WAVE_POSTGRES_RUNTIME ??
-  join(workspacePaths.installedRuntime, "postgresql");
-const executable = join(
-  installation,
-  "bin",
-  process.platform === "win32" ? "postgres.exe" : "postgres",
-);
-if (await stat(executable).catch(() => undefined)) {
-  const version = await promisify(execFile)(executable, ["--version"], {
-    windowsHide: true,
-  });
-  if (!/PostgreSQL\) 18\.6(?:\s|$)/.test(version.stdout))
-    throw new Error("Developer PostgreSQL must be version 18.6");
-} else if (process.platform === "win32") {
-  const locations = await resolveLocations({
-    home: workspacePaths.development,
-    installationHome: repo,
-    programRoot: workspacePaths.runtime,
-    runtimeRoot: workspacePaths.installedRuntime,
-  });
-  const catalog = JSON.parse(
-    await readFile(
-      join(workspacePaths.runtime, "manifest/runtimes.json"),
-      "utf8",
-    ),
-  ) as {
-    packs: {
-      component: string;
-      platform: string;
-      arch: string;
-      archive: string;
-    }[];
-  };
-  const pack = catalog.packs.find(
-    (p) =>
-      p.component === "postgresql" &&
-      p.platform === process.platform &&
-      p.arch === process.arch,
+const { values } = parseArgs({
+  options: { home: { type: "string" }, locator: { type: "string" } },
+});
+const override = process.env.NOUS_WAVE_POSTGRES_RUNTIME
+  ? resolve(process.env.NOUS_WAVE_POSTGRES_RUNTIME)
+  : undefined;
+if (override && basename(override) !== "postgresql")
+  throw new Error(
+    "NOUS_WAVE_POSTGRES_RUNTIME must select RuntimeRoot/postgresql; use the same RuntimeRoot in the serve locator",
   );
-  if (!pack)
-    throw new Error("Prepare a PostgreSQL runtime pack and catalog first");
+const locations = await resolveLocations({
+  home:
+    values.home ?? (values.locator ? undefined : workspacePaths.development),
+  locator: values.locator,
+  installationHome: repo,
+  programRoot: repo,
+  runtimeRoot: override ? dirname(override) : workspacePaths.installedRuntime,
+});
+const installation = join(locations.runtime, "postgresql");
+if (override && override !== installation)
+  throw new Error(
+    "NOUS_WAVE_POSTGRES_RUNTIME disagrees with the selected locator RuntimeRoot/postgresql",
+  );
+if (process.platform === "win32") {
   await installRuntime(
-    locations,
+    { ...locations, program: workspacePaths.runtime },
     "postgresql",
-    join(workspacePaths.runtime, "packs", pack.archive),
   );
 } else {
-  const prepare = (env: NodeJS.ProcessEnv = process.env) =>
+  const environment = {
+    ...process.env,
+    NOUS_WAVE_POSTGRES_RUNTIME: installation,
+  };
+  const prepare = (env: NodeJS.ProcessEnv = environment) =>
     promisify(execFile)(
       "cargo",
       [
@@ -86,7 +71,7 @@ if (await stat(executable).catch(() => undefined)) {
       throw error;
     const libraryRoot = await preparePostgresXmlLibrary();
     await prepare({
-      ...process.env,
+      ...environment,
       LD_LIBRARY_PATH: [libraryRoot, process.env.LD_LIBRARY_PATH]
         .filter(Boolean)
         .join(":"),

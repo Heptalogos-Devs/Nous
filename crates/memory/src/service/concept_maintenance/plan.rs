@@ -5,29 +5,47 @@ use super::*;
 use sqlx::Row;
 const CURRENT_FOCUS: &str = r#"
 WITH current AS (
- SELECT 'memory_revision'::text kind,o.current_revision_id id,o.object_epoch epoch FROM memory_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'cognitive_schema_revision',o.current_revision_id,o.object_epoch FROM cognitive_schemas o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'episode_revision',o.current_revision_id,o.object_epoch FROM episode_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
- UNION ALL SELECT 'journal_revision',o.current_revision_id,o.object_epoch FROM journal_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal'
-) SELECT epoch FROM current WHERE kind=$2 AND id=$3
+ SELECT 'memory_revision'::text kind,o.current_revision_id id,o.object_epoch epoch FROM memory_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+ UNION ALL SELECT 'cognitive_schema_revision',o.current_revision_id,o.object_epoch FROM cognitive_schemas o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+ UNION ALL SELECT 'episode_revision',o.current_revision_id,o.object_epoch FROM episode_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+ UNION ALL SELECT 'journal_revision',o.current_revision_id,o.object_epoch FROM journal_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
+) SELECT kind,id FROM current JOIN unnest($2::text[],$3::uuid[]) requested(kind,id) USING(kind,id)
 "#;
 impl MemoryService {
-    pub(super) async fn current_concept_epoch(
+    async fn current_concept_references(
         &self,
         subject: SubjectId,
-        reference: &CognitiveRef,
-    ) -> Result<Option<i64>> {
-        let (kind, value) = reference_parts(reference);
-        let id: Uuid = value
-            .parse()
-            .map_err(|_| Error::Invalid("concept focus must be exact cognition".into()))?;
-        sqlx::query_scalar(CURRENT_FOCUS)
+        references: &[CognitiveRef],
+    ) -> Result<std::collections::HashSet<CognitiveRef>> {
+        let (kinds, ids): (Vec<_>, Vec<_>) = references
+            .iter()
+            .map(|reference| {
+                let (kind, value) = reference_parts(reference);
+                Ok((
+                    kind,
+                    value.parse::<Uuid>().map_err(|_| {
+                        Error::Invalid("concept focus must be exact cognition".into())
+                    })?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .unzip();
+        sqlx::query(CURRENT_FOCUS)
             .bind(subject.0)
-            .bind(kind)
-            .bind(id)
-            .fetch_optional(self.store.pool())
+            .bind(kinds)
+            .bind(ids)
+            .fetch_all(self.store.pool())
             .await
-            .map_err(db)
+            .map_err(db)?
+            .into_iter()
+            .map(|row| {
+                parse_reference(
+                    &row.try_get::<String, _>("kind").map_err(db)?,
+                    &row.try_get::<Uuid, _>("id").map_err(db)?.to_string(),
+                )
+            })
+            .collect()
     }
     #[expect(
         clippy::too_many_lines,
@@ -42,24 +60,13 @@ impl MemoryService {
         let policy = snapshot.get(CONCEPT_MAINTENANCE)?;
         let config_digest = snapshot.digest_for(&[CONCEPT_MAINTENANCE.path(), ACCRETION.path()])?;
         let sequence = self.store.authority_seq(subject).await?;
-        let epoch = self
-            .current_concept_epoch(subject, &focus)
-            .await?
-            .ok_or_else(|| {
-                Error::NotFound("concept focus is no longer current and eligible".into())
-            })?;
-        let text = self
-            .store
-            .query_descriptors(subject, std::slice::from_ref(&focus))
-            .await?
-            .into_iter()
-            .next()
-            .ok_or_else(|| Error::NotFound("concept focus descriptor unavailable".into()))?
-            .text
-            .chars()
-            .take(4096)
-            .collect::<String>();
-        let (source_basis, entities) = self.concept_focus_sources(subject, &focus).await?;
+        let projected = self
+            .concept_focus(subject, &focus, &resolve_accessibility_policy(&snapshot)?)
+            .await?;
+        let epoch = projected.epoch;
+        let text = projected.text.clone();
+        let source_basis = projected.basis.clone();
+        let entities = projected.entities.clone();
         let mut basis = BTreeMap::new();
         basis.insert(
             "s0".into(),
@@ -103,7 +110,7 @@ impl MemoryService {
             .iter()
             .filter(|root| root.certainty == EvidenceRootCertainty::Known)
             .count();
-        let focus_context = self.concept_focus_context(subject, &focus, &basis).await?;
+        let focus_context = projected.context(&basis);
         let mut cognition = vec![
             serde_json::json!({"key":"c0","kind":reference_parts(&focus).0,"epoch":epoch,"text":text,"exactBasisKey":"s0","context":focus_context,"distinctRoots":distinct_roots}),
         ];
@@ -113,30 +120,40 @@ impl MemoryService {
                 neighbors.push(reference);
             }
         }
-        for reference in neighbors.iter().filter(|r| *r != &focus).take(8) {
-            if !matches!(
-                reference,
-                CognitiveRef::MemoryRevision(_)
-                    | CognitiveRef::CognitiveSchemaRevision(_)
-                    | CognitiveRef::EpisodeRevision(_)
-                    | CognitiveRef::JournalRevision(_)
-            ) {
-                continue;
-            }
-            if self
-                .current_concept_epoch(subject, reference)
-                .await?
-                .is_none()
-            {
-                continue;
-            }
-            if let Some(descriptor) = self
-                .store
-                .query_descriptors(subject, std::slice::from_ref(reference))
-                .await?
-                .into_iter()
-                .next()
-            {
+        let neighbors = neighbors
+            .into_iter()
+            .filter(|reference| reference != &focus)
+            .take(8)
+            .filter(|reference| {
+                matches!(
+                    reference,
+                    CognitiveRef::MemoryRevision(_)
+                        | CognitiveRef::CognitiveSchemaRevision(_)
+                        | CognitiveRef::EpisodeRevision(_)
+                        | CognitiveRef::JournalRevision(_)
+                )
+            })
+            .collect::<Vec<_>>();
+        let eligible = self.current_concept_references(subject, &neighbors).await?;
+        let mut descriptors = self
+            .query_descriptors(
+                subject,
+                &neighbors
+                    .iter()
+                    .filter(|reference| eligible.contains(*reference))
+                    .map(|reference| (reference.clone(), true))
+                    .collect::<Vec<_>>(),
+                CognitiveEffort::Maximum,
+                self.cognition.now(subject),
+                &snapshot,
+                None,
+            )
+            .await?
+            .into_iter()
+            .map(|descriptor| (descriptor.reference.clone(), descriptor))
+            .collect::<std::collections::HashMap<_, _>>();
+        for reference in &neighbors {
+            if let Some(descriptor) = descriptors.remove(reference) {
                 let key = format!("c{}", cognition.len());
                 let basis_key = format!("s{}", basis.len());
                 basis.insert(
@@ -156,12 +173,13 @@ impl MemoryService {
         let mut entity_input = Vec::new();
         for descriptor in self
             .store
-            .query_descriptors(
+            .identity_descriptors(
                 subject,
                 &entities
                     .into_iter()
                     .map(CognitiveRef::Entity)
                     .collect::<Vec<_>>(),
+                None,
             )
             .await?
         {
@@ -221,17 +239,25 @@ impl MemoryService {
                 partial = true;
             }
         }
-        let (kind, value) = reference_parts(&focus);
-        let use_rows=sqlx::query("SELECT consumer_ref,event_id,use_kind FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind=$2 AND ref_value=$3 AND use_kind IN ('referenced','acted_on','result_supported','corrected','pinned') ORDER BY occurred_at DESC,event_id LIMIT 4")
-            .bind(subject.0).bind(kind).bind(value).fetch_all(self.store.pool()).await.map_err(db)?;
-        for row in use_rows {
+        for event in self
+            .cognition
+            .recent_use_events(
+                subject,
+                &focus,
+                &[
+                    "referenced",
+                    "acted_on",
+                    "result_supported",
+                    "corrected",
+                    "pinned",
+                ],
+                4,
+            )
+            .await?
+        {
             basis.insert(
                 format!("s{}", basis.len()),
-                AssociationBasis::UseEvent(UseEventRef {
-                    subject_id: subject,
-                    consumer_ref: row.try_get("consumer_ref").map_err(db)?,
-                    event_id: UseEventId(row.try_get("event_id").map_err(db)?),
-                }),
+                AssociationBasis::UseEvent(event),
             );
         }
         let accretion_policy = snapshot.get(ACCRETION)?;
@@ -301,7 +327,7 @@ impl MemoryService {
         if entities.is_empty() {
             return Ok(Vec::new());
         }
-        let rows:Vec<Uuid>=sqlx::query_scalar("SELECT r.memory_revision_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' AND r.memory_revision_id::text<>$2 AND EXISTS(SELECT 1 FROM memory_revision_aboutness a WHERE a.memory_revision_id=r.memory_revision_id AND a.entity_ref=ANY($3::text[])) ORDER BY ts_rank_cd(to_tsvector('simple',r.representation_text),to_tsquery('simple',replace(plainto_tsquery('simple',$4)::text,' & ',' | '))) DESC,r.recorded_at DESC,r.memory_revision_id LIMIT 8")
+        let rows:Vec<Uuid>=sqlx::query_scalar("SELECT r.memory_revision_id FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND r.memory_revision_id::text<>$2 AND EXISTS(SELECT 1 FROM memory_revision_aboutness a WHERE a.memory_revision_id=r.memory_revision_id AND a.entity_ref=ANY($3::text[])) ORDER BY ts_rank_cd(to_tsvector('simple',r.representation_text),to_tsquery('simple',replace(plainto_tsquery('simple',$4)::text,' & ',' | '))) DESC,r.recorded_at DESC,r.memory_revision_id LIMIT 8")
             .bind(subject.0).bind(reference_parts(focus).1).bind(entities.iter().map(|entity|entity.as_str()).collect::<Vec<_>>()).bind(text).fetch_all(self.store.pool()).await.map_err(db)?;
         Ok(rows
             .into_iter()

@@ -9,8 +9,10 @@ message UploadHeader { string subject_id = 1; string media_type = 2; }
 message UploadChunk { oneof part { UploadHeader header = 1; bytes content = 2; } }
 message DownloadRequest { string subject_id = 1; string artifact_id = 2; optional uint64 start = 3; optional uint64 end = 4; }
 message DownloadChunk { bytes content = 1; }
+message MaterializedChunk { oneof part { nous.wave.v1alpha1.MaterializedEvidence header = 1; bytes content = 2; } }
 service ArtifactStreamService {
   rpc UploadArtifact(stream UploadChunk) returns (nous.wave.v1alpha1.Artifact);
   rpc DownloadArtifact(DownloadRequest) returns (stream DownloadChunk);
+  rpc MaterializeEvidence(nous.wave.v1alpha1.MaterializeRequest) returns (stream MaterializedChunk);
 }
 

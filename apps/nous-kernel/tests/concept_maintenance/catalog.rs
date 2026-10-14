@@ -27,15 +27,13 @@ pub(super) async fn assert_wire_catalog(
         created_at: Some(ts(first.created_at)),
         updated_at: Some(ts(first.updated_at)),
         state: first.state.clone(),
-        lease_token: first.lease_token.map(|t| t.to_string()),
-        lease_until: first.lease_until.map(ts),
         ..Default::default()
     };
     let service = nous_kernel::transport::KernelService(rt.clone());
     let reply = KernelMaintenanceService::plan_maintenance(
         &service,
         tonic::Request::new(k::PlanMaintenanceRequest {
-            claimed: Some(wire.clone()),
+            selected: Some(wire.clone()),
         }),
     )
     .await
@@ -61,7 +59,7 @@ pub(super) async fn assert_wire_catalog(
         KernelMaintenanceService::plan_maintenance(
             &service,
             tonic::Request::new(k::PlanMaintenanceRequest {
-                claimed: Some(wrong_scope)
+                selected: Some(wrong_scope)
             })
         )
         .await

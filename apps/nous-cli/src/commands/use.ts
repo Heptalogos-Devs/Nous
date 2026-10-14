@@ -8,7 +8,9 @@ export async function useCommands(
   env: CliEnvironment,
   action: string | undefined,
 ) {
-  const { client, values, state, subjectId, required, resolveReference } = env;
+  const { client, values, required, resolveReference } = env;
+  const subjectId = await env.subjectId;
+  const state = await env.state;
   const kind = values.kind ?? "referenced";
   if (
     ![
@@ -57,9 +59,9 @@ export async function useCommands(
       "RESULT_SUBJECT_MISMATCH",
       "No query is saved for this Subject",
     );
-  return client.cognition.reportUse({
+  return client.runtime.reportUse({
     subjectId,
-    sessionId: state.sessionId,
+    sessionId: await env.sessionId,
     consumerRef: values.consumer,
     events: [
       {

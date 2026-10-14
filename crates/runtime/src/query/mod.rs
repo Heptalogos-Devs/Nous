@@ -9,7 +9,7 @@ pub use activation::*;
 mod representation;
 pub use representation::{
     QUERY_REPRESENTATION, QueryContextSnapshot, QueryRepresentation, QueryRepresentationLimits,
-    build_query_representation,
+    QuerySource, build_query_representation,
 };
 mod closure;
 mod cognitive_profile;
@@ -22,14 +22,13 @@ mod preferences;
 mod ranking;
 mod tree;
 mod types;
-pub use bind::planned_lanes;
 pub use lane::{LaneCandidate, LaneOutput, LaneStatus, TopologyWorkSummary};
 pub use orchestrate::{CognitiveContributor, CognitiveContributors, SharedLaneProvider};
-pub use plan::{QueryPlan, WorkCycle};
+pub use plan::QueryPlan;
 pub use ranking::{
     CandidateRankInput, DEFAULT_RESULT_LIMIT, RetrievalPolicy, rank_candidates_with_policy,
     register_retrieval_configuration, resolve_retrieval_policy,
 };
-pub use types::{BoundQuery, QueryActivationView, QueryExecution, QueryReadLease};
+pub use types::{BoundQuery, QueryActivationView, QueryExecution, QueryHostCapabilities};
 pub(super) mod prepared;
 pub use prepared::{QueryLease, QueryReservation};

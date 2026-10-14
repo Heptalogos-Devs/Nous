@@ -109,7 +109,7 @@ Positive AssociationEvidence projection 保留 support class、association kind 
 
 映射聚焦检查覆盖输入次序不变的 identity、source/stable curve 顺序、重复 member、维度错误、独立/重复/negative evidence 和未知输出 ID。Production graph/embedding 资产组装、Typed config、atomic generation publication、immutable VCP observation、引擎与 public query 接入仍待完成；当前 VCP profile 尚未启用。
 
-`AuthorityStore.cognitive_projection_input()` 在同一个 repeatable-read read-only transaction 中读取 subject Authority sequence、拓扑证据和符合 capability 的 material/memory/longitudinal 文本源。原 `topology_projection_input()` 复用同一个 topology snapshot owner；`CognitiveProjectionInput.authority_watermark` 表示全 Subject sequence，另有原 topology watermark，二者不能互换。
+`AuthorityStore.vcp_projection_rows()` 在同一个 repeatable-read read-only transaction 中读取 Subject Authority sequence、真实 family watermarks、拓扑证据和符合 capability 的 material/memory/longitudinal 文本源。VCP 制品使用实际依赖的 desired watermark；全 Subject sequence 仅保护跨 owner provenance contribution 的一致性。Native `topology_projection_input()` 直接读取结构，不读取 VCP 文本包；current/history 使用同一结构规则，历史选择来自 owner 的有效 snapshot，当前 purge 边界仍有效。
 
 [Serving VCP material preparation](../../crates/retrieval/src/vcp/material.rs) 复用既有文本拼装与 host-supplied embedding provider，冻结 space/producer 并检查每个输出身份/维度。它返回 generation identity map、独立证据、candidate vectors 与 Tag membership，Authority 无序 membership 明确标记 stable-identity 曲线顺序。缺已存储 embedding 时返回 unavailable；本机配置使用 StoredEmbeddingProvider，该步骤没有独立远程调用路径。
 

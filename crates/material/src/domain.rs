@@ -5,14 +5,30 @@
 
 use chrono::{DateTime, Utc};
 use nous_core::{
-    ArtifactId, CapabilityOperation, DerivedRegionId, DerivedRepresentationId, EntityRef, Error,
-    ObjectRef, OccurrenceId, ProducerSignature, RepresentationKind, ResourceRef, Result,
-    SourceClass, SourceRegionId, SubjectId, TemporalExtent,
+    ArtifactId, DerivedRegionId, DerivedRepresentationId, EntityRef, Error, ObjectRef,
+    OccurrenceId, ProducerSignature, RepresentationKind, ResourceRef, Result, SourceClass,
+    SourceRegionId, SubjectId, TemporalExtent,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use nous_core::{AuthorityClass, Modality};
+
+pub fn media_modality(media: &str) -> Modality {
+    if media.starts_with("text/") {
+        Modality::Text
+    } else if media.starts_with("image/") {
+        Modality::Image
+    } else if media.starts_with("audio/") {
+        Modality::Audio
+    } else if media.starts_with("video/") {
+        Modality::Video
+    } else if media.contains("json") || media.contains("xml") {
+        Modality::Structured
+    } else {
+        Modality::Binary
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifact {
@@ -21,30 +37,8 @@ pub struct Artifact {
     pub content_hash: String,
     pub byte_length: u64,
     pub media_type: String,
-    pub storage_key: String,
     pub created_at: DateTime<Utc>,
     pub metadata: serde_json::Value,
-}
-
-impl Artifact {
-    pub fn validate(&self) -> Result<()> {
-        if self.content_hash.len() != 64
-            || !self
-                .content_hash
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Err(Error::Invalid(
-                "artifact content hash must be BLAKE3 hex".into(),
-            ));
-        }
-        if self.media_type.trim().is_empty() || self.storage_key.trim().is_empty() {
-            return Err(Error::Invalid(
-                "artifact media_type/storage_key is required".into(),
-            ));
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,28 +75,6 @@ pub struct SourceRegion {
     pub coordinate_hash: String,
     pub parent_source_region_id: Option<SourceRegionId>,
     pub created_at: DateTime<Utc>,
-}
-
-impl SourceRegion {
-    pub fn validate(&self) -> Result<()> {
-        const KINDS: &[&str] = &[
-            "whole_artifact",
-            "byte_range",
-            "text_span",
-            "pdf_region",
-            "image_bbox",
-            "media_time",
-            "json_pointer",
-            "structural_path",
-        ];
-        if !KINDS.contains(&self.coordinate_kind.as_str()) {
-            return Err(Error::Invalid("unsupported source coordinate kind".into()));
-        }
-        if self.coordinate_hash.is_empty() {
-            return Err(Error::Invalid("source coordinate hash is required".into()));
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,7 +118,7 @@ impl DerivedRepresentation {
                         | nous_core::CognitiveRef::DerivedRepresentation(_)
                         | nous_core::CognitiveRef::DerivedRegion(_)
                 )
-                || !seen.insert(input.reference.to_string())
+                || !seen.insert(&input.reference)
                 || input.reference
                     == nous_core::CognitiveRef::DerivedRepresentation(
                         self.derived_representation_id,
@@ -200,36 +172,6 @@ pub struct DerivedRegion {
     pub created_at: DateTime<Utc>,
 }
 
-impl DerivedRegion {
-    pub fn validate(&self) -> Result<()> {
-        const KINDS: &[&str] = &[
-            "text_span",
-            "segment",
-            "description_segment",
-            "bbox-in-derived",
-            "structural_path",
-        ];
-        if !KINDS.contains(&self.coordinate_kind.as_str()) || self.coordinate_hash.trim().is_empty()
-        {
-            return Err(Error::Invalid("invalid derived coordinate".into()));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CoverageNeed {
-    pub coverage_need_id: Uuid,
-    pub subject_id: SubjectId,
-    pub source_region_id: SourceRegionId,
-    pub representation_kind: RepresentationKind,
-    pub capability_operation: CapabilityOperation,
-    pub requirement: String,
-    pub state: String,
-    pub current_representation_id: Option<DerivedRepresentationId>,
-    pub updated_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ObservationMaterial {
@@ -238,17 +180,6 @@ pub enum ObservationMaterial {
     ExternalObjectRef { object_ref: ObjectRef },
     StructuredJson { value: serde_json::Value },
     ResourceAvailability { resource: ResourceRef },
-}
-
-impl ObservationMaterial {
-    pub fn modality(&self) -> Modality {
-        match self {
-            Self::InlineText { .. } => Modality::Text,
-            Self::ArtifactRef { .. } => Modality::Binary,
-            Self::ExternalObjectRef { .. } => Modality::Structured,
-            Self::StructuredJson { .. } | Self::ResourceAvailability { .. } => Modality::Structured,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,57 +244,4 @@ pub struct AcceptedObservation {
     pub mention_ids: Vec<Uuid>,
     pub resident: bool,
     pub memory_revisions: Vec<nous_core::MemoryRevisionId>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolObservation {
-    pub subject: SubjectId,
-    pub session: Option<nous_core::SessionId>,
-    pub occurred_time: TemporalExtent,
-    pub observed_at: DateTime<Utc>,
-    pub tool_ref: Option<ObjectRef>,
-    pub result: serde_json::Value,
-    #[serde(default)]
-    pub context: serde_json::Value,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn source_coordinates_are_not_parser_chunk_ordinals() {
-        let region = SourceRegion {
-            source_region_id: SourceRegionId::new(),
-            subject_id: SubjectId::new(),
-            artifact_id: ArtifactId::new(),
-            coordinate_kind: "text_span".into(),
-            coordinate: serde_json::json!({"encoding":"utf-8","start":0,"end":4}),
-            coordinate_hash: "stable-coordinate".into(),
-            parent_source_region_id: None,
-            created_at: Utc::now(),
-        };
-        assert!(region.validate().is_ok());
-        assert!(
-            SourceRegion {
-                coordinate_kind: "chunk_12".into(),
-                ..region
-            }
-            .validate()
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn temporal_extent_preserves_unknown_and_half_open_intervals() {
-        assert!(TemporalExtent::Unknown.validate().is_ok());
-        assert!(
-            TemporalExtent::Interval {
-                start: Some(Utc::now()),
-                end: Some(Utc::now() + chrono::Duration::seconds(1)),
-            }
-            .validate()
-            .is_ok()
-        );
-    }
 }

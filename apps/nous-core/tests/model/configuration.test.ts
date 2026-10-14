@@ -24,14 +24,6 @@ const modelGraph = () => ({
   roles: { memory_formation: { routes: ["main"] } },
 });
 
-it("freezes protocol and gateway-dependent defaults in the owning normalized graph", () => {
-  const config = modelConfigurationSchema.parse(modelGraph());
-  expect(config.execution_profiles.main).toMatchObject({
-    max_output_tokens: 4096,
-    timeout_ms: 30000,
-  });
-});
-
 it("rejects a dangling explicit route with its exact configuration path", () => {
   const config = modelGraph();
   config.roles.memory_formation.routes = ["missing"];
@@ -60,16 +52,13 @@ it("freezes only a role's dependency graph so unrelated profiles and media budge
         },
       },
     });
-    const left = (await ModelInvocations.create(first)).snapshot(
+    const left = (await ModelInvocations.create(first)).prepare(
       "memory_formation",
     );
-    const right = (await ModelInvocations.create(second)).snapshot(
+    const right = (await ModelInvocations.create(second)).prepare(
       "memory_formation",
     );
     expect(left.configDigest).toBe(right.configDigest);
-    expect(left.configuration.model_profiles).toEqual({
-      chat: first.model_profiles.chat,
-    });
   } finally {
     delete process.env.NOUS_GRAPH_TEST;
   }

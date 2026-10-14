@@ -1,7 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { CONFIG_REVISION } from "../../apps/nous-core/src/configuration/schema.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -27,7 +26,6 @@ export async function prepare(home: string) {
   await writeFile(
     join(locations.config, "nous.toml"),
     stringify({
-      config_revision: CONFIG_REVISION,
       host: {
         port: 0,
         kernel_executable:
@@ -59,7 +57,8 @@ export async function boot(locator: string): Promise<Boot> {
     process.execPath,
     [
       join(repo, "node_modules/tsx/dist/cli.mjs"),
-      join(repo, "apps/nous-core/src/main.ts"),
+      join(repo, "apps/nous-core/src/launcher.ts"),
+      "serve",
       "--development",
       "--locator",
       locator,

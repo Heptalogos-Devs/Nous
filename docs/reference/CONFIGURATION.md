@@ -2,7 +2,7 @@
 
 [返回 Reference](README.md)
 
-操作者配置位于 `ConfigurationRoot/nous.toml`，声明 `config_revision = 2`。配置使用自然 TOML section；完整示例见 [nous.toml](examples/nous.toml)。[bootstrap.toml](examples/bootstrap.toml) 只定位独立运行目录。
+操作者配置位于 `ConfigurationRoot/nous.toml`。配置使用自然 TOML section；完整示例见 [nous.toml](examples/nous.toml)。[bootstrap.toml](examples/bootstrap.toml) 只定位独立运行目录。
 
 ## Catalog 与所有权
 
@@ -12,15 +12,15 @@ Kernel Configuration Service 统一持有 Rust 与 Core owner 注册的目录、
 
 Overrideable 值按 reference default → deployment TOML → persisted system override → persisted Subject override 解析。Deployment-only 值只使用 reference default 与 deployment TOML，管理 API 拒绝持久覆盖。SystemOnly 与 SubjectOverrideAllowed 声明作用域；暴露等级只控制呈现，不授予或限制管理权限。Core 的认证边界保护管理 API。
 
-| 暴露等级 | 设置范围 |
-| --- | --- |
-| Standard | gateway/model setup、material strategy、maintenance 开关与 host 启动设置 |
-| Advanced | role、media、Resource、consumer、Episode/Journal/consolidation 策略 |
+| 暴露等级  | 设置范围                                                                    |
+| --------- | --------------------------------------------------------------------------- |
+| Standard  | gateway/model setup、material strategy、maintenance 开关与 host 启动设置    |
+| Advanced  | role、media、Resource、consumer、Episode/Journal/consolidation 策略         |
 | Developer | retrieval/accessibility/topology 算法、worker opportunity、retry 和运行预算 |
 
 ## 启动与快照
 
-Core 先解析 `config_revision`、`host` 和 `database` bootstrap，通过私有 JSON bundle 交付 Core descriptors 与 deployment document。Kernel finalize Catalog 并加载持久覆盖后，Core 从 active snapshot 构造 model/resource/consumer runtime。凭据值只从 SecretRoot/environment 加载；Catalog 保存 credential reference。
+Core 先解析 `host` 和 `database` bootstrap，通过私有 JSON bundle 交付 Core descriptors 与 deployment document。Kernel finalize Catalog 并加载持久覆盖后，Core 从 active snapshot 构造 model/resource/consumer runtime。凭据值只从 SecretRoot/environment 加载；Catalog 保存 credential reference。
 
 Live 修改作用于后续 operation；在途 operation 保留固定快照。RestartProcess 修改 desired snapshot 并返回 restart effect，active snapshot 在重启前不变。Core model/gateway/role/media/resource/consumer、`material.inputs` 与 `core_execution` 结构使用 RestartProcess。`core_execution` 拥有 Kernel RPC、maintenance RPC、工作、cleanup、need acknowledgement 和回应等待的 typed opportunity policy 、HTTP body byte budget 和 managed context track 上限（默认 256）、Query embedding cache entries（默认 128）及 rerank candidate 上限（默认 64）；host startup/shutdown timeout 和 runtime download timeout（默认 300000 ms）是 deployment-only bootstrap 参数。NewSubjectsOnly 更新供给默认，已有 Subject 保存已采用的 typed capability set。ServingRebuild 返回 owner rebuild effect；Serving 在下一次需要该 family 的 prepare 或显式 refresh 中构建并原子替换 generation。Projection status 按 family/space 返回 generation ID、Authority watermark、实际配置 digest 和当前所需 digest；Authority 或配置落后时为 STALE。
 
@@ -32,7 +32,7 @@ Artifact 上传预算为 `object_store.max_upload_bytes`，归 Material owner；
 
 Canonical `ConfigurationService` 提供 list/describe/get 与 system/Subject set/clear。Schema 和配置值使用 protobuf JSON Value；结构化值保持结构。所有公开写入携带 desired view 返回的 `configuration_revision` 作为 `expected_revision`；Kernel 在同一数据库事务内比较全局修订，过期写入或清除返回 conflict，不改变配置或修订。Mutation identity 包含 operation ID、expected revision 和规范输入；同 ID 不同输入 conflict。已完成请求先重放冻结回执，即使后续修改已推进修订。SystemService 提供系统状态与 projection 状态。
 
-Official Client 使用 `client.configuration.list / describe / get / setSystem / clearSystem / setSubject / clearSubject`；写入参数要求 `expectedRevision: bigint`。CLI 默认显示 Standard，`--advanced` 包含 Advanced，`--developer` 包含全部目录；`--subject <id>` 选择 Subject scope，`--desired` 读取 desired view。`set/clear` 必须显式提供 `--expected-revision`，重试使用原 operation ID、原 expected revision 和原值。
+Official Client 使用 generated ConfigurationService 方法：`listConfigDescriptors`、`getConfigDescriptor`、`getConfiguration`、`setSystemOverride`、`clearSystemOverride`、`setSubjectOverride` 和 `clearSubjectOverride`。`expectedRevision: bigint` 是可选并发条件；明确赋值或清除无需先读取全局 revision。CLI 默认显示 Standard，`--advanced` 包含 Advanced，`--developer` 包含全部目录；`--subject <id或名称>` 选择 Subject scope，`--desired` 读取 desired view。需要条件替换时显式提供 `--expected-revision`。重试使用原 operation ID、原条件和原值。
 
 ```sh
 nous config list
@@ -40,9 +40,9 @@ nous config list --developer
 nous config describe maintenance.enabled
 nous config get runtime.resident_limit --desired
 nous config get maintenance.enabled --desired
-nous config set maintenance.enabled true --expected-revision <configurationRevision>
-nous config set maintenance.enabled false --subject <id> --expected-revision <configurationRevision>
-nous config clear maintenance.enabled --subject <id> --expected-revision <configurationRevision>
+nous config set maintenance.enabled true
+nous config set maintenance.enabled false --subject <id>
+nous config clear maintenance.enabled --subject <id>
 nous config get models --desired
 nous config describe models
 nous config check --home <instance>
@@ -70,7 +70,7 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 
 `audio.input_mode` 为 `direct`（默认）或 `transcription`。Direct 将原始 Artifact bytes 作为 chat 的 `input_audio` 发送；transcription 需要 speech_transcription role。
 
-独立字段具有真实叶路径，例如 `video.input_mode`、`video.max_frames`、`audio.max_source_bytes`、`material.inputs.formation_source_max_bytes`、`core_execution.opportunity.work_timeout_ms` 与 `consumer_state.receipt_limit`。`config describe video.max_frames` 直接返回该字段的范围与默认值；`config set video.max_frames 4 --expected-revision <configurationRevision>` 只覆盖该字段，其他字段保留各自来源。Catalog 不同时注册这些字段的 parent。媒体、Material 输入和策略影响 Authority formation；consumer composition 和 rerank candidate budget 标注 Query policy，其余基础设施预算标注 operational。当前这些 Core 参数仍实际使用 RestartProcess，按回执重启后生效。
+独立字段具有真实叶路径，例如 `video.input_mode`、`video.max_frames`、`audio.max_source_bytes`、`material.inputs.formation_source_max_bytes`、`core_execution.opportunity.work_timeout_ms` 与 `consumer_state.receipt_limit`。`config describe video.max_frames` 直接返回该字段的范围与默认值；`config set video.max_frames 4` 只覆盖该字段，其他字段保留各自来源。Catalog 不同时注册这些字段的 parent。媒体、Material 输入和策略影响 Authority formation；consumer composition 和 rerank candidate budget 标注 Query policy，其余基础设施预算标注 operational。当前这些 Core 参数仍实际使用 RestartProcess，按回执重启后生效。
 
 `video.ffmpeg_executable` 默认显式 null，表示使用 RuntimeRoot 已安装 FFmpeg pack；string 表示 ConfigurationRoot 下的显式 executable。清除 override 回落到部署值或 reference default，显式 null 覆盖部署的 executable，空 string 非法。模型图中的空 profile map 是明确空集合，省略字段则由 owning graph 填入默认值。
 
@@ -82,39 +82,40 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 
 ## 纵向认知配置
 
+`maintenance.max_model_calls_per_tick` 可设为 0：停止本轮模型生成，已有成果提交和确定性维护继续执行。操作消耗由 grant 的 `operationsConsumed` 返回，每项实际处理的 need 计一次，跳过无法生成的候选不计。
+
 这些 typed settings 由 Runtime/Memory registry 定义，支持 registry 声明的 scope override 与 apply mode；实际生效快照由 Configuration Service 读取。
 
-| Setting | 默认值 | 单位/含义 |
-| --- | --- | --- |
-| `maintenance.concept` | 16 candidates / 4 suggestions | Developer、Live、AuthorityFormation：局部 Tag 候选和逐项 ordered suggestions；候选范围 1..32，建议范围 1..4 |
-| `maintenance.concept_use_review_interval` | 3 | Advanced、Live、AuthorityFormation：meaningful use count 跨 interval 时排入 concept review，范围 1..128 |
-| `maintenance.accretion` | enabled / generic_degree 32 / recurrence_review 3 | Developer、Live、AuthorityFormation：按需派生聚合，genericity 和 recurrence review；关闭时不计算 hints，基础 concept workflow 仍工作，无 provider 调用 |
-| `maintenance.enabled` | true | host maintenance 开关 |
-| `maintenance.poll_interval_seconds` | 30 | standalone loop 的基础设施秒 |
-| `maintenance.worker_lease_seconds` | 120 | worker lease 的基础设施秒 |
-| `maintenance.max_operations_per_grant` | 4 | 每次机会/standalone tick 的操作数上限 |
-| `maintenance.experience_batch_size` | 256 | Developer：每次 Episode segmentation processing operation 的 ExperienceItem batch，范围 1..256 |
-| `maintenance.member_text_max_bytes` | 2048 | Developer：每个 maintenance Experience member 的输入 byte 预算；共同 materialization safety ceiling 由实现持有 |
-| `maintenance.terminal_retention_seconds` | 86400 | terminal need finish replay 的基础设施秒，范围 1..604800 |
-| `maintenance.retry_initial_seconds` | 30 | transient retry 初始基础设施秒，范围 1..3600 |
-| `maintenance.retry_max_seconds` | 3600 | transient retry 延迟上限秒，范围 1..86400 |
-| `maintenance.retry_max_attempts` | 8 | 连续 transient failure 上限，范围 1..32；达到后 blocked |
-| `maintenance.max_model_calls_per_tick` | 4 | standalone tick 全局模型调用预算，范围 1..32 |
-| `maintenance.max_elapsed_ms_per_tick` | 60000 | standalone tick 全局 elapsed 毫秒预算，范围 1..900000 |
-| `episode.context_switch_count` | 2 | 形成边界所需变化的 context dimensions，范围 1..4 |
-| `episode.synopsis` | longitudinal | Developer：Episode member text synopsis 的 member/fragment/total byte 预算；同一 policy 用于 Query rendering 与 lexical/dense generation |
-| `episode.soft_idle_seconds` | 300 | 认知秒 |
-| `episode.hard_idle_seconds` | 1800 | 认知秒 |
-| `episode.settle_delay_seconds` | 300 | semantic review 的认知秒 |
-| `episode.max_neighbor_episodes` | 8 | 局部 repair 的 Episode 数 |
-| `episode.max_neighbor_span_seconds` | 86400 | 局部 repair 的认知秒 |
-| `journal.max_episode_count` | 12 | 一次 Journal synthesis 的 Episode 数 |
-| `journal.max_span_seconds` | 86400 | Journal scope 的认知秒 |
-| `consolidation.settle_delay_seconds` | 300 | 整合前的认知秒 |
-| `consolidation.max_actions` | 8 | 一个 ordered model proposal 的 action 数；每项独立 owner mutation |
-| `consolidation.context` | longitudinal | Developer：query cue/candidate text 字符预算、candidate/support/provenance/entity 数上限；运行开始解析一次 |
+| Setting                                   | 默认值                                                                                          | 单位/含义                                                                                                                                              |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `maintenance.concept`                     | 16 candidates / 4 suggestions                                                                   | Developer、Live、AuthorityFormation：局部 Tag 候选和逐项 ordered suggestions；候选范围 1..32，建议范围 1..4                                            |
+| `maintenance.concept_use_review_interval` | 3                                                                                               | Advanced、Live、AuthorityFormation：meaningful use count 跨 interval 时排入 concept review，范围 1..128                                                |
+| `maintenance.accretion`                   | enabled / generic_degree 32 / recurrence_review 3 / member_budget 32 / coherence_threshold 0.35 | Developer、Live、AuthorityFormation：按需派生聚合，genericity 和 recurrence review；关闭时不计算 hints，基础 concept workflow 仍工作，无 provider 调用 |
+| `maintenance.enabled`                     | true                                                                                            | host maintenance 开关                                                                                                                                  |
+| `maintenance.poll_interval_seconds`       | 30                                                                                              | standalone loop 的基础设施秒                                                                                                                           |
+| `maintenance.max_operations_per_grant`    | 4                                                                                               | 每次机会/standalone tick 的操作数上限                                                                                                                  |
+| `maintenance.experience_batch_size`       | 256                                                                                             | Developer：每次 Episode segmentation processing operation 的 ExperienceItem batch，范围 1..256                                                         |
+| `maintenance.member_text_max_bytes`       | 2048                                                                                            | Developer：每个 maintenance Experience member 的输入 byte 预算；共同 materialization safety ceiling 由实现持有                                         |
+| `maintenance.terminal_retention_seconds`  | 86400                                                                                           | terminal need finish replay 的基础设施秒，范围 1..604800                                                                                               |
+| `maintenance.retry_initial_seconds`       | 30                                                                                              | transient retry 初始基础设施秒，范围 1..3600                                                                                                           |
+| `maintenance.retry_max_seconds`           | 3600                                                                                            | transient retry 延迟上限秒，范围 1..86400                                                                                                              |
+| `maintenance.retry_max_attempts`          | 8                                                                                               | 连续 transient failure 上限，范围 1..32；达到后 blocked                                                                                                |
+| `maintenance.max_model_calls_per_tick`    | 4                                                                                               | standalone tick 全局模型调用预算，范围 1..32                                                                                                           |
+| `maintenance.max_elapsed_ms_per_tick`     | 60000                                                                                           | standalone tick 全局 elapsed 毫秒预算，范围 1..900000                                                                                                  |
+| `episode.context_switch_count`            | 2                                                                                               | 形成边界所需变化的 context dimensions，范围 1..4                                                                                                       |
+| `episode.synopsis`                        | longitudinal                                                                                    | Developer：Episode member text synopsis 的 member/fragment/total byte 预算；同一 policy 用于 Query rendering 与 lexical/dense generation               |
+| `episode.soft_idle_seconds`               | 300                                                                                             | 认知秒                                                                                                                                                 |
+| `episode.hard_idle_seconds`               | 1800                                                                                            | 认知秒                                                                                                                                                 |
+| `episode.settle_delay_seconds`            | 300                                                                                             | semantic review 的认知秒                                                                                                                               |
+| `episode.max_neighbor_episodes`           | 8                                                                                               | 局部 repair 的 Episode 数                                                                                                                              |
+| `episode.max_neighbor_span_seconds`       | 86400                                                                                           | 局部 repair 的认知秒                                                                                                                                   |
+| `journal.max_episode_count`               | 12                                                                                              | 一次 Journal synthesis 的 Episode 数                                                                                                                   |
+| `journal.max_span_seconds`                | 86400                                                                                           | Journal scope 的认知秒                                                                                                                                 |
+| `consolidation.settle_delay_seconds`      | 300                                                                                             | 整合前的认知秒                                                                                                                                         |
+| `consolidation.max_actions`               | 8                                                                                               | 一个 ordered model proposal 的 action 数；每项独立 owner mutation                                                                                      |
+| `consolidation.context`                   | longitudinal                                                                                    | Developer：query cue/candidate text 字符预算、candidate/support/provenance/entity 数上限；运行开始解析一次                                             |
 
-`GrantMaintenance` 调用同时提供 operation/model-call/elapsed budgets；有效操作数还受当前 registry policy 限制。`maintenance.poll_interval_seconds`、`maintenance.worker_lease_seconds`、experience batch、member text、retention/retry/tick budget 设置均由 `cognitive-runtime` owner 注册，使用 Developer exposure、SystemOnly scope、Live apply mode 和 Operational semantic effect。其他以上设置允许 Subject override。retry 延迟为 `min(retry_max_seconds, retry_initial_seconds × 2^(连续失败次数−1))`。语义合同见 [纵向认知](../specs/active/cognitive-runtime/longitudinal-cognition.md)。
+`GrantMaintenance` 调用同时提供 operation/model-call/elapsed budgets；有效操作数还受当前 registry policy 限制。`maintenance.poll_interval_seconds`、experience batch、member text、retention/retry/tick budget 设置均由 `cognitive-runtime` owner 注册，使用 Developer exposure、SystemOnly scope、Live apply mode 和 Operational semantic effect。其他以上设置允许 Subject override。retry 延迟为 `min(retry_max_seconds, retry_initial_seconds × 2^(连续失败次数−1))`。语义合同见 [纵向认知](../specs/active/cognitive-runtime/longitudinal-cognition.md)。
 
 `material.inputs` 是 Developer 运行输入预算：`formation_source_max_bytes` 默认 32768，`derivation_source_max_bytes` 默认 1048576。超界 source 必须选择 bounded representation/region；预算不允许截断完整来源后仍声明完整支持。Memory formation workflow 保存首次采用的 source budget，retry 使用该快照。
 
@@ -122,10 +123,9 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 
 `video.frame_end_margin_seconds` 默认 0.1；frame sampling 将最后一个采样点留在该 configured end margin 之前。
 
-`retrieval.cognitive.profile` 使用 SubjectOverrideAllowed / Live / QueryPolicy，两个 Subject 可选择不同 profile；变更只影响后续 preparation，已形成的 in-flight query 保留自己的 snapshot 和 semantic representation；DTSC/RiverMemo 共享 VCP asset，不因 readout 切换重建。`serving.retired_grace_seconds` 默认 300，范围 0..604800，Developer/SystemOnly/Live；active readers、validation tickets、current artifacts 和 research pins 保护回收边界。运行时 expiry/release 后可在后续 query 机会清理 retired artifact，metadata 保留简短 audit。
+`retrieval.cognitive.profile` 使用 SubjectOverrideAllowed / Live / QueryPolicy，两个 Subject 可选择不同 profile；变更只影响后续 preparation，已形成的 in-flight query 保留自己的 snapshot 和 semantic representation；DTSC/RiverMemo 共享 VCP asset，不因 readout 切换重建。`serving.retired_grace_seconds` 默认 300，范围 0..604800，Developer/SystemOnly/Live；active readers、validation tickets、current artifacts 和 research pins 保护回收边界。`serving clean` 直接回收 retired/failed 和 orphan 制品，返回 reclaimed IDs、bytes、readersActive 和 orphanDirectories；不先刷新或构建。显式 Serving refresh 与维护也可回收 retired artifact；普通 query 不扫描整个资产目录，回收删除物理 cache 与对应 catalog row，不保留 audit/tombstone。
 
 `retrieval.query.representation` 控制完整 query embedding 的 typed character/descriptor/count budgets，Developer、SubjectOverrideAllowed、Live。配置只有 `total_chars=8192` 与 `max_context_items=16`。各 section 的 hard ceilings 由实现持有；预算优先满足 Intent、显式时间/selector descriptor、Entity/Tag、current exact refs、WorkContext 和其他 descriptor，输出 section 顺序固定。一次 prepare 固定 policy；inspection 返回实际 SHA256 与截断/缺失 descriptor 诊断。Preparation token 与 validation ticket 共用 `runtime.query_lease_slots`/query lease 的现有预算机制。
-
 
 ## Temporal、Concept activation 与 feedback
 
@@ -133,4 +133,16 @@ Prompt 默认来自 ProgramRoot/prompts；配置可使用 `config-prompts/` 前�
 
 `retrieval.query.concept_activation` 下的独立叶字段由 Runtime 注册为 Advanced/SubjectOverrideAllowed/Live/QueryPolicy：`max_activated_tags` 默认 8，控制合并后保留的 inferred Tags；`minimum_similarity` 默认 0.72，范围为余弦的 -1–1；`model_catalog_limit` 默认 32，控制给 query model 的冻结 catalog。两个数量预算为正整数。默认值只由当前 reference profile 定义；Retrieval 和 model readout 读取同一 prepared operation 的配置快照，在途查询不受后续修改影响。Provider 的结构化输出合同仍独立限制一次模型响应的合法形状。
 
-`runtime.query_feedback_retention` 默认 604800 认知秒（七天）；bounded records 包含 query/activation digest、signals 与 returned exact refs，不保存正文。过期清理不删除已接受的 UseEvents。Historical artifact cache 复用 `serving.retired_grace_seconds` 与 read leases，不引入第二套 history DB/独立缓存政策。Semantic intervals 使用 captured Subject CognitiveClock，timeout/lease/retry 使用 infrastructure time。
+`runtime.query_feedback_retention` 默认 604800 认知秒（七天）；bounded records 包含 query/activation digest、signals 与 returned exact refs，不保存正文。过期清理不删除已接受的 UseEvents。Historical artifact cache 复用 `serving.retired_grace_seconds` 与 query readers，不引入第二套 history DB/独立缓存政策。Semantic intervals 使用 captured Subject CognitiveClock，timeout/lease/retry 使用 infrastructure time。
+
+## 运行数据与清理
+
+| 数据               | 所属能力与位置                                    | 增长边界或清理方式                                                                                                                                       |
+| ------------------ | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Serving 制品       | Retrieval、CacheRoot 下 serving generations       | `serving clean` 使用 grace，保护 current、reader 和 research pin；普通 Query 不遍历目录                                                                  |
+| 不可变材料         | Material/ObjectStore、BlobRoot                    | `material clean` 只清无引用 CAS/staging；有效材料通过显式领域 purge 管理                                                                                 |
+| embedding material | Retrieval、PostgreSQL embedding_materials         | 以 Subject/content digest/space/producer 去重；目前无独立淘汰入口，新增内容或模型空间仍会增长，清理边界尚未完成                                          |
+| 模型成果           | Core 结果操作、PostgreSQL model_results           | 只保存实际成果与必要输入；每条 telemetry 最多 64 attempts，已完成/被替换的维护记录由 need 生命周期清理；有效付费成果保留，cognition purge 删除其正文依赖 |
+| consumer receipt   | CLI、InstanceRoot/consumers 下 operations         | receipt_limit、file_max_bytes；成功或正式拒绝删除，未知结果手动 retry/forget                                                                             |
+| Query 内存缓存     | Core/Runtime 进程内                               | query_embedding_cache_entries、context_track_limit、query slots/deadline 限制；重启释放                                                                  |
+| 临时与开发缓存     | Locations、TempRoot；仓库 data/temp 和 data/cache | `clean:local` 限定生成目录，并先停止所属临时 PostgreSQL；保留程序、配置、密钥、业务和研究成果                                                            |

@@ -6,20 +6,15 @@ import { readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parse } from "smol-toml";
 import { parseEnv } from "node:util";
-import {
-  modelConfigurationSchema,
-  modelExecutionSchema,
-} from "../model/configuration.js";
+import { modelConfigurationSchema } from "../model/configuration.js";
 import type { RuntimeLocations } from "../locations.js";
 import {
-  CONFIG_REVISION,
   bootstrapSchema,
   consumersSchema,
   configurationBundle,
   coreExecutionSchema,
   coreConfigurationGroup,
 } from "./catalog.js";
-export { CONFIG_REVISION } from "./catalog.js";
 
 export class ConfigurationError extends Error {
   constructor(
@@ -43,14 +38,6 @@ export function parseConfiguration(text: string, development = false) {
       },
     ]);
   }
-  if (document.config_revision !== CONFIG_REVISION)
-    throw new ConfigurationError([
-      {
-        path: "config_revision",
-        code: "revision_mismatch",
-        message: `Expected configuration revision ${CONFIG_REVISION}`,
-      },
-    ]);
   const parsed = bootstrapSchema.safeParse(document);
   if (!parsed.success)
     throw new ConfigurationError(
@@ -80,34 +67,44 @@ export async function readConfiguration(
   );
 }
 
-/** Zod owners consume values resolved by Kernel; no override precedence exists in Core. */
-export function parseEffectiveConfiguration(values: Record<string, unknown>) {
-  const parseOwner = <T>(
-    path: string,
-    schema: z.ZodType<T>,
-    input: unknown,
-  ): T => {
-    const parsed = schema.safeParse(input);
-    if (!parsed.success)
-      throw new ConfigurationError(
-        parsed.error.issues.map((issue) => ({
-          path: [path, ...issue.path].filter(Boolean).join("."),
-          code: issue.code,
-          message: issue.message,
-        })),
-      );
-    return parsed.data;
-  };
-  const models = parseOwner("", modelConfigurationSchema, {
-    ...parseOwner("models", modelExecutionSchema, values.models),
+const parseOwner = <T>(
+  path: string,
+  schema: z.ZodType<T>,
+  input: unknown,
+): T => {
+  const parsed = schema.safeParse(input);
+  if (!parsed.success)
+    throw new ConfigurationError(
+      parsed.error.issues.map((issue) => ({
+        path: [path, ...issue.path].filter(Boolean).join("."),
+        code: issue.code,
+        message: issue.message,
+      })),
+    );
+  return parsed.data;
+};
+
+export function parseModelConfiguration(values: Record<string, unknown>) {
+  return parseOwner("", modelConfigurationSchema, {
+    ...((values.models ?? {}) as Record<string, unknown>),
     audio: coreConfigurationGroup(values, "audio"),
     video: coreConfigurationGroup(values, "video"),
     material_strategy: values["material.strategy"],
     material_inputs: coreConfigurationGroup(values, "material.inputs"),
   });
+}
+
+/** Zod owners consume the complete startup values resolved by Kernel. */
+export function parseEffectiveConfiguration(values: Record<string, unknown>) {
+  const models = parseModelConfiguration(values);
   const consumers = parseOwner("consumers", consumersSchema, values.consumers);
   return {
     models,
+    maxUploadBytes: parseOwner(
+      "object_store.max_upload_bytes",
+      z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      values["object_store.max_upload_bytes"],
+    ),
     execution: parseOwner(
       "core_execution",
       coreExecutionSchema,
@@ -189,9 +186,8 @@ export async function loadConfig(
       development,
       config.host.kernel_executable,
     ),
-    bundle: configurationBundle(document),
     kernelBootstrap: {
-      configuration_bundle: join(locations.run, "configuration-bundle.json"),
+      configuration: configurationBundle(document),
       bootstrap: {
         database: {
           ...config.database,
@@ -202,8 +198,8 @@ export async function loadConfig(
           instance_dir: locations.instance,
           secret_dir: locations.secret,
         },
-        object_store: { backend: "fs", root: locations.blob },
-        serving: { root: join(locations.cache, "serving") },
+        object_root: locations.blob,
+        serving_root: join(locations.cache, "serving"),
       },
     },
   };
@@ -224,5 +220,4 @@ export async function resolveMediaExecutables(
     if ((await stat(path).catch(() => undefined))?.isFile())
       models.video.ffmpeg_executable = path;
   }
-  return Boolean(explicit);
 }

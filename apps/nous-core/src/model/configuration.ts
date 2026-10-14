@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from "zod";
+import { canonicalDigest } from "../digest.js";
 import {
   gatewaySchema,
+  embeddingSpaceParameters,
   modelSchema,
   executionProfileSchema,
   profileNameSchema,
@@ -121,6 +123,19 @@ export const modelExecutionSchema = z
           issue(["roles", name, "routes", index], `${route}: ${problem}`);
       }
     }
+    const spaces = (graph.roles.query_embedding?.routes ?? []).flatMap(
+      (route) => {
+        const model =
+          graph.model_profiles[graph.execution_profiles[route]?.model ?? ""];
+        const space = model && embeddingSpaceParameters(model);
+        return space ? [canonicalDigest(space)] : [];
+      },
+    );
+    if (new Set(spaces).size > 1)
+      issue(
+        ["roles", "query_embedding", "routes"],
+        "Embedding routes require identical full space signatures",
+      );
   })
   .overwrite((graph) => ({
     ...graph,
@@ -221,32 +236,9 @@ export const modelConfigurationShape = {
     .default("description_only"),
   ...modelExecutionShape,
 };
-const graphFrom = (
-  config: z.infer<
-    ReturnType<typeof z.strictObject<typeof modelConfigurationShape>>
-  >,
-) => ({
-  gateway_profiles: config.gateway_profiles,
-  model_profiles: config.model_profiles,
-  execution_profiles: config.execution_profiles,
-  roles: config.roles,
-});
-export const modelConfigurationSchema = z
-  .strictObject(modelConfigurationShape)
-  .superRefine((config, context) => {
-    const graph = modelExecutionSchema.safeParse(graphFrom(config));
-    if (!graph.success)
-      for (const issue of graph.error.issues)
-        context.addIssue({
-          code: "custom",
-          path: issue.path,
-          message: issue.message,
-        });
-  })
-  .overwrite((config) => {
-    const graph = modelExecutionSchema.safeParse(graphFrom(config));
-    return graph.success ? { ...config, ...graph.data } : config;
-  });
+export const modelConfigurationSchema = modelExecutionSchema
+  .unwrap()
+  .safeExtend(modelConfigurationShape);
 
 /** Cross-profile graph readiness is an owner diagnostic, not a second Catalog validator. */
 export function modelRoleProblem(

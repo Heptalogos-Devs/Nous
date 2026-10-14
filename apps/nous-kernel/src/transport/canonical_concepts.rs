@@ -6,6 +6,9 @@ use super::*;
 rpc_service! {
     p::concept_service_server::ConceptService {
         forward {
+            list_cognitive_schemas(p::ListRequest) -> p::ListSchemasResponse;
+            list_cognitive_schema_revisions(p::CognitionHistoryRequest) -> p::ListSchemasResponse;
+            list_tag_revisions(p::CognitionHistoryRequest) -> p::ListTagsResponse;
             create_tag(p::CreateTagRequest) -> p::Tag;
             get_tag(p::ObjectRequest) -> p::Tag;
             list_tags(p::ListRequest) -> p::ListTagsResponse;
@@ -13,6 +16,8 @@ rpc_service! {
             revise_tag(p::ReviseTagRequest) -> p::Tag;
             merge_tags(p::MergeTagsRequest) -> p::Tag;
             split_tag(p::SplitTagRequest) -> p::SplitTagResponse;
+            list_associations(p::ListRequest) -> p::ListAssociationsResponse;
+            get_association(p::ObjectRequest) -> p::Association;
             create_association(p::CreateAssociationRequest) -> p::Association;
             revoke_association(p::RevokeAssociationRequest) -> ();
             get_neighborhood(p::NeighborhoodRequest) -> p::NeighborhoodResponse;

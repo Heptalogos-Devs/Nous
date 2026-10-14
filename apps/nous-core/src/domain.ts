@@ -16,6 +16,3 @@ export interface ConsumerPolicy {
   maxTextBytes: number;
   materialize: boolean;
 }
-export function refKey(ref: Ref): string {
-  return ref.kind + "\0" + ref.value;
-}

@@ -9,13 +9,13 @@
 use chrono::{DateTime, Utc};
 pub use nous_core::cognition::{
     AcceptanceState, BasisRole, CognitionDependency, DependencyRelation, EpistemicRelation,
-    EvidenceLocator, EvidenceRef, EvidenceRoot, EvidenceRootCertainty, IntegrityState, PurgeState,
+    EvidenceLocator, EvidenceRef, EvidenceRoot, EvidenceRootCertainty, IntegrityState,
     RevisionBasis, SuppressionState, dependency_relation,
 };
 use nous_core::{
     AssociationEvidenceId, CognitiveRef, CognitiveSchemaId, CognitiveSchemaRevisionId, EntityRef,
     EpistemicClass, Error, MemoryId, MemoryRevisionId, OccurrenceId, OperationId, Result,
-    SchemaEvidenceLinkId, SubjectId, TagId, TemporalExtent, UseEventId,
+    SchemaEvidenceLinkId, SubjectId, TagId, TemporalExtent, UseEventRef,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -100,7 +100,6 @@ pub struct MemoryObject {
     pub acceptance_state: AcceptanceState,
     pub integrity_state: IntegrityState,
     pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
     pub accessibility_mode: AccessibilityMode,
     pub created_at: DateTime<Utc>,
 }
@@ -123,12 +122,6 @@ pub struct MemoryRevision {
     pub valid_time: TemporalExtent,
     pub formed_at: DateTime<Utc>,
     pub recorded_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryRevisionEvidence {
-    pub evidence_no: i32,
-    pub evidence: EvidenceRef,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,29 +154,6 @@ pub struct MemoryRevisionRelation {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tag {
-    pub tag_id: TagId,
-    pub subject_id: SubjectId,
-    pub current_revision_id: Uuid,
-    pub status: String,
-    pub canonical_tag_id: Option<TagId>,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TagRevision {
-    pub tag_revision_id: Uuid,
-    pub tag_id: TagId,
-    pub revision_no: i32,
-    pub label: String,
-    pub description: Option<String>,
-    pub kind_hint: Option<String>,
-    pub origin: String,
-    pub producer_signature_id: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssociationPolarity {
@@ -208,22 +178,6 @@ pub enum AssociationBasisClass {
     CognitiveDerivation,
     MeaningfulUse,
     DerivedStructure,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UseEventRef {
-    pub subject_id: SubjectId,
-    pub consumer_ref: String,
-    pub event_id: UseEventId,
-}
-
-impl UseEventRef {
-    pub fn canonical_key(&self) -> String {
-        format!(
-            "{}:{}:{}",
-            self.subject_id.0, self.consumer_ref, self.event_id.0
-        )
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,27 +231,26 @@ pub struct AssociationNeighborhood {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExplicitMemoryInput {
-    #[serde(default)]
+pub struct MemoryContent {
     pub producer: Option<nous_core::ProducerSignature>,
-    pub operation_id: OperationId,
-    #[serde(default)]
-    pub subject: SubjectId,
-    pub cognitive_role: CognitiveRole,
     pub formation_mode: FormationMode,
     pub grounding_occurrence_id: Option<OccurrenceId>,
     pub semantic_role: String,
     pub representation_text: String,
     pub title: Option<String>,
-    #[serde(default)]
     pub basis: Vec<RevisionBasis>,
-    #[serde(default)]
     pub aboutness: Vec<EntityRef>,
-    #[serde(default)]
     pub tags: Vec<TagId>,
     pub valid_time: TemporalExtent,
-
     pub epistemic_class: EpistemicClass,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplicitMemoryInput {
+    pub operation_id: OperationId,
+    pub subject: SubjectId,
+    pub cognitive_role: CognitiveRole,
+    pub content: MemoryContent,
 }
 
 impl ExplicitMemoryInput {
@@ -305,6 +258,12 @@ impl ExplicitMemoryInput {
         if self.operation_id.0.is_nil() {
             return Err(Error::Invalid("operation_id is required".into()));
         }
+        self.content.validate()
+    }
+}
+
+impl MemoryContent {
+    pub fn validate(&self) -> Result<()> {
         validate_content(&self.semantic_role, &self.representation_text)?;
         self.valid_time.validate()?;
         if self.basis.is_empty() {
@@ -385,59 +344,6 @@ fn validate_basis(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryFormationProposal {
-    #[serde(default)]
-    pub producer: Option<nous_core::ProducerSignature>,
-    pub operation_id: OperationId,
-    pub cognitive_role: CognitiveRole,
-    pub formation_mode: FormationMode,
-    pub grounding_occurrence_id: Option<OccurrenceId>,
-    pub semantic_role: String,
-    pub representation_text: String,
-    pub title: Option<String>,
-    pub basis: Vec<RevisionBasis>,
-    pub aboutness: Vec<EntityRef>,
-    pub valid_time: TemporalExtent,
-
-    pub epistemic_class: EpistemicClass,
-}
-
-impl MemoryFormationProposal {
-    pub fn into_input(self, subject: SubjectId) -> ExplicitMemoryInput {
-        ExplicitMemoryInput {
-            producer: self.producer,
-            operation_id: self.operation_id,
-            subject,
-            cognitive_role: self.cognitive_role,
-            formation_mode: self.formation_mode,
-            grounding_occurrence_id: self.grounding_occurrence_id,
-            semantic_role: self.semantic_role,
-            representation_text: self.representation_text,
-            title: self.title,
-            basis: self.basis,
-            aboutness: self.aboutness,
-            tags: Vec::new(),
-            valid_time: self.valid_time,
-
-            epistemic_class: self.epistemic_class,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum TagProposal {
-    Existing {
-        tag_id: TagId,
-    },
-    New {
-        label: String,
-        description: Option<String>,
-        kind_hint: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaScope {
     pub description: String,
     #[serde(default)]
@@ -456,7 +362,6 @@ pub struct CognitiveSchema {
     pub acceptance_state: AcceptanceState,
     pub integrity_state: IntegrityState,
     pub suppression_state: SuppressionState,
-    pub purge_state: PurgeState,
     pub created_at: DateTime<Utc>,
 }
 
@@ -525,13 +430,6 @@ pub struct SchemaEvidenceLink {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaLineage {
-    pub from_revision_id: CognitiveSchemaRevisionId,
-    pub to_revision_id: CognitiveSchemaRevisionId,
-    pub relation: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaContent {
     pub producer: Option<nous_core::ProducerSignature>,
     pub title: Option<String>,
@@ -569,19 +467,6 @@ pub struct ReviseSchemaInput {
     pub copy_link_ids: Vec<SchemaEvidenceLinkId>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateAssociationInput {
-    pub operation_id: OperationId,
-    pub subject: SubjectId,
-    pub from: CognitiveRef,
-    pub to: CognitiveRef,
-    pub relation_kind: String,
-    pub polarity: AssociationPolarity,
-    pub basis_class: AssociationBasisClass,
-    pub basis: Vec<AssociationBasis>,
-    pub valid_time: TemporalExtent,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TemporalEvidence {
     pub occurred: Vec<TemporalExtent>,
@@ -605,45 +490,51 @@ mod tests {
     fn grounded_formation_binds_its_declared_occurrence() {
         let occurrence = OccurrenceId::new();
         let mut input = ExplicitMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject: SubjectId::new(),
             cognitive_role: CognitiveRole::Declarative,
-            formation_mode: FormationMode::Grounded,
-            grounding_occurrence_id: Some(occurrence),
-            semantic_role: "fact".into(),
-            representation_text: "bounded fact".into(),
-            title: None,
-            basis: vec![evidence(occurrence)],
-            aboutness: Vec::new(),
-            tags: Vec::new(),
-            valid_time: TemporalExtent::Unknown,
 
-            epistemic_class: EpistemicClass::Reported,
+            content: crate::MemoryContent {
+                producer: None,
+                formation_mode: FormationMode::Grounded,
+                grounding_occurrence_id: Some(occurrence),
+                semantic_role: "fact".into(),
+                representation_text: "bounded fact".into(),
+                title: None,
+                basis: vec![evidence(occurrence)],
+                aboutness: Vec::new(),
+                tags: Vec::new(),
+                valid_time: TemporalExtent::Unknown,
+
+                epistemic_class: EpistemicClass::Reported,
+            },
         };
         assert!(input.validate().is_ok());
-        input.grounding_occurrence_id = Some(OccurrenceId::new());
+        input.content.grounding_occurrence_id = Some(OccurrenceId::new());
         assert!(input.validate().is_err());
     }
 
     #[test]
     fn synthesized_requires_two_inputs() {
         let input = ExplicitMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject: SubjectId::new(),
             cognitive_role: CognitiveRole::Declarative,
-            formation_mode: FormationMode::Synthesized,
-            grounding_occurrence_id: None,
-            semantic_role: "fact".into(),
-            representation_text: "bounded fact".into(),
-            title: None,
-            basis: vec![evidence(OccurrenceId::new())],
-            aboutness: Vec::new(),
-            tags: Vec::new(),
-            valid_time: TemporalExtent::Unknown,
 
-            epistemic_class: EpistemicClass::Inferred,
+            content: crate::MemoryContent {
+                producer: None,
+                formation_mode: FormationMode::Synthesized,
+                grounding_occurrence_id: None,
+                semantic_role: "fact".into(),
+                representation_text: "bounded fact".into(),
+                title: None,
+                basis: vec![evidence(OccurrenceId::new())],
+                aboutness: Vec::new(),
+                tags: Vec::new(),
+                valid_time: TemporalExtent::Unknown,
+
+                epistemic_class: EpistemicClass::Inferred,
+            },
         };
         assert!(input.validate().is_err());
     }

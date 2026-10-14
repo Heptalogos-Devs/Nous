@@ -46,6 +46,7 @@ export interface CoreOptions {
   kernel: KernelClient;
   token: string;
   consumers: ConsumerPolicy[];
+  maxUploadBytes: number;
   models?: ModelRuntime;
   resources?: ResourceRegistry;
   execution?: CoreExecutionPolicy;
@@ -82,8 +83,7 @@ export async function createCore(settings: CoreOptions) {
       .http_body_limit_bytes,
   });
   const kernel = settings.kernel;
-  const materialLimits = await kernel.material.getLimits({});
-  const maxUploadBytes = Number(materialLimits.maxUploadBytes);
+  const maxUploadBytes = settings.maxUploadBytes;
   if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes < 1)
     throw new Error(
       "Kernel upload limit cannot be represented by the HTTP host",
@@ -140,34 +140,36 @@ export async function createCore(settings: CoreOptions) {
     materializeResource: (r, c) =>
       materializeResource(kernel, resourceRegistry, r, options(c)),
   };
+  const systemStatus: NonNullable<
+    ServiceImpl<typeof SystemService>["getStatus"]
+  > = async (request, context) => {
+    const components: { name: string; state: string; detail?: string }[] = [
+      { name: "core", state: "READY" },
+    ];
+    try {
+      const status = await kernel.system.getStatus(request, options(context));
+      components.push({ name: "kernel", state: "READY" }, ...status.components);
+    } catch (error) {
+      if (
+        context.signal.aborted ||
+        !(error instanceof ConnectError) ||
+        (error.code !== Code.Unavailable &&
+          error.code !== Code.DeadlineExceeded)
+      )
+        throw error;
+      components.push({
+        name: "kernel",
+        state: "UNAVAILABLE",
+        detail: error.rawMessage,
+      });
+    }
+    return {
+      components: [...components, ...modelRuntime.invocations.capabilities],
+    };
+  };
   const system: ServiceImpl<typeof SystemService> = {
-    getStatus: async (r, c) => {
-      try {
-        return await kernel.system.getStatus(r, options(c));
-      } catch (error) {
-        if (c.signal.aborted) throw error;
-        return {
-          components: [
-            {
-              name: "kernel",
-              state: "UNAVAILABLE",
-              detail: "Kernel unavailable",
-            },
-          ],
-        };
-      }
-    },
-    getCapabilities: async (r, c) => {
-      const status = await kernel.system.getStatus(r, options(c));
-      return {
-        components: [
-          ...status.components,
-          ...(settings.models ?? new ModelRuntime()).invocations.capabilities,
-        ],
-      };
-    },
-    getProjectionStatus: (r, c) =>
-      kernel.system.getProjectionStatus(r, options(c)),
+    ...forward(SystemService, kernel.system),
+    getStatus: systemStatus,
   };
   await app.register(fastifyConnectPlugin, {
     routes: (router) => {

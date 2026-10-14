@@ -33,25 +33,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(parent)?;
         let scratch = parent.join(format!("prepare-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir(&scratch)?;
-        let settings = SettingsBuilder::new()
-            .version(VersionReq::parse("=18.6.0")?)
-            .installation_dir(scratch.join("install"))
-            .data_dir(scratch.join("cluster"))
-            .password_file(scratch.join("postgres.pgpass"))
-            .password(uuid::Uuid::now_v7().to_string())
-            .timeout(Some(Duration::from_secs(60)))
-            .temporary(false)
-            .build();
-        let mut postgres = PostgreSQL::new(settings);
-        postgres.setup().await?;
-        let installed = postgres.settings().installation_dir.clone();
-        drop(postgres);
-        std::fs::rename(installed, &installation)?;
+        let result: Result<(), Box<dyn std::error::Error>> = async {
+            let settings = SettingsBuilder::new()
+                .version(VersionReq::parse("=18.6.0")?)
+                .installation_dir(scratch.join("install"))
+                .data_dir(scratch.join("cluster"))
+                .password_file(scratch.join("postgres.pgpass"))
+                .password(uuid::Uuid::now_v7().to_string())
+                .timeout(Some(Duration::from_secs(60)))
+                .temporary(false)
+                .build();
+            let mut postgres = PostgreSQL::new(settings);
+            postgres.setup().await?;
+            let installed = postgres.settings().installation_dir.clone();
+            drop(postgres);
+            std::fs::rename(installed, &installation)?;
+            Ok(())
+        }
+        .await;
         let scratch = scratch.canonicalize()?;
         if !scratch.starts_with(parent.canonicalize()?) {
             return Err("Unexpected runtime preparation path".into());
         }
-        std::fs::remove_dir_all(scratch)?;
+        let cleanup = std::fs::remove_dir_all(scratch);
+        result?;
+        cleanup?;
     }
     println!("Developer PostgreSQL18.6 prepared; ordinary serve remains acquisition-free");
     Ok(())

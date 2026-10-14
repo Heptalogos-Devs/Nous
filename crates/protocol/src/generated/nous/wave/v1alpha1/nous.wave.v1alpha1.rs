@@ -241,9 +241,8 @@ pub enum DomainErrorCode {
     StaleContext = 6,
     StaleRevision = 7,
     OperationIdConflict = 8,
-    OperationInProgress = 9,
-    LeaseLost = 10,
     CapabilityUnavailable = 11,
+    InvalidConfiguration = 12,
 }
 impl DomainErrorCode {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -261,9 +260,8 @@ impl DomainErrorCode {
             Self::StaleContext => "DOMAIN_ERROR_CODE_STALE_CONTEXT",
             Self::StaleRevision => "DOMAIN_ERROR_CODE_STALE_REVISION",
             Self::OperationIdConflict => "DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT",
-            Self::OperationInProgress => "DOMAIN_ERROR_CODE_OPERATION_IN_PROGRESS",
-            Self::LeaseLost => "DOMAIN_ERROR_CODE_LEASE_LOST",
             Self::CapabilityUnavailable => "DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE",
+            Self::InvalidConfiguration => "DOMAIN_ERROR_CODE_INVALID_CONFIGURATION",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -278,9 +276,8 @@ impl DomainErrorCode {
             "DOMAIN_ERROR_CODE_STALE_CONTEXT" => Some(Self::StaleContext),
             "DOMAIN_ERROR_CODE_STALE_REVISION" => Some(Self::StaleRevision),
             "DOMAIN_ERROR_CODE_OPERATION_ID_CONFLICT" => Some(Self::OperationIdConflict),
-            "DOMAIN_ERROR_CODE_OPERATION_IN_PROGRESS" => Some(Self::OperationInProgress),
-            "DOMAIN_ERROR_CODE_LEASE_LOST" => Some(Self::LeaseLost),
             "DOMAIN_ERROR_CODE_CAPABILITY_UNAVAILABLE" => Some(Self::CapabilityUnavailable),
+            "DOMAIN_ERROR_CODE_INVALID_CONFIGURATION" => Some(Self::InvalidConfiguration),
             _ => None,
         }
     }
@@ -295,7 +292,7 @@ pub enum ErrorRecovery {
     CorrectRequest = 3,
     RediscoverReference = 4,
     RefreshState = 5,
-    /// Resume the original frozen operation identity after obtaining a new lease.
+    /// Retry the original frozen operation identity with a new work budget.
     RetryOperation = 6,
     /// Different semantic inputs require a different operation identity.
     NewOperation = 7,
@@ -460,6 +457,21 @@ pub struct AdoptCognitiveSeedRequest {
     #[prost(string, tag="4")]
     pub kind: ::prost::alloc::string::String,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Resident {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(string, tag="2")]
+    pub entry_reason: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub state: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="4")]
+    pub entered_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="5")]
+    pub last_meaningful_use_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="6")]
+    pub hold_until: ::core::option::Option<::prost_types::Timestamp>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Session {
     #[prost(string, tag="1")]
@@ -468,12 +480,18 @@ pub struct Session {
     pub subject_id: ::prost::alloc::string::String,
     #[prost(int64, tag="3")]
     pub runtime_revision: i64,
-    #[prost(bool, tag="4")]
-    pub closed: bool,
+    #[prost(message, optional, tag="4")]
+    pub closed_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, repeated, tag="5")]
-    pub resident_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    pub resident: ::prost::alloc::vec::Vec<Resident>,
     #[prost(string, optional, tag="6")]
     pub active_work_context_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="7")]
+    pub opened_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="8")]
+    pub last_activity_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="9")]
+    pub last_meaningful_use_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListSessionsResponse {
@@ -749,7 +767,7 @@ pub struct QueryRequest {
     #[prost(message, optional, tag="8")]
     pub capabilities: ::core::option::Option<QueryCapabilities>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PreparedQueryResponse {
     #[prost(string, tag="1")]
     pub bound_query: ::prost::alloc::string::String,
@@ -769,6 +787,10 @@ pub struct PreparedQueryResponse {
     pub concept_enrichment_requirement: ::prost::alloc::string::String,
     #[prost(bool, tag="9")]
     pub historical_view: bool,
+    #[prost(message, optional, tag="10")]
+    pub result: ::core::option::Option<QueryResponse>,
+    #[prost(string, optional, tag="11")]
+    pub validation_ticket: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Evidence {
@@ -1029,8 +1051,6 @@ pub mod revision_basis {
 pub struct MemoryContent {
     #[prost(message, optional, tag="13")]
     pub producer: ::core::option::Option<ProducerSignature>,
-    #[prost(string, tag="1")]
-    pub cognitive_role: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
     pub formation_mode: ::prost::alloc::string::String,
     #[prost(string, optional, tag="3")]
@@ -1072,8 +1092,6 @@ pub struct Memory {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="8")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="9")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(string, tag="10")]
     pub accessibility_mode: ::prost::alloc::string::String,
     #[prost(string, tag="11")]
@@ -1146,6 +1164,8 @@ pub struct FormMemoryRequest {
     pub subject_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag="3")]
     pub input: ::core::option::Option<MemoryContent>,
+    #[prost(string, tag="4")]
+    pub cognitive_role: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReviseMemoryRequest {
@@ -1224,6 +1244,13 @@ pub struct Artifact {
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="7")]
     pub metadata: ::core::option::Option<::prost_types::Struct>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MaterialCleanup {
+    #[prost(uint64, tag="1")]
+    pub objects_deleted: u64,
+    #[prost(uint64, tag="2")]
+    pub staging_deleted: u64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MaterialLimits {
@@ -1418,6 +1445,35 @@ pub struct WorkContextResponse {
     #[prost(message, repeated, tag="2")]
     pub degradation: ::prost::alloc::vec::Vec<Degradation>,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WorkContextTextList {
+    #[prost(string, repeated, tag="1")]
+    pub values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WorkContextFields {
+    #[prost(string, optional, tag="1")]
+    pub purpose: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="2")]
+    pub unresolved_questions: ::core::option::Option<WorkContextTextList>,
+    #[prost(message, optional, tag="3")]
+    pub constraints: ::core::option::Option<::prost_types::Struct>,
+    #[prost(message, optional, tag="4")]
+    pub resume_conditions: ::core::option::Option<WorkContextTextList>,
+    #[prost(message, optional, tag="5")]
+    pub budget_summary: ::core::option::Option<::prost_types::Struct>,
+    #[prost(string, optional, tag="6")]
+    pub context_text: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WorkContextAnchors {
+    #[prost(message, repeated, tag="1")]
+    pub cognition_anchors: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(string, repeated, tag="2")]
+    pub entity_anchors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag="3")]
+    pub tag_anchors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateWorkContextRequest {
     #[prost(string, tag="1")]
@@ -1428,24 +1484,22 @@ pub struct UpdateWorkContextRequest {
     pub work_context_id: ::prost::alloc::string::String,
     #[prost(int64, tag="4")]
     pub expected_revision: i64,
-    #[prost(string, tag="5")]
-    pub purpose: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag="6")]
-    pub unresolved_questions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(message, optional, tag="7")]
-    pub constraints: ::core::option::Option<::prost_types::Struct>,
-    #[prost(string, repeated, tag="8")]
-    pub resume_conditions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(message, optional, tag="9")]
-    pub budget_summary: ::core::option::Option<::prost_types::Struct>,
-    #[prost(message, repeated, tag="10")]
-    pub cognition_anchors: ::prost::alloc::vec::Vec<CognitiveRef>,
-    #[prost(string, tag="11")]
-    pub context_text: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag="12")]
-    pub entity_anchors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag="13")]
-    pub tag_anchors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(oneof="update_work_context_request::Intent", tags="5, 6, 7, 8")]
+    pub intent: ::core::option::Option<update_work_context_request::Intent>,
+}
+/// Nested message and enum types in `UpdateWorkContextRequest`.
+pub mod update_work_context_request {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Intent {
+        #[prost(message, tag="5")]
+        Fields(super::WorkContextFields),
+        #[prost(message, tag="6")]
+        Pin(super::WorkContextAnchors),
+        #[prost(message, tag="7")]
+        Unpin(super::WorkContextAnchors),
+        #[prost(enumeration="super::WorkContextClearScope", tag="8")]
+        Clear(i32),
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WorkContextMutationRequest {
@@ -1489,6 +1543,14 @@ pub struct ProjectionRequest {
     pub max_items: u32,
     #[prost(uint32, tag="8")]
     pub max_text_bytes: u32,
+    #[prost(string, tag="9")]
+    pub memory_requirement: ::prost::alloc::string::String,
+    #[prost(string, tag="10")]
+    pub runtime_requirement: ::prost::alloc::string::String,
+    #[prost(string, tag="11")]
+    pub resource_requirement: ::prost::alloc::string::String,
+    #[prost(bool, tag="12")]
+    pub materialize: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ContextSegment {
@@ -1521,6 +1583,12 @@ pub struct Projection {
     pub segments: ::prost::alloc::vec::Vec<ContextSegment>,
     #[prost(message, repeated, tag="5")]
     pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+    #[prost(string, tag="6")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="7")]
+    pub session_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="8")]
+    pub active_work_context_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ContextCursor {
@@ -1556,6 +1624,17 @@ pub struct EpisodeMember {
     #[prost(string, tag="3")]
     pub role: ::prost::alloc::string::String,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EpisodeRelation {
+    #[prost(string, tag="1")]
+    pub from_revision_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub to_revision_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub relation: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="4")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EpisodeRevision {
     #[prost(string, tag="1")]
@@ -1588,6 +1667,8 @@ pub struct EpisodeRevision {
     pub members: ::prost::alloc::vec::Vec<EpisodeMember>,
     #[prost(message, repeated, tag="15")]
     pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
+    #[prost(message, repeated, tag="16")]
+    pub relations: ::prost::alloc::vec::Vec<EpisodeRelation>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Episode {
@@ -1607,12 +1688,27 @@ pub struct Episode {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="8")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="9")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(message, optional, tag="10")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="11")]
     pub current_revision: ::core::option::Option<EpisodeRevision>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EpisodeContent {
+    #[prost(string, optional, tag="1")]
+    pub title: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="2")]
+    pub parent_episode_revision_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="3")]
+    pub experience_time: ::core::option::Option<TemporalExtent>,
+    #[prost(string, tag="4")]
+    pub boundary_explanation: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="5")]
+    pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="6")]
+    pub members: ::prost::alloc::vec::Vec<EpisodeMember>,
+    #[prost(message, repeated, tag="7")]
+    pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateEpisodeRequest {
@@ -1622,20 +1718,8 @@ pub struct CreateEpisodeRequest {
     pub subject_id: ::prost::alloc::string::String,
     #[prost(string, tag="3")]
     pub track_key: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="4")]
-    pub title: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag="5")]
-    pub parent_episode_revision_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag="6")]
-    pub experience_time: ::core::option::Option<TemporalExtent>,
-    #[prost(string, tag="7")]
-    pub boundary_explanation: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="9")]
-    pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, repeated, tag="10")]
-    pub members: ::prost::alloc::vec::Vec<EpisodeMember>,
-    #[prost(message, repeated, tag="11")]
-    pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
+    #[prost(message, optional, tag="4")]
+    pub content: ::core::option::Option<EpisodeContent>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReviseEpisodeRequest {
@@ -1649,20 +1733,8 @@ pub struct ReviseEpisodeRequest {
     pub expected_object_epoch: i64,
     #[prost(string, tag="5")]
     pub intent: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="6")]
-    pub title: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag="7")]
-    pub parent_episode_revision_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag="8")]
-    pub experience_time: ::core::option::Option<TemporalExtent>,
-    #[prost(string, tag="9")]
-    pub boundary_explanation: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="11")]
-    pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, repeated, tag="12")]
-    pub members: ::prost::alloc::vec::Vec<EpisodeMember>,
-    #[prost(message, repeated, tag="13")]
-    pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
+    #[prost(message, optional, tag="6")]
+    pub content: ::core::option::Option<EpisodeContent>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LinkEpisodeRevisionsRequest {
@@ -1717,6 +1789,38 @@ pub struct ListEpisodeRevisionsResponse {
     pub items: ::prost::alloc::vec::Vec<EpisodeRevision>,
     #[prost(string, tag="2")]
     pub next_page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum WorkContextClearScope {
+    Unspecified = 0,
+    Text = 1,
+    Anchors = 2,
+    All = 3,
+}
+impl WorkContextClearScope {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "WORK_CONTEXT_CLEAR_SCOPE_UNSPECIFIED",
+            Self::Text => "WORK_CONTEXT_CLEAR_SCOPE_TEXT",
+            Self::Anchors => "WORK_CONTEXT_CLEAR_SCOPE_ANCHORS",
+            Self::All => "WORK_CONTEXT_CLEAR_SCOPE_ALL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "WORK_CONTEXT_CLEAR_SCOPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "WORK_CONTEXT_CLEAR_SCOPE_TEXT" => Some(Self::Text),
+            "WORK_CONTEXT_CLEAR_SCOPE_ANCHORS" => Some(Self::Anchors),
+            "WORK_CONTEXT_CLEAR_SCOPE_ALL" => Some(Self::All),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IdentityBinding {
@@ -1872,8 +1976,6 @@ pub struct Journal {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="7")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="8")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(message, optional, tag="9")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="10")]
@@ -1931,7 +2033,7 @@ pub struct MaintenanceGrantRequest {
     #[prost(uint32, tag="4")]
     pub max_elapsed_ms: u32,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MaintenanceOperationResult {
     #[prost(string, tag="1")]
     pub need_id: ::prost::alloc::string::String,
@@ -1941,6 +2043,8 @@ pub struct MaintenanceOperationResult {
     pub status: ::prost::alloc::string::String,
     #[prost(string, optional, tag="4")]
     pub problem_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="5")]
+    pub error_detail: ::core::option::Option<ErrorDetail>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MaintenanceGrantResponse {
@@ -1952,6 +2056,8 @@ pub struct MaintenanceGrantResponse {
     pub elapsed_ms: u32,
     #[prost(string, tag="4")]
     pub disposition: ::prost::alloc::string::String,
+    #[prost(uint32, tag="5")]
+    pub operations_consumed: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceDescriptor {
@@ -2012,6 +2118,8 @@ pub struct Tag {
     pub status: ::prost::alloc::string::String,
     #[prost(string, optional, tag="8")]
     pub canonical_tag_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag="9")]
+    pub revision_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateTagRequest {
@@ -2020,9 +2128,11 @@ pub struct CreateTagRequest {
     #[prost(string, tag="2")]
     pub subject_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag="3")]
-    pub tag: ::core::option::Option<Tag>,
+    pub content: ::core::option::Option<TagContent>,
     #[prost(message, optional, tag="4")]
     pub producer: ::core::option::Option<ProducerSignature>,
+    #[prost(string, tag="5")]
+    pub origin: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SearchTagsRequest {
@@ -2144,6 +2254,12 @@ pub struct Association {
     pub basis: ::prost::alloc::vec::Vec<AssociationBasis>,
     #[prost(string, optional, tag="8")]
     pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="9")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="10")]
+    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(string, tag="11")]
+    pub subject_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateAssociationRequest {
@@ -2204,6 +2320,12 @@ pub struct SchemaEvidenceLink {
     pub role: ::prost::alloc::string::String,
     #[prost(message, optional, tag="3")]
     pub basis: ::core::option::Option<RevisionBasis>,
+    #[prost(string, optional, tag="4")]
+    pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="5")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="6")]
+    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CognitiveSchema {
@@ -2221,8 +2343,6 @@ pub struct CognitiveSchema {
     pub integrity_state: ::prost::alloc::string::String,
     #[prost(string, tag="7")]
     pub suppression_state: ::prost::alloc::string::String,
-    #[prost(string, tag="8")]
-    pub purge_state: ::prost::alloc::string::String,
     #[prost(string, tag="9")]
     pub title: ::prost::alloc::string::String,
     #[prost(string, tag="10")]
@@ -2241,6 +2361,16 @@ pub struct CognitiveSchema {
     pub formation_kind: ::prost::alloc::string::String,
     #[prost(string, optional, tag="17")]
     pub producer_signature_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int32, tag="18")]
+    pub revision_no: i32,
+    #[prost(string, optional, tag="19")]
+    pub parent_revision_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="20")]
+    pub revision_intent: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="21")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(string, tag="22")]
+    pub revision_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CognitiveSchemaContent {
@@ -2515,6 +2645,83 @@ pub struct ResourceMaterialization {
     pub media_type: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CognitionHistoryRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub object: ::core::option::Option<CognitiveRef>,
+    #[prost(message, optional, tag="3")]
+    pub page: ::core::option::Option<Page>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListSchemasResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<CognitiveSchema>,
+    #[prost(string, tag="2")]
+    pub next_page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListAssociationsResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<Association>,
+    #[prost(string, tag="2")]
+    pub next_page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ServingReclamation {
+    #[prost(string, repeated, tag="1")]
+    pub reclaimed: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(uint64, tag="2")]
+    pub bytes_reclaimed: u64,
+    #[prost(bool, tag="3")]
+    pub readers_active: bool,
+    #[prost(uint32, tag="4")]
+    pub orphan_directories: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MaterialLineageRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="2")]
+    pub roots: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(uint32, tag="3")]
+    pub max_nodes: u32,
+    #[prost(uint32, tag="4")]
+    pub max_bytes: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MaterialLineageNode {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(oneof="material_lineage_node::Value", tags="2, 3, 4, 5, 6")]
+    pub value: ::core::option::Option<material_lineage_node::Value>,
+}
+/// Nested message and enum types in `MaterialLineageNode`.
+pub mod material_lineage_node {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        #[prost(message, tag="2")]
+        Occurrence(super::Occurrence),
+        #[prost(message, tag="3")]
+        Artifact(super::Artifact),
+        #[prost(message, tag="4")]
+        SourceRegion(super::SourceRegion),
+        #[prost(message, tag="5")]
+        Representation(super::DerivedRepresentation),
+        #[prost(message, tag="6")]
+        DerivedRegion(super::DerivedRegion),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MaterialLineage {
+    #[prost(message, repeated, tag="1")]
+    pub nodes: ::prost::alloc::vec::Vec<MaterialLineageNode>,
+    #[prost(bool, tag="2")]
+    pub truncated: bool,
+    #[prost(bool, tag="3")]
+    pub payloads_truncated: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FormationRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
@@ -2539,8 +2746,6 @@ pub struct DeriveMaterialRequest {
     pub source_region_id: ::prost::alloc::string::String,
     #[prost(string, optional, tag="3")]
     pub strategy: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag="4")]
-    pub target: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag="5")]
     pub supersedes: ::core::option::Option<::prost::alloc::string::String>,
 }
@@ -2573,6 +2778,51 @@ pub struct PrepareEmbeddingsResponse {
     pub committed: u32,
     #[prost(message, repeated, tag="2")]
     pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CognitionTraceRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(uint32, tag="3")]
+    pub max_nodes: u32,
+    #[prost(uint32, tag="4")]
+    pub max_bytes: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CognitionTraceNode {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(oneof="cognition_trace_node::Content", tags="2, 3, 4, 5")]
+    pub content: ::core::option::Option<cognition_trace_node::Content>,
+}
+/// Nested message and enum types in `CognitionTraceNode`.
+pub mod cognition_trace_node {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Content {
+        #[prost(message, tag="2")]
+        Memory(super::Memory),
+        #[prost(message, tag="3")]
+        Schema(super::CognitiveSchema),
+        #[prost(message, tag="4")]
+        Episode(super::EpisodeRevision),
+        #[prost(message, tag="5")]
+        Journal(super::JournalRevision),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CognitionTrace {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(message, repeated, tag="2")]
+    pub nodes: ::prost::alloc::vec::Vec<CognitionTraceNode>,
+    #[prost(message, optional, tag="3")]
+    pub lineage: ::core::option::Option<MaterialLineage>,
+    #[prost(message, repeated, tag="4")]
+    pub producers: ::prost::alloc::vec::Vec<ProducerSignature>,
+    #[prost(bool, tag="5")]
+    pub truncated: bool,
 }
 include!("nous.wave.v1alpha1.tonic.rs");
 // @@protoc_insertion_point(module)

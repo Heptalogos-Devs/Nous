@@ -9,15 +9,12 @@ CREATE TABLE mutation_receipts (
     operation_id uuid NOT NULL,
     operation_kind text NOT NULL,
     request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
-    state text NOT NULL CHECK (state IN ('in_progress','committed','failed_terminal')),
     result_kind text NULL,
-    result_ref_kind text NULL,
     result_ref text NULL,
     result_revision uuid NULL,
     result_epoch bigint NULL,
     created_at timestamptz NOT NULL,
     committed_at timestamptz NULL,
-    terminal_problem_code text NULL,
     PRIMARY KEY(subject_id, operation_id)
 );
 CREATE TABLE cognition_dependency_invalidations (
@@ -107,12 +104,7 @@ CREATE TABLE maintenance_needs (
     trigger_revision bigint NOT NULL DEFAULT 1 CHECK (trigger_revision > 0),
     due_at timestamptz NOT NULL,
     priority integer NOT NULL CHECK (priority BETWEEN 0 AND 100),
-    state text NOT NULL CHECK (state IN ('pending','leased','blocked','satisfied','obsolete')),
-    lease_token uuid NULL,
-    lease_until timestamptz NULL,
-    last_ack_token uuid NULL,
-    last_ack_digest text NULL CHECK (last_ack_digest IS NULL OR last_ack_digest ~ '^[0-9a-f]{64}$'),
-    attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    state text NOT NULL CHECK (state IN ('pending','blocked','satisfied','obsolete')),
     retry_count integer NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
     retry_not_before timestamptz NULL,
     terminal_at timestamptz NULL,
@@ -120,33 +112,32 @@ CREATE TABLE maintenance_needs (
     model_execution_digest text NULL CHECK (model_execution_digest IS NULL OR model_execution_digest ~ '^[0-9a-f]{64}$'),
     last_problem_code text NULL,
     created_at timestamptz NOT NULL,
-    updated_at timestamptz NOT NULL,
-    CHECK ((state = 'leased') = (lease_token IS NOT NULL AND lease_until IS NOT NULL))
+    updated_at timestamptz NOT NULL
 );
 CREATE UNIQUE INDEX maintenance_active_scope ON maintenance_needs(subject_id,kind,scope_kind,scope_ref)
-    WHERE state IN ('pending','leased','blocked');
+    WHERE state IN ('pending','blocked');
 CREATE INDEX maintenance_due ON maintenance_needs(subject_id,due_at,priority DESC)
-    WHERE state IN ('pending','leased');
+    WHERE state IN ('pending');
 
-CREATE TABLE model_workflow_operations (
+CREATE TABLE model_results (
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
     owner text NOT NULL CHECK (owner ~ '^[a-z][a-z0-9_]{0,63}$'),
     operation_key text NOT NULL CHECK (length(operation_key) BETWEEN 1 AND 256),
     semantic_digest text NOT NULL CHECK (length(semantic_digest) BETWEEN 1 AND 128),
-    snapshot jsonb NOT NULL,
+    context jsonb NULL,
     proposal jsonb NULL,
     outcome jsonb NULL,
     execution_telemetry jsonb NULL,
     maintenance_trigger_revision bigint NULL CHECK (maintenance_trigger_revision >= 0),
     maintenance_need_id uuid NULL REFERENCES maintenance_needs(need_id) ON DELETE CASCADE,
-    lease_token uuid NULL,
-    lease_until timestamptz NULL,
+    dependencies jsonb NOT NULL DEFAULT '[]',
+    mutation_operations uuid[] NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY(subject_id,owner,operation_key)
 );
 
-CREATE INDEX maintenance_workflows ON model_workflow_operations(maintenance_need_id) WHERE maintenance_need_id IS NOT NULL;
+CREATE INDEX maintenance_model_results ON model_results(maintenance_need_id) WHERE maintenance_need_id IS NOT NULL;
 
 CREATE TABLE experience_items (
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
@@ -213,7 +204,7 @@ CREATE INDEX query_feedback_expiry ON query_feedback_records(subject_id,expires_
 
 CREATE TABLE cognitive_use_events (
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    consumer_ref text NOT NULL CHECK (octet_length(consumer_ref) BETWEEN 1 AND 512 AND consumer_ref !~ '[[:space:]]' AND consumer_ref LIKE '%:%:%'),
+    consumer_ref text NOT NULL CHECK (octet_length(consumer_ref) BETWEEN 1 AND 512 AND consumer_ref !~ '[[:space:]]'),
     event_id uuid NOT NULL,
     query_id uuid NULL,
     ref_kind text NOT NULL CHECK (ref_kind IN ('memory_revision','cognitive_schema_revision','episode_revision','journal_revision')),
@@ -240,15 +231,12 @@ CREATE TABLE serving_generations (
     view_descriptor jsonb NOT NULL DEFAULT '{"kind":"current"}' CHECK (view_descriptor->>'kind' IN ('current','historical')),
     generation_id uuid PRIMARY KEY,
     subject_id uuid NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    family text NOT NULL CHECK (family IN ('exact','lexical','dense','concept','topology')),
+    family text NOT NULL CHECK (family IN ('lexical','dense','concept','topology')),
     space_signature text NULL,
     authority_watermark bigint NOT NULL,
-    implementation_id text NOT NULL,
-    implementation_revision text NOT NULL,
     config_digest text NOT NULL,
-    artifact_location text NOT NULL,
     artifact_hash text NOT NULL,
-    state text NOT NULL CHECK (state IN ('building','ready','retired','failed')),
+    state text NOT NULL CHECK (state IN ('ready','retired','failed')),
     built_at timestamptz NOT NULL,
     published_at timestamptz NULL,
     metadata jsonb NOT NULL DEFAULT '{}'
@@ -331,3 +319,13 @@ CREATE TRIGGER episode_state_history AFTER INSERT OR UPDATE ON episode_objects F
 CREATE TRIGGER journal_state_history AFTER INSERT OR UPDATE ON journal_objects FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('journal','journal_id');
 CREATE TRIGGER tag_state_history AFTER INSERT OR UPDATE ON tags FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('tag','tag_id');
 CREATE TRIGGER lexical_state_history AFTER INSERT OR UPDATE ON lexical_visibility FOR EACH ROW EXECUTE FUNCTION capture_authority_object_state('lexical_visibility','lexical_ref');
+
+-- Runtime owns draft reservations and experience ordering; cognition applies its own membership rules.
+CREATE FUNCTION runtime_available_experience(p_subject uuid,p_through bigint)
+RETURNS TABLE(occurrence_id uuid,recorded_seq bigint,observed_at timestamptz)
+LANGUAGE sql STABLE AS $$
+  SELECT e.occurrence_id,e.recorded_seq,e.observed_at FROM experience_items e
+  WHERE e.subject_id=p_subject AND e.recorded_seq<=p_through
+    AND NOT EXISTS(SELECT 1 FROM episode_draft_members m JOIN episode_drafts d USING(draft_id)
+      WHERE m.occurrence_id=e.occurrence_id AND d.state IN ('open','ready'))
+$$;

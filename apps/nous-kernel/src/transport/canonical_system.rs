@@ -7,6 +7,7 @@ rpc_service! {
     p::system_service_server::SystemService {
         forward {
             get_projection_status(p::SubjectRequest) -> p::ProjectionStatus;
+            reclaim_serving(p::SubjectRequest) -> p::ServingReclamation;
         }
         custom {
             async fn get_status(
@@ -20,12 +21,6 @@ rpc_service! {
                     .map_err(status)
             }
 
-            async fn get_capabilities(
-                &self,
-                _: Request<()>,
-            ) -> std::result::Result<Response<p::SystemStatus>, Status> {
-                rpc_reply(KernelService::get_status(self, ())).await
-            }
         }
     }
 }

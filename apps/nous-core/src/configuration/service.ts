@@ -3,9 +3,14 @@
 
 import { fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
-import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";
+import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { ConfigurationService } from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
 import { normalizeCoreConfigurationValue } from "./catalog.js";
+import {
+  domainError,
+  DomainErrorCode,
+  ErrorRecovery,
+} from "@nous-wave/client/errors";
 import { z } from "zod";
 
 /** Kernel owns precedence and snapshots; Core only runs the owning TypeScript normalizer. */
@@ -25,7 +30,7 @@ export function configurationOperations(
         ) as JsonValue,
       );
     } catch (error) {
-      throw new ConnectError(
+      throw domainError(
         error instanceof z.ZodError
           ? error.issues
               .map(
@@ -35,6 +40,11 @@ export function configurationOperations(
               .join("; ")
           : `Invalid configuration ${path}`,
         Code.InvalidArgument,
+        {
+          code: DomainErrorCode.INVALID_CONFIGURATION,
+          recovery: ErrorRecovery.CORRECT_REQUEST,
+          context: { commit_status: "rejected", path },
+        },
       );
     }
   };

@@ -41,8 +41,7 @@ pub struct RuntimeOptions {
     pub serving_options: ServingOptions,
     pub embedding: Option<Arc<dyn TextEmbeddingProvider>>,
     pub stored_embedding: Option<nous_retrieval::StoredEmbeddingConfig>,
-    pub deployment_document: serde_json::Value,
-    pub core_descriptors: Vec<nous_configuration::ConfigDescriptor>,
+    pub configuration: nous_configuration::ConfigDeployment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,13 +51,6 @@ pub struct RuntimeStatus {
 }
 
 impl NousRuntime {
-    pub async fn materialize(
-        &self,
-        subject: SubjectId,
-        request: nous_material::MaterializeRequest,
-    ) -> Result<nous_material::MaterializedEvidence> {
-        self.material.materialize(subject, request).await
-    }
     pub async fn open(options: RuntimeOptions) -> Result<Self> {
         Self::open_with_clock(options, Arc::new(nous_runtime::SystemCognitiveClock)).await
     }
@@ -74,10 +66,8 @@ impl NousRuntime {
         )
         .await?;
         store.migrate().await?;
-        let registry = configuration_catalog(options.core_descriptors)?;
         let configuration =
-            ConfigurationService::open(store.clone(), registry, options.deployment_document)
-                .await?;
+            ConfigurationService::open(store.clone(), options.configuration).await?;
         let system_snapshot = configuration.active_system_snapshot()?;
         let process_capabilities = process_capabilities(&system_snapshot)?;
         let resident_limit = system_snapshot.get(nous_runtime::RESIDENT_LIMIT_KEY)?;
@@ -105,10 +95,16 @@ impl NousRuntime {
         serving_options.lexical = system_snapshot.get(nous_retrieval::LEXICAL_ENABLED_KEY)?;
         serving_options.dense = system_snapshot.get(nous_retrieval::DENSE_ENABLED_KEY)?;
         serving_options.topology = system_snapshot.get(nous_retrieval::TOPOLOGY_ENABLED_KEY)?;
-        let memory = process_capabilities
-            .memory
-            .then(|| MemoryService::new(material.clone(), configuration.clone()));
+        let memory = process_capabilities.memory.then(|| {
+            MemoryService::new(
+                store.clone(),
+                cognition.clone(),
+                material.clone(),
+                configuration.clone(),
+            )
+        });
         let serving = ServingService::new(
+            store.clone(),
             material.clone(),
             memory.clone(),
             serving_options,
@@ -170,7 +166,7 @@ impl NousRuntime {
             None
         };
         self.cognition
-            .bind_query_with_authority_view(query, config, view)
+            .bind_query_with_authority_view(query, config, view, self)
             .await
     }
     pub async fn historical_authority_view(
@@ -242,16 +238,6 @@ impl NousRuntime {
                 self.serving.embedding().map(|provider| provider.space());
         }
         self.cognition.expire_query_leases()?;
-        self.serving
-            .reclaim_retired(
-                bound.source_query.subject,
-                std::time::Duration::from_secs(
-                    bound
-                        .config_snapshot
-                        .get(nous_retrieval::RETIRED_GRACE_SECONDS)?,
-                ),
-            )
-            .await?;
         let plan = nous_runtime::QueryPlan::for_bound_query(&bound);
         let subject_capabilities = self
             .subjects
@@ -286,7 +272,7 @@ impl NousRuntime {
             )
             .await?;
         execution.result.generation = serving_query.generation_trace();
-        execution.read_lease = Some(serving_query);
+        execution.bound.activation_view = Some(serving_query);
         let result = &mut execution.result;
         result.degradation.extend(projection.degradation);
         if !result.degradation.is_empty() && result.status != QueryStatus::Partial {
@@ -304,7 +290,7 @@ impl NousRuntime {
     }
 
     pub async fn status(&self) -> RuntimeStatus {
-        let mut capabilities = vec![
+        let capabilities = vec![
             CapabilityStatus {
                 capability_id: "subject_core".into(),
                 status: Readiness::Ready,
@@ -328,9 +314,6 @@ impl NousRuntime {
                     .then(|| "disabled in composition".into()),
             },
         ];
-        if let Some(memory) = &self.memory {
-            capabilities.extend(memory.status().await.capabilities);
-        }
         RuntimeStatus {
             ready: self.store.check().await.is_ok(),
             capabilities,

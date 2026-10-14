@@ -1,239 +1,148 @@
-# Nous Wave 用户配置，放置于 ConfigurationRoot/nous.toml。
-# SecretRoot/gateway.env 保存 key；所有目录由 bootstrap.toml 的 [paths] 定位。
-# 修改 role/model 配置后重启 Core；示例 identifier 空值表示尚未配置。
-# ConfigurationRoot/nous.toml 使用的合同版本。此示例符合 Core revision 2。
-config_revision = 2
-
-# 应用 API 只监听本机 loopback。
-# 设为 0 时由系统分配空闲端口。默认固定端口为 9470。
+# 放到 ConfigurationRoot/nous.toml；凭据放 SecretRoot/gateway.env 或环境变量。
+# Gateway 地址只是连接示例。获得实际端口和模型信息后填写并 enabled=true。
+# 空 model 标识报告 NOT_CONFIGURED；本模板不会调用模型。
 [host]
 port = 9470
-
-# 凭据文件名，相对 SecretRoot 解析；同名变量以操作系统环境中的值为准。
 dotenv_file = "gateway.env"
 
-[material]
-# description_only / direct_structured / describe_then_structure
-strategy = "description_only"
-
-# ── 数据库与材料大小 ──
 [database]
-# managed_private / external；默认使用私有 runtime pack。
 mode = "managed_private"
-name = "nous_wave"
-max_connections = 8
-# external 时必填；值进入受控环境或 dotenv。
-# url_env = "NOUS_DATABASE_URL"
+# external 模式使用 url_env = "NOUS_DATABASE_URL"。
 
-[object_store]
-# Artifact 唯一上传上限，默认 8 GiB。
-max_upload_bytes = 8589934592
-
-# 可选默认策略：description_only / direct_structured / describe_then_structure。
-# description_only 只保存描述；direct_structured 直接生成结构；
-# describe_then_structure 先保存描述，再从描述生成结构。
-# 两阶段结构化失败会保留已提交的 rich description。
-# Gateway：只配置应用调用地址与 token 变量名。上游渠道/供应商 key/配额由 New API 管理。
-# ── 网关与可复用模型配置 ──
 [models.gateway_profiles.local]
-# 必填；远程必须 HTTPS，literal loopback 可用 HTTP。
 base_url = "http://127.0.0.1:3000/v1"
-# 必填；值写到 SecretRoot/gateway.env，不能在本文件放 key。
 credential_env = "NOUS_GATEWAY_TOKEN"
-# 可选；填好模型与 key 后改为 true。
 enabled = false
-# 可选；1–300000 毫秒。示例值为 30 秒。
 request_timeout_ms = 30000
 
-# ModelProfile 声明可复用模型资源；ExecutionProfile 拥有参数；RolePolicy 选择有序 routes。
-# protocol 选项：openai-chat / openai-responses / openai-embeddings /
-# openai-audio-transcription / rerank-v1。聊天选 chat，明确支持 Responses 时可改 responses。
-# capabilities 声明支持 text / image_input / structured_output / embedding /
-# audio_input / video_input / speech_transcription / rerank；可执行配置完整时报告 READY。
-[models.model_profiles.formation]
+# ModelProfile 是模型资源；ExecutionProfile 是调用控制；RolePolicy 选择执行路线。
+# 仅声明实际支持的能力；音视频输入须经网关和模型实际确认。
+[models.model_profiles.text]
 gateway = "local"
 protocol = "openai-chat"
-# 启用该角色时填写实际 identifier；空值=NOT_CONFIGURED。
 model = ""
 capabilities = ["text", "structured_output"]
-# 可选；填写经服务方文档或响应确认的模型修订。
-# model_revision = "实际已知的模型修订"
 
-[models.model_profiles.vision]
+[models.model_profiles.media]
 gateway = "local"
 protocol = "openai-chat"
-# 需支持图片输入；可与文本模型相同，但要确认能力。
 model = ""
 capabilities = ["text", "image_input", "audio_input", "video_input", "structured_output"]
 
 [models.model_profiles.embedding]
 gateway = "local"
 protocol = "openai-embeddings"
-# 选择实际 embedding endpoint 的模型，不能用聊天模型。
 model = ""
 capabilities = ["embedding"]
-
 [models.model_profiles.embedding.embedding]
-# 每个真实 HTTP 请求 1–64 条；网关不接受数组批量时设为 1。失败不自动改单条重试。
-max_batch_size = 64
-# 占位值；改为模型实际返回的维度。
+# 接入时填写实际维度、权重修订和输出语义；这里的值不用于真实调用。
 dimension = 1
-# 必填；声明所选权重/版本，形成向量空间身份。
+max_batch_size = 64
 weights_revision = "REPLACE_WEIGHTS_REVISION"
-# 必填；所选模型的实际任务语义。
 task = "retrieval"
-# 必填；当前路径使用文本。
 input_representation = "text"
-# 必填；实际输入预处理的稳定身份。
 preprocessing_identity = "utf8"
-# 必填；预处理版本。
 preprocessing_revision = "1"
-# 必填；声明模型实际输出的 normalization。
 normalization = "none"
-# 必填；实际输出语义。
 output_semantics = "dense_vector"
 
 [models.model_profiles.rerank]
 gateway = "local"
 protocol = "rerank-v1"
-# 可选角色；需提供 /v1/rerank 标准 index/score response。
 model = ""
 capabilities = ["rerank"]
 
 [models.model_profiles.speech]
 gateway = "local"
 protocol = "openai-audio-transcription"
-# 可选角色；需支持标准 multipart audio transcription。
 model = ""
 capabilities = ["speech_transcription"]
 
-# Role 参数独立，不存在 global temperature/max tokens。
-# requirement：optional（不可用时显式降级）/ required（不可用时 operation 失败）。
-# 生成角色可设置 temperature 0–2、top_p 0–1、max_output_tokens 1–65536、timeout_ms 1–300000。
-# 模型不支持的 sampling 参数从对应 ExecutionProfile 删除。
-# Prompt 可省略以使用项目默认；prompts/... 明确选择 ProgramRoot。
-# 用户覆盖用 config-prompts/...，相对 ConfigurationRoot/prompts；缺失时角色为 UNAVAILABLE。
-# 每份最多 128 KiB，修改会改变 producer。
-# ── 各认知角色使用的模型、Prompt 与生成参数 ──
-[models.execution_profiles.memory_formation]
-model = "formation"
+# 控制按实际模型能力设置；不支持 sampling 的模型删除 temperature。
+[models.execution_profiles.text]
+model = "text"
 temperature = 0.1
 max_output_tokens = 4096
-
-[models.roles.memory_formation]
-routes = ["memory_formation"]
-prompt = "prompts/memory/formation.md"
-requirement = "optional"
-
-[models.execution_profiles.projection_steward]
-model = "formation"
-temperature = 0.1
-max_output_tokens = 2048
-
-[models.roles.projection_steward]
-routes = ["projection_steward"]
-prompt = "prompts/projection/steward.md"
-requirement = "optional"
-
-[models.execution_profiles.material_description]
-model = "vision"
-temperature = 0.1
+[models.execution_profiles.media]
+model = "media"
 max_output_tokens = 8192
-
-[models.roles.material_description]
-routes = ["material_description"]
-prompt = "prompts/material/description.md"
-requirement = "optional"
-
-[models.execution_profiles.material_structuring]
-model = "formation"
-temperature = 0.1
-max_output_tokens = 4096
-
-# 原始图片/视频直接结构化：与描述、文本再结构化独立配置。
-[models.roles.material_structuring]
-routes = ["material_structuring"]
-prompt = "prompts/material/structure.md"
-requirement = "optional"
-
-[models.execution_profiles.material_direct_structuring]
-model = "vision"
-temperature = 0.1
-max_output_tokens = 4096
-
-[models.roles.material_direct_structuring]
-routes = ["material_direct_structuring"]
-prompt = "prompts/material/direct-structure.md"
-requirement = "optional"
-
-[models.execution_profiles.query_embedding]
+[models.execution_profiles.embedding]
 model = "embedding"
-
-[models.roles.query_embedding]
-routes = ["query_embedding"]
-requirement = "optional"
-
-[models.execution_profiles.query_rerank]
+[models.execution_profiles.rerank]
 model = "rerank"
-
-[models.roles.query_rerank]
-routes = ["query_rerank"]
-requirement = "optional"
-
-[models.execution_profiles.speech_transcription]
+[models.execution_profiles.speech]
 model = "speech"
 
-# direct mode 使用多模态音频理解；transcription mode 使用 speech_transcription role。
-# ── 音频与视频输入方式和大小限制 ──
-[models.roles.speech_transcription]
-routes = ["speech_transcription"]
+# optional 允许未配置能力明确降级；required 使依赖该角色的操作失败。
+# 默认 Prompt 属于各 role；覆盖用 prompt = "config-prompts/<文件>"。
+[models.roles.memory_formation]
+routes = ["text"]
 requirement = "optional"
 
+[models.roles.projection_steward]
+routes = ["text"]
+requirement = "optional"
+
+[models.roles.episode_segmentation]
+routes = ["text"]
+requirement = "optional"
+
+[models.roles.journal_synthesis]
+routes = ["text"]
+requirement = "optional"
+
+[models.roles.memory_consolidation]
+routes = ["text"]
+requirement = "optional"
+
+[models.roles.concept_maintenance]
+routes = ["text"]
+requirement = "optional"
+
+[models.roles.query_concept_enrichment]
+routes = ["text"]
+requirement = "optional"
+
+[models.roles.material_description]
+routes = ["media"]
+requirement = "optional"
+
+[models.roles.material_structuring]
+routes = ["text"]
+requirement = "optional"
+
+[models.roles.material_direct_structuring]
+routes = ["media"]
+requirement = "optional"
+
+[models.roles.query_embedding]
+routes = ["embedding"]
+requirement = "optional"
+
+[models.roles.query_rerank]
+routes = ["rerank"]
+requirement = "optional"
+
+[models.roles.speech_transcription]
+routes = ["speech"]
+requirement = "optional"
+
+[material]
+# description_only / direct_structured / describe_then_structure
+strategy = "description_only"
 [audio]
-# direct / transcription；后者要求 speech_transcription role。
+# direct 多模态理解；transcription 使用 speech_transcription。
 input_mode = "direct"
-# 1 KiB–24 MiB；拒绝超限，不静默截断。
-max_source_bytes = 16777216
-
-# 视频输入：direct 直接发送原始视频，frames 使用 FFmpeg 抽帧。
-# direct 要求模型和网关支持视频输入。
 [video]
-# direct / frames；frames 需要已安装的 FFmpeg。
+# direct 原视频；frames 明确选择已安装 FFmpeg 的有界抽帧。
 input_mode = "direct"
-# FFmpeg 来自已安装的 LGPL-only runtime pack；serve 不下载。
-# 可选：使用已有 executable，省略则使用 RuntimeRoot 的 pack。
-# ffmpeg_executable = "C:/tools/ffmpeg/bin/ffmpeg.exe"
-# 可选；视频输入预算，1 KiB–64 MiB，默认 16 MiB。
-max_source_bytes = 16777216
-# 可选；视频时长上限 1–3600 秒。
-max_video_seconds = 60
-# 可选；1–16。示例值为 8。
-max_frames = 8
-# 可选；每帧 1 KiB–1 MiB，默认 256 KiB。
-max_frame_bytes = 262144
-# 可选；44 B–16 MiB，默认 4 MiB；音轨转为 mono 16 kHz WAV。
-max_audio_bytes = 4194304
-# 可选；每个预处理进程的 timeout，示例值为 30 秒。
-process_timeout_ms = 30000
-# 可选；视频时间序列专用 Prompt，仍受同一 registry 管理。
-prompt = "material/video-description.md"
+# ffmpeg_executable = "/absolute/path/to/ffmpeg"
 
-# Consumer 设置一次调用的上下文贡献类型与预算。
-# ── 使用端的上下文贡献策略 ──
 [[consumers]]
-# 必填；进程内唯一。
 consumer_id = "default"
-# 可选；修改 consumer policy 时使用新修订。
-revision = "1"
-# REQUIRED / PREFERRED / OPTIONAL / FORBIDDEN。
 memory = "PREFERRED"
-# 同上，控制 Runtime context 是否需要。
 runtime = "OPTIONAL"
-# 同上，控制 Resource contribution。
 resource = "OPTIONAL"
-# 可选；1–2048。示例值为 32。
 max_items = 32
-# 可选；1–1048576 bytes。示例值为 32 KiB。
 max_text_bytes = 32768
-# 可选；展开可提供的文本。
 materialize = true

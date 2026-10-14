@@ -9,15 +9,15 @@
 
 mod time;
 pub use time::{TemporalExtent, TimeInterval, TimePredicate};
-mod workflow;
-pub use workflow::{
-    AttemptStatus, ExecutionAttempt, ExecutionTelemetry, ExecutionUsage, MaintenanceClaim,
-    WorkflowPayload, WorkflowSnapshot,
+mod model_results;
+pub use model_results::{
+    AttemptStatus, ExecutionAttempt, ExecutionTelemetry, ExecutionUsage, MaintenanceTrigger,
+    ModelResultContext, ResultPayload,
 };
 mod topology;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use std::str::FromStr;
 pub use topology::TopologyRelation;
 use uuid::Uuid;
 
@@ -128,33 +128,6 @@ fn validate_opaque_ref(value: &str, expected_prefix: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
-pub enum CognitiveRef {
-    Memory(MemoryId),
-    MemoryRevision(MemoryRevisionId),
-    Episode(EpisodeId),
-    EpisodeRevision(EpisodeRevisionId),
-    Journal(JournalId),
-    JournalRevision(JournalRevisionId),
-    CognitiveSchema(CognitiveSchemaId),
-    CognitiveSchemaRevision(CognitiveSchemaRevisionId),
-    CognitiveSeedVersion(CognitiveSeedVersionId),
-    Artifact(ArtifactId),
-    SourceRegion(SourceRegionId),
-    DerivedRepresentation(DerivedRepresentationId),
-    DerivedRegion(DerivedRegionId),
-    Entity(EntityRef),
-    Tag(TagId),
-    Resource(ResourceRef),
-    ExternalObject(ObjectRef),
-    Occurrence(OccurrenceId),
-    Session(SessionId),
-    Subject(SubjectId),
-    WorkContext(WorkContextId),
-    Association(AssociationEvidenceId),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityClass {
@@ -190,7 +163,7 @@ impl EpistemicClass {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(from = "String", into = "String")]
 pub enum SourceClass {
     Message,
     Tool,
@@ -235,6 +208,12 @@ impl From<String> for SourceClass {
     }
 }
 
+impl From<SourceClass> for String {
+    fn from(value: SourceClass) -> Self {
+        value.as_str().to_owned()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityOperation {
@@ -250,25 +229,6 @@ pub enum CapabilityOperation {
     ImageEmbedding,
     SpeechTranscription,
     DocumentExtraction,
-}
-
-impl CapabilityOperation {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::TextEmbedding => "text.embedding",
-            Self::TextRerank => "text.rerank",
-            Self::TextInterpretation => "text.interpretation",
-            Self::MemoryFormationText => "memory.formation.text",
-            Self::MemoryConsolidationText => "memory.consolidation.text",
-            Self::ConceptMaintenanceText => "memory.concept.maintenance.text",
-            Self::EpisodeSegmentationText => "episode.segmentation.text",
-            Self::JournalSynthesisText => "journal.synthesis.text",
-            Self::ImageInterpretation => "image.interpretation",
-            Self::ImageEmbedding => "image.embedding",
-            Self::SpeechTranscription => "speech.transcription",
-            Self::DocumentExtraction => "document.extraction",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,7 +274,7 @@ impl RepresentationKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementStrength {
     Required,
@@ -322,47 +282,6 @@ pub enum RequirementStrength {
     #[default]
     Optional,
     Forbidden,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilityReadiness {
-    Ready,
-    Degraded,
-    Unavailable,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityLimits {
-    pub max_input_bytes: Option<u64>,
-    pub max_output_bytes: Option<u64>,
-    pub timeout_ms: Option<u64>,
-}
-
-impl Default for CapabilityLimits {
-    fn default() -> Self {
-        Self {
-            max_input_bytes: None,
-            max_output_bytes: None,
-            timeout_ms: Some(30_000),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityDescriptor {
-    pub operation: CapabilityOperation,
-    pub input_modalities: Vec<Modality>,
-    pub output_kind: RepresentationKind,
-    pub producer: ProducerSignature,
-    pub limits: CapabilityLimits,
-    pub readiness: CapabilityReadiness,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityRequirement {
-    pub operation: CapabilityOperation,
-    pub strength: RequirementStrength,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -432,31 +351,9 @@ pub struct EvidenceHandle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProvenanceSummary {
-    pub source_count: usize,
-    pub producer_signatures: Vec<String>,
-    pub note: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterializationHandle {
     pub reference: CognitiveRef,
     pub level: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextContribution {
-    pub source_revision: Option<MemoryRevisionId>,
-    pub reference: CognitiveRef,
-    pub semantic_role: String,
-    pub text: Option<String>,
-    pub authority: AuthorityClass,
-    pub freshness: FreshnessDescriptor,
-    pub evidence: Vec<EvidenceHandle>,
-    pub provenance: ProvenanceSummary,
-    pub priority: f32,
-    pub estimated_tokens: Option<u32>,
-    pub materialization: Option<MaterializationHandle>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -473,37 +370,6 @@ pub struct SituationDescriptor {
 mod error;
 pub use error::{DomainError, DomainErrorCode, Error, Result};
 
-impl fmt::Display for CognitiveRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Memory(id) => write!(f, "memory:{}", id.0),
-            Self::MemoryRevision(id) => write!(f, "memory_revision:{}", id.0),
-            Self::Episode(id) => write!(f, "episode:{}", id.0),
-            Self::EpisodeRevision(id) => write!(f, "episode_revision:{}", id.0),
-            Self::Journal(id) => write!(f, "journal:{}", id.0),
-            Self::JournalRevision(id) => write!(f, "journal_revision:{}", id.0),
-            Self::CognitiveSchema(id) => write!(f, "cognitive_schema:{}", id.0),
-            Self::CognitiveSchemaRevision(id) => {
-                write!(f, "cognitive_schema_revision:{}", id.0)
-            }
-            Self::CognitiveSeedVersion(id) => write!(f, "cognitive_seed_version:{}", id.0),
-            Self::Artifact(id) => write!(f, "artifact:{}", id.0),
-            Self::SourceRegion(id) => write!(f, "source_region:{}", id.0),
-            Self::DerivedRepresentation(id) => write!(f, "derived_representation:{}", id.0),
-            Self::DerivedRegion(id) => write!(f, "derived_region:{}", id.0),
-            Self::Entity(id) => f.write_str(id.as_str()),
-            Self::Tag(id) => write!(f, "tag:{}", id.0),
-            Self::Resource(id) => f.write_str(id.as_str()),
-            Self::ExternalObject(id) => f.write_str(id.as_str()),
-            Self::Occurrence(id) => write!(f, "occurrence:{}", id.0),
-            Self::Session(id) => write!(f, "session:{}", id.0),
-            Self::Subject(id) => write!(f, "subject:{}", id.0),
-            Self::WorkContext(id) => write!(f, "work_context:{}", id.0),
-            Self::Association(id) => write!(f, "association:{}", id.0),
-        }
-    }
-}
-
 mod canonical;
 pub mod cognition;
 mod concept;
@@ -515,4 +381,26 @@ mod references;
 pub use canonical::canonical_request_digest;
 pub use cognition::*;
 pub use query::*;
-pub use references::{parse_reference, reference_parts};
+pub use references::{CognitiveRef, parse_reference, reference_parts};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UseEventRef {
+    pub subject_id: SubjectId,
+    pub consumer_ref: String,
+    pub event_id: UseEventId,
+}
+
+impl UseEventRef {
+    pub fn canonical_key(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.subject_id.0, self.consumer_ref, self.event_id.0
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryDescriptor {
+    pub reference: CognitiveRef,
+    pub text: String,
+}

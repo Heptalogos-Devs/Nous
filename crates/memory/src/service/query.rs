@@ -19,7 +19,6 @@ pub(super) struct FinalMemoryState {
     pub(super) acceptance_state: AcceptanceState,
     pub(super) integrity_state: IntegrityState,
     pub(super) suppression_state: SuppressionState,
-    pub(super) purge_state: PurgeState,
     pub(super) accessibility_mode: AccessibilityMode,
 }
 
@@ -95,16 +94,17 @@ impl CognitiveContributor for MemoryService {
             .map(|(_, revision)| revision.0)
             .collect::<Vec<_>>();
         let views = self
-            .memories_for_query(
+            .memory_views(
                 subject,
                 &revision_ids,
                 &accessibility_policy,
                 bound.historical_authority.as_deref(),
+                self.cognition.now(subject),
             )
             .await?;
         let mut drops = BTreeMap::new();
         let source_objects = self
-            .source_objects_for_revisions(subject, &revision_ids)
+            .source_objects_for_views(subject, &views, bound.historical_authority.as_deref())
             .await?;
         let mut hits = Vec::new();
         for reference in &memory_references {
@@ -132,7 +132,6 @@ impl CognitiveContributor for MemoryService {
                 acceptance_state: view.object.acceptance_state,
                 integrity_state: view.object.integrity_state,
                 suppression_state: view.object.suppression_state,
-                purge_state: view.object.purge_state,
                 accessibility_mode: view.object.accessibility_mode,
             };
             if let Some(binding) = bound
@@ -273,13 +272,13 @@ async fn temporal_lane(
                 start: "oc.occurred_time_start",
                 end: "oc.occurred_time_end",
             },
-            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id)",
+            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN LATERAL material_occurrence_facts(o.subject_id,NULL,NULL) oc USING(occurrence_id)",
             "r.memory_revision_id",
         ),
         (
             constraints.observed,
             TimeColumns::Instant("oc.observed_at"),
-            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN observation_occurrences oc USING(occurrence_id)",
+            " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN LATERAL material_occurrence_facts(o.subject_id,NULL,NULL) oc USING(occurrence_id)",
             "r.memory_revision_id",
         ),
         (

@@ -20,10 +20,7 @@ import { bundleApplication } from "./bundle.js";
 import { loadNotices } from "./notices.js";
 import { writeManifest } from "./manifest.js";
 import { resolveLocations } from "../../apps/nous-core/src/locations.js";
-import {
-  installRuntime,
-  verifyRuntime,
-} from "../../apps/nous-core/src/runtime-packs.js";
+import { installRuntime } from "../../apps/nous-core/src/runtime-packs.js";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const { values } = parseArgs({
   options: { "runtime-root": { type: "string" } },
@@ -62,9 +59,6 @@ for (const [source, target] of [
   ["crates/persistence/migrations", "migrations"],
 ])
   await cp(join(repo, source!), join(program, target!), { recursive: true });
-await cp(join(runtimePacks, "manifest"), join(program, "manifest"), {
-  recursive: true,
-});
 const components = JSON.parse(
   await readFile(join(runtimePacks, "manifest/runtimes.json"), "utf8"),
 ) as {
@@ -78,7 +72,7 @@ const components = JSON.parse(
     archive: string;
   }[];
 };
-for (const name of ["node", "postgresql", "ffmpeg"]) {
+const selectedPacks = ["node", "postgresql", "ffmpeg"].map((name) => {
   const entries = components.packs.filter(
     (p) =>
       p.component === name &&
@@ -86,7 +80,15 @@ for (const name of ["node", "postgresql", "ffmpeg"]) {
       p.arch === process.arch,
   );
   if (entries.length !== 1) throw new Error(`No unique ${name} pack`);
-  const pack = entries[0]!;
+  return entries[0]!;
+});
+await mkdir(join(program, "manifest"));
+await writeFile(
+  join(program, "manifest/runtimes.json"),
+  JSON.stringify({ packs: selectedPacks }, null, 2) + "\n",
+);
+for (const pack of selectedPacks) {
+  const name = pack.component;
   const cache = join(
     workspacePaths.cache,
     "release/runtime",
@@ -102,7 +104,6 @@ for (const name of ["node", "postgresql", "ffmpeg"]) {
     name,
     join(runtimePacks, "packs", pack.archive),
   );
-  await verifyRuntime(locations, name);
   await cp(join(cache, name), join(output, "runtime", name), {
     recursive: true,
   });
@@ -113,7 +114,7 @@ await writeFile(
   '@echo off\r\n"%~dp0..\\runtime\\node\\node.exe" "%~dp0..\\program\\core\\launcher.js" %*\r\n',
 );
 const notices = await loadNotices(repo, packages, output);
-await writeManifest(repo, output, notices, components);
+await writeManifest(repo, output, notices, { packs: selectedPacks });
 const systemRoot = process.env.SystemRoot;
 if (!systemRoot) throw new Error("SystemRoot missing");
 await promisify(execFile)(

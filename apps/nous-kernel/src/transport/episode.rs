@@ -16,10 +16,11 @@ fn member(value: p::EpisodeMember) -> Result<EpisodeMemberInput> {
     })
 }
 
-fn revision(
+pub(super) fn revision(
     value: nous_memory::EpisodeRevision,
     members: Vec<nous_memory::EpisodeMember>,
     basis: Vec<nous_memory::RevisionBasis>,
+    relations: Vec<nous_memory::EpisodeRelation>,
 ) -> p::EpisodeRevision {
     p::EpisodeRevision {
         episode_revision_id: value.episode_revision_id.0.to_string(),
@@ -44,6 +45,15 @@ fn revision(
             })
             .collect(),
         basis: basis.into_iter().map(basis_proto).collect(),
+        relations: relations
+            .into_iter()
+            .map(|relation| p::EpisodeRelation {
+                from_revision_id: relation.from_revision_id.0.to_string(),
+                to_revision_id: relation.to_revision_id.0.to_string(),
+                relation: relation.relation,
+                created_at: Some(timestamp(relation.created_at)),
+            })
+            .collect(),
     }
 }
 
@@ -58,9 +68,9 @@ pub(super) fn view(value: nous_memory::EpisodeView) -> p::Episode {
         acceptance_state: enum_name(value.object.acceptance_state),
         integrity_state: enum_name(value.object.integrity_state),
         suppression_state: enum_name(value.object.suppression_state),
-        purge_state: enum_name(value.object.purge_state),
         created_at: Some(timestamp(value.object.created_at)),
-        current_revision: current.then(|| revision(value.revision, value.members, value.basis)),
+        current_revision: current
+            .then(|| revision(value.revision, value.members, value.basis, value.relations)),
     }
 }
 
@@ -78,6 +88,30 @@ fn parsed_parent(value: Option<String>) -> Result<Option<EpisodeRevisionId>> {
         .transpose()
 }
 
+fn episode_content(content: p::EpisodeContent) -> Result<nous_memory::EpisodeContent> {
+    Ok(nous_memory::EpisodeContent {
+        title: content.title,
+        parent_episode_revision_id: parsed_parent(content.parent_episode_revision_id)?,
+        experience_time: temporal(content.experience_time)?,
+        boundary_explanation: content.boundary_explanation,
+        producer_signature_id: content
+            .producer_signature_id
+            .as_deref()
+            .map(id)
+            .transpose()?,
+        members: content
+            .members
+            .into_iter()
+            .map(member)
+            .collect::<Result<_>>()?,
+        basis: content
+            .basis
+            .into_iter()
+            .map(basis)
+            .collect::<Result<_>>()?,
+    })
+}
+
 impl KernelService {
     pub(super) async fn create_episode(
         &self,
@@ -90,21 +124,8 @@ impl KernelService {
                 operation_id: OperationId(id(&input.operation_id)?),
                 subject,
                 track_key: input.track_key,
-                title: input.title,
-                parent_episode_revision_id: parsed_parent(input.parent_episode_revision_id)?,
-                experience_time: temporal(input.experience_time)?,
-                boundary_explanation: input.boundary_explanation,
-                producer_signature_id: input
-                    .producer_signature_id
-                    .as_deref()
-                    .map(id)
-                    .transpose()?,
-                members: input
-                    .members
-                    .into_iter()
-                    .map(member)
-                    .collect::<Result<_>>()?,
-                basis: input.basis.into_iter().map(basis).collect::<Result<_>>()?,
+
+                content: episode_content(required(input.content, "content")?)?,
             })
             .await?;
         Ok(response(value))
@@ -133,22 +154,41 @@ impl KernelService {
                 EpisodeRevisionId(id(&input.id)?),
             )
             .await?;
-        Ok(revision(value.revision, value.members, value.basis))
+        Ok(revision(
+            value.revision,
+            value.members,
+            value.basis,
+            value.relations,
+        ))
     }
 
     pub(super) async fn list_episodes(
         &self,
         input: p::ListRequest,
     ) -> Result<p::ListEpisodesResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let scope = format!("episodes:{}:{}", subject.0, input.status);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .list_episodes(subject, &input.status, limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                items
+                    .last()
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .object
+                    .episode_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
         Ok(p::ListEpisodesResponse {
-            items: self
-                .require_memory()?
-                .list_episodes(SubjectId(id(&input.subject_id)?))
-                .await?
-                .into_iter()
-                .map(view)
-                .collect(),
-            next_page_token: String::new(),
+            items: items.into_iter().map(view).collect(),
+            next_page_token,
         })
     }
 
@@ -156,19 +196,33 @@ impl KernelService {
         &self,
         input: p::ListEpisodeRevisionsRequest,
     ) -> Result<p::ListEpisodeRevisionsResponse> {
-        let values = self
+        let subject = SubjectId(id(&input.subject_id)?);
+        let episode = EpisodeId(id(&input.episode_id)?);
+        let scope = format!("episode-history:{}:{}", subject.0, episode.0);
+        let (limit, after) = page(input.page, &scope)?;
+        let (values, more) = self
             .require_memory()?
-            .episode_history(
-                SubjectId(id(&input.subject_id)?),
-                EpisodeId(id(&input.episode_id)?),
-            )
+            .episode_history(subject, episode, limit, after)
             .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                values
+                    .last()
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .revision
+                    .episode_revision_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
         Ok(p::ListEpisodeRevisionsResponse {
             items: values
                 .into_iter()
-                .map(|value| revision(value.revision, value.members, value.basis))
+                .map(|value| revision(value.revision, value.members, value.basis, value.relations))
                 .collect(),
-            next_page_token: String::new(),
+            next_page_token,
         })
     }
 
@@ -185,21 +239,8 @@ impl KernelService {
                     episode_id: EpisodeId(id(&input.episode_id)?),
                     expected_object_epoch: input.expected_object_epoch,
                     intent: input.intent,
-                    title: input.title,
-                    parent_episode_revision_id: parsed_parent(input.parent_episode_revision_id)?,
-                    experience_time: temporal(input.experience_time)?,
-                    boundary_explanation: input.boundary_explanation,
-                    producer_signature_id: input
-                        .producer_signature_id
-                        .as_deref()
-                        .map(id)
-                        .transpose()?,
-                    members: input
-                        .members
-                        .into_iter()
-                        .map(member)
-                        .collect::<Result<_>>()?,
-                    basis: input.basis.into_iter().map(basis).collect::<Result<_>>()?,
+
+                    content: episode_content(required(input.content, "content")?)?,
                 })
                 .await?,
         ))
@@ -223,34 +264,21 @@ impl KernelService {
     async fn episode_lifecycle(
         &self,
         input: p::EpisodeMutationRequest,
-        operation: &str,
+        action: nous_memory::LifecycleAction,
     ) -> Result<p::EpisodeResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
         let episode = EpisodeId(id(&input.episode_id)?);
         let operation_id = OperationId(id(&input.operation_id)?);
-        let value = match operation {
-            "suppress" => {
-                self.require_memory()?
-                    .suppress_episode(subject, episode, operation_id, input.expected_object_epoch)
-                    .await?
-            }
-            "restore" => {
-                self.require_memory()?
-                    .restore_episode(subject, episode, operation_id, input.expected_object_epoch)
-                    .await?
-            }
-            "withdraw" => {
-                self.require_memory()?
-                    .withdraw_episode(subject, episode, operation_id, input.expected_object_epoch)
-                    .await?
-            }
-            "reaccept" => {
-                self.require_memory()?
-                    .reaccept_episode(subject, episode, operation_id, input.expected_object_epoch)
-                    .await?
-            }
-            _ => return Err(Error::Invalid("unknown Episode lifecycle operation".into())),
-        };
+        let value = self
+            .require_memory()?
+            .mutate_episode_lifecycle(
+                subject,
+                episode,
+                operation_id,
+                input.expected_object_epoch,
+                action,
+            )
+            .await?;
         Ok(response(value))
     }
 
@@ -258,25 +286,29 @@ impl KernelService {
         &self,
         input: p::EpisodeMutationRequest,
     ) -> Result<p::EpisodeResponse> {
-        self.episode_lifecycle(input, "suppress").await
+        self.episode_lifecycle(input, nous_memory::LifecycleAction::Suppress)
+            .await
     }
     pub(super) async fn restore_episode(
         &self,
         input: p::EpisodeMutationRequest,
     ) -> Result<p::EpisodeResponse> {
-        self.episode_lifecycle(input, "restore").await
+        self.episode_lifecycle(input, nous_memory::LifecycleAction::Restore)
+            .await
     }
     pub(super) async fn withdraw_episode(
         &self,
         input: p::EpisodeMutationRequest,
     ) -> Result<p::EpisodeResponse> {
-        self.episode_lifecycle(input, "withdraw").await
+        self.episode_lifecycle(input, nous_memory::LifecycleAction::Withdraw)
+            .await
     }
     pub(super) async fn reaccept_episode(
         &self,
         input: p::EpisodeMutationRequest,
     ) -> Result<p::EpisodeResponse> {
-        self.episode_lifecycle(input, "reaccept").await
+        self.episode_lifecycle(input, nous_memory::LifecycleAction::Reaccept)
+            .await
     }
 
     pub(super) async fn purge_episode(&self, input: p::EpisodeMutationRequest) -> Result<()> {

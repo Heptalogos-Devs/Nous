@@ -3,7 +3,15 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -33,6 +41,7 @@ function parseLock(value: unknown): { pid: number } {
 
 async function protectPrivateDirectory(runtime: string) {
   await mkdir(runtime, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") await chmod(runtime, 0o700);
   if (process.platform === "win32") {
     const systemRoot = process.env.SystemRoot;
     if (!systemRoot) throw new Error("Windows SystemRoot is unavailable");
@@ -75,55 +84,75 @@ export async function claimInstance(locations: {
     if (errorCode(error) !== "ENOENT") throw error;
   }
   const handle = await open(lock, "wx", 0o600);
-  await handle.writeFile(JSON.stringify({ pid: process.pid }));
-  await handle.close();
-  const identityPath = join(locations.instance, "instance.json");
   try {
-    await writeFile(
-      identityPath,
-      JSON.stringify({ instanceId: randomUUID() }),
-      { flag: "wx", mode: 0o600 },
-    );
-  } catch (error) {
-    if (errorCode(error) !== "EEXIST") throw error;
-  }
-  const identity: unknown = JSON.parse(await readFile(identityPath, "utf8"));
-  if (
-    !identity ||
-    typeof identity !== "object" ||
-    !("instanceId" in identity) ||
-    typeof identity.instanceId !== "string" ||
-    !/^[0-9a-f-]{36}$/i.test(identity.instanceId)
-  ) {
-    await unlink(lock);
-    throw new Error("Invalid instance identity");
-  }
-  const path = join(runtime, "core.json");
-  return {
-    path,
-    publish: (endpoint: string, token: string) =>
-      writeFile(
-        path,
-        JSON.stringify({
-          instanceId: identity.instanceId,
-          endpoint,
-          token,
-          pid: process.pid,
-        }),
-        {
-          mode: 0o600,
-        },
-      ),
-    release: async () => {
-      await unlink(path).catch((error: unknown) => {
-        if (errorCode(error) !== "ENOENT") throw error;
-      });
-      await unlink(lock);
-      await unlink(join(runtime, "kernel-bootstrap.toml")).catch(
-        (error: unknown) => {
-          if (errorCode(error) !== "ENOENT") throw error;
-        },
+    try {
+      await handle.writeFile(JSON.stringify({ pid: process.pid }));
+    } finally {
+      await handle.close();
+    }
+    const identityPath = join(locations.instance, "instance.json");
+    try {
+      await writeFile(
+        identityPath,
+        JSON.stringify({ instanceId: randomUUID() }),
+        { flag: "wx", mode: 0o600 },
       );
-    },
-  };
+    } catch (error) {
+      if (errorCode(error) !== "EEXIST") throw error;
+    }
+    const identity: unknown = JSON.parse(await readFile(identityPath, "utf8"));
+    if (
+      !identity ||
+      typeof identity !== "object" ||
+      !("instanceId" in identity) ||
+      typeof identity.instanceId !== "string" ||
+      !/^[0-9a-f-]{36}$/i.test(identity.instanceId)
+    ) {
+      throw new Error("Invalid instance identity");
+    }
+    const path = join(runtime, "core.json");
+    return {
+      path,
+      publish: async (endpoint: string, token: string) => {
+        const pending = `${path}.tmp`;
+        await writeFile(
+          pending,
+          JSON.stringify({
+            instanceId: identity.instanceId,
+            endpoint,
+            token,
+            pid: process.pid,
+          }),
+          {
+            mode: 0o600,
+          },
+        );
+        await rename(pending, path);
+      },
+      release: async () => {
+        const results = await Promise.allSettled(
+          [path, `${path}.tmp`, join(runtime, "kernel-bootstrap.json")].map(
+            async (file) => {
+              await unlink(file).catch((error: unknown) => {
+                if (errorCode(error) !== "ENOENT") throw error;
+              });
+            },
+          ),
+        );
+        const errors = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason as unknown] : [],
+        );
+        try {
+          await unlink(lock);
+        } catch (error) {
+          if (errorCode(error) !== "ENOENT") errors.push(error);
+        }
+        if (errors.length)
+          throw new AggregateError(errors, "Instance release failed");
+      },
+    };
+  } catch (error) {
+    await unlink(lock);
+    throw error;
+  }
 }

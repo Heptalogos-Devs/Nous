@@ -63,20 +63,8 @@ export function cliErrorPayload(error: unknown) {
     };
   const message =
     error instanceof Error ? error.message : "CLI operation failed";
-  const transportCodes: Record<number, string> = {
-    3: "INVALID_ARGUMENT",
-    5: "NOT_FOUND",
-    8: "RESOURCE_EXHAUSTED",
-    9: "FAILED_PRECONDITION",
-    10: "ABORTED",
-    14: "UNAVAILABLE",
-    4: "DEADLINE_EXCEEDED",
-  };
   return {
-    code:
-      error instanceof NousError
-        ? (error.domainCode ?? transportCodes[error.code] ?? "RPC_ERROR")
-        : "INVALID_ARGUMENT",
+    code: error instanceof NousError ? error.codeName : "INVALID_ARGUMENT",
     message,
     details: error instanceof NousError ? error.details : [],
     candidates: error instanceof NousError ? error.candidates : [],
@@ -102,6 +90,89 @@ export const commandInventory = {
       "stderr semantic error; --json provides code/message/details/candidates/receipt; nonzero exit",
   },
   commands: [
+    {
+      command: "serving clean",
+      parameters: ["--subject <Subject reference>"],
+      description:
+        "Reclaim retired/failed and orphan Serving assets without rebuilding; protect active readers, current and research-pinned generations.",
+    },
+    {
+      command:
+        "material clean|limits|artifacts|occurrences|representations|producer",
+      parameters: [
+        "clean reclaims unreferenced objects and staging across BlobRoot; no selected Subject required",
+        "occurrences <Artifact reference>",
+        "representations [Artifact or SourceRegion reference] [--kind <kind>]",
+        "producer <signature identity>",
+        "--page-size <n> --page-token <token> for artifacts",
+      ],
+    },
+    {
+      command:
+        "memory form|get|list|revision|history|revise|accessibility|link|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[Memory reference]",
+        "--request-file <Memory content TOML> for form/revise",
+        "list --status accepted|withdrawn (optional)",
+        "--kind <revision intent or accessibility mode>",
+        "--expected-object-epoch <observed epoch> skips mutation pre-read; omitted reads current epoch",
+        "--page-size <n> --page-token <token>",
+      ],
+      description:
+        "Source-backed cognition management; mutations freeze the current object epoch and stable operation identity.",
+    },
+    {
+      command:
+        "schema create|get|list|history|revision|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[Schema reference]",
+        "--request-file <Schema content/evidence/children or MergeCognitiveSchemasRequest TOML>",
+        "--kind <revision intent>",
+        "--expected-object-epoch <observed epoch> skips mutation pre-read; omitted reads current epoch",
+      ],
+      description: "Supported transferable pattern and evidence management.",
+    },
+    {
+      command:
+        "episode create|get|list|revision|history|revise|link|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[Episode reference]",
+        "--request-file <Episode content TOML>",
+        "create --kind <segmentation track>",
+        "--kind resegment|reinterpret",
+        "--expected-object-epoch <observed epoch> skips mutation pre-read; omitted reads current epoch",
+        "list --status accepted|withdrawn (optional)",
+      ],
+    },
+    {
+      command:
+        "journal get|list|revision|history|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[Journal reference]",
+        "--expected-object-epoch <observed epoch> skips mutation pre-read; omitted reads current epoch",
+        "list --status accepted|withdrawn (optional)",
+        "--page-size <n> --page-token <token>",
+      ],
+    },
+    {
+      command: "resource put|get|list|remove|materialize",
+      parameters: [
+        "[Resource reference]",
+        "--request-file <Resource descriptor or stable external reference TOML>",
+        "list --status ready|degraded|unavailable (optional)",
+      ],
+    },
+    {
+      command: "projection build|managed",
+      parameters: [
+        "--consumer <operator-configured consumer>",
+        "--max-items <n> --max-bytes <n>",
+        "--request-file <query/situation_refs/known_cursor TOML> (optional)",
+      ],
+      description:
+        "Generate actual consumer projection or synchronize managed context; requires selected Session and uses its foreground WorkContext.",
+    },
+
     {
       command: "read",
       parameters: [
@@ -132,17 +203,19 @@ export const commandInventory = {
     {
       command: "tag list|get|search|resolve|create|revise|merge|split|attach",
       parameters: [
+        "list --status active|withdrawn (defaults to active)",
+        "create --name <label> [--description <text> --kind-hint <hint>] | --request-file <TagContent TOML>",
         "get <tag-ref>",
         "search <text>",
         "resolve <name>",
         "create --name <label> [--description <text>]",
-        "revise|merge|split --request-file <semantic TOML>",
-        "attach <exact-revision> --tag <ref> --association-file <basis TOML>",
+        "revise|merge|split --request-file <formal Request TOML; targets include expected_revision_id>",
+        "attach <exact-revision> --tag <ref> --request-file <Association TOML>",
       ],
       example: "nous tag resolve deploy",
     },
     {
-      command: "association neighborhood",
+      command: "association get|list|neighborhood",
       parameters: [
         "<canonical-or-lexical-ref>",
         "--kind <kind> (for lexical)",
@@ -155,10 +228,10 @@ export const commandInventory = {
       command: "association create",
       parameters: [
         "--operation-id <stable operation identity> (optional; generated)",
-        "--association-file <semantic TOML>",
+        "--request-file <CreateAssociationRequest TOML>",
       ],
       description:
-        "CLI-owned semantic Association TOML; requires nonempty revision/use-event basis",
+        "Formal Association request with nonempty revision/use-event basis",
     },
     {
       command: "association revoke",
@@ -213,10 +286,18 @@ export const commandInventory = {
         "--advanced|--developer",
       ],
     },
-    { command: "subject create|list|use", parameters: ["[id]"] },
     {
-      command: "session open|close",
+      command: "subject create|list|use|seed|adopt-seed",
+      parameters: [
+        "[id]",
+        "--operation-id <stable operation identity> (optional; generated)",
+        "list --status <Subject status> (optional)",
+      ],
+    },
+    {
+      command: "session open|list|close",
       purpose: "Open a new Session or close the selected Session",
+      parameters: ["list --status open|closed (optional)"],
     },
     {
       command: "session show [reference]",
@@ -259,9 +340,9 @@ export const commandInventory = {
     },
     {
       command: "retry",
-      parameters: ["<saved-receipt-id>"],
+      parameters: ["<saved-request-id> | forget <saved-request-id>"],
       description:
-        "Replay original frozen operation inputs; preserve the consumer state root.",
+        "Replay original frozen inputs through the semantic owner; forget discards only local retry inputs.",
     },
     {
       command:
@@ -270,6 +351,8 @@ export const commandInventory = {
         "[WorkContext lexical reference]",
         "--purpose <purpose>",
         "--text <task context> | --file <path|->",
+        "--request-file <WorkContext fields TOML>",
+        "--expected-revision <revision> (optional; otherwise reads current revision)",
         "--cognition <exact-ref|result:N> --entity <real-ref> --tag <real-ref>",
         "clear --scope text|anchors|all",
         "foreground --clear",

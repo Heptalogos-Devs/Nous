@@ -167,7 +167,7 @@ impl CognitiveRuntimeService {
             &Uuid::NAMESPACE_OID,
             format!("episode-draft:{draft}").as_bytes(),
         );
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$3 AND operation_kind='create_episode' AND state='committed' AND result_revision=$2)")
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mutation_receipts WHERE subject_id=$1 AND operation_id=$3 AND operation_kind='create_episode' AND result_revision=$2)")
             .bind(subject.0).bind(revision.0).bind(operation).fetch_one(&mut *tx).await.map_err(db)?;
         if !exists {
             return Err(Error::FailedPrecondition(

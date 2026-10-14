@@ -15,21 +15,14 @@ impl KernelService {
         let execution = Box::pin(self.0.execute_bound_query(bound, pool_limit)).await?;
         lease.require_live()?;
         let inspection = inspect_bound_query(&execution.bound)?;
-        let feedback_bound = execution.bound.clone();
         let requires_finalization =
             pool_limit.is_some() || !execution.result.resource_actions.is_empty();
         let (result, ticket) = if requires_finalization {
             let (result, ticket) = self.0.cognition.retain_query(execution, lease)?;
-            (result, ticket.map(|value| value.to_string()))
+            (result, Some(ticket.to_string()))
         } else {
             (execution.result, None)
         };
-        if requires_finalization && ticket.is_none() {
-            self.0
-                .cognition
-                .record_query_feedback(&feedback_bound, &result)
-                .await?;
-        }
         let mut response = query_response(result);
         response.bound_query = Some(inspection);
         Ok(k::KernelQueryResponse {
@@ -509,41 +502,14 @@ fn hit(value: CognitiveHit, rank: usize) -> p::Hit {
 }
 
 pub(super) fn inspect_bound_query(bound: &nous_runtime::BoundQuery) -> Result<String> {
-    let mut seeds = bound.topology_seed_refs.clone();
-    seeds.extend(
-        bound
-            .runtime_refs
-            .iter()
-            .cloned()
-            .map(|reference| (reference, "runtime_situation".into())),
-    );
-    seeds.extend(
-        bound
-            .exact_bindings
-            .iter()
-            .map(|binding| (binding.bound_ref.clone(), "exact_target".into())),
-    );
-    seeds.extend(
-        bound
-            .representation
-            .source_refs
-            .iter()
-            .filter(|(reference, source)| {
-                source.starts_with("explicit")
-                    && matches!(reference, CognitiveRef::Tag(_) | CognitiveRef::Entity(_))
-            })
-            .cloned(),
-    );
-    seeds.sort_by_key(|(reference, source)| (reference.to_string(), source.clone()));
-    seeds.dedup();
     serde_json::to_string(&serde_json::json!({
         "prepared_query":bound.source_query, "query_id":bound.query_id,
-        "representation":bound.representation, "context_snapshot":bound.context_snapshot.as_ref(), "current_refs":bound.runtime_refs,
+        "representation":bound.representation.as_ref(), "context_snapshot":bound.context_snapshot.as_ref(), "current_refs":bound.runtime_sources().map(|source| &source.reference).collect::<Vec<_>>(),
         "query_activation":bound.activation, "concept_enrichment":bound.concept_enrichment,
         "query_concept_requirement":bound.source_query.capabilities.query_concept_enrichment,
         "historical_view":bound.historical_authority.as_ref().map(|view|serde_json::json!({"digest":view.snapshot_digest,"as_of":view.as_of,"revision_view":view.revision_view})),
         "temporal_frame":bound.source_query.temporal_frame, "result_projection":bound.source_query.projection,
-        "topology_seeds":seeds, "exact_bindings":bound.exact_bindings,
+        "topology_seeds":bound.activation.seeds, "exact_bindings":bound.exact_bindings,
         "profile_id":bound.retrieval_policy.cognitive_profile.id(),
         "profile_source":bound.config_snapshot.source(nous_runtime::COGNITIVE_PROFILE.path()),
         "config_snapshot_digest":bound.config_snapshot.effective_digest,

@@ -27,33 +27,35 @@ impl MemoryService {
         {
             MutationStart::Replay(receipt) => {
                 let id = receipt.result_ref;
-                if receipt.state == "committed" {
-                    return self
-                        .association(
-                            subject,
-                            AssociationEvidenceId(
-                                id.ok_or_else(|| {
-                                    Error::Infrastructure(
-                                        "association receipt missing result".into(),
-                                    )
-                                })?
-                                .parse()
-                                .map_err(|_| {
-                                    Error::Infrastructure("invalid association receipt".into())
-                                })?,
-                            ),
-                        )
-                        .await;
-                }
-                return Err(Error::Unavailable(
-                    "association operation is already in progress".into(),
-                ));
+
+                return self
+                    .association(
+                        subject,
+                        AssociationEvidenceId(
+                            id.ok_or_else(|| {
+                                Error::Infrastructure("association receipt missing result".into())
+                            })?
+                            .parse()
+                            .map_err(|_| {
+                                Error::Infrastructure("invalid association receipt".into())
+                            })?,
+                        ),
+                    )
+                    .await;
             }
             MutationStart::Active(mutation) => mutation,
         };
-        self.store.validate_reference(subject, &input.from).await?;
-        self.store.validate_reference(subject, &input.to).await?;
-        self.validate_association_basis(subject, &input).await?;
+        for reference in [&input.from, &input.to] {
+            if !self
+                .store
+                .reference_in_subject_tx(mutation.tx(), subject, reference)
+                .await?
+            {
+                return Err(Error::NotFound("association endpoint not found".into()));
+            }
+        }
+        self.validate_association_basis(mutation.tx(), subject, &input)
+            .await?;
         if input.producer.is_some() {
             self.require_current_concept_endpoint(mutation.tx(), subject, &input.from)
                 .await?;
@@ -140,7 +142,7 @@ impl MemoryService {
         query.push(revision_table).push(" r JOIN ").push(object_table)
             .push(" o USING(").push(object_column).push(") WHERE o.subject_id=")
             .push_bind(subject.0).push(" AND r.").push(revision_column).push("=")
-            .push_bind(id).push(" AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND o.purge_state='normal' FOR SHARE OF o");
+            .push_bind(id).push(" AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FOR SHARE OF o");
         let current: Option<Uuid> = query
             .build_query_scalar()
             .fetch_optional(&mut **tx)
@@ -210,8 +212,11 @@ impl MemoryService {
                 "neighborhood requires 1..256 nodes and 1..4 depth".into(),
             ));
         }
-        self.store.require_subject(subject).await?;
-        let (root, _, _) = self.store.bind_exact_reference(subject, &root).await?;
+        let mut tx = self.store.read_view().await?;
+        let (root, _, _) = self
+            .store
+            .bind_exact_reference_in(&mut tx, subject, &root)
+            .await?;
         let mut seen = std::collections::HashSet::from([root.clone()]);
         let mut frontier = vec![root.clone()];
         let mut nodes = vec![root];
@@ -223,8 +228,8 @@ impl MemoryService {
                 break;
             }
             let (kinds, refs): (Vec<_>, Vec<_>) = frontier.iter().map(reference_parts).unzip();
-            let rows = sqlx::query("WITH frontier AS (SELECT * FROM unnest($2::text[], $3::text[]) AS f(kind,ref)), active AS (SELECT association_evidence_id,from_ref_kind,to_ref_kind,CASE WHEN from_ref_kind='tag' THEN canonical_tag($1,from_ref::uuid)::text ELSE from_ref END AS from_ref,CASE WHEN to_ref_kind='tag' THEN canonical_tag($1,to_ref::uuid)::text ELSE to_ref END AS to_ref FROM association_evidence WHERE subject_id=$1 AND revoked_at IS NULL) SELECT a.* FROM active a WHERE a.from_ref IS NOT NULL AND a.to_ref IS NOT NULL AND (a.from_ref_kind<>a.to_ref_kind OR a.from_ref<>a.to_ref) AND EXISTS(SELECT 1 FROM frontier f WHERE (f.kind=a.from_ref_kind AND f.ref=a.from_ref) OR (f.kind=a.to_ref_kind AND f.ref=a.to_ref)) ORDER BY a.association_evidence_id LIMIT 257")
-                .bind(subject.0).bind(kinds).bind(refs).fetch_all(self.store.pool()).await.map_err(db)?;
+            let rows = sqlx::query("WITH frontier AS (SELECT * FROM unnest($2::text[], $3::text[]) AS f(kind,ref)), active AS (SELECT a.*,CASE WHEN from_ref_kind='tag' THEN canonical_tag($1,from_ref::uuid)::text ELSE from_ref END AS effective_from,CASE WHEN to_ref_kind='tag' THEN canonical_tag($1,to_ref::uuid)::text ELSE to_ref END AS effective_to FROM association_evidence a WHERE subject_id=$1 AND revoked_at IS NULL) SELECT a.* FROM active a WHERE a.effective_from IS NOT NULL AND a.effective_to IS NOT NULL AND (a.from_ref_kind<>a.to_ref_kind OR a.effective_from<>a.effective_to) AND EXISTS(SELECT 1 FROM frontier f WHERE (f.kind=a.from_ref_kind AND f.ref=a.effective_from) OR (f.kind=a.to_ref_kind AND f.ref=a.effective_to)) ORDER BY a.association_evidence_id LIMIT 257")
+                .bind(subject.0).bind(kinds).bind(refs).fetch_all(&mut *tx).await.map_err(db)?;
             truncated |= rows.len() > 256;
             let mut next = Vec::new();
             for row in rows.into_iter().take(256) {
@@ -234,11 +239,11 @@ impl MemoryService {
                 }
                 let from = parse_reference(
                     &row.try_get::<String, _>("from_ref_kind").map_err(db)?,
-                    &row.try_get::<String, _>("from_ref").map_err(db)?,
+                    &row.try_get::<String, _>("effective_from").map_err(db)?,
                 )?;
                 let to = parse_reference(
                     &row.try_get::<String, _>("to_ref_kind").map_err(db)?,
-                    &row.try_get::<String, _>("to_ref").map_err(db)?,
+                    &row.try_get::<String, _>("effective_to").map_err(db)?,
                 )?;
                 let added = [&from, &to]
                     .iter()
@@ -248,9 +253,8 @@ impl MemoryService {
                     truncated = true;
                     continue;
                 }
-                let mut association = self.association(subject, AssociationEvidenceId(id)).await?;
-                association.from = from.clone();
-                association.to = to.clone();
+                let association =
+                    decode_association(&row, subject, from.clone(), to.clone(), Vec::new())?;
                 for reference in [from, to]
                     .into_iter()
                     .filter(|reference| seen.insert(reference.clone()))
@@ -263,6 +267,17 @@ impl MemoryService {
             }
             frontier = next;
         }
+        let ids = associations
+            .iter()
+            .map(|edge| edge.association_evidence_id.0)
+            .collect::<Vec<_>>();
+        let mut basis = self.association_basis_in(&mut tx, subject, &ids).await?;
+        for association in &mut associations {
+            association.basis = basis
+                .remove(&association.association_evidence_id.0)
+                .unwrap_or_default();
+        }
+        tx.commit().await.map_err(db)?;
         Ok(AssociationNeighborhood {
             nodes,
             associations,
@@ -270,17 +285,77 @@ impl MemoryService {
         })
     }
 
-    pub(crate) async fn association(
+    pub async fn association_page(
+        &self,
+        subject: SubjectId,
+        status: &str,
+        limit: i64,
+        after: Option<Uuid>,
+    ) -> Result<(Vec<AssociationEvidence>, bool)> {
+        let status = if status.is_empty() { "active" } else { status };
+        if !(1..=200).contains(&limit) || !matches!(status, "active" | "revoked") {
+            return Err(Error::Invalid("invalid Association page envelope".into()));
+        }
+        self.store.require_subject(subject).await?;
+        let mut tx = self.store.read_view().await?;
+        let mut rows = sqlx::query("SELECT * FROM association_evidence WHERE subject_id=$1 AND (revoked_at IS NULL)=($2='active') AND ($3::uuid IS NULL OR association_evidence_id>$3) ORDER BY association_evidence_id LIMIT $4")
+            .bind(subject.0).bind(status).bind(after).bind(limit+1).fetch_all(&mut *tx).await.map_err(db)?;
+        let more = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        let ids = rows
+            .iter()
+            .map(|r| r.try_get::<Uuid, _>("association_evidence_id").map_err(db))
+            .collect::<Result<Vec<_>>>()?;
+        let mut basis = self.association_basis_in(&mut tx, subject, &ids).await?;
+        let items = rows
+            .into_iter()
+            .map(|row| {
+                let id: Uuid = row.try_get("association_evidence_id").map_err(db)?;
+                let from = parse_reference(
+                    &row.try_get::<String, _>("from_ref_kind").map_err(db)?,
+                    &row.try_get::<String, _>("from_ref").map_err(db)?,
+                )?;
+                let to = parse_reference(
+                    &row.try_get::<String, _>("to_ref_kind").map_err(db)?,
+                    &row.try_get::<String, _>("to_ref").map_err(db)?,
+                )?;
+                decode_association(
+                    &row,
+                    subject,
+                    from,
+                    to,
+                    basis.remove(&id).unwrap_or_default(),
+                )
+            })
+            .collect::<Result<_>>()?;
+        tx.commit().await.map_err(db)?;
+        Ok((items, more))
+    }
+    pub(super) async fn association_basis_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<AssociationBasis>>> {
+        let mut basis = std::collections::HashMap::<Uuid, Vec<AssociationBasis>>::new();
+        for row in sqlx::query("SELECT * FROM association_evidence_basis WHERE association_evidence_id=ANY($1::uuid[]) ORDER BY association_evidence_id,basis_kind,basis_ref,basis_role")
+            .bind(ids).fetch_all(&mut **tx).await.map_err(db)? {
+            basis.entry(row.try_get("association_evidence_id").map_err(db)?).or_default().push(decode_association_basis(&row,subject)?);
+        }
+        Ok(basis)
+    }
+    pub async fn association(
         &self,
         subject: SubjectId,
         id: AssociationEvidenceId,
     ) -> Result<AssociationEvidence> {
+        let mut tx = self.store.read_view().await?;
         let row = sqlx::query(
             "SELECT * FROM association_evidence WHERE subject_id=$1 AND association_evidence_id=$2",
         )
         .bind(subject.0)
         .bind(id.0)
-        .fetch_optional(self.store.pool())
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?
         .ok_or_else(|| Error::NotFound("association evidence not found".into()))?;
@@ -292,115 +367,44 @@ impl MemoryService {
             &row.try_get::<String, _>("to_ref_kind").map_err(db)?,
             &row.try_get::<String, _>("to_ref").map_err(db)?,
         )?;
-        let basis=sqlx::query("SELECT basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,epistemic_relation FROM association_evidence_basis WHERE association_evidence_id=$1 ORDER BY basis_kind,basis_ref,basis_role").bind(id.0).fetch_all(self.store.pool()).await.map_err(db)?.into_iter().map(|row| {
-            let kind: String = row.try_get("basis_kind").map_err(db)?;
-            let basis_role = parse_enum(row.try_get("basis_role").map_err(db)?, "association basis role")?;
-            if kind == "use_event" {
-                let value = row.try_get::<String, _>("basis_ref").map_err(db)?;
-                let (consumer_ref, event_id) = parse_use_event_key(&value)?;
-                Ok(AssociationBasis::UseEvent(UseEventRef {
-                    subject_id: subject,
-                    consumer_ref,
-                    event_id: UseEventId(event_id),
-                }))
-            } else if kind == "evidence" {
-                let locator = match (
-                    row.try_get::<Option<Uuid>, _>("source_region_id").map_err(db)?,
-                    row.try_get::<Option<Uuid>, _>("derived_representation_id").map_err(db)?,
-                    row.try_get::<Option<Uuid>, _>("derived_region_id").map_err(db)?,
-                ) {
-                    (Some(value), None, None) => EvidenceLocator::SourceRegion(nous_core::SourceRegionId(value)),
-                    (None, Some(value), None) => EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(value)),
-                    (None, None, Some(value)) => EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(value)),
-                    (None, None, None) => EvidenceLocator::WholeOccurrence,
-                    _ => return Err(Error::Infrastructure("association evidence locator is invalid".into())),
-                };
-                Ok(AssociationBasis::Revision(RevisionBasis::Evidence(EvidenceRef {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
-                    occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
-                    locator,
-                    basis_role,
-                })))
-            } else {
-                Ok(AssociationBasis::Revision(RevisionBasis::CognitionDependency(CognitionDependency {
-                    epistemic_relation: parse_epistemic_relation(row.try_get("epistemic_relation").map_err(db)?)?,
-                    target_revision: parse_reference(&kind, &row.try_get::<String, _>("basis_ref").map_err(db)?)?,
-                    basis_role,
-                })))
-            }
-        }).collect::<Result<Vec<_>>>()?;
-        Ok(AssociationEvidence {
-            association_evidence_id: id,
-            subject_id: subject,
-            from,
-            to,
-            relation_kind: row.try_get("relation_kind").map_err(db)?,
-            polarity: parse_enum(row.try_get("polarity").map_err(db)?, "association polarity")?,
-            basis_class: parse_enum(
-                row.try_get("basis_class").map_err(db)?,
-                "association support class",
-            )?,
-            basis,
-            producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
-            valid_time: temporal_from_columns(
-                row.try_get("valid_time_kind").map_err(db)?,
-                row.try_get("valid_time_start").map_err(db)?,
-                row.try_get("valid_time_end").map_err(db)?,
-            )?,
-            created_at: row.try_get("created_at").map_err(db)?,
-            revoked_at: row.try_get("revoked_at").map_err(db)?,
-        })
+        let basis = self
+            .association_basis_in(&mut tx, subject, &[id.0])
+            .await?
+            .remove(&id.0)
+            .unwrap_or_default();
+        let view = decode_association(&row, subject, from, to, basis)?;
+        tx.commit().await.map_err(db)?;
+        Ok(view)
     }
 
     async fn validate_association_basis(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subject: SubjectId,
         input: &CreateAssociationRequest,
     ) -> Result<()> {
         let mut has_source_evidence = false;
         let mut use_events = Vec::new();
+        let mut revision_basis = Vec::new();
         for basis in &input.basis {
             match basis {
                 AssociationBasis::Revision(value) => {
                     if matches!(value, RevisionBasis::Evidence(_)) {
                         has_source_evidence = true;
                     }
-                    self.validate_basis_for_subject(subject, std::slice::from_ref(value))
-                        .await?;
+                    revision_basis.push(value.clone());
                 }
                 AssociationBasis::UseEvent(value) => {
-                    if value.subject_id != subject {
-                        return Err(Error::Invalid(
-                            "association UseEvent support belongs to another Subject".into(),
-                        ));
-                    }
-                    let active = sqlx::query_scalar::<_, String>(
-                        "SELECT use_kind FROM cognitive_use_events WHERE subject_id=$1 AND consumer_ref=$2 AND event_id=$3",
-                    )
-                    .bind(subject.0)
-                    .bind(&value.consumer_ref)
-                    .bind(value.event_id.0)
-                    .fetch_optional(self.store.pool())
-                    .await
-                    .map_err(db)?;
-                    let purged = sqlx::query_scalar::<_, bool>(
-                        "SELECT EXISTS(SELECT 1 FROM purged_use_receipts WHERE subject_id=$1 AND consumer_ref=$2 AND event_id=$3)",
-                    )
-                    .bind(subject.0)
-                    .bind(&value.consumer_ref)
-                    .bind(value.event_id.0)
-                    .fetch_one(self.store.pool())
-                    .await
-                    .map_err(db)?;
-                    if active.is_none() && !purged {
-                        return Err(Error::Invalid(
-                            "association UseEvent support was not recorded".into(),
-                        ));
-                    }
+                    let active = self
+                        .cognition
+                        .use_event_support_in(tx, subject, value)
+                        .await?;
                     use_events.push(active);
                 }
             }
         }
+        self.provenance_summary_in(tx, subject, &revision_basis, None, &mut Default::default())
+            .await?;
         match input.basis_class {
             AssociationBasisClass::HostExplicit => {}
             AssociationBasisClass::SourceEvidence if !has_source_evidence => {
@@ -426,7 +430,7 @@ impl MemoryService {
                     })?;
                     let exists: bool = sqlx::query_scalar(
                         "SELECT EXISTS(SELECT 1 FROM producer_signatures WHERE producer_signature_id=$1)")
-                        .bind(producer).fetch_one(self.store.pool()).await.map_err(db)?;
+                        .bind(producer).fetch_one(&mut **tx).await.map_err(db)?;
                     if !exists {
                         return Err(Error::Invalid(
                             "producer signature is not registered".into(),
@@ -488,13 +492,8 @@ impl MemoryService {
             .start_mutation(subject, operation_id, "revoke_association", &digest)
             .await?
         {
-            MutationStart::Replay(receipt) => {
-                if receipt.state == "committed" {
-                    return Ok(());
-                }
-                return Err(Error::Unavailable(
-                    "association revoke operation is already in progress".into(),
-                ));
+            MutationStart::Replay(_) => {
+                return Ok(());
             }
             MutationStart::Active(mutation) => mutation,
         };
@@ -514,43 +513,6 @@ impl MemoryService {
         mutation
             .commit("association", Some(&association.0.to_string()), None, None)
             .await
-    }
-
-    pub async fn accessibility_level(
-        &self,
-        subject: SubjectId,
-        memory: MemoryId,
-        now: DateTime<Utc>,
-    ) -> Result<AccessibilityLevel> {
-        let policy = super::resolve_accessibility_policy(
-            &self.configuration.snapshot_for_subject(subject)?,
-        )?;
-        policy
-            .level_for_memory(&self.store, subject, memory, now)
-            .await
-    }
-
-    pub async fn temporal_evidence_public(
-        &self,
-        revision: MemoryRevisionId,
-    ) -> Result<TemporalEvidence> {
-        self.temporal_evidence(revision).await
-    }
-
-    pub async fn require_exact_revision(
-        &self,
-        subject: SubjectId,
-        reference: &CognitiveRef,
-    ) -> Result<()> {
-        if !matches!(
-            reference,
-            CognitiveRef::MemoryRevision(_) | CognitiveRef::CognitiveSchemaRevision(_)
-        ) {
-            return Err(Error::Invalid(
-                "durable cognition reference must be an exact revision".into(),
-            ));
-        }
-        self.store.validate_reference(subject, reference).await
     }
 }
 
@@ -683,4 +645,104 @@ fn validate_association_input(input: &CreateAssociationRequest) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn decode_association_basis(
+    row: &sqlx::postgres::PgRow,
+    subject: SubjectId,
+) -> Result<AssociationBasis> {
+    let kind: String = row.try_get("basis_kind").map_err(db)?;
+    let basis_role = parse_enum(
+        row.try_get("basis_role").map_err(db)?,
+        "association basis role",
+    )?;
+    if kind == "use_event" {
+        let value = row.try_get::<String, _>("basis_ref").map_err(db)?;
+        let (consumer_ref, event_id) = parse_use_event_key(&value)?;
+        Ok(AssociationBasis::UseEvent(UseEventRef {
+            subject_id: subject,
+            consumer_ref,
+            event_id: UseEventId(event_id),
+        }))
+    } else if kind == "evidence" {
+        let locator = match (
+            row.try_get::<Option<Uuid>, _>("source_region_id")
+                .map_err(db)?,
+            row.try_get::<Option<Uuid>, _>("derived_representation_id")
+                .map_err(db)?,
+            row.try_get::<Option<Uuid>, _>("derived_region_id")
+                .map_err(db)?,
+        ) {
+            (Some(value), None, None) => {
+                EvidenceLocator::SourceRegion(nous_core::SourceRegionId(value))
+            }
+            (None, Some(value), None) => {
+                EvidenceLocator::DerivedRepresentation(nous_core::DerivedRepresentationId(value))
+            }
+            (None, None, Some(value)) => {
+                EvidenceLocator::DerivedRegion(nous_core::DerivedRegionId(value))
+            }
+            (None, None, None) => EvidenceLocator::WholeOccurrence,
+            _ => {
+                return Err(Error::Infrastructure(
+                    "association evidence locator is invalid".into(),
+                ));
+            }
+        };
+        Ok(AssociationBasis::Revision(RevisionBasis::Evidence(
+            EvidenceRef {
+                epistemic_relation: parse_epistemic_relation(
+                    row.try_get("epistemic_relation").map_err(db)?,
+                )?,
+                occurrence_id: OccurrenceId(row.try_get("occurrence_id").map_err(db)?),
+                locator,
+                basis_role,
+            },
+        )))
+    } else {
+        Ok(AssociationBasis::Revision(
+            RevisionBasis::CognitionDependency(CognitionDependency {
+                epistemic_relation: parse_epistemic_relation(
+                    row.try_get("epistemic_relation").map_err(db)?,
+                )?,
+                target_revision: parse_reference(
+                    &kind,
+                    &row.try_get::<String, _>("basis_ref").map_err(db)?,
+                )?,
+                basis_role,
+            }),
+        ))
+    }
+}
+
+fn decode_association(
+    row: &sqlx::postgres::PgRow,
+    subject: SubjectId,
+    from: CognitiveRef,
+    to: CognitiveRef,
+    basis: Vec<AssociationBasis>,
+) -> Result<AssociationEvidence> {
+    Ok(AssociationEvidence {
+        association_evidence_id: AssociationEvidenceId(
+            row.try_get("association_evidence_id").map_err(db)?,
+        ),
+        subject_id: subject,
+        from,
+        to,
+        relation_kind: row.try_get("relation_kind").map_err(db)?,
+        polarity: parse_enum(row.try_get("polarity").map_err(db)?, "association polarity")?,
+        basis_class: parse_enum(
+            row.try_get("basis_class").map_err(db)?,
+            "association support class",
+        )?,
+        basis,
+        producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
+        valid_time: temporal_from_columns(
+            row.try_get("valid_time_kind").map_err(db)?,
+            row.try_get("valid_time_start").map_err(db)?,
+            row.try_get("valid_time_end").map_err(db)?,
+        )?,
+        created_at: row.try_get("created_at").map_err(db)?,
+        revoked_at: row.try_get("revoked_at").map_err(db)?,
+    })
 }

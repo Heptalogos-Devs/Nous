@@ -62,10 +62,10 @@ async fn historical_catalog_sources_in(
         .unzip();
     let rows = sqlx::query(r#"
 WITH selected AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), catalog AS (
- SELECT s.kind,s.value,r.title,r.representation_text text,NULL::text source_class FROM selected s JOIN memory_revisions r ON s.kind='memory_revision' AND r.memory_revision_id=CASE WHEN s.kind='memory_revision' THEN s.value::uuid END JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND o.purge_state='normal'
- UNION ALL SELECT s.kind,s.value,r.title,r.structural_claim,NULL FROM selected s JOIN cognitive_schema_revisions r ON s.kind='cognitive_schema_revision' AND r.schema_revision_id=CASE WHEN s.kind='cognitive_schema_revision' THEN s.value::uuid END JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND o.purge_state='normal'
- UNION ALL SELECT s.kind,s.value,r.title,NULL,NULL FROM selected s JOIN episode_revisions r ON s.kind='episode_revision' AND r.episode_revision_id=CASE WHEN s.kind='episode_revision' THEN s.value::uuid END JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1 AND o.purge_state='normal'
- UNION ALL SELECT s.kind,s.value,r.title,COALESCE(r.title,'')||E'\n'||r.narrative||E'\n'||COALESCE((SELECT string_agg(text,E'\n' ORDER BY ordinal) FROM journal_revision_points WHERE journal_revision_id=r.journal_revision_id),''),NULL FROM selected s JOIN journal_revisions r ON s.kind='journal_revision' AND r.journal_revision_id=CASE WHEN s.kind='journal_revision' THEN s.value::uuid END JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1 AND o.purge_state='normal'
+ SELECT s.kind,s.value,r.title,r.representation_text text,NULL::text source_class FROM selected s JOIN memory_revisions r ON s.kind='memory_revision' AND r.memory_revision_id=CASE WHEN s.kind='memory_revision' THEN s.value::uuid END JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1
+ UNION ALL SELECT s.kind,s.value,r.title,r.structural_claim,NULL FROM selected s JOIN cognitive_schema_revisions r ON s.kind='cognitive_schema_revision' AND r.schema_revision_id=CASE WHEN s.kind='cognitive_schema_revision' THEN s.value::uuid END JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1
+ UNION ALL SELECT s.kind,s.value,r.title,NULL,NULL FROM selected s JOIN episode_revisions r ON s.kind='episode_revision' AND r.episode_revision_id=CASE WHEN s.kind='episode_revision' THEN s.value::uuid END JOIN episode_objects o USING(episode_id) WHERE r.subject_id=$1
+ UNION ALL SELECT s.kind,s.value,r.title,COALESCE(r.title,'')||E'\n'||r.narrative||E'\n'||COALESCE((SELECT string_agg(text,E'\n' ORDER BY ordinal) FROM journal_revision_points WHERE journal_revision_id=r.journal_revision_id),''),NULL FROM selected s JOIN journal_revisions r ON s.kind='journal_revision' AND r.journal_revision_id=CASE WHEN s.kind='journal_revision' THEN s.value::uuid END JOIN journal_objects o USING(journal_id) WHERE r.subject_id=$1
  UNION ALL SELECT s.kind,s.value,NULL,NULL,o.source_class FROM selected s JOIN observation_occurrences o ON s.kind='occurrence' AND o.occurrence_id=CASE WHEN s.kind='occurrence' THEN s.value::uuid END LEFT JOIN artifacts a USING(artifact_id) WHERE o.subject_id=$1
  UNION ALL SELECT s.kind,s.value,NULL,NULL,NULL FROM selected s JOIN source_regions r ON s.kind='source_region' AND r.source_region_id=CASE WHEN s.kind='source_region' THEN s.value::uuid END JOIN artifacts a USING(artifact_id) WHERE r.subject_id=$1
  UNION ALL SELECT s.kind,s.value,d.representation_kind,NULL,'derived' FROM selected s JOIN derived_representations d ON s.kind='derived_representation' AND d.derived_representation_id=CASE WHEN s.kind='derived_representation' THEN s.value::uuid END WHERE d.subject_id=$1
@@ -84,10 +84,6 @@ WITH selected AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), ca
             title: row.get("title"),
             source_class: row.get("source_class"),
             member_fragments: vec![],
-            source_region: match reference {
-                CognitiveRef::SourceRegion(id) => Some(id),
-                _ => None,
-            },
             entity_refs: vec![],
             tag_ids: vec![],
             schema_ids: vec![],
@@ -155,7 +151,6 @@ fn historical_tag_sources(
             member_fragments: vec![],
             title: None,
             source_class: None,
-            source_region: None,
             entity_refs: vec![],
             tag_ids: vec![],
             schema_ids: vec![],
@@ -322,5 +317,4 @@ fn eligible_state(state: &serde_json::Value) -> bool {
     state["acceptance_state"] == "accepted"
         && state["integrity_state"] == "valid"
         && state["suppression_state"] == "normal"
-        && state["purge_state"] == "normal"
 }

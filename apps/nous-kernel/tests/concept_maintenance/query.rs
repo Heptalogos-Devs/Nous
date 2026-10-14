@@ -11,7 +11,7 @@ pub(super) async fn assert_maintained_concept_query(
 ) {
     let graph = rt
         .store
-        .topology_projection_input(subject, true)
+        .topology_projection_input(subject, true, None)
         .await
         .unwrap();
     assert!(
@@ -59,7 +59,7 @@ pub(super) async fn assert_maintained_concept_query(
     };
     let bound = rt
         .cognition
-        .bind_query(query)
+        .bind_query(query, rt)
         .await
         .unwrap()
         .for_profile(CognitiveProfile::NousNodePotential)

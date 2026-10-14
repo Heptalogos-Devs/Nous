@@ -64,16 +64,15 @@ fn domain_status(error: DomainError) -> Status {
             WireCode::OperationIdConflict,
             Recovery::NewOperation,
         ),
-        DomainCode::OperationInProgress => (
-            Code::Aborted,
-            WireCode::OperationInProgress,
-            Recovery::RetryOperation,
-        ),
-        DomainCode::LeaseLost => (Code::Aborted, WireCode::LeaseLost, Recovery::RetryOperation),
         DomainCode::CapabilityUnavailable => (
             Code::Unavailable,
             WireCode::CapabilityUnavailable,
             Recovery::CheckConfiguration,
+        ),
+        DomainCode::InvalidConfiguration => (
+            Code::InvalidArgument,
+            WireCode::InvalidConfiguration,
+            Recovery::CorrectRequest,
         ),
     };
     let detail = p::ErrorDetail {

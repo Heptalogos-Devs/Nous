@@ -376,7 +376,6 @@ pub struct CandidateRankInput {
     pub reference: CognitiveRef,
     pub family_ranks: HashMap<EvidenceFamily, usize>,
     #[serde(default)]
-    pub family_view_ranks: HashMap<EvidenceFamily, Vec<usize>>,
     pub variants: Vec<String>,
 }
 
@@ -415,11 +414,7 @@ pub fn rank_candidates_with_policy(
             let raw = enabled
                 .iter()
                 .filter_map(|lane| {
-                    let rank = candidate
-                        .family_view_ranks
-                        .get(&lane.family)
-                        .and_then(|ranks| ranks.iter().copied().min())
-                        .or_else(|| candidate.family_ranks.get(&lane.family).copied())?;
+                    let rank = candidate.family_ranks.get(&lane.family).copied()?;
                     Some(lane.weight / (policy.rrf_k + rank as f64))
                 })
                 .sum::<f64>();
@@ -468,7 +463,6 @@ mod tests {
         let candidate = CandidateRankInput {
             reference: CognitiveRef::Memory(MemoryId::new()),
             family_ranks: HashMap::from([(EvidenceFamily::Lexical, 1)]),
-            family_view_ranks: HashMap::new(),
             variants: Vec::new(),
         };
         let reference = candidate.reference.clone();
@@ -487,17 +481,15 @@ mod tests {
     }
 
     #[test]
-    fn multi_view_family_uses_one_best_rank_and_tie_order_is_stable() {
+    fn equal_family_ranks_have_stable_tie_order() {
         let left = CandidateRankInput {
             reference: CognitiveRef::Memory(MemoryId::new()),
-            family_ranks: HashMap::new(),
-            family_view_ranks: HashMap::from([(EvidenceFamily::Dense, vec![7, 2, 5])]),
+            family_ranks: HashMap::from([(EvidenceFamily::Dense, 2)]),
             variants: vec!["dense:space-a".into()],
         };
         let right = CandidateRankInput {
             reference: CognitiveRef::Memory(MemoryId::new()),
             family_ranks: HashMap::from([(EvidenceFamily::Dense, 2)]),
-            family_view_ranks: HashMap::new(),
             variants: Vec::new(),
         };
         let reverse = rank_candidates(&[right.clone(), left.clone()], &[EvidenceFamily::Dense]);

@@ -3,11 +3,10 @@
 
 import type { ModelRole } from "../roles.js";
 import {
-  hydrateRole,
   type ReadyRole,
-  type ModelRoleSnapshot,
+  type PreparedModelRole,
   type ModelProducerMetadata,
-} from "./snapshot.js";
+} from "./binding.js";
 import { InputUnavailable } from "../input.js";
 import {
   safeProviderFailure,
@@ -17,7 +16,7 @@ import {
 import type {
   ExecutionAttempt as WireAttempt,
   ExecutionTelemetry as WireTelemetry,
-} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/workflow_envelope_pb.js";
+} from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/model_results_pb.js";
 type ExecutionAttempt = Omit<WireAttempt, "$typeName" | "status" | "usage"> & {
   status: "succeeded" | "failed" | "skipped" | "unknown";
   usage?: ReturnType<typeof usageCounts>;
@@ -31,7 +30,7 @@ export type ExecutionTelemetry = Omit<
 };
 export class GenerationFailure extends Error {
   constructor(
-    role: ModelRole,
+    readonly role: ModelRole,
     readonly reason: string,
     readonly execution?: ExecutionTelemetry,
     readonly usage?: unknown,
@@ -41,6 +40,14 @@ export class GenerationFailure extends Error {
 }
 
 const interruptedExecutions = new WeakMap<object, ExecutionTelemetry>();
+export function attachExecutionTelemetry(
+  error: unknown,
+  execution: ExecutionTelemetry,
+): unknown {
+  if (error && typeof error === "object")
+    interruptedExecutions.set(error, execution);
+  return error;
+}
 export function failedExecutionTelemetry(
   error: unknown,
 ): ExecutionTelemetry | undefined {
@@ -73,28 +80,27 @@ export async function executeRoutes<
   Input = undefined,
 >(
   name: ModelRole,
-  snapshot: ModelRoleSnapshot,
-  credentialOrigins: ReadonlySet<string>,
+  snapshot: PreparedModelRole,
   invoke: (role: ReadyRole, input: Input) => Promise<T>,
   signal?: AbortSignal,
   beforeAttempt?: () => void,
   prepare?: (role: ReadyRole) => Input,
 ) {
   if (snapshot.role !== name) throw new Error("Reserved model role mismatch");
-  const policy = snapshot.configuration.roles[name];
   const attempts: ExecutionAttempt[] = [];
-  for (const executionName of policy?.routes ?? []) {
+  for (const route of snapshot.routes) {
+    const { executionName } = route;
     if (signal?.aborted) interrupt(name, signal.reason, attempts);
     let role: ReadyRole;
     let prepared: Input;
     try {
-      role = hydrateRole(snapshot, executionName, credentialOrigins);
+      if (!route.ready) throw new Error("route_unavailable");
+      role = route.ready;
       prepared = prepare ? prepare(role) : (undefined as Input);
     } catch (error) {
       attempts.push({
         executionProfile: executionName,
-        modelProfile:
-          snapshot.configuration.execution_profiles[executionName]?.model ?? "",
+        modelProfile: route.modelProfile,
         status: "skipped",
         failureClass:
           error instanceof InputUnavailable

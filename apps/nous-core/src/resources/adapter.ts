@@ -1,56 +1,33 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-export type ResourceBinding = {
-  resourceRef: string;
-  adapterKind: string;
-  providerProfile: string;
-  providerLocator: string;
-};
-export type StableExternalRef = {
-  providerKind: string;
-  providerProfile: string;
-  profileDigest: string;
-  resourceRef: string;
-  providerResourceId: string;
-  entryId: string;
-  entryVersion: string | null;
-  contentDigest: string;
-  sourceLocator: string;
-  retrievedAt: string;
-  accessScope: string;
-};
-export type ResourceRecord = {
-  resourceRef: string;
-  reference: StableExternalRef;
-  title?: string;
-  content: string;
-  providerRank: number;
-  providerScore?: number;
-  versionStatus: "current" | "stale" | "missing" | "unknown";
-  accessStatus: "allowed" | "denied" | "unknown";
-};
-type VersionCheck = {
-  status: ResourceRecord["versionStatus"];
-  checkedAt: string;
-};
-type AccessCheck = {
-  status: ResourceRecord["accessStatus"];
-  checkedAt: string;
-};
-type ResourceMaterial = {
-  reference: StableExternalRef;
-  content: string;
-  mediaType: string;
-  version: VersionCheck;
-  access: AccessCheck;
-};
+import type { MessageInitShape } from "@bufbuild/protobuf";
+import type {
+  StableExternalRefSchema,
+  ExternalResourceRecordSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import type { ResourceDescriptor } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
+
+export type ResourceBinding = Pick<
+  ResourceDescriptor,
+  "resourceRef" | "adapterKind" | "providerProfile" | "providerLocator"
+>;
+export type StableExternalRef = MessageInitShape<
+  typeof StableExternalRefSchema
+>;
+export type ResourceRecord = MessageInitShape<
+  typeof ExternalResourceRecordSchema
+> & { reference: StableExternalRef };
+type ResourceMaterial = Pick<
+  ResourceRecord,
+  "content" | "versionStatus" | "accessStatus"
+> & { content: string; mediaType: string };
 export interface ExternalResourceAdapter {
   readonly profileDigest: string;
   describe(
     binding: ResourceBinding,
     signal?: AbortSignal,
-  ): Promise<{ resourceIds: string[]; accessible: boolean }>;
+  ): Promise<{ accessible: boolean }>;
   search(
     binding: ResourceBinding,
     question: string,
@@ -64,17 +41,16 @@ export interface ExternalResourceAdapter {
   checkVersion(
     reference: StableExternalRef,
     signal?: AbortSignal,
-  ): Promise<VersionCheck>;
+  ): Promise<ResourceRecord["versionStatus"]>;
   checkAccess(
     reference: StableExternalRef,
     signal?: AbortSignal,
-  ): Promise<AccessCheck>;
+  ): Promise<ResourceRecord["accessStatus"]>;
 }
 export class ResourceProviderError extends Error {
   constructor(
     readonly status: "unavailable" | "denied" | "stale" | "failed",
     message: string,
-    readonly missing = false,
   ) {
     super(message);
   }

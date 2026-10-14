@@ -13,8 +13,7 @@ use historical_authority::{
 use nous_core::*;
 use nous_memory::{AssociationBasis, AssociationBasisClass, AssociationPolarity};
 use nous_memory::{CreateTagRequest, ReviseTagInput, TagContent, TagExpectation};
-use nous_runtime::{CognitiveRuntimeService, ManualCognitiveClock};
-use nous_subject::{CognitiveSeedInput, CreateSubject};
+use nous_runtime::ManualCognitiveClock;
 use std::sync::Arc;
 use test_support::*;
 #[tokio::test]
@@ -24,46 +23,29 @@ use test_support::*;
 )]
 async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     let (root, url, _pg) = database().await;
-    let mut rt = open_runtime_with_serving(&url, &root, true, false, true).await;
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
     let start = chrono::Utc::now();
     let clock = Arc::new(ManualCognitiveClock::new(start));
-    rt.cognition = CognitiveRuntimeService::with_clock(
-        rt.store.clone(),
-        rt.cognition.resident_limit,
-        rt.configuration.clone(),
+    let rt = nous_kernel::NousRuntime::open_with_clock(
+        runtime_options(&url, &root, true, false, true),
         clock.clone(),
     )
+    .await
     .unwrap();
-    rt.memory.as_mut().unwrap().cognition = rt.cognition.clone();
-    rt.material.cognition = rt.cognition.clone();
+    let subject = test_support::query::subject(&rt).await;
     let source = observation(&rt, subject, "original authority fact").await;
     let owner = rt.require_memory().unwrap();
     let tag = owner
         .create_tag(
             subject,
             CreateTagRequest {
-                operation_id: OperationId::new(),
-                label: "Past concept".into(),
-                description: Some("PAST_DESCRIPTION reader ownership".into()),
-                kind_hint: None,
-                origin: "host_explicit".into(),
                 producer: None,
+                operation_id: OperationId::new(),
+                content: nous_memory::TagContent {
+                    label: "Past concept".into(),
+                    description: Some("PAST_DESCRIPTION reader ownership".into()),
+                    kind_hint: None,
+                },
+                origin: "host_explicit".into(),
             },
         )
         .await
@@ -74,8 +56,8 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         OperationId::new(),
         "original authority fact",
     );
-    input.tags = vec![tag.tag_id];
-    let basis = input.basis.clone();
+    input.content.tags = vec![tag.tag_id];
+    let basis = input.content.basis.clone();
     let memory = owner.form_memory(input).await.unwrap();
     let old = CognitiveRef::MemoryRevision(memory.revision.memory_revision_id);
     let exact_boundary = owner
@@ -110,21 +92,25 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .unwrap();
     let revised = owner
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
             operation_id: OperationId::new(),
             subject,
             memory_id: memory.object.memory_id,
             expected_object_epoch: memory.object.object_epoch,
             intent: nous_memory::RevisionIntent::Rephrase,
-            formation_mode: nous_memory::FormationMode::Grounded,
-            grounding_occurrence_id: Some(source.occurrence.occurrence_id),
-            semantic_role: "fact".into(),
-            representation_text: "rephrased authority fact".into(),
-            title: None,
-            basis: basis.clone(),
-            aboutness: vec![],
-            valid_time: TemporalExtent::Unknown,
-            epistemic_class: EpistemicClass::Observed,
+
+            content: nous_memory::MemoryContent {
+                producer: None,
+                formation_mode: nous_memory::FormationMode::Grounded,
+                grounding_occurrence_id: Some(source.occurrence.occurrence_id),
+                semantic_role: "fact".into(),
+                representation_text: "rephrased authority fact".into(),
+                title: None,
+                basis: basis.clone(),
+                aboutness: vec![],
+                valid_time: TemporalExtent::Unknown,
+                epistemic_class: EpistemicClass::Observed,
+                tags: Vec::new(),
+            },
         })
         .await
         .unwrap();
@@ -229,11 +215,12 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .advance_to(subject, start + chrono::Duration::seconds(20))
         .unwrap();
     owner
-        .suppress(
+        .mutate_memory_lifecycle(
             subject,
             memory.object.memory_id,
             OperationId::new(),
             revised.object.object_epoch,
+            nous_memory::LifecycleAction::Suppress,
         )
         .await
         .unwrap();
@@ -300,12 +287,14 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .create_tag(
             subject,
             CreateTagRequest {
-                operation_id: OperationId::new(),
-                label: "New survivor concept".into(),
-                description: None,
-                kind_hint: None,
-                origin: "host_explicit".into(),
                 producer: None,
+                operation_id: OperationId::new(),
+                content: nous_memory::TagContent {
+                    label: "New survivor concept".into(),
+                    description: None,
+                    kind_hint: None,
+                },
+                origin: "host_explicit".into(),
             },
         )
         .await
@@ -389,24 +378,9 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
 async fn historical_material_query_runs_without_memory_micro_system() {
     use nous_kernel::{NousRuntime, RuntimeOptions};
     let (root, url, _pg) = database().await;
-    let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:nous_retrieval::ServingOptions {root:root.path().join("serving"),lexical:true,dense:false,topology:false,memory_enabled:false},embedding:None,stored_embedding:None,core_descriptors:vec![],deployment_document:serde_json::json!({"capabilities":{"process":{"memory":false},"subject_defaults":{"memory":false}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":false},"topology":{"enabled":false}}})}).await.unwrap();
+    let rt=NousRuntime::open(RuntimeOptions {postgres_url:url,max_connections:4,acquire_timeout_ms:15000,object_root:root.path().join("objects").to_string_lossy().into_owned(),serving_options:nous_retrieval::ServingOptions {root:root.path().join("serving"),lexical:true,dense:false,topology:false,memory_enabled:false},embedding:None,stored_embedding:None,configuration: nous_kernel::configuration_catalog(vec![]).unwrap().deployment(&serde_json::json!({"capabilities":{"process":{"memory":false},"subject_defaults":{"memory":false}},"serving":{"lexical":{"enabled":true},"dense":{"enabled":false},"topology":{"enabled":false}}})).unwrap()}).await.unwrap();
     assert!(rt.memory.is_none());
-    let subject = rt
-        .subjects
-        .create_subject(CreateSubject {
-            subject_id: None,
-            operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
-                text: "schema_version = 1".into(),
-                format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
-                provenance: serde_json::json!({}),
-            },
-            metadata: serde_json::json!({}),
-            capabilities: None,
-        })
-        .await
-        .unwrap()
-        .subject_id;
+    let subject = test_support::query::subject(&rt).await;
     let old = observation(&rt, subject, "material archival chronicle").await;
     let cut = rt.cognition.now(subject);
     let future = observation(&rt, subject, "future material archival chronicle").await;

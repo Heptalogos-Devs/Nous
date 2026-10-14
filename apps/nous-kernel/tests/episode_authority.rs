@@ -60,20 +60,16 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
         .await
         .unwrap();
     let mut occurrences = vec![];
+    let mut source_regions = vec![];
     for index in 0..4 {
         let mut input = observation(subject, Some(session.session_id));
         input.material = ObservationMaterial::InlineText {
             text: format!("experience {index}"),
             media_type: "text/plain".into(),
         };
-        occurrences.push(
-            rt.material
-                .record_observation(input)
-                .await
-                .unwrap()
-                .occurrence
-                .occurrence_id,
-        );
+        let accepted = rt.material.record_observation(input).await.unwrap();
+        occurrences.push(accepted.occurrence.occurrence_id);
+        source_regions.push(accepted.source_region.unwrap().source_region_id);
         clock.advance_by(subject, Duration::minutes(1)).unwrap();
     }
     let original = rt
@@ -81,6 +77,7 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
         .await
         .unwrap()
         .episodes;
+    let original_topology_watermark = episode_topology_watermark(&rt, subject, &original).await;
     let memory = rt.require_memory().unwrap();
     let split_request = partition_request(
         &rt,
@@ -95,6 +92,7 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
         .await
         .unwrap();
     assert_eq!(split.len(), 2);
+    assert!(episode_topology_watermark(&rt, subject, &split).await > original_topology_watermark);
     assert!(
         split
             .iter()
@@ -110,11 +108,12 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
     );
     assert!(
         memory
-            .reaccept_episode(
+            .mutate_episode_lifecycle(
                 subject,
                 withdrawn.object.episode_id,
                 nous_core::OperationId::new(),
-                withdrawn.object.object_epoch
+                withdrawn.object.object_epoch,
+                nous_memory::LifecycleAction::Reaccept
             )
             .await
             .is_err()
@@ -124,12 +123,7 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
             .iter()
             .any(|relation| relation.relation == "split_from")
     }));
-    let replay = memory.apply_episode_partition(split_request).await.unwrap();
-    assert_eq!(
-        replay[0].revision.episode_revision_id,
-        split[0].revision.episode_revision_id
-    );
-    assert_partition_rollback(&rt, subject, &split, &occurrences).await;
+    assert_partition_replay_and_rollback(&rt, subject, split_request, &split, &occurrences).await;
     let repartition_request = partition_request(
         &rt,
         subject,
@@ -167,15 +161,32 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
             .count()
             == 2
     );
-    assert_partition_revision(&rt, subject, &merged, &occurrences).await;
+    assert_partition_revision(&rt, subject, &merged, &occurrences, &source_regions).await;
 }
 
-async fn assert_partition_rollback(
+async fn assert_partition_replay_and_rollback(
     rt: &NousRuntime,
     subject: nous_core::SubjectId,
+    replay_request: EpisodePartitionInput,
     sources: &[EpisodeView],
     occurrences: &[nous_core::OccurrenceId],
 ) {
+    let replay = rt
+        .require_memory()
+        .unwrap()
+        .apply_episode_partition(replay_request)
+        .await
+        .unwrap();
+    assert_eq!(
+        replay
+            .iter()
+            .map(|episode| episode.revision.episode_revision_id)
+            .collect::<Vec<_>>(),
+        sources
+            .iter()
+            .map(|episode| episode.revision.episode_revision_id)
+            .collect::<Vec<_>>()
+    );
     let mut invalid =
         partition_request(rt, subject, sources, occurrences, &[vec![0, 1], vec![2, 3]]).await;
     invalid.segments[1].boundary_explanation = "x".repeat(20000);
@@ -223,6 +234,7 @@ async fn assert_partition_revision(
     subject: nous_core::SubjectId,
     merged: &[EpisodeView],
     occurrences: &[nous_core::OccurrenceId],
+    source_regions: &[nous_core::SourceRegionId],
 ) {
     let memory = rt.require_memory().unwrap();
     let mut revise = partition_request(rt, subject, merged, occurrences, &[vec![0, 1, 2, 3]]).await;
@@ -238,9 +250,10 @@ async fn assert_partition_revision(
     );
     assert_eq!(
         memory
-            .episode_history(subject, revised[0].object.episode_id)
+            .episode_history(subject, revised[0].object.episode_id, 100, None)
             .await
             .unwrap()
+            .0
             .len(),
         2
     );
@@ -256,6 +269,71 @@ async fn assert_partition_revision(
     assert_eq!(rt.store.authority_seq(subject).await.unwrap(), watermark);
     revise.operation_id = nous_core::OperationId::new();
     assert!(memory.apply_episode_partition(revise).await.is_err());
+    let mut content = nous_memory::EpisodeContent {
+        title: Some("exact source organization".into()),
+        parent_episode_revision_id: None,
+        experience_time: revised[0].revision.experience_time.clone(),
+        boundary_explanation: "source identity is preserved".into(),
+        producer_signature_id: None,
+        members: vec![nous_memory::EpisodeMemberInput {
+            reference: nous_core::CognitiveRef::Occurrence(occurrences[0]),
+            role: "experience".into(),
+        }],
+        basis: vec![nous_core::RevisionBasis::Evidence(nous_core::EvidenceRef {
+            occurrence_id: occurrences[0],
+            locator: nous_core::EvidenceLocator::SourceRegion(source_regions[0]),
+            basis_role: nous_core::BasisRole::Direct,
+            epistemic_relation: None,
+        })],
+    };
+    let valid = memory
+        .create_episode(nous_memory::EpisodeInput {
+            operation_id: nous_core::OperationId::new(),
+            subject,
+            track_key: "exact-source-check".into(),
+            content: content.clone(),
+        })
+        .await
+        .unwrap();
+    let sequence = rt.store.authority_seq(subject).await.unwrap();
+    let nous_core::RevisionBasis::Evidence(evidence) = &mut content.basis[0] else {
+        unreachable!()
+    };
+    evidence.locator = nous_core::EvidenceLocator::SourceRegion(source_regions[1]);
+    let invalid_create = memory
+        .create_episode(nous_memory::EpisodeInput {
+            operation_id: nous_core::OperationId::new(),
+            subject,
+            track_key: "exact-source-check".into(),
+            content: content.clone(),
+        })
+        .await;
+    assert!(
+        matches!(invalid_create, Err(nous_core::Error::Invalid(message)) if message.contains("does not match occurrence"))
+    );
+    let invalid_revision = memory
+        .revise_episode(nous_memory::ReviseEpisodeInput {
+            operation_id: nous_core::OperationId::new(),
+            subject,
+            episode_id: valid.object.episode_id,
+            expected_object_epoch: valid.object.object_epoch,
+            intent: "reinterpret".into(),
+            content,
+        })
+        .await;
+    assert!(
+        matches!(invalid_revision, Err(nous_core::Error::Invalid(message)) if message.contains("does not match occurrence"))
+    );
+    assert_eq!(rt.store.authority_seq(subject).await.unwrap(), sequence);
+    let unchanged = memory
+        .episode(subject, valid.object.episode_id, None)
+        .await
+        .unwrap();
+    assert_eq!(unchanged.object.object_epoch, valid.object.object_epoch);
+    assert_eq!(
+        unchanged.revision.episode_revision_id,
+        valid.revision.episode_revision_id
+    );
 }
 
 #[tokio::test]
@@ -331,7 +409,7 @@ async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
     let kinds = vec!["episode_resegment".into()];
     let needs = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 8, 60, None)
+        .select_maintenance(subject, &kinds, 8, None, None)
         .await
         .unwrap();
     let need = needs
@@ -340,15 +418,16 @@ async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
         .unwrap();
     let plan = service
         .plan_maintenance(tonic::Request::new(k::PlanMaintenanceRequest {
-            claimed: Some(k::MaintenanceNeed {
+            selected: Some(k::MaintenanceNeed {
                 need_id: need.need_id.to_string(),
                 subject_id: subject.0.to_string(),
                 kind: need.kind.clone(),
                 scope_kind: need.scope_kind.clone(),
                 scope_ref: need.scope_ref.clone(),
                 trigger_authority_seq: need.trigger_authority_seq,
+                trigger_revision: need.trigger_revision,
+                state: need.state.clone(),
                 due_at: Some(test_timestamp(need.due_at)),
-                lease_token: need.lease_token.map(|id| id.to_string()),
                 created_at: Some(test_timestamp(need.created_at)),
                 updated_at: Some(test_timestamp(need.updated_at)),
                 ..Default::default()
@@ -406,4 +485,33 @@ fn test_timestamp(at: chrono::DateTime<Utc>) -> prost_types::Timestamp {
         seconds: at.timestamp(),
         nanos: at.timestamp_subsec_nanos() as i32,
     }
+}
+
+async fn episode_topology_watermark(
+    rt: &NousRuntime,
+    subject: nous_core::SubjectId,
+    episodes: &[EpisodeView],
+) -> i64 {
+    let graph = rt
+        .store
+        .topology_projection_input(subject, true, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        graph.watermark,
+        rt.store.authority_seq(subject).await.unwrap()
+    );
+    let revisions = graph
+        .nodes
+        .into_iter()
+        .filter(|reference| matches!(reference, nous_core::CognitiveRef::EpisodeRevision(_)))
+        .collect::<std::collections::HashSet<_>>();
+    let expected = episodes
+        .iter()
+        .map(|episode| {
+            nous_core::CognitiveRef::EpisodeRevision(episode.revision.episode_revision_id)
+        })
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(revisions, expected);
+    graph.watermark
 }

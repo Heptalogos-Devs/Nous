@@ -1,6 +1,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { boot, stop, prepare, type Boot } from "./support.js";
 import type { NousClient } from "@nous-wave/client";
 import { create } from "@bufbuild/protobuf";
@@ -14,6 +16,7 @@ import {
   FormMemoryRequestSchema,
   InlineTextSchema,
   MemoryContentSchema,
+  ReviseMemoryRequestSchema,
   MemoryMutationRequestSchema,
   ObservationInputSchema,
   QueryExprSchema,
@@ -25,7 +28,10 @@ import {
   TemporalExtentSchema,
   UseEventSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
-import { rm } from "node:fs/promises";
+import { CreateTagRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
+import { appendFile, rm, writeFile } from "node:fs/promises";
+import { runCli } from "../../apps/nous-cli/src/commands/index.js";
+import { NousError } from "@nous-wave/client";
 import { workspaceTemp } from "../workspace.js";
 
 const subjectId = "00000000-0000-0000-0000-000000009801";
@@ -85,12 +91,16 @@ function hitMatches(
 async function main() {
   const root = await workspaceTemp("smoke", "memory-");
   const configPath = await prepare(root);
+  await appendFile(
+    `${root}/config/nous.toml`,
+    "\n[database]\nmax_connections = 1\n",
+  );
 
   let booted: Boot | undefined;
   try {
     booted = await boot(configPath);
     const client = booted.client;
-    const created = await client.subjects.create(
+    const created = await client.subjects.createSubject(
       create(CreateSubjectRequestSchema, {
         subjectId,
         operationId: "00000000-0000-0000-0000-000000009801",
@@ -104,13 +114,13 @@ async function main() {
     if (created.subjectId !== subjectId)
       throw new Error("Subject identity mismatch");
 
-    const sessionA = await client.cognition.openSession(
+    const sessionA = await client.runtime.openSession(
       create(SubjectRequestSchema, { subjectId }),
     );
-    const sessionB = await client.cognition.openSession(
+    const sessionB = await client.runtime.openSession(
       create(SubjectRequestSchema, { subjectId }),
     );
-    const observed = await client.cognition.observe(
+    const observed = await client.runtime.recordObservation(
       create(ObservationInputSchema, {
         subjectId,
         sessionId: sessionA.sessionId,
@@ -127,12 +137,12 @@ async function main() {
         },
       }),
     );
-    const formed = await client.memory.form(
+    let formed = await client.memory.formMemory(
       create(FormMemoryRequestSchema, {
         operationId: formOperationId,
         subjectId,
+        cognitiveRole: "declarative",
         input: create(MemoryContentSchema, {
-          cognitiveRole: "declarative",
           formationMode: "grounded",
           groundingOccurrenceId: observed.occurrenceId,
           semanticRole: "fact",
@@ -190,8 +200,8 @@ async function main() {
         }),
       ],
     });
-    const accepted = await client.cognition.reportUse(useRequest);
-    const duplicate = await client.cognition.reportUse(useRequest);
+    const accepted = await client.runtime.reportUse(useRequest);
+    const duplicate = await client.runtime.reportUse(useRequest);
     if (accepted.acceptedCount !== 1 || duplicate.duplicateCount !== 1)
       throw new Error("UseEvent retry was not idempotent");
 
@@ -210,9 +220,219 @@ async function main() {
     )
       throw new Error("Session B observed Session A residency");
 
+    const original = formed;
+    const tags = await Promise.all(
+      ["attendance", "calibration"].map((label) =>
+        client.concepts.createTag(
+          create(CreateTagRequestSchema, {
+            subjectId,
+            operationId: randomUUID(),
+            content: { label },
+          }),
+        ),
+      ),
+    );
+    const cliFlags = [
+      "--run-root",
+      `${root}/run`,
+      "--instance-root",
+      `${root}/instance`,
+      "--subject",
+      subjectId,
+    ];
+    const tagRevisionFile = `${root}/revise-tag.toml`;
+    await writeFile(
+      tagRevisionFile,
+      `[target]\ntag_id = "tag:${tags[0]!.tagId}"\nexpected_revision_id = "${tags[0]!.currentRevisionId}"\n[content]\nlabel = "Attendance planning"\n`,
+    );
+    const revisedTag = (await runCli([
+      "tag",
+      "revise",
+      "--request-file",
+      tagRevisionFile,
+      ...cliFlags,
+    ])) as { data: { revisionId: string } };
+    if (revisedTag.data.revisionId === tags[0]!.revisionId)
+      throw new Error("CLI Tag revision did not advance head");
+    let staleTagHead = false;
+    try {
+      await runCli([
+        "tag",
+        "revise",
+        "--request-file",
+        tagRevisionFile,
+        ...cliFlags,
+      ]);
+    } catch (error) {
+      staleTagHead =
+        error instanceof NousError && error.domainCode === "STALE_REVISION";
+    }
+    if (!staleTagHead)
+      throw new Error("CLI replaced an observed stale Tag head");
+    const tagPage = await client.concepts.listTagRevisions({
+      subjectId,
+      object: { kind: "tag", value: tags[0]!.tagId },
+      page: { pageSize: 1 },
+    });
+    assert.equal(tagPage.items[0]?.revisionId, tags[0]!.revisionId);
+    assert(tagPage.nextPageToken);
+    const tagLast = await client.concepts.listTagRevisions({
+      subjectId,
+      object: { kind: "tag", value: tags[0]!.tagId },
+      page: { pageSize: 1, pageToken: tagPage.nextPageToken },
+    });
+    assert.equal(tagLast.items[0]?.revisionId, revisedTag.data.revisionId);
+    assert.equal(tagLast.nextPageToken, "");
+    const associationFile = `${root}/association.toml`;
+    await writeFile(
+      associationFile,
+      `[association]\nfrom = "memory_revision:${formed.revisionId}"\nto = "tag:${tags[0]!.tagId}"\nrelation_kind = "related_to"\npolarity = "positive"\nbasis_class = "host_explicit"\n[[association.basis]]\n[association.basis.revision.evidence]\noccurrence_id = "occurrence:${observed.occurrenceId}"\nwhole_occurrence = true\nbasis_role = "direct"\n`,
+    );
+    const associated = (await runCli([
+      "association",
+      "create",
+      "--request-file",
+      associationFile,
+      ...cliFlags,
+    ])) as { data: { associationId: string } };
+    if (!associated.data.associationId)
+      throw new Error("CLI formal Association request did not commit");
+    const attachmentFile = `${root}/attachment.toml`;
+    await writeFile(
+      attachmentFile,
+      `[[basis]]\n[basis.revision.evidence]\noccurrence_id = "occurrence:${observed.occurrenceId}"\nwhole_occurrence = true\nbasis_role = "direct"\n`,
+    );
+    const attached = (await runCli([
+      "tag",
+      "attach",
+      `memory_revision:${formed.revisionId}`,
+      "--tag",
+      `tag:${tags[1]!.tagId}`,
+      "--request-file",
+      attachmentFile,
+      ...cliFlags,
+    ])) as { data: { associationId: string } };
+    if (!attached.data.associationId)
+      throw new Error("CLI formal attachment basis did not commit");
+    const association = await client.concepts.getAssociation({
+      subjectId,
+      id: associated.data.associationId,
+    });
+    assert.equal(association.from?.value, original.revisionId);
+    assert(association.basis.length && association.createdAt);
+    const associationPage = await client.concepts.listAssociations({
+      subjectId,
+      page: { pageSize: 1 },
+    });
+    assert.equal(associationPage.items.length, 1);
+    assert(associationPage.nextPageToken);
+    const associationLast = await client.concepts.listAssociations({
+      subjectId,
+      page: { pageSize: 1, pageToken: associationPage.nextPageToken },
+    });
+    assert.equal(associationLast.items.length, 1);
+    assert.equal(associationLast.nextPageToken, "");
+    const derivation = {
+      from: { kind: "memory_revision", value: formed.revisionId },
+      to: { kind: "tag", value: tags[0]!.tagId },
+      relationKind: "assoc.related",
+      polarity: "positive",
+      basisClass: "cognitive_derivation",
+      basis: [
+        { basis: { case: "revision" as const, value: formed.basis[0]! } },
+      ],
+    };
+    const registered = await client.concepts.createAssociation({
+      subjectId,
+      operationId: randomUUID(),
+      association: derivation,
+      producer: {
+        providerClass: "deterministic-single-connection",
+        operation: "concept_maintenance_text",
+        implementation: "public-association",
+        preprocessingIdentity: "exact-memory",
+        preprocessingRevision: "1",
+        configDigest: "single-connection",
+      },
+    });
+    assert(registered.producerSignatureId);
+    const byProducerId = await client.concepts.createAssociation({
+      subjectId,
+      operationId: randomUUID(),
+      association: {
+        ...derivation,
+        basisClass: "derived_structure",
+        producerSignatureId: registered.producerSignatureId,
+      },
+    });
+    assert.equal(
+      byProducerId.producerSignatureId,
+      registered.producerSignatureId,
+    );
+    assert(byProducerId.associationId);
+    const reclaimed = await runCli(["serving", "clean", ...cliFlags, "--json"]);
+    assert(reclaimed);
+
+    const revisionRequest = create(ReviseMemoryRequestSchema, {
+      subjectId,
+      memoryId: formed.memoryId,
+      operationId: randomUUID(),
+      expectedObjectEpoch: formed.objectEpoch,
+      intent: "rephrase",
+      input: {
+        formationMode: formed.formationMode,
+        groundingOccurrenceId: formed.groundingOccurrenceId,
+        semanticRole: formed.semanticRole,
+        text: "Alice is present at calibration",
+        title: "Attendance",
+        basis: formed.basis,
+        aboutness: formed.aboutness,
+        tags: [tags[1]!.tagId, tags[0]!.tagId, tags[1]!.tagId],
+        validTime: formed.validTime,
+        epistemicClass: formed.epistemicClass,
+      },
+    });
+    formed = await client.memory.reviseMemory(revisionRequest);
+    assert.deepEqual(
+      [...formed.tags].sort(),
+      tags.map((tag) => tag.tagId).sort(),
+    );
+    revisionRequest.input!.tags = tags.map((tag) => tag.tagId);
+    assert.equal(
+      (await client.memory.reviseMemory(revisionRequest)).revisionId,
+      formed.revisionId,
+    );
+    revisionRequest.input!.tags = [tags[0]!.tagId];
+    await assert.rejects(client.memory.reviseMemory(revisionRequest));
+    const historyFirst = await client.memory.listMemoryRevisions({
+      subjectId,
+      memoryId: formed.memoryId,
+      page: { pageSize: 1 },
+    });
+    assert.equal(historyFirst.items.length, 1);
+    assert(historyFirst.nextPageToken);
+    assert.equal(historyFirst.items[0]!.revisionId, original.revisionId);
+    assert.deepEqual(historyFirst.items[0]!.basis, original.basis);
+    assert.equal(historyFirst.items[0]!.cognitiveRole, original.cognitiveRole);
+    assert.equal(historyFirst.items[0]!.objectEpoch, formed.objectEpoch);
+    assert(
+      historyFirst.items[0]!.temporalEvidence &&
+        historyFirst.items[0]!.createdAt,
+    );
+    const historyLast = await client.memory.listMemoryRevisions({
+      subjectId,
+      memoryId: formed.memoryId,
+      page: { pageSize: 1, pageToken: historyFirst.nextPageToken },
+    });
+    assert.equal(historyLast.items.length, 1);
+    assert.equal(historyLast.items[0]!.revisionId, formed.revisionId);
+    assert.deepEqual(historyLast.items[0]!.tags, formed.tags);
+    assert.deepEqual(historyLast.items[0]!.basis, formed.basis);
+    assert.equal(historyLast.nextPageToken, "");
+
     await stop(booted);
     booted = await boot(configPath);
-    const restarted = await booted.client.memory.get({
+    const restarted = await booted.client.memory.getMemory({
       subjectId,
       id: formed.memoryId,
     });
@@ -230,7 +450,7 @@ async function main() {
     )
       throw new Error("restart lost public Query recall");
 
-    const suppressed = await booted.client.memory.suppress(
+    const suppressed = await booted.client.memory.suppressMemory(
       create(MemoryMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009805",
         subjectId,
@@ -245,7 +465,7 @@ async function main() {
       )
     )
       throw new Error("suppressed Memory remained query-visible");
-    const restored = await booted.client.memory.restore(
+    const restored = await booted.client.memory.restoreMemory(
       create(MemoryMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009806",
         subjectId,
@@ -267,7 +487,7 @@ async function main() {
     )
       throw new Error("restore did not restore public recall");
 
-    await booted.client.memory.purge(
+    await booted.client.memory.purgeMemory(
       create(MemoryMutationRequestSchema, {
         operationId: "00000000-0000-0000-0000-000000009807",
         subjectId,
@@ -275,7 +495,7 @@ async function main() {
         expectedObjectEpoch: restored.objectEpoch,
       }),
     );
-    const purgedRetry = await booted.client.cognition.reportUse(useRequest);
+    const purgedRetry = await booted.client.runtime.reportUse(useRequest);
     if (purgedRetry.duplicateCount !== 1)
       throw new Error("purged UseEvent retry lost its idempotency receipt");
     const afterPurge = await query(

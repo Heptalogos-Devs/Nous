@@ -37,7 +37,6 @@ class LocalDocuments implements ExternalResourceAdapter {
   async describe(_binding: ResourceBinding) {
     const entries = await this.entries();
     return {
-      resourceIds: entries.filter((e) => e.accessible).map((e) => e.id),
       accessible: entries.some((e) => e.accessible),
     };
   }
@@ -75,45 +74,36 @@ class LocalDocuments implements ExternalResourceAdapter {
     const entry = (await this.entries()).find(
       (e) => e.id === reference.entryId,
     );
-    return {
-      status: !entry
-        ? ("missing" as const)
-        : entry.version === reference.entryVersion &&
-            digest(entry.content) === reference.contentDigest
-          ? ("current" as const)
-          : ("stale" as const),
-      checkedAt: new Date().toISOString(),
-    };
+    return !entry
+      ? ("missing" as const)
+      : entry.version === reference.entryVersion &&
+          digest(entry.content) === reference.contentDigest
+        ? ("current" as const)
+        : ("stale" as const);
   }
   async checkAccess(reference: StableExternalRef) {
     const entry = (await this.entries()).find(
       (e) => e.id === reference.entryId,
     );
-    return {
-      status: entry?.accessible ? ("allowed" as const) : ("denied" as const),
-      checkedAt: new Date().toISOString(),
-    };
+    return entry?.accessible ? ("allowed" as const) : ("denied" as const);
   }
   async materialize(reference: StableExternalRef) {
-    const version = await this.checkVersion(reference);
-    const access = await this.checkAccess(reference);
-    if (version.status !== "current")
-      throw new ResourceProviderError(
-        "stale",
-        "Source changed or was deleted",
-        version.status === "missing",
-      );
-    if (access.status !== "allowed")
-      throw new ResourceProviderError("denied", "Source access revoked");
     const entry = (await this.entries()).find(
       (e) => e.id === reference.entryId,
-    )!;
+    );
+    if (
+      !entry ||
+      entry.version !== reference.entryVersion ||
+      digest(entry.content) !== reference.contentDigest
+    )
+      throw new ResourceProviderError("stale", "Source changed or was deleted");
+    if (!entry.accessible)
+      throw new ResourceProviderError("denied", "Source access revoked");
     return {
-      reference,
       content: entry.content,
       mediaType: "text/markdown",
-      version,
-      access,
+      versionStatus: "current" as const,
+      accessStatus: "allowed" as const,
     };
   }
 }

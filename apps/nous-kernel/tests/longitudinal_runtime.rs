@@ -119,7 +119,7 @@ async fn experience_capture_cursor_idle_and_reopen_are_stable() {
 }
 
 #[tokio::test]
-async fn maintenance_claims_use_execution_leases_and_keep_new_triggers() {
+async fn maintenance_selection_preserves_new_triggers_during_work() {
     let (root, url, _postgres) = database().await;
     let start = Utc::now().trunc_subsecs(6);
     let clock = Arc::new(ManualCognitiveClock::new(start));
@@ -142,69 +142,48 @@ async fn maintenance_claims_use_execution_leases_and_keep_new_triggers() {
     let kinds = vec!["journal_review".into()];
     assert!(
         rt.cognition
-            .lease_maintenance(subject, &kinds, 1, 60, None)
+            .select_maintenance(subject, &kinds, 1, None, None)
             .await
             .unwrap()
             .is_empty()
     );
     clock.advance_by(subject, Duration::hours(1)).unwrap();
-    let (a, b) = tokio::join!(
-        rt.cognition.lease_maintenance(subject, &kinds, 1, 60, None),
-        rt.cognition.lease_maintenance(subject, &kinds, 1, 60, None)
-    );
-    let leased: Vec<_> = a.unwrap().into_iter().chain(b.unwrap()).collect();
-    assert_eq!(leased.len(), 1);
-    assert_eq!(leased[0].need_id, id);
-    clock.advance_by(subject, Duration::days(30)).unwrap();
-    assert!(
-        rt.cognition
-            .lease_maintenance(subject, &kinds, 1, 60, None)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    let selected = rt
+        .cognition
+        .select_maintenance(subject, &kinds, 1, None, None)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(selected.need_id, id);
+    assert_eq!(selected.state, "pending");
+    let during_work = rt
+        .cognition
+        .select_maintenance(subject, &kinds, 1, None, None)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(during_work.trigger_revision, selected.trigger_revision);
+    assert_eq!(during_work.updated_at, selected.updated_at);
     let newer = MaintenanceRequest {
         trigger_authority_seq: 2,
         ..request
     };
     assert_eq!(rt.cognition.enqueue_maintenance(newer).await.unwrap(), id);
     rt.cognition
-        .acknowledge_maintenance(&leased[0], MaintenanceDisposition::Satisfied)
+        .acknowledge_maintenance(&selected, MaintenanceDisposition::Satisfied)
         .await
         .unwrap();
-    rt.cognition
-        .acknowledge_maintenance(&leased[0], MaintenanceDisposition::Satisfied)
-        .await
-        .unwrap();
-    assert!(
-        rt.cognition
-            .acknowledge_maintenance(&leased[0], MaintenanceDisposition::Obsolete)
-            .await
-            .is_err()
-    );
-    let reclaimed = rt
+    let next = rt
         .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, None)
+        .select_maintenance(subject, &kinds, 1, None, None)
         .await
-        .unwrap();
-    assert_eq!(reclaimed.len(), 1);
-    assert_eq!(reclaimed[0].trigger_authority_seq, 2);
-    sqlx::query("UPDATE maintenance_needs SET lease_until=clock_timestamp()-interval '1 second' WHERE need_id=$1")
-        .bind(id).execute(rt.store.pool()).await.unwrap();
-    let retry = rt
-        .cognition
-        .lease_maintenance(subject, &kinds, 1, 60, None)
-        .await
-        .unwrap();
-    assert_eq!(retry[0].attempt_count, 3);
-    assert!(
-        rt.cognition
-            .acknowledge_maintenance(&reclaimed[0], MaintenanceDisposition::Satisfied)
-            .await
-            .is_err()
-    );
+        .unwrap()
+        .remove(0);
+    assert_eq!(next.need_id, id);
+    assert_eq!(next.trigger_authority_seq, 2);
+    assert!(next.trigger_revision > selected.trigger_revision);
     rt.cognition
-        .acknowledge_maintenance(&retry[0], MaintenanceDisposition::Satisfied)
+        .acknowledge_maintenance(&next, MaintenanceDisposition::Satisfied)
         .await
         .unwrap();
     assert!(
@@ -264,16 +243,16 @@ async fn ended_work_context_wakes_and_closes_experience_before_idle_deadline() {
         .unwrap();
     let initial = rt.organize_experience(subject, 128, false).await.unwrap();
     assert!(initial.episodes.is_empty());
-    let claimed = rt
+    let selected = rt
         .cognition
-        .lease_maintenance(subject, &["episode_segment".into()], 1, 60, None)
+        .select_maintenance(subject, &["episode_segment".into()], 1, None, None)
         .await
         .unwrap();
     rt.cognition
         .acknowledge_maintenance(
-            &claimed[0],
+            &selected[0],
             MaintenanceDisposition::Pending {
-                due_at: initial.next_due.unwrap(),
+                due_at: initial.next_due,
                 problem_code: None,
             },
         )
@@ -290,7 +269,7 @@ async fn ended_work_context_wakes_and_closes_experience_before_idle_deadline() {
         .unwrap();
     let needs = rt
         .cognition
-        .lease_maintenance(subject, &["episode_segment".into()], 1, 60, None)
+        .select_maintenance(subject, &["episode_segment".into()], 1, None, None)
         .await
         .unwrap();
     assert_eq!(needs.len(), 1);
@@ -327,21 +306,25 @@ async fn assert_owner_timestamp_replay(
     rt.require_memory()
         .unwrap()
         .revise_memory(nous_memory::ReviseMemoryInput {
-            producer: None,
             operation_id: nous_core::OperationId::new(),
             subject,
             memory_id: memory.object.memory_id,
             expected_object_epoch: memory.object.object_epoch,
             intent: nous_memory::RevisionIntent::Correct,
-            formation_mode: input.formation_mode,
-            grounding_occurrence_id: input.grounding_occurrence_id,
-            semantic_role: input.semantic_role.clone(),
-            representation_text: "corrected owner-timed memory".into(),
-            title: None,
-            basis: input.basis.clone(),
-            aboutness: vec![],
-            valid_time: TemporalExtent::Unknown,
-            epistemic_class: input.epistemic_class,
+
+            content: nous_memory::MemoryContent {
+                producer: None,
+                formation_mode: input.content.formation_mode,
+                grounding_occurrence_id: input.content.grounding_occurrence_id,
+                semantic_role: input.content.semantic_role.clone(),
+                representation_text: "corrected owner-timed memory".into(),
+                title: None,
+                basis: input.content.basis.clone(),
+                aboutness: vec![],
+                valid_time: TemporalExtent::Unknown,
+                epistemic_class: input.content.epistemic_class,
+                tags: Vec::new(),
+            },
         })
         .await
         .unwrap();

@@ -4,7 +4,6 @@
 import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
 import {
   executionEnvelope,
-  executionLeaseSeconds,
   type ExecutionOpportunityPolicy,
 } from "@nous-wave/client/execution-policy";
 
@@ -54,11 +53,8 @@ export class ExecutionOpportunity {
     if (this.signal.aborted) canceled();
     else this.signal.addEventListener("abort", canceled, { once: true });
   }
-  get leaseSeconds() {
-    return executionLeaseSeconds(
-      this.policy,
-      this.workUntil - performance.now(),
-    );
+  get remainingWorkMs() {
+    return Math.max(0, this.workUntil - performance.now());
   }
   cleanup(): CallOptions {
     const remaining = Math.min(

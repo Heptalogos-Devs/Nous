@@ -265,6 +265,10 @@ pub fn to_object(json: serde_json::Value) -> Option<Struct> {
     }
 }
 pub fn page(page: Option<p::Page>, scope: &str) -> Result<(i64, Option<Uuid>)> {
+    let (limit, last) = page_cursor(page, scope)?;
+    Ok((limit, last.as_deref().map(id).transpose()?))
+}
+pub fn page_cursor(page: Option<p::Page>, scope: &str) -> Result<(i64, Option<String>)> {
     let page = page.unwrap_or_default();
     if page.page_size > 200 {
         return Err(Error::Invalid("page_size exceeds 200".into()));
@@ -281,7 +285,7 @@ pub fn page(page: Option<p::Page>, scope: &str) -> Result<(i64, Option<Uuid>)> {
                 "page token belongs to another request".into(),
             ));
         }
-        Some(id(last)?)
+        Some(last.to_owned())
     };
     Ok((
         i64::from(if page.page_size == 0 {
@@ -292,6 +296,6 @@ pub fn page(page: Option<p::Page>, scope: &str) -> Result<(i64, Option<Uuid>)> {
         last,
     ))
 }
-pub fn next_token(scope: &str, id: Uuid) -> String {
+pub fn next_token(scope: &str, id: impl std::fmt::Display) -> String {
     format!("{}.{}", blake3::hash(scope.as_bytes()).to_hex(), id)
 }

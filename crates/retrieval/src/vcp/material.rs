@@ -21,26 +21,10 @@ pub struct VcpProjectedDocument {
 }
 
 impl ServingService {
-    /// Resolve model material for a disposable VCP serving generation using
-    /// the same host-supplied provider contract as dense construction.
-    pub async fn vcp_projection_material(
+    pub(crate) async fn vcp_projection_material(
         &self,
         subject: SubjectId,
-        snapshot: &nous_configuration::ConfigSnapshot,
-    ) -> Result<VcpProjectionMaterial> {
-        self.vcp_projection_material_in_view(
-            subject,
-            snapshot,
-            None,
-            &self.publisher.snapshot_for(subject),
-        )
-        .await
-    }
-    pub(crate) async fn vcp_projection_material_in_view(
-        &self,
-        subject: SubjectId,
-        snapshot: &nous_configuration::ConfigSnapshot,
-        view: Option<&HistoricalAuthoritySnapshot>,
+        input: &mut crate::assets::build::TextDocuments,
         serving: &ServingSnapshot,
     ) -> Result<VcpProjectionMaterial> {
         let provider = self.embedding().ok_or_else(|| {
@@ -48,23 +32,21 @@ impl ServingService {
         })?;
         let space = provider.space();
         let producer = provider.producer();
-        let budget = snapshot.get(crate::EPISODE_SYNOPSIS)?;
-        let capabilities = self.projection_capabilities(subject).await?;
-        let input = self
-            .projection_input(subject, capabilities.memory, budget, view)
-            .await?;
-        let concepts = serving.concept.iter().find(|generation| {
-            generation
-                .space
-                .as_ref()
-                .is_some_and(|s| s.compatible_with(&space))
-                && generation
-                    .producer
-                    .as_ref()
-                    .is_some_and(|p| p.signature_hash == producer.signature_hash)
-        });
+        let embedded = self.embedded_documents(subject, input, serving).await?;
+        let source_documents = &input.documents;
+        let expected = source_documents.len();
+        let (topology, evidence_roots) = input
+            .vcp
+            .take()
+            .ok_or_else(|| Error::Infrastructure("VCP topology missing".into()))?;
         let mut documents = Vec::new();
-        for document in self.documents(subject, input.sources, budget, view).await? {
+        if embedded.len() != expected {
+            return Err(Error::Unavailable(
+                "VCP requires compatible shared concept material".into(),
+            ));
+        }
+        for (index, output) in embedded.iter() {
+            let document = &source_documents[*index];
             let concept_refs = document
                 .tag_ids
                 .iter()
@@ -78,19 +60,7 @@ impl ServingService {
                         })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let output = self
-                .embed_document(
-                    subject,
-                    &document,
-                    concepts.map(AsRef::as_ref),
-                    provider.as_ref(),
-                )
-                .await?
-                .ok_or_else(|| {
-                    Error::Unavailable("VCP requires compatible shared concept material".into())
-                })?;
-            let evidence_roots = input
-                .evidence_roots
+            let evidence_roots = evidence_roots
                 .get(&document.reference)
                 .cloned()
                 .unwrap_or_default()
@@ -98,16 +68,15 @@ impl ServingService {
                 .collect();
             documents.push(VcpProjectedDocument {
                 evidence_roots,
-                reference: document.reference,
-                representation_text: document.representation_text,
-                vector: output.vector,
+                reference: document.reference.clone(),
+                representation_text: document.representation_text.clone(),
+                vector: output.vector.clone(),
                 concept_refs,
                 curve_order: VcpCurveOrder::StableIdentity,
             });
         }
         let identities = VcpIdentityMap::new(
-            input
-                .topology
+            topology
                 .nodes
                 .into_iter()
                 .chain(documents.iter().map(|d| d.reference.clone()))
@@ -118,11 +87,13 @@ impl ServingService {
                 ),
         );
         Ok(VcpProjectionMaterial {
-            authority_watermark: input.authority_watermark,
+            authority_watermark: input
+                .watermarks
+                .desired("topology", &format!("vcp:{}", space.space_hash)),
             space,
             producer,
             identities,
-            edges: input.topology.edges,
+            edges: topology.edges,
             documents,
         })
     }

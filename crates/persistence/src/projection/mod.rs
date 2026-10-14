@@ -11,7 +11,67 @@ pub(crate) mod topology;
 use crate::{AuthorityStore, database_error as db};
 use nous_core::{Result, SubjectId};
 use serde::{Deserialize, Serialize};
-use sqlx::{Postgres, Transaction};
+use sqlx::{Postgres, Row, Transaction};
+
+/// Desired revisions for one Subject, resolved against each asset's actual inputs.
+#[derive(Default)]
+pub struct ProjectionWatermarks(Vec<(String, String, i64)>);
+
+impl ProjectionWatermarks {
+    pub fn desired(&self, family: &str, space: &str) -> i64 {
+        // VCP consumes text and shared vectors as well as native structure.
+        let vcp_space = if family == "topology" {
+            space.strip_prefix("vcp:")
+        } else {
+            None
+        };
+        self.0
+            .iter()
+            .filter(|(source_family, source_space, _)| {
+                if let Some(embedding_space) = vcp_space {
+                    match source_family.as_str() {
+                        "topology" | "lexical" => source_space.is_empty(),
+                        "dense" | "concept" => {
+                            source_space == embedding_space || source_space == "*"
+                        }
+                        _ => false,
+                    }
+                } else {
+                    source_family == family && (source_space == space || source_space == "*")
+                }
+            })
+            .map(|(_, _, revision)| *revision)
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+pub(crate) async fn watermarks_in(
+    tx: &mut Transaction<'_, Postgres>,
+    subject: SubjectId,
+) -> Result<ProjectionWatermarks> {
+    let rows = sqlx::query("SELECT family,space_signature,desired_authority_seq FROM projection_watermarks WHERE subject_id=$1")
+        .bind(subject.0).fetch_all(&mut **tx).await.map_err(db)?;
+    rows.into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("family").map_err(db)?,
+                row.try_get("space_signature").map_err(db)?,
+                row.try_get("desired_authority_seq").map_err(db)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(ProjectionWatermarks)
+}
+
+pub(crate) async fn watermark(
+    tx: &mut Transaction<'_, Postgres>,
+    subject: SubjectId,
+    family: &str,
+    space: &str,
+) -> Result<i64> {
+    Ok(watermarks_in(tx, subject).await?.desired(family, space))
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum DenseInvalidation {
@@ -26,7 +86,6 @@ pub struct ProjectionInvalidation {
     pub lexical: bool,
     pub dense: DenseInvalidation,
     pub topology: bool,
-    pub synopsis: bool,
 }
 
 impl ProjectionInvalidation {
@@ -57,14 +116,12 @@ impl ProjectionInvalidation {
             lexical: true,
             dense: DenseInvalidation::All,
             topology: true,
-            synopsis: true,
         }
     }
 
     pub(crate) fn merge(&mut self, other: Self) {
         self.lexical |= other.lexical;
         self.topology |= other.topology;
-        self.synopsis |= other.synopsis;
         self.dense = match (std::mem::take(&mut self.dense), other.dense) {
             (DenseInvalidation::All, _) | (_, DenseInvalidation::All) => DenseInvalidation::All,
             (DenseInvalidation::None, right) => right,
@@ -80,11 +137,7 @@ impl ProjectionInvalidation {
 
     fn families(&self) -> Vec<(&'static str, String)> {
         let mut result = Vec::new();
-        for (family, changed) in [
-            ("lexical", self.lexical),
-            ("topology", self.topology),
-            ("synopsis", self.synopsis),
-        ] {
+        for (family, changed) in [("lexical", self.lexical), ("topology", self.topology)] {
             if changed {
                 result.push((family, String::new()));
             }
@@ -105,6 +158,23 @@ impl ProjectionInvalidation {
 }
 
 impl AuthorityStore {
+    pub async fn projection_watermarks(&self, subject: SubjectId) -> Result<ProjectionWatermarks> {
+        let mut tx = self.begin().await?;
+        watermarks_in(&mut tx, subject).await
+    }
+
+    pub async fn projection_watermark(
+        &self,
+        subject: SubjectId,
+        family: &str,
+        space: &str,
+    ) -> Result<i64> {
+        Ok(self
+            .projection_watermarks(subject)
+            .await?
+            .desired(family, space))
+    }
+
     pub async fn invalidate(
         &self,
         subject: SubjectId,

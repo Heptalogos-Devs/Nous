@@ -5,6 +5,7 @@ syntax = "proto3";
 package nous.wave.v1alpha1;
 import "nous/wave/v1alpha1/presentation.proto";
 import "nous/wave/v1alpha1/types.proto";
+import "nous/wave/v1alpha1/errors.proto";
 import "google/protobuf/timestamp.proto";
 
 message JournalPoint {
@@ -37,7 +38,6 @@ message Journal {
   string acceptance_state = 5;
   string integrity_state = 6;
   string suppression_state = 7;
-  string purge_state = 8;
   google.protobuf.Timestamp created_at = 9;
   JournalRevision current_revision = 10;
 }
@@ -47,5 +47,5 @@ message ListJournalsResponse { repeated Journal items = 1; string next_page_toke
 message ListJournalRevisionsRequest { string subject_id = 1 [(reference_kind) = "subject"]; string journal_id = 2 [(reference_kind) = "journal"]; Page page = 3; }
 message ListJournalRevisionsResponse { repeated JournalRevision items = 1; string next_page_token = 2; }
 message MaintenanceGrantRequest { string subject_id = 1 [(reference_kind) = "subject"]; uint32 max_operations = 2; uint32 max_model_calls = 3; uint32 max_elapsed_ms = 4; }
-message MaintenanceOperationResult { string need_id = 1; string kind = 2; string status = 3; optional string problem_code = 4; }
-message MaintenanceGrantResponse { repeated MaintenanceOperationResult results = 1; uint32 model_calls = 2; uint32 elapsed_ms = 3; string disposition = 4; }
+message MaintenanceOperationResult { string need_id = 1; string kind = 2; string status = 3; optional string problem_code = 4; ErrorDetail error_detail = 5; }
+message MaintenanceGrantResponse { repeated MaintenanceOperationResult results = 1; uint32 model_calls = 2; uint32 elapsed_ms = 3; string disposition = 4; uint32 operations_consumed = 5; }

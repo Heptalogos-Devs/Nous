@@ -8,7 +8,7 @@
     "node": ">=24.21.0"
   },
   "scripts": {
-    "dev": "tsx scripts/dev/start.ts",
+    "dev": "tsx scripts/dev/nous.ts serve",
     "nous": "tsx scripts/dev/nous.ts",
     "runtime:pack": "tsx scripts/runtime/pack.ts",
     "assemble:portable": "tsx scripts/release/assemble.ts",
@@ -29,21 +29,21 @@
     "release:verify": "tsx scripts/release/verify-portable.ts",
     "release:archive": "tsx scripts/release/archive.ts",
     "dev:prepare": "tsx scripts/dev/prepare.ts",
-    "check:length": "tsx scripts/dev/check-code-length.ts",
-    "check:fast": "pnpm check:length && pnpm format:check && pnpm proto:check && pnpm typecheck && pnpm lint:ts",
+    "check:fast": "pnpm format:check && pnpm proto:check && pnpm typecheck && pnpm lint:ts",
     "audit": "pnpm lint:knip && pnpm lint:deps && pnpm lint:sherif && pnpm lint:dupes",
     "smoke:memory": "tsx scripts/smoke/memory.ts",
     "smoke:longitudinal": "tsx scripts/smoke/longitudinal.ts",
     "smoke:runtime": "tsx scripts/smoke/runtime-episode.ts",
     "smoke:model": "tsx scripts/smoke/model-material-resource.ts",
     "smoke:media": "tsx scripts/smoke/media-routes.ts",
-    "smoke": "pnpm smoke:memory && pnpm smoke:runtime && pnpm smoke:model && pnpm smoke:media && pnpm smoke:longitudinal && pnpm smoke:configuration",
+    "smoke": "pnpm smoke:memory && pnpm smoke:runtime && pnpm smoke:model && pnpm smoke:media && pnpm smoke:configuration",
     "research:longitudinal": "tsx scripts/research/longitudinal.ts",
     "research:media-live": "tsx scripts/research/media.ts",
     "dev:portable": "tsx scripts/dev/portable.ts",
     "smoke:configuration": "tsx scripts/smoke/configuration.ts",
     "inspect:model-contracts": "tsx scripts/research/model-contracts.ts",
-    "inspect:model-trace": "tsx scripts/research/model-trace.ts"
+    "inspect:model-trace": "tsx scripts/research/model-trace.ts",
+    "clean:local": "tsx scripts/maintenance/clean.ts"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.73.0",

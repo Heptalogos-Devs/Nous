@@ -3,9 +3,7 @@
 
 use super::*;
 use nous_core::{ResourceRef, Result, SubjectId};
-use nous_persistence::database_error as db;
 use nous_runtime::{ResourceDescriptor, ResourceUpsert};
-use sqlx::Row;
 
 fn json_strings(value: serde_json::Value) -> Vec<String> {
     value
@@ -52,7 +50,7 @@ impl KernelService {
                     adapter_kind: r.adapter_kind,
                     provider_profile: r.provider_profile,
                     provider_locator: r.provider_locator,
-                    display_label: Some(r.display_label.clone()),
+                    display_label: Some(r.display_label),
                     authority_class: r.authority_class,
                     coverage: object(r.coverage),
                     query_dimensions: serde_json::json!(r.query_dimensions),
@@ -63,15 +61,6 @@ impl KernelService {
                 },
             )
             .await?;
-        self.0
-            .store
-            .bind_identity(
-                subject,
-                nous_core::CognitiveRef::Resource(ResourceRef::new(r.resource_ref)?),
-                r.display_label,
-                vec![],
-            )
-            .await?;
         Ok(resource(result.descriptor))
     }
     pub(super) async fn get_resource(
@@ -79,73 +68,44 @@ impl KernelService {
         input: p::ObjectRequest,
     ) -> Result<p::ResourceDescriptor> {
         let subject = SubjectId(id(&input.subject_id)?);
-        self.0.store.require_subject(subject).await?;
-        self.0
-            .cognition
-            .list_resources(subject)
-            .await?
-            .into_iter()
-            .find(|r| r.descriptor.resource_ref.as_str() == input.id)
-            .map(|r| resource(r.descriptor))
-            .ok_or_else(|| Error::NotFound("resource not found".into()))
+        Ok(resource(
+            self.0
+                .cognition
+                .resource(subject, &ResourceRef::new(input.id)?)
+                .await?
+                .descriptor,
+        ))
     }
     pub(super) async fn list_resources(
         &self,
         input: p::ListRequest,
     ) -> Result<p::ListResourcesResponse> {
         let subject = SubjectId(id(&input.subject_id)?);
-        self.0.store.require_subject(subject).await?;
-        let scope = format!("resources:{}:{}", input.subject_id, input.status);
-        let page = input.page.unwrap_or_default();
-        if page.page_size > 200 {
-            return Err(Error::Invalid("page_size exceeds 200".into()));
-        }
-        let limit = if page.page_size == 0 {
-            50
-        } else {
-            page.page_size as usize
-        };
-        let last = if page.page_token.is_empty() {
-            String::new()
-        } else {
-            let (digest, last) = page
-                .page_token
-                .split_once('.')
-                .ok_or_else(|| Error::Invalid("invalid page token".into()))?;
-            if digest != blake3::hash(scope.as_bytes()).to_hex().as_str() {
-                return Err(Error::Invalid("page token scope mismatch".into()));
-            }
-            last.to_owned()
-        };
-        let mut items: Vec<_> = self
+        let scope = format!("resources:{}:{}", subject.0, input.status);
+        let (limit, last) = page_cursor(input.page, &scope)?;
+        let (items, more) = self
             .0
             .cognition
-            .list_resources(subject)
-            .await?
-            .into_iter()
-            .filter(|r| {
-                r.descriptor.resource_ref.as_str() > last.as_str()
-                    && (input.status.is_empty() || r.descriptor.readiness == input.status)
-            })
-            .take(limit + 1)
-            .map(|r| resource(r.descriptor))
-            .collect();
-        let more = items.len() > limit;
-        items.truncate(limit);
+            .resource_page(subject, &input.status, limit, last.as_deref())
+            .await?;
         let next_page_token = if more {
-            format!(
-                "{}.{}",
-                blake3::hash(scope.as_bytes()).to_hex(),
+            next_token(
+                &scope,
                 items
                     .last()
                     .ok_or_else(|| Error::Internal("page continuation has no last item".into()))?
+                    .descriptor
                     .resource_ref
+                    .as_str(),
             )
         } else {
             String::new()
         };
         Ok(p::ListResourcesResponse {
-            items,
+            items: items
+                .into_iter()
+                .map(|view| resource(view.descriptor))
+                .collect(),
             next_page_token,
         })
     }
@@ -172,51 +132,53 @@ impl KernelService {
                 .collect(),
         })
     }
+    pub(super) async fn reclaim_serving(
+        &self,
+        input: p::SubjectRequest,
+    ) -> Result<p::ServingReclamation> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let config = self.0.configuration.snapshot_for_subject(subject)?;
+        let report = self
+            .0
+            .serving
+            .reclaim_retired(
+                subject,
+                std::time::Duration::from_secs(config.get(nous_retrieval::RETIRED_GRACE_SECONDS)?),
+            )
+            .await?;
+        Ok(p::ServingReclamation {
+            reclaimed: report
+                .reclaimed
+                .into_iter()
+                .map(|id| id.0.to_string())
+                .collect(),
+            bytes_reclaimed: report.bytes_reclaimed,
+            readers_active: report.readers_active,
+            orphan_directories: report.orphan_directories as u32,
+        })
+    }
     pub(super) async fn get_projection_status(
         &self,
         input: p::SubjectRequest,
     ) -> Result<p::ProjectionStatus> {
         let subject = SubjectId(id(&input.subject_id)?);
-        self.0.store.require_subject(subject).await?;
-        let snapshot = self.0.configuration.snapshot_for_subject(subject)?;
-        let rows=sqlx::query("SELECT COALESCE(w.family,c.family) AS family,COALESCE(w.space_signature,c.space_signature) AS space_signature,COALESCE(w.desired_authority_seq,0) AS desired_authority_seq,g.authority_watermark,g.generation_id,g.config_digest FROM projection_watermarks w FULL JOIN serving_current c ON c.subject_id=w.subject_id AND c.family=w.family AND c.space_signature=w.space_signature LEFT JOIN serving_generations g ON g.generation_id=c.generation_id WHERE COALESCE(w.subject_id,c.subject_id)=$1 ORDER BY family,space_signature")
-            .bind(subject.0).fetch_all(self.0.store.pool()).await.map_err(db)?;
-        let mut families = Vec::with_capacity(rows.len());
-        for row in rows {
-            let name: String = row.try_get("family").map_err(db)?;
-            let desired_authority_seq = row.try_get("desired_authority_seq").map_err(db)?;
-            let authority_watermark: Option<i64> =
-                row.try_get("authority_watermark").map_err(db)?;
-            let config_digest: Option<String> = row.try_get("config_digest").map_err(db)?;
-            let desired_config_digest = self
-                .0
-                .serving
-                .config_digest(subject, &name, &snapshot)
-                .await?;
-            let state = match authority_watermark {
-                Some(watermark)
-                    if watermark >= desired_authority_seq
-                        && config_digest.as_deref() == Some(desired_config_digest.as_str()) =>
-                {
-                    "READY"
-                }
-                Some(_) => "STALE",
-                None => "UNAVAILABLE",
-            };
-            families.push(p::ProjectionFamilyStatus {
-                name,
-                state: state.into(),
-                space_signature: row.try_get("space_signature").map_err(db)?,
-                desired_authority_seq,
-                authority_watermark,
-                generation_id: row
-                    .try_get::<Option<uuid::Uuid>, _>("generation_id")
-                    .map_err(db)?
-                    .map(|id| id.to_string()),
-                config_digest,
-                desired_config_digest,
-            });
-        }
+        let families = self
+            .0
+            .serving
+            .family_status(subject)
+            .await?
+            .into_iter()
+            .map(|family| p::ProjectionFamilyStatus {
+                name: family.name,
+                state: enum_name(family.state).to_uppercase(),
+                space_signature: family.space_signature,
+                desired_authority_seq: family.desired_authority_seq,
+                authority_watermark: family.authority_watermark,
+                generation_id: family.generation_id.map(|id| id.0.to_string()),
+                config_digest: family.config_digest,
+                desired_config_digest: family.desired_config_digest,
+            })
+            .collect();
         Ok(p::ProjectionStatus { families })
     }
 }

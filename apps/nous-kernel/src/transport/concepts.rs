@@ -2,16 +2,39 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use nous_core::UseEventRef;
 use nous_core::{OperationId, Result, SubjectId};
-use nous_memory::{AssociationBasis, UseEventRef};
+use nous_memory::AssociationBasis;
 use nous_memory::{CreateAssociationRequest, CreateTagRequest};
-use nous_persistence::database_error as db;
-use sqlx::Row;
 
 impl KernelService {
+    pub(super) async fn list_tag_revisions(
+        &self,
+        input: p::CognitionHistoryRequest,
+    ) -> Result<p::ListTagsResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let nous_core::CognitiveRef::Tag(tag) = from_ref(required(input.object, "Tag")?)? else {
+            return Err(Error::Invalid("Tag history requires a Tag object".into()));
+        };
+        let scope = format!("tag-history:{}:{}", subject.0, tag.0);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .tag_history(subject, tag, limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(&scope, items.last().expect("nonempty page").revision_id)
+        } else {
+            String::new()
+        };
+        Ok(p::ListTagsResponse {
+            items: items.into_iter().map(tag_view).collect(),
+            next_page_token,
+        })
+    }
     pub(super) async fn create_tag(&self, input: p::CreateTagRequest) -> Result<p::Tag> {
         let subject = SubjectId(id(&input.subject_id)?);
-        let tag = required(input.tag, "tag")?;
+        let content = tag_content(required(input.content, "content")?);
         let created = self
             .require_memory()?
             .create_tag(
@@ -19,20 +42,23 @@ impl KernelService {
                 CreateTagRequest {
                     producer: input.producer.map(from_producer).transpose()?,
                     operation_id: OperationId(id(&input.operation_id)?),
-                    label: tag.label,
-                    description: tag.description,
-                    kind_hint: tag.kind_hint,
-                    origin: tag.origin,
+                    content,
+                    origin: input.origin,
                 },
             )
             .await?;
-        self.read_tag_revision(subject, created.tag_id, created.current_revision_id)
-            .await
+        Ok(tag_view(created))
     }
     pub(super) async fn get_tag(&self, input: p::ObjectRequest) -> Result<p::Tag> {
-        let row=sqlx::query("SELECT t.tag_id,t.current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.tag_id=$2")
-            .bind(id(&input.subject_id)?).bind(id(&input.id)?).fetch_optional(self.0.store.pool()).await.map_err(db)?.ok_or_else(||Error::NotFound("Tag not found".into()))?;
-        tag_row(row)
+        Ok(tag_view(
+            self.require_memory()?
+                .tag_view(
+                    SubjectId(id(&input.subject_id)?),
+                    nous_core::TagId(id(&input.id)?),
+                    None,
+                )
+                .await?,
+        ))
     }
     pub(super) async fn revise_tag(&self, input: p::ReviseTagRequest) -> Result<p::Tag> {
         let result = self
@@ -47,12 +73,7 @@ impl KernelService {
                 },
             )
             .await?;
-        self.read_tag_revision(
-            SubjectId(id(&input.subject_id)?),
-            result.tag_id,
-            result.current_revision_id,
-        )
-        .await
+        Ok(tag_view(result))
     }
     pub(super) async fn merge_tags(&self, input: p::MergeTagsRequest) -> Result<p::Tag> {
         let result = self
@@ -75,11 +96,7 @@ impl KernelService {
                 },
             )
             .await?;
-        self.get_tag(p::ObjectRequest {
-            subject_id: input.subject_id,
-            id: result.tag_id.0.to_string(),
-        })
-        .await
+        Ok(tag_view(result))
     }
     pub(super) async fn split_tag(&self, input: p::SplitTagRequest) -> Result<p::SplitTagResponse> {
         let results = self
@@ -99,28 +116,8 @@ impl KernelService {
                 },
             )
             .await?;
-        let mut children = Vec::new();
-        for result in results {
-            children.push(
-                self.read_tag_revision(
-                    SubjectId(id(&input.subject_id)?),
-                    result.tag_id,
-                    result.current_revision_id,
-                )
-                .await?,
-            );
-        }
+        let children = results.into_iter().map(tag_view).collect();
         Ok(p::SplitTagResponse { children })
-    }
-    async fn read_tag_revision(
-        &self,
-        subject: SubjectId,
-        tag: nous_core::TagId,
-        revision: uuid::Uuid,
-    ) -> Result<p::Tag> {
-        let row = sqlx::query("SELECT t.tag_id,r.tag_revision_id current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_id=t.tag_id WHERE t.subject_id=$1 AND t.tag_id=$2 AND r.tag_revision_id=$3")
-            .bind(subject.0).bind(tag.0).bind(revision).fetch_one(self.0.store.pool()).await.map_err(db)?;
-        tag_row(row)
     }
     pub(super) async fn list_tags(&self, input: p::ListRequest) -> Result<p::ListTagsResponse> {
         self.read_tags(&input.subject_id, "", input.page, &input.status)
@@ -146,33 +143,27 @@ impl KernelService {
         status: &str,
     ) -> Result<p::ListTagsResponse> {
         let subject = SubjectId(id(subject)?);
-        self.0.store.require_subject(subject).await?;
         let status = if status.is_empty() { "active" } else { status };
-        if !matches!(status, "active" | "withdrawn") {
-            return Err(Error::Invalid("invalid tag status".into()));
-        }
         let scope = format!("tags:{}:{status}:{text}", subject.0);
         let (limit, last) = page(request_page, &scope)?;
-        let rows = sqlx::query("SELECT t.tag_id,t.current_revision_id,t.status,t.canonical_tag_id,r.label,r.description,r.kind_hint,r.origin FROM tags t JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status=$2 AND ($3::uuid IS NULL OR t.tag_id>$3) AND ($4='' OR strpos(lower(r.label || ' ' || COALESCE(r.description,'')),lower($4))>0 OR EXISTS(SELECT 1 FROM lexical_bindings b JOIN lexical_visibility v ON v.lexical_ref=b.lexical_ref WHERE v.subject_id=t.subject_id AND b.object_kind='tag' AND canonical_tag(t.subject_id,CASE WHEN b.object_kind='tag' THEN b.canonical_ref::uuid END)=t.tag_id AND b.tombstoned_at IS NULL AND (strpos(lower(v.display_name),lower($4))>0 OR EXISTS(SELECT 1 FROM unnest(v.aliases) alias WHERE strpos(lower(alias),lower($4))>0)))) ORDER BY t.tag_id LIMIT $5")
-            .bind(subject.0).bind(status).bind(last).bind(text).bind(limit+1).fetch_all(self.0.store.pool()).await.map_err(db)?;
-        let truncated = rows.len() > usize::try_from(limit).unwrap_or(200);
-        let mut items = Vec::new();
-        for row in rows.into_iter().take(usize::try_from(limit).unwrap_or(200)) {
-            items.push(tag_row(row)?);
-        }
-        let next_page_token = if truncated {
+        let (items, more) = self
+            .require_memory()?
+            .tag_views(subject, text, status, limit, last)
+            .await?;
+        let next_page_token = if more {
             next_token(
                 &scope,
-                id(&items
+                items
                     .last()
-                    .ok_or_else(|| Error::Infrastructure("empty tag page".into()))?
-                    .tag_id)?,
+                    .ok_or_else(|| Error::Internal("empty page".into()))?
+                    .tag_id
+                    .0,
             )
         } else {
             String::new()
         };
         Ok(p::ListTagsResponse {
-            items,
+            items: items.into_iter().map(tag_view).collect(),
             next_page_token,
         })
     }
@@ -211,20 +202,45 @@ impl KernelService {
                 subject,
             )
             .await?;
-        Ok(p::Association {
-            association_id: result.association_evidence_id.0.to_string(),
-            from: Some(to_ref(result.from)),
-            to: Some(to_ref(result.to)),
-            relation_kind: result.relation_kind,
-            polarity: enum_name(result.polarity),
-            basis_class: enum_name(result.basis_class),
-            basis: result
-                .basis
-                .into_iter()
-                .map(association_basis_proto)
-                .collect(),
-            producer_signature_id: result.producer_signature_id.map(|value| value.to_string()),
+        Ok(association_view(result))
+    }
+    pub(super) async fn list_associations(
+        &self,
+        input: p::ListRequest,
+    ) -> Result<p::ListAssociationsResponse> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        let scope = format!("associations:{}:{}", subject.0, input.status);
+        let (limit, after) = page(input.page, &scope)?;
+        let (items, more) = self
+            .require_memory()?
+            .association_page(subject, &input.status, limit, after)
+            .await?;
+        let next_page_token = if more {
+            next_token(
+                &scope,
+                items
+                    .last()
+                    .expect("nonempty page")
+                    .association_evidence_id
+                    .0,
+            )
+        } else {
+            String::new()
+        };
+        Ok(p::ListAssociationsResponse {
+            items: items.into_iter().map(association_view).collect(),
+            next_page_token,
         })
+    }
+    pub(super) async fn get_association(&self, input: p::ObjectRequest) -> Result<p::Association> {
+        Ok(association_view(
+            self.require_memory()?
+                .association(
+                    SubjectId(id(&input.subject_id)?),
+                    nous_core::AssociationEvidenceId(id(&input.id)?),
+                )
+                .await?,
+        ))
     }
 
     pub(super) async fn revoke_association(
@@ -265,16 +281,7 @@ impl KernelService {
             associations: result
                 .associations
                 .into_iter()
-                .map(|a| p::Association {
-                    association_id: a.association_evidence_id.0.to_string(),
-                    from: Some(to_ref(a.from)),
-                    to: Some(to_ref(a.to)),
-                    relation_kind: a.relation_kind,
-                    polarity: enum_name(a.polarity),
-                    basis_class: enum_name(a.basis_class),
-                    basis: a.basis.into_iter().map(association_basis_proto).collect(),
-                    producer_signature_id: a.producer_signature_id.map(|id| id.to_string()),
-                })
+                .map(association_view)
                 .collect(),
             truncated: result.truncated,
         })
@@ -315,26 +322,18 @@ pub(super) fn association_basis_proto(value: AssociationBasis) -> p::Association
     p::AssociationBasis { basis: Some(basis) }
 }
 
-fn tag_row(row: sqlx::postgres::PgRow) -> Result<p::Tag> {
-    Ok(p::Tag {
-        tag_id: row
-            .try_get::<uuid::Uuid, _>("tag_id")
-            .map_err(db)?
-            .to_string(),
-        current_revision_id: row
-            .try_get::<uuid::Uuid, _>("current_revision_id")
-            .map_err(db)?
-            .to_string(),
-        status: row.try_get("status").map_err(db)?,
-        canonical_tag_id: row
-            .try_get::<Option<uuid::Uuid>, _>("canonical_tag_id")
-            .map_err(db)?
-            .map(|id| id.to_string()),
-        label: row.try_get("label").map_err(db)?,
-        description: row.try_get("description").map_err(db)?,
-        kind_hint: row.try_get("kind_hint").map_err(db)?,
-        origin: row.try_get("origin").map_err(db)?,
-    })
+fn tag_view(value: nous_memory::TagView) -> p::Tag {
+    p::Tag {
+        tag_id: value.tag_id.0.to_string(),
+        current_revision_id: value.current_revision_id.to_string(),
+        revision_id: value.revision_id.to_string(),
+        status: value.status,
+        canonical_tag_id: value.canonical_tag_id.map(|id| id.0.to_string()),
+        label: value.label,
+        description: value.description,
+        kind_hint: value.kind_hint,
+        origin: value.origin,
+    }
 }
 fn tag_target(target: p::TagRevisionTarget) -> Result<nous_memory::TagExpectation> {
     Ok(nous_memory::TagExpectation {
@@ -347,5 +346,25 @@ fn tag_content(content: p::TagContent) -> nous_memory::TagContent {
         label: content.label,
         description: content.description,
         kind_hint: content.kind_hint,
+    }
+}
+
+fn association_view(result: nous_memory::AssociationEvidence) -> p::Association {
+    p::Association {
+        association_id: result.association_evidence_id.0.to_string(),
+        from: Some(to_ref(result.from)),
+        to: Some(to_ref(result.to)),
+        relation_kind: result.relation_kind,
+        polarity: enum_name(result.polarity),
+        basis_class: enum_name(result.basis_class),
+        basis: result
+            .basis
+            .into_iter()
+            .map(association_basis_proto)
+            .collect(),
+        producer_signature_id: result.producer_signature_id.map(|value| value.to_string()),
+        subject_id: result.subject_id.0.to_string(),
+        created_at: Some(timestamp(result.created_at)),
+        revoked_at: result.revoked_at.map(timestamp),
     }
 }

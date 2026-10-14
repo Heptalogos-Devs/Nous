@@ -19,18 +19,15 @@ message MaintenanceNeed {
   google.protobuf.Timestamp due_at = 7;
   int32 priority = 8;
   string state = 9;
-  optional string lease_token = 10;
-  google.protobuf.Timestamp lease_until = 11;
-  int32 attempt_count = 12;
   optional string last_problem_code = 13;
   google.protobuf.Timestamp created_at = 14;
   google.protobuf.Timestamp updated_at = 15;
   uint32 retry_count = 16;
   uint64 trigger_revision = 17;
 }
-message ClaimMaintenanceRequest { string subject_id = 1; repeated string allowed_kinds = 2; uint32 limit = 3; uint32 lease_seconds = 4; optional string model_execution_digest = 5; }
-message ClaimMaintenanceResponse { repeated MaintenanceNeed needs = 1; }
-message FinishMaintenanceRequest { MaintenanceNeed claimed = 1; string disposition = 2; google.protobuf.Timestamp next_due = 3; optional string problem_code = 4; uint32 retry_delay_seconds = 5; }
+message SelectMaintenanceRequest { string subject_id = 1; repeated string allowed_kinds = 2; uint32 limit = 3; optional string model_execution_digest = 5; MaintenanceNeed after = 6; }
+message SelectMaintenanceResponse { repeated MaintenanceNeed needs = 1; }
+message FinishMaintenanceRequest { MaintenanceNeed selected = 1; string disposition = 2; google.protobuf.Timestamp next_due = 3; optional string problem_code = 4; uint32 retry_delay_seconds = 5; }
 message OrganizeExperienceRequest { string subject_id = 1; uint32 limit = 2; bool close = 3; }
 message OrganizeExperienceResponse { uint32 processed_count = 1; repeated nous.wave.v1alpha1.Episode episodes = 2; google.protobuf.Timestamp next_due = 3; }
 message EpisodePartitionSource { string revision_id = 1 [(nous.wave.v1alpha1.reference_kind) = "episode_revision"]; int64 expected_epoch = 2; }
@@ -61,7 +58,6 @@ message MaintenancePolicy {
   bool enabled = 1;
   uint32 poll_interval_seconds = 2;
   uint32 max_operations = 3;
-  uint32 worker_lease_seconds = 4;
   google.protobuf.Timestamp cognitive_now = 5;
   uint32 retry_initial_seconds = 6;
   uint32 retry_max_seconds = 7;
@@ -70,7 +66,7 @@ message MaintenancePolicy {
   uint32 max_elapsed_ms = 10;
   uint32 experience_batch_size = 11;
 }
-message PlanMaintenanceRequest { MaintenanceNeed claimed = 1; }
+message PlanMaintenanceRequest { MaintenanceNeed selected = 1; }
 message ExperienceMember {
   string key = 1;
   string occurrence_id = 2 [(nous.wave.v1alpha1.reference_kind) = "occurrence"];
@@ -110,7 +106,7 @@ message MaintenancePlan {
   ConceptMaintenanceCatalog concept_catalog = 20;
   optional string concept_model_input_json = 21;
 }
-message RefreshMaintenanceRequest { MaintenanceNeed claimed = 1; }
+message RefreshMaintenanceRequest { MaintenanceNeed selected = 1; }
 
 message ConsolidationCandidate { string key = 1; ExpectedCognition target = 2; string text = 3; string cognitive_role = 4; string formation_mode = 5; repeated string entity_refs = 6; repeated UseSummary use = 7; repeated string eligible_basis_keys = 11; nous.wave.v1alpha1.TemporalExtent valid_time = 8; google.protobuf.Timestamp formed_at = 9; google.protobuf.Timestamp recorded_at = 10; bool text_truncated = 12; }
 message ConsolidationEntity { string key = 1; string entity_ref = 2; }

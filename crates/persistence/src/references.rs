@@ -16,6 +16,41 @@ impl AuthorityStore {
         subject: SubjectId,
         reference: &CognitiveRef,
     ) -> Result<(CognitiveRef, Option<i64>, bool)> {
+        if !is_bound_cognition(reference) {
+            self.require_subject(subject).await?;
+        }
+        Self::bind_exact_reference_executor(self.pool(), subject, reference).await
+    }
+
+    /// Bind inside the caller's transaction, including canonical Tag identity.
+    pub async fn bind_exact_reference_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+    ) -> Result<(CognitiveRef, Option<i64>, bool)> {
+        if !is_bound_cognition(reference) {
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM subjects WHERE subject_id=$1)")
+                    .bind(subject.0)
+                    .fetch_one(&mut **tx)
+                    .await
+                    .map_err(db)?;
+            if !exists {
+                return Err(Error::NotFound("subject not found".into()));
+            }
+        }
+        Self::bind_exact_reference_executor(&mut **tx, subject, reference).await
+    }
+
+    async fn bind_exact_reference_executor<'e, E>(
+        executor: E,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+    ) -> Result<(CognitiveRef, Option<i64>, bool)>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
         let (query, id, mutable) = match reference {
             CognitiveRef::Memory(id) => (
                 "SELECT current_revision_id,object_epoch FROM memory_objects WHERE subject_id=$1 AND memory_id=$2",
@@ -59,20 +94,33 @@ impl AuthorityStore {
             ),
             CognitiveRef::Tag(tag) => {
                 return Ok((
-                    CognitiveRef::Tag(self.canonical_tag_id(subject, *tag).await?),
+                    CognitiveRef::Tag(
+                        sqlx::query_scalar::<_, Option<uuid::Uuid>>("SELECT canonical_tag($1,$2)")
+                            .bind(subject.0)
+                            .bind(tag.0)
+                            .fetch_one(executor)
+                            .await
+                            .map_err(db)?
+                            .map(TagId)
+                            .ok_or_else(|| {
+                                Error::NotFound("active Tag identity not found".into())
+                            })?,
+                    ),
                     None,
                     false,
                 ));
             }
             _ => {
-                self.validate_reference(subject, reference).await?;
+                if !Self::reference_in_subject_executor(executor, subject, reference).await? {
+                    return Err(Error::NotFound("cognitive reference not found".into()));
+                }
                 return Ok((reference.clone(), None, false));
             }
         };
         let row = sqlx::query(query)
             .bind(subject.0)
             .bind(id)
-            .fetch_optional(self.pool())
+            .fetch_optional(executor)
             .await
             .map_err(db)?
             .ok_or_else(|| Error::NotFound("cognition exact target not found".into()))?;
@@ -305,4 +353,19 @@ impl AuthorityStore {
             Err(Error::NotFound("cognitive reference not found".into()))
         }
     }
+}
+
+fn is_bound_cognition(reference: &CognitiveRef) -> bool {
+    matches!(
+        reference,
+        CognitiveRef::Memory(_)
+            | CognitiveRef::MemoryRevision(_)
+            | CognitiveRef::Episode(_)
+            | CognitiveRef::EpisodeRevision(_)
+            | CognitiveRef::Journal(_)
+            | CognitiveRef::JournalRevision(_)
+            | CognitiveRef::CognitiveSchema(_)
+            | CognitiveRef::CognitiveSchemaRevision(_)
+            | CognitiveRef::Tag(_)
+    )
 }
