@@ -30,10 +30,6 @@ export async function subjectCommands(
         : {
             operationId: operationId(env),
             capabilities: { memory: true },
-            cognitiveSeed: {
-              text: "schema_version = 1",
-              format: "application/vnd.nous-wave.cognitive-seed+toml;version=1",
-            },
           },
     );
     await save({

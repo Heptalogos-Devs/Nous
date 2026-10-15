@@ -22,11 +22,11 @@ async fn missing_serving_cache_rebuilds_without_changing_authority() {
         .create_subject(CreateSubject {
             subject_id: None,
             operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
+            cognitive_seed: Some(CognitiveSeedInput {
                 text: "schema_version = 1".into(),
                 format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
                 provenance: json!({}),
-            },
+            }),
             metadata: json!({}),
             capabilities: None,
         })
@@ -97,11 +97,11 @@ async fn configuration_precedence_permissions_and_restart_state_are_explicit() {
         .create_subject(CreateSubject {
             subject_id: None,
             operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
+            cognitive_seed: Some(CognitiveSeedInput {
                 text: "schema_version = 1".into(),
                 format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
                 provenance: json!({}),
-            },
+            }),
             metadata: json!({}),
             capabilities: None,
         })
@@ -188,11 +188,11 @@ async fn configuration_receipts_freeze_subject_scope_and_replay_outcomes() {
         .create_subject(CreateSubject {
             subject_id: None,
             operation_id: OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
+            cognitive_seed: Some(CognitiveSeedInput {
                 text: "schema_version = 1".into(),
                 format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
                 provenance: json!({}),
-            },
+            }),
             metadata: json!({}),
             capabilities: None,
         })
@@ -337,11 +337,11 @@ async fn rebuild_policy_and_provisioning_defaults_preserve_adopted_subject_state
     let create = || CreateSubject {
         subject_id: None,
         operation_id: OperationId::new(),
-        cognitive_seed: CognitiveSeedInput {
+        cognitive_seed: Some(CognitiveSeedInput {
             text: "schema_version = 1".into(),
             format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
             provenance: json!({}),
-        },
+        }),
         metadata: json!({}),
         capabilities: None,
     };

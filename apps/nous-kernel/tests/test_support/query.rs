@@ -43,11 +43,11 @@ pub(crate) async fn subject(runtime: &nous_kernel::NousRuntime) -> nous_core::Su
         .create_subject(CreateSubject {
             subject_id: None,
             operation_id: nous_core::OperationId::new(),
-            cognitive_seed: CognitiveSeedInput {
+            cognitive_seed: Some(CognitiveSeedInput {
                 text: "schema_version = 1".into(),
                 format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
                 provenance: serde_json::json!({}),
-            },
+            }),
             metadata: serde_json::json!({}),
             capabilities: None,
         })

@@ -66,7 +66,7 @@ impl KernelService {
                     .transpose()?
                     .map(SubjectId),
                 operation_id: OperationId(id(&input.operation_id)?),
-                cognitive_seed: seed(required(input.cognitive_seed, "cognitive_seed")?),
+                cognitive_seed: input.cognitive_seed.map(seed),
                 metadata: object(input.metadata),
                 capabilities: input.capabilities.map(|value| SubjectCapabilities {
                     memory: value.memory,
