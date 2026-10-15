@@ -38,6 +38,7 @@ mod memory;
 mod model;
 mod query;
 mod schema;
+mod self_cognition;
 mod subject;
 mod work_context;
 
@@ -77,6 +78,9 @@ impl KernelService {
                 .into());
             }
         }
+        if input.self_requirement == "REQUIRED" {
+            self.0.require_self()?.require_enabled(subject).await?;
+        }
         let requirement = |value: &str| -> nous_core::Result<nous_core::RequirementStrength> {
             Ok(match value {
                 "REQUIRED" => nous_core::RequirementStrength::Required,
@@ -108,6 +112,11 @@ impl KernelService {
                     max_text_bytes: input.max_text_bytes as usize,
                     materialize: input.materialize,
                     memory: requirement(&input.memory_requirement)?,
+                    self_cognition: if input.self_requirement.is_empty() {
+                        nous_core::RequirementStrength::Preferred
+                    } else {
+                        requirement(&input.self_requirement)?
+                    },
                     runtime: requirement(&input.runtime_requirement)?,
                     resource: requirement(&input.resource_requirement)?,
                 },
@@ -127,6 +136,13 @@ impl KernelService {
                 .into_iter()
                 .map(|segment| p::ContextSegment {
                     segment_id: uuid::Uuid::now_v7().to_string(),
+                    domain: match segment.source.reference.domain() {
+                        nous_core::CognitiveDomain::Memory => "memory",
+                        nous_core::CognitiveDomain::SelfCognition => "self",
+                        nous_core::CognitiveDomain::Resource => "resource",
+                        _ => "runtime",
+                    }
+                    .into(),
                     text: segment.source.text.unwrap_or_default(),
                     semantic_role: segment.semantic_role.into(),
                     source_refs: vec![to_ref(segment.source.reference.clone())],

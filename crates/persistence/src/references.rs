@@ -5,6 +5,7 @@ use crate::*;
 use database_error as db;
 use nous_core::*;
 use sqlx::{Executor, Postgres, Row, Transaction};
+use uuid::Uuid;
 
 impl AuthorityStore {
     /// Resolve a query exact target once at binding time.  Mutable cognition
@@ -51,6 +52,21 @@ impl AuthorityStore {
     where
         E: Executor<'e, Database = Postgres>,
     {
+        if reference.domain() == CognitiveDomain::SelfCognition {
+            let exact = reference.is_cognition_revision();
+            let family = reference
+                .kind()
+                .strip_suffix("_revision")
+                .unwrap_or(reference.kind());
+            let row=sqlx::query("SELECT r.revision_id,o.object_epoch FROM self_objects o JOIN self_revisions r ON r.object_id=o.object_id JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.self_cognition AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2 AND r.revision_id=o.current_revision_id))")
+                .bind(subject.0).bind(reference.uuid()).bind(family).bind(exact).fetch_optional(executor).await.map_err(db)?.ok_or_else(||Error::NotFound("Self exact target is unavailable".into()))?;
+            let revision: Uuid = row.try_get("revision_id").map_err(db)?;
+            return Ok((
+                parse_reference(&format!("{family}_revision"), &revision.to_string())?,
+                Some(row.try_get("object_epoch").map_err(db)?),
+                !exact,
+            ));
+        }
         let (query, id, mutable) = match reference {
             CognitiveRef::Memory(id) => (
                 "SELECT current_revision_id,object_epoch FROM memory_objects WHERE subject_id=$1 AND memory_id=$2",
@@ -178,7 +194,16 @@ impl AuthorityStore {
     where
         E: Executor<'e, Database = Postgres>,
     {
+        if reference.domain() == CognitiveDomain::SelfCognition {
+            let family = reference
+                .kind()
+                .strip_suffix("_revision")
+                .unwrap_or(reference.kind());
+            return sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM self_objects o JOIN self_revisions r USING(object_id) JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.self_cognition AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2)))")
+                .bind(subject.0).bind(reference.uuid()).bind(family).bind(reference.is_cognition_revision()).fetch_one(executor).await.map_err(db);
+        }
         let valid = match reference {
+            CognitiveRef::SelfFacet(_) | CognitiveRef::SelfFacetRevision(_) | CognitiveRef::NarrativeThread(_) | CognitiveRef::NarrativeThreadRevision(_) => unreachable!("Self owner handled above"),
             CognitiveRef::Memory(id) => sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM memory_objects WHERE subject_id=$1 AND memory_id=$2)",
             )
@@ -357,15 +382,53 @@ impl AuthorityStore {
 
 fn is_bound_cognition(reference: &CognitiveRef) -> bool {
     matches!(
-        reference,
-        CognitiveRef::Memory(_)
-            | CognitiveRef::MemoryRevision(_)
-            | CognitiveRef::Episode(_)
-            | CognitiveRef::EpisodeRevision(_)
-            | CognitiveRef::Journal(_)
-            | CognitiveRef::JournalRevision(_)
-            | CognitiveRef::CognitiveSchema(_)
-            | CognitiveRef::CognitiveSchemaRevision(_)
-            | CognitiveRef::Tag(_)
+        reference.domain(),
+        CognitiveDomain::Memory | CognitiveDomain::SelfCognition
     )
+}
+
+impl AuthorityStore {
+    /// Read current owner-declared lifecycle columns for an exact cognition.
+    /// The consumer decides what those states mean for its operation.
+    pub async fn cognition_available_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+    ) -> Result<bool> {
+        let (query, id) = match reference {
+            CognitiveRef::MemoryRevision(id) => (
+                "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE o.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o",
+                id.0,
+            ),
+            CognitiveRef::CognitiveSchemaRevision(id) => (
+                "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) WHERE o.subject_id=$1 AND r.schema_revision_id=$2 FOR SHARE OF o",
+                id.0,
+            ),
+            CognitiveRef::EpisodeRevision(id) => (
+                "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM episode_revisions r JOIN episode_objects o USING(episode_id) WHERE o.subject_id=$1 AND r.episode_revision_id=$2 FOR SHARE OF o",
+                id.0,
+            ),
+            CognitiveRef::JournalRevision(id) => (
+                "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE o.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o",
+                id.0,
+            ),
+            r if r.domain() == CognitiveDomain::SelfCognition && r.is_cognition_revision() => (
+                "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM self_revisions r JOIN self_objects o USING(object_id) WHERE o.subject_id=$1 AND r.revision_id=$2 FOR SHARE OF o",
+                r.uuid().expect("Self UUID"),
+            ),
+            _ => {
+                return Err(Error::Invalid(
+                    "lifecycle read needs exact cognition".into(),
+                ));
+            }
+        };
+        Ok(sqlx::query_scalar(query)
+            .bind(subject.0)
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db)?
+            .unwrap_or(false))
+    }
 }

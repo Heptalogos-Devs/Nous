@@ -387,6 +387,8 @@ pub struct CognitiveSeed {
 pub struct SubjectCapabilities {
     #[prost(bool, tag="1")]
     pub memory: bool,
+    #[prost(bool, tag="2")]
+    pub self_cognition: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Subject {
@@ -1585,6 +1587,8 @@ pub struct ProjectionRequest {
     pub materialize: bool,
     #[prost(message, optional, tag="13")]
     pub usage: ::core::option::Option<CognitionUsage>,
+    #[prost(string, tag="14")]
+    pub self_requirement: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ContextSegment {
@@ -1606,6 +1610,8 @@ pub struct ContextSegment {
     pub source_revision: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag="9")]
     pub usage: ::prost::alloc::string::String,
+    #[prost(string, tag="10")]
+    pub domain: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Projection {
@@ -2816,6 +2822,216 @@ pub struct PrepareEmbeddingsResponse {
     pub committed: u32,
     #[prost(message, repeated, tag="2")]
     pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SelfScope {
+    #[prost(string, tag="1")]
+    pub description: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="2")]
+    pub purposes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag="3")]
+    pub entity_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="4")]
+    pub work_context_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="5")]
+    pub conversation_ref: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SelfException {
+    #[prost(string, tag="1")]
+    pub statement: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="2")]
+    pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SelfFacetContent {
+    #[prost(string, tag="1")]
+    pub kind: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub statement: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub scope: ::core::option::Option<SelfScope>,
+    #[prost(string, tag="4")]
+    pub stance: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="5")]
+    pub exceptions: ::prost::alloc::vec::Vec<SelfException>,
+    #[prost(message, repeated, tag="6")]
+    pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
+    #[prost(message, optional, tag="7")]
+    pub valid_time: ::core::option::Option<TemporalExtent>,
+    #[prost(message, optional, tag="8")]
+    pub producer: ::core::option::Option<ProducerSignature>,
+    #[prost(string, tag="9")]
+    pub epistemic_class: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NarrativeContent {
+    #[prost(string, tag="1")]
+    pub theme: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub interpretation: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="3")]
+    pub source_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(message, repeated, tag="4")]
+    pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
+    #[prost(message, optional, tag="5")]
+    pub valid_time: ::core::option::Option<TemporalExtent>,
+    #[prost(message, optional, tag="6")]
+    pub producer: ::core::option::Option<ProducerSignature>,
+    #[prost(string, tag="7")]
+    pub epistemic_class: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SelfContent {
+    #[prost(oneof="self_content::Content", tags="1, 2")]
+    pub content: ::core::option::Option<self_content::Content>,
+}
+/// Nested message and enum types in `SelfContent`.
+pub mod self_content {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Content {
+        #[prost(message, tag="1")]
+        Facet(super::SelfFacetContent),
+        #[prost(message, tag="2")]
+        Narrative(super::NarrativeContent),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SelfEvidence {
+    #[prost(string, tag="1")]
+    pub role: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub basis: ::core::option::Option<RevisionBasis>,
+    #[prost(message, optional, tag="3")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SelfRecord {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(message, optional, tag="2")]
+    pub object_ref: ::core::option::Option<CognitiveRef>,
+    #[prost(string, tag="3")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub current_revision_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="5")]
+    pub object_epoch: i64,
+    #[prost(int32, tag="6")]
+    pub revision_no: i32,
+    #[prost(string, optional, tag="7")]
+    pub parent_revision_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag="8")]
+    pub reason: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="9")]
+    pub content: ::core::option::Option<SelfContent>,
+    #[prost(string, tag="10")]
+    pub acceptance_state: ::prost::alloc::string::String,
+    #[prost(string, tag="11")]
+    pub integrity_state: ::prost::alloc::string::String,
+    #[prost(string, tag="12")]
+    pub suppression_state: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="13")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="14")]
+    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="15")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, repeated, tag="16")]
+    pub evidence: ::prost::alloc::vec::Vec<SelfEvidence>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdoptSelfRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub content: ::core::option::Option<SelfContent>,
+    #[prost(string, tag="4")]
+    pub reason: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReviseSelfRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub target_revision: ::core::option::Option<CognitiveRef>,
+    #[prost(int64, tag="4")]
+    pub expected_object_epoch: i64,
+    #[prost(message, optional, tag="5")]
+    pub content: ::core::option::Option<SelfContent>,
+    #[prost(string, tag="6")]
+    pub reason: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AddSelfEvidenceRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub target_revision: ::core::option::Option<CognitiveRef>,
+    #[prost(int64, tag="4")]
+    pub expected_object_epoch: i64,
+    #[prost(string, tag="5")]
+    pub role: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="6")]
+    pub basis: ::core::option::Option<RevisionBasis>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SelfListRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub family: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub page: ::core::option::Option<Page>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SelfHistoryRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub object_ref: ::core::option::Option<CognitiveRef>,
+    #[prost(message, optional, tag="3")]
+    pub page: ::core::option::Option<Page>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SelfListResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<SelfRecord>,
+    #[prost(string, tag="2")]
+    pub next_page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SelfMutationRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub object_ref: ::core::option::Option<CognitiveRef>,
+    #[prost(int64, tag="4")]
+    pub expected_object_epoch: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SelfLifecycleRequest {
+    #[prost(message, optional, tag="1")]
+    pub mutation: ::core::option::Option<SelfMutationRequest>,
+    #[prost(string, tag="2")]
+    pub action: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProvisionCapabilitiesRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub capabilities: ::core::option::Option<SubjectCapabilities>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CognitionTraceRequest {

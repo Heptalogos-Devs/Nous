@@ -37,7 +37,7 @@
     "smoke:runtime": "tsx scripts/smoke/runtime-episode.ts",
     "smoke:model": "tsx scripts/smoke/model-material-resource.ts",
     "smoke:media": "tsx scripts/smoke/media-routes.ts",
-    "smoke": "pnpm smoke:memory && pnpm smoke:runtime && pnpm smoke:model && pnpm smoke:media && pnpm smoke:configuration",
+    "smoke": "pnpm smoke:memory && pnpm smoke:runtime && pnpm smoke:model && pnpm smoke:media && pnpm smoke:configuration && pnpm smoke:self",
     "research:longitudinal": "tsx scripts/research/longitudinal.ts",
     "research:media-live": "tsx scripts/research/media.ts",
     "dev:portable": "tsx scripts/dev/portable.ts",
@@ -46,7 +46,8 @@
     "inspect:model-contracts": "tsx scripts/research/model-contracts.ts",
     "inspect:model-trace": "tsx scripts/research/model-trace.ts",
     "clean:local": "tsx scripts/maintenance/clean.ts",
-    "openclaw:pack": "tsx scripts/openclaw/pack.ts"
+    "openclaw:pack": "tsx scripts/openclaw/pack.ts",
+    "smoke:self": "tsx scripts/smoke/self.ts"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.73.0",

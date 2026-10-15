@@ -47,6 +47,10 @@ macro_rules! cognitive_refs {
 }
 
 cognitive_refs! {
+    SelfFacet(SelfFacetId) = "self_facet",
+    SelfFacetRevision(SelfFacetRevisionId) = "self_facet_revision",
+    NarrativeThread(NarrativeThreadId) = "narrative_thread",
+    NarrativeThreadRevision(NarrativeThreadRevisionId) = "narrative_thread_revision",
     Memory(MemoryId) = "memory",
     MemoryRevision(MemoryRevisionId) = "memory_revision",
     Episode(EpisodeId) = "episode",
@@ -69,4 +73,52 @@ cognitive_refs! {
     Entity(EntityRef) = "entity",
     Resource(ResourceRef) = "resource",
     ExternalObject(ObjectRef) = "external_object"
+}
+
+/// Semantic ownership is shared by consumers; wire spelling does not determine policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CognitiveDomain {
+    Memory,
+    SelfCognition,
+    Runtime,
+    Material,
+    Resource,
+}
+impl CognitiveRef {
+    pub fn domain(&self) -> CognitiveDomain {
+        match self {
+            Self::Memory(_)
+            | Self::MemoryRevision(_)
+            | Self::CognitiveSchema(_)
+            | Self::CognitiveSchemaRevision(_)
+            | Self::Episode(_)
+            | Self::EpisodeRevision(_)
+            | Self::Journal(_)
+            | Self::JournalRevision(_)
+            | Self::Tag(_) => CognitiveDomain::Memory,
+            Self::SelfFacet(_)
+            | Self::SelfFacetRevision(_)
+            | Self::NarrativeThread(_)
+            | Self::NarrativeThreadRevision(_) => CognitiveDomain::SelfCognition,
+            Self::Artifact(_)
+            | Self::Occurrence(_)
+            | Self::SourceRegion(_)
+            | Self::DerivedRegion(_)
+            | Self::DerivedRepresentation(_)
+            | Self::ExternalObject(_) => CognitiveDomain::Material,
+            Self::Resource(_) => CognitiveDomain::Resource,
+            _ => CognitiveDomain::Runtime,
+        }
+    }
+    pub fn is_cognition_revision(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryRevision(_)
+                | Self::CognitiveSchemaRevision(_)
+                | Self::EpisodeRevision(_)
+                | Self::JournalRevision(_)
+                | Self::SelfFacetRevision(_)
+                | Self::NarrativeThreadRevision(_)
+        )
+    }
 }

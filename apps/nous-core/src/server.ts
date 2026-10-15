@@ -1,3 +1,4 @@
+import { SelfService } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -174,6 +175,7 @@ export async function createCore(settings: CoreOptions) {
   await app.register(fastifyConnectPlugin, {
     routes: (router) => {
       router.service(SubjectService, forward(SubjectService, kernel.subjects));
+      router.service(SelfService, forward(SelfService, kernel.self));
       router.service(CognitionService, cognition);
       router.service(MemoryService, forward(MemoryService, kernel.memory));
       router.service(

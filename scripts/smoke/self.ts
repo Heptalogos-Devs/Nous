@@ -1,0 +1,344 @@
+// Copyright 2026 Aravine Zhu
+// SPDX-License-Identifier: Apache-2.0
+import assert from "node:assert/strict";
+import { prepare, boot, stop, type Boot } from "./support.js";
+import { workspaceTemp } from "../workspace.js";
+import { create } from "@bufbuild/protobuf";
+import { RevisionBasisSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { SelfContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
+const home = await workspaceTemp("smoke", "self-");
+let core: Boot | undefined;
+try {
+  const locator = await prepare(home);
+  core = await boot(locator);
+  const c = core.client;
+  const subject = await c.subjects.createSubject({
+    operationId: crypto.randomUUID(),
+    capabilities: { memory: true },
+  });
+  const subjectId = subject.subjectId;
+  const observation = await c.runtime.recordObservation({
+    subjectId,
+    requestId: crypto.randomUUID(),
+    sourceClass: "generation",
+    material: {
+      case: "inlineText",
+      value: {
+        text: "我自主选择自称青砚；核对项目事实时先读原始材料，闲聊无需形式化调用工具。",
+        mediaType: "text/plain",
+      },
+    },
+    admit: false,
+  });
+  const evidence = create(RevisionBasisSchema, {
+    basis: {
+      case: "evidence" as const,
+      value: {
+        occurrenceId: observation.occurrenceId,
+        locator: { case: "wholeOccurrence" as const, value: true },
+        basisRole: "direct",
+      },
+    },
+  });
+  const facet = create(SelfContentSchema, {
+    content: {
+      case: "facet",
+      value: {
+        kind: "identity",
+        epistemicClass: "observed",
+        statement: "我选择自称青砚。",
+        scope: { description: "general" },
+        stance: "adopted",
+        basis: [evidence],
+        validTime: {},
+      },
+    },
+  });
+  await assert.rejects(
+    c.self.adopt({
+      subjectId,
+      operationId: crypto.randomUUID(),
+      content: facet,
+      reason: "actual self choice",
+    }),
+  );
+  await c.subjects.provisionCapabilities({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    capabilities: { selfCognition: true },
+  });
+  assert.equal(
+    (await c.self.list({ subjectId, page: { pageSize: 100 } })).items.length,
+    0,
+  );
+  const seeded = await c.subjects.createSubject({
+    operationId: crypto.randomUUID(),
+    capabilities: { selfCognition: true },
+    cognitiveSeed: {
+      format: "text/markdown",
+      text: "# Self\nName: 露白\n",
+      provenance: { author_role: "creator" },
+    },
+  });
+  const seed = await c.subjects.getCognitiveSeed({
+    subjectId: seeded.subjectId,
+  });
+  assert.equal(seed.seed?.text, "# Self\nName: 露白\n");
+  const seededContent = create(SelfContentSchema, {
+    content: {
+      case: "facet",
+      value: {
+        kind: "identity",
+        epistemicClass: "narrative",
+        statement: "采用的初始自称为露白。",
+        scope: { description: "general" },
+        stance: "adopted",
+        basis: [
+          {
+            basis: {
+              case: "seed",
+              value: {
+                seedVersion: {
+                  kind: "cognitive_seed_version",
+                  value: seed.seedVersionId,
+                },
+                semanticPath: "line:2",
+              },
+            },
+          },
+        ],
+        validTime: {},
+      },
+    },
+  });
+  await c.self.adopt({
+    subjectId: seeded.subjectId,
+    operationId: crypto.randomUUID(),
+    content: seededContent,
+    reason: "explicit preserved Seed adoption",
+  });
+  await assert.rejects(
+    c.self.adopt({
+      subjectId,
+      operationId: crypto.randomUUID(),
+      content: seededContent,
+      reason: "foreign Seed is not owned",
+    }),
+  );
+  const request = {
+    subjectId,
+    operationId: crypto.randomUUID(),
+    content: facet,
+    reason: "actual self choice",
+  };
+  const first = await c.self.adopt(request);
+  const replay = await c.self.adopt(request);
+  assert.equal(first.reference?.value, replay.reference?.value);
+  await assert.rejects(
+    c.self.adopt({ ...request, reason: "different request" }),
+  );
+  const projectionSession = await c.runtime.openSession({ subjectId });
+  const projected = await c.cognition.buildProjection({
+    subjectId,
+    sessionId: projectionSession.sessionId,
+    consumerId: "consumer:smoke:cognitive-runtime-episode",
+    situationRefs: [first.reference!],
+  });
+  assert(
+    projected.segments.some(
+      (s) =>
+        s.domain === "self" &&
+        s.authority === "subject_cognition" &&
+        s.text.includes("青砚"),
+    ),
+  );
+  const narrative = await c.self.adopt({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    reason: "organize the actual choice",
+    content: {
+      content: {
+        case: "narrative",
+        value: {
+          theme: "选择自称",
+          epistemicClass: "narrative",
+          interpretation: "我选择青砚作为当前自称；这不提供虚构的个人来历。",
+          sourceRefs: [first.reference!],
+          basis: [evidence],
+          validTime: {},
+        },
+      },
+    },
+  });
+  await assert.rejects(
+    c.self.purge({
+      subjectId,
+      operationId: crypto.randomUUID(),
+      objectRef: { kind: "self_facet", value: narrative.objectRef!.value },
+      expectedObjectEpoch: narrative.objectEpoch,
+    }),
+  );
+  await assert.rejects(
+    c.self.addEvidence({
+      subjectId,
+      operationId: crypto.randomUUID(),
+      targetRevision: first.reference,
+      expectedObjectEpoch: first.objectEpoch,
+      role: "support",
+      basis: {
+        basis: {
+          case: "cognitionDependency",
+          value: { targetRevision: narrative.reference, basisRole: "direct" },
+        },
+      },
+    }),
+  );
+  const corrected = await c.runtime.recordObservation({
+    subjectId,
+    requestId: crypto.randomUUID(),
+    sourceClass: "generation",
+    material: {
+      case: "inlineText",
+      value: {
+        text: "考虑新语境后，我决定改用澄砚作为自称。",
+        mediaType: "text/plain",
+      },
+    },
+    admit: false,
+  });
+  const correctedBasis = create(RevisionBasisSchema, {
+    basis: {
+      case: "evidence" as const,
+      value: {
+        occurrenceId: corrected.occurrenceId,
+        locator: { case: "wholeOccurrence" as const, value: true },
+        basisRole: "direct",
+      },
+    },
+  });
+  const facetBody =
+    facet.content.case === "facet"
+      ? facet.content.value
+      : assert.fail("expected facet");
+  const next = create(SelfContentSchema, {
+    content: {
+      case: "facet",
+      value: {
+        ...facetBody,
+        statement: "我选择自称澄砚。",
+        basis: [correctedBasis],
+      },
+    },
+  });
+  const changed = await c.self.revise({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    targetRevision: first.reference,
+    expectedObjectEpoch: first.objectEpoch,
+    content: next,
+    reason: "actual new self choice in a changed situation",
+  });
+  assert.equal(changed.objectRef?.value, first.objectRef?.value);
+  assert.notEqual(changed.reference?.value, first.reference?.value);
+  const old = await c.self.getRevision({
+    subjectId,
+    id: first.reference!.value,
+  });
+  assert.equal(old.content?.content.case, "facet");
+  if (old.content?.content.case === "facet")
+    assert.equal(old.content.content.value.statement, "我选择自称青砚。");
+  assert.equal(
+    (await c.self.get({ subjectId, id: narrative.objectRef!.value }))
+      .integrityState,
+    "revalidation_required",
+  );
+  const pendingNarrative = await c.self.get({
+    subjectId,
+    id: narrative.objectRef!.value,
+  });
+  const reinterpretation = await c.self.revise({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    targetRevision: narrative.reference,
+    expectedObjectEpoch: pendingNarrative.objectEpoch,
+    reason: "reinterpret the actual naming history after the new choice",
+    content: {
+      content: {
+        case: "narrative",
+        value: {
+          theme: "选择自称",
+          interpretation:
+            "我曾使用青砚，后来选择了澄砚；它们分别是当时和当前的自称。",
+          epistemicClass: "narrative",
+          sourceRefs: [first.reference!, changed.reference!],
+          basis: [correctedBasis],
+          validTime: {},
+        },
+      },
+    },
+  });
+  assert.equal(reinterpretation.integrityState, "valid");
+  await assert.rejects(
+    c.self.revise({
+      subjectId,
+      operationId: crypto.randomUUID(),
+      targetRevision: first.reference,
+      expectedObjectEpoch: first.objectEpoch,
+      content: next,
+      reason: "stale caller",
+    }),
+  );
+  const supported = await c.self.addEvidence({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    targetRevision: changed.reference,
+    expectedObjectEpoch: changed.objectEpoch,
+    role: "boundary_case",
+    basis: correctedBasis,
+  });
+  assert.equal(supported.reference?.value, changed.reference?.value);
+  assert.equal(supported.evidence.length, 1);
+  const suppressed = await c.self.setLifecycle({
+    mutation: {
+      subjectId,
+      operationId: crypto.randomUUID(),
+      objectRef: changed.objectRef,
+      expectedObjectEpoch: supported.objectEpoch,
+    },
+    action: "suppress",
+  });
+  assert.equal(suppressed.suppressionState, "suppressed");
+  const restored = await c.self.setLifecycle({
+    mutation: {
+      subjectId,
+      operationId: crypto.randomUUID(),
+      objectRef: changed.objectRef,
+      expectedObjectEpoch: suppressed.objectEpoch,
+    },
+    action: "restore",
+  });
+  await stop(core);
+  core = await boot(locator);
+  const restarted = core.client;
+  assert.equal(
+    (await restarted.self.get({ subjectId, id: first.objectRef!.value }))
+      .reference?.value,
+    changed.reference?.value,
+  );
+  const purge = {
+    subjectId,
+    operationId: crypto.randomUUID(),
+    objectRef: changed.objectRef,
+    expectedObjectEpoch: restored.objectEpoch,
+  };
+  await restarted.self.purge(purge);
+  await restarted.self.purge(purge);
+  await assert.rejects(
+    restarted.self.getRevision({ subjectId, id: changed.reference!.value }),
+  );
+  console.log(
+    "SELF_OWNER_SMOKE identity=true source=true exact_history=true revision_cas=true evidence=true lifecycle=true purge_replay=true restart=true",
+  );
+} finally {
+  await stop(core);
+}

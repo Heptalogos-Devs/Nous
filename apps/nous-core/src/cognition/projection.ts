@@ -14,24 +14,24 @@ import type { ConsumerPolicy } from "../domain.js";
 import { ModelRuntime } from "../model/runtime.js";
 import { canonicalDigest } from "../digest.js";
 
-function family(segment: Segment): "memory" | "runtime" | "resource" {
-  const kind = segment.sourceRefs[0]?.kind;
-  return kind &&
-    [
-      "memory",
-      "memory_revision",
-      "cognitive_schema",
-      "cognitive_schema_revision",
-      "episode",
-      "episode_revision",
-      "journal",
-      "journal_revision",
-      "tag",
-    ].includes(kind)
-    ? "memory"
-    : kind === "resource"
-      ? "resource"
-      : "runtime";
+function family(
+  segment: Segment,
+): "memory" | "selfCognition" | "runtime" | "resource" {
+  switch (segment.domain) {
+    case "memory":
+      return "memory";
+    case "self":
+      return "selfCognition";
+    case "runtime":
+      return "runtime";
+    case "resource":
+      return "resource";
+    default:
+      throw new ConnectError(
+        "Contribution has no declared semantic owner",
+        Code.Internal,
+      );
+  }
 }
 export class ProjectionPlanner {
   constructor(
@@ -64,10 +64,10 @@ export class ProjectionPlanner {
         Code.InvalidArgument,
       );
     const required = batch.segments.filter(
-      (s) => policy[family(s)] === "REQUIRED",
+      (s) => s.domain === "self" || policy[family(s)] === "REQUIRED",
     );
     const optional = batch.segments.filter(
-      (s) => policy[family(s)] !== "REQUIRED",
+      (s) => s.domain !== "self" && policy[family(s)] !== "REQUIRED",
     );
     let refined = optional;
     const degradation = [...batch.degradation];
@@ -115,6 +115,7 @@ export class ProjectionPlanner {
               stability: "EPOCH_STABLE",
               sourceRevision: revision,
               usage: "task_evidence",
+              domain: "runtime",
             }),
           ];
         }

@@ -41,6 +41,7 @@ pub struct ProjectionRequest {
     pub max_text_bytes: usize,
     pub materialize: bool,
     pub memory: RequirementStrength,
+    pub self_cognition: RequirementStrength,
     pub runtime: RequirementStrength,
     pub resource: RequirementStrength,
 }
@@ -191,17 +192,10 @@ impl CognitiveRuntimeService {
                 .into_iter()
                 .map(|reference| (reference, "request_situation", "request", true)),
         );
-        let requirement = |reference: &CognitiveRef| match reference {
-            CognitiveRef::Memory(_)
-            | CognitiveRef::MemoryRevision(_)
-            | CognitiveRef::CognitiveSchema(_)
-            | CognitiveRef::CognitiveSchemaRevision(_)
-            | CognitiveRef::Episode(_)
-            | CognitiveRef::EpisodeRevision(_)
-            | CognitiveRef::Journal(_)
-            | CognitiveRef::JournalRevision(_)
-            | CognitiveRef::Tag(_) => input.memory,
-            CognitiveRef::Resource(_) => input.resource,
+        let requirement = |reference: &CognitiveRef| match reference.domain() {
+            CognitiveDomain::Memory => input.memory,
+            CognitiveDomain::SelfCognition => input.self_cognition,
+            CognitiveDomain::Resource => input.resource,
             _ => input.runtime,
         };
         references

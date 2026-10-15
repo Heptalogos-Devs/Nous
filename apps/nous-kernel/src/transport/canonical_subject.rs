@@ -6,6 +6,7 @@ use super::*;
 rpc_service! {
     p::subject_service_server::SubjectService {
         forward {
+            provision_capabilities(p::ProvisionCapabilitiesRequest) -> p::Subject;
             create_subject(p::CreateSubjectRequest) -> p::Subject;
             get_subject(p::SubjectRequest) -> p::Subject;
             list_subjects(p::ListRequest) -> p::ListSubjectsResponse;

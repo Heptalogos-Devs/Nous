@@ -58,13 +58,7 @@ impl CognitiveRuntimeService {
                     "UseEvent occurred_at is outside the allowed range".into(),
                 ));
             }
-            if !matches!(
-                event.reference,
-                CognitiveRef::MemoryRevision(_)
-                    | CognitiveRef::CognitiveSchemaRevision(_)
-                    | CognitiveRef::EpisodeRevision(_)
-                    | CognitiveRef::JournalRevision(_)
-            ) {
+            if !event.reference.is_cognition_revision() {
                 return Err(Error::Invalid(
                     "UseEvent requires an exact cognition revision".into(),
                 ));
@@ -240,7 +234,10 @@ impl CognitiveRuntimeService {
                     .await
                     .map_err(db)?;
             let mut added = HashMap::<(String, String), u64>::new();
-            for (reference, _) in &meaningful_times {
+            for (reference, _) in meaningful_times
+                .iter()
+                .filter(|(r, _)| r.domain() == CognitiveDomain::Memory)
+            {
                 *added.entry(reference_parts(reference)).or_default() += 1;
             }
             let (kinds, values): (Vec<_>, Vec<_>) = added.keys().cloned().unzip();
@@ -306,6 +303,16 @@ async fn validate_use_target_in(
     subject: SubjectId,
     reference: &CognitiveRef,
 ) -> Result<()> {
+    if reference.domain() == CognitiveDomain::SelfCognition {
+        let family = reference
+            .kind()
+            .strip_suffix("_revision")
+            .ok_or_else(|| Error::Invalid("UseEvent needs an exact Self revision".into()))?;
+        let exists:Option<bool>=sqlx::query_scalar("SELECT true FROM self_revisions r JOIN self_objects o USING(object_id) WHERE r.subject_id=$1 AND r.revision_id=$2 AND o.family=$3 FOR SHARE OF o").bind(subject.0).bind(reference.uuid()).bind(family).fetch_optional(&mut **tx).await.map_err(db)?;
+        return exists
+            .map(|_| ())
+            .ok_or_else(|| Error::NotFound("Self UseEvent revision is outside Subject".into()));
+    }
     let (query, id) = match reference {
         CognitiveRef::MemoryRevision(id) => (
             "SELECT true FROM memory_revisions r JOIN memory_objects o USING(memory_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 FOR SHARE OF o",

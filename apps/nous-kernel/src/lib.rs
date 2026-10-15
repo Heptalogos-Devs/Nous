@@ -26,6 +26,7 @@ pub struct NousRuntime {
     pub configuration: ConfigurationService,
     pub store: AuthorityStore,
     pub subjects: SubjectCoreService,
+    pub self_cognition: Option<nous_self::SelfService>,
     pub cognition: CognitiveRuntimeService,
     pub memory: Option<MemoryService>,
     pub process_capabilities: ProcessCapabilities,
@@ -90,6 +91,14 @@ impl NousRuntime {
             cognition.clone(),
             system_snapshot.get(nous_material::MAX_UPLOAD_BYTES)?,
         )?;
+        let self_cognition = process_capabilities.self_cognition.then(|| {
+            nous_self::SelfService::new(
+                store.clone(),
+                material.clone(),
+                objects.clone(),
+                cognition.clone(),
+            )
+        });
         let mut serving_options = options.serving_options;
         serving_options.memory_enabled = process_capabilities.memory;
         serving_options.lexical = system_snapshot.get(nous_retrieval::LEXICAL_ENABLED_KEY)?;
@@ -121,6 +130,7 @@ impl NousRuntime {
             configuration,
             store,
             subjects,
+            self_cognition,
             cognition,
             memory,
             process_capabilities,
@@ -129,6 +139,16 @@ impl NousRuntime {
         })
     }
 
+    pub fn require_self(&self) -> Result<&nous_self::SelfService> {
+        self.self_cognition.as_ref().ok_or_else(|| {
+            DomainError::new(
+                DomainErrorCode::CapabilityUnavailable,
+                "Self MicroSystem is disabled",
+            )
+            .with_context("capability", "self_cognition")
+            .into()
+        })
+    }
     pub fn require_memory(&self) -> Result<&MemoryService> {
         self.memory.as_ref().ok_or_else(|| {
             DomainError::new(

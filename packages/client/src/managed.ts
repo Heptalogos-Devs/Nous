@@ -178,14 +178,7 @@ export function createManagedBinding(options: {
             .flatMap((segment) => segment.sourceRefs)
             .map((ref) => [`${ref.kind}:${ref.value}`, ref]),
         ).values(),
-      ].filter((ref) =>
-        [
-          "memory_revision",
-          "cognitive_schema_revision",
-          "episode_revision",
-          "journal_revision",
-        ].includes(ref.kind),
-      );
+      ].filter((ref) => ref.kind.endsWith("_revision"));
       if (references.length)
         await client.runtime.reportUse(
           {

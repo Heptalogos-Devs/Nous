@@ -48,6 +48,28 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
         ConfigSemanticEffect::SubjectProvisioning,
         bool_validator,
     )?;
+    registry.register(
+        PROCESS_SELF,
+        "configuration-service",
+        "Whether the process provides Self cognition.",
+        true,
+        ConfigExposure::Developer,
+        ConfigScopePolicy::SystemOnly,
+        ConfigApplyMode::RestartProcess,
+        ConfigSemanticEffect::Operational,
+        bool_validator,
+    )?;
+    registry.register(
+        SUBJECT_DEFAULT_SELF,
+        "configuration-service",
+        "Default Self capability for new Subjects.",
+        false,
+        ConfigExposure::Developer,
+        ConfigScopePolicy::SystemOnly,
+        ConfigApplyMode::NewSubjectsOnly,
+        ConfigSemanticEffect::SubjectProvisioning,
+        bool_validator,
+    )?;
     Ok(())
 }
 

@@ -14,6 +14,8 @@ pub enum QueryTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResultDomain {
+    SelfFacet,
+    NarrativeThread,
     Memory,
     Schema,
     Episode,
@@ -24,6 +26,8 @@ pub enum ResultDomain {
 impl ResultDomain {
     pub fn name(self) -> &'static str {
         match self {
+            Self::SelfFacet => "self_facet",
+            Self::NarrativeThread => "narrative_thread",
             Self::Memory => "memory",
             Self::Schema => "schema",
             Self::Episode => "episode",
@@ -41,6 +45,8 @@ impl Default for ResultProjection {
     fn default() -> Self {
         Self {
             domains: vec![
+                ResultDomain::SelfFacet,
+                ResultDomain::NarrativeThread,
                 ResultDomain::Memory,
                 ResultDomain::Schema,
                 ResultDomain::Episode,
@@ -61,7 +67,9 @@ impl ResultProjection {
         self.domains.iter().any(|domain| {
             matches!(
                 domain,
-                ResultDomain::Memory
+                ResultDomain::SelfFacet
+                    | ResultDomain::NarrativeThread
+                    | ResultDomain::Memory
                     | ResultDomain::Schema
                     | ResultDomain::Episode
                     | ResultDomain::Journal
@@ -111,6 +119,10 @@ impl Default for TemporalFrame {
 
 pub fn reference_query_domain(reference: &CognitiveRef) -> &'static str {
     match reference {
+        CognitiveRef::SelfFacet(_) | CognitiveRef::SelfFacetRevision(_) => "self_facet",
+        CognitiveRef::NarrativeThread(_) | CognitiveRef::NarrativeThreadRevision(_) => {
+            "narrative_thread"
+        }
         CognitiveRef::Memory(_) | CognitiveRef::MemoryRevision(_) => "memory",
         CognitiveRef::CognitiveSchema(_) | CognitiveRef::CognitiveSchemaRevision(_) => "schema",
         CognitiveRef::Episode(_) | CognitiveRef::EpisodeRevision(_) => "episode",

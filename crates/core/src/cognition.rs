@@ -284,13 +284,7 @@ pub fn validate_exact_basis(basis: &[RevisionBasis]) -> Result<()> {
             return Err(Error::Invalid("duplicate revision support".into()));
         }
         if let RevisionBasis::CognitionDependency(value) = basis
-            && !matches!(
-                value.target_revision,
-                CognitiveRef::MemoryRevision(_)
-                    | CognitiveRef::CognitiveSchemaRevision(_)
-                    | CognitiveRef::EpisodeRevision(_)
-                    | CognitiveRef::JournalRevision(_)
-            )
+            && !value.target_revision.is_cognition_revision()
         {
             return Err(Error::Invalid(
                 "cognition support must target an exact revision".into(),

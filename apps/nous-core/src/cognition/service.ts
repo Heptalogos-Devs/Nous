@@ -111,6 +111,7 @@ export class CoreCognition {
     const request = create(ProjectionRequestSchema, input);
     bindProjectionUsage(request);
     request.memoryRequirement = policy.memory;
+    request.selfRequirement = policy.selfCognition;
     request.runtimeRequirement = policy.runtime;
     request.resourceRequirement = policy.resource;
     request.materialize = policy.materialize;

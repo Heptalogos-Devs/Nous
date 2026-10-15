@@ -115,10 +115,15 @@ impl ContextResolver for NousRuntime {
             }
         }
         for (index, (reference, _)) in other {
-            result[index] = self
-                .cognition
-                .runtime_context_source(subject, reference, max_bytes)
-                .await;
+            result[index] = if reference.domain() == CognitiveDomain::SelfCognition {
+                self.require_self()?
+                    .context_source(subject, reference, max_bytes > 0)
+                    .await
+            } else {
+                self.cognition
+                    .runtime_context_source(subject, reference, max_bytes)
+                    .await
+            };
         }
         Ok(result)
     }

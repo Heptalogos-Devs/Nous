@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::SubjectCoreService;
 
+pub const MARKDOWN_SEED_FORMAT: &str = "text/markdown";
 pub const COGNITIVE_SEED_FORMAT: &str = "application/vnd.nous-wave.cognitive-seed+toml;version=1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,13 +34,19 @@ impl CognitiveSeedInput {
         if self.text.trim().is_empty() {
             return Err(Error::Invalid("Cognitive Seed content is required".into()));
         }
-        if self.format != COGNITIVE_SEED_FORMAT {
-            return Err(Error::Invalid(format!(
-                "unsupported Cognitive Seed format: {}",
-                self.format
-            )));
+        if self.text.len() > 1_048_576 {
+            return Err(Error::Invalid("Cognitive Seed exceeds source bound".into()));
         }
-        validate_seed_document(&self.text)?;
+        match self.format.as_str() {
+            COGNITIVE_SEED_FORMAT => validate_seed_document(&self.text)?,
+            MARKDOWN_SEED_FORMAT => {}
+            _ => {
+                return Err(Error::Invalid(format!(
+                    "unsupported Cognitive Seed format: {}",
+                    self.format
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -232,7 +239,12 @@ pub(super) async fn insert_seed(
             tx,
             subject,
             nous_material::UploadMetadata {
-                media_type: "application/toml".into(),
+                media_type: if input.format == MARKDOWN_SEED_FORMAT {
+                    "text/markdown"
+                } else {
+                    "application/toml"
+                }
+                .into(),
                 metadata: serde_json::json!({}),
             },
             futures::stream::iter([Ok(input.text.as_bytes().to_vec())]),

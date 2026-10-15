@@ -47,10 +47,31 @@ fn subject(input: SubjectView) -> p::Subject {
         metadata: to_object(input.metadata),
         capabilities: Some(p::SubjectCapabilities {
             memory: capabilities.memory,
+            self_cognition: capabilities.self_cognition,
         }),
     }
 }
 impl KernelService {
+    pub(super) async fn provision_capabilities(
+        &self,
+        input: p::ProvisionCapabilitiesRequest,
+    ) -> Result<p::Subject> {
+        let c = required(input.capabilities, "capabilities")?;
+        Ok(subject(
+            self.0
+                .subjects
+                .provision_capabilities(
+                    SubjectId(id(&input.subject_id)?),
+                    OperationId(id(&input.operation_id)?),
+                    SubjectCapabilities {
+                        memory: c.memory,
+                        self_cognition: c.self_cognition,
+                    },
+                )
+                .await?,
+        ))
+    }
+
     pub(super) async fn create_subject(
         &self,
         input: p::CreateSubjectRequest,
@@ -70,6 +91,7 @@ impl KernelService {
                 metadata: object(input.metadata),
                 capabilities: input.capabilities.map(|value| SubjectCapabilities {
                     memory: value.memory,
+                    self_cognition: value.self_cognition,
                 }),
             })
             .await?;
