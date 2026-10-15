@@ -3,6 +3,7 @@
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import {
   RevisionBasisSchema,
+  DegradationSchema,
   ProducerSignatureSchema,
   type ProducerSignature,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
@@ -57,6 +58,7 @@ type SavedSelfProposal = {
   basis: [string, JsonValue][];
   current: [string, JsonValue][];
   producer: JsonValue;
+  degradation?: JsonValue[];
 };
 function actionIdentity(
   request: InterpretSelfRequest,
@@ -262,6 +264,9 @@ async function interpretOnce(
               toJson(SelfRecordSchema, value),
             ]),
             producer: toJson(ProducerSignatureSchema, producer),
+            degradation: plan.degradation.map((entry) =>
+              toJson(DegradationSchema, entry),
+            ),
           },
           dependencies,
           execution: generated.execution,
@@ -280,6 +285,9 @@ async function interpretOnce(
       const response = create(InterpretSelfResponseSchema, {
         domain: "self",
         status: "applied",
+        degradation: (proposal.degradation ?? []).map((entry) =>
+          fromJson(DegradationSchema, entry),
+        ),
       });
       let actions: PreparedAction[];
       try {
@@ -287,6 +295,7 @@ async function interpretOnce(
           proposal.output,
           {
             input: "",
+            degradation: response.degradation,
             basis: new Map(
               proposal.basis.map(([key, value]) => [
                 key,

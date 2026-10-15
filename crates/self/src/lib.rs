@@ -8,6 +8,7 @@ mod lifecycle;
 mod mutations;
 mod query;
 mod read;
+mod selection;
 mod trace;
 use chrono::{DateTime, Utc};
 pub use contract::*;

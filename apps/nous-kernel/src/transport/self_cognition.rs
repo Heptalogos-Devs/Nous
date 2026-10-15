@@ -146,6 +146,91 @@ fn self_ref(input: Option<p::CognitiveRef>, exact: bool) -> Result<CognitiveRef>
 }
 #[tonic::async_trait]
 impl p::self_service_server::SelfService for KernelService {
+    async fn select(
+        &self,
+        r: Request<p::SelfSelectionRequest>,
+    ) -> std::result::Result<Response<p::SelfSelectionResponse>, Status> {
+        let r = r.into_inner();
+        rpc_reply(async {
+            let scope = r.scope.unwrap_or_default();
+            let scope = SelfScope {
+                description: scope.description,
+                purposes: scope.purposes,
+                entities: scope
+                    .entity_refs
+                    .into_iter()
+                    .map(EntityRef::new)
+                    .collect::<Result<_>>()?,
+                work_context: scope
+                    .work_context_id
+                    .as_deref()
+                    .map(id)
+                    .transpose()?
+                    .map(WorkContextId),
+                conversation: scope.conversation_ref,
+            };
+            let targets = r
+                .targets
+                .into_iter()
+                .map(from_ref)
+                .collect::<Result<Vec<_>>>()?;
+            let sources = r
+                .sources
+                .into_iter()
+                .map(from_ref)
+                .collect::<Result<Vec<_>>>()?;
+            let mut ranked = r
+                .ranked
+                .into_iter()
+                .map(from_ref)
+                .collect::<Result<Vec<_>>>()?;
+            self.0
+                .require_self()?
+                .require_enabled(SubjectId(id(&r.subject_id)?))
+                .await?;
+            let (discovered, discovery_degradation) = self
+                .0
+                .serving
+                .lexical_candidates(
+                    SubjectId(id(&r.subject_id)?),
+                    &r.intent,
+                    r.max_items as usize,
+                    &["self_facet", "narrative_thread"],
+                )
+                .await?;
+            ranked.extend(discovered);
+            let selection = self
+                .0
+                .require_self()?
+                .select(
+                    SubjectId(id(&r.subject_id)?),
+                    nous_self::SelfSelectionRequest {
+                        scope: &scope,
+                        targets: &targets,
+                        sources: &sources,
+                        ranked: &ranked,
+                        max_items: r.max_items as usize,
+                        max_bytes: r.max_bytes as usize,
+                        automatic: false,
+                    },
+                )
+                .await?;
+            Ok(p::SelfSelectionResponse {
+                candidate_scope: format!("Bounded current accepted/unsuppressed Self: exact targets, direct incoming/outgoing source dependencies, shared lexical ranking (at most 128 refs), adopted identities; count={}, body/support bytes={}. Scope descriptions remain for interpretation; absence is not nonexistence.", r.max_items, r.max_bytes),
+                items: selection.records.into_iter().map(record).collect(),
+                degradation: selection
+                    .degradation
+                    .into_iter()
+                    .chain(discovery_degradation)
+                    .map(|d| p::Degradation {
+                        code: d.code,
+                        detail: d.detail.unwrap_or_default(),
+                    })
+                    .collect(),
+            })
+        })
+        .await
+    }
     async fn adopt(
         &self,
         r: Request<p::AdoptSelfRequest>,

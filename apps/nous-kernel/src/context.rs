@@ -10,10 +10,8 @@ impl ContextResolver for NousRuntime {
     async fn automatic_context_sources(
         &self,
         subject: SubjectId,
-        scope: &nous_runtime::InvocationScope,
-        work_context: Option<uuid::Uuid>,
-        materialize: bool,
-    ) -> Result<Vec<ContextSource>> {
+        input: nous_runtime::AutomaticContextRequest<'_>,
+    ) -> Result<nous_runtime::AutomaticContext> {
         if !self
             .subjects
             .subject(subject)
@@ -21,11 +19,33 @@ impl ContextResolver for NousRuntime {
             .capabilities
             .self_cognition
         {
-            return Ok(Vec::new());
+            return Ok(nous_runtime::AutomaticContext::default());
         }
-        self.require_self()?
-            .automatic_context(subject, scope, work_context, materialize)
-            .await
+        let (discovered, degradation) = self
+            .serving
+            .lexical_candidates(
+                subject,
+                &input.scope.intent.chars().take(2048).collect::<String>(),
+                input.max_items.min(128),
+                &["self_facet"],
+            )
+            .await?;
+        let mut ranked = input.ranked.to_vec();
+        ranked.extend(discovered);
+        ranked.retain(|r| r.domain() == CognitiveDomain::SelfCognition);
+        ranked.truncate(128);
+        let mut selected = self
+            .require_self()?
+            .automatic_context(
+                subject,
+                nous_runtime::AutomaticContextRequest {
+                    ranked: &ranked,
+                    ..input
+                },
+            )
+            .await?;
+        selected.degradation.extend(degradation);
+        Ok(selected)
     }
 
     async fn query_descriptors(

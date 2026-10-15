@@ -20,6 +20,8 @@ message InterpretSelfRequest {
   string operation_id = 2;
   oneof source { string seed_version_id = 3 [(reference_kind) = "cognitive_seed_version"]; SelfObservationSource observation = 4; }
   SelfScope scope = 5;
+  repeated CognitiveRef targets = 6;
+  uint32 max_candidates = 7;
 }
 message SelfActionResult { string action = 1; string status = 2; SelfRecord record = 3; string reason = 4; optional string error_code = 5; }
 message InterpretSelfResponse { string domain = 1; string status = 2; repeated SelfActionResult actions = 3; repeated Degradation degradation = 4; }

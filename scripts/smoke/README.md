@@ -13,6 +13,7 @@
 | [longitudinal.ts](longitudinal.ts)                       | Observation 到纵向维护与重启轨迹     |
 | [configuration.ts](configuration.ts)                     | 配置规范化、scope、CAS/replay 和重启 |
 | [client.ts](client.ts) | 仓库外安装官方 Client，严格类型检查与 status/Subject 操作 |
+| [self-selection.ts](self-selection.ts) | 超过 100 项的管理分页、完整依据、身份与有界反思；可选真实 native 验证 |
 | [support.ts](support.ts)                                 | 场景共用的隔离实例和 Core 生命周期   |
 
 ## Public smoke
@@ -41,3 +42,14 @@ corepack pnpm smoke:client
 `smoke:longitudinal` 调用 Rust test harness 启动临时 PostgreSQL 和真实 Kernel gRPC；TypeScript 场景托管真实 Core HTTP 并使用官方 Client。ManualCognitiveClock 通过测试子进程的 stdin/stdout 控制，未增加产品 RPC。该测试由 `just check` 的 workspace tests 执行；aggregate smoke 不重复执行它。`just check` 随后运行 aggregate 公共场景。
 
 场景创建临时实例，通过正常 Core 与官方 Client 操作。`NOUS_WAVE_KERNEL_EXECUTABLE` 可指定 Kernel；`NOUS_WAVE_POSTGRES_RUNTIME` 可指定 PostgreSQL 安装。`support.ts` 是共享启动 helper。
+
+
+## Self 容量副本
+
+```sh
+pnpm smoke:self-selection
+# 显式加载自己现有的 private env，使用已经配置的模型；仅创建隔离实例
+NOUS_SELF_SELECTION_MODEL=<已配置的反思模型> pnpm smoke:self-selection /absolute/path/openclaw.json /absolute/path/runtime/node_modules/openclaw
+```
+
+默认使用本地确定性模型替身，检查真实 Core/Kernel/PostgreSQL 的容量、分页和读取边界，不证明模型判断。提供已有 OpenClaw provider 配置与受控 runtime 后，复用 native runner 的实际 HTTP 捕获，调用真实 self_reflection 并验证原生对话的实际输入和输出含第一页之后的身份。可用 `NOUS_SELF_SELECTION_MODEL` 选择已有配置中实际可用的反思模型，默认采用 provider 的最后一个模型；只消费现有 provider 模型。配置/凭据只用于隔离副本，证据及成果保留在打印的 `data/temp/smoke/self-selection-*` 路径。成功或失败均停止本次 Core/Gateway，付费结果一产生就保存在副本中。

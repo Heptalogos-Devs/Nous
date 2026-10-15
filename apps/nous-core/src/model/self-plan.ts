@@ -6,6 +6,8 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import {
   RevisionBasisSchema,
   TemporalExtentSchema,
+  type CognitiveRef,
+  CognitiveRefSchema,
   type ProducerSignature,
   type RevisionBasis,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
@@ -33,49 +35,8 @@ export async function prepareSelfInterpretation(
   const basis = new Map<string, RevisionBasis>();
   const current = new Map<string, SelfRecord>();
   const subjectId = request.subjectId;
-  const listing = await kernel.self.list(
-    { subjectId, page: { pageSize: 100 } },
-    options,
-  );
-  if (listing.nextPageToken)
-    throw new ConnectError(
-      "Self interpretation exceeds bounded current snapshot",
-      Code.ResourceExhausted,
-    );
-  for (const record of listing.items) {
-    if (
-      record.acceptanceState !== "accepted" ||
-      record.suppressionState !== "normal"
-    )
-      continue;
-    const key = `self:${current.size}`;
-    current.set(key, record);
-    const content = record.content?.content;
-    if (content?.case) {
-      content.value.basis.forEach((entry, index) =>
-        basis.set(`${key}:basis:${index}`, entry),
-      );
-      record.evidence.forEach((entry, index) => {
-        if (entry.basis) basis.set(`${key}:evidence:${index}`, entry.basis);
-      });
-      if (content.case === "facet")
-        content.value.exceptions.forEach((exception, index) =>
-          exception.basis.forEach((entry, source) =>
-            basis.set(`${key}:exception:${index}:${source}`, entry),
-          ),
-        );
-    }
-    if (record.integrityState === "valid")
-      basis.set(
-        key,
-        create(RevisionBasisSchema, {
-          basis: {
-            case: "cognitionDependency",
-            value: { targetRevision: record.reference, basisRole: "direct" },
-          },
-        }),
-      );
-  }
+  const sources: CognitiveRef[] = [];
+  let sourceText = "";
   let source: unknown;
   if (request.source.case === "seedVersionId") {
     const seed = await kernel.subjects.getCognitiveSeedVersion(
@@ -83,6 +44,13 @@ export async function prepareSelfInterpretation(
       options,
     );
     const text = seed.seed?.text ?? "";
+    sourceText = text;
+    sources.push(
+      create(CognitiveRefSchema, {
+        kind: "cognitive_seed_version",
+        value: seed.seedVersionId,
+      }),
+    );
     if (!text.trim()) invalidSelf("Seed text is empty");
     if (Buffer.byteLength(text) > maxBytes)
       throw new ConnectError(
@@ -146,6 +114,14 @@ export async function prepareSelfInterpretation(
     const text = new TextDecoder("utf-8", { fatal: true }).decode(
       material.content,
     );
+    sourceText = text;
+    sources.push(
+      create(CognitiveRefSchema, {
+        kind: "occurrence",
+        value: observation.occurrenceId,
+      }),
+      material.reference,
+    );
     basis.set(
       "source",
       create(RevisionBasisSchema, {
@@ -183,9 +159,75 @@ export async function prepareSelfInterpretation(
     invalidSelf(
       "Self interpretation requires an adopted Seed or actual observation",
     );
+  const maxCandidates = request.maxCandidates || 32;
+  if (maxCandidates > 128 || request.targets.length > maxCandidates)
+    invalidSelf(
+      "Self candidate budget must be 1..128 and contain explicit targets",
+    );
+  const intent = Array.from(sourceText).slice(0, 2048).join("");
+  const selection = await kernel.self.select(
+    {
+      subjectId,
+      scope: request.scope,
+      targets: request.targets,
+      sources,
+      intent,
+      maxItems: maxCandidates,
+      maxBytes: Math.floor(maxBytes / 4),
+    },
+    options,
+  );
+  const degradation = selection.degradation;
+  for (const record of selection.items) {
+    if (
+      record.acceptanceState !== "accepted" ||
+      record.suppressionState !== "normal"
+    )
+      continue;
+    const key = `self:${current.size}`;
+    current.set(key, record);
+    const content = record.content?.content;
+    if (content?.case) {
+      content.value.basis.forEach((entry, index) =>
+        basis.set(`${key}:basis:${index}`, entry),
+      );
+      record.evidence.forEach((entry, index) => {
+        if (entry.basis) basis.set(`${key}:evidence:${index}`, entry.basis);
+      });
+      if (content.case === "facet")
+        content.value.exceptions.forEach((exception, index) =>
+          exception.basis.forEach((entry, basisIndex) =>
+            basis.set(`${key}:exception:${index}:${basisIndex}`, entry),
+          ),
+        );
+    }
+    if (record.integrityState === "valid")
+      basis.set(
+        key,
+        create(RevisionBasisSchema, {
+          basis: {
+            case: "cognitionDependency",
+            value: { targetRevision: record.reference, basisRole: "direct" },
+          },
+        }),
+      );
+  }
+  const candidateScope = {
+    completeSubjectSnapshot: false,
+    selection: selection.candidateScope,
+    countBudget: maxCandidates,
+    bodyAndSupportByteBudget: Math.floor(maxBytes / 4),
+    retrievalSourceCharacters: Array.from(intent).length,
+    retrievalSourceTruncated: intent !== sourceText,
+    invocationScope: request.scope,
+    omitted: degradation,
+    interpretation:
+      "Unselected Self may exist. Candidate absence is not proof of absence or inapplicability. Insufficient evidence for a new-vs-existing decision requires an exact target follow-up, not an exhaustive Self read.",
+  };
   const input = JSON.stringify(
     {
       source,
+      candidateScope,
       invocationScope: request.scope,
       basisCatalog: [...basis].map(([key, entry]) => ({
         key,
@@ -204,7 +246,7 @@ export async function prepareSelfInterpretation(
       "Self interpretation snapshot exceeds input budget",
       Code.ResourceExhausted,
     );
-  return { input, basis, current };
+  return { input, basis, current, degradation };
 }
 export type SelfInterpretationPlan = Awaited<
   ReturnType<typeof prepareSelfInterpretation>
