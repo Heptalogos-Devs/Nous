@@ -23,6 +23,7 @@ pub use projection::concept::{ConceptProjectionInput, ConceptProjectionTag};
 mod query_time;
 pub use query_time::{TimeColumns, push_time_predicate};
 mod references;
+mod self_dependencies;
 pub use identity::{
     IdentityAddress, IdentityAddressTarget, IdentityBinding, lexical_prefix, validate_lexical,
 };
@@ -38,6 +39,9 @@ pub use serving::{ServingRecord, ServingView};
 
 use nous_core::{Error, OperationId, Result, SubjectId};
 use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
+
+/// The existing Authority transaction shared by composed semantic owner reads.
+pub type AuthorityTransaction<'a> = Transaction<'a, Postgres>;
 
 /// Serialize a Subject-scoped mutation receipt within its Authority transaction.
 pub async fn lock_operation(
@@ -112,7 +116,7 @@ impl AuthorityStore {
         self.pool.begin().await.map_err(database_error)
     }
 
-    pub async fn read_view(&self) -> Result<Transaction<'_, Postgres>> {
+    pub async fn read_view(&self) -> Result<AuthorityTransaction<'_>> {
         let mut tx = self.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .execute(&mut *tx)

@@ -25,7 +25,7 @@ import {
   RevisionBasisSchema,
   SetActiveWorkContextRequestSchema,
   SubjectCapabilitiesSchema,
-  SubjectRequestSchema,
+  OpenSessionRequestSchema,
   TemporalExtentSchema,
   UpdateWorkContextRequestSchema,
   WorkContextMutationRequestSchema,
@@ -88,7 +88,7 @@ async function main() {
     );
     const createdSeed = await client.subjects.getCognitiveSeed({ subjectId });
     const sessionA = await client.runtime.openSession(
-      create(SubjectRequestSchema, { subjectId }),
+      create(OpenSessionRequestSchema, { subjectId }),
     );
     const observed = await client.runtime.recordObservation(
       create(ObservationInputSchema, {
@@ -467,7 +467,7 @@ async function main() {
     await stop(current);
     current = await boot(configPath);
     const sessionB = await current.client.runtime.openSession(
-      create(SubjectRequestSchema, { subjectId }),
+      create(OpenSessionRequestSchema, { subjectId }),
     );
     context = await current.client.runtime.resumeWorkContext(
       create(WorkContextMutationRequestSchema, {

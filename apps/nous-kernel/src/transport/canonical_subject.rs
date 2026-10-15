@@ -6,9 +6,11 @@ use super::*;
 rpc_service! {
     p::subject_service_server::SubjectService {
         forward {
+            provision_capabilities(p::ProvisionCapabilitiesRequest) -> p::Subject;
             create_subject(p::CreateSubjectRequest) -> p::Subject;
             get_subject(p::SubjectRequest) -> p::Subject;
             list_subjects(p::ListRequest) -> p::ListSubjectsResponse;
+            get_cognitive_seed_version(p::ObjectRequest) -> p::CognitiveSeedVersion;
             get_cognitive_seed(p::SubjectRequest) -> p::CognitiveSeedVersion;
             adopt_cognitive_seed(p::AdoptCognitiveSeedRequest) -> p::CognitiveSeedVersion;
         }

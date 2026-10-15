@@ -11,14 +11,20 @@ impl CognitiveRuntimeService {
     pub async fn open_session(
         &self,
         subject: SubjectId,
+        parent: Option<SessionId>,
         metadata: serde_json::Value,
     ) -> Result<SessionView> {
         self.require_subject(subject).await?;
         let session = SessionId::new();
         let now = self.now(subject);
         let mut tx = self.store.begin().await?;
-        sqlx::query("INSERT INTO cognitive_sessions(session_id,subject_id,opened_at,last_activity_at,metadata) VALUES($1,$2,$3,$3,$4)")
-            .bind(session.0).bind(subject.0).bind(now).bind(metadata)
+        if let Some(parent) = parent {
+            self.lock_open_session_in(&mut tx, subject, parent).await?;
+            self.require_safe_history_in(&mut tx, subject, parent)
+                .await?;
+        }
+        sqlx::query("INSERT INTO cognitive_sessions(session_id,subject_id,opened_at,last_activity_at,metadata,parent_session_id,history_domains) VALUES($1,$2,$3,$3,$4,$5,COALESCE((SELECT history_domains FROM cognitive_sessions WHERE session_id=$5),'{}'::text[]))")
+            .bind(session.0).bind(subject.0).bind(now).bind(metadata).bind(parent.map(|id| id.0))
             .execute(&mut *tx).await.map_err(db)?;
         self.store
             .ensure_identity_addresses_in(&mut tx, subject, &[CognitiveRef::Session(session)], "")
@@ -53,12 +59,23 @@ impl CognitiveRuntimeService {
         session: SessionId,
         connection: &mut sqlx::PgConnection,
     ) -> Result<SessionView> {
-        let row = sqlx::query("SELECT session_id,subject_id,opened_at,last_activity_at,last_meaningful_use_at,closed_at,runtime_revision,active_work_context_id FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2")
-            .bind(subject.0).bind(session.0).fetch_optional(&mut *connection).await.map_err(db)?
-            .ok_or_else(|| Error::NotFound("session not found".into()))?;
+        let row =
+            sqlx::query("SELECT * FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2")
+                .bind(subject.0)
+                .bind(session.0)
+                .fetch_optional(&mut *connection)
+                .await
+                .map_err(db)?
+                .ok_or_else(|| Error::NotFound("session not found".into()))?;
         let refs = sqlx::query("SELECT ref_kind,ref_value,entry_reason,state,entered_at,last_meaningful_use_at,hold_until FROM resident_refs WHERE session_id=$1 AND state <> 'evicted' ORDER BY entered_at")
             .bind(session.0).fetch_all(&mut *connection).await.map_err(db)?;
-        decode_session(row, refs)
+        let mut view = decode_session(row, refs)?;
+        if view.parent_session_id.is_some() && !view.history_invalidated {
+            view.history_invalidated = self
+                .history_invalidated_in(connection, subject, session)
+                .await?;
+        }
+        Ok(view)
     }
 
     pub async fn sessions(
@@ -88,10 +105,13 @@ impl CognitiveRuntimeService {
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let id: Uuid = row.try_get("session_id").map_err(db)?;
-            items.push(decode_session(
-                row,
-                residents.remove(&id).unwrap_or_default(),
-            )?);
+            let mut view = decode_session(row, residents.remove(&id).unwrap_or_default())?;
+            if view.parent_session_id.is_some() && !view.history_invalidated {
+                view.history_invalidated = self
+                    .history_invalidated_in(&mut tx, subject, SessionId(id))
+                    .await?;
+            }
+            items.push(view);
         }
         tx.commit().await.map_err(db)?;
         Ok((items, more))
@@ -323,6 +343,12 @@ fn decode_session(
         });
     }
     Ok(SessionView {
+        parent_session_id: row
+            .try_get::<Option<Uuid>, _>("parent_session_id")
+            .map_err(db)?
+            .map(SessionId),
+        history_invalidated: row.try_get("history_invalidated").map_err(db)?,
+        history_domains: row.try_get("history_domains").map_err(db)?,
         session_id: SessionId(row.try_get("session_id").map_err(db)?),
         subject_id: SubjectId(row.try_get("subject_id").map_err(db)?),
         opened_at: row.try_get("opened_at").map_err(db)?,

@@ -33,6 +33,7 @@ import {
   MemoryService,
   MaterialService,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/services_pb.js";
+import { SelfService } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
 import { IdentityService } from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
 
 /** A consumer-owned web identity, with the original public locator preserved. */
@@ -62,6 +63,7 @@ import { ModelService } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js
 /** Client namespaces use the canonical service descriptors. */
 export const serviceDescriptors = {
   subjects: SubjectService,
+  self: SelfService,
   runtime: RuntimeService,
   cognition: CognitionService,
   memory: MemoryService,

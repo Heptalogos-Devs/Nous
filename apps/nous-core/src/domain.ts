@@ -10,6 +10,7 @@ export interface ConsumerPolicy {
   consumerId: string;
   revision: string;
   memory: Requirement;
+  selfCognition: Requirement;
   runtime: Requirement;
   resource: Requirement;
   maxItems: number;

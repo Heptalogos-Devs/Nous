@@ -12,6 +12,8 @@ const defaults: Partial<Record<ModelRole, string>> = {
   query_concept_enrichment: "query/concept-enrichment.md",
   projection_steward: "projection/steward.md",
   memory_formation: "memory/formation.md",
+  self_formation: "self/formation.md",
+  self_reflection: "self/reflection.md",
   episode_segmentation: "episode/segmentation.md",
   journal_synthesis: "journal/synthesis.md",
   memory_consolidation: "memory/consolidation.md",

@@ -24,6 +24,7 @@ export const consumersSchema = z
         ),
       revision: z.string().min(1).default("1"),
       memory: requirement.default("PREFERRED"),
+      self_cognition: requirement.default("PREFERRED"),
       runtime: requirement.default("OPTIONAL"),
       resource: requirement.default("OPTIONAL"),
       max_items: z.number().int().min(1).max(2048).default(32),

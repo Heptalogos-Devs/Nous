@@ -91,6 +91,25 @@ export const commandInventory = {
   },
   commands: [
     {
+      command:
+        "self list|soul|interpret|interpret-seed|adopt|get|revision|history|revise|evidence|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[typed SelfFacet/NarrativeThread object or exact revision reference]",
+        "adopt/revise --request-file <SelfContent TOML> --text <reason>",
+        "interpret --request-file <InterpretSelfRequest TOML>; interpret-seed uses the currently adopted Seed",
+        "evidence --request-file <AddSelfEvidenceRequest TOML with role and basis>",
+        "--expected-object-epoch <epoch>; --operation-id <stable retry id>",
+      ],
+      description:
+        "Explicit Self management and source-backed model interpretation. Soul is a derived current view; ordinary chat does not authorize mutation.",
+    },
+    {
+      command: "subject provision",
+      parameters: ["--request-file <SubjectCapabilities TOML>"],
+      description:
+        "Append explicitly requested domain capabilities to the existing Subject without replacing identity or data.",
+    },
+    {
       command: "serving clean",
       parameters: ["--subject <Subject reference>"],
       description:

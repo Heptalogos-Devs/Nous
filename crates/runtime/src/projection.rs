@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::*;
+use std::collections::HashMap;
 
+#[derive(Clone)]
 pub struct ContextSource {
+    pub usage: &'static str,
+    pub required: bool,
     pub reference: CognitiveRef,
     pub source_revision: Option<String>,
     pub text: Option<String>,
@@ -11,8 +15,23 @@ pub struct ContextSource {
     pub evidence: Vec<EvidenceHandle>,
 }
 
+pub struct InvocationScope {
+    pub purpose: String,
+    pub conversation: String,
+    pub entities: Vec<EntityRef>,
+}
 #[async_trait::async_trait]
 pub trait ContextResolver: Send + Sync {
+    async fn automatic_context_sources(
+        &self,
+        _subject: SubjectId,
+        _scope: &InvocationScope,
+        _work_context: Option<Uuid>,
+        _materialize: bool,
+    ) -> Result<Vec<ContextSource>> {
+        Ok(Vec::new())
+    }
+
     async fn query_descriptors(
         &self,
         query: &CognitiveQuery,
@@ -33,6 +52,7 @@ pub trait ContextResolver: Send + Sync {
 
 pub struct ProjectionRequest {
     pub subject: SubjectId,
+    pub scope: Option<InvocationScope>,
     pub session: SessionId,
     pub active_work_context: Option<Uuid>,
     pub consumer_id: String,
@@ -41,6 +61,7 @@ pub struct ProjectionRequest {
     pub max_text_bytes: usize,
     pub materialize: bool,
     pub memory: RequirementStrength,
+    pub self_cognition: RequirementStrength,
     pub runtime: RequirementStrength,
     pub resource: RequirementStrength,
 }
@@ -71,6 +92,8 @@ impl CognitiveRuntimeService {
         if let CognitiveRef::Resource(resource) = reference {
             let descriptor = self.resource(subject, resource).await?.descriptor;
             return Ok(crate::ContextSource {
+                usage: "task_evidence",
+                required: false,
                 reference: reference.clone(),
                 source_revision: None,
                 text: (max_bytes > 0).then(|| {
@@ -101,6 +124,8 @@ impl CognitiveRuntimeService {
             None
         };
         Ok(crate::ContextSource {
+            usage: "task_evidence",
+            required: false,
             reference: reference.clone(),
             source_revision: None,
             text,
@@ -191,23 +216,66 @@ impl CognitiveRuntimeService {
                 .into_iter()
                 .map(|reference| (reference, "request_situation", "request", true)),
         );
-        let requirement = |reference: &CognitiveRef| match reference {
-            CognitiveRef::Memory(_)
-            | CognitiveRef::MemoryRevision(_)
-            | CognitiveRef::CognitiveSchema(_)
-            | CognitiveRef::CognitiveSchemaRevision(_)
-            | CognitiveRef::Episode(_)
-            | CognitiveRef::EpisodeRevision(_)
-            | CognitiveRef::Journal(_)
-            | CognitiveRef::JournalRevision(_)
-            | CognitiveRef::Tag(_) => input.memory,
-            CognitiveRef::Resource(_) => input.resource,
+        let automatic = if input.self_cognition != RequirementStrength::Forbidden {
+            if let Some(scope) = &input.scope {
+                resolver
+                    .automatic_context_sources(
+                        input.subject,
+                        scope,
+                        session.active_work_context_id,
+                        input.materialize,
+                    )
+                    .await?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        let required_bytes: usize = automatic
+            .iter()
+            .filter(|s| s.required)
+            .map(|s| s.text.as_ref().map_or(0, String::len))
+            .sum();
+        let required_count = automatic.iter().filter(|s| s.required).count();
+        let foreground_text = foreground
+            .as_ref()
+            .filter(|_| input.runtime != RequirementStrength::Forbidden)
+            .map(|w| w.task_text());
+        if required_count + usize::from(foreground_text.is_some()) > input.max_items
+            || (input.materialize
+                && required_bytes + foreground_text.as_ref().map_or(0, String::len)
+                    > input.max_text_bytes)
+        {
+            return Err(Error::Unavailable(
+                "required cognition exceeds projection budget".into(),
+            ));
+        }
+        let automatic_refs = automatic
+            .iter()
+            .map(|s| s.reference.clone())
+            .collect::<Vec<_>>();
+        let cached = automatic
+            .into_iter()
+            .map(|s| (s.reference.clone(), s))
+            .collect::<HashMap<_, _>>();
+        references.splice(
+            0..0,
+            automatic_refs
+                .into_iter()
+                .map(|r| (r, "current_self", "checkpoint", true)),
+        );
+        let requirement = |reference: &CognitiveRef| match reference.domain() {
+            CognitiveDomain::Memory => input.memory,
+            CognitiveDomain::SelfCognition => input.self_cognition,
+            CognitiveDomain::Resource => input.resource,
             _ => input.runtime,
         };
         references
             .retain(|(reference, ..)| requirement(reference) != RequirementStrength::Forbidden);
         references.sort_by_key(|(reference, ..)| {
             (
+                !cached.get(reference).is_some_and(|s| s.required),
                 !matches!(reference, CognitiveRef::WorkContext(_)),
                 requirement(reference),
             )
@@ -249,9 +317,10 @@ impl CognitiveRuntimeService {
             let requested = batch
                 .iter()
                 .filter(|(r, ..)| {
-                    foreground.as_ref().is_none_or(|c| {
-                        *r != CognitiveRef::WorkContext(WorkContextId(c.work_context_id))
-                    })
+                    !cached.contains_key(r)
+                        && foreground.as_ref().is_none_or(|c| {
+                            *r != CognitiveRef::WorkContext(WorkContextId(c.work_context_id))
+                        })
                 })
                 .map(|(r, ..)| (r.clone(), explicit_refs.contains(r)))
                 .collect::<Vec<_>>();
@@ -260,7 +329,9 @@ impl CognitiveRuntimeService {
                 .await?
                 .into_iter();
             for (reference, role, stability, _) in batch {
-                let source = if let Some(context) = foreground.as_ref().filter(|c| {
+                let source = if let Some(source) = cached.get(&reference) {
+                    Ok(source.clone())
+                } else if let Some(context) = foreground.as_ref().filter(|c| {
                     reference == CognitiveRef::WorkContext(WorkContextId(c.work_context_id))
                 }) {
                     Ok(work_context_source(context, remaining))
@@ -290,7 +361,7 @@ impl CognitiveRuntimeService {
                         .text
                         .as_ref()
                         .is_some_and(|text| text.len() > remaining);
-                if exceeds_budget && matches!(source.reference, CognitiveRef::WorkContext(_)) {
+                if exceeds_budget && source.required {
                     return Err(Error::Unavailable(
                         "required WorkContext exceeds projection budget".into(),
                     ));
@@ -344,6 +415,8 @@ impl CognitiveRuntimeService {
 
 fn work_context_source(context: &WorkContextView, max_bytes: usize) -> ContextSource {
     ContextSource {
+        usage: "situational_guidance",
+        required: true,
         reference: CognitiveRef::WorkContext(WorkContextId(context.work_context_id)),
         source_revision: Some(context.revision.to_string()),
         text: (max_bytes > 0).then(|| context.task_text()),

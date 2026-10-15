@@ -62,6 +62,15 @@ test("MCP forwards exact argv without serializing long commands and preserves CL
       ).isError,
     ).toBe(true);
     expect(seen).not.toContainEqual(["query", "x", "--instance-root=other"]);
+    expect(
+      (
+        await client.callTool({
+          name: "nous_command",
+          arguments: { args: ["self", "adopt", "--management"] },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(seen).not.toContainEqual(["self", "adopt", "--management"]);
   } finally {
     await client.close();
     await server.close();

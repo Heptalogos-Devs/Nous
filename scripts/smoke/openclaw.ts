@@ -14,6 +14,7 @@ import {
 } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { connectNousInstance } from "@nous-wave/client/node";
@@ -78,8 +79,11 @@ const captures: {
   worker: boolean;
   tool: boolean;
   memory: boolean;
+  selfMarker: boolean;
+  markerInHistory: boolean;
 }[] = [];
 let groundedMemoryRevision: string | undefined;
+let historyMarker: string | undefined;
 const config = configSchema.parse(
   JSON.parse(await readFile(configSource, "utf8")),
 );
@@ -126,6 +130,12 @@ async function forward(incoming: IncomingMessage, outgoing: ServerResponse) {
       tool: JSON.stringify(input.messages).includes(
         "OPENCLAW_REAL_TOOL_RESULT",
       ),
+      selfMarker: !!historyMarker && system.includes(historyMarker),
+      markerInHistory:
+        !!historyMarker &&
+        JSON.stringify(
+          input.messages.filter((message) => message.role !== "system"),
+        ).includes(historyMarker),
       memory:
         !!groundedMemoryRevision &&
         system.includes(`memory_revision:${groundedMemoryRevision}`),
@@ -213,11 +223,13 @@ const rpc = (method: string, params: object) =>
     JSON.stringify(params),
     "--json",
     "--timeout",
-    "120000",
+    "240000",
   ]);
-async function nativeReadResult(
+async function nativeObservation(
   client: Awaited<ReturnType<typeof connectNousInstance>>,
   subjectId: string,
+  needle: string,
+  role: "read" | "assistant",
 ) {
   const artifacts = await client.material.listArtifacts({
     subjectId,
@@ -229,9 +241,11 @@ async function nativeReadResult(
       artifactId: artifact.artifactId,
       limit: 100,
     });
-    const occurrence = occurrences.items.find(
-      (item) =>
-        item.sourceClass === "tool" && item.context?.tool_name === "read",
+    const occurrence = occurrences.items.find((item) =>
+      role === "read"
+        ? item.sourceClass === "tool" && item.context?.tool_name === "read"
+        : item.sourceClass === "generated" &&
+          item.context?.role === "assistant",
     );
     if (!occurrence) continue;
     const download = await client.artifacts.download(
@@ -241,13 +255,56 @@ async function nativeReadResult(
     const chunks: Uint8Array[] = [];
     for await (const bytes of download.content as AsyncIterable<Uint8Array>)
       chunks.push(bytes);
-    if (Buffer.concat(chunks).toString().includes("OPENCLAW_REAL_TOOL_RESULT"))
-      return occurrence;
+    if (Buffer.concat(chunks).toString().includes(needle)) return occurrence;
   }
-  throw new Error("Public Material must contain actual native read output");
+  throw new Error(
+    "Public Material must contain the requested actual native output",
+  );
 }
+const nativeReadResult = (
+  client: Awaited<ReturnType<typeof connectNousInstance>>,
+  subjectId: string,
+) => nativeObservation(client, subjectId, "OPENCLAW_REAL_TOOL_RESULT", "read");
 let core: Boot | undefined;
 let gateway: ChildProcess | undefined;
+async function stopGateway() {
+  if (gateway?.exitCode === null && gateway.signalCode === null) {
+    const exited = once(gateway, "exit");
+    gateway.kill();
+    await exited;
+  }
+  gateway = undefined;
+}
+async function startGateway(port: number) {
+  gateway = spawn(
+    process.execPath,
+    [join(nativeRoot, "openclaw.mjs"), "gateway", "run"],
+    { env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  const gatewayLog = createWriteStream(join(root, "gateway.log"), {
+    mode: 0o600,
+    flags: "a",
+  });
+  gateway.stdout!.pipe(gatewayLog, { end: false });
+  gateway.stderr!.pipe(gatewayLog, { end: false });
+  gateway.once("exit", () => gatewayLog.end());
+  // Native readiness is an HTTP contract, independent of diagnostic wording.
+  gateway.stdout!.resume();
+  gateway.stderr!.resume();
+  const readinessDeadline = Date.now() + 60000;
+  for (;;) {
+    if (gateway.exitCode !== null)
+      throw new Error("Native Gateway exited before ready");
+    const ready = await fetch(`http://127.0.0.1:${port}/readyz`, {
+      signal: AbortSignal.timeout(1000),
+    }).catch(() => undefined);
+    if (ready?.status === 200) break;
+    if (Date.now() >= readinessDeadline)
+      throw new Error("Native Gateway readiness timeout");
+    await delay(250);
+  }
+}
+
 try {
   const locator = await prepare(root);
   core = await boot(locator);
@@ -284,7 +341,10 @@ try {
             model: {
               primary: `${Object.keys(config.models.providers)[0]}/${provider.models[0]!.id}`,
             },
-            compaction: { memoryFlush: { enabled: false } },
+            compaction: {
+              keepRecentTokens: 1,
+              memoryFlush: { enabled: false },
+            },
           },
         },
         tools: { profile: "full" },
@@ -321,32 +381,7 @@ try {
   };
   gatewayConfig.gateway.port = port.port;
   await writeFile(configPath, JSON.stringify(gatewayConfig, null, 2));
-  gateway = spawn(
-    process.execPath,
-    [join(nativeRoot, "openclaw.mjs"), "gateway", "run"],
-    { env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
-  );
-  const gatewayLog = createWriteStream(join(root, "gateway.log"), {
-    mode: 0o600,
-  });
-  gateway.stdout!.pipe(gatewayLog, { end: false });
-  gateway.stderr!.pipe(gatewayLog, { end: false });
-  gateway.once("exit", () => gatewayLog.end());
-  // Native readiness is an HTTP contract, independent of diagnostic wording.
-  gateway.stdout!.resume();
-  gateway.stderr!.resume();
-  const readinessDeadline = Date.now() + 60000;
-  for (;;) {
-    if (gateway.exitCode !== null)
-      throw new Error("Native Gateway exited before ready");
-    const ready = await fetch(`http://127.0.0.1:${port.port}/readyz`, {
-      signal: AbortSignal.timeout(1000),
-    }).catch(() => undefined);
-    if (ready?.status === 200) break;
-    if (Date.now() >= readinessDeadline)
-      throw new Error("Native Gateway readiness timeout");
-    await delay(250);
-  }
+  await startGateway(port.port);
   await agent(
     "Read evidence.txt using the read tool, then quote its actual contents.",
   );
@@ -354,6 +389,42 @@ try {
     captures.some((input) => input.v1 && input.tool),
     "Tool continuation must contain applied cognition and real result",
   );
+  const nativeStore = (await import(
+    pathToFileURL(join(nativeRoot, "dist/plugin-sdk/session-store-runtime.js"))
+      .href
+  )) as {
+    getSessionEntry(params: {
+      readConsistency?: "latest";
+      agentId: string;
+      sessionKey: string;
+      env: NodeJS.ProcessEnv;
+    }):
+      | {
+          lifecycleRevision?: string;
+          pluginExtensions?: Record<string, Record<string, unknown>>;
+        }
+      | undefined;
+    loadTranscriptEventsSync(params: {
+      agentId: string;
+      sessionId: string;
+      sessionKey: string;
+      env: NodeJS.ProcessEnv;
+    }): unknown[];
+  };
+  const bindingSchema = z.object({
+    nousSessionId: z.string(),
+    nativeHistoryGeneration: z.string(),
+  });
+  const readNativeBinding = () =>
+    bindingSchema.parse(
+      nativeStore.getSessionEntry({
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        env,
+        readConsistency: "latest",
+      })?.pluginExtensions?.["nous-cognition"]?.["nous-cognition"],
+    );
+  const originalBinding = readNativeBinding();
   const actualRead = await nativeReadResult(client, subjectId);
   // Explicit operator adoption from the actual native observation. Chat itself
   // does not acquire this management operation.
@@ -418,6 +489,11 @@ try {
       .every((input) => input.v2 && !input.v1 && input.memory),
     "RESET must remove old cognition from system input",
   );
+  assert.equal(
+    readNativeBinding().nousSessionId,
+    originalBinding.nousSessionId,
+    "Native turns must reuse the durably bound Nous Session",
+  );
   const compactAt = captures.length;
   await rpc("sessions.compact", { key: "agent:main:main" });
   assert(
@@ -469,6 +545,158 @@ try {
       ),
     "Native reset/model switch must retain current Subject cognition",
   );
+  // This provider's mini profile produced actual native summaries; lite is
+  // exercised for ordinary task/model continuity above, not assumed equivalent.
+  await rpc("sessions.patch", {
+    key: "agent:main:main",
+    model: `${Object.keys(config.models.providers)[0]}/${provider.models[0]!.id}`,
+  });
+  await core.client.subjects.provisionCapabilities({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    capabilities: { selfCognition: true },
+  });
+  const designation = await agent(
+    "Choose your own provisional designation for this one privacy test. Do not invent a backstory. Reply only with your chosen designation: HISTORYTEST_ followed by 3 to 30 uppercase letters, digits or underscores.",
+  );
+  const spoken = z
+    .object({
+      result: z
+        .object({
+          payloads: z.array(
+            z.object({ text: z.string().optional() }).passthrough(),
+          ),
+        })
+        .passthrough(),
+    })
+    .parse(designation)
+    .result.payloads.map((payload) => payload.text ?? "")
+    .join("\n")
+    .trim();
+  assert.match(spoken, /^HISTORYTEST_[A-Z0-9_]{3,30}$/);
+  historyMarker = spoken;
+  const choice = await nativeObservation(
+    core.client,
+    subjectId,
+    historyMarker,
+    "assistant",
+  );
+  const identity = await core.client.self.adopt({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    reason:
+      "Explicit operator adoption of the actual native provisional self choice, scoped to this test conversation",
+    content: {
+      content: {
+        case: "facet",
+        value: {
+          kind: "identity",
+          statement: `During this test I use the provisional designation ${historyMarker}.`,
+          stance: "adopted",
+          epistemicClass: "observed",
+          scope: {
+            description: "This test conversation only",
+            conversationRef: "agent:main:main",
+          },
+          validTime: {},
+          basis: [
+            {
+              basis: {
+                case: "evidence",
+                value: {
+                  occurrenceId: choice.occurrenceId,
+                  locator: { case: "wholeOccurrence", value: true },
+                  basisRole: "direct",
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+  const identityAt = captures.length;
+  const named = await agent(
+    "State your currently adopted provisional designation in one short sentence.",
+  );
+  assert(JSON.stringify(named).includes(historyMarker));
+  assert(captures.slice(identityAt).some((input) => input.selfMarker));
+  await rpc("sessions.compact", { key: "agent:main:main" });
+  // Inspect the native owner's actual persisted summary, without printing its content.
+  const nativeId = z.string().parse(choice.context?.native_session_id);
+  const summaries = nativeStore
+    .loadTranscriptEventsSync({
+      agentId: "main",
+      sessionId: nativeId,
+      sessionKey: "agent:main:main",
+      env,
+    })
+    .flatMap((event) => {
+      const entry = z
+        .object({ type: z.literal("compaction"), summary: z.string() })
+        .safeParse(event);
+      return entry.success ? [entry.data.summary] : [];
+    });
+  assert(
+    summaries.some((summary) => summary.includes(historyMarker!)),
+    "Actual native compaction must retain the previously spoken test designation",
+  );
+  const afterCompactAt = captures.length;
+  await agent("State the current provisional designation once more.");
+  assert(captures.slice(afterCompactAt).some((input) => input.markerInHistory));
+  await core.client.self.purge({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    objectRef: identity.objectRef,
+    expectedObjectEpoch: identity.objectEpoch,
+  });
+  const purgedAt = captures.length;
+  await agent("Continue the current task.", false);
+  // Compaction is also a model submission, not a bypass around the history barrier.
+  const refusedCompact = await rpc("sessions.compact", {
+    key: "agent:main:main",
+  });
+  assert.equal(refusedCompact?.ok, false);
+  assert.equal(refusedCompact?.compacted, false);
+  assert.match(String(refusedCompact?.reason), /history.*reset/i);
+  assert.equal(
+    captures.length,
+    purgedAt,
+    "Purged cognition in native history must stop before provider submission",
+  );
+  await stop(core);
+  core = await boot(locator);
+  const fencedBinding = readNativeBinding();
+  await stopGateway();
+  assert.equal(
+    readNativeBinding().nousSessionId,
+    fencedBinding.nousSessionId,
+    "Host teardown must preserve durable Session extensions",
+  );
+  await startGateway(port.port);
+  assert.equal(
+    readNativeBinding().nousSessionId,
+    fencedBinding.nousSessionId,
+    "Gateway restart must retain the exact invalidated binding",
+  );
+  await agent("Continue after the process restart.", false);
+  assert.equal(
+    captures.length,
+    purgedAt,
+    "Core and native restart must preserve the history fence",
+  );
+  await rpc("sessions.reset", { key: "agent:main:main", reason: "new" });
+  const cleanAt = captures.length;
+  await agent(
+    "Read evidence.txt and give one sentence based only on current sources.",
+  );
+  assert(captures.length > cleanAt);
+  assert(
+    captures
+      .slice(cleanAt)
+      .every((input) => !input.selfMarker && !input.markerInHistory),
+    "Formal native reset must discard old output and summary before submission",
+  );
   const reconnected = await connectNousInstance({ runRoot: join(root, "run") });
   const sessions = await reconnected.runtime.listSessions({
     subjectId,
@@ -497,11 +725,15 @@ try {
       nativeSessionReset: true,
       memoryApplied: true,
       modelSwitch: !!switchedModel,
+      selfHistoryPurge: true,
+      persistedSummaryContainedSelf: true,
+      gatewayRestartFence: true,
+      cleanNativeReset: true,
       providerInputs: captures.length,
     }),
   );
   process.stdout.write(
-    `OPENCLAW_SMOKE_OK no_seed=true reset=true compact=true subagent=true outcome=true unavailable=true restart=true evidence=${root}\n`,
+    `OPENCLAW_SMOKE_OK no_seed=true reset=true compact=true subagent=true outcome=true unavailable=true restart=true history_purge=true evidence=${root}\n`,
   );
 } finally {
   await writeFile(
@@ -509,11 +741,7 @@ try {
     JSON.stringify(captures),
     { mode: 0o600 },
   );
-  if (gateway?.exitCode === null && gateway.signalCode === null) {
-    const exited = once(gateway, "exit");
-    gateway.kill();
-    await exited;
-  }
+  await stopGateway();
   await stop(core);
   forwardingAgent.destroy();
   capture.closeAllConnections();

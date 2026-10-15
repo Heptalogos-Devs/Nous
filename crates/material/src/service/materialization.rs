@@ -122,6 +122,8 @@ impl MaterialService {
                     })
                     .collect();
                 Ok(nous_runtime::ContextSource {
+                    usage: "task_evidence",
+                    required: false,
                     reference: reference.clone(),
                     source_revision: None,
                     text,

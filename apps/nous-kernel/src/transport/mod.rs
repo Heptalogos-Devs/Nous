@@ -28,6 +28,7 @@ mod model_results;
 mod projection_workflow;
 mod query_workflow;
 pub use hosting::router;
+mod cognition_trace;
 mod concepts;
 mod journal;
 mod longitudinal;
@@ -38,6 +39,7 @@ mod memory;
 mod model;
 mod query;
 mod schema;
+mod self_cognition;
 mod subject;
 mod work_context;
 
@@ -77,6 +79,9 @@ impl KernelService {
                 .into());
             }
         }
+        if input.self_requirement == "REQUIRED" {
+            self.0.require_self()?.require_enabled(subject).await?;
+        }
         let requirement = |value: &str| -> nous_core::Result<nous_core::RequirementStrength> {
             Ok(match value {
                 "REQUIRED" => nous_core::RequirementStrength::Required,
@@ -92,6 +97,31 @@ impl KernelService {
             .projection(
                 nous_runtime::ProjectionRequest {
                     subject,
+                    scope: input
+                        .usage
+                        .as_ref()
+                        .map(|u| {
+                            Ok::<_, nous_core::Error>(nous_runtime::InvocationScope {
+                                purpose: u.purpose.clone(),
+                                conversation: u
+                                    .audience
+                                    .as_ref()
+                                    .map(|a| a.conversation_ref.clone())
+                                    .unwrap_or_default(),
+                                entities: u
+                                    .participants
+                                    .iter()
+                                    .map(|p| p.entity_ref.clone())
+                                    .chain(
+                                        u.audience
+                                            .iter()
+                                            .flat_map(|a| a.recipient_entity_refs.clone()),
+                                    )
+                                    .map(nous_core::EntityRef::new)
+                                    .collect::<nous_core::Result<_>>()?,
+                            })
+                        })
+                        .transpose()?,
                     session: SessionId(id(&input.session_id)?),
                     active_work_context: input
                         .active_work_context_id
@@ -108,62 +138,74 @@ impl KernelService {
                     max_text_bytes: input.max_text_bytes as usize,
                     materialize: input.materialize,
                     memory: requirement(&input.memory_requirement)?,
+                    self_cognition: if input.self_requirement.is_empty() {
+                        nous_core::RequirementStrength::Preferred
+                    } else {
+                        requirement(&input.self_requirement)?
+                    },
                     runtime: requirement(&input.runtime_requirement)?,
                     resource: requirement(&input.resource_requirement)?,
                 },
                 &self.0,
             )
             .await?;
-        Ok(p::Projection {
-            projection_id: uuid::Uuid::now_v7().to_string(),
-            consumer_id: view.consumer_id,
-            source_runtime_revision: view.runtime_revision,
-            subject_id: view.subject.0.to_string(),
-            session_id: view.session.0.to_string(),
-            active_work_context_id: view.active_work_context.map(|id| id.to_string()),
-            usage: input.usage,
-            segments: view
-                .segments
-                .into_iter()
-                .map(|segment| p::ContextSegment {
-                    segment_id: uuid::Uuid::now_v7().to_string(),
-                    text: segment.source.text.unwrap_or_default(),
-                    semantic_role: segment.semantic_role.into(),
-                    source_refs: vec![to_ref(segment.source.reference.clone())],
-                    evidence: segment
-                        .source
-                        .evidence
-                        .into_iter()
-                        .map(|evidence| p::Evidence {
-                            epistemic_relation: evidence
-                                .epistemic_relation
-                                .map(|relation| relation.as_str().into()),
-                            reference: Some(to_ref(evidence.reference)),
-                            basis_role: evidence.basis_role,
-                        })
-                        .collect(),
-                    authority: enum_name(segment.source.authority),
-                    stability: segment.stability.into(),
-                    source_revision: segment.source.source_revision,
-                    usage: if matches!(
-                        segment.source.reference,
-                        nous_core::CognitiveRef::WorkContext(_)
-                    ) {
-                        "situational_guidance"
-                    } else {
-                        "task_evidence"
-                    }
-                    .into(),
-                })
-                .collect(),
-            degradation: view
-                .degradation
-                .into_iter()
-                .map(|value| p::Degradation {
-                    code: value.code,
-                    detail: value.detail.unwrap_or_default(),
-                })
-                .collect(),
-        })
+        Ok(projection_proto(view, input.usage))
+    }
+}
+
+fn projection_proto(
+    view: nous_runtime::ProjectionView,
+    usage: Option<p::CognitionUsage>,
+) -> p::Projection {
+    p::Projection {
+        projection_id: uuid::Uuid::now_v7().to_string(),
+        consumer_id: view.consumer_id,
+        source_runtime_revision: view.runtime_revision,
+        subject_id: view.subject.0.to_string(),
+        session_id: view.session.0.to_string(),
+        active_work_context_id: view.active_work_context.map(|id| id.to_string()),
+        usage,
+        segments: view
+            .segments
+            .into_iter()
+            .map(|segment| p::ContextSegment {
+                segment_id: uuid::Uuid::now_v7().to_string(),
+                domain: match segment.source.reference.domain() {
+                    nous_core::CognitiveDomain::Memory => "memory",
+                    nous_core::CognitiveDomain::SelfCognition => "self",
+                    nous_core::CognitiveDomain::Resource => "resource",
+                    _ => "runtime",
+                }
+                .into(),
+                text: segment.source.text.unwrap_or_default(),
+                semantic_role: segment.semantic_role.into(),
+                source_refs: vec![to_ref(segment.source.reference.clone())],
+                evidence: segment
+                    .source
+                    .evidence
+                    .into_iter()
+                    .map(|evidence| p::Evidence {
+                        epistemic_relation: evidence
+                            .epistemic_relation
+                            .map(|relation| relation.as_str().into()),
+                        reference: Some(to_ref(evidence.reference)),
+                        basis_role: evidence.basis_role,
+                    })
+                    .collect(),
+                authority: enum_name(segment.source.authority),
+                stability: segment.stability.into(),
+                source_revision: segment.source.source_revision,
+                usage: segment.source.usage.into(),
+                required: segment.source.required,
+            })
+            .collect(),
+        degradation: view
+            .degradation
+            .into_iter()
+            .map(|value| p::Degradation {
+                code: value.code,
+                detail: value.detail.unwrap_or_default(),
+            })
+            .collect(),
     }
 }

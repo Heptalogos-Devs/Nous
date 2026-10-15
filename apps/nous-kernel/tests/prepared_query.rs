@@ -68,6 +68,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         .cognition
         .open_session(
             subject,
+            None,
             serde_json::json!({"transcript":"UNRELATED HISTORY MUST NOT BE EMBEDDED"}),
         )
         .await
@@ -471,6 +472,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
     runtime
         .cognition
         .use_feedback(nous_runtime::UseFeedback {
+            model_input: false,
             subject,
             session_id: Some(session.session_id),
             consumer_ref: "consumer:test:prepared-query".into(),

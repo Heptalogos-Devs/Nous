@@ -7,6 +7,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+mod trace;
+pub use trace::CognitionTraceSources;
 mod time;
 pub use time::{TemporalExtent, TimeInterval, TimePredicate};
 mod model_results;
@@ -56,6 +58,10 @@ macro_rules! uuid_id {
 }
 
 uuid_id!(SubjectId);
+uuid_id!(SelfFacetId);
+uuid_id!(SelfFacetRevisionId);
+uuid_id!(NarrativeThreadId);
+uuid_id!(NarrativeThreadRevisionId);
 uuid_id!(MemoryId);
 uuid_id!(MemoryRevisionId);
 uuid_id!(EpisodeId);
@@ -221,6 +227,8 @@ pub enum CapabilityOperation {
     TextRerank,
     TextInterpretation,
     MemoryFormationText,
+    SelfFormationText,
+    SelfReflectionText,
     MemoryConsolidationText,
     ConceptMaintenanceText,
     EpisodeSegmentationText,
@@ -381,7 +389,7 @@ mod references;
 pub use canonical::canonical_request_digest;
 pub use cognition::*;
 pub use query::*;
-pub use references::{CognitiveRef, parse_reference, reference_parts};
+pub use references::{CognitiveDomain, CognitiveRef, parse_reference, reference_parts};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UseEventRef {

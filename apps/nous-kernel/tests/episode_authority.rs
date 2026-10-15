@@ -56,7 +56,7 @@ async fn episode_partition_split_repartition_merge_and_retry_are_atomic() {
     let subject = create_subject(&rt).await;
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     let mut occurrences = vec![];
@@ -359,7 +359,7 @@ async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
     );
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     let mut occurrences = Vec::new();

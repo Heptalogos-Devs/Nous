@@ -37,6 +37,7 @@ pub async fn router(runtime: NousRuntime, token: String) -> tonic::transport::se
         .set_serving::<nous_protocol::kernel::kernel_query_service_server::KernelQueryServiceServer<KernelService>>()
         .await;
     tonic::transport::Server::builder()
+        .add_service(nous_protocol::public::self_service_server::SelfServiceServer::with_interceptor(service.clone(),auth.clone()))
         .add_service(KernelConfigurationServiceServer::with_interceptor(
             service.clone(),
             auth.clone(),

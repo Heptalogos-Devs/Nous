@@ -48,15 +48,9 @@ impl MemoryService {
                     "cognition support is outside the captured view".into(),
                 ));
             }
-            if !matches!(
-                reference,
-                CognitiveRef::MemoryRevision(_)
-                    | CognitiveRef::CognitiveSchemaRevision(_)
-                    | CognitiveRef::EpisodeRevision(_)
-                    | CognitiveRef::JournalRevision(_)
-            ) {
+            if reference.domain() != CognitiveDomain::Memory || !reference.is_cognition_revision() {
                 return Err(Error::Invalid(
-                    "cognition dependency needs exact revision".into(),
+                    "Memory support requires an owned exact revision".into(),
                 ));
             }
             selected

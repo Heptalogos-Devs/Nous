@@ -33,7 +33,8 @@ async fn historical_catalog_sources_in(
         Some(references) => references
             .iter()
             .filter(|reference| {
-                memory_allowed
+                reference.domain() == CognitiveDomain::Memory
+                    && memory_allowed
                     && view
                         .selected_cognition_for(reference)
                         .is_some_and(|state| eligible_state(&state.state))
@@ -43,7 +44,11 @@ async fn historical_catalog_sources_in(
         None => view
             .cognition
             .iter()
-            .filter(|state| memory_allowed && eligible_state(&state.state))
+            .filter(|state| {
+                state.object.domain() == CognitiveDomain::Memory
+                    && memory_allowed
+                    && eligible_state(&state.state)
+            })
             .flat_map(|state| state.revisions.iter().cloned())
             .collect(),
     };
@@ -302,7 +307,10 @@ pub(crate) fn document_references(
 ) -> Vec<CognitiveRef> {
     view.cognition
         .iter()
-        .filter(|state| memory_allowed && eligible_state(&state.state))
+        .filter(|state| {
+            (state.object.domain() == CognitiveDomain::SelfCognition || memory_allowed)
+                && eligible_state(&state.state)
+        })
         .flat_map(|state| state.revisions.iter().cloned())
         .chain(view.material_documents.iter().cloned())
         .chain(

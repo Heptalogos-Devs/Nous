@@ -27,6 +27,7 @@ const segment = (id: string, text = id): Segment =>
     segmentId: id,
     text,
     semanticRole: "evidence",
+    domain: "memory",
     sourceRefs: [{ kind: "memory", value: id }],
     evidence: [],
     authority: "subject_cognition",
@@ -44,6 +45,7 @@ const policy: ConsumerPolicy = {
   consumerId: "test",
   revision: "1",
   memory: "PREFERRED",
+  selfCognition: "PREFERRED",
   resource: "FORBIDDEN",
   runtime: "OPTIONAL",
   maxItems: 10,
@@ -230,6 +232,7 @@ describe("projection authority boundaries", () => {
         projection({
           ...segment("self", "Only under the full stated condition."),
           usage: "identity",
+          required: true,
         }),
         { maxItems: 1, maxTextBytes: 3 },
         required,

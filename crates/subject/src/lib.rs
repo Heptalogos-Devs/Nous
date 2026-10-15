@@ -17,8 +17,8 @@ use sqlx::Row;
 
 pub use nous_configuration::SubjectCapabilities;
 pub use seed::{
-    COGNITIVE_SEED_FORMAT, CognitiveSeedInput, CognitiveSeedVersion, CognitiveSeedView,
-    SeedAdoptionKind, SubjectSeedAdoption,
+    COGNITIVE_SEED_FORMAT, CognitiveSeedInput, CognitiveSeedSource, CognitiveSeedVersion,
+    CognitiveSeedView, MARKDOWN_SEED_FORMAT, SeedAdoptionKind, SubjectSeedAdoption,
 };
 
 #[derive(Clone)]
@@ -113,12 +113,15 @@ impl SubjectCoreService {
             .execute(&mut *tx)
             .await
             .map_err(nous_persistence::database_error)?;
-        sqlx::query("INSERT INTO subject_capabilities(subject_id,memory) VALUES($1,$2)")
-            .bind(subject.0)
-            .bind(capabilities.memory)
-            .execute(&mut *tx)
-            .await
-            .map_err(nous_persistence::database_error)?;
+        sqlx::query(
+            "INSERT INTO subject_capabilities(subject_id,memory,self_cognition) VALUES($1,$2,$3)",
+        )
+        .bind(subject.0)
+        .bind(capabilities.memory)
+        .bind(capabilities.self_cognition)
+        .execute(&mut *tx)
+        .await
+        .map_err(nous_persistence::database_error)?;
         nous_persistence::check_receipt(
             &mut tx,
             subject,
@@ -169,7 +172,7 @@ impl SubjectCoreService {
     }
 
     pub async fn subject(&self, subject: SubjectId) -> Result<SubjectView> {
-        let row = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE s.subject_id=$1")
+        let row = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory,c.self_cognition FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE s.subject_id=$1")
             .bind(subject.0).fetch_optional(self.store.pool()).await
             .map_err(nous_persistence::database_error)?
             .ok_or_else(|| Error::NotFound("subject not found".into()))?;
@@ -182,7 +185,7 @@ impl SubjectCoreService {
         limit: i64,
         after: Option<uuid::Uuid>,
     ) -> Result<(Vec<SubjectView>, bool)> {
-        let mut rows = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE ($1::uuid IS NULL OR s.subject_id>$1) AND ($2='' OR s.status=$2) ORDER BY s.subject_id LIMIT $3")
+        let mut rows = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory,c.self_cognition FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE ($1::uuid IS NULL OR s.subject_id>$1) AND ($2='' OR s.status=$2) ORDER BY s.subject_id LIMIT $3")
             .bind(after).bind(status).bind(limit+1).fetch_all(self.store.pool()).await.map_err(nous_persistence::database_error)?;
         let more = rows.len() > limit as usize;
         rows.truncate(limit as usize);
@@ -214,9 +217,52 @@ fn decode_subject(row: sqlx::postgres::PgRow) -> Result<SubjectView> {
             .try_get("metadata")
             .map_err(nous_persistence::database_error)?,
         capabilities: SubjectCapabilities {
+            self_cognition: row
+                .try_get("self_cognition")
+                .map_err(nous_persistence::database_error)?,
             memory: row
                 .try_get("memory")
                 .map_err(nous_persistence::database_error)?,
         },
     })
+}
+
+impl SubjectCoreService {
+    /// Provision additional requested domains without resetting existing cognition.
+    pub async fn provision_capabilities(
+        &self,
+        subject: SubjectId,
+        operation: OperationId,
+        requested: SubjectCapabilities,
+    ) -> Result<SubjectView> {
+        if operation.0.is_nil() {
+            return Err(Error::Invalid("operation_id is required".into()));
+        }
+        let process = process_capabilities(&self.configuration.active_system_snapshot()?)?;
+        requested.require_process(process)?;
+        let digest = nous_core::canonical_request_digest("subject.provision", subject, &requested)?;
+        let mut mutation = match nous_persistence::MutationEnvelope::begin(
+            &self.store,
+            subject,
+            operation,
+            "subject.provision",
+            &digest,
+            Some(nous_persistence::OwnerLock("subject-capabilities")),
+        )
+        .await?
+        {
+            nous_persistence::MutationStart::Replay(_) => return self.subject(subject).await,
+            nous_persistence::MutationStart::Active(m) => m,
+        };
+        let changed=sqlx::query("UPDATE subject_capabilities SET memory=memory OR $2,self_cognition=self_cognition OR $3 WHERE subject_id=$1 AND (($2 AND NOT memory) OR ($3 AND NOT self_cognition))").bind(subject.0).bind(requested.memory).bind(requested.self_cognition).execute(&mut **mutation.tx()).await.map_err(nous_persistence::database_error)?.rows_affected();
+        if changed > 0 {
+            mutation
+                .invalidate(nous_persistence::ProjectionInvalidation::all())
+                .await?;
+        }
+        mutation
+            .commit("subject", Some(&subject.0.to_string()), None, None)
+            .await?;
+        self.subject(subject).await
+    }
 }

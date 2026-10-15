@@ -1233,6 +1233,14 @@ pub mod kernel_query_service_server {
     #[async_trait]
     pub trait KernelQueryService: std::marker::Send + std::marker::Sync + 'static {
         ///
+        async fn trace(
+            &self,
+            request: tonic::Request<super::super::super::v1alpha1::CognitionTraceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::super::v1alpha1::CognitionTrace>,
+            tonic::Status,
+        >;
+        ///
         async fn get_cognitive_time(
             &self,
             request: tonic::Request<super::super::super::v1alpha1::SubjectRequest>,
@@ -1355,6 +1363,54 @@ pub mod kernel_query_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/nous.wave.kernel.v1alpha1.KernelQueryService/Trace" => {
+                    #[allow(non_camel_case_types)]
+                    struct TraceSvc<T: KernelQueryService>(pub Arc<T>);
+                    impl<
+                        T: KernelQueryService,
+                    > tonic::server::UnaryService<
+                        super::super::super::v1alpha1::CognitionTraceRequest,
+                    > for TraceSvc<T> {
+                        type Response = super::super::super::v1alpha1::CognitionTrace;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::super::v1alpha1::CognitionTraceRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KernelQueryService>::trace(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = TraceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/nous.wave.kernel.v1alpha1.KernelQueryService/GetCognitiveTime" => {
                     #[allow(non_camel_case_types)]
                     struct GetCognitiveTimeSvc<T: KernelQueryService>(pub Arc<T>);

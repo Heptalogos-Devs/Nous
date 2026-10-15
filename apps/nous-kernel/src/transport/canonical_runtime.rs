@@ -6,7 +6,7 @@ use super::*;
 rpc_service! {
     p::runtime_service_server::RuntimeService {
         forward {
-            open_session(p::SubjectRequest) -> p::Session;
+            open_session(p::OpenSessionRequest) -> p::Session;
             get_session(p::ObjectRequest) -> p::Session;
             list_sessions(p::ListRequest) -> p::ListSessionsResponse;
             close_session(p::ObjectRequest) -> p::Session;

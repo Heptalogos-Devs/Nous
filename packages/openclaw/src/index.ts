@@ -22,6 +22,14 @@ import type {
 import { cognitionRenderer } from "./render.js";
 
 const namespace = "nous-cognition";
+const sessionBinding = z
+  .object({
+    subjectId: z.uuid(),
+    nativeSessionId: z.string().min(1),
+    nativeHistoryGeneration: z.string().min(1),
+    nousSessionId: z.uuid(),
+  })
+  .strict();
 const configuration = z
   .object({
     runRoot: z.string().min(1),
@@ -57,11 +65,23 @@ function register(api: OpenClawPluginApi): void {
             ? { agentId: input.agentId, sessionKey: input.sessionKey }
             : undefined;
           const entry =
-            scope && api.runtime.agent.session.getSessionEntry(scope);
-          const saved = entry?.pluginExtensions?.[namespace];
+            scope &&
+            api.runtime.agent.session.getSessionEntry({
+              ...scope,
+              readConsistency: "latest",
+            });
+          if (!scope || !entry)
+            throw new Error(
+              "Required managed native Session binding is unavailable; use a persisted native Session",
+            );
+          const parsed = sessionBinding.safeParse(
+            entry.pluginExtensions?.[namespace]?.[namespace],
+          );
+          const saved = parsed.success ? parsed.data : undefined;
           let sessionId =
             saved?.subjectId === config.subjectId &&
             saved.nativeSessionId === input.sessionId &&
+            saved.nativeHistoryGeneration === input.historyGeneration &&
             typeof saved.nousSessionId === "string"
               ? saved.nousSessionId
               : undefined;
@@ -75,32 +95,40 @@ function register(api: OpenClawPluginApi): void {
                 "Bound Nous Session is closed; reset the native session explicitly",
               );
           } else {
+            if (!input.historyIsFresh)
+              throw new Error(
+                "Existing native history has no valid durable Nous binding; reset the native session before model submission",
+              );
+            if (input.parentSessionKey)
+              throw new Error(
+                "Delegated native input has no prepared durable Nous handoff binding",
+              );
             const session = await connected.runtime.openSession(
               { subjectId: config.subjectId },
               { signal: input.signal },
             );
             sessionId = session.sessionId;
-            if (scope && entry)
-              await api.runtime.agent.session.patchSessionEntry({
-                ...scope,
-                preserveActivity: true,
-                update: (latest) => {
-                  if (latest.sessionId !== input.sessionId)
-                    throw new Error(
-                      "Native Session changed during Nous binding",
-                    );
-                  return {
-                    pluginExtensions: {
-                      ...latest.pluginExtensions,
-                      [namespace]: {
-                        subjectId: config.subjectId,
-                        nativeSessionId: input.sessionId,
-                        nousSessionId: sessionId!,
-                      },
-                    },
-                  };
-                },
-              });
+            await input.persistSessionBinding({
+              subjectId: config.subjectId,
+              nativeSessionId: input.sessionId,
+              nativeHistoryGeneration: input.historyGeneration,
+              nousSessionId: sessionId,
+            });
+            const written = api.runtime.agent.session.getSessionEntry({
+              ...scope,
+              readConsistency: "latest",
+            });
+            const confirmed = sessionBinding.safeParse(
+              written?.pluginExtensions?.[namespace]?.[namespace],
+            );
+            if (
+              !confirmed.success ||
+              confirmed.data.nousSessionId !== sessionId ||
+              confirmed.data.nativeHistoryGeneration !== input.historyGeneration
+            )
+              throw new Error(
+                "Native Nous Session binding was not durably written",
+              );
           }
           if (config.workContextId) {
             const session = await connected.runtime.getSession(
@@ -166,8 +194,8 @@ function register(api: OpenClawPluginApi): void {
             message.role === "toolResult"
               ? "tool"
               : message.role === "assistant"
-                ? "generation"
-                : "conversation",
+                ? "generated"
+                : "message",
           externalObjectRef: `object:openclaw:${await eventIdentity(key)}`,
           conversationRef: input.sessionKey,
           observedAt: timestampFromDate(new Date(message.timestamp)),
@@ -237,10 +265,100 @@ function register(api: OpenClawPluginApi): void {
         };
       },
       async compact(params) {
+        const entry = api.runtime.agent.session.getSessionEntry({
+          sessionKey: params.sessionKey,
+          agentId: params.agentId,
+          readConsistency: "latest",
+        });
+        const parsed = sessionBinding.safeParse(
+          entry?.pluginExtensions?.[namespace]?.[namespace],
+        );
+        if (
+          !parsed.success ||
+          parsed.data.subjectId !== config.subjectId ||
+          parsed.data.nativeSessionId !== params.sessionId
+        )
+          throw new Error(
+            "Native compaction has no current durable Nous binding",
+          );
+        const checked = await (
+          await connect()
+        ).runtime.reportUse(
+          {
+            subjectId: config.subjectId,
+            sessionId: parsed.data.nousSessionId,
+            consumerRef: config.consumerId,
+            modelInput: true,
+            events: [],
+          },
+          { signal: params.abortSignal },
+        );
+        if (!checked.modelInputChecked)
+          throw new Error(
+            "Required native compaction history check was not enforced",
+          );
         return delegateCompactionToRuntime(params);
       },
       recordNativeEvent: observe,
+      async prepareSubagentSpawn(params) {
+        if (
+          params.contextMode !== "isolated" ||
+          typeof params.persistSessionBinding !== "function"
+        )
+          throw new Error(
+            "Required native isolated cognition handoff control is unavailable",
+          );
+        const parent = api.runtime.agent.session.getSessionEntry({
+          sessionKey: params.parentSessionKey,
+          readConsistency: "latest",
+        });
+        const child = api.runtime.agent.session.getSessionEntry({
+          sessionKey: params.childSessionKey,
+          readConsistency: "latest",
+        });
+        const parsed = sessionBinding.safeParse(
+          parent?.pluginExtensions?.[namespace]?.[namespace],
+        );
+        if (
+          !parsed.success ||
+          parsed.data.subjectId !== config.subjectId ||
+          parsed.data.nativeSessionId !== parent?.sessionId ||
+          !child?.sessionId
+        )
+          throw new Error(
+            "Native handoff has no current bound parent or child generation",
+          );
+        const connected = await connect();
+        const session = await connected.runtime.openSession({
+          subjectId: config.subjectId,
+          parentSessionId: parsed.data.nousSessionId,
+        });
+        await params.persistSessionBinding({
+          subjectId: config.subjectId,
+          nativeSessionId: child.sessionId,
+          nativeHistoryGeneration: child.sessionId,
+          nousSessionId: session.sessionId,
+        });
+        return {
+          rollback: async () => {
+            await connected.runtime.closeSession({
+              subjectId: config.subjectId,
+              id: session.sessionId,
+            });
+          },
+        };
+      },
       async prepareModelInput(input) {
+        if (
+          input.boundaryVersion !== 2 ||
+          typeof input.historyGeneration !== "string" ||
+          !input.historyGeneration ||
+          typeof input.historyIsFresh !== "boolean" ||
+          typeof input.persistSessionBinding !== "function"
+        )
+          throw new Error(
+            "Required native history admission boundary is unavailable; prepare the controlled OpenClaw distribution",
+          );
         input.signal.throwIfAborted();
         const binding = await worker(input);
         const currentTurn = input.context.messages.findLastIndex(
@@ -305,6 +423,14 @@ function register(api: OpenClawPluginApi): void {
           applied,
           invocationId: `${input.runId}:nous:${++invocation}`,
         };
+        await binding.admit(
+          {
+            invocationId: application.invocationId,
+            applied,
+            occurredAt: new Date(),
+          },
+          { signal: input.signal },
+        );
         api.logger.info(
           `Nous applied invocation=${application.invocationId} kind=${prepared.kind} projection=${applied.projectionId} sources=${applied.sourceRefs.length} budgetEstimate=openclaw_native`,
         );

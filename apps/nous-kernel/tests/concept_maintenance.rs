@@ -337,7 +337,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
 
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     let events = (0..3)
@@ -352,6 +352,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         .collect();
     rt.cognition
         .use_feedback(nous_runtime::UseFeedback {
+            model_input: false,
             subject,
             session_id: Some(session.session_id),
             consumer_ref: "consumer:accretion:fixture".into(),
@@ -386,6 +387,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         .unwrap();
     rt.cognition
         .use_feedback(nous_runtime::UseFeedback {
+            model_input: false,
             subject,
             session_id: Some(session.session_id),
             consumer_ref: "consumer:accretion:fixture".into(),

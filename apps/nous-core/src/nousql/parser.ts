@@ -387,6 +387,8 @@ export const resultDomainOrder = [
   "schema",
   "episode",
   "journal",
+  "self_facet",
+  "narrative_thread",
   "evidence",
   "resource",
 ];

@@ -29,7 +29,7 @@ Structuring 失败保留已提交的 description。普通 recall 不重新解释
 
 `client.model.formFromObservation({ operationId, subjectId, occurrenceId, representationId?, aboutnessMode?, explicitAboutness? })` 使用指定表示，或按实际媒体策略选择最新描述/转写。operationId 由调用方稳定提供；同 ID/input 重放 outcome，不受后续配置变化影响，不同 input conflict。未解释的 binary source 返回 `material_representation_required`。Aboutness 支持 explicit、select_from_resolved_mentions（默认）与 none；select 模式只使用 Kernel 提供的 resolved mention candidate keys，Actor identity 单独保存于 Observation。
 
-Memory revision 的 `producerSignatureId` 可用 `client.material.producer` 读取。Material 的表示、inputs、DerivedRegion、SourceRegion、Artifact 都有同 Subject 的 public read path。`nous trace` 只经 official Client 展开这条链，保存的 producer 不包含 token。
+Memory revision 的 `producerSignatureId` 可用 `client.material.producer` 读取。Material 的表示、inputs、DerivedRegion、SourceRegion、Artifact 都有同 Subject 的 public read path。`nous trace` 经 `client.cognition.trace` 组合 owner 来源展开这条链，Self producer 也复用同一签名库，保存的 producer 不包含 token。
 
 同一 producer read 也覆盖 Episode、Journal、Schema、Tag revisions 与 AssociationEvidence；historical revisions／revoked association 的实际引用仍可追溯，跨 Subject 不开放未引用的签名。最新角色模型与 reasoning 部署建议、真实上下文和延迟观测见 [Cognitive Model & Evolution Research](../research/cognitive-model-evolution-2026-10-08.md)。Embedding 的 max_batch_size 要按实际 endpoint 配置；本轮 Doubao endpoint 明确拒绝超过 10 条的输入，配置为 10 后完整 preparation 成功。
 

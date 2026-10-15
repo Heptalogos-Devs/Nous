@@ -11,7 +11,7 @@
     },
     "dist/builtin-openclaw-zQV8Wwjr.js": {
       "original": "62599de51a360163f8020d3f2c9ffbf7481a2424b850363d77308a99056a5303",
-      "patched": "63c6a16f40e512c5aba056ae8a97cc8be245f270f06f71d0cc6999fd0591c46b"
+      "patched": "e7b08ce2420bb209f6a1273bceddcc6ab369ef8ba90e144d70359b433ec92726"
     },
     "dist/context-engine-turn-attempt-BPzr5IBp.js": {
       "original": "4cc537188596b09ee72b9d1cff7f027e4eebc836ee43859a414b15eaac36d0fc",
@@ -35,11 +35,15 @@
     },
     "dist/sessions-spawn-tool-1FQMTkIo.js": {
       "original": "a21770222831b6574680621577da6bb0727903117210f20968afdb59a83975b8",
-      "patched": "1f5d8b6f34ae2f736e328343e0b783463fddf18940912674dd3f1011a997cbc9"
+      "patched": "a45a4631e98cd986735aaec2683ded146c3c7a85aaef8820e9e7dab1b3ebc50d"
     },
     "dist/system-prompt-params-B645JcX8.js": {
       "original": "df80c676f3d6fd201212bd4c95db25898c6a00dd61f4b598f7e8c5db04d94750",
       "patched": "fef1fd89fb3733c40ecfe2a1017beae9df04cd6732ce6eed515b2eddcd948829"
+    },
+    "dist/host-hook-cleanup-BQvPj1LG.js": {
+      "original": "874542c213fc9114e9e79ad37c4bbb5acd8e35e886f717fca5460f8cd1dd0df2",
+      "patched": "eb8fb504d54852d549b4773d8f6c3d9d470c0a89743d8b224781cbb38ac5bb5b"
     }
   }
 }

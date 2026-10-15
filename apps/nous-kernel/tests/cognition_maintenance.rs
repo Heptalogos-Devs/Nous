@@ -126,6 +126,7 @@ async fn assert_consolidation_context(
     };
     rt.cognition
         .use_feedback(nous_runtime::UseFeedback {
+            model_input: false,
             subject,
             session_id: None,
             consumer_ref: "consumer:test:context".into(),

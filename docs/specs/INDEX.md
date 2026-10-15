@@ -15,6 +15,8 @@
 - [Episode Authority](active/episode/episode-authority.md)
 - [Episode Runtime integration](active/episode/episode-runtime-integration.md)
 
+- [Self](active/self/self.md)
+
 ## Model、Material 与 Resource
 
 - [Gateway、Model 与 Prompt](active/model-runtime/gateway-model-and-prompts.md)

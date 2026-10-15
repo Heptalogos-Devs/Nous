@@ -10,7 +10,7 @@
 | TypeScript Core | [apps/nous-core/README.md](apps/nous-core/README.md) | 公共 Core、WorkContext/Projection/Context、NousQL 和模型编排 |
 | Reference consumer | [apps/nous-cli/README.md](apps/nous-cli/README.md) | official Client CLI、流式上传、Subject/Session、NousQL 和来源追踪 |
 | Rust Kernel | [apps/nous-kernel/README.md](apps/nous-kernel/README.md) | 私有 Kernel 进程和 Rust owners 的组合 |
-| Rust owners | [crates/README.md](crates/README.md) / [crates/INDEX.md](crates/INDEX.md) | Subject、Runtime、Material、Memory、Persistence 和 Retrieval |
+| Rust owners | [crates/README.md](crates/README.md) / [crates/INDEX.md](crates/INDEX.md) | Subject、Runtime、Material、Memory、Self、Persistence 和 Retrieval |
 | Protobuf source | [proto/README.md](proto/README.md) | 唯一的跨语言 wire-contract source |
 | TypeScript packages | [packages/README.md](packages/README.md) | 官方 Client 和生成的 TypeScript protocol bindings |
 | 命令入口 | [justfile](justfile) / [package.json](package.json) | Rust、Protobuf、TypeScript 和 按需 public smoke |
@@ -23,4 +23,5 @@
 
 - [Nous Wave TypeScript Client](packages/client/README.md)
 - [TypeScript Protocol Bindings](packages/protocol-ts/README.md)
+- [正式 OpenClaw 认知插件](packages/openclaw/README.md)
 - [研究语料](docs/research/corpus/README.md)

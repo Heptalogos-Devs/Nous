@@ -37,6 +37,22 @@ fn seed_view(input: CognitiveSeedView) -> p::CognitiveSeedVersion {
         operation_id: input.adoption.operation_id.0.to_string(),
     }
 }
+pub(super) fn seed_source(input: nous_subject::CognitiveSeedSource) -> p::CognitiveSeedVersion {
+    p::CognitiveSeedVersion {
+        seed: Some(p::CognitiveSeed {
+            text: input.text,
+            format: input.version.format.clone(),
+            provenance: to_object(input.version.provenance),
+        }),
+        seed_version_id: input.version.seed_version_id.0.to_string(),
+        subject_id: input.version.subject_id.0.to_string(),
+        artifact_id: input.version.artifact_id.0.to_string(),
+        format: input.version.format,
+        content_hash: input.version.content_hash,
+        created_at: Some(timestamp(input.version.created_at)),
+        ..Default::default()
+    }
+}
 fn subject(input: SubjectView) -> p::Subject {
     let capabilities = input.capabilities;
     p::Subject {
@@ -47,10 +63,31 @@ fn subject(input: SubjectView) -> p::Subject {
         metadata: to_object(input.metadata),
         capabilities: Some(p::SubjectCapabilities {
             memory: capabilities.memory,
+            self_cognition: capabilities.self_cognition,
         }),
     }
 }
 impl KernelService {
+    pub(super) async fn provision_capabilities(
+        &self,
+        input: p::ProvisionCapabilitiesRequest,
+    ) -> Result<p::Subject> {
+        let c = required(input.capabilities, "capabilities")?;
+        Ok(subject(
+            self.0
+                .subjects
+                .provision_capabilities(
+                    SubjectId(id(&input.subject_id)?),
+                    OperationId(id(&input.operation_id)?),
+                    SubjectCapabilities {
+                        memory: c.memory,
+                        self_cognition: c.self_cognition,
+                    },
+                )
+                .await?,
+        ))
+    }
+
     pub(super) async fn create_subject(
         &self,
         input: p::CreateSubjectRequest,
@@ -70,6 +107,7 @@ impl KernelService {
                 metadata: object(input.metadata),
                 capabilities: input.capabilities.map(|value| SubjectCapabilities {
                     memory: value.memory,
+                    self_cognition: value.self_cognition,
                 }),
             })
             .await?;
@@ -106,6 +144,20 @@ impl KernelService {
             items: items.into_iter().map(subject).collect(),
             next_page_token,
         })
+    }
+    pub(super) async fn get_cognitive_seed_version(
+        &self,
+        input: p::ObjectRequest,
+    ) -> Result<p::CognitiveSeedVersion> {
+        Ok(seed_source(
+            self.0
+                .subjects
+                .cognitive_seed_version(
+                    SubjectId(id(&input.subject_id)?),
+                    nous_core::CognitiveSeedVersionId(id(&input.id)?),
+                )
+                .await?,
+        ))
     }
     pub(super) async fn get_cognitive_seed(
         &self,
@@ -152,12 +204,21 @@ impl KernelService {
         let view = self.0.cognition.session(subject, session).await?;
         Ok(session_proto(view))
     }
-    pub(super) async fn open_session(&self, input: p::SubjectRequest) -> Result<p::Session> {
+    pub(super) async fn open_session(&self, input: p::OpenSessionRequest) -> Result<p::Session> {
         let subject = SubjectId(id(&input.subject_id)?);
         let view = self
             .0
             .cognition
-            .open_session(subject, serde_json::json!({}))
+            .open_session(
+                subject,
+                input
+                    .parent_session_id
+                    .as_deref()
+                    .map(id)
+                    .transpose()?
+                    .map(SessionId),
+                serde_json::json!({}),
+            )
             .await?;
         Ok(session_proto(view))
     }
@@ -210,6 +271,9 @@ fn session_proto(view: nous_runtime::SessionView) -> p::Session {
         session_id: view.session_id.0.to_string(),
         subject_id: view.subject_id.0.to_string(),
         runtime_revision: view.runtime_revision,
+        parent_session_id: view.parent_session_id.map(|id| id.0.to_string()),
+        history_invalidated: view.history_invalidated,
+        history_domains: view.history_domains,
         closed_at: view.closed_at.map(timestamp),
         opened_at: Some(timestamp(view.opened_at)),
         last_activity_at: Some(timestamp(view.last_activity_at)),

@@ -67,7 +67,6 @@ pub use nous_core::TopologyRelation;
 pub use nous_core::{CognitiveQuery, CognitiveQueryResult};
 pub use tag::*;
 pub use trace::CognitionContent;
-pub use trace::CognitionTrace;
 
 #[derive(Clone)]
 pub struct MemoryService {

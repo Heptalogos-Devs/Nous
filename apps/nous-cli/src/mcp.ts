@@ -3,6 +3,8 @@
 
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { connectNousInstance } from "@nous-wave/client/node";
+import { mcpConnection } from "./mcp-scope.js";
 import { runCli } from "./commands/index.js";
 import { friendlyOutput } from "./friendly.js";
 import { formatError, formatResult } from "./format.js";
@@ -16,14 +18,16 @@ export function createMcpServer(execute: Execute) {
     if (
       args[0] === "mcp" ||
       args.some((arg) =>
-        /^--(?:run-root|instance-root|state-root|consumer)(?:=|$)/.test(arg),
+        /^--(?:run-root|instance-root|state-root|consumer|management)(?:=|$)/.test(
+          arg,
+        ),
       )
     )
       return Promise.resolve<CallToolResult>({
         content: [
           {
             type: "text",
-            text: "MCP connection owns run-root, state-root and consumer; use --subject/--session for cognition selection.",
+            text: "MCP connection owns its scope, run-root, state-root and consumer; use --subject/--session for cognition selection.",
           },
         ],
         isError: true,
@@ -43,7 +47,7 @@ export function createMcpServer(execute: Execute) {
     "nous_command",
     {
       description:
-        "Execute native Nous CLI argv (no shell). Discover commands with nous_help. This connection has isolated selection, exact result:N references and retry receipts. Default semantic text; use --json only when needed. Failed commands preserve the native error and retry receipt. Subject/Session selection is explicit or durable locally.",
+        "Execute native Nous CLI argv (no shell). Discover commands with nous_help. This connection has isolated selection, exact result:N references and retry receipts. Default semantic text; use --json only when needed. Cognition reads, observations and task context are available by default. Authority mutations require an operator-configured management connection. Failed commands preserve the native error and retry receipt. Subject/Session selection is explicit or durable locally.",
       inputSchema: z.object({
         args: z.array(z.string().max(65536)).min(1).max(128),
       }),
@@ -77,6 +81,7 @@ export function cliExecutor(options: {
   runRoot: string;
   stateRoot: string;
   consumer: string;
+  management?: boolean;
 }): Execute {
   return async (args) => {
     const command = [
@@ -89,7 +94,15 @@ export function cliExecutor(options: {
       ...args,
     ];
     try {
-      const result = await runCli(command, undefined, friendlyOutput);
+      const result = await runCli(
+        command,
+        async (location) =>
+          mcpConnection(
+            await connectNousInstance(location),
+            options.management === true,
+          ),
+        friendlyOutput,
+      );
       return {
         content: [{ type: "text", text: formatResult(result, command) }],
       };

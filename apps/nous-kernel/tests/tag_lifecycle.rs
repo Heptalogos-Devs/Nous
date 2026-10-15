@@ -72,8 +72,9 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     let service = KernelService(rt.clone());
     let session = RuntimeService::open_session(
         &service,
-        Request::new(p::SubjectRequest {
+        Request::new(p::OpenSessionRequest {
             subject_id: subject.0.to_string(),
+            parent_session_id: None,
         }),
     )
     .await

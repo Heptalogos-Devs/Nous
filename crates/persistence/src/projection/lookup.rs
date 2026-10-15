@@ -41,6 +41,7 @@ impl AuthorityStore {
             }
             sources
         };
+        sources.extend(super::text::self_sources(&mut tx, subject, Some(references), view).await?);
         sources.sort_by_key(|source| source.reference.to_string());
         tx.commit().await.map_err(db)?;
         Ok(sources)
@@ -81,6 +82,7 @@ WITH catalog AS (
  UNION ALL SELECT 'source_region',source_region_id FROM source_regions WHERE subject_id=$1
  UNION ALL SELECT 'derived_representation',derived_representation_id FROM derived_representations WHERE subject_id=$1
  UNION ALL SELECT 'derived_region',derived_region_id FROM derived_regions WHERE subject_id=$1
+ UNION ALL SELECT family||'_revision',current_revision_id FROM self_objects o WHERE subject_id=$1 AND EXISTS(SELECT 1 FROM subject_capabilities c WHERE c.subject_id=$1 AND c.self_cognition) AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal'
  UNION ALL SELECT 'memory_revision',current_revision_id FROM memory_objects WHERE $2 AND subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal'
  UNION ALL SELECT 'cognitive_schema_revision',current_revision_id FROM cognitive_schemas WHERE $2 AND subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal'
  UNION ALL SELECT 'episode_revision',current_revision_id FROM episode_objects WHERE $2 AND subject_id=$1 AND acceptance_state='accepted' AND integrity_state='valid' AND suppression_state='normal'

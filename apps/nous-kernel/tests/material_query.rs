@@ -163,12 +163,17 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
             Vec::new(),
             Vec::new(),
             nous_runtime::CognitiveContributors {
-                material: Some(&runtime.material),
                 shared: None,
-                memory: runtime
-                    .memory
-                    .as_ref()
-                    .map(|owner| owner as &dyn nous_runtime::CognitiveContributor),
+                owners: [
+                    runtime
+                        .memory
+                        .as_ref()
+                        .map(|owner| owner as &dyn nous_runtime::CognitiveContributor),
+                    Some(&runtime.material),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
             },
         )
         .await

@@ -189,7 +189,7 @@ pub(super) fn workflow_json(value: &str) -> Result<serde_json::Value> {
 
 pub(super) fn private_result_owner(owner: &str) -> Result<()> {
     nous_persistence::ModelResultOwner::new(owner)?;
-    if ["memory", "material"].contains(&owner) {
+    if ["memory", "material", "self"].contains(&owner) {
         Ok(())
     } else {
         Err(Error::Invalid(

@@ -38,7 +38,7 @@ async fn observation_admission_is_a_single_idempotent_runtime_batch() {
     let subject = test_support::query::subject(&runtime).await;
     let session = runtime
         .cognition
-        .open_session(subject, serde_json::json!({"consumer":"a"}))
+        .open_session(subject, None, serde_json::json!({"consumer":"a"}))
         .await
         .expect("session");
     let entity = EntityRef::new("entity:alice").expect("entity");
@@ -162,7 +162,7 @@ async fn resident_batch_is_atomic_and_invalid_persisted_refs_are_visible() {
     let subject_b = test_support::query::subject(&runtime).await;
     let session = runtime
         .cognition
-        .open_session(subject_a, serde_json::json!({}))
+        .open_session(subject_a, None, serde_json::json!({}))
         .await
         .expect("session");
     let foreign = observation(&runtime, subject_b, "foreign").await;
@@ -215,7 +215,7 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
     let subject = test_support::query::subject(&runtime).await;
     let session = runtime
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .expect("session");
     let first = observation(&runtime, subject, "first").await;
@@ -316,6 +316,7 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
         });
     }
     let uses = nous_runtime::UseFeedback {
+        model_input: false,
         subject,
         session_id: Some(session.session_id),
         consumer_ref: "consumer:resident-test".into(),
@@ -432,7 +433,7 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         .expect("caller policy controls accessibility");
     let session = runtime
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .expect("session");
     let service = nous_kernel::transport::KernelService(runtime);

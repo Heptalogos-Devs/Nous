@@ -25,3 +25,5 @@ Memory、Schema、Episode 与 Journal 即使由 request situation 提供，仍�
 Core Projection assigns segment identities from the final selected, bounded content, exact source references, evidence, authority/stability and source revision. Per-read contribution IDs do not change that identity. Managed Context appends only to a synchronized unchanged prefix: a repeated unchanged projection produces an empty APPEND with the same cursor; actual source/content change produces RESET. Tracks are process-local, so restart or an unknown cursor produces RESET.
 
 各 owner 返回同一个 `ContextSource`，分别表达已解析来源引用与可选的真实内容修订标记。Cognition 和 Tag 使用选中 revision UUID，WorkContext 使用捕获的整数 revision。Immutable Material、Resource descriptor 和 Entity 目录名称不虚构修订标记。
+
+Managed usage 还触发 [Self owner](../self/self.md) 的当前身份与适用指导选择。Source owner 声明片段的 domain、usage 和 required；Runtime 优先完整保留 required 语义单元，Core 不用 reference-kind 列表猜测新领域归属。Query owner 组合使用已有 CognitiveContributor 集合，Self 与 Memory 保持独立供给。

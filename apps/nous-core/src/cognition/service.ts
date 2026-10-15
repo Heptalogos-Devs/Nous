@@ -14,9 +14,12 @@ import {
   ManagedContextResponseSchema,
   ProjectionRequestSchema,
   QueryRequestSchema,
+  QueryModifiersSchema,
+  ResultProjectionSchema,
   type ManagedContextRequest,
   type ProjectionRequest,
   type QueryRequest,
+  type ReportUseRequest,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { ConsumerPolicy } from "../domain.js";
 import type { executionOptions } from "../execution.js";
@@ -111,6 +114,7 @@ export class CoreCognition {
     const request = create(ProjectionRequestSchema, input);
     bindProjectionUsage(request);
     request.memoryRequirement = policy.memory;
+    request.selfRequirement = policy.selfCognition;
     request.runtimeRequirement = policy.runtime;
     request.resourceRequirement = policy.resource;
     request.materialize = policy.materialize;
@@ -123,6 +127,38 @@ export class CoreCognition {
       policy.maxTextBytes,
     );
     const queryDegradation = [];
+    if (request.query) {
+      const subject = await this.kernel.subjects.getSubject(
+        { subjectId: request.subjectId },
+        calls,
+      );
+      const allowed = [
+        ...(policy.memory !== "FORBIDDEN" && subject.capabilities?.memory
+          ? ["memory", "schema", "episode", "journal"]
+          : []),
+        ...(policy.selfCognition !== "FORBIDDEN" &&
+        subject.capabilities?.selfCognition
+          ? ["self_facet", "narrative_thread"]
+          : []),
+        ...(policy.runtime !== "FORBIDDEN" ? ["evidence"] : []),
+        ...(policy.resource !== "FORBIDDEN" ? ["resource"] : []),
+      ];
+      const requested = request.query.modifiers?.projection?.domains ?? [
+        "memory",
+        "schema",
+        "episode",
+        "journal",
+        "self_facet",
+        "narrative_thread",
+      ];
+      const domains = requested.filter((domain) => allowed.includes(domain));
+      if (!domains.length) request.query = undefined;
+      else {
+        const modifiers = create(QueryModifiersSchema, request.query.modifiers);
+        modifiers.projection = create(ResultProjectionSchema, { domains });
+        request.query.modifiers = modifiers;
+      }
+    }
     if (request.query) {
       const query = await this.queries.execute(
         create(QueryRequestSchema, {
@@ -165,6 +201,12 @@ export class CoreCognition {
         "Managed context requires actual invocation usage",
         Code.InvalidArgument,
       );
+    await this.checkModelHistory(
+      input.subjectId,
+      input.sessionId,
+      input.consumerId,
+      calls,
+    );
     const projection = await this.buildProjection(input, calls);
     const policy = this.planner.policy(input.consumerId);
     return create(
@@ -182,6 +224,56 @@ export class CoreCognition {
         request.knownCursor,
       ),
     );
+  }
+
+  async reportUse(request: ReportUseRequest, calls: Execution) {
+    if (request.modelInput) {
+      if (!request.sessionId)
+        throw new ConnectError(
+          "Model input requires a Session",
+          Code.InvalidArgument,
+        );
+      await this.checkModelHistory(
+        request.subjectId,
+        request.sessionId,
+        request.consumerRef,
+        calls,
+      );
+    }
+    return this.kernel.runtime.reportUse(request, calls);
+  }
+  private async checkModelHistory(
+    subjectId: string,
+    sessionId: string,
+    consumerId: string,
+    calls: Execution,
+  ) {
+    const history = await this.kernel.runtime.getSession(
+      { subjectId: subjectId, id: sessionId },
+      calls,
+    );
+    const consumer = this.planner.policy(consumerId);
+    if (
+      history.historyInvalidated ||
+      history.historyDomains.some(
+        (domain) =>
+          (domain === "memory" && consumer.memory === "FORBIDDEN") ||
+          (domain === "self" && consumer.selfCognition === "FORBIDDEN"),
+      )
+    ) {
+      throw domainError(
+        "Native history requires reset after cognition withdrawal or a narrower consumer scope",
+        Code.FailedPrecondition,
+        {
+          code: DomainErrorCode.STALE_CONTEXT,
+          recovery: ErrorRecovery.REFRESH_STATE,
+          context: {
+            history_reset_required: "true",
+            session_id: sessionId,
+          },
+        },
+      );
+    }
   }
 
   private async bindQueryInput(request: QueryRequest, calls: CallOptions) {

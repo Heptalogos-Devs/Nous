@@ -69,9 +69,15 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
                 Vec::new(),
                 Vec::new(),
                 nous_runtime::CognitiveContributors {
-                    material: Some(&runtime.material),
                     shared: None,
-                    memory: Some(runtime.require_memory().unwrap()),
+                    owners: [
+                        Some(runtime.require_memory().unwrap()
+                            as &dyn nous_runtime::CognitiveContributor),
+                        Some(&runtime.material)
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
                 }
             )
             .await
@@ -211,9 +217,15 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
             order,
             Vec::new(),
             nous_runtime::CognitiveContributors {
-                material: Some(&runtime.material),
                 shared: None,
-                memory: Some(runtime.require_memory().unwrap()),
+                owners: [
+                    Some(runtime.require_memory().unwrap()
+                        as &dyn nous_runtime::CognitiveContributor),
+                    Some(&runtime.material),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
             },
         )
         .await
@@ -270,12 +282,13 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
         .unwrap();
     let session = runtime
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     runtime
         .cognition
         .use_feedback(UseFeedback {
+            model_input: false,
             subject,
             session_id: Some(session.session_id),
             consumer_ref: "consumer:test:exact".into(),
@@ -357,9 +370,14 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
         .execute_query_with_plan(
             bound,
             nous_runtime::CognitiveContributors {
-                material: Some(&runtime.material),
                 shared: None,
-                memory: Some(memory_service as &dyn nous_runtime::CognitiveContributor),
+                owners: [
+                    Some(memory_service as &dyn nous_runtime::CognitiveContributor),
+                    Some(&runtime.material),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
             },
             plan,
             None,

@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::SubjectCoreService;
 
+pub const MARKDOWN_SEED_FORMAT: &str = "text/markdown";
 pub const COGNITIVE_SEED_FORMAT: &str = "application/vnd.nous-wave.cognitive-seed+toml;version=1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,13 +34,19 @@ impl CognitiveSeedInput {
         if self.text.trim().is_empty() {
             return Err(Error::Invalid("Cognitive Seed content is required".into()));
         }
-        if self.format != COGNITIVE_SEED_FORMAT {
-            return Err(Error::Invalid(format!(
-                "unsupported Cognitive Seed format: {}",
-                self.format
-            )));
+        if self.text.len() > 1_048_576 {
+            return Err(Error::Invalid("Cognitive Seed exceeds source bound".into()));
         }
-        validate_seed_document(&self.text)?;
+        match self.format.as_str() {
+            COGNITIVE_SEED_FORMAT => validate_seed_document(&self.text)?,
+            MARKDOWN_SEED_FORMAT => {}
+            _ => {
+                return Err(Error::Invalid(format!(
+                    "unsupported Cognitive Seed format: {}",
+                    self.format
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -104,7 +111,55 @@ pub struct CognitiveSeedView {
     pub text: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct CognitiveSeedSource {
+    pub version: CognitiveSeedVersion,
+    pub text: String,
+}
+
 impl SubjectCoreService {
+    /// Read an exact preserved source, without assigning it a newer adoption.
+    pub async fn cognitive_seed_version_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        version: CognitiveSeedVersionId,
+    ) -> Result<CognitiveSeedSource> {
+        let row = sqlx::query("SELECT * FROM cognitive_seed_versions v WHERE subject_id=$1 AND seed_version_id=$2 AND EXISTS(SELECT 1 FROM subject_seed_adoptions a WHERE a.subject_id=v.subject_id AND a.seed_version_id=v.seed_version_id)")
+            .bind(subject.0).bind(version.0).fetch_optional(&mut **tx).await.map_err(db)?
+            .ok_or_else(|| Error::NotFound("Cognitive Seed version not adopted by Subject".into()))?;
+        let text = String::from_utf8(
+            self.objects
+                .get(&row.try_get::<String, _>("content_hash").map_err(db)?)
+                .await?,
+        )
+        .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        Ok(CognitiveSeedSource {
+            version: CognitiveSeedVersion {
+                seed_version_id: version,
+                subject_id: subject,
+                artifact_id: ArtifactId(row.try_get("artifact_id").map_err(db)?),
+                format: row.try_get("format").map_err(db)?,
+                provenance: row.try_get("provenance").map_err(db)?,
+                content_hash: row.try_get("content_hash").map_err(db)?,
+                created_at: row.try_get("created_at").map_err(db)?,
+            },
+            text,
+        })
+    }
+    pub async fn cognitive_seed_version(
+        &self,
+        subject: SubjectId,
+        version: CognitiveSeedVersionId,
+    ) -> Result<CognitiveSeedSource> {
+        let mut tx = self.store.read_view().await?;
+        let source = self
+            .cognitive_seed_version_in(&mut tx, subject, version)
+            .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(source)
+    }
+
     pub async fn adopt_cognitive_seed(
         &self,
         subject: SubjectId,
@@ -232,7 +287,12 @@ pub(super) async fn insert_seed(
             tx,
             subject,
             nous_material::UploadMetadata {
-                media_type: "application/toml".into(),
+                media_type: if input.format == MARKDOWN_SEED_FORMAT {
+                    "text/markdown"
+                } else {
+                    "application/toml"
+                }
+                .into(),
                 metadata: serde_json::json!({}),
             },
             futures::stream::iter([Ok(input.text.as_bytes().to_vec())]),

@@ -1,3 +1,4 @@
+import { SelfService } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -113,6 +114,8 @@ export async function createCore(settings: CoreOptions) {
         .send({ code: "unauthenticated", message: "Core credential required" });
   });
   const cognition: ServiceImpl<typeof CognitionService> = {
+    trace: (request, context) =>
+      kernel.queryWorkflow.trace(request, options(context)),
     grantMaintenance: (r, c) =>
       grantMaintenance(kernel, modelRuntime, r, options(c)),
     prepareQuery: (r, c) =>
@@ -174,6 +177,7 @@ export async function createCore(settings: CoreOptions) {
   await app.register(fastifyConnectPlugin, {
     routes: (router) => {
       router.service(SubjectService, forward(SubjectService, kernel.subjects));
+      router.service(SelfService, forward(SelfService, kernel.self));
       router.service(CognitionService, cognition);
       router.service(MemoryService, forward(MemoryService, kernel.memory));
       router.service(
@@ -193,7 +197,14 @@ export async function createCore(settings: CoreOptions) {
           forward(ConfigurationService, kernel.configuration),
         ),
       );
-      router.service(RuntimeService, forward(RuntimeService, kernel.runtime));
+      router.service(RuntimeService, {
+        ...forward(RuntimeService, kernel.runtime),
+        reportUse: (request, context) =>
+          composition.reportUse(
+            request,
+            executionOptions(kernel.execution.opportunity, options(context)),
+          ),
+      });
       router.service(
         ResourceRegistryService,
         forward(ResourceRegistryService, kernel.resourceRegistry),

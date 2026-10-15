@@ -7,6 +7,7 @@ import type { KernelClient } from "../kernel-client.js";
 import { ModelRuntime } from "./runtime.js";
 import { ModelMaterialPipeline } from "./material.js";
 import { deriveMaterial } from "./derivation.js";
+import { interpretSelf } from "./self.js";
 import { formObservation } from "./formation.js";
 import { GenerationFailure } from "./execution/routes.js";
 import { executionOptions } from "../execution.js";
@@ -26,6 +27,11 @@ export function modelOperations(
 ): ServiceImpl<typeof ModelService> {
   const material = new ModelMaterialPipeline(kernel, models);
   return {
+    interpretSelf: (r, c) =>
+      interpretSelf(kernel, models, r, {
+        signal: c.signal,
+        timeoutMs: c.timeoutMs(),
+      }),
     prepareEmbeddings: async (r, c) => {
       if (r.limit < 1 || r.limit > 256)
         throw new ConnectError(

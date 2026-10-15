@@ -52,14 +52,7 @@ impl CognitiveRuntimeService {
             .iter()
             .filter_map(|hit| {
                 let reference = hit.revision.as_ref().unwrap_or(&hit.reference);
-                matches!(
-                    reference,
-                    CognitiveRef::MemoryRevision(_)
-                        | CognitiveRef::CognitiveSchemaRevision(_)
-                        | CognitiveRef::EpisodeRevision(_)
-                        | CognitiveRef::JournalRevision(_)
-                )
-                .then(|| reference.clone())
+                reference.is_cognition_revision().then(|| reference.clone())
             })
             .collect::<Vec<_>>();
         if revisions.len() > 256 {

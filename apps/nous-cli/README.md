@@ -37,7 +37,7 @@ corepack pnpm nous use result:1 --kind referenced
 
 `--json` 返回 `schemaVersion="nous.cli.v1"` 的机器 envelope，保留 canonical IDs，int64 使用十进制字符串。native message 采用 Buf 的 canonical Protobuf JSON：oneof 使用实际字段名、Timestamp 为 ISO 字符串、bytes 为 base64；任意用户 JSON 不按字段形状重解释。`--developer` 保留诊断身份和 query trace，`--raw --developer` 显式选择原始 Client DTO。正常文本省略这些内部追踪身份。成功仅写 stdout，错误仅写 stderr 并返回非零码；错误保留 code、message、details、candidates 和未知结果的 receipt。
 
-Launcher 提供 RunRoot/InstanceRoot。`--subject`、`--session`、`--work-context` 覆盖本地选择。查询和幂等修改需要 InstanceRoot 保存续接状态；只读查询准备、配置与 status 可仅指定 RunRoot。Query 的 `result:N` 按实际命中顺序保存真实引用，并限定到原 Subject。Memory、Schema、Episode、Journal 保留 exact immutable revision，`show/trace/use` 不替换成最新 head。Evidence/Resource 与混合 hits 正常展示，每条只提供 owner 支持的后续动作；外部 Resource records 单独显示稳定来源身份。
+Launcher 提供 RunRoot/InstanceRoot。`--subject`、`--session`、`--work-context` 覆盖本地选择。查询和幂等修改需要 InstanceRoot 保存续接状态；只读查询准备、配置与 status 可仅指定 RunRoot。Query 的 `result:N` 按实际命中顺序保存真实引用，并限定到原 Subject。Memory、Self、Schema、Episode、Journal 保留 exact immutable revision，`show/trace/use` 不替换成最新 head。Evidence/Resource 与混合 hits 正常展示，每条只提供 owner 支持的后续动作；外部 Resource records 单独显示稳定来源身份。
 
 Client 直接返回 canonical generated Protobuf，CLI 只在呈现边界读取 generated descriptor 并输出文本/JSON；不建立平行 DTO 或 schema 恢复层。正文与 freeform Struct/Value 在所属字段保持不透明。查询已返回的 lexicalRef 直接沿用，避免重复目录查询。
 
@@ -111,6 +111,8 @@ node --import tsx apps/nous-cli/src/main.ts --run-root <Core RunRoot> --instance
 
 `nous --locator <bootstrap.toml> mcp --state-root <Agent 私有目录> --consumer consumer:codex:research` 启动官方 MCP SDK v2 stdio consumer。MCP 必须显式指定私有 state root 和稳定 consumer；它通过参数数组在进程内调用 Terminal 共用的命令核心，并使用同一跨进程状态事务。并发命令各自冻结输入，长操作不阻塞其他调用。stdout/stdin 仅用于 MCP 协议；MCP 输入使用文件或 `--text`，不接受文件 `-`。三个工具为 `nous_help`、`nous_command`（`args` 是 argv 字符串数组，不是 shell 命令）和 `nous_query`。错误保留 CLI 文本与未知结果 receipt；用 `nous_command` 调用 `retry <receipt>` 恢复。
 
+默认 MCP 连接提供认知读取、查询、实际观察、Session/WorkContext 和结果反馈。Self/Memory/Schema 等认知写入、模型形成、能力供给、Seed、Identity、配置与资源登记管理需要操作者在启动参数加入 `--management`，并为该连接单独选择私有 state root。scope 固定在连接内，工具 argv 不能追加 `--management` 提权；拒绝发生在 owner 调用前，明确拒绝不留下未知结果回执。普通交谈的“记住/忘记”不授予管理权限。
+
 Codex 项目 `.codex/config.toml` 的源码配置示例，替换全部绝对路径：
 
 ```toml
@@ -131,9 +133,27 @@ Session. Closing a Session clears consumer selection; its returned stable addres
 remains readable through the explicit form. `session open` and `session close`
 accept no reference argument.
 
+## Self 与当前 soul
+
+`subject provision --request-file capabilities.toml` 在当前 Subject 上追加请求能力，例如 `self_cognition = true`，保留原身份和数据。无 Seed 创建不调用解释模型或生成默认人格。
+
+`self list --kind self_facet|narrative_thread`、`self get <对象引用>`、`self revision <exact引用>` 与 `self history <对象引用>` 读取正式对象；Self 的分页上限为 100。`self soul` 从一次当前 owner 快照生成可读文本，保留 stance、适用范围、反例、有效时间和 exact revision。它不保存另一份人格文件；修改使用显式提案。
+
+`self adopt --request-file content.toml --text <采用理由>` 和 `self revise <对象或exact引用> --request-file content.toml --text <变化理由>` 使用 SelfContent：顶层 `[facet]` 或 `[narrative]` 与正式字段一致。`self evidence <引用> --request-file evidence.toml` 使用 AddSelfEvidenceRequest 的 role/basis 字段；操作 envelope、target 和 epoch 由当前调用固定。`suppress/restore/withdraw/reaccept/purge` 使用实际生命周期。指定 exact revision 修订时不替换目标；owner 检查 head 与 epoch。purge 显式提供 `--expected-object-epoch` 和 `--operation-id` 时可在对象删除后重放。
+
+先通过 `subject create/adopt-seed` 保存来源，再运行 `self interpret-seed` 解释当前 Seed。观察反思使用 `self interpret --request-file reflection.toml`：
+
+```toml
+[observation]
+occurrence_id = "<返回的 obs:引用>"
+# representation_id = "<需要时选择有界文本 repr:引用>"
+```
+
+这调用正式 `model.interpretSelf`，按实际来源选择 `self_formation` 或 `self_reflection` 配置角色，返回 Self 领域状态及逐项结果。模型失败不会撤销 Subject 或 Seed；同 operation id 复用已有付费结果。所有管理与解释操作要求显式调用或管理 scope。
+
 ## 完整 owner 管理命令
 
-`memory form|get|list|revision|history|revise|accessibility|link|suppress|restore|withdraw|reaccept|purge`；`schema create|get|revision|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge`；`episode create|get|list|revision|history|revise|link` 加同样 lifecycle；`journal get|list|revision|history` 加 lifecycle。这些都是实际 Authority 操作，MCP 的 `nous_command` 可直接使用。
+`memory form|get|list|revision|history|revise|accessibility|link|suppress|restore|withdraw|reaccept|purge`；`schema create|get|revision|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge`；`episode create|get|list|revision|history|revise|link` 加同样 lifecycle；`journal get|list|revision|history` 加 lifecycle。这些都是实际 Authority 操作，Terminal 或显式管理 scope 的 MCP `nous_command` 可使用。
 
 Memory correction 示例：
 
@@ -170,6 +190,6 @@ Memory、Schema、Episode、Journal 的修订和 lifecycle 可用 `--expected-ob
 
 `config list|describe|get` 直接连接配置入口；`config set|clear` 无需先读取 revision，需要条件替换时才带 `--expected-revision`。明确的提交前拒绝不会留下 retry 请求；结果不确定时仍可 `retry <id>` 发送冻结原请求。
 
-`trace <精确认知修订> --max-nodes 64 --max-bytes 65536` 返回认知依赖节点、材料来源 DAG 和实际 producers。Memory 与 Material 分别完成自己的遍历，CLI 不逐节点编排 RPC。节点和正文预算共享于本次 trace；`truncated` 表示边界内未返回全部来源。
+`trace <精确认知修订> --max-nodes 64 --max-bytes 65536` 返回认知依赖节点、材料来源 DAG 和实际 producers。统一调用 `client.cognition.trace`，由 Kernel 组合各认知 owner 和 Material 来源；包含 Self 与 exact Seed 原文，不由 CLI 逐节点编排 RPC。节点和正文预算共享于本次 trace；`truncated` 表示边界内未返回全部来源。
 
 `serving clean --subject <Subject>` 直接回收过期 Serving 制品；返回 reclaimed、bytesReclaimed、readersActive 和 orphanDirectories，保护 current、research-pinned 和在用制品。`schema list|history`、`tag history`、`association get|list` 提供完整 owner 读取与既有分页；history 对显式对象返回其修订，当前对象状态与 get 保持一致。

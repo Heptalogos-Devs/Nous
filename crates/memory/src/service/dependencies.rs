@@ -73,6 +73,13 @@ impl MemoryService {
             if !seen.insert((kind.clone(), source)) {
                 continue;
             }
+            AuthorityStore::invalidate_self_dependents_in(
+                tx,
+                subject,
+                &kind,
+                &[source.to_string()],
+            )
+            .await?;
             let edge_reason = if roots.contains(&(kind.clone(), source)) {
                 reason
             } else {
@@ -150,19 +157,7 @@ ORDER BY kind,object_id")
                         "journal_revision" | "episode_revision"
                     );
                 if dependent_kind == "journal_revision" {
-                    self.cognition
-                        .enqueue_maintenance_in(
-                            tx,
-                            &nous_runtime::MaintenanceRequest {
-                                subject,
-                                kind: "journal_revalidate".into(),
-                                scope_kind: "journal".into(),
-                                scope_ref: object.to_string(),
-                                trigger_authority_seq: sequence,
-                                due_at: now,
-                                priority: 80,
-                            },
-                        )
+                    self.enqueue_dependency_revalidation(tx, subject, object, sequence, now)
                         .await?;
                 }
                 pending.push_back((dependent_kind, revision));
@@ -177,6 +172,30 @@ ORDER BY kind,object_id")
             )
             .await?;
         }
+        Ok(())
+    }
+    async fn enqueue_dependency_revalidation(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        object: Uuid,
+        sequence: i64,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        self.cognition
+            .enqueue_maintenance_in(
+                tx,
+                &nous_runtime::MaintenanceRequest {
+                    subject,
+                    kind: "journal_revalidate".into(),
+                    scope_kind: "journal".into(),
+                    scope_ref: object.to_string(),
+                    trigger_authority_seq: sequence,
+                    due_at: now,
+                    priority: 80,
+                },
+            )
+            .await?;
         Ok(())
     }
 }

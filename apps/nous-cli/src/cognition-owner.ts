@@ -1,5 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import type { NousClient } from "@nous-wave/client";
 import { CliError } from "./agent.js";
 import { operationId, target } from "./content.js";
 import type { CliEnvironment } from "./runtime.js";
@@ -40,4 +41,47 @@ export async function revisionLink(
     toRevisionId: await target(env, file.to, kind),
     relation: env.required(file.relation, "relation"),
   };
+}
+
+/** One CLI dispatch table owns revision reads and the follow-up actions actually available. */
+const revisionReaders: Record<
+  string,
+  {
+    read: (
+      client: NousClient,
+      input: { subjectId: string; id: string },
+    ) => Promise<unknown>;
+    trace: boolean;
+  }
+> = {
+  memory_revision: {
+    read: (client, input) => client.memory.getMemoryRevision(input),
+    trace: true,
+  },
+  cognitive_schema_revision: {
+    read: (client, input) => client.concepts.getCognitiveSchemaRevision(input),
+    trace: true,
+  },
+  episode_revision: {
+    read: (client, input) => client.memory.getEpisodeRevision(input),
+    trace: true,
+  },
+  journal_revision: {
+    read: (client, input) => client.memory.getJournalRevision(input),
+    trace: true,
+  },
+  self_facet_revision: {
+    read: (client, input) => client.self.getRevision(input),
+    trace: true,
+  },
+  narrative_thread_revision: {
+    read: (client, input) => client.self.getRevision(input),
+    trace: true,
+  },
+};
+
+export function cognitionRevisionReader(kind: string) {
+  return Object.hasOwn(revisionReaders, kind)
+    ? revisionReaders[kind]
+    : undefined;
 }

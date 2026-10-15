@@ -12,6 +12,7 @@ try {
       "run-root": { type: "string" },
       "state-root": { type: "string" },
       consumer: { type: "string" },
+      management: { type: "boolean", default: false },
     },
   });
   if (!values["run-root"] || !values["state-root"] || !values.consumer)
@@ -22,6 +23,7 @@ try {
     runRoot: resolve(values["run-root"]),
     stateRoot: resolve(values["state-root"]),
     consumer: values.consumer,
+    management: values.management,
   });
   serveStdio(() => createMcpServer(execute));
 } catch (error) {

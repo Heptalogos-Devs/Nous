@@ -44,7 +44,7 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
         .unwrap();
     let session = runtime
         .cognition
-        .open_session(owner, serde_json::json!({}))
+        .open_session(owner, None, serde_json::json!({}))
         .await
         .unwrap();
     let projection = nous_kernel::transport::KernelService(runtime.clone())
@@ -185,9 +185,14 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
             _ => {}
         }
         let contributors = || nous_runtime::CognitiveContributors {
-            material: Some(&runtime.material),
             shared: None,
-            memory: Some(runtime.require_memory().unwrap()),
+            owners: [
+                Some(runtime.require_memory().unwrap() as &dyn nous_runtime::CognitiveContributor),
+                Some(&runtime.material),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
         };
         assert!(
             runtime
