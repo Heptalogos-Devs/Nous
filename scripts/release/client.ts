@@ -57,7 +57,9 @@ export async function packClient() {
           outDir: join(output, "dist"),
           paths,
         },
-        include: [join(repositoryRoot, source, "src/**/*.ts")],
+        include: [
+          join(repositoryRoot, source, "src/**/*.ts").replaceAll("\\", "/"),
+        ],
       }),
     );
     execFileSync(
