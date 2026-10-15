@@ -47,7 +47,7 @@ Self 使用现有 CognitiveContributor、共享 lexical/dense Serving、固定 f
 
 `client.model.interpretSelf` 是显式授权的领域解释操作。输入指定同一 Subject 已采用的 Seed version，或实际 Occurrence 与可选文本 representation。Seed 使用 `self_formation`，观察反思使用 `self_reflection`；两种 role 都复用现有模型配置、严格结构输出、producer、执行 telemetry 和 model-results。没有配置模型角色时返回明确的 Self 领域失败，不创建默认人格。
 
-模型读取当前可修订事项与真实来源目录，按事项、类别和 scope 提议 adopt/revise/keep/evidence。引用只能选择调用内目录；Seed 行键绑定原始版本和 semantic path，观察绑定实际 EvidenceRef。新变化必须引用本次来源；当前 exact cognition 和原有依据可补充支持，目标不能依赖自身。NarrativeThread 引用已有 exact cognition revision，不把 Seed 故事伪造为 Occurrence。
+模型读取当前可修订事项与真实来源目录，按事项、类别和 scope 提议 adopt/revise/keep/evidence。引用只能选择调用内目录；Seed 行键绑定原始版本和 semantic path，观察绑定实际 EvidenceRef。名字与情境偏好分别形成可独立修订的事项。证据发生时间不等于认识的有效时间；持续采用的认识不能仅因选择发生在某时刻就被限制到该单点。新变化必须引用本次来源；当前 exact cognition 和原有依据可补充支持，目标不能依赖自身。NarrativeThread 引用已有 exact cognition revision，不把 Seed 故事伪造为 Occurrence。
 
 付费的结构化提案、来源快照和实际 producer 在提交前保存。整个提案先校验目录选择，再逐项调用 Self owner；每项独立使用现有 receipt/CAS，没有跨领域总事务。同 operation id 重放已存结果，Core 重启不重新支付或重复采用；发生基础设施中断时复用已保存提案和 owner receipt 继续。无效提案也保留付费结果并报告失败。
 
@@ -63,6 +63,6 @@ Self 的原始 basis、异常、追加证据、叙事 exact sources 与实际 pr
 
 正式 managed binding 在模型发送前通过 Runtime 检查来源和 Session 历史。显式 purge/suppression/withdrawal 使已经接触该来源的历史待 reset，沿父 Session 关系传递；删除认知与清理 UseEvent 在同一 owner 事务中保留该屏障。未接触来源的独立 Session 不被一并清空。标记跨 Core/Gateway 重启保留，旧实际模型输出和压缩摘要不能因新 slice 移除来源就继续发送。详细原生合同见 [Managed OpenClaw](../cognitive-runtime/openclaw.md)。
 
-## 当前施工范围
+## 原生运行验证
 
-本功能分支已接通 owner、公开 RPC/Client、自动选择、共享查询和模型形成/反思。CLI/MCP 已提供正式 owner 操作、来源解释与只读 soul；正式 OpenClaw 的 Self 使用场景继续在同一功能内实现；完成状态由实际代码与运行证据确认。
+CLI/MCP 提供正式 owner 操作、来源解释与只读 soul；OpenClaw 自动贡献走同一输入路径。原生行为场景覆盖无 Seed 的实际名字/有情境偏好、有 Seed 的独立主体、公共原文工具结果、同事项反例修订和精确旧历史，以及换话题、模型、会话和 Core/Gateway 重启后的连续性。普通聊天的“记住/忘记”通过状态比较核验权限边界。运行要求与命令由 [插件包说明](../../../../packages/openclaw/README.md) 维护。

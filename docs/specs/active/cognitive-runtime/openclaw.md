@@ -6,7 +6,7 @@
 
 Nous 提供唯一的长期认知。官方 Client 的 `./managed` 子入口提供框架无关 prepare/apply/admit/report/close；`packages/openclaw` 只映射原生循环、受众和实际结果。Heptalogos 可以装载同一发行物，其重建、数据库及旧 AIRuntime 不是 Nous 集成的前提。
 
-Subject 是独立持久个体，创建可省略 Seed；没有 Seed 不生成个人经历、默认人格或可写 SOUL 镜像。初始源文档的保存/adoption 与后续 Self 形成分别处理。Self/Social/LanguageConvention/Motivation 的完整对象功能按长期设计继续实现。
+Subject 是独立持久个体，创建可省略 Seed；没有 Seed 不生成个人经历、默认人格或可写 SOUL 镜像。初始源文档的保存/adoption 与后续 Self 形成分别处理。Self 的领域功能见 [Self](../self/self.md)；Social/LanguageConvention/Motivation 按长期设计继续实现。
 
 ## 实际调用
 
@@ -47,3 +47,5 @@ ReportUse 仅把实际待发送输入的 exact cognition refs 记为 presented�
 [包说明](../../../../packages/openclaw/README.md) 是安装/配置命令的唯一完整入口。`openclaw:pack` 生成 bundled 插件及安装器 tarball，宿主原样安装；`openclaw:prepare` 使用同一产物安装到开发实例。
 
 `smoke:openclaw` 使用真实模型 gateway 与正式安装的原生 Gateway，核验最终 provider 输入、工具后续、RESET、原生 compact、子 Agent、真实 Material 回流、必需 Core 不可用时零发送及恢复，并核验真实自我选择的输出进入实际 native compaction summary 后，purge 和进程重启均阻止发送，正式 reset 后新输入不含旧标记。准备/应用日志不冒充已传输证明。未测试的渠道、Computer use 平台和语言人格质量不由该接线场景推定。
+
+Self 的付费行为场景使用同一正式安装入口，检查无 Seed 自主选择、有 Seed 形成、实际公共资料工具步骤、同事项反思修订及旧 exact revision、话题/模型/会话/进程连续性和普通聊天的管理权限边界。命令和模型配置要求见包说明。模型提案仍需按实际语义与来源核对，不能仅凭合法结构或出现名字判定通过。

@@ -43,6 +43,7 @@
     "dev:portable": "tsx scripts/dev/portable.ts",
     "smoke:configuration": "tsx scripts/smoke/configuration.ts",
     "smoke:openclaw": "tsx scripts/smoke/openclaw.ts",
+    "smoke:openclaw-self": "tsx scripts/smoke/openclaw-self.ts",
     "inspect:model-contracts": "tsx scripts/research/model-contracts.ts",
     "inspect:model-trace": "tsx scripts/research/model-trace.ts",
     "clean:local": "tsx scripts/maintenance/clean.ts",

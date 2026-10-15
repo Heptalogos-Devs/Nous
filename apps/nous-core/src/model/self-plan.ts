@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { create, toJson } from "@bufbuild/protobuf";
-import { timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { timestampDate, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   RevisionBasisSchema,
@@ -172,8 +172,12 @@ export async function prepareSelfInterpretation(
       actor: occurrence.actorEntityRef,
       conversation: occurrence.conversationRef,
       context: occurrence.context,
-      occurredTime: occurrence.occurredTime,
-      observedAt: occurrence.observedAt,
+      occurredTime: occurrence.occurredTime
+        ? toJson(TemporalExtentSchema, occurrence.occurredTime)
+        : undefined,
+      observedAt: occurrence.observedAt
+        ? timestampDate(occurrence.observedAt).toISOString()
+        : undefined,
     };
   } else
     invalidSelf(
