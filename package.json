@@ -30,7 +30,7 @@
     "release:verify": "tsx scripts/release/verify-portable.ts",
     "release:archive": "tsx scripts/release/archive.ts",
     "dev:prepare": "tsx scripts/dev/prepare.ts",
-    "check:fast": "pnpm format:check && pnpm proto:check && pnpm typecheck && pnpm lint:ts && pnpm client:verify",
+    "check:fast": "pnpm format:check && pnpm proto:check && pnpm typecheck && pnpm lint:ts && pnpm client:verify && pnpm openclaw:custody:verify",
     "audit": "pnpm lint:knip && pnpm lint:deps && pnpm lint:sherif && pnpm lint:dupes",
     "smoke:memory": "tsx scripts/smoke/memory.ts",
     "smoke:longitudinal": "tsx scripts/smoke/longitudinal.ts",
@@ -52,7 +52,8 @@
     "client:pack": "tsx scripts/release/client.ts",
     "client:verify": "tsx scripts/release/verify-client.ts",
     "smoke:client": "tsx scripts/smoke/client.ts",
-    "smoke:self-selection": "tsx scripts/smoke/self-selection.ts"
+    "smoke:self-selection": "tsx scripts/smoke/self-selection.ts",
+    "openclaw:custody:verify": "vitest run --config .config/vitest.ts scripts/tests/openclaw/custody.test.ts"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.73.0",

@@ -38,7 +38,7 @@ Runtime Session 保存 parent_session_id、history_invalidated 与已进入模�
 
 历史失效后不允许继续从旧 transcript 或 compact summary 发送。插件通过持久 native Session extension 保留对应关系，Core/Gateway 重启不能重新绑定成干净 Session。正式 native reset 清除原生当前历史、建立新 Native/Nous Session，继续消费同一 Subject 与 WorkContext。consumer 收窄为 FORBIDDEN 时，曾使用该域的旧历史也拒绝进入模型。独立且未接触该来源的 Session 继续可用。
 
-ReportUse 仅把实际待发送输入的 exact cognition refs 记为 presented。模型产生引用或文本不证明其内部因果、选用或真实外发。Heptalogos 后续对实际行为/外发许可及 effect/messaging outcome 负责，不能以 best-effort message hook 替代正式许可入口。
+ReportUse 仅把实际待发送输入的 exact cognition refs 记为 presented。模型产生引用或文本不证明其内部因果、选用或真实外发。Heptalogos 对实际行为/外发许可及 effect/messaging outcome 负责，不能以 best-effort message hook 替代正式许可入口。受控渠道通过 `ChannelPlugin.message.deliveryCustody` 在原生 prepared batch/queue 中持有 Host 签发的非秘密 adoption reference；新接纳先验证可信 native run/session，恢复复用既有 reference，每个实际 adapter handoff 必须等待当前 Host 授权。缺 provenance/custody 或 queue 持久化时拒绝发送，通用渠道不声明此接口则保持原生能力。具体 SDK 合同和无网络 fixture 命令见包说明。
 
 普通聊天“记住/忘记”不拥有认知 mutation/purge 能力。工具可见性、执行政策、凭据和 OS 范围由宿主明确配置；插件不向普通主体暴露 Core discovery 管理凭据。运维 OpenClaw 使用独立实例及权限。
 

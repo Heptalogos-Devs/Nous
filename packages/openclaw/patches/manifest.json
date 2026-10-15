@@ -17,6 +17,22 @@
       "original": "4cc537188596b09ee72b9d1cff7f027e4eebc836ee43859a414b15eaac36d0fc",
       "patched": "2afbee78e7799a5c748c01745f140a1e394add211d226362d0686c1fd982884b"
     },
+    "dist/deliver-B6F55ipQ.js": {
+      "original": "c7623c250bb5388829d3e385d4d830876209a252d45b132cee73eaa3b16de16d",
+      "patched": "4d19892621162ddf0d296a47697fda6be4155b6ec6b4b3a8dcc8556be9ce4420"
+    },
+    "dist/deliver-contracts-BrA0Kn8c.d.ts": {
+      "original": "06541fe79ae5fc6b0faa5cbd11843c7099512628f537dd1fa3eefe5de6f385ff",
+      "patched": "81b8873ff7efbb821009363e6aa7b677eb739c5300eac0387b1973788f2b4a3b"
+    },
+    "dist/deliver-prepare-7gjKTwQN.js": {
+      "original": "4f6301f820330523f209f06dcefd687036946368738d8273b5c33f9f2e702758",
+      "patched": "f6c244a069b9a88fb55091823085ac0110f8cdf1ea5f81deb40cafbd9cb8e7a7"
+    },
+    "dist/delivery-queue-migration-BZ8aX6BT.js": {
+      "original": "909524a0ca8a870538a043f9e90ce78bea1d204160263df1684ba00cc2ca99c6",
+      "patched": "1220fb1679ae95d3ccebcd396cb714fbb42145ff2ce2487e55f5fad4dec1083b"
+    },
     "dist/history-image-prune-Dg0CDQ4a.js": {
       "original": "a4261a044f88060be7d9412186c8b7df02710d1138a9eb836056ee63123b820f",
       "patched": "c50e82ef73ad4e9c6e3d3b8f4527f5965da40905d2200f50ab41fe5d48acdd58"
@@ -25,9 +41,41 @@
       "original": "393bb69a0f0ea534479ac6888ce0fc4fc1996fcfe5f35ae180a9ed63836ae36a",
       "patched": "49d1be4da3598d98c7de7c4b431c982620794efb118dbd60e4e0ea465abd9fe7"
     },
+    "dist/host-hook-cleanup-BQvPj1LG.js": {
+      "original": "874542c213fc9114e9e79ad37c4bbb5acd8e35e886f717fca5460f8cd1dd0df2",
+      "patched": "eb8fb504d54852d549b4773d8f6c3d9d470c0a89743d8b224781cbb38ac5bb5b"
+    },
+    "dist/install-security-scan.types-C51Ik81l.d.ts": {
+      "original": "941889a8270ec1c2d5b1c0737454fd3f75ec3665d1fba4e243adc36bdec7eaec",
+      "patched": "128662057b4d2df0f03e6d76fa256f1215a17e5d09a7f114af687cc38340f044"
+    },
+    "dist/install-security-scan.types-CimJAuMq.d.ts": {
+      "original": "dab5f30048a1ff82b8dc1672a89b59bb66bd79709a784b22d6df877aad1c7770",
+      "patched": "2efdc2bfd643a6356e3c76e02d1a02f5158a6345c3e0794e872adc25625c1b76"
+    },
+    "dist/plugin-entry-C-sjzaBe.d.ts": {
+      "original": "5b0d61e56bbef81c0b2d00efc18527905a86ae31661f6f5345bbc97ff048844e",
+      "patched": "8036cc8536b6596a985ee2e7fb5527e21fc138adff690f954fdb2816bfbb76cc"
+    },
+    "dist/plugin-entry-r6eDtEsn.d.ts": {
+      "original": "7504ecd3a396e90bdd2c5021e42c79eb4e5f5b6a43855bbd4f560c35c6660949",
+      "patched": "52b9314bbb79d7aecb22f9048ad1f1390d047f78353120269ab68e1272e4dc37"
+    },
+    "dist/plugin-sdk/channel-message.d.ts": {
+      "original": "4d14ec25989aee109c09757d53db9c781c77576d7323d85bfeef8f34b69d7866",
+      "patched": "5c35006e9a6db965dd3330e171139ff85b2d0606410aadb7bc4e63ff481792d9"
+    },
+    "dist/plugin-sdk/channel-outbound.d.ts": {
+      "original": "0589428b48ef3d409dbb53ea0398e1505246e2f67f6343ba2c64e213d175aac9",
+      "patched": "6443e151f1f8a308fc655d0f06a2393312fa6b9acbfbff209a21f1fe22e84b6b"
+    },
     "dist/registry-BdPa2vko.js": {
       "original": "e0d223429562e6b2b4aa715c1a45989470a59c5a4e6362163f816245419e99b8",
       "patched": "4580c644b9fcd3be0d8599961dcbe44b0a7d86f4861900dd170de2f8445fd496"
+    },
+    "dist/runtime-api-DDF9iz51.d.ts": {
+      "original": "56b584b45458dd0ce1c5d593d92bad569e2aa3526be97588c3ec7f51d1dc6cc9",
+      "patched": "b6a1a9d0bd7b737d198674678c7221da40eeafa1e3ceda9ef6c8daee3678a4af"
     },
     "dist/runtime-plugins-CWkOjN1D.js": {
       "original": "e7353bc15138284b23a343949c78cbcfc17bcdb6a469951f176ed50ebeedcbff",
@@ -41,9 +89,9 @@
       "original": "df80c676f3d6fd201212bd4c95db25898c6a00dd61f4b598f7e8c5db04d94750",
       "patched": "fef1fd89fb3733c40ecfe2a1017beae9df04cd6732ce6eed515b2eddcd948829"
     },
-    "dist/host-hook-cleanup-BQvPj1LG.js": {
-      "original": "874542c213fc9114e9e79ad37c4bbb5acd8e35e886f717fca5460f8cd1dd0df2",
-      "patched": "eb8fb504d54852d549b4773d8f6c3d9d470c0a89743d8b224781cbb38ac5bb5b"
+    "dist/types-BzYyevxm.d.ts": {
+      "original": "172177f5b571c0f7a29da23b95dea65cf67fa33047ade377c0f070f87f124a7a",
+      "patched": "c35ad2d55ea47c5c9a61ca27370053612bd49bc9f32792783444acd0a89e833f"
     }
   },
   "dependencyOverrides": {

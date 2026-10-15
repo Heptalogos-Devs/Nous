@@ -88,7 +88,18 @@ if (!states.every(({ actual, hashes }) => actual === hashes.patched)) {
       "OpenClaw installation contains only part of the required patch",
     );
   const patch = join(plugin, `patches/openclaw-${manifest.version}.patch`);
-  const args = ["apply", "--no-index", "--unsafe-paths", "--whitespace=nowarn"];
+  // Native npm files and the manifest describe exact LF bytes. Git's host
+  // checkout preferences must not rewrite the installed runtime to CRLF.
+  const args = [
+    "-c",
+    "core.autocrlf=false",
+    "-c",
+    "core.eol=lf",
+    "apply",
+    "--no-index",
+    "--unsafe-paths",
+    "--whitespace=nowarn",
+  ];
   // A package can live below an unrelated Git checkout. Stop repository
   // discovery here so Git cannot silently skip package-relative patch paths.
   const environment = {
