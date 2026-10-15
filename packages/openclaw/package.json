@@ -1,0 +1,33 @@
+{
+  "name": "@nous-wave/openclaw",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "peerDependencies": {
+    "openclaw": "2026.9.1"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.15.0",
+    "@nous-wave/client": "workspace:*",
+    "@nous-wave/protocol": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@openclaw/ai": "2026.9.1",
+    "openclaw": "2026.9.1"
+  }
+}

@@ -163,6 +163,16 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
         materialize: true,
         ..Default::default()
     };
+    assert!(matches!(
+        service
+            .build_contribution_batch(foreground_request.clone())
+            .await,
+        Err(Error::Unavailable(_))
+    ));
+    let foreground_request = nous_protocol::public::ProjectionRequest {
+        max_text_bytes: 4096,
+        ..foreground_request
+    };
     let foreground = service
         .build_contribution_batch(foreground_request.clone())
         .await
@@ -184,7 +194,7 @@ async fn preparation_captures_work_context_exact_sources_and_frozen_policy_witho
             .contains("Alice's pending release tasks")
     );
     assert!(foreground.segments[0].text.contains("TASK CONTEXT"));
-    assert!(foreground.segments[0].text.len() <= 96);
+    assert!(foreground.segments[0].text.len() > 96);
     assert_eq!(
         foreground.segments[0].authority,
         "external_current_authority"

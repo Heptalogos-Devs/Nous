@@ -65,6 +65,18 @@ impl KernelService {
         &self,
         input: p::ProjectionRequest,
     ) -> nous_core::Result<p::Projection> {
+        let subject = SubjectId(id(&input.subject_id)?);
+        if input.memory_requirement == "REQUIRED" {
+            self.require_memory()?;
+            if !self.0.subjects.subject(subject).await?.capabilities.memory {
+                return Err(nous_core::DomainError::new(
+                    nous_core::DomainErrorCode::CapabilityUnavailable,
+                    "Required Subject Memory capability is disabled",
+                )
+                .with_context("capability", "memory")
+                .into());
+            }
+        }
         let requirement = |value: &str| -> nous_core::Result<nous_core::RequirementStrength> {
             Ok(match value {
                 "REQUIRED" => nous_core::RequirementStrength::Required,
@@ -79,7 +91,7 @@ impl KernelService {
             .cognition
             .projection(
                 nous_runtime::ProjectionRequest {
-                    subject: SubjectId(id(&input.subject_id)?),
+                    subject,
                     session: SessionId(id(&input.session_id)?),
                     active_work_context: input
                         .active_work_context_id
@@ -109,6 +121,7 @@ impl KernelService {
             subject_id: view.subject.0.to_string(),
             session_id: view.session.0.to_string(),
             active_work_context_id: view.active_work_context.map(|id| id.to_string()),
+            usage: input.usage,
             segments: view
                 .segments
                 .into_iter()
@@ -116,7 +129,7 @@ impl KernelService {
                     segment_id: uuid::Uuid::now_v7().to_string(),
                     text: segment.source.text.unwrap_or_default(),
                     semantic_role: segment.semantic_role.into(),
-                    source_refs: vec![to_ref(segment.source.reference)],
+                    source_refs: vec![to_ref(segment.source.reference.clone())],
                     evidence: segment
                         .source
                         .evidence
@@ -132,6 +145,15 @@ impl KernelService {
                     authority: enum_name(segment.source.authority),
                     stability: segment.stability.into(),
                     source_revision: segment.source.source_revision,
+                    usage: if matches!(
+                        segment.source.reference,
+                        nous_core::CognitiveRef::WorkContext(_)
+                    ) {
+                        "situational_guidance"
+                    } else {
+                        "task_evidence"
+                    }
+                    .into(),
                 })
                 .collect(),
             degradation: view

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   ContextCursorSchema,
+  CognitionUsageSchema,
   QueryExprSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { boundedInteger } from "../agent.js";
@@ -13,6 +14,7 @@ export async function projectionCommands(env: CliEnvironment, action?: string) {
         query?: unknown;
         situation_refs?: string[];
         known_cursor?: unknown;
+        usage?: unknown;
       })
     : {};
   const projection = {
@@ -37,6 +39,26 @@ export async function projectionCommands(env: CliEnvironment, action?: string) {
     situationRefs: await Promise.all(
       (file.situation_refs ?? []).map((value) => env.resolveReference(value)),
     ),
+    usage:
+      action === "managed"
+        ? await content(
+            env,
+            CognitionUsageSchema,
+            file.usage ?? {
+              agentInstanceId: `cli:${env.values.consumer}`,
+              purpose: "reflection",
+              intent:
+                "Inspect the current cognition for the selected task and session.",
+              audience: {
+                conversationRef: env.required(
+                  await env.sessionId,
+                  "Selected Session",
+                ),
+                visibility: "internal",
+              },
+            },
+          )
+        : undefined,
   };
   return action === "managed"
     ? env.client.cognition.buildManagedContext({

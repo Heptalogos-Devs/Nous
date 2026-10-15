@@ -340,16 +340,8 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
             max_text_bytes: 12,
             ..projection_request.clone()
         })
-        .await
-        .unwrap();
-    assert!(
-        bounded
-            .segments
-            .iter()
-            .map(|segment| segment.text.len())
-            .sum::<usize>()
-            <= 12
-    );
+        .await;
+    assert!(matches!(bounded, Err(nous_core::Error::Unavailable(_))));
     let forbidden = service
         .build_contribution_batch(p::ProjectionRequest {
             memory_requirement: "FORBIDDEN".into(),

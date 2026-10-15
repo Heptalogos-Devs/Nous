@@ -194,12 +194,19 @@ describe("projection authority boundaries", () => {
     ]);
     expect(result.degradation[0]?.code).toBe("steward_rejected");
   });
-  it("enforces bytes without splitting UTF-8 and keeps required sources", async () => {
+  it("omits whole units and refuses to remove mandatory identity", async () => {
     const required = { ...policy, memory: "REQUIRED" as const };
     const planner = new ProjectionPlanner(
       new Map([["test", required]]),
       new ModelRuntime(),
     );
+    const empty = await planner.build(
+      projection(),
+      { maxItems: 1, maxTextBytes: 5 },
+      required,
+    );
+    expect(empty.segments).toHaveLength(0);
+    expect(empty.degradation).toEqual([]);
     const result = await planner.build(
       projection(segment("a", "中文中文")),
       {
@@ -208,13 +215,25 @@ describe("projection authority boundaries", () => {
       },
       required,
     );
-    expect(result.segments[0]?.text).toBe("中");
-    expect(result.segments).toHaveLength(1);
+    expect(result.segments).toHaveLength(0);
+    expect(result.degradation.map((value) => value.code)).toContain(
+      "context_budget_omission",
+    );
     const replacement = await planner.build(
       projection(segment("a", "�X")),
       { maxItems: 1, maxTextBytes: 3 },
       required,
     );
-    expect(replacement.segments[0]?.text).toBe("�");
+    expect(replacement.segments).toHaveLength(0);
+    await expect(
+      planner.build(
+        projection({
+          ...segment("self", "Only under the full stated condition."),
+          usage: "identity",
+        }),
+        { maxItems: 1, maxTextBytes: 3 },
+        required,
+      ),
+    ).rejects.toMatchObject({ code: 8 });
   });
 });

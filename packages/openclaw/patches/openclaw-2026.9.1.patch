@@ -1,0 +1,372 @@
+diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
+index 56406d3..d37f219 100644
+--- a/dist/agent-core-BxgCPa8O.js
++++ b/dist/agent-core-BxgCPa8O.js
+@@ -424,20 +424,31 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
+ 	if (config.transformContext) messages = await config.transformContext(messages, signal);
+ 	messages = normalizeCoreContextMessages(messages);
+ 	const llmMessages = await config.convertToLlm(messages);
+-	const llmContext = {
++	let llmContext = {
+ 		systemPrompt: context.systemPrompt,
+ 		messages: llmMessages,
+ 		tools: context.tools
+ 	};
++	// Nous controlled distribution: required cognition at every native model step.
++	const managed = config.managedCognition;
++	const application = managed ? await managed.prepare(config.model, llmContext, signal, { reservedOutputTokens: config.maxTokens ?? config.model.maxTokens }) : void 0;
++	if (managed && (!application?.applied || !application?.context)) throw new Error("Required Nous model input was not applied");
++	if (application) llmContext = application.context;
+ 	const streamFunction = resolveAgentCoreStreamFn(runtime, streamFn);
+ 	const resolvedApiKey = (config.getApiKey ? await config.getApiKey(config.model.provider) : void 0) || config.apiKey;
+-	const response = await streamFunction(config.model, llmContext, {
++	let response;
++	try { response = await streamFunction(config.model, llmContext, {
+ 		...config,
+ 		apiKey: resolvedApiKey,
+ 		signal
+-	});
++	}); } catch (error) {
++		if (application) await managed.report(application, signal?.aborted ? "cancelled" : "failed");
++		throw error;
++	}
+ 	let partialMessage = null;
+ 	let addedPartial = false;
++	let outcomeReported = false;
++	try {
+ 	for await (const event of response) switch (event.type) {
+ 		case "start": {
+ 			const message = event.partial;
+@@ -474,6 +485,13 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
+ 		case "error": return await finalizeAssistantMessage();
+ 	}
+ 	return await finalizeAssistantMessage();
++	} catch (error) {
++		if (application && !outcomeReported) {
++			outcomeReported = true;
++			await managed.report(application, signal?.aborted ? "cancelled" : "failed", partialMessage ?? void 0);
++		}
++		throw error;
++	}
+ 	async function finalizeAssistantMessage() {
+ 		const finalMessage = withAssistantTurnTaint(ensureToolTurnIdentity(removeNonExecutableToolCalls(await response.result())), turnTainted);
+ 		if (addedPartial) context.messages[context.messages.length - 1] = finalMessage;
+@@ -488,6 +506,8 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
+ 			type: "message_end",
+ 			message: finalMessage
+ 		});
++		outcomeReported = true;
++		if (application) await managed.report(application, finalMessage.stopReason === "aborted" ? "cancelled" : finalMessage.stopReason === "error" ? "failed" : "completed", finalMessage);
+ 		return finalMessage;
+ 	}
+ }
+@@ -615,7 +635,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
+ 			}
+ 			if (launched) await Promise.all(launched.started.map(async ({ index, entry, outcome }) => settle(index, entry, await outcome)));
+ 			for (const finalized of ordered) if (finalized) {
+-				messages.push(await emitToolResultMessage(finalized, batch.emit));
++				messages.push(await emitToolResultMessage(finalized, batch.emit, batch.config.managedCognition));
+ 				finalizedCalls.push(finalized);
+ 			}
+ 		} finally {
+@@ -633,7 +653,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
+ 		const toolCall = toolCalls[cursor];
+ 		if (!toolCall) continue;
+ 		const finalized = await completeUnstartedToolCall(batch, toolCall, { reason: skippedReason });
+-		messages.push(await emitToolResultMessage(finalized, batch.emit));
++		messages.push(await emitToolResultMessage(finalized, batch.emit, batch.config.managedCognition));
+ 		finalizedCalls.push(finalized);
+ 	}
+ 	return {
+@@ -1108,7 +1128,7 @@ async function completeToolLoopInterventionBatch(batch, params) {
+ 			...hideFromChannelProgress ? { hideFromChannelProgress: true } : {}
+ 		}, validation?.kind === "prepared" ? validation.args : toolCall.arguments);
+ 		await emitToolExecutionEnd(finalized, batch.emit);
+-		messages.push(await emitToolResultMessage(finalized, batch.emit));
++		messages.push(await emitToolResultMessage(finalized, batch.emit, batch.config.managedCognition));
+ 		finalizedCalls.push(finalized);
+ 	}
+ 	return {
+@@ -1162,7 +1182,7 @@ async function emitToolExecutionEnd(finalized, emit) {
+ 		...finalized.hideFromChannelProgress === true ? { hideFromChannelProgress: true } : {}
+ 	});
+ }
+-async function emitToolResultMessage(finalized, emit) {
++async function emitToolResultMessage(finalized, emit, managed) {
+ 	const message = copyInternalToolResultState(finalized.result, withToolResultContentSource({
+ 		role: "toolResult",
+ 		toolCallId: finalized.toolCall.id,
+@@ -1180,6 +1200,7 @@ async function emitToolResultMessage(finalized, emit) {
+ 		type: "message_end",
+ 		message
+ 	});
++	if (managed) await managed.observe(message);
+ 	return message;
+ }
+ function readTurnTaintMetadata(message) {
+@@ -1531,6 +1552,7 @@ var Agent$1 = class {
+ 			} : void 0,
+ 			convertToLlm: this.convertToLlm,
+ 			transformContext: this.transformContext,
++			managedCognition: this.managedCognition,
+ 			getApiKey: this.getApiKey,
+ 			getSteeringMessages,
+ 			getFollowUpMessages: async () => this.followUpQueue.drain(),
+diff --git a/dist/agent-exec-DQrJo6Wo.js b/dist/agent-exec-DQrJo6Wo.js
+index e8ee3cd..8cf5105 100644
+--- a/dist/agent-exec-DQrJo6Wo.js
++++ b/dist/agent-exec-DQrJo6Wo.js
+@@ -13,6 +13,8 @@ import path from "node:path";
+ import fs$1 from "node:fs/promises";
+ import os from "node:os";
+ import { randomUUID } from "node:crypto";
++import { r as closeExecStateDatabaseByPath } from "./openclaw-state-db-cache-AunrvrzG.js";
++import { a as closeExecAgentDatabases } from "./openclaw-agent-db-CUTe8BX6.js";
+ //#region src/commands/agent-exec-input.ts
+ const AGENT_EXEC_MESSAGE_MAX_BYTES = 4194304;
+ const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+@@ -452,6 +454,8 @@ async function agentExecCommand(positionalMessage, opts, runtime, deps = {}) {
+ 	runCleanupStep(() => restoreRuntimeConfigSnapshot ? restoreRuntimeConfigSnapshot() : configIo?.clearRuntimeConfigSnapshot());
+ 	runCleanupStep(() => runtimePaths?.pinRuntimePaths());
+ 	if (temporaryStateDir) try {
++		closeExecAgentDatabases(temporaryStateDir);
++		closeExecStateDatabaseByPath(path.join(temporaryStateDir, "state", "openclaw.sqlite"));
+ 		await fs$1.rm(temporaryStateDir, {
+ 			recursive: true,
+ 			force: true
+diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.js
+index 63c12b4..0579ccf 100644
+--- a/dist/builtin-openclaw-zQV8Wwjr.js
++++ b/dist/builtin-openclaw-zQV8Wwjr.js
+@@ -238,6 +238,7 @@ import { a as extractAssistantThinking, c as extractThinkingFromTaggedStream, d
+ import { n as claimHeartbeatOutcomeForRun, t as buildHeartbeatOutcomeContext } from "./heartbeat-outcome-store-BoT9c8Af.js";
+ import { I as streamWithPayloadPatch } from "./provider-stream-shared-BmB0vX9b.js";
+ import { i as resolveEmbeddedAgentStream, n as resolveEmbeddedAgentApiKey, r as resolveEmbeddedAgentBaseStreamFn, t as wrapStreamFnWithDiagnosticModelCallEvents } from "./attempt.model-diagnostic-events-B4dGIs0S.js";
++import { D as estimateNousInputTokensNative, O as estimateNousRenderedTokensNative } from "./helpers-BTOsl-oB.js";
+ import { a as appendModelIdentitySystemPrompt, c as buildProjectMemoryWriteInstruction, i as buildConfiguredAgentSystemPrompt, l as prepareProjectMemoryBootstrap, o as buildModelIdentityPromptLine, s as resolveAgentPromptSurfaceForSessionKey } from "./system-prompt-params-B645JcX8.js";
+ import { o as resolveUserTimezone, r as formatDateStamp } from "./date-time-C7YbYLih.js";
+ import { n as prepareWatchedSessionsPrompt } from "./watched-sessions-prompt-C9QfwkEy.js";
+@@ -14248,6 +14249,22 @@ async function runEmbeddedAttemptExecutionPhase(input) {
+ 		state.terminal = mergeAgentRunAttemptTerminal(state.terminal, incoming);
+ 	};
+ 	const idleTimeoutTriggerRef = {};
++	if (input.activeContextEngine?.info.managedModelInputRequired === true || attempt.config?.plugins?.slots?.contextEngine?.trim() === "nous-cognition") {
++		const engine = input.activeContextEngine;
++		if (engine?.info.id !== "nous-cognition" || typeof engine.prepareModelInput !== "function" || typeof engine.reportModelOutcome !== "function") throw new Error("Required Nous cognition engine is unavailable at the native model boundary");
++		let capturedInput;
++		activeSession.agent.managedCognition = {
++			prepare: (model, context, signal, budget) => {
++				capturedInput = { sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", model, context, signal: signal ?? input.runAbortController.signal,
++					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: budget.reservedOutputTokens,
++					audience: { visibility: attempt.sessionKey?.includes(":subagent:") ? "internal" : attempt.chatType === "direct" ? "direct" : attempt.chatType === "group" ? "group" : attempt.chatType === "channel" ? "public" : "internal", channel: attempt.messageChannel ?? attempt.messageProvider, senderId: attempt.senderId, destination: attempt.currentChannelId },
++					measureContext: (value) => estimateNousInputTokensNative({ messages: value.messages, systemPrompt: value.systemPrompt, prompt: "" }) + estimateNousRenderedTokensNative({ systemPrompt: JSON.stringify(value.tools ?? []), prompt: "" }) };
++				return engine.prepareModelInput(capturedInput);
++			},
++			report: (application, outcome, message) => engine.reportModelOutcome(capturedInput, application, outcome, message),
++			observe: (message) => engine.recordNativeEvent(capturedInput, message)
++		};
++	}
+ 	const { cacheObservabilityEnabled, promptCacheTools } = installEmbeddedAttemptStreamGuards({
+ 		attempt,
+ 		session: activeSession,
+diff --git a/dist/context-engine-turn-attempt-BPzr5IBp.js b/dist/context-engine-turn-attempt-BPzr5IBp.js
+index 0c1c60c..0424796 100644
+--- a/dist/context-engine-turn-attempt-BPzr5IBp.js
++++ b/dist/context-engine-turn-attempt-BPzr5IBp.js
+@@ -40,6 +40,7 @@ async function createContextEngineLogicalTurnLease(params) {
+ 		(params.warn ?? console.warn)(`[context-engine] Context engine "${sanitizeForLog(resolution.configuredId)}" degraded to "${sanitizeForLog(resolution.fallback.registeredId)}" for this logical turn: ${sanitizeForLog(reason)}. The "${sanitizeForLog(resolution.fallback.registeredId)}" engine will handle only this turn; configuration is unchanged, and "${sanitizeForLog(resolution.configuredId)}" will be retried next turn.`);
+ 	};
+ 	const degradeBeforeStart = (reason) => {
++		if (resolution.configuredId === "nous-cognition") throw new Error(`Required Nous cognition cannot degrade: ${reason}`);
+ 		if (state === "disposed") throw new Error("context-engine logical turn selection is already pinned");
+ 		if (isBaselineEngineSelection) {
+ 			if (state === "unselected") state = "selected";
+@@ -60,8 +61,9 @@ async function createContextEngineLogicalTurnLease(params) {
+ 		});
+ 		if (!support.ok) return `host "${selection.host.id}" is missing ${support.missingCapabilities.join(", ")}`;
+ 		if (isBaselineEngineSelection) return;
+-		if (selection.requiresDurableCommit && effective.engine.info.transcriptSemantics?.currentTurnFence !== "before-current-turn-entry-v1") return "current-turn transcript fencing is not declared";
+-		if (selection.requiresDurableCommit && !supportsContextEngineDurableTurnAdvancement(effective.engine)) return "atomic idempotent turn advancement is not declared";
++		const engineOwnsTranscript = effective.engine.info.transcriptPersistence !== "host";
++		if (selection.requiresDurableCommit && engineOwnsTranscript && effective.engine.info.transcriptSemantics?.currentTurnFence !== "before-current-turn-entry-v1") return "current-turn transcript fencing is not declared";
++		if (selection.requiresDurableCommit && engineOwnsTranscript && !supportsContextEngineDurableTurnAdvancement(effective.engine)) return "atomic idempotent turn advancement is not declared";
+ 	};
+ 	if (resolution.configuredFailure) degradeBeforeStart(resolution.configuredFailure);
+ 	return {
+diff --git a/dist/history-image-prune-Dg0CDQ4a.js b/dist/history-image-prune-Dg0CDQ4a.js
+index dfbd9c1..4aac267 100644
+--- a/dist/history-image-prune-Dg0CDQ4a.js
++++ b/dist/history-image-prune-Dg0CDQ4a.js
+@@ -1777,6 +1777,7 @@ async function prepareEmbeddedAttemptHistory(input) {
+ 		}
+ 	} catch (error) {
+ 		log.warn(`context engine assemble failed, using pipeline messages: ${String(error)}`);
++		if (input.activeContextEngine?.info.managedModelInputRequired === true || attempt.config?.plugins?.slots?.contextEngine?.trim() === "nous-cognition") throw error;
+ 	}
+ 	return {
+ 		contextEnginePromptAuthority,
+diff --git a/dist/host-compat-xESS3bi6.js b/dist/host-compat-xESS3bi6.js
+index 0a3e6ab..242abc7 100644
+--- a/dist/host-compat-xESS3bi6.js
++++ b/dist/host-compat-xESS3bi6.js
+@@ -12,6 +12,7 @@ const OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST = {
+ 	id: "openclaw-embedded",
+ 	label: "OpenClaw embedded runner",
+ 	capabilities: [
++		"managed-model-input",
+ 		"bootstrap",
+ 		"assemble-before-prompt",
+ 		"after-turn",
+@@ -43,7 +44,12 @@ function buildGenericCliContextEngineHostSupport(params) {
+ }
+ /** Evaluate whether a context-engine host can safely run the requested operation. */
+ function evaluateContextEngineHostSupport(params) {
+-	const requirements = params.contextEngineInfo.hostRequirements?.[params.operation];
++	const declared = params.contextEngineInfo.hostRequirements?.[params.operation];
++	const requirements = params.contextEngineInfo.managedModelInputRequired && params.operation === "agent-run" ? {
++		...declared,
++		requiredCapabilities: [...(declared?.requiredCapabilities ?? []), "managed-model-input"],
++		unsupportedMessage: "Nous managed cognition requires the controlled native OpenClaw model boundary."
++	} : declared;
+ 	if (!requirements || requirements.requiredCapabilities.length === 0) return {
+ 		ok: true,
+ 		requirements,
+diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
+index 115e3a6..6d3c930 100644
+--- a/dist/registry-BdPa2vko.js
++++ b/dist/registry-BdPa2vko.js
+@@ -150,7 +150,7 @@ function projectContextEngineHostParams(engine, methodName, params) {
+ 	return Object.fromEntries(Object.entries(params).filter(([key]) => accepted.includes(key) || !CONTEXT_ENGINE_HOST_PARAMS.has(key) || methodName === "compact" && key === "abortSignal"));
+ }
+ function wrapResolvedContextEngine(engine, metadata) {
+-	const fallback = metadata.defaultEngineId && metadata.factoryCtx && metadata.engineId !== metadata.defaultEngineId ? {
++	const fallback = metadata.engineId !== "nous-cognition" && metadata.defaultEngineId && metadata.factoryCtx && metadata.engineId !== metadata.defaultEngineId ? {
+ 		defaultEngineId: metadata.defaultEngineId,
+ 		factoryCtx: metadata.factoryCtx
+ 	} : void 0;
+@@ -489,15 +489,19 @@ async function resolveContextEngine(config, options) {
+ 	const slotValue = config?.plugins?.slots?.contextEngine;
+ 	const engineId = typeof slotValue === "string" && slotValue.trim() ? slotValue.trim() : defaultEngineId;
+ 	const isDefaultEngine = engineId === defaultEngineId;
++	const requiredCognition = engineId === "nous-cognition";
+ 	const factoryCtx = {
+ 		config,
+ 		agentDir: options?.agentDir,
+ 		workspaceDir: options?.workspaceDir
+ 	};
+-	if (!isDefaultEngine ? getContextEngineQuarantine(engineId) : void 0) return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
++	if (!isDefaultEngine ? getContextEngineQuarantine(engineId) : void 0) {
++		if (requiredCognition) throw new Error("Required Nous context engine is quarantined");
++		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
++	}
+ 	const entry = getContextEngines().get(engineId);
+ 	if (!entry) {
+-		if (isDefaultEngine) throw new Error(`Context engine "${engineId}" is not registered. Available engines: ${listContextEngineIds().join(", ") || "(none)"}`);
++		if (isDefaultEngine || requiredCognition) throw new Error(`Context engine "${engineId}" is not registered. Available engines: ${listContextEngineIds().join(", ") || "(none)"}`);
+ 		recordContextEngineQuarantine({
+ 			engineId,
+ 			operation: "resolve",
+@@ -507,6 +511,7 @@ async function resolveContextEngine(config, options) {
+ 		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
+ 	}
+ 	if (!isDefaultEngine && entry.lifecycle === "readOnlyDiscovery") {
++		if (requiredCognition) throw new Error("Required Nous context engine has no runtime registration");
+ 		console.warn(`[context-engine] Context engine "${engineId}" owner=${entry.owner} is registered for read-only discovery only; falling back to default engine "${defaultEngineId}" without quarantine until runtime activation registers it.`);
+ 		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
+ 	}
+@@ -518,7 +523,7 @@ async function resolveContextEngine(config, options) {
+ 		const contractError = describeResolvedContextEngineContractError(engineId, engine);
+ 		if (contractError) throw new Error(contractError);
+ 	} catch (error) {
+-		if (isDefaultEngine) throw error;
++		if (isDefaultEngine || requiredCognition) throw error;
+ 		recordContextEngineQuarantine({
+ 			engineId,
+ 			owner: entry.owner,
+diff --git a/dist/runtime-plugins-CWkOjN1D.js b/dist/runtime-plugins-CWkOjN1D.js
+index 842fe5a..b13953c 100644
+--- a/dist/runtime-plugins-CWkOjN1D.js
++++ b/dist/runtime-plugins-CWkOjN1D.js
+@@ -5,7 +5,7 @@ import { a as loadPluginMetadataSnapshot } from "./plugin-metadata-snapshot-BuNx
+ import { d as getActivePluginRegistry, m as getActivePluginRegistryWorkspaceDir } from "./runtime-MupoouIC.js";
+ import { a as getPluginRuntimeGatewayRequestScope, d as withPluginRuntimeRegistryScope } from "./gateway-request-scope-CmMd3nUp.js";
+ import { a as registryContainsRuntimePluginIds, i as listRuntimePluginIdsFromRegistry, r as listLoadedRuntimePluginIds } from "./active-runtime-registry-D12UHfQh.js";
+-import { n as loadPluginRegistryHandle } from "./loader-UHuBXZwI.js";
++import { n as loadPluginRegistryHandle, t as loadAndActivateRootPluginRegistry } from "./loader-UHuBXZwI.js";
+ import { r as adoptRuntimeContextEngineRegistrations } from "./registry-BdPa2vko.js";
+ import { a as resolveAgentRuntimePluginSelections, i as resolveAgentRuntimePluginLoadPlan } from "./runtime-plugin-load-plan-Bm46qisR.js";
+ import { t as adoptRuntimeMemoryRegistrations } from "./memory-state-D4Yq0L6U.js";
+@@ -81,10 +81,11 @@ function resolveAgentRuntimePluginRegistryLoad(params) {
+ /** Loads the registry handle owned by an agent prepared-runtime generation. */
+ function loadAgentRuntimePluginRegistryHandle(params) {
+ 	const loadOptions = resolveAgentRuntimePluginRegistryLoad(params);
+-	if (params.reusableRegistry && loadOptions.onlyPluginIds !== void 0 && registryContainsRuntimePluginIds(params.reusableRegistry, loadOptions.onlyPluginIds)) return params.reusableRegistry;
+-	const pluginRegistry = loadPluginRegistryHandle({
++	const requiredCognition = params.config?.plugins?.slots?.contextEngine?.trim() === "nous-cognition";
++	if (params.reusableRegistry && (!requiredCognition || params.reusableRegistry.contextEngines.get("nous-cognition")?.lifecycle === "runtime") && loadOptions.onlyPluginIds !== void 0 && registryContainsRuntimePluginIds(params.reusableRegistry, loadOptions.onlyPluginIds)) return params.reusableRegistry;
++	const needsRuntimeRoot = requiredCognition && getActivePluginRegistry()?.contextEngines.get("nous-cognition")?.lifecycle !== "runtime";
++	const pluginRegistry = (needsRuntimeRoot ? loadAndActivateRootPluginRegistry : loadPluginRegistryHandle)({
+ 		...loadOptions,
+-		activate: false
+ 	});
+ 	const activeRegistry = getActivePluginRegistry();
+ 	if (!activeRegistry) return pluginRegistry;
+diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQMTkIo.js
+index 93a9926..b537079 100644
+--- a/dist/sessions-spawn-tool-1FQMTkIo.js
++++ b/dist/sessions-spawn-tool-1FQMTkIo.js
+@@ -3616,7 +3616,8 @@ function createSessionsSpawnTool(opts) {
+ 			const cleanup = params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
+ 			const expectsCompletionMessage = collect ? false : params.expectsCompletionMessage !== false;
+ 			const sandbox = params.sandbox === "require" ? "require" : "inherit";
+-			const context = params.context === "fork" || params.context === "isolated" ? params.context : void 0;
++			// Required Nous cognition uses task-only handoff; parent history is not delegated by model choice.
++			const context = visibilityCfg?.plugins?.slots?.contextEngine?.trim() === "nous-cognition" ? "isolated" : params.context === "fork" || params.context === "isolated" ? params.context : void 0;
+ 			const streamTo = runtime === "acp" && params.streamTo === "parent" ? "parent" : void 0;
+ 			const lightContext = params.lightContext === true;
+ 			const roleContext = requestedAgentId ? { role: requestedAgentId } : {};
+diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B645JcX8.js
+index d5764bd..e46e5b0 100644
+--- a/dist/system-prompt-params-B645JcX8.js
++++ b/dist/system-prompt-params-B645JcX8.js
+@@ -530,10 +530,11 @@ function appendModelIdentitySystemPrompt(params) {
+ 	return base ? `${base}\n\n${line}` : line;
+ }
+ function buildAgentSystemPrompt(params) {
++	const identityLine = params.subjectCognition ? "You are an independent Subject executing through OpenClaw. Nous provides your current adopted cognition; no model, host or data manager defines a personal history for you." : "You are a personal assistant running inside OpenClaw.";
+ 	const promptMode = params.promptMode ?? "full";
+ 	const runtimeInfo = params.runtimeInfo;
+ 	const modelIdentityLine = buildModelIdentityPromptLine(runtimeInfo?.model);
+-	if (promptMode === "none") return ["You are a personal assistant running inside OpenClaw.", modelIdentityLine].filter(Boolean).join("\n");
++	if (promptMode === "none") return [identityLine, modelIdentityLine].filter(Boolean).join("\n");
+ 	const acpEnabled = params.acpEnabled === true;
+ 	const promptSurface = params.promptSurface ?? "openclaw_main";
+ 	const sandboxedRuntime = params.sandboxInfo?.enabled === true;
+@@ -806,7 +807,7 @@ function buildAgentSystemPrompt(params) {
+ 		stableContextFiles: contextFiles
+ 	}), () => {
+ 		const lines = [
+-			"You are a personal assistant running inside OpenClaw.",
++			identityLine,
+ 			"",
+ 			...includeToolGuidance ? [
+ 				"## Tooling",
+@@ -1062,6 +1063,7 @@ function resolveAgentSystemPromptConfig(params) {
+ /** Builds the agent system prompt after applying config-derived prompt fields. */
+ function buildConfiguredAgentSystemPrompt(params) {
+ 	const { config, agentId, ...renderParams } = params;
++	const subjectCognition = config?.plugins?.slots?.contextEngine?.trim() === "nous-cognition";
+ 	const configParams = config ? resolveAgentSystemPromptConfig({
+ 		config,
+ 		agentId,
+@@ -1070,7 +1072,9 @@ function buildConfiguredAgentSystemPrompt(params) {
+ 	}) : {};
+ 	return buildAgentSystemPrompt({
+ 		...renderParams,
+-		...configParams
++		...configParams,
++		subjectCognition,
++		...(subjectCognition ? { includeMemorySection: false, contextFiles: (renderParams.contextFiles ?? []).filter((file) => !/(?:^|[\\/])(?:SOUL|USER|IDENTITY|MEMORY|BOOTSTRAP)\.md$/iu.test(file.path) && !/(?:^|[\\/])memory[\\/]/iu.test(file.path)) } : {})
+ 	});
+ }
+ //#endregion

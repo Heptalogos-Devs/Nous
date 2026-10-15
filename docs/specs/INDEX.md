@@ -11,6 +11,7 @@
 - [纵向认知与维护](active/cognitive-runtime/longitudinal-cognition.md)
 - [WorkContext](active/cognitive-runtime/work-context.md)
 - [Active Cognition](active/cognitive-runtime/active-cognition.md)
+- [Managed OpenClaw](active/cognitive-runtime/openclaw.md)
 - [Episode Authority](active/episode/episode-authority.md)
 - [Episode Runtime integration](active/episode/episode-runtime-integration.md)
 

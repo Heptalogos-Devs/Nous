@@ -12,6 +12,7 @@ pub(super) struct CognitionText {
     pub text: String,
     pub scope: Option<String>,
     pub boundary: Option<String>,
+    pub complete: bool,
 }
 impl CognitionText {
     pub(super) fn descriptor(self) -> QueryDescriptor {
@@ -108,7 +109,8 @@ impl MemoryService {
 WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) WITH ORDINALITY r(kind,value,ordinal))
 SELECT q.ordinal,'memory_revision' kind,r.memory_revision_id id,o.memory_id object_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,
- CASE WHEN $4>0 THEN r.title END title,CASE WHEN $4>0 THEN left(r.representation_text,$4) ELSE '' END text,NULL::text scope,NULL::text boundary
+ CASE WHEN $4>0 THEN r.title END title,CASE WHEN $4>0 THEN left(r.representation_text,$4) ELSE '' END text,NULL::text scope,NULL::text boundary,
+ octet_length(r.representation_text)<=$4 complete
  FROM requested q JOIN memory_objects o ON o.subject_id=$1
  JOIN memory_revisions r ON r.memory_id=o.memory_id
  WHERE (q.kind='memory_revision' AND r.memory_revision_id::text=q.value)
@@ -116,7 +118,8 @@ SELECT q.ordinal,'memory_revision' kind,r.memory_revision_id id,o.memory_id obje
 UNION ALL
 SELECT q.ordinal,'cognitive_schema_revision',r.schema_revision_id,o.schema_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
- CASE WHEN $4>0 THEN left(r.structural_claim,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.applicability_description,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.boundary_definition,$4) ELSE '' END
+ CASE WHEN $4>0 THEN left(r.structural_claim,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.applicability_description,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.boundary_definition,$4) ELSE '' END,
+ octet_length(r.structural_claim)+octet_length(r.applicability_description)+octet_length(r.boundary_definition)+2<=$4
  FROM requested q JOIN cognitive_schemas o ON o.subject_id=$1
  JOIN cognitive_schema_revisions r ON r.schema_id=o.schema_id
  WHERE (q.kind='cognitive_schema_revision' AND r.schema_revision_id::text=q.value)
@@ -124,21 +127,21 @@ SELECT q.ordinal,'cognitive_schema_revision',r.schema_revision_id,o.schema_id,
 UNION ALL
 SELECT q.ordinal,'episode_revision',r.episode_revision_id,o.episode_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
- CASE WHEN $4>0 THEN left(r.boundary_explanation,$4) ELSE '' END,NULL,NULL
+ CASE WHEN $4>0 THEN left(r.boundary_explanation,$4) ELSE '' END,NULL,NULL,octet_length(r.boundary_explanation)<=$4
  FROM requested q JOIN episode_objects o ON o.subject_id=$1 JOIN episode_revisions r ON r.episode_id=o.episode_id
  WHERE (q.kind='episode_revision' AND r.episode_revision_id::text=q.value)
     OR (q.kind='episode' AND o.episode_id::text=q.value AND r.episode_revision_id=o.current_revision_id)
 UNION ALL
 SELECT q.ordinal,'journal_revision',r.journal_revision_id,o.journal_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
- CASE WHEN $4>0 THEN left(r.narrative,$4) ELSE '' END,NULL,NULL
+ CASE WHEN $4>0 THEN left(r.narrative,$4) ELSE '' END,NULL,NULL,octet_length(r.narrative)<=$4
  FROM requested q JOIN journal_objects o ON o.subject_id=$1 JOIN journal_revisions r ON r.journal_id=o.journal_id
  WHERE (q.kind='journal_revision' AND r.journal_revision_id::text=q.value)
     OR (q.kind='journal' AND o.journal_id::text=q.value AND r.journal_revision_id=o.current_revision_id)
 UNION ALL
 SELECT q.ordinal,'tag',t.tag_id,r.tag_revision_id,'accepted','valid','normal',
  CASE WHEN $4>0 THEN r.label END,CASE WHEN $4>0 THEN COALESCE(r.description,'') ELSE '' END,
- CASE WHEN $4>0 THEN r.kind_hint END,NULL
+ CASE WHEN $4>0 THEN r.kind_hint END,NULL,octet_length(r.label)+octet_length(COALESCE(r.description,''))+octet_length(COALESCE(r.kind_hint,''))+32<=$4
  FROM requested q JOIN tags t ON q.kind='tag' AND t.tag_id=canonical_tag($1,CASE WHEN q.kind='tag' THEN q.value::uuid END)
  JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status='active'
 "#).bind(subject.0).bind(kinds).bind(values).bind(i32::try_from(max_bytes).map_err(|_| Error::Invalid("content bound exceeded".into()))?)
@@ -206,6 +209,7 @@ fn read_content(
             },
             scope: None,
             boundary: None,
+            complete: true,
         });
     }
     let row =
@@ -271,5 +275,6 @@ fn read_content(
         text,
         scope,
         boundary: row.try_get("boundary").map_err(db)?,
+        complete: row.try_get("complete").map_err(db)?,
     })
 }

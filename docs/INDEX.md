@@ -18,6 +18,7 @@
 
 - [接口参考入口](reference/README.md)
 - [Official Client operations](reference/CLIENT.md)
+- [OpenClaw 独立集成与安装](../packages/openclaw/README.md)
 - [NousQL](reference/NOUSQL.md)
 - [Configuration](reference/CONFIGURATION.md)
 - [Model Runtime](reference/MODEL_RUNTIME.md)

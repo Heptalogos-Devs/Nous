@@ -11,6 +11,7 @@
 - Query/Serving：QueryExpr、exact read、lexical/dense/runtime lanes、固定 fusion、可选 model rerank、final Authority revalidation 和可重建 generation。
 - Authority mutation：Persistence envelope 统一 owner/operation locks、receipt replay、transaction 与合并 projection invalidation；领域 owner 保持独立数据模型和 mutation/lifecycle 验证。
 - Core 与官方 Client/CLI：ModelRole/RolePolicy/ExecutionProfile/ModelProfile/Gateway、Prompt identity、media derivation、宿主显式供给的 External Resource adapter、trace、流式材料上传与完整下载；Memory/Schema/Episode/Journal 管理、Seed adoption、Resource registry、projection 与 managed context 均可从 CLI/MCP 操作。
+- [正式 OpenClaw 认知集成](../../packages/openclaw/README.md)：Client managed binding、固定版本原生入口、逐模型认知应用、RESET、原生压缩委派、独立子 Agent 与真实 Observation/ReportUse；Subject 可无 Seed。
 - Windows x64 source-less portable package 的 assembly 与 runtime installation path。
 
 当前 Agent 接口使用非空 Unicode NousQL 意图与可选语法岛；自然语言指代不需要显式补全。WorkContext 持久化自由文本和 cognition/Entity/Tag anchors，Runtime 同事务冻结 Session/ResidentSet context snapshot，所有 retrieval profiles 共用 representation 和 activation，history 排除未来 cognition/Tag。CLI 使用 citty，默认语义文本、opt-in owned JSON、exact result:N 续接和原请求 receipt 恢复。模型 routes/controls/Prompt 冻结；逐次 fallback 计费并保存实际成功 producer 和有界累积 telemetry。Formation basis、来源 lineage 与 epistemic relation 分离；结构合法的认知错误仍可演化和纠正。

@@ -5,12 +5,18 @@
       "entry": [
         "scripts/dev/*.ts!",
         "scripts/runtime/pack.ts!",
+        "scripts/openclaw/{prepare,pack}.ts!",
         "scripts/maintenance/clean.ts!",
         "scripts/release/{assemble,archive,prepare-notices,verify-portable}.ts!",
-        "scripts/smoke/{memory,runtime-episode,model-material-resource,media-routes,longitudinal,configuration}.ts!",
+        "scripts/smoke/{memory,runtime-episode,model-material-resource,media-routes,longitudinal,configuration,openclaw}.ts!",
         "scripts/research/{media,serve-gateway,longitudinal,model-contracts,model-trace,dogfooding}.ts!",
         "scripts/tests/**/*.test.ts"
       ]
+    },
+    "packages/openclaw": {
+      "entry": ["src/index.ts!", "bin/prepare.mjs!"],
+      "project": ["src/**/*.ts!", "bin/*.mjs!"],
+      "ignoreDependencies": ["openclaw"]
     },
     "apps/nous-core": {
       "entry": ["src/main.ts!", "src/launcher.ts!", "tests/**/*.test.ts"],

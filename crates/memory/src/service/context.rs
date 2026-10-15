@@ -52,23 +52,43 @@ impl MemoryService {
             sources.entry(row.try_get("journal_revision_id").map_err(db)?).or_default().push(parse_reference(
                 &row.try_get::<String,_>("ref_kind").map_err(db)?, &row.try_get::<String,_>("ref_value").map_err(db)?)?);
         }
-        let mut points = std::collections::HashMap::<Uuid, Vec<String>>::new();
+        let mut points = std::collections::HashMap::<Uuid, Vec<Option<String>>>::new();
         if max_bytes > 0 && !journals.is_empty() {
-            for row in sqlx::query("SELECT journal_revision_id,left(text,$2) text FROM journal_revision_points WHERE journal_revision_id=ANY($1) ORDER BY journal_revision_id,ordinal")
+            for row in sqlx::query("SELECT journal_revision_id,CASE WHEN octet_length(text)<=$2 THEN text END text FROM journal_revision_points WHERE journal_revision_id=ANY($1) ORDER BY journal_revision_id,ordinal")
                 .bind(&journals).bind(max_bytes as i32).fetch_all(&mut *tx).await.map_err(db)? {
-                points.entry(row.try_get("journal_revision_id").map_err(db)?).or_default().push(row.try_get("text").map_err(db)?);
+                let text: Option<String> = row.try_get("text").map_err(db)?;
+                points.entry(row.try_get("journal_revision_id").map_err(db)?).or_default().push(text);
             }
         }
         let results = contents
             .into_iter()
             .map(|content| {
-                content.map(|content| {
+                content.and_then(|content| {
+                    if max_bytes > 0
+                        && (!content.complete
+                            || points
+                                .get(&content.revision)
+                                .is_some_and(|values| values.iter().any(Option::is_none)))
+                    {
+                        return Err(Error::Unavailable(
+                            "complete cognitive unit exceeds projection budget".into(),
+                        ));
+                    }
                     let mut text = content.text;
                     if let Some(scope) = content.scope {
                         text.push('\n');
                         text.push_str(&scope);
                     }
-                    for point in points.get(&content.revision).into_iter().flatten() {
+                    if let Some(boundary) = content.boundary {
+                        text.push('\n');
+                        text.push_str(&boundary);
+                    }
+                    for point in points
+                        .get(&content.revision)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                    {
                         text.push('\n');
                         text.push_str(point);
                     }
@@ -94,14 +114,18 @@ impl MemoryService {
                                 basis_role: "source".into(),
                             }),
                     );
-                    text.truncate(text.floor_char_boundary(max_bytes));
-                    ContextSource {
+                    if max_bytes > 0 && text.len() > max_bytes {
+                        return Err(Error::Unavailable(
+                            "complete cognitive unit exceeds projection budget".into(),
+                        ));
+                    }
+                    Ok(ContextSource {
                         reference: content.reference,
                         source_revision: Some(content.revision.to_string()),
                         text: (max_bytes > 0).then_some(text),
                         authority: AuthorityClass::SubjectCognition,
                         evidence,
-                    }
+                    })
                 })
             })
             .collect();

@@ -1,0 +1,22 @@
+{
+  "id": "nous-cognition",
+  "name": "Nous Cognition",
+  "description": "Managed Subject cognition at every native OpenClaw model invocation.",
+  "kind": "context-engine",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["runRoot", "subjectId", "consumerId"],
+    "properties": {
+      "runRoot": { "type": "string", "minLength": 1 },
+      "subjectId": { "type": "string", "format": "uuid" },
+      "consumerId": { "type": "string", "minLength": 1 },
+      "workContextId": { "type": "string", "format": "uuid" },
+      "cognitionTokenCap": {
+        "type": "integer",
+        "minimum": 512,
+        "default": 4096
+      }
+    }
+  }
+}
