@@ -5,6 +5,7 @@ import {
   CognitiveSeedSchema,
   CreateSubjectRequestSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { SubjectCapabilitiesSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { content, operationId, page } from "../content.js";
 import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
@@ -38,6 +39,12 @@ export async function subjectCommands(
     });
     return subject;
   }
+  if (action === "provision")
+    return client.subjects.provisionCapabilities({
+      subjectId: required(await env.subjectId, "Selected Subject"),
+      operationId: operationId(env),
+      capabilities: await content(env, SubjectCapabilitiesSchema),
+    });
   if (action === "seed")
     return client.subjects.getCognitiveSeed({
       subjectId: required(await env.subjectId, "Selected Subject"),

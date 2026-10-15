@@ -111,6 +111,8 @@ node --import tsx apps/nous-cli/src/main.ts --run-root <Core RunRoot> --instance
 
 `nous --locator <bootstrap.toml> mcp --state-root <Agent 私有目录> --consumer consumer:codex:research` 启动官方 MCP SDK v2 stdio consumer。MCP 必须显式指定私有 state root 和稳定 consumer；它通过参数数组在进程内调用 Terminal 共用的命令核心，并使用同一跨进程状态事务。并发命令各自冻结输入，长操作不阻塞其他调用。stdout/stdin 仅用于 MCP 协议；MCP 输入使用文件或 `--text`，不接受文件 `-`。三个工具为 `nous_help`、`nous_command`（`args` 是 argv 字符串数组，不是 shell 命令）和 `nous_query`。错误保留 CLI 文本与未知结果 receipt；用 `nous_command` 调用 `retry <receipt>` 恢复。
 
+默认 MCP 连接提供认知读取、查询、实际观察、Session/WorkContext 和结果反馈。Self/Memory/Schema 等认知写入、模型形成、能力供给、Seed、Identity、配置与资源登记管理需要操作者在启动参数加入 `--management`，并为该连接单独选择私有 state root。scope 固定在连接内，工具 argv 不能追加 `--management` 提权；拒绝发生在 owner 调用前，明确拒绝不留下未知结果回执。普通交谈的“记住/忘记”不授予管理权限。
+
 Codex 项目 `.codex/config.toml` 的源码配置示例，替换全部绝对路径：
 
 ```toml
@@ -131,9 +133,27 @@ Session. Closing a Session clears consumer selection; its returned stable addres
 remains readable through the explicit form. `session open` and `session close`
 accept no reference argument.
 
+## Self 与当前 soul
+
+`subject provision --request-file capabilities.toml` 在当前 Subject 上追加请求能力，例如 `self_cognition = true`，保留原身份和数据。无 Seed 创建不调用解释模型或生成默认人格。
+
+`self list --kind self_facet|narrative_thread`、`self get <对象引用>`、`self revision <exact引用>` 与 `self history <对象引用>` 读取正式对象；Self 的分页上限为 100。`self soul` 从一次当前 owner 快照生成可读文本，保留 stance、适用范围、反例、有效时间和 exact revision。它不保存另一份人格文件；修改使用显式提案。
+
+`self adopt --request-file content.toml --text <采用理由>` 和 `self revise <对象或exact引用> --request-file content.toml --text <变化理由>` 使用 SelfContent：顶层 `[facet]` 或 `[narrative]` 与正式字段一致。`self evidence <引用> --request-file evidence.toml` 使用 AddSelfEvidenceRequest 的 role/basis 字段；操作 envelope、target 和 epoch 由当前调用固定。`suppress/restore/withdraw/reaccept/purge` 使用实际生命周期。指定 exact revision 修订时不替换目标；owner 检查 head 与 epoch。purge 显式提供 `--expected-object-epoch` 和 `--operation-id` 时可在对象删除后重放。
+
+先通过 `subject create/adopt-seed` 保存来源，再运行 `self interpret-seed` 解释当前 Seed。观察反思使用 `self interpret --request-file reflection.toml`：
+
+```toml
+[observation]
+occurrence_id = "<返回的 obs:引用>"
+# representation_id = "<需要时选择有界文本 repr:引用>"
+```
+
+这调用正式 `model.interpretSelf`，按实际来源选择 `self_formation` 或 `self_reflection` 配置角色，返回 Self 领域状态及逐项结果。模型失败不会撤销 Subject 或 Seed；同 operation id 复用已有付费结果。所有管理与解释操作要求显式调用或管理 scope。
+
 ## 完整 owner 管理命令
 
-`memory form|get|list|revision|history|revise|accessibility|link|suppress|restore|withdraw|reaccept|purge`；`schema create|get|revision|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge`；`episode create|get|list|revision|history|revise|link` 加同样 lifecycle；`journal get|list|revision|history` 加 lifecycle。这些都是实际 Authority 操作，MCP 的 `nous_command` 可直接使用。
+`memory form|get|list|revision|history|revise|accessibility|link|suppress|restore|withdraw|reaccept|purge`；`schema create|get|revision|evidence|revise|split|merge|suppress|restore|withdraw|reaccept|purge`；`episode create|get|list|revision|history|revise|link` 加同样 lifecycle；`journal get|list|revision|history` 加 lifecycle。这些都是实际 Authority 操作，Terminal 或显式管理 scope 的 MCP `nous_command` 可使用。
 
 Memory correction 示例：
 

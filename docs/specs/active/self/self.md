@@ -55,4 +55,4 @@ Self 使用现有 CognitiveContributor、共享 lexical/dense Serving、固定 f
 
 ## 当前施工范围
 
-本功能分支已接通 owner、公开 RPC/Client、自动选择、共享查询和模型形成/反思。CLI 和正式 OpenClaw 的 Self 使用场景继续在同一功能内实现；完成状态由实际代码与运行证据确认。
+本功能分支已接通 owner、公开 RPC/Client、自动选择、共享查询和模型形成/反思。CLI/MCP 已提供正式 owner 操作、来源解释与只读 soul；正式 OpenClaw 的 Self 使用场景继续在同一功能内实现；完成状态由实际代码与运行证据确认。

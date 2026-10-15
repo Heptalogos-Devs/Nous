@@ -131,10 +131,8 @@ export async function createEnvironment(
   async function bindReference(text: string, kind: string, subject: string) {
     if (kind && /^[0-9a-f-]{36}$/i.test(text))
       return { kind, value: text.toLowerCase() };
-    const canonical =
-      /^(subject|session|work_context|association|entity|resource|memory|memory_revision|cognitive_schema|cognitive_schema_revision|episode|episode_revision|journal|journal_revision|tag|occurrence|artifact|source_region|derived_representation|derived_region|external_object):(.+)$/.exec(
-        text,
-      );
+    // Decode canonical shape here; the receiving owner validates its declared reference family.
+    const canonical = /^([a-z][a-z0-9_]*):(.+)$/.exec(text);
     if (
       canonical &&
       (["entity", "resource", "external_object"].includes(canonical[1]!) ||
@@ -219,7 +217,7 @@ export async function createEnvironment(
       return result;
     } catch (error) {
       const rejected =
-        error instanceof NousError &&
+        (error instanceof NousError || error instanceof CliError) &&
         error.context.commit_status === "rejected";
       if (rejected) {
         await (await local()).removeReceipt(id).catch(() =>

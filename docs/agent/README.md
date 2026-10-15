@@ -17,4 +17,10 @@ exports complete exact bytes for inspecting original media. An existing file is
 never overwritten; partial input requires a larger bound or a bounded region.
 For implementation details, use the Chinese [developer reference](../reference/NOUSQL.md).
 
+The default MCP connection supports cognition reads, observations and task context.
+Authority mutations require an operator-started `--management` connection. A chat
+request to remember or forget does not change the connection scope. `self soul`
+reads a derived current view; adoption, revision and interpretation are explicit
+management operations. See the [CLI reference](../../apps/nous-cli/README.md).
+
 [Documentation index](../INDEX.md)

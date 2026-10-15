@@ -1,16 +1,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { cognitionRevisionReader } from "../cognition-owner.js";
 import { CliError, boundedInteger } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 import { pipeline } from "node:stream/promises";
 import { open, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-const cognitionKinds = new Set([
-  "memory_revision",
-  "cognitive_schema_revision",
-  "episode_revision",
-  "journal_revision",
-]);
 export async function queryCommands(
   env: CliEnvironment,
   action?: string,
@@ -85,8 +80,8 @@ export async function queryCommands(
       cognitiveRole: hit.cognitiveRole,
       formationMode: hit.formationMode,
       evidenceFamilies: hit.evidenceFamilies,
-      next: cognitionKinds.has(refs[index]!.kind)
-        ? `show result:${index + 1} | trace result:${index + 1} | use result:${index + 1} | context pin --cognition result:${index + 1}`
+      next: cognitionRevisionReader(refs[index]!.kind)
+        ? `show result:${index + 1} | ${cognitionRevisionReader(refs[index]!.kind)!.trace ? `trace result:${index + 1} | ` : ""}use result:${index + 1} | context pin --cognition result:${index + 1}`
         : refs[index]!.kind === "occurrence"
           ? `show result:${index + 1} | read result:${index + 1} | context pin --cognition result:${index + 1}`
           : refs[index]!.kind === "resource"
@@ -127,15 +122,9 @@ export async function showCommands(env: CliEnvironment, reference?: string) {
     required(reference, "Exact reference or result:N"),
   );
   const input = { subjectId, id: ref.value };
+  const cognition = cognitionRevisionReader(ref.kind);
+  if (cognition) return cognition.read(client, input);
   switch (ref.kind) {
-    case "memory_revision":
-      return client.memory.getMemoryRevision(input);
-    case "cognitive_schema_revision":
-      return client.concepts.getCognitiveSchemaRevision(input);
-    case "episode_revision":
-      return client.memory.getEpisodeRevision(input);
-    case "journal_revision":
-      return client.memory.getJournalRevision(input);
     case "occurrence":
       return client.material.getOccurrence(input);
     case "artifact": {

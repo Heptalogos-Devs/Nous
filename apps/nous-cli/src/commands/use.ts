@@ -1,6 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { cognitionRevisionReader } from "../cognition-owner.js";
 import { CliError } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
 
@@ -26,14 +27,7 @@ export async function useCommands(
     throw new CliError("INVALID_ARGUMENT", "Invalid use kind");
   const text = required(action, "Exact cognition revision");
   const reference = await resolveReference(text);
-  if (
-    ![
-      "memory_revision",
-      "cognitive_schema_revision",
-      "episode_revision",
-      "journal_revision",
-    ].includes(reference.kind)
-  )
+  if (!cognitionRevisionReader(reference.kind))
     throw new CliError(
       "INVALID_ARGUMENT",
       "Use requires an exact cognition revision",

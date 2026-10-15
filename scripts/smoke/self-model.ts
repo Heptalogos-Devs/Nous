@@ -1,5 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { selfCliSmoke } from "./self-cli.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { appendFile } from "node:fs/promises";
@@ -357,6 +358,9 @@ routes=["contract"]
       .reference?.value,
     original.reference!.value,
   );
+  const beforeCli = calls;
+  await selfCliSmoke(home, subjectId, request.operationId);
+  assert.equal(calls, beforeCli);
   const purgeTarget = await c.self.get({
     subjectId,
     id: original.objectRef!.value,

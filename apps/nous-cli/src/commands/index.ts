@@ -38,6 +38,7 @@ import { traceCommands } from "./trace.js";
 import { contextCommands } from "./context.js";
 import { queryCommands, showCommands, readCommands } from "./query.js";
 import { materialCommands } from "./material.js";
+import { selfCommands } from "./self.js";
 import { memoryCommands } from "./memory.js";
 import { schemaCommands } from "./schema.js";
 import { episodeCommands, journalCommands } from "./longitudinal.js";
@@ -248,6 +249,7 @@ export async function runCli(
         "use",
         "seed",
         "adopt-seed",
+        "provision",
       ]),
       session: family("session", sessionCommands, [
         "open",
@@ -291,6 +293,23 @@ export async function runCli(
         "occurrences",
         "representations",
         "producer",
+      ]),
+      self: family("self", selfCommands, [
+        "list",
+        "soul",
+        "interpret",
+        "interpret-seed",
+        "adopt",
+        "get",
+        "revision",
+        "history",
+        "revise",
+        "evidence",
+        "suppress",
+        "restore",
+        "withdraw",
+        "reaccept",
+        "purge",
       ]),
       memory: family("memory", memoryCommands, [
         "form",

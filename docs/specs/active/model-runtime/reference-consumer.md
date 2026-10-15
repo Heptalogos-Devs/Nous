@@ -4,7 +4,7 @@
 
 ## Owner 与边界
 
-`apps/nous-cli` 是第一方 consumer，通过 public `@nous-wave/client` 调用 Core。[CLI README](../../../../apps/nous-cli/README.md) 定义可执行命令。Terminal 与官方 stdio MCP 调用同一个 in-process command core；MCP 提供 help、argv 与 NousQL query，stdin/stdout 仅用于协议，不接受文件 `-`。MCP 显式提供私有 state root 与稳定 consumer identity。consumer 是不超过 512 UTF-8 字节的非空、不含空白的 opaque ID；配置、projection、CLI selection 与 UseEvent 使用同一原值，默认 ID 为 default。
+`apps/nous-cli` 是第一方 consumer，通过 public `@nous-wave/client` 调用 Core。[CLI README](../../../../apps/nous-cli/README.md) 定义可执行命令。Terminal 与官方 stdio MCP 调用同一个 in-process command core；MCP 提供 help、argv 与 NousQL query，stdin/stdout 仅用于协议，不接受文件 `-`。MCP 显式提供私有 state root 与稳定 consumer identity。默认连接限于认知读取、查询、观察和任务上下文；Authority 修改需要操作者在启动时启用 `--management`。scope 在 Client 调用边界执行，工具 argv 不能提升连接权限；明确拒绝清理本地 retry 请求。consumer 是不超过 512 UTF-8 字节的非空、不含空白的 opaque ID；配置、projection、CLI selection 与 UseEvent 使用同一原值，默认 ID 为 default。
 
 Core discovery 由 RunRoot 提供。consumer InstanceRoot 保存 Subject/Session/WorkContext selection、exact result:N 索引与冻结原请求，不拥有 Nous Wave Authority。state 按稳定 Core instanceId 与 consumer 隔离。只读配置直接使用连接；显式 Subject 按需解析。需要当前上下文的操作才读取 selection，需要结果索引或冻结请求才读取 active consumer_state policy；原子写与跨进程锁仅覆盖短事务，RPC/provider 等待不占锁。独立 selection 字段可合并，冲突 Subject/query scope 或同字段更新返回 STATE_UNSAVED，保留实际业务结果和可继续使用的 exact references。
 
@@ -30,7 +30,7 @@ semantic owner 是唯一结果与拒绝 Authority。consumer 不建立 complete/
 
 ## 可用能力
 
-consumer 公开 Subject/seed、Session、Observation/Material、模型形成/derivation/embedding、NousQL、UseEvent、WorkContext、Resource Registry/materialization、Memory/Schema/Episode/Journal 的实际管理与 lifecycle、projection/managed context。复杂输入采用 owner 内容的语义 TOML，generated schema 校验 declared fields，引用统一绑定一次后冻结；不是动态 raw RPC 执行入口。
+consumer 公开 Subject/seed、Session、Observation/Material、模型形成/derivation/embedding、NousQL、UseEvent、WorkContext、Resource Registry/materialization、Memory/Self/Schema/Episode/Journal 的实际管理与 lifecycle、projection/managed context。复杂输入采用 owner 内容的语义 TOML，generated schema 校验 declared fields，引用统一绑定一次后冻结；不是动态 raw RPC 执行入口。
 
 Memory/Schema/Episode/Journal 的 get/history/lifecycle 使用稳定对象，revision/trace/use 使用 immutable exact revision。修正与生命周期 command 读取当前 owner epoch，再保存冻结 mutation。WorkContext 保持正式 full replacement 合同，set/pin/unpin 在读取的 expected revision 上更新；structured fields 与分页可显式使用。projection 与 managedContext 使用 operator-configured consumer policy，不与 WorkContext 文本更新混淆。
 
