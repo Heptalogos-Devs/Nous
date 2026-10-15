@@ -7,10 +7,11 @@
         "scripts/runtime/pack.ts!",
         "scripts/openclaw/{prepare,pack}.ts!",
         "scripts/maintenance/clean.ts!",
-        "scripts/release/{assemble,archive,prepare-notices,verify-portable}.ts!",
-        "scripts/smoke/{memory,runtime-episode,model-material-resource,media-routes,longitudinal,configuration,openclaw,openclaw-self,self,self-model,self-history}.ts!",
+        "scripts/release/{assemble,archive,prepare-notices,verify-portable,client,verify-client}.ts!",
+        "scripts/smoke/{memory,runtime-episode,model-material-resource,media-routes,longitudinal,configuration,openclaw,openclaw-self,self,self-model,self-history,client}.ts!",
         "scripts/research/{media,serve-gateway,longitudinal,model-contracts,model-trace,dogfooding}.ts!",
-        "scripts/tests/**/*.test.ts"
+        "scripts/tests/**/*.test.ts",
+        "scripts/tests/release/client-consumer.ts!"
       ]
     },
     "packages/openclaw": {

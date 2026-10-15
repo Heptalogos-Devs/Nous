@@ -1,11 +1,13 @@
-# Windows Portable 构建与资格检查
+# 发布产物构建与验证
 
 [脚本路由](../INDEX.md) · [脚本指南](../README.md)
 
-先准备 [Runtime packs](../runtime/README.md)，再构建 shipping Kernel、准备 notices、离线组装、验证实际 bundle。
+Client 构建复用工作区 TypeScript 编译器和 npm 打包，不需要 Kernel 或 Runtime packs。Windows Portable 先准备 [Runtime packs](../runtime/README.md)，再构建 shipping Kernel、准备 notices、离线组装、验证实际 bundle。
 
 | 文件 | 用途 |
 | --- | --- |
+| [client.ts](client.ts) | 编译并打包可独立安装的官方 Client 与 bundled Protocol |
+| [verify-client.ts](verify-client.ts) | 仓库外 npm 安装、全部入口加载及完整类型检查 |
 | [build-kernel.ps1](build-kernel.ps1) | shipping gnullvm Kernel、私有运行库和 strip |
 | [prepare-notices.ts](prepare-notices.ts) | 网络阶段：准备当前应用与真实供应者许可证 |
 | [assemble.ts](assemble.ts) | 离线阶段：组装 source-less Program/Runtime |
@@ -15,6 +17,10 @@
 | [manifest.ts](manifest.ts) | release inventory 与内容 SHA |
 | [notices.ts](notices.ts) | 应用依赖及 runtime notices 读取/准备 |
 | [zip.ps1](zip.ps1) | runtime pack 和 assembler 共用 ZIP helper |
+
+## Client 发布
+
+`corepack pnpm client:pack` 生成 `data/releases/client/nous-wave-client-0.1.0.tgz`。`corepack pnpm client:verify` 在系统临时目录安装该产物，用普通 Node 加载全部公开入口，并用严格 TypeScript 消费者生成声明。类型 fixture 位于 [client-consumer.ts](../tests/release/client-consumer.ts)。该检查已接入 `check:fast`，真实隔离实例操作已接入 [smoke:client](../smoke/client.ts)。安装方式和入口合同由 [Client README](../../packages/client/README.md) 维护。
 
 ## Portable 发布
 

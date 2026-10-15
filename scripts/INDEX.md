@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 源码开发、离线配置检查 | [dev](dev/README.md) | `dev`、`nous`、`dev:prepare`、`dev:portable` |
 | 构建/打包第三方运行依赖 | [runtime](runtime/README.md) | `runtime:pack`、显式构建 shell 脚本 |
-| 构建并验证 Windows Portable | [release](release/README.md) | `release:notices`、`assemble:portable`、`release:verify` |
+| 构建并验证 Client/Windows Portable | [release](release/README.md) | `client:pack`、`client:verify`、`release:notices`、`assemble:portable`、`release:verify` |
 | 检查真实公共操作的确定性轨迹 | [smoke](smoke/README.md) | `just smoke` 或单个 `smoke:*` |
 | 研究真实模型、资料、合同和 wire trace | [research](research/README.md) | `research:*`、`inspect:model-*` |
 | 检查文档路由、清理本地 temp/cache | [maintenance](maintenance/README.md) | Python 导航检查、`just clean-local` |
