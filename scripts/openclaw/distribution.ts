@@ -40,7 +40,10 @@ export async function buildDistribution(destination: string) {
         license: metadata.license,
         type: "module",
         exports: { ".": "./dist/index.js" },
-        bin: { "nous-openclaw-prepare": "./bin/prepare.mjs" },
+        bin: {
+          "nous-openclaw-prepare": "./bin/prepare.mjs",
+          "nous-openclaw-install": "./bin/install.mjs",
+        },
         engines: { node: ">=24.21.0" },
         openclaw: metadata.openclaw,
         peerDependencies: metadata.peerDependencies,
@@ -53,6 +56,7 @@ export async function buildDistribution(destination: string) {
   for (const name of ["bin", "patches", "openclaw.plugin.json", "README.md"])
     await cp(join(source, name), join(destination, name), { recursive: true });
   await chmod(join(destination, "bin/prepare.mjs"), 0o755);
+  await chmod(join(destination, "bin/install.mjs"), 0o755);
   for (const name of ["LICENSE", "NOTICE"])
     await cp(join(repo, name), join(destination, name));
   const packages = new Set<string>();

@@ -45,5 +45,13 @@
       "original": "874542c213fc9114e9e79ad37c4bbb5acd8e35e886f717fca5460f8cd1dd0df2",
       "patched": "eb8fb504d54852d549b4773d8f6c3d9d470c0a89743d8b224781cbb38ac5bb5b"
     }
+  },
+  "dependencyOverrides": {
+    "undici@8.10.0": "8.10.2",
+    "@modelcontextprotocol/sdk@1.30.0": "1.31.0"
+  },
+  "dependencies": {
+    "undici": "8.10.2",
+    "@modelcontextprotocol/sdk": "1.31.0"
   }
 }
