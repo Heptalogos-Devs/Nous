@@ -34,6 +34,11 @@ export async function selfCliSmoke(
     seedOperationId,
   );
   assert(first.actions[0]?.record.reference);
+  const trace = await data<{ nodes: { content: { case: string } }[] }>(
+    "trace",
+    `${first.actions[0]!.record.reference!.kind}:${first.actions[0]!.record.reference!.value}`,
+  );
+  assert(trace.nodes.some((node) => node.content.case === "seed"));
   const projected = await data<{ text: string }>("self", "soul");
   assert(projected.text.includes("青岚"));
   const ordinary = cliExecutor({
@@ -180,7 +185,7 @@ basis_role="direct"
   );
   assert(index >= 0);
   assert(results.results[index]!.next.includes("show result:"));
-  assert(!results.results[index]!.next.includes("trace result:"));
+  assert(results.results[index]!.next.includes("trace result:"));
   assert.equal(
     (await data<SelfRecord>("show", `result:${index + 1}`)).reference?.value,
     revised.reference?.value,

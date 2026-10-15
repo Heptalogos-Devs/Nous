@@ -7,6 +7,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+mod trace;
+pub use trace::CognitionTraceSources;
 mod time;
 pub use time::{TemporalExtent, TimeInterval, TimePredicate};
 mod model_results;

@@ -40,6 +40,9 @@ pub use serving::{ServingRecord, ServingView};
 use nous_core::{Error, OperationId, Result, SubjectId};
 use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 
+/// The existing Authority transaction shared by composed semantic owner reads.
+pub type AuthorityTransaction<'a> = Transaction<'a, Postgres>;
+
 /// Serialize a Subject-scoped mutation receipt within its Authority transaction.
 pub async fn lock_operation(
     tx: &mut Transaction<'_, Postgres>,
@@ -113,7 +116,7 @@ impl AuthorityStore {
         self.pool.begin().await.map_err(database_error)
     }
 
-    pub async fn read_view(&self) -> Result<Transaction<'_, Postgres>> {
+    pub async fn read_view(&self) -> Result<AuthorityTransaction<'_>> {
         let mut tx = self.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .execute(&mut *tx)

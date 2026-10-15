@@ -125,6 +125,8 @@ export async function showCommands(env: CliEnvironment, reference?: string) {
   const cognition = cognitionRevisionReader(ref.kind);
   if (cognition) return cognition.read(client, input);
   switch (ref.kind) {
+    case "cognitive_seed_version":
+      return client.subjects.getCognitiveSeedVersion(input);
     case "occurrence":
       return client.material.getOccurrence(input);
     case "artifact": {

@@ -1,5 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { selfTraceSmoke } from "./self-trace.js";
 import { selfCliSmoke } from "./self-cli.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -358,6 +359,7 @@ routes=["contract"]
       .reference?.value,
     original.reference!.value,
   );
+  await selfTraceSmoke(c, subjectId, original);
   const beforeCli = calls;
   await selfCliSmoke(home, subjectId, request.operationId);
   assert.equal(calls, beforeCli);

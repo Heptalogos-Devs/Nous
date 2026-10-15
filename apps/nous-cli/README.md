@@ -37,7 +37,7 @@ corepack pnpm nous use result:1 --kind referenced
 
 `--json` 返回 `schemaVersion="nous.cli.v1"` 的机器 envelope，保留 canonical IDs，int64 使用十进制字符串。native message 采用 Buf 的 canonical Protobuf JSON：oneof 使用实际字段名、Timestamp 为 ISO 字符串、bytes 为 base64；任意用户 JSON 不按字段形状重解释。`--developer` 保留诊断身份和 query trace，`--raw --developer` 显式选择原始 Client DTO。正常文本省略这些内部追踪身份。成功仅写 stdout，错误仅写 stderr 并返回非零码；错误保留 code、message、details、candidates 和未知结果的 receipt。
 
-Launcher 提供 RunRoot/InstanceRoot。`--subject`、`--session`、`--work-context` 覆盖本地选择。查询和幂等修改需要 InstanceRoot 保存续接状态；只读查询准备、配置与 status 可仅指定 RunRoot。Query 的 `result:N` 按实际命中顺序保存真实引用，并限定到原 Subject。Memory、Schema、Episode、Journal 保留 exact immutable revision，`show/trace/use` 不替换成最新 head。Evidence/Resource 与混合 hits 正常展示，每条只提供 owner 支持的后续动作；外部 Resource records 单独显示稳定来源身份。
+Launcher 提供 RunRoot/InstanceRoot。`--subject`、`--session`、`--work-context` 覆盖本地选择。查询和幂等修改需要 InstanceRoot 保存续接状态；只读查询准备、配置与 status 可仅指定 RunRoot。Query 的 `result:N` 按实际命中顺序保存真实引用，并限定到原 Subject。Memory、Self、Schema、Episode、Journal 保留 exact immutable revision，`show/trace/use` 不替换成最新 head。Evidence/Resource 与混合 hits 正常展示，每条只提供 owner 支持的后续动作；外部 Resource records 单独显示稳定来源身份。
 
 Client 直接返回 canonical generated Protobuf，CLI 只在呈现边界读取 generated descriptor 并输出文本/JSON；不建立平行 DTO 或 schema 恢复层。正文与 freeform Struct/Value 在所属字段保持不透明。查询已返回的 lexicalRef 直接沿用，避免重复目录查询。
 
@@ -190,6 +190,6 @@ Memory、Schema、Episode、Journal 的修订和 lifecycle 可用 `--expected-ob
 
 `config list|describe|get` 直接连接配置入口；`config set|clear` 无需先读取 revision，需要条件替换时才带 `--expected-revision`。明确的提交前拒绝不会留下 retry 请求；结果不确定时仍可 `retry <id>` 发送冻结原请求。
 
-`trace <精确认知修订> --max-nodes 64 --max-bytes 65536` 返回认知依赖节点、材料来源 DAG 和实际 producers。Memory 与 Material 分别完成自己的遍历，CLI 不逐节点编排 RPC。节点和正文预算共享于本次 trace；`truncated` 表示边界内未返回全部来源。
+`trace <精确认知修订> --max-nodes 64 --max-bytes 65536` 返回认知依赖节点、材料来源 DAG 和实际 producers。统一调用 `client.cognition.trace`，由 Kernel 组合各认知 owner 和 Material 来源；包含 Self 与 exact Seed 原文，不由 CLI 逐节点编排 RPC。节点和正文预算共享于本次 trace；`truncated` 表示边界内未返回全部来源。
 
 `serving clean --subject <Subject>` 直接回收过期 Serving 制品；返回 reclaimed、bytesReclaimed、readersActive 和 orphanDirectories，保护 current、research-pinned 和在用制品。`schema list|history`、`tag history`、`association get|list` 提供完整 owner 读取与既有分页；history 对显式对象返回其修订，当前对象状态与 get 保持一致。

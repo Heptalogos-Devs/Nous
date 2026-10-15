@@ -10,7 +10,7 @@ import "google/protobuf/empty.proto";
 import "nous/wave/v1alpha1/management.proto";
 import "nous/wave/v1alpha1/types.proto";
 
-service SubjectService { rpc ProvisionCapabilities(ProvisionCapabilitiesRequest) returns (Subject) { option idempotency_level = IDEMPOTENT; } rpc CreateSubject(CreateSubjectRequest) returns (Subject) { option idempotency_level = IDEMPOTENT; } rpc GetSubject(SubjectRequest) returns (Subject); rpc ListSubjects(ListRequest) returns (ListSubjectsResponse); rpc GetCognitiveSeed(SubjectRequest) returns (CognitiveSeedVersion); rpc AdoptCognitiveSeed(AdoptCognitiveSeedRequest) returns (CognitiveSeedVersion) { option idempotency_level = IDEMPOTENT; } }
+service SubjectService { rpc ProvisionCapabilities(ProvisionCapabilitiesRequest) returns (Subject) { option idempotency_level = IDEMPOTENT; } rpc CreateSubject(CreateSubjectRequest) returns (Subject) { option idempotency_level = IDEMPOTENT; } rpc GetSubject(SubjectRequest) returns (Subject); rpc ListSubjects(ListRequest) returns (ListSubjectsResponse); rpc GetCognitiveSeedVersion(ObjectRequest) returns (CognitiveSeedVersion); rpc GetCognitiveSeed(SubjectRequest) returns (CognitiveSeedVersion); rpc AdoptCognitiveSeed(AdoptCognitiveSeedRequest) returns (CognitiveSeedVersion) { option idempotency_level = IDEMPOTENT; } }
 service RuntimeService {
   rpc OpenSession(OpenSessionRequest) returns (Session);
   rpc GetSession(ObjectRequest) returns (Session);
@@ -28,6 +28,7 @@ service RuntimeService {
   rpc SetActiveWorkContext(SetActiveWorkContextRequest) returns (Session) { option idempotency_level = IDEMPOTENT; }
 }
 service CognitionService {
+  rpc Trace(CognitionTraceRequest) returns (CognitionTrace);
   rpc GrantMaintenance(MaintenanceGrantRequest) returns (MaintenanceGrantResponse);
   rpc PrepareQuery(QueryRequest) returns (PreparedQueryResponse);
   rpc Query(QueryRequest) returns (QueryResponse);
@@ -35,10 +36,9 @@ service CognitionService {
   rpc BuildManagedContext(ManagedContextRequest) returns (ManagedContextResponse);
 }
 message CognitionTraceRequest { string subject_id = 1 [(reference_kind) = "subject"]; CognitiveRef reference = 2; uint32 max_nodes = 3; uint32 max_bytes = 4; }
-message CognitionTraceNode { CognitiveRef reference = 1; oneof content { Memory memory = 2; CognitiveSchema schema = 3; EpisodeRevision episode = 4; JournalRevision journal = 5; } }
+message CognitionTraceNode { CognitiveRef reference = 1; oneof content { Memory memory = 2; CognitiveSchema schema = 3; EpisodeRevision episode = 4; JournalRevision journal = 5; SelfRecord self_record = 6; CognitiveSeedVersion seed = 7; } }
 message CognitionTrace { CognitiveRef reference = 1; repeated CognitionTraceNode nodes = 2; MaterialLineage lineage = 3; repeated ProducerSignature producers = 4; bool truncated = 5; }
 service MemoryService {
-  rpc Trace(CognitionTraceRequest) returns (CognitionTrace);
   rpc GetJournal(ObjectRequest) returns (JournalResponse);
   rpc GetJournalRevision(ObjectRequest) returns (JournalRevision);
   rpc ListJournals(ListRequest) returns (ListJournalsResponse);

@@ -17,8 +17,8 @@ use sqlx::Row;
 
 pub use nous_configuration::SubjectCapabilities;
 pub use seed::{
-    COGNITIVE_SEED_FORMAT, CognitiveSeedInput, CognitiveSeedVersion, CognitiveSeedView,
-    MARKDOWN_SEED_FORMAT, SeedAdoptionKind, SubjectSeedAdoption,
+    COGNITIVE_SEED_FORMAT, CognitiveSeedInput, CognitiveSeedSource, CognitiveSeedVersion,
+    CognitiveSeedView, MARKDOWN_SEED_FORMAT, SeedAdoptionKind, SubjectSeedAdoption,
 };
 
 #[derive(Clone)]

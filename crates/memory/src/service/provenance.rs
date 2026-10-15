@@ -253,10 +253,10 @@ impl MemoryService {
         let mut tx = self.store.read_view().await?;
         let mut supports = std::collections::HashMap::new();
         let basis = match reference {
-            CognitiveRef::MemoryRevision(_)
-            | CognitiveRef::EpisodeRevision(_)
-            | CognitiveRef::JournalRevision(_)
-            | CognitiveRef::CognitiveSchemaRevision(_) => {
+            reference
+                if reference.domain() == CognitiveDomain::Memory
+                    && reference.is_cognition_revision() =>
+            {
                 supports = self
                     .exact_supports_in(&mut tx, subject, std::slice::from_ref(reference), view)
                     .await?;
@@ -348,7 +348,7 @@ fn dependency_query(reference: &CognitiveRef) -> Result<(&'static str, Uuid)> {
         ),
         _ => {
             return Err(Error::Invalid(
-                "cognition dependency needs exact revision".into(),
+                "Memory dependency requires an exact revision from the Memory owner".into(),
             ));
         }
     })

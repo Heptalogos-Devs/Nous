@@ -72,11 +72,11 @@ const revisionReaders: Record<
   },
   self_facet_revision: {
     read: (client, input) => client.self.getRevision(input),
-    trace: false,
+    trace: true,
   },
   narrative_thread_revision: {
     read: (client, input) => client.self.getRevision(input),
-    trace: false,
+    trace: true,
   },
 };
 

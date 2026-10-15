@@ -4218,6 +4218,14 @@ pub mod subject_service_server {
             tonic::Status,
         >;
         ///
+        async fn get_cognitive_seed_version(
+            &self,
+            request: tonic::Request<super::ObjectRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CognitiveSeedVersion>,
+            tonic::Status,
+        >;
+        ///
         async fn get_cognitive_seed(
             &self,
             request: tonic::Request<super::SubjectRequest>,
@@ -4480,6 +4488,55 @@ pub mod subject_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ListSubjectsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.v1alpha1.SubjectService/GetCognitiveSeedVersion" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetCognitiveSeedVersionSvc<T: SubjectService>(pub Arc<T>);
+                    impl<
+                        T: SubjectService,
+                    > tonic::server::UnaryService<super::ObjectRequest>
+                    for GetCognitiveSeedVersionSvc<T> {
+                        type Response = super::CognitiveSeedVersion;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ObjectRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SubjectService>::get_cognitive_seed_version(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetCognitiveSeedVersionSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -5513,6 +5570,10 @@ pub mod cognition_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with CognitionServiceServer.
     #[async_trait]
     pub trait CognitionService: std::marker::Send + std::marker::Sync + 'static {
+        async fn trace(
+            &self,
+            request: tonic::Request<super::CognitionTraceRequest>,
+        ) -> std::result::Result<tonic::Response<super::CognitionTrace>, tonic::Status>;
         async fn grant_maintenance(
             &self,
             request: tonic::Request<super::MaintenanceGrantRequest>,
@@ -5619,6 +5680,51 @@ pub mod cognition_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/nous.wave.v1alpha1.CognitionService/Trace" => {
+                    #[allow(non_camel_case_types)]
+                    struct TraceSvc<T: CognitionService>(pub Arc<T>);
+                    impl<
+                        T: CognitionService,
+                    > tonic::server::UnaryService<super::CognitionTraceRequest>
+                    for TraceSvc<T> {
+                        type Response = super::CognitionTrace;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CognitionTraceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CognitionService>::trace(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = TraceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/nous.wave.v1alpha1.CognitionService/GrantMaintenance" => {
                     #[allow(non_camel_case_types)]
                     struct GrantMaintenanceSvc<T: CognitionService>(pub Arc<T>);
@@ -5904,11 +6010,6 @@ pub mod memory_service_server {
     #[async_trait]
     pub trait MemoryService: std::marker::Send + std::marker::Sync + 'static {
         ///
-        async fn trace(
-            &self,
-            request: tonic::Request<super::CognitionTraceRequest>,
-        ) -> std::result::Result<tonic::Response<super::CognitionTrace>, tonic::Status>;
-        ///
         async fn get_journal(
             &self,
             request: tonic::Request<super::ObjectRequest>,
@@ -6174,51 +6275,6 @@ pub mod memory_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/nous.wave.v1alpha1.MemoryService/Trace" => {
-                    #[allow(non_camel_case_types)]
-                    struct TraceSvc<T: MemoryService>(pub Arc<T>);
-                    impl<
-                        T: MemoryService,
-                    > tonic::server::UnaryService<super::CognitionTraceRequest>
-                    for TraceSvc<T> {
-                        type Response = super::CognitionTrace;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::CognitionTraceRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as MemoryService>::trace(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = TraceSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
                 "/nous.wave.v1alpha1.MemoryService/GetJournal" => {
                     #[allow(non_camel_case_types)]
                     struct GetJournalSvc<T: MemoryService>(pub Arc<T>);

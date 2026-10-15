@@ -3120,7 +3120,7 @@ pub struct CognitionTraceRequest {
 pub struct CognitionTraceNode {
     #[prost(message, optional, tag="1")]
     pub reference: ::core::option::Option<CognitiveRef>,
-    #[prost(oneof="cognition_trace_node::Content", tags="2, 3, 4, 5")]
+    #[prost(oneof="cognition_trace_node::Content", tags="2, 3, 4, 5, 6, 7")]
     pub content: ::core::option::Option<cognition_trace_node::Content>,
 }
 /// Nested message and enum types in `CognitionTraceNode`.
@@ -3135,6 +3135,10 @@ pub mod cognition_trace_node {
         Episode(super::EpisodeRevision),
         #[prost(message, tag="5")]
         Journal(super::JournalRevision),
+        #[prost(message, tag="6")]
+        SelfRecord(super::SelfRecord),
+        #[prost(message, tag="7")]
+        Seed(super::CognitiveSeedVersion),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]

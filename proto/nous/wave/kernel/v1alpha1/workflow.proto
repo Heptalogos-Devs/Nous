@@ -6,10 +6,12 @@ package nous.wave.kernel.v1alpha1;
 import "nous/wave/kernel/v1alpha1/model.proto";
 import "nous/wave/kernel/v1alpha1/longitudinal.proto";
 import "nous/wave/v1alpha1/types.proto";
+import "nous/wave/v1alpha1/services.proto";
 import "nous/wave/v1alpha1/journal.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 service KernelQueryService {
+  rpc Trace(nous.wave.v1alpha1.CognitionTraceRequest) returns (nous.wave.v1alpha1.CognitionTrace);
   rpc GetCognitiveTime(nous.wave.v1alpha1.SubjectRequest) returns (google.protobuf.Timestamp);
   rpc PrepareQuery(PrepareQueryRequest) returns (nous.wave.v1alpha1.PreparedQueryResponse);
   rpc ActivateQuery(KernelQueryRequest) returns (QueryActivationResponse);

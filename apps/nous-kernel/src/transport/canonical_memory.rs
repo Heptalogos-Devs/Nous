@@ -6,7 +6,6 @@ use super::*;
 rpc_service! {
     p::memory_service_server::MemoryService {
         forward {
-            trace(p::CognitionTraceRequest) -> p::CognitionTrace;
             get_journal(p::ObjectRequest) -> p::JournalResponse;
             get_journal_revision(p::ObjectRequest) -> p::JournalRevision;
             list_journals(p::ListRequest) -> p::ListJournalsResponse;

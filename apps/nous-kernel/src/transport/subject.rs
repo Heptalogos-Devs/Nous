@@ -37,6 +37,22 @@ fn seed_view(input: CognitiveSeedView) -> p::CognitiveSeedVersion {
         operation_id: input.adoption.operation_id.0.to_string(),
     }
 }
+pub(super) fn seed_source(input: nous_subject::CognitiveSeedSource) -> p::CognitiveSeedVersion {
+    p::CognitiveSeedVersion {
+        seed: Some(p::CognitiveSeed {
+            text: input.text,
+            format: input.version.format.clone(),
+            provenance: to_object(input.version.provenance),
+        }),
+        seed_version_id: input.version.seed_version_id.0.to_string(),
+        subject_id: input.version.subject_id.0.to_string(),
+        artifact_id: input.version.artifact_id.0.to_string(),
+        format: input.version.format,
+        content_hash: input.version.content_hash,
+        created_at: Some(timestamp(input.version.created_at)),
+        ..Default::default()
+    }
+}
 fn subject(input: SubjectView) -> p::Subject {
     let capabilities = input.capabilities;
     p::Subject {
@@ -128,6 +144,20 @@ impl KernelService {
             items: items.into_iter().map(subject).collect(),
             next_page_token,
         })
+    }
+    pub(super) async fn get_cognitive_seed_version(
+        &self,
+        input: p::ObjectRequest,
+    ) -> Result<p::CognitiveSeedVersion> {
+        Ok(seed_source(
+            self.0
+                .subjects
+                .cognitive_seed_version(
+                    SubjectId(id(&input.subject_id)?),
+                    nous_core::CognitiveSeedVersionId(id(&input.id)?),
+                )
+                .await?,
+        ))
     }
     pub(super) async fn get_cognitive_seed(
         &self,

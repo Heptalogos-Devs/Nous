@@ -53,6 +53,12 @@ Self 使用现有 CognitiveContributor、共享 lexical/dense Serving、固定 f
 
 返回 `domain=self`、`status=applied/kept/partial/failed` 与逐项结果。目标版本冲突明确失败，不能覆盖新状态；模型解释失败不撤销已经创建的 Subject 或保存的 Seed。来源保存与领域解释是两个正式、可分别核对结果的操作。调用方应先保存来源，再显式解释所需领域。
 
+## 共享来源遍历
+
+`client.cognition.trace` 统一遍历 Self、Memory/Schema/Episode/Journal、实际 Material 来源及 exact Seed version。Kernel 在同一认知 read view 中组合各 owner 的节点与来源声明；Memory 不再拥有通用 trace，也不将 Self 放进自己的事实支持对象族。节点与正文共享预算，重复引用只返回一次，边界省略明确标记 truncated。
+
+Self 的原始 basis、异常、追加证据、叙事 exact sources 与实际 producer 一并可追溯。Seed 节点保留原文、格式、provenance、artifact 和版本；`subjects.getCognitiveSeedVersion` 读取指定来源版本，不把后续 adoption 写到旧来源上。读取 current adoption 仍使用 `getCognitiveSeed`。Seed 原文不是实际 Occurrence，也不能由通用遍历变成独立的观察事实。Self producer 复用共享签名注册表，trace 返回 canonical signature。
+
 ## 原生历史清除边界
 
 正式 managed binding 在模型发送前通过 Runtime 检查来源和 Session 历史。显式 purge/suppression/withdrawal 使已经接触该来源的历史待 reset，沿父 Session 关系传递；删除认知与清理 UseEvent 在同一 owner 事务中保留该屏障。未接触来源的独立 Session 不被一并清空。标记跨 Core/Gateway 重启保留，旧实际模型输出和压缩摘要不能因新 slice 移除来源就继续发送。详细原生合同见 [Managed OpenClaw](../cognitive-runtime/openclaw.md)。

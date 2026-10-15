@@ -6,6 +6,15 @@ use nous_core::{RequirementStrength, Result};
 
 #[tonic::async_trait]
 impl k::kernel_query_service_server::KernelQueryService for KernelService {
+    async fn trace(
+        &self,
+        request: Request<p::CognitionTraceRequest>,
+    ) -> std::result::Result<Response<p::CognitionTrace>, Status> {
+        KernelService::trace(self, request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(status)
+    }
     async fn get_cognitive_time(
         &self,
         request: Request<p::SubjectRequest>,

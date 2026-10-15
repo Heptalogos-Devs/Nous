@@ -107,7 +107,7 @@ fn content_proto(value: SelfContent) -> p::SelfContent {
         content: Some(content),
     }
 }
-fn record(v: SelfRecord) -> p::SelfRecord {
+pub(super) fn record(v: SelfRecord) -> p::SelfRecord {
     p::SelfRecord {
         reference: Some(to_ref(v.reference())),
         object_ref: Some(to_ref(v.object_reference())),

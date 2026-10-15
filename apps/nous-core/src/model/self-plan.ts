@@ -78,12 +78,10 @@ export async function prepareSelfInterpretation(
   }
   let source: unknown;
   if (request.source.case === "seedVersionId") {
-    const seed = await kernel.subjects.getCognitiveSeed({ subjectId }, options);
-    if (seed.seedVersionId !== request.source.value)
-      throw new ConnectError(
-        "Requested Seed is not the currently adopted version",
-        Code.FailedPrecondition,
-      );
+    const seed = await kernel.subjects.getCognitiveSeedVersion(
+      { subjectId, id: request.source.value },
+      options,
+    );
     const text = seed.seed?.text ?? "";
     if (!text.trim()) invalidSelf("Seed text is empty");
     if (Buffer.byteLength(text) > maxBytes)

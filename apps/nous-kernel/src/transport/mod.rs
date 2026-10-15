@@ -28,6 +28,7 @@ mod model_results;
 mod projection_workflow;
 mod query_workflow;
 pub use hosting::router;
+mod cognition_trace;
 mod concepts;
 mod journal;
 mod longitudinal;
