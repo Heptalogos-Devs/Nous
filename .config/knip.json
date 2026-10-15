@@ -11,7 +11,8 @@
         "scripts/smoke/{memory,runtime-episode,model-material-resource,media-routes,longitudinal,configuration,openclaw,openclaw-self,self,self-model,self-history,client,self-selection}.ts!",
         "scripts/research/{media,serve-gateway,longitudinal,model-contracts,model-trace,dogfooding}.ts!",
         "scripts/tests/**/*.test.ts",
-        "scripts/tests/release/client-consumer.ts!"
+        "scripts/tests/release/client-consumer.ts!",
+        "scripts/tests/openclaw/custody.ts!"
       ]
     },
     "packages/openclaw": {

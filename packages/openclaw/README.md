@@ -103,7 +103,14 @@ Channel 内的媒体子发送、编辑/撤回及自定义 actions 也必须复�
 不能注册原始协议工具或直发旁路。原生未知发送、completion 与回执语义保持不变，
 Host 回写失败不成为重新发送的理由。
 
-仅做本机无网络 native fixture：
+默认 Vitest 与 `check:fast` 自动执行离线 native custody 检查：
+
+```sh
+pnpm openclaw:custody:verify
+```
+
+它从 workspace 固定 OpenClaw 依赖拷贝运行代码到测试临时根，使用正式 prepare，
+不联网安装或修改原生依赖/操作者实例。已有受控包也可手动运行同一 fixture：
 
 ```sh
 pnpm exec tsx scripts/tests/openclaw/custody.ts /absolute/path/openclaw-package-root
