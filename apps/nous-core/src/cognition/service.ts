@@ -132,7 +132,6 @@ export class CoreCognition {
           workContextId: request.activeWorkContextId,
           situation: {
             consumer: request.consumerId,
-            currentRefs: request.situationRefs,
           },
         }),
         calls,
