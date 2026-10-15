@@ -11,3 +11,5 @@
 | [model-call-guard](research/model-call-guard.test.ts) | 持久预算恢复和耗尽 | [研究预算](../research/README.md) |
 
 Core/Kernel 公共操作场景在 [smoke](../smoke/README.md)；真实模型质量观察由 [Research](../../docs/research/README.md) 保存。
+
+[Client consumer fixture](release/client-consumer.ts) 由 `corepack pnpm client:verify` 在仓库外 npm 安装中编译和执行，检查公开入口、generated 类型与下游声明生成；不是 Vitest 场景。真实隔离实例操作由 `smoke:client` 执行。

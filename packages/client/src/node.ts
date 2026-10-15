@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createConnectTransport } from "@connectrpc/connect-node";
-import { createNousClient } from "./index.js";
+import { createNousClient, type NousClient } from "./index.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { artifactUploads } from "./artifacts.js";
 
-export function connectNous(baseUrl: string, token: string) {
+export type { ArtifactUploadOptions, UploadedArtifact } from "./artifacts.js";
+export type NodeNousClient = NousClient & {
+  artifacts: ReturnType<typeof artifactUploads>;
+};
+export type NousInstanceClient = NodeNousClient & { instanceId: string };
+
+export function connectNous(baseUrl: string, token: string): NodeNousClient {
   const client = createNousClient(
     createConnectTransport({
       baseUrl,
@@ -28,7 +34,9 @@ export function connectNous(baseUrl: string, token: string) {
     ),
   };
 }
-export async function connectNousInstance(instance: { runRoot: string }) {
+export async function connectNousInstance(instance: {
+  runRoot: string;
+}): Promise<NousInstanceClient> {
   const value = JSON.parse(
     await readFile(join(instance.runRoot, "core.json"), "utf8"),
   ) as { endpoint?: unknown; token?: unknown; instanceId?: unknown };

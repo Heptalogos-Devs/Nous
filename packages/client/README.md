@@ -9,7 +9,34 @@
 - [Administrative operations and required vocabulary](../../docs/reference/CLIENT.md)
 - [Protobuf source](../../proto/README.md)
 
-Client returns generated canonical Protobuf messages directly. Decode configuration `Value` fields explicitly with `toJson(ValueSchema, value)`; use `messageData` from `@nous-wave/protocol/messages` at text/JSON output boundaries. Freeform JSON leaves remain opaque.
+## 独立安装
+
+Heptalogos Host 和其他仓库外 Node 消费者使用正式 tarball，不引用本仓库的 TypeScript 源码：
+
+```sh
+# 在 Nous Wave 仓库内构建
+corepack pnpm install --frozen-lockfile
+corepack pnpm client:pack
+
+# 在 Host 项目内安装生成的包
+npm install /absolute/path/nous-wave-client-0.1.0.tgz
+```
+
+产物为 `data/releases/client/nous-wave-client-0.1.0.tgz`，要求 Node >=24.21.0。包提供 `@nous-wave/client`、`/node`、`/managed`、`/errors`、`/consumer-policy`、`/execution-policy` 的 ESM JavaScript 和 `.d.ts`；无需 tsx 或源码 checkout。官方 `@nous-wave/protocol` 的同源编译代码和 generated 声明作为 bundled dependency 随 Client 一起安装，其余精确 npm dependencies 正常安装。tarball 仅含编译代码、类型、包元数据和许可证，不包含实例配置、凭据或数据。
+
+```js
+import { connectNousInstance } from "@nous-wave/client/node";
+
+const client = await connectNousInstance({ runRoot: "/absolute/path/instance/run" });
+const status = await client.system.getStatus({});
+const subjects = await client.subjects.listSubjects({});
+```
+
+TypeScript Host 使用 `module/moduleResolution: "NodeNext"` 并安装 `@types/node`；所有服务请求/响应保留 canonical generated 类型。`NodeNousClient` 和 `NousInstanceClient` 是 `/node` 的正式返回类型，`ArtifactUploadOptions`、`UploadedArtifact` 也从该入口公开。
+
+维护者执行 `corepack pnpm client:verify`，会重新打包、在系统临时目录的独立 npm 项目安装，逐一加载全部入口，并在 `skipLibCheck: false` 下验证 generated 类型与下游声明生成。该检查已接入 `check:fast`。`corepack pnpm smoke:client` 复用[公共 smoke](../../scripts/smoke/README.md) 的隔离实例，用安装后的正式 Client 执行 status、Subject create/get/list，不调用付费模型；已接入 `just smoke`。独立消费者成功后清理，失败时打印并保留路径。
+
+Client returns generated canonical Protobuf messages directly. Decode configuration `Value` fields explicitly with `toJson(ValueSchema, value)`; the workspace CLI uses `messageData` from `@nous-wave/protocol/messages` at text/JSON output boundaries. The bundled Protocol is an internal Client dependency, rather than a separate Host import entry. Freeform JSON leaves remain opaque.
 
 Node consumers use `connectNousInstance({ runRoot })` from `@nous-wave/client/node` for authenticated local discovery. The returned client includes `artifacts.uploadFile(subjectId, path, { mediaType })` and `artifacts.uploadBytes(subjectId, bytes, { mediaType })`. `artifacts.download(subjectId, artifactId, options?)` returns the admitted media type and a backpressured content stream for complete downloads. File upload streams with backpressure and an exact multipart length; credentials stay inside the transport. Request options support cancellation and an upload timeout (default 300 seconds).
 
