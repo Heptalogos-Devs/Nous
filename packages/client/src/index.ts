@@ -61,7 +61,22 @@ import {
 import { ModelService } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
 
 /** Client namespaces use the canonical service descriptors. */
-export const serviceDescriptors = {
+export type ServiceDescriptors = {
+  readonly subjects: typeof SubjectService;
+  readonly self: typeof SelfService;
+  readonly runtime: typeof RuntimeService;
+  readonly cognition: typeof CognitionService;
+  readonly memory: typeof MemoryService;
+  readonly material: typeof MaterialService;
+  readonly identity: typeof IdentityService;
+  readonly model: typeof ModelService;
+  readonly configuration: typeof ConfigurationService;
+  readonly resourceRegistry: typeof ResourceRegistryService;
+  readonly resources: typeof ResourceService;
+  readonly concepts: typeof ConceptService;
+  readonly system: typeof SystemService;
+};
+export const serviceDescriptors: ServiceDescriptors = {
   subjects: SubjectService,
   self: SelfService,
   runtime: RuntimeService,
@@ -75,7 +90,7 @@ export const serviceDescriptors = {
   resources: ResourceService,
   concepts: ConceptService,
   system: SystemService,
-} as const;
+};
 export type NousClient = {
   [K in keyof typeof serviceDescriptors]: Client<
     (typeof serviceDescriptors)[K]

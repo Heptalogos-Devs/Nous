@@ -36,13 +36,41 @@ export interface ActualInvocationOutcome {
   observations?: readonly MessageInitShape<typeof ObservationInputSchema>[];
 }
 
+/** Public contract for one serial worker's managed cognition lifecycle. */
+export interface ManagedBinding {
+  sessionId: string;
+  prepare(input: {
+    usage: CognitionUsage;
+    workContextId?: string;
+    cognitionTokenBudget: number;
+    signal: AbortSignal;
+  }): Promise<ManagedContextResponse>;
+  apply<T>(
+    base: T,
+    response: ManagedContextResponse,
+    renderer: ContextRenderer<T>,
+  ): { input: T; applied: AppliedCognition };
+  admit(
+    result: Pick<
+      ActualInvocationOutcome,
+      "invocationId" | "applied" | "occurredAt"
+    >,
+    request?: RequestOptions,
+  ): Promise<void>;
+  report(
+    result: ActualInvocationOutcome,
+    request?: RequestOptions,
+  ): Promise<void>;
+  close(): Promise<void>;
+}
+
 /** One serial worker's ephemeral cursor/slice, backed only by public Nous operations. */
 export function createManagedBinding(options: {
   client: () => NousClient | Promise<NousClient>;
   subjectId: string;
   sessionId: string;
   consumerId: string;
-}) {
+}): ManagedBinding {
   let cursor: ContextCursor | undefined;
   let current: Projection | undefined;
   let pending:
