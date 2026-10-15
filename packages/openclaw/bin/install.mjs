@@ -30,7 +30,15 @@ if (existing && existing.nousManagedRuntime !== 1)
     "Choose a fresh runtime directory; this directory is not owned by the Nous native installer",
   );
 await mkdir(join(prefix, "artifacts"), { recursive: true });
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCli =
+  process.platform === "win32"
+    ? process.env.npm_execpath?.endsWith("npm-cli.js")
+      ? process.env.npm_execpath
+      : join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js")
+    : undefined;
+const npm = npmCli ? process.execPath : "npm";
+/** @param {string[]} args */
+const npmArguments = (args) => (npmCli ? [npmCli, ...args] : args);
 const packed = /** @type {{filename:string,shasum:string}[]} */ (
   JSON.parse(
     execFileSync(
@@ -73,7 +81,7 @@ await writeFile(
     2,
   ) + "\n",
 );
-execFileSync(npm, ["install", "--no-audit", "--no-fund"], {
+execFileSync(npm, npmArguments(["install", "--no-audit", "--no-fund"]), {
   cwd: prefix,
   stdio: "inherit",
   windowsHide: true,
