@@ -4,6 +4,8 @@
 export const roleNames = [
   "projection_steward",
   "memory_formation",
+  "self_formation",
+  "self_reflection",
   "episode_segmentation",
   "journal_synthesis",
   "memory_consolidation",

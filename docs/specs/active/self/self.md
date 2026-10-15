@@ -43,6 +43,16 @@ Self 使用现有 CognitiveContributor、共享 lexical/dense Serving、固定 f
 
 直接依赖的 Memory/Schema/Episode/Journal 来源发生修订、失效、suppression 或 purge 时，既有依赖遍历同时使相关 Self 解释待重新核验。历史正文保留，当前解释不能继续作为可用认知注入。
 
+## 模型形成与反思
+
+`client.model.interpretSelf` 是显式授权的领域解释操作。输入指定同一 Subject 已采用的 Seed version，或实际 Occurrence 与可选文本 representation。Seed 使用 `self_formation`，观察反思使用 `self_reflection`；两种 role 都复用现有模型配置、严格结构输出、producer、执行 telemetry 和 model-results。没有配置模型角色时返回明确的 Self 领域失败，不创建默认人格。
+
+模型读取当前可修订事项与真实来源目录，按事项、类别和 scope 提议 adopt/revise/keep/evidence。引用只能选择调用内目录；Seed 行键绑定原始版本和 semantic path，观察绑定实际 EvidenceRef。新变化必须引用本次来源；当前 exact cognition 和原有依据可补充支持，目标不能依赖自身。NarrativeThread 引用已有 exact cognition revision，不把 Seed 故事伪造为 Occurrence。
+
+付费的结构化提案、来源快照和实际 producer 在提交前保存。整个提案先校验目录选择，再逐项调用 Self owner；每项独立使用现有 receipt/CAS，没有跨领域总事务。同 operation id 重放已存结果，Core 重启不重新支付或重复采用；发生基础设施中断时复用已保存提案和 owner receipt 继续。无效提案也保留付费结果并报告失败。
+
+返回 `domain=self`、`status=applied/kept/partial/failed` 与逐项结果。目标版本冲突明确失败，不能覆盖新状态；模型解释失败不撤销已经创建的 Subject 或保存的 Seed。来源保存与领域解释是两个正式、可分别核对结果的操作。调用方应先保存来源，再显式解释所需领域。
+
 ## 当前施工范围
 
-本功能分支已接通上述 owner、公开 RPC/Client 和数据库场景。模型形成/反思、CLI 和正式 OpenClaw 的 Self 使用场景继续在同一功能内实现；完成状态由实际代码与运行证据确认。
+本功能分支已接通 owner、公开 RPC/Client、自动选择、共享查询和模型形成/反思。CLI 和正式 OpenClaw 的 Self 使用场景继续在同一功能内实现；完成状态由实际代码与运行证据确认。

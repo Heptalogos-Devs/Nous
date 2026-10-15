@@ -6,13 +6,25 @@ package nous.wave.v1alpha1;
 import "nous/wave/v1alpha1/presentation.proto";
 import "nous/wave/v1alpha1/types.proto";
 import "nous/wave/v1alpha1/management.proto";
+import "nous/wave/v1alpha1/self.proto";
 message FormationRequest { string subject_id = 1 [(reference_kind) = "subject"]; string occurrence_id = 2 [(reference_kind) = "occurrence"]; optional string representation_id = 3 [(reference_kind) = "derived_representation"]; string operation_id = 4; string aboutness_mode = 5; repeated string explicit_aboutness = 6; repeated string explicit_tags = 7; }
 message DeriveMaterialRequest { string subject_id = 1 [(reference_kind) = "subject"]; string source_region_id = 2 [(reference_kind) = "source_region"]; optional string strategy = 3; optional string supersedes = 5; }
 message FormationResponse { Memory memory = 1; repeated Degradation degradation = 2; }
 message DerivationResponse { repeated DerivedRepresentation representations = 1; optional string selected_representation_id = 2 [(reference_kind) = "derived_representation"]; repeated Degradation degradation = 3; }
 message PrepareEmbeddingsRequest { string subject_id = 1 [(reference_kind) = "subject"]; uint32 limit = 2; }
 message PrepareEmbeddingsResponse { uint32 committed = 1; repeated Degradation degradation = 2; }
+// Explicit authorized domain interpretation. Source creation/adoption is a separate durable operation.
+message SelfObservationSource { string occurrence_id = 1 [(reference_kind) = "occurrence"]; optional string representation_id = 2 [(reference_kind) = "derived_representation"]; }
+message InterpretSelfRequest {
+  string subject_id = 1 [(reference_kind) = "subject"];
+  string operation_id = 2;
+  oneof source { string seed_version_id = 3 [(reference_kind) = "cognitive_seed_version"]; SelfObservationSource observation = 4; }
+  SelfScope scope = 5;
+}
+message SelfActionResult { string action = 1; string status = 2; SelfRecord record = 3; string reason = 4; optional string error_code = 5; }
+message InterpretSelfResponse { string domain = 1; string status = 2; repeated SelfActionResult actions = 3; repeated Degradation degradation = 4; }
 service ModelService {
+  rpc InterpretSelf(InterpretSelfRequest) returns (InterpretSelfResponse) { option idempotency_level = IDEMPOTENT; }
   rpc FormFromObservation(FormationRequest) returns (FormationResponse) { option idempotency_level = IDEMPOTENT; }
   rpc DeriveMaterial(DeriveMaterialRequest) returns (DerivationResponse);
   rpc PrepareEmbeddings(PrepareEmbeddingsRequest) returns (PrepareEmbeddingsResponse);

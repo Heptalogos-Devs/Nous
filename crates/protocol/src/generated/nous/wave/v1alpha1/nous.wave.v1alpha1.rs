@@ -2768,64 +2768,6 @@ pub struct MaterialLineage {
     pub payloads_truncated: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct FormationRequest {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub occurrence_id: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="3")]
-    pub representation_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag="4")]
-    pub operation_id: ::prost::alloc::string::String,
-    #[prost(string, tag="5")]
-    pub aboutness_mode: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag="6")]
-    pub explicit_aboutness: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag="7")]
-    pub explicit_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct DeriveMaterialRequest {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub source_region_id: ::prost::alloc::string::String,
-    #[prost(string, optional, tag="3")]
-    pub strategy: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag="5")]
-    pub supersedes: ::core::option::Option<::prost::alloc::string::String>,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct FormationResponse {
-    #[prost(message, optional, tag="1")]
-    pub memory: ::core::option::Option<Memory>,
-    #[prost(message, repeated, tag="2")]
-    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DerivationResponse {
-    #[prost(message, repeated, tag="1")]
-    pub representations: ::prost::alloc::vec::Vec<DerivedRepresentation>,
-    #[prost(string, optional, tag="2")]
-    pub selected_representation_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, repeated, tag="3")]
-    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PrepareEmbeddingsRequest {
-    #[prost(string, tag="1")]
-    pub subject_id: ::prost::alloc::string::String,
-    #[prost(uint32, tag="2")]
-    pub limit: u32,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct PrepareEmbeddingsResponse {
-    #[prost(uint32, tag="1")]
-    pub committed: u32,
-    #[prost(message, repeated, tag="2")]
-    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SelfScope {
     #[prost(string, tag="1")]
     pub description: ::prost::alloc::string::String,
@@ -3034,6 +2976,117 @@ pub struct ProvisionCapabilitiesRequest {
     pub operation_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag="3")]
     pub capabilities: ::core::option::Option<SubjectCapabilities>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FormationRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub occurrence_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="3")]
+    pub representation_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag="4")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub aboutness_mode: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="6")]
+    pub explicit_aboutness: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag="7")]
+    pub explicit_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeriveMaterialRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub source_region_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="3")]
+    pub strategy: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="5")]
+    pub supersedes: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FormationResponse {
+    #[prost(message, optional, tag="1")]
+    pub memory: ::core::option::Option<Memory>,
+    #[prost(message, repeated, tag="2")]
+    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DerivationResponse {
+    #[prost(message, repeated, tag="1")]
+    pub representations: ::prost::alloc::vec::Vec<DerivedRepresentation>,
+    #[prost(string, optional, tag="2")]
+    pub selected_representation_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="3")]
+    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PrepareEmbeddingsRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(uint32, tag="2")]
+    pub limit: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PrepareEmbeddingsResponse {
+    #[prost(uint32, tag="1")]
+    pub committed: u32,
+    #[prost(message, repeated, tag="2")]
+    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+}
+/// Explicit authorized domain interpretation. Source creation/adoption is a separate durable operation.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SelfObservationSource {
+    #[prost(string, tag="1")]
+    pub occurrence_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="2")]
+    pub representation_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct InterpretSelfRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="5")]
+    pub scope: ::core::option::Option<SelfScope>,
+    #[prost(oneof="interpret_self_request::Source", tags="3, 4")]
+    pub source: ::core::option::Option<interpret_self_request::Source>,
+}
+/// Nested message and enum types in `InterpretSelfRequest`.
+pub mod interpret_self_request {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Source {
+        #[prost(string, tag="3")]
+        SeedVersionId(::prost::alloc::string::String),
+        #[prost(message, tag="4")]
+        Observation(super::SelfObservationSource),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SelfActionResult {
+    #[prost(string, tag="1")]
+    pub action: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub status: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub record: ::core::option::Option<SelfRecord>,
+    #[prost(string, tag="4")]
+    pub reason: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="5")]
+    pub error_code: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InterpretSelfResponse {
+    #[prost(string, tag="1")]
+    pub domain: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub status: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="3")]
+    pub actions: ::prost::alloc::vec::Vec<SelfActionResult>,
+    #[prost(message, repeated, tag="4")]
+    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CognitionTraceRequest {

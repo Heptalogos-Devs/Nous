@@ -38,7 +38,7 @@ QueryActivation 统一 explicit Tags、exact/current cognition、Entity/Schema c
 
 `$return`、`$asof`、`$history`、`$effort`、`$limit`、`$diagnostics`、`$explore`、`$materialize` 为 root-only。其他支持项包括 `$source`、`$modality`、`$cognitiveRole`、`$formationMode`、`$evidenceClass`、`$authority`、`$current`、`$exclude`。`$current(none|prefer|required)` 属于 Resource freshness constraint，不能被子 scope 放宽。
 
-查询上限为 32 KiB、2048 tokens，`$limit` 为 1–2048。persona/relation/rel 认知仍 unavailable；此次不增加 Self/Social/Motivation。
+查询上限为 32 KiB、2048 tokens，`$limit` 为 1–2048。Self 结果域为 `self_facet`、`narrative_thread`，按 Subject 的 `self_cognition` 供给开放。persona/relation/rel 认知仍 unavailable。
 
 Query 可显式提供 Session、WorkContext、Situation refs/objects/descriptions/consumer。正式 TextCue 必须非空；自然语言代词没有 closure gate。只拒绝明确的未解析 machine placeholder。独立研究的 text-only 输入保持单一原始 TextCue，不添加 context/exploration/enrichment。
 

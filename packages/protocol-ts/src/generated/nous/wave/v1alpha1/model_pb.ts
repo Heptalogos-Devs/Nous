@@ -12,13 +12,15 @@ import type { Degradation, Memory } from "./types_pb.js";
 import { file_nous_wave_v1alpha1_types } from "./types_pb.js";
 import type { DerivedRepresentation } from "./management_pb.js";
 import { file_nous_wave_v1alpha1_management } from "./management_pb.js";
+import type { SelfRecord, SelfScope } from "./self_pb.js";
+import { file_nous_wave_v1alpha1_self } from "./self_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file nous/wave/v1alpha1/model.proto.
  */
 export const file_nous_wave_v1alpha1_model: GenFile = /*@__PURE__*/
-  fileDesc("Ch5ub3VzL3dhdmUvdjFhbHBoYTEvbW9kZWwucHJvdG8SEm5vdXMud2F2ZS52MWFscGhhMSKNAgoQRm9ybWF0aW9uUmVxdWVzdBIfCgpzdWJqZWN0X2lkGAEgASgJQgvK8xgHc3ViamVjdBIlCg1vY2N1cnJlbmNlX2lkGAIgASgJQg7K8xgKb2NjdXJyZW5jZRI6ChFyZXByZXNlbnRhdGlvbl9pZBgDIAEoCUIayvMYFmRlcml2ZWRfcmVwcmVzZW50YXRpb25IAIgBARIUCgxvcGVyYXRpb25faWQYBCABKAkSFgoOYWJvdXRuZXNzX21vZGUYBSABKAkSGgoSZXhwbGljaXRfYWJvdXRuZXNzGAYgAygJEhUKDWV4cGxpY2l0X3RhZ3MYByADKAlCFAoSX3JlcHJlc2VudGF0aW9uX2lkIrEBChVEZXJpdmVNYXRlcmlhbFJlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSKwoQc291cmNlX3JlZ2lvbl9pZBgCIAEoCUIRyvMYDXNvdXJjZV9yZWdpb24SFQoIc3RyYXRlZ3kYAyABKAlIAIgBARIXCgpzdXBlcnNlZGVzGAUgASgJSAGIAQFCCwoJX3N0cmF0ZWd5Qg0KC19zdXBlcnNlZGVzInUKEUZvcm1hdGlvblJlc3BvbnNlEioKBm1lbW9yeRgBIAEoCzIaLm5vdXMud2F2ZS52MWFscGhhMS5NZW1vcnkSNAoLZGVncmFkYXRpb24YAiADKAsyHy5ub3VzLndhdmUudjFhbHBoYTEuRGVncmFkYXRpb24i8gEKEkRlcml2YXRpb25SZXNwb25zZRJCCg9yZXByZXNlbnRhdGlvbnMYASADKAsyKS5ub3VzLndhdmUudjFhbHBoYTEuRGVyaXZlZFJlcHJlc2VudGF0aW9uEkMKGnNlbGVjdGVkX3JlcHJlc2VudGF0aW9uX2lkGAIgASgJQhrK8xgWZGVyaXZlZF9yZXByZXNlbnRhdGlvbkgAiAEBEjQKC2RlZ3JhZGF0aW9uGAMgAygLMh8ubm91cy53YXZlLnYxYWxwaGExLkRlZ3JhZGF0aW9uQh0KG19zZWxlY3RlZF9yZXByZXNlbnRhdGlvbl9pZCJKChhQcmVwYXJlRW1iZWRkaW5nc1JlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSDQoFbGltaXQYAiABKA0iZAoZUHJlcGFyZUVtYmVkZGluZ3NSZXNwb25zZRIRCgljb21taXR0ZWQYASABKA0SNAoLZGVncmFkYXRpb24YAiADKAsyHy5ub3VzLndhdmUudjFhbHBoYTEuRGVncmFkYXRpb24yzgIKDE1vZGVsU2VydmljZRJnChNGb3JtRnJvbU9ic2VydmF0aW9uEiQubm91cy53YXZlLnYxYWxwaGExLkZvcm1hdGlvblJlcXVlc3QaJS5ub3VzLndhdmUudjFhbHBoYTEuRm9ybWF0aW9uUmVzcG9uc2UiA5ACAhJjCg5EZXJpdmVNYXRlcmlhbBIpLm5vdXMud2F2ZS52MWFscGhhMS5EZXJpdmVNYXRlcmlhbFJlcXVlc3QaJi5ub3VzLndhdmUudjFhbHBoYTEuRGVyaXZhdGlvblJlc3BvbnNlEnAKEVByZXBhcmVFbWJlZGRpbmdzEiwubm91cy53YXZlLnYxYWxwaGExLlByZXBhcmVFbWJlZGRpbmdzUmVxdWVzdBotLm5vdXMud2F2ZS52MWFscGhhMS5QcmVwYXJlRW1iZWRkaW5nc1Jlc3BvbnNlYgZwcm90bzM", [file_nous_wave_v1alpha1_presentation, file_nous_wave_v1alpha1_types, file_nous_wave_v1alpha1_management]);
+  fileDesc("Ch5ub3VzL3dhdmUvdjFhbHBoYTEvbW9kZWwucHJvdG8SEm5vdXMud2F2ZS52MWFscGhhMSKNAgoQRm9ybWF0aW9uUmVxdWVzdBIfCgpzdWJqZWN0X2lkGAEgASgJQgvK8xgHc3ViamVjdBIlCg1vY2N1cnJlbmNlX2lkGAIgASgJQg7K8xgKb2NjdXJyZW5jZRI6ChFyZXByZXNlbnRhdGlvbl9pZBgDIAEoCUIayvMYFmRlcml2ZWRfcmVwcmVzZW50YXRpb25IAIgBARIUCgxvcGVyYXRpb25faWQYBCABKAkSFgoOYWJvdXRuZXNzX21vZGUYBSABKAkSGgoSZXhwbGljaXRfYWJvdXRuZXNzGAYgAygJEhUKDWV4cGxpY2l0X3RhZ3MYByADKAlCFAoSX3JlcHJlc2VudGF0aW9uX2lkIrEBChVEZXJpdmVNYXRlcmlhbFJlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSKwoQc291cmNlX3JlZ2lvbl9pZBgCIAEoCUIRyvMYDXNvdXJjZV9yZWdpb24SFQoIc3RyYXRlZ3kYAyABKAlIAIgBARIXCgpzdXBlcnNlZGVzGAUgASgJSAGIAQFCCwoJX3N0cmF0ZWd5Qg0KC19zdXBlcnNlZGVzInUKEUZvcm1hdGlvblJlc3BvbnNlEioKBm1lbW9yeRgBIAEoCzIaLm5vdXMud2F2ZS52MWFscGhhMS5NZW1vcnkSNAoLZGVncmFkYXRpb24YAiADKAsyHy5ub3VzLndhdmUudjFhbHBoYTEuRGVncmFkYXRpb24i8gEKEkRlcml2YXRpb25SZXNwb25zZRJCCg9yZXByZXNlbnRhdGlvbnMYASADKAsyKS5ub3VzLndhdmUudjFhbHBoYTEuRGVyaXZlZFJlcHJlc2VudGF0aW9uEkMKGnNlbGVjdGVkX3JlcHJlc2VudGF0aW9uX2lkGAIgASgJQhrK8xgWZGVyaXZlZF9yZXByZXNlbnRhdGlvbkgAiAEBEjQKC2RlZ3JhZGF0aW9uGAMgAygLMh8ubm91cy53YXZlLnYxYWxwaGExLkRlZ3JhZGF0aW9uQh0KG19zZWxlY3RlZF9yZXByZXNlbnRhdGlvbl9pZCJKChhQcmVwYXJlRW1iZWRkaW5nc1JlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSDQoFbGltaXQYAiABKA0iZAoZUHJlcGFyZUVtYmVkZGluZ3NSZXNwb25zZRIRCgljb21taXR0ZWQYASABKA0SNAoLZGVncmFkYXRpb24YAiADKAsyHy5ub3VzLndhdmUudjFhbHBoYTEuRGVncmFkYXRpb24ikAEKFVNlbGZPYnNlcnZhdGlvblNvdXJjZRIlCg1vY2N1cnJlbmNlX2lkGAEgASgJQg7K8xgKb2NjdXJyZW5jZRI6ChFyZXByZXNlbnRhdGlvbl9pZBgCIAEoCUIayvMYFmRlcml2ZWRfcmVwcmVzZW50YXRpb25IAIgBAUIUChJfcmVwcmVzZW50YXRpb25faWQi/gEKFEludGVycHJldFNlbGZSZXF1ZXN0Eh8KCnN1YmplY3RfaWQYASABKAlCC8rzGAdzdWJqZWN0EhQKDG9wZXJhdGlvbl9pZBgCIAEoCRI1Cg9zZWVkX3ZlcnNpb25faWQYAyABKAlCGsrzGBZjb2duaXRpdmVfc2VlZF92ZXJzaW9uSAASQAoLb2JzZXJ2YXRpb24YBCABKAsyKS5ub3VzLndhdmUudjFhbHBoYTEuU2VsZk9ic2VydmF0aW9uU291cmNlSAASLAoFc2NvcGUYBSABKAsyHS5ub3VzLndhdmUudjFhbHBoYTEuU2VsZlNjb3BlQggKBnNvdXJjZSKaAQoQU2VsZkFjdGlvblJlc3VsdBIOCgZhY3Rpb24YASABKAkSDgoGc3RhdHVzGAIgASgJEi4KBnJlY29yZBgDIAEoCzIeLm5vdXMud2F2ZS52MWFscGhhMS5TZWxmUmVjb3JkEg4KBnJlYXNvbhgEIAEoCRIXCgplcnJvcl9jb2RlGAUgASgJSACIAQFCDQoLX2Vycm9yX2NvZGUipAEKFUludGVycHJldFNlbGZSZXNwb25zZRIOCgZkb21haW4YASABKAkSDgoGc3RhdHVzGAIgASgJEjUKB2FjdGlvbnMYAyADKAsyJC5ub3VzLndhdmUudjFhbHBoYTEuU2VsZkFjdGlvblJlc3VsdBI0CgtkZWdyYWRhdGlvbhgEIAMoCzIfLm5vdXMud2F2ZS52MWFscGhhMS5EZWdyYWRhdGlvbjK5AwoMTW9kZWxTZXJ2aWNlEmkKDUludGVycHJldFNlbGYSKC5ub3VzLndhdmUudjFhbHBoYTEuSW50ZXJwcmV0U2VsZlJlcXVlc3QaKS5ub3VzLndhdmUudjFhbHBoYTEuSW50ZXJwcmV0U2VsZlJlc3BvbnNlIgOQAgISZwoTRm9ybUZyb21PYnNlcnZhdGlvbhIkLm5vdXMud2F2ZS52MWFscGhhMS5Gb3JtYXRpb25SZXF1ZXN0GiUubm91cy53YXZlLnYxYWxwaGExLkZvcm1hdGlvblJlc3BvbnNlIgOQAgISYwoORGVyaXZlTWF0ZXJpYWwSKS5ub3VzLndhdmUudjFhbHBoYTEuRGVyaXZlTWF0ZXJpYWxSZXF1ZXN0GiYubm91cy53YXZlLnYxYWxwaGExLkRlcml2YXRpb25SZXNwb25zZRJwChFQcmVwYXJlRW1iZWRkaW5ncxIsLm5vdXMud2F2ZS52MWFscGhhMS5QcmVwYXJlRW1iZWRkaW5nc1JlcXVlc3QaLS5ub3VzLndhdmUudjFhbHBoYTEuUHJlcGFyZUVtYmVkZGluZ3NSZXNwb25zZWIGcHJvdG8z", [file_nous_wave_v1alpha1_presentation, file_nous_wave_v1alpha1_types, file_nous_wave_v1alpha1_management, file_nous_wave_v1alpha1_self]);
 
 /**
  * @generated from message nous.wave.v1alpha1.FormationRequest
@@ -193,9 +195,154 @@ export const PrepareEmbeddingsResponseSchema: GenMessage<PrepareEmbeddingsRespon
   messageDesc(file_nous_wave_v1alpha1_model, 5);
 
 /**
+ * Explicit authorized domain interpretation. Source creation/adoption is a separate durable operation.
+ *
+ * @generated from message nous.wave.v1alpha1.SelfObservationSource
+ */
+export type SelfObservationSource = Message<"nous.wave.v1alpha1.SelfObservationSource"> & {
+  /**
+   * @generated from field: string occurrence_id = 1;
+   */
+  occurrenceId: string;
+
+  /**
+   * @generated from field: optional string representation_id = 2;
+   */
+  representationId?: string | undefined;
+};
+
+/**
+ * Describes the message nous.wave.v1alpha1.SelfObservationSource.
+ * Use `create(SelfObservationSourceSchema)` to create a new message.
+ */
+export const SelfObservationSourceSchema: GenMessage<SelfObservationSource> = /*@__PURE__*/
+  messageDesc(file_nous_wave_v1alpha1_model, 6);
+
+/**
+ * @generated from message nous.wave.v1alpha1.InterpretSelfRequest
+ */
+export type InterpretSelfRequest = Message<"nous.wave.v1alpha1.InterpretSelfRequest"> & {
+  /**
+   * @generated from field: string subject_id = 1;
+   */
+  subjectId: string;
+
+  /**
+   * @generated from field: string operation_id = 2;
+   */
+  operationId: string;
+
+  /**
+   * @generated from oneof nous.wave.v1alpha1.InterpretSelfRequest.source
+   */
+  source: {
+    /**
+     * @generated from field: string seed_version_id = 3;
+     */
+    value: string;
+    case: "seedVersionId";
+  } | {
+    /**
+     * @generated from field: nous.wave.v1alpha1.SelfObservationSource observation = 4;
+     */
+    value: SelfObservationSource;
+    case: "observation";
+  } | { case: undefined; value?: undefined };
+
+  /**
+   * @generated from field: nous.wave.v1alpha1.SelfScope scope = 5;
+   */
+  scope?: SelfScope | undefined;
+};
+
+/**
+ * Describes the message nous.wave.v1alpha1.InterpretSelfRequest.
+ * Use `create(InterpretSelfRequestSchema)` to create a new message.
+ */
+export const InterpretSelfRequestSchema: GenMessage<InterpretSelfRequest> = /*@__PURE__*/
+  messageDesc(file_nous_wave_v1alpha1_model, 7);
+
+/**
+ * @generated from message nous.wave.v1alpha1.SelfActionResult
+ */
+export type SelfActionResult = Message<"nous.wave.v1alpha1.SelfActionResult"> & {
+  /**
+   * @generated from field: string action = 1;
+   */
+  action: string;
+
+  /**
+   * @generated from field: string status = 2;
+   */
+  status: string;
+
+  /**
+   * @generated from field: nous.wave.v1alpha1.SelfRecord record = 3;
+   */
+  record?: SelfRecord | undefined;
+
+  /**
+   * @generated from field: string reason = 4;
+   */
+  reason: string;
+
+  /**
+   * @generated from field: optional string error_code = 5;
+   */
+  errorCode?: string | undefined;
+};
+
+/**
+ * Describes the message nous.wave.v1alpha1.SelfActionResult.
+ * Use `create(SelfActionResultSchema)` to create a new message.
+ */
+export const SelfActionResultSchema: GenMessage<SelfActionResult> = /*@__PURE__*/
+  messageDesc(file_nous_wave_v1alpha1_model, 8);
+
+/**
+ * @generated from message nous.wave.v1alpha1.InterpretSelfResponse
+ */
+export type InterpretSelfResponse = Message<"nous.wave.v1alpha1.InterpretSelfResponse"> & {
+  /**
+   * @generated from field: string domain = 1;
+   */
+  domain: string;
+
+  /**
+   * @generated from field: string status = 2;
+   */
+  status: string;
+
+  /**
+   * @generated from field: repeated nous.wave.v1alpha1.SelfActionResult actions = 3;
+   */
+  actions: SelfActionResult[];
+
+  /**
+   * @generated from field: repeated nous.wave.v1alpha1.Degradation degradation = 4;
+   */
+  degradation: Degradation[];
+};
+
+/**
+ * Describes the message nous.wave.v1alpha1.InterpretSelfResponse.
+ * Use `create(InterpretSelfResponseSchema)` to create a new message.
+ */
+export const InterpretSelfResponseSchema: GenMessage<InterpretSelfResponse> = /*@__PURE__*/
+  messageDesc(file_nous_wave_v1alpha1_model, 9);
+
+/**
  * @generated from service nous.wave.v1alpha1.ModelService
  */
 export const ModelService: GenService<{
+  /**
+   * @generated from rpc nous.wave.v1alpha1.ModelService.InterpretSelf
+   */
+  interpretSelf: {
+    methodKind: "unary";
+    input: typeof InterpretSelfRequestSchema;
+    output: typeof InterpretSelfResponseSchema;
+  },
   /**
    * @generated from rpc nous.wave.v1alpha1.ModelService.FormFromObservation
    */

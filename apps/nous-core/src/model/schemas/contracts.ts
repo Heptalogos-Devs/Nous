@@ -4,6 +4,7 @@
 import type { z } from "zod";
 import type { ModelRole } from "../roles.js";
 import { queryConceptSchema } from "./query-concept.js";
+import { selfInterpretationSchema } from "./self.js";
 import { formationSchema } from "./formation.js";
 import { projectionStewardSchema } from "./projection.js";
 import { materialInterpretationSchema } from "./material-interpretation.js";
@@ -37,6 +38,16 @@ const structuredRoleContracts = {
     "projection.steward",
     "projection_steward",
     projectionStewardSchema,
+  ),
+  self_formation: contract(
+    "self.formation",
+    "self_formation",
+    selfInterpretationSchema,
+  ),
+  self_reflection: contract(
+    "self.reflection",
+    "self_reflection",
+    selfInterpretationSchema,
   ),
   memory_formation: contract(
     "memory.formation",

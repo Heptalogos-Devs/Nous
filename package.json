@@ -47,7 +47,7 @@
     "inspect:model-trace": "tsx scripts/research/model-trace.ts",
     "clean:local": "tsx scripts/maintenance/clean.ts",
     "openclaw:pack": "tsx scripts/openclaw/pack.ts",
-    "smoke:self": "tsx scripts/smoke/self.ts"
+    "smoke:self": "tsx scripts/smoke/self.ts && tsx scripts/smoke/self-model.ts"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.73.0",
