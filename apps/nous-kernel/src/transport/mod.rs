@@ -102,6 +102,7 @@ impl KernelService {
                         .as_ref()
                         .map(|u| {
                             Ok::<_, nous_core::Error>(nous_runtime::InvocationScope {
+                                intent: u.intent.clone(),
                                 purpose: u.purpose.clone(),
                                 conversation: u
                                     .audience

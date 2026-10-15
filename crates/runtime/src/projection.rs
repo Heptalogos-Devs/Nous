@@ -16,20 +16,32 @@ pub struct ContextSource {
 }
 
 pub struct InvocationScope {
+    pub intent: String,
     pub purpose: String,
     pub conversation: String,
     pub entities: Vec<EntityRef>,
+}
+pub struct AutomaticContextRequest<'a> {
+    pub scope: &'a InvocationScope,
+    pub work_context: Option<Uuid>,
+    pub materialize: bool,
+    pub max_items: usize,
+    pub max_bytes: usize,
+    pub ranked: &'a [CognitiveRef],
+}
+#[derive(Default)]
+pub struct AutomaticContext {
+    pub sources: Vec<ContextSource>,
+    pub degradation: Vec<Degradation>,
 }
 #[async_trait::async_trait]
 pub trait ContextResolver: Send + Sync {
     async fn automatic_context_sources(
         &self,
         _subject: SubjectId,
-        _scope: &InvocationScope,
-        _work_context: Option<Uuid>,
-        _materialize: bool,
-    ) -> Result<Vec<ContextSource>> {
-        Ok(Vec::new())
+        _input: AutomaticContextRequest<'_>,
+    ) -> Result<AutomaticContext> {
+        Ok(AutomaticContext::default())
     }
 
     async fn query_descriptors(
@@ -221,17 +233,27 @@ impl CognitiveRuntimeService {
                 resolver
                     .automatic_context_sources(
                         input.subject,
-                        scope,
-                        session.active_work_context_id,
-                        input.materialize,
+                        AutomaticContextRequest {
+                            scope,
+                            work_context: session.active_work_context_id,
+                            materialize: input.materialize,
+                            max_items: input.max_items,
+                            max_bytes: input.max_text_bytes,
+                            ranked: &references
+                                .iter()
+                                .map(|(r, ..)| r.clone())
+                                .collect::<Vec<_>>(),
+                        },
                     )
                     .await?
             } else {
-                Vec::new()
+                AutomaticContext::default()
             }
         } else {
-            Vec::new()
+            AutomaticContext::default()
         };
+        let mut degradation = automatic.degradation;
+        let automatic = automatic.sources;
         let required_bytes: usize = automatic
             .iter()
             .filter(|s| s.required)
@@ -294,7 +316,6 @@ impl CognitiveRuntimeService {
         };
         let mut segments = Vec::new();
         let mut emitted = HashSet::new();
-        let mut degradation = Vec::new();
         let mut references = references.into_iter();
         while segments.len() < input.max_items {
             if input.materialize && remaining == 0 {
@@ -380,6 +401,12 @@ impl CognitiveRuntimeService {
                     source,
                 });
             }
+        }
+        if references.next().is_some() {
+            degradation.push(Degradation {
+                code: "context_budget_omission".into(),
+                detail: Some("remaining semantic units omitted at projection item budget".into()),
+            });
         }
         let current: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM cognitive_sessions WHERE subject_id=$1 AND session_id=$2 AND runtime_revision=$3 AND closed_at IS NULL AND active_work_context_id IS NOT DISTINCT FROM $4 AND ($4::uuid IS NULL OR EXISTS(SELECT 1 FROM work_contexts WHERE subject_id=$1 AND work_context_id=$4 AND revision=$5 AND state='open')))",

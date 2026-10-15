@@ -228,3 +228,18 @@ pub struct ReviseSelf {
     pub content: SelfContent,
     pub reason: String,
 }
+
+/// A bounded owner read, distinct from complete management pagination.
+pub struct SelfSelectionRequest<'a> {
+    pub scope: &'a SelfScope,
+    pub targets: &'a [CognitiveRef],
+    pub sources: &'a [CognitiveRef],
+    pub ranked: &'a [CognitiveRef],
+    pub max_items: usize,
+    pub max_bytes: usize,
+    pub automatic: bool,
+}
+pub struct SelfSelection {
+    pub records: Vec<SelfRecord>,
+    pub degradation: Vec<Degradation>,
+}

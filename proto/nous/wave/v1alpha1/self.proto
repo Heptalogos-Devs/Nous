@@ -64,7 +64,27 @@ message SelfListResponse {repeated SelfRecord items = 1; string next_page_token 
 message SelfMutationRequest {string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; CognitiveRef object_ref = 3; int64 expected_object_epoch = 4;}
 message SelfLifecycleRequest {SelfMutationRequest mutation = 1; string action = 2;}
 message ProvisionCapabilitiesRequest {string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; SubjectCapabilities capabilities = 3;}
+// Bounded current candidates, not a complete Subject snapshot. Source/target/dependency
+// lookup and Query-ranked references share the owner's body/support read budget.
+message SelfSelectionRequest {
+  string subject_id = 1 [(reference_kind) = "subject"];
+  SelfScope scope = 2;
+  repeated CognitiveRef targets = 3;
+  repeated CognitiveRef sources = 4;
+  repeated CognitiveRef ranked = 5;
+  // Actual selected records, 1..128; not a Subject population limit.
+  uint32 max_items = 6;
+  // Complete body/support read ceiling, at most 4 MiB.
+  uint32 max_bytes = 7;
+  string intent = 8;
+}
+message SelfSelectionResponse {
+  repeated SelfRecord items = 1;
+  repeated Degradation degradation = 2;
+  string candidate_scope = 3;
+}
 service SelfService {
+  rpc Select(SelfSelectionRequest) returns (SelfSelectionResponse);
   rpc Adopt(AdoptSelfRequest) returns (SelfRecord) {option idempotency_level = IDEMPOTENT;}
   rpc Revise(ReviseSelfRequest) returns (SelfRecord) {option idempotency_level = IDEMPOTENT;}
   rpc AddEvidence(AddSelfEvidenceRequest) returns (SelfRecord) {option idempotency_level = IDEMPOTENT;}

@@ -48,10 +48,11 @@
     "inspect:model-trace": "tsx scripts/research/model-trace.ts",
     "clean:local": "tsx scripts/maintenance/clean.ts",
     "openclaw:pack": "tsx scripts/openclaw/pack.ts",
-    "smoke:self": "tsx scripts/smoke/self.ts && tsx scripts/smoke/self-model.ts && tsx scripts/smoke/self-history.ts",
+    "smoke:self": "tsx scripts/smoke/self.ts && tsx scripts/smoke/self-model.ts && tsx scripts/smoke/self-history.ts && tsx scripts/smoke/self-selection.ts",
     "client:pack": "tsx scripts/release/client.ts",
     "client:verify": "tsx scripts/release/verify-client.ts",
-    "smoke:client": "tsx scripts/smoke/client.ts"
+    "smoke:client": "tsx scripts/smoke/client.ts",
+    "smoke:self-selection": "tsx scripts/smoke/self-selection.ts"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.73.0",

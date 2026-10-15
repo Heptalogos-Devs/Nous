@@ -2994,6 +2994,38 @@ pub struct ProvisionCapabilitiesRequest {
     #[prost(message, optional, tag="3")]
     pub capabilities: ::core::option::Option<SubjectCapabilities>,
 }
+/// Bounded current candidates, not a complete Subject snapshot. Source/target/dependency
+/// lookup and Query-ranked references share the owner's body/support read budget.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SelfSelectionRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub scope: ::core::option::Option<SelfScope>,
+    #[prost(message, repeated, tag="3")]
+    pub targets: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(message, repeated, tag="4")]
+    pub sources: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(message, repeated, tag="5")]
+    pub ranked: ::prost::alloc::vec::Vec<CognitiveRef>,
+    /// Actual selected records, 1..128; not a Subject population limit.
+    #[prost(uint32, tag="6")]
+    pub max_items: u32,
+    /// Complete body/support read ceiling, at most 4 MiB.
+    #[prost(uint32, tag="7")]
+    pub max_bytes: u32,
+    #[prost(string, tag="8")]
+    pub intent: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SelfSelectionResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<SelfRecord>,
+    #[prost(message, repeated, tag="2")]
+    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+    #[prost(string, tag="3")]
+    pub candidate_scope: ::prost::alloc::string::String,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FormationRequest {
     #[prost(string, tag="1")]
@@ -3060,7 +3092,7 @@ pub struct SelfObservationSource {
     #[prost(string, optional, tag="2")]
     pub representation_id: ::core::option::Option<::prost::alloc::string::String>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct InterpretSelfRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
@@ -3068,6 +3100,10 @@ pub struct InterpretSelfRequest {
     pub operation_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag="5")]
     pub scope: ::core::option::Option<SelfScope>,
+    #[prost(message, repeated, tag="6")]
+    pub targets: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(uint32, tag="7")]
+    pub max_candidates: u32,
     #[prost(oneof="interpret_self_request::Source", tags="3, 4")]
     pub source: ::core::option::Option<interpret_self_request::Source>,
 }

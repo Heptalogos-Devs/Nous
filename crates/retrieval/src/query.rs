@@ -402,3 +402,48 @@ impl ServingService {
         Ok(reader)
     }
 }
+
+impl ServingService {
+    /// Reuse the lexical generation for bounded owner candidate discovery, without
+    /// materializing candidate Authority bodies/support or invoking a model.
+    pub async fn lexical_candidates(
+        &self,
+        subject: SubjectId,
+        intent: &str,
+        limit: usize,
+        domains: &[&str],
+    ) -> Result<(Vec<CognitiveRef>, Vec<Degradation>)> {
+        if intent.trim().is_empty() || limit == 0 {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        if limit > 128 || intent.len() > 32768 {
+            return Err(Error::Invalid(
+                "lexical candidate request exceeds bound".into(),
+            ));
+        }
+        let _lease = self.read_gate.clone().read_owned().await;
+        let config = self.configuration.snapshot_for_subject(subject)?;
+        let (status, snapshot) = self
+            .prepare_assets(
+                subject,
+                ServingNeed {
+                    lexical: true,
+                    ..Default::default()
+                },
+                &config,
+                None,
+            )
+            .await?;
+        let Some(index) = snapshot.lexical else {
+            let mut degradation = status.degradation;
+            degradation.push(Degradation { code: "self_lexical_candidates_unavailable".into(), detail: Some("Candidate scope retains exact targets/source dependencies; lexical discovery unavailable".into()) });
+            return Ok((Vec::new(), degradation));
+        };
+        let refs = index
+            .search_with_domains(intent, limit, domains)?
+            .into_iter()
+            .filter_map(|m| m.reference)
+            .collect();
+        Ok((refs, status.degradation))
+    }
+}

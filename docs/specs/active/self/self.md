@@ -25,7 +25,8 @@ Canonical `SelfService` 由官方 Client 的 `self` namespace 暴露：
 - `adopt` 创建 facet 或 narrative 对象及初始 revision；
 - `revise` 要求 exact target、当前 object epoch、内容和实际变化理由，同对象创建新 revision；无正文变化时保存操作结果而不制造新修订；
 - `addEvidence` 为 exact revision 增加 support、counterexample 或 boundary_case，不因依据增加而全文重写；
-- `get`、`getRevision`、`list`、`listRevisions` 提供当前、精确及有界历史视图；
+- `get`、`getRevision`、`list`、`listRevisions` 提供当前、精确及有界历史视图；管理页包含不可用/历史项和完整追加 evidence，100 是单页上限，不是领域总量上限；
+- `select` 是独立的有界当前候选读取，接收 sources、显式 targets、检索排名和实际条目/正文依据字节预算；返回 candidateScope 与明确省略，不冒充完整管理视图；
 - `setLifecycle` 执行 suppression/restore、withdraw/reaccept；
 - `purge` 通过正式授权操作清除对象、修订和所属 Runtime 引用，保留必要幂等及 tombstone 语义。
 
@@ -35,7 +36,7 @@ Canonical `SelfService` 由官方 Client 的 `self` namespace 暴露：
 
 ## 自动认知与查询贡献
 
-Managed Projection 从已捕获的实际 usage 自动选择当前 SelfFacet，无需调用者拼装 refs。owner 核验生命周期、valid time、purpose、conversation、WorkContext 与已解析 Entity 条件。已采用且适用的 identity 标为必需身份；其他适用认识保留完整条件作为情境指导。必需身份与 foreground WorkContext 在预算中先保留，无法完整容纳时终止准备；可选内容按语义单元整体省略。
+Managed Projection 从已捕获的实际 usage 自动选择当前 SelfFacet，无需调用者拼装 refs。owner 在候选限额前以 SQL 核验生命周期、valid time、purpose、conversation、WorkContext 与已解析 Entity 条件。必需身份独立读取，不与普通条目竞争管理第一页；可选事项按既有 Query 提供的排名和共享 lexical generation 的相关 refs 优先选择，结构适用项仍保留有界候补，不能以一次关键词不匹配断言不适用。读取限额使用本次 projection 的条目预算；内部正文与依据读取上限为文本预算四倍（最少 16 KiB、最多 4 MiB），最终输出仍遵守原 projection 预算。已采用且适用的 identity 标为必需身份；其他适用认识保留完整条件作为情境指导。必需身份与 foreground WorkContext 在预算中先保留，无法完整容纳时终止准备；可选内容按语义单元整体省略。
 
 用途和必需性由来源 owner 声明，Core 读取贡献的 domain，不根据一组不断增长的 wire-kind 字符串猜测。Self 不交给 Steward 自由改写；RESET/APPEND 继续复用 ContextCompiler。历史 Self 修订作为过去认识标记，不能冒充当前身份。
 
@@ -47,7 +48,11 @@ Self 使用现有 CognitiveContributor、共享 lexical/dense Serving、固定 f
 
 `client.model.interpretSelf` 是显式授权的领域解释操作。输入指定同一 Subject 已采用的 Seed version，或实际 Occurrence 与可选文本 representation。Seed 使用 `self_formation`，观察反思使用 `self_reflection`；两种 role 都复用现有模型配置、严格结构输出、producer、执行 telemetry 和 model-results。没有配置模型角色时返回明确的 Self 领域失败，不创建默认人格。
 
-模型读取当前可修订事项与真实来源目录，按事项、类别和 scope 提议 adopt/revise/keep/evidence。引用只能选择调用内目录；Seed 行键绑定原始版本和 semantic path，观察绑定实际 EvidenceRef。名字与情境偏好分别形成可独立修订的事项。证据发生时间不等于认识的有效时间；持续采用的认识不能仅因选择发生在某时刻就被限制到该单点。新变化必须引用本次来源；当前 exact cognition 和原有依据可补充支持，目标不能依赖自身。NarrativeThread 引用已有 exact cognition revision，不把 Seed 故事伪造为 Occurrence。
+模型从本批来源准备有界候选，不读取全域管理第一页。`interpretSelf.targets` 可显式指定需要核对的当前对象或 exact revision；`maxCandidates` 默认 32、上限 128。候选优先包括显式目标、来源的直接依赖/反向依赖、共享 lexical 检索结果与当前采用的身份；只补读一跳依赖，不拉 narrative 全历史。开放 scope 条件完整交给模型解释。来源检索文本最多前 2048 个 Unicode code point，该边界与实际候选/正文依据预算在 candidateScope 中声明。正文与追加 evidence 分别按选中 revision 批量读取，同一 repeatable-read 视图组合；管理页复用相同批量机制且不省略 evidence。
+
+模型输入的 currentSelf 明确是候选目录，candidateScope 保留范围、预算和省略；未出现不表示 Subject 没有该事项。不能充分判断新建/修订时 keep 并指出需按 targets 补读的具体事项，不重新读取完整 Self。候选正文/依据预算沿用 formation_source_max_bytes 的四分之一，来源与最终输入继续受原预算约束。候选省略的 degradation 随已保存提案和正式响应保留。
+
+模型按事项、类别和 scope 提议 adopt/revise/keep/evidence。引用只能选择调用内目录；Seed 行键绑定原始版本和 semantic path，观察绑定实际 EvidenceRef。名字与情境偏好分别形成可独立修订的事项。证据发生时间不等于认识的有效时间；持续采用的认识不能仅因选择发生在某时刻就被限制到该单点。新变化必须引用本次来源；当前 exact cognition 和原有依据可补充支持，目标不能依赖自身。NarrativeThread 引用已有 exact cognition revision，不把 Seed 故事伪造为 Occurrence。
 
 付费的结构化提案、来源快照和实际 producer 在提交前保存。整个提案先校验目录选择，再逐项调用 Self owner；每项独立使用现有 receipt/CAS，没有跨领域总事务。同 operation id 重放已存结果，Core 重启不重新支付或重复采用；发生基础设施中断时复用已保存提案和 owner receipt 继续。无效提案也保留付费结果并报告失败。
 
@@ -66,3 +71,7 @@ Self 的原始 basis、异常、追加证据、叙事 exact sources 与实际 pr
 ## 原生运行验证
 
 CLI/MCP 提供正式 owner 操作、来源解释与只读 soul；OpenClaw 自动贡献走同一输入路径。原生行为场景覆盖无 Seed 的实际名字/有情境偏好、有 Seed 的独立主体、公共原文工具结果、同事项反例修订和精确旧历史，以及换话题、模型、会话和 Core/Gateway 重启后的连续性。普通聊天的“记住/忘记”通过状态比较核验权限边界。运行要求与命令由 [插件包说明](../../../../packages/openclaw/README.md) 维护。
+
+## 容量验证
+
+`pnpm smoke:self-selection` 已接入 `smoke:self`，在隔离实例中通过正式 API 先创建 121 项容量背景（多数撤回，其余不匹配 purpose/conversation/WorkContext 或已过期），再建立第一页之后的当前身份。检查管理分页与完整 evidence、精确历史、自动身份/省略、有界来源/目标及一跳依赖候选和反思输入范围。真实配置与 native 运行方法见 [公共 smoke](../../../../scripts/smoke/README.md)，不修改原 Subject。

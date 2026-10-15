@@ -85,62 +85,52 @@ impl SelfService {
     pub async fn automatic_context(
         &self,
         subject: SubjectId,
-        scope: &nous_runtime::InvocationScope,
-        work_context: Option<Uuid>,
-        materialize: bool,
-    ) -> Result<Vec<nous_runtime::ContextSource>> {
-        let (records, more) = self.list(subject, "self_facet", None, 100).await?;
-        if more {
-            return Err(Error::Unavailable(
-                "Self selection exceeds its bounded current facet view".into(),
-            ));
-        }
-        let now = self.runtime.now(subject);
-        let mut selected = Vec::new();
-        for record in records {
-            let SelfContent::SelfFacet(facet) = &record.content else {
-                continue;
-            };
-            let time = match &facet.valid_time {
-                TemporalExtent::Unknown => true,
-                TemporalExtent::Instant { at } => *at == now,
-                TemporalExtent::Interval { start, end } => TimeInterval {
-                    start: *start,
-                    end: *end,
-                }
-                .contains(now),
-            };
-            if !record.is_current_available()
-                || !time
-                || (!facet.scope.purposes.is_empty()
-                    && !facet.scope.purposes.contains(&scope.purpose))
-                || facet
-                    .scope
-                    .work_context
-                    .is_some_and(|w| Some(w.0) != work_context)
-                || facet
-                    .scope
-                    .conversation
-                    .as_ref()
-                    .is_some_and(|c| c != &scope.conversation)
-                || !facet
-                    .scope
-                    .entities
-                    .iter()
-                    .all(|e| scope.entities.contains(e))
-            {
-                continue;
-            }
-            let mut source = Self::record_context(&record, materialize);
-            source.usage = if facet.kind == "identity" && facet.stance == "adopted" {
-                "identity"
-            } else {
-                "situational_guidance"
-            };
-            source.required = source.usage == "identity";
-            selected.push(source);
-        }
-        selected.sort_by_key(|s| !s.required);
-        Ok(selected)
+        input: nous_runtime::AutomaticContextRequest<'_>,
+    ) -> Result<nous_runtime::AutomaticContext> {
+        let scope = SelfScope {
+            description: String::new(),
+            purposes: vec![input.scope.purpose.clone()],
+            entities: input.scope.entities.clone(),
+            work_context: input.work_context.map(WorkContextId),
+            conversation: Some(input.scope.conversation.clone()),
+        };
+        let selected = self
+            .select(
+                subject,
+                SelfSelectionRequest {
+                    scope: &scope,
+                    targets: &[],
+                    sources: &[],
+                    ranked: input.ranked,
+                    max_items: input.max_items,
+                    max_bytes: input
+                        .max_bytes
+                        .saturating_mul(4)
+                        .clamp(16384, 4 * 1024 * 1024),
+                    automatic: true,
+                },
+            )
+            .await?;
+        let sources = selected
+            .records
+            .iter()
+            .map(|record| {
+                let mut source = Self::record_context(record, input.materialize);
+                let SelfContent::SelfFacet(facet) = &record.content else {
+                    unreachable!("automatic selection only selects facets")
+                };
+                source.required = facet.kind == "identity" && facet.stance == "adopted";
+                source.usage = if source.required {
+                    "identity"
+                } else {
+                    "situational_guidance"
+                };
+                source
+            })
+            .collect();
+        Ok(nous_runtime::AutomaticContext {
+            sources,
+            degradation: selected.degradation,
+        })
     }
 }

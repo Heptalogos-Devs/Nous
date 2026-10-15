@@ -137,11 +137,11 @@ accept no reference argument.
 
 `subject provision --request-file capabilities.toml` 在当前 Subject 上追加请求能力，例如 `self_cognition = true`，保留原身份和数据。无 Seed 创建不调用解释模型或生成默认人格。
 
-`self list --kind self_facet|narrative_thread`、`self get <对象引用>`、`self revision <exact引用>` 与 `self history <对象引用>` 读取正式对象；Self 的分页上限为 100。`self soul` 从一次当前 owner 快照生成可读文本，保留 stance、适用范围、反例、有效时间和 exact revision。它不保存另一份人格文件；修改使用显式提案。
+`self list --kind self_facet|narrative_thread`、`self get <对象引用>`、`self revision <exact引用>` 与 `self history <对象引用>` 读取正式对象；Self 的分页上限为 100。`self soul` 从当前管理页生成可读文本，保留 stance、适用范围、反例、有效时间和 exact revision，并返回 nextPageToken；使用 `--page-size` 和 `--page-token` 继续读取，不因领域超过一页而失败。它不保存另一份人格文件；修改使用显式提案。
 
 `self adopt --request-file content.toml --text <采用理由>` 和 `self revise <对象或exact引用> --request-file content.toml --text <变化理由>` 使用 SelfContent：顶层 `[facet]` 或 `[narrative]` 与正式字段一致。`self evidence <引用> --request-file evidence.toml` 使用 AddSelfEvidenceRequest 的 role/basis 字段；操作 envelope、target 和 epoch 由当前调用固定。`suppress/restore/withdraw/reaccept/purge` 使用实际生命周期。指定 exact revision 修订时不替换目标；owner 检查 head 与 epoch。purge 显式提供 `--expected-object-epoch` 和 `--operation-id` 时可在对象删除后重放。
 
-先通过 `subject create/adopt-seed` 保存来源，再运行 `self interpret-seed` 解释当前 Seed。观察反思使用 `self interpret --request-file reflection.toml`：
+先通过 `subject create/adopt-seed` 保存来源，再运行 `self interpret-seed` 解释当前 Seed。观察反思使用 `self interpret --request-file reflection.toml`；请求可带 `targets` 指定需补读的当前事项，`max_candidates` 默认 32、上限 128，未入选不代表不存在：
 
 ```toml
 [observation]

@@ -64,20 +64,16 @@ export async function selfCommands(
   if (action === "soul") {
     const listing = await client.self.list({
       subjectId,
-      page: { pageSize: 100 },
+      page: page(env),
     });
-    if (listing.nextPageToken)
-      throw new CliError(
-        "RESOURCE_EXHAUSTED",
-        "Soul view exceeds one owner snapshot; inspect paged Self records",
-      );
     return {
       subjectId,
       text: [
-        "# 当前 soul",
-        "此视图派生自当前正式对象；修改需显式提案。条件和有效时间随内容保留。",
+        "# 当前 soul（当前管理页）",
+        "此页派生自正式对象；修改需显式提案。条件和有效时间随内容保留，后续页由 nextPageToken 读取。",
         soul(listing.items),
       ].join("\n\n"),
+      nextPageToken: listing.nextPageToken,
     };
   }
   if (action === "interpret") {
