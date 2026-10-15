@@ -29,6 +29,13 @@ test("controlled native custody survives SQLite and gates real delivery producer
     await symlink(dirname(source), join(native, "node_modules"), "junction");
     const env = {
       ...process.env,
+      // Reproduce Windows/user Git newline preferences on every platform;
+      // prepare must still produce the exact manifest bytes.
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "core.autocrlf",
+      GIT_CONFIG_VALUE_0: "true",
+      GIT_CONFIG_KEY_1: "core.eol",
+      GIT_CONFIG_VALUE_1: "crlf",
       OPENCLAW_STATE_DIR: join(temporary, "state"),
       OPENCLAW_CONFIG_PATH: join(temporary, "openclaw.json"),
       TMPDIR: temporary,
