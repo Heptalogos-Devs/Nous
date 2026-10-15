@@ -37,8 +37,7 @@ pub trait SharedLaneProvider: Send + Sync {
 /// composition change; callers do not discover domains dynamically.
 pub struct CognitiveContributors<'a> {
     pub shared: Option<&'a dyn SharedLaneProvider>,
-    pub memory: Option<&'a dyn CognitiveContributor>,
-    pub material: Option<&'a dyn CognitiveContributor>,
+    pub owners: Vec<&'a dyn CognitiveContributor>,
 }
 
 impl CognitiveRuntimeService {
@@ -163,13 +162,10 @@ impl CognitiveRuntimeService {
         if let Some(shared) = contributors.shared.filter(|_| !exact_read) {
             lane_outputs.extend(shared.lanes(&bound, &plan).await?);
         }
-        if let Some(memory) = contributors.memory.filter(|_| !exact_read) {
-            lane_outputs.extend(memory.direct_lanes(&bound, &plan).await?);
-        } else if contributors.memory.is_none() && query.projection.has_cognition() {
-            return Err(Error::Unavailable("Memory MicroSystem is disabled".into()));
-        }
-        if let Some(material) = contributors.material.filter(|_| !exact_read) {
-            lane_outputs.extend(material.direct_lanes(&bound, &plan).await?);
+        if !exact_read {
+            for owner in &contributors.owners {
+                lane_outputs.extend(owner.direct_lanes(&bound, &plan).await?);
+            }
         }
         let mut exact_output = LaneOutput::empty(EvidenceFamily::Exact, LaneStatus::Ready);
         for binding in &bound.exact_bindings {
@@ -272,14 +268,14 @@ impl CognitiveRuntimeService {
                 )),
             });
         }
-        let owners = [contributors.memory, contributors.material];
-        let mut by_owner = [Vec::<CognitiveRef>::new(), Vec::new()];
+        let owners = &contributors.owners;
+        let mut by_owner = vec![Vec::<CognitiveRef>::new(); owners.len()];
         let mut generic = Vec::new();
         for candidate in ranked.iter().take(validation_bound) {
             let matching = owners
                 .iter()
                 .enumerate()
-                .filter(|(_, owner)| owner.is_some_and(|owner| owner.owns(&candidate.reference)))
+                .filter(|(_, owner)| owner.owns(&candidate.reference))
                 .map(|(index, _)| index)
                 .collect::<Vec<_>>();
             if matching.len() > 1 {
@@ -318,7 +314,7 @@ impl CognitiveRuntimeService {
             );
         }
         for (index, owner) in owners.iter().enumerate() {
-            if let Some(owner) = owner.filter(|_| !by_owner[index].is_empty()) {
+            if !by_owner[index].is_empty() {
                 let (hits, drops) = owner
                     .validate_and_materialize(query.subject, &by_owner[index], &bound)
                     .await?;
@@ -458,16 +454,9 @@ fn merge_counts(target: &mut BTreeMap<String, usize>, incoming: BTreeMap<String,
 
 fn is_persistent_cognition(reference: &CognitiveRef) -> bool {
     matches!(
-        reference,
-        CognitiveRef::Memory(_)
-            | CognitiveRef::MemoryRevision(_)
-            | CognitiveRef::Episode(_)
-            | CognitiveRef::EpisodeRevision(_)
-            | CognitiveRef::Journal(_)
-            | CognitiveRef::JournalRevision(_)
-            | CognitiveRef::CognitiveSchema(_)
-            | CognitiveRef::CognitiveSchemaRevision(_)
-    )
+        reference.domain(),
+        CognitiveDomain::Memory | CognitiveDomain::SelfCognition
+    ) && !matches!(reference, CognitiveRef::Tag(_))
 }
 
 fn explain_plan(result: &mut CognitiveQueryResult, query: &CognitiveQuery, plan: &QueryPlan) {

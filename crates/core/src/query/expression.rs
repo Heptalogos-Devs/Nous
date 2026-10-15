@@ -24,6 +24,15 @@ pub enum ResultDomain {
     Resource,
 }
 impl ResultDomain {
+    pub fn owner(self) -> CognitiveDomain {
+        match self {
+            Self::Memory | Self::Schema | Self::Episode | Self::Journal => CognitiveDomain::Memory,
+            Self::SelfFacet | Self::NarrativeThread => CognitiveDomain::SelfCognition,
+            Self::Evidence => CognitiveDomain::Material,
+            Self::Resource => CognitiveDomain::Resource,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Self::SelfFacet => "self_facet",

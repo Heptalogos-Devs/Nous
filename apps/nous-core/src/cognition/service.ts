@@ -14,6 +14,8 @@ import {
   ManagedContextResponseSchema,
   ProjectionRequestSchema,
   QueryRequestSchema,
+  QueryModifiersSchema,
+  ResultProjectionSchema,
   type ManagedContextRequest,
   type ProjectionRequest,
   type QueryRequest,
@@ -124,6 +126,38 @@ export class CoreCognition {
       policy.maxTextBytes,
     );
     const queryDegradation = [];
+    if (request.query) {
+      const subject = await this.kernel.subjects.getSubject(
+        { subjectId: request.subjectId },
+        calls,
+      );
+      const allowed = [
+        ...(policy.memory !== "FORBIDDEN" && subject.capabilities?.memory
+          ? ["memory", "schema", "episode", "journal"]
+          : []),
+        ...(policy.selfCognition !== "FORBIDDEN" &&
+        subject.capabilities?.selfCognition
+          ? ["self_facet", "narrative_thread"]
+          : []),
+        ...(policy.runtime !== "FORBIDDEN" ? ["evidence"] : []),
+        ...(policy.resource !== "FORBIDDEN" ? ["resource"] : []),
+      ];
+      const requested = request.query.modifiers?.projection?.domains ?? [
+        "memory",
+        "schema",
+        "episode",
+        "journal",
+        "self_facet",
+        "narrative_thread",
+      ];
+      const domains = requested.filter((domain) => allowed.includes(domain));
+      if (!domains.length) request.query = undefined;
+      else {
+        const modifiers = create(QueryModifiersSchema, request.query.modifiers);
+        modifiers.projection = create(ResultProjectionSchema, { domains });
+        request.query.modifiers = modifiers;
+      }
+    }
     if (request.query) {
       const query = await this.queries.execute(
         create(QueryRequestSchema, {

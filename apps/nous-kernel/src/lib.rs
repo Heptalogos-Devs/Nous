@@ -160,6 +160,23 @@ impl NousRuntime {
         })
     }
 
+    pub(crate) fn query_owners(
+        &self,
+        capabilities: nous_configuration::SubjectCapabilities,
+    ) -> Vec<&dyn nous_runtime::CognitiveContributor> {
+        let mut owners: Vec<&dyn nous_runtime::CognitiveContributor> = vec![&self.material];
+        if capabilities.memory
+            && let Some(owner) = &self.memory
+        {
+            owners.push(owner);
+        }
+        if capabilities.self_cognition
+            && let Some(owner) = &self.self_cognition
+        {
+            owners.push(owner);
+        }
+        owners
+    }
     pub async fn query(&self, query: CognitiveQuery) -> Result<CognitiveQueryResult> {
         Ok(self.execute_query(query, None).await?.result)
     }
@@ -168,6 +185,35 @@ impl NousRuntime {
         mut query: CognitiveQuery,
         config: nous_configuration::ConfigSnapshot,
     ) -> Result<nous_runtime::BoundQuery> {
+        let caps = self.subjects.subject(query.subject).await?.capabilities;
+        query.projection.domains.retain(|d| match d.owner() {
+            CognitiveDomain::Memory => caps.memory,
+            CognitiveDomain::SelfCognition => caps.self_cognition,
+            _ => true,
+        });
+        if query
+            .projection
+            .domains
+            .iter()
+            .any(|d| d.owner() == CognitiveDomain::Memory)
+        {
+            self.require_memory()?;
+        }
+        if query
+            .projection
+            .domains
+            .iter()
+            .any(|d| d.owner() == CognitiveDomain::SelfCognition)
+        {
+            self.require_self()?;
+        }
+        if query.projection.domains.is_empty() {
+            return Err(DomainError::new(
+                DomainErrorCode::CapabilityUnavailable,
+                "Requested cognition domains are not provisioned",
+            )
+            .into());
+        }
         if query.temporal_frame.clock_now == chrono::DateTime::<chrono::Utc>::UNIX_EPOCH {
             query.temporal_frame.clock_now = self.cognition.now(query.subject);
         }
@@ -201,6 +247,13 @@ impl NousRuntime {
         } else {
             HistoricalAuthoritySnapshot::empty(subject, at, revision_view)
         };
+        if capabilities.self_cognition {
+            view.cognition.extend(
+                self.require_self()?
+                    .project_as_of(subject, at, revision_view)
+                    .await?,
+            );
+        }
         let material = self.material.project_as_of(subject, at).await?;
         view.material_visibility = material.known_references;
         view.material_documents = material.document_references;
@@ -240,13 +293,8 @@ impl NousRuntime {
                 .execute_query_with_plan(
                     bound,
                     nous_runtime::CognitiveContributors {
-                        material: Some(&self.material),
                         shared: None,
-                        memory: self
-                            .memory
-                            .as_ref()
-                            .filter(|_| capabilities.memory)
-                            .map(|memory| memory as &dyn nous_runtime::CognitiveContributor),
+                        owners: self.query_owners(capabilities),
                     },
                     plan,
                     pool_limit,
@@ -276,16 +324,8 @@ impl NousRuntime {
             .execute_query_with_plan(
                 bound,
                 nous_runtime::CognitiveContributors {
-                    material: Some(&self.material),
                     shared: Some(serving_query.provider()),
-                    memory: subject_capabilities
-                        .memory
-                        .then(|| {
-                            self.memory
-                                .as_ref()
-                                .map(|memory| memory as &dyn nous_runtime::CognitiveContributor)
-                        })
-                        .flatten(),
+                    owners: self.query_owners(subject_capabilities),
                 },
                 plan,
                 pool_limit,

@@ -54,3 +54,5 @@ ALTER TABLE cognitive_seed_versions ADD CONSTRAINT cognitive_seed_versions_forma
 ALTER TABLE cognitive_use_events DROP CONSTRAINT cognitive_use_events_ref_kind_check;
 ALTER TABLE cognitive_use_events ADD CONSTRAINT cognitive_use_events_ref_kind_check
  CHECK(ref_kind IN ('memory_revision','cognitive_schema_revision','episode_revision','journal_revision','self_facet_revision','narrative_thread_revision'));
+CREATE TRIGGER self_state_history AFTER INSERT OR UPDATE ON self_objects FOR EACH ROW
+ EXECUTE FUNCTION capture_authority_object_state('self','object_id');

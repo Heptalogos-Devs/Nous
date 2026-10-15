@@ -185,9 +185,14 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
             _ => {}
         }
         let contributors = || nous_runtime::CognitiveContributors {
-            material: Some(&runtime.material),
             shared: None,
-            memory: Some(runtime.require_memory().unwrap()),
+            owners: [
+                Some(runtime.require_memory().unwrap() as &dyn nous_runtime::CognitiveContributor),
+                Some(&runtime.material),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
         };
         assert!(
             runtime

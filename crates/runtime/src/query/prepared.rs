@@ -262,10 +262,7 @@ impl CognitiveRuntimeService {
         for leaf in &execution.leaves {
             let validation_bound = leaf.validation_bound(&execution.bound);
             let mut fresh = HashMap::new();
-            for owner in [contributors.memory, contributors.material]
-                .into_iter()
-                .flatten()
-            {
+            for owner in contributors.owners.iter() {
                 let references = leaf
                     .hits
                     .iter()
@@ -284,9 +281,9 @@ impl CognitiveRuntimeService {
                 if !pool.contains(&hit.reference) {
                     continue;
                 }
-                let valid = if [contributors.memory, contributors.material]
-                    .into_iter()
-                    .flatten()
+                let valid = if contributors
+                    .owners
+                    .iter()
                     .any(|owner| owner.owns(&hit.reference))
                 {
                     same_stamp(fresh.get(&hit.reference), hit)

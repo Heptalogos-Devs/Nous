@@ -70,9 +70,7 @@ impl MemoryService {
                                 .get(&content.revision)
                                 .is_some_and(|values| values.iter().any(Option::is_none)))
                     {
-                        return Err(Error::Unavailable(
-                            "complete cognitive unit exceeds projection budget".into(),
-                        ));
+                        return Err(complete_unit_error());
                     }
                     let mut text = content.text;
                     if let Some(scope) = content.scope {
@@ -115,11 +113,11 @@ impl MemoryService {
                             }),
                     );
                     if max_bytes > 0 && text.len() > max_bytes {
-                        return Err(Error::Unavailable(
-                            "complete cognitive unit exceeds projection budget".into(),
-                        ));
+                        return Err(complete_unit_error());
                     }
                     Ok(ContextSource {
+                        usage: "task_evidence",
+                        required: false,
                         reference: content.reference,
                         source_revision: Some(content.revision.to_string()),
                         text: (max_bytes > 0).then_some(text),
@@ -132,4 +130,8 @@ impl MemoryService {
         tx.commit().await.map_err(db)?;
         Ok(results)
     }
+}
+
+fn complete_unit_error() -> Error {
+    Error::Unavailable("complete cognitive unit exceeds projection budget".into())
 }

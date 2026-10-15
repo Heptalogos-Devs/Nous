@@ -7,6 +7,27 @@ use nous_runtime::{ContextResolver, ContextSource};
 
 #[async_trait::async_trait]
 impl ContextResolver for NousRuntime {
+    async fn automatic_context_sources(
+        &self,
+        subject: SubjectId,
+        scope: &nous_runtime::InvocationScope,
+        work_context: Option<uuid::Uuid>,
+        materialize: bool,
+    ) -> Result<Vec<ContextSource>> {
+        if !self
+            .subjects
+            .subject(subject)
+            .await?
+            .capabilities
+            .self_cognition
+        {
+            return Ok(Vec::new());
+        }
+        self.require_self()?
+            .automatic_context(subject, scope, work_context, materialize)
+            .await
+    }
+
     async fn query_descriptors(
         &self,
         query: &CognitiveQuery,
@@ -51,6 +72,20 @@ impl ContextResolver for NousRuntime {
                 .query_descriptors(query.subject, &material, historical)
                 .await?,
         );
+        let (selves, identities): (Vec<_>, Vec<_>) = identities
+            .into_iter()
+            .partition(|r| r.domain() == CognitiveDomain::SelfCognition);
+        for reference in selves {
+            match self
+                .require_self()?
+                .query_descriptor(query.subject, &reference)
+                .await
+            {
+                Ok(value) => descriptors.push(value),
+                Err(Error::NotFound(_) | Error::Unavailable(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
         descriptors.extend(
             self.store
                 .identity_descriptors(query.subject, &identities, historical)

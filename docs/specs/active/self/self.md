@@ -33,6 +33,16 @@ Canonical `SelfService` 由官方 Client 的 `self` namespace 暴露：
 
 普通“记住/忘记”、称赞、纠正和不赞同是交谈或来源；显式 Self 操作才修改领域状态。主体自己的选择、遵守受托工作与采用价值分别解释。
 
+## 自动认知与查询贡献
+
+Managed Projection 从已捕获的实际 usage 自动选择当前 SelfFacet，无需调用者拼装 refs。owner 核验生命周期、valid time、purpose、conversation、WorkContext 与已解析 Entity 条件。已采用且适用的 identity 标为必需身份；其他适用认识保留完整条件作为情境指导。必需身份与 foreground WorkContext 在预算中先保留，无法完整容纳时终止准备；可选内容按语义单元整体省略。
+
+用途和必需性由来源 owner 声明，Core 读取贡献的 domain，不根据一组不断增长的 wire-kind 字符串猜测。Self 不交给 Steward 自由改写；RESET/APPEND 继续复用 ContextCompiler。历史 Self 修订作为过去认识标记，不能冒充当前身份。
+
+Self 使用现有 CognitiveContributor、共享 lexical/dense Serving、固定 fusion 和最终 owner materialization。Kernel 按 Subject 实际供给的域构成 owner 集合；Self-only 主体不要求 Memory 已启用。Query 支持 `self_facet`、`narrative_thread` 结果域，current/as-of 选择和当前 lifecycle/purge fence 分开核验。Self 的 Scope、epistemic class、依据和精确修订随命中返回。
+
+直接依赖的 Memory/Schema/Episode/Journal 来源发生修订、失效、suppression 或 purge 时，既有依赖遍历同时使相关 Self 解释待重新核验。历史正文保留，当前解释不能继续作为可用认知注入。
+
 ## 当前施工范围
 
-本功能分支已接通上述 owner、公开 RPC/Client 和数据库场景。模型形成/反思、自动 Self 选择与 Query/Serving、CLI 和正式 OpenClaw 的 Self 使用场景继续在同一功能内实现；完成状态由实际代码与运行证据确认。
+本功能分支已接通上述 owner、公开 RPC/Client 和数据库场景。模型形成/反思、CLI 和正式 OpenClaw 的 Self 使用场景继续在同一功能内实现；完成状态由实际代码与运行证据确认。

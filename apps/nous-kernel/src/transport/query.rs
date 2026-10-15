@@ -69,13 +69,10 @@ impl KernelService {
                     })
                     .collect::<Result<Vec<_>>>()?,
                 nous_runtime::CognitiveContributors {
-                    material: Some(&self.0.material),
                     shared: None,
-                    memory: self
+                    owners: self
                         .0
-                        .memory
-                        .as_ref()
-                        .map(|owner| owner as &dyn nous_runtime::CognitiveContributor),
+                        .query_owners(self.0.subjects.subject(subject).await?.capabilities),
                 },
             )
             .await?;

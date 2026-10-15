@@ -143,9 +143,7 @@ export class ProjectionPlanner {
     const selectedIds = new Set(selected.map((segment) => segment.segmentId));
     if (
       required.some(
-        (segment) =>
-          ["identity", "situational_guidance"].includes(segment.usage) &&
-          !selectedIds.has(segment.segmentId),
+        (segment) => segment.required && !selectedIds.has(segment.segmentId),
       )
     )
       throw new ConnectError(

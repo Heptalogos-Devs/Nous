@@ -4,12 +4,18 @@ import assert from "node:assert/strict";
 import { prepare, boot, stop, type Boot } from "./support.js";
 import { workspaceTemp } from "../workspace.js";
 import { create } from "@bufbuild/protobuf";
+import { appendFile } from "node:fs/promises";
+import { join } from "node:path";
 import { RevisionBasisSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { SelfContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
 const home = await workspaceTemp("smoke", "self-");
 let core: Boot | undefined;
 try {
   const locator = await prepare(home);
+  await appendFile(
+    join(home, "config/nous.toml"),
+    '\n[[consumers]]\nconsumer_id="consumer:self-only"\nmemory="FORBIDDEN"\nself_cognition="REQUIRED"\nruntime="REQUIRED"\nresource="FORBIDDEN"\nmaterialize=true\n',
+  );
   core = await boot(locator);
   const c = core.client;
   const subject = await c.subjects.createSubject({
@@ -152,6 +158,167 @@ try {
         s.text.includes("青砚"),
     ),
   );
+  const preference = await c.self.adopt({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    reason: "explicit contextual self choice",
+    content: {
+      content: {
+        case: "facet",
+        value: {
+          kind: "preference",
+          statement: "核验工作先读原始材料，普通闲聊无需为了形式调用工具。",
+          epistemicClass: "observed",
+          scope: { description: "仅核验执行者", purposes: ["worker"] },
+          stance: "adopted",
+          basis: [evidence],
+          validTime: {},
+        },
+      },
+    },
+  });
+  const usage = {
+    agentInstanceId: "self-worker",
+    purpose: "deliberation",
+    intent: "继续当前工作并保持自称",
+    audience: { conversationRef: "conversation:self", visibility: "internal" },
+  };
+  const managedInput = {
+    subjectId,
+    sessionId: projectionSession.sessionId,
+    consumerId: "consumer:smoke:cognitive-runtime-episode",
+    usage,
+  };
+  const automatic = await c.cognition.buildManagedContext({
+    projection: managedInput,
+  });
+  assert(
+    automatic.projection?.segments.some(
+      (s) =>
+        s.domain === "self" &&
+        s.usage === "identity" &&
+        s.required &&
+        s.text.includes("青砚"),
+    ),
+  );
+  const synchronized = await c.cognition.buildManagedContext({
+    projection: managedInput,
+    knownCursor: automatic.cursor,
+  });
+  assert.equal(synchronized.kind, "APPEND");
+  assert.equal(synchronized.projection?.segments.length, 0);
+  assert(
+    !automatic.projection?.segments.some(
+      (s) =>
+        s.usage === "situational_guidance" &&
+        s.sourceRefs.some((r) => r.value === preference.reference!.value),
+    ),
+  );
+  const worker = await c.cognition.buildManagedContext({
+    projection: {
+      ...managedInput,
+      usage: {
+        ...usage,
+        purpose: "worker",
+        agentInstanceId: "self-worker-scope",
+      },
+    },
+  });
+  assert(
+    worker.projection?.segments.some(
+      (s) =>
+        s.usage === "situational_guidance" &&
+        s.sourceRefs.some((r) => r.value === preference.reference!.value),
+    ),
+  );
+  await assert.rejects(
+    c.cognition.buildManagedContext({
+      projection: { ...managedInput, maxTextBytes: 8 },
+    }),
+  );
+  const selfOnlySession = await c.runtime.openSession({
+    subjectId: seeded.subjectId,
+  });
+  const selfOnly = await c.cognition.buildManagedContext({
+    projection: {
+      subjectId: seeded.subjectId,
+      sessionId: selfOnlySession.sessionId,
+      consumerId: "consumer:self-only",
+      usage: { ...usage, agentInstanceId: "self-only" },
+    },
+  });
+  assert(
+    selfOnly.projection?.segments.some(
+      (s) => s.required && s.text.includes("露白"),
+    ),
+  );
+  const recalled = await c.cognition.query({
+    subjectId: seeded.subjectId,
+    nousql: "采用的初始自称为露白 $return(self_facet)",
+  });
+  assert(
+    recalled.hits.some(
+      (h) =>
+        h.revision?.kind === "self_facet_revision" && h.text?.includes("露白"),
+    ),
+  );
+  const memorySource = await c.memory.formMemory({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    cognitiveRole: "declarative",
+    input: {
+      formationMode: "grounded",
+      groundingOccurrenceId: observation.occurrenceId,
+      semanticRole: "reported_self_choice",
+      text: "本次输出作出了自称选择。",
+      epistemicClass: "observed",
+      basis: [evidence],
+      validTime: {},
+    },
+  });
+  const dependent = await c.self.adopt({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    reason: "source-backed contextual belief",
+    content: {
+      content: {
+        case: "facet",
+        value: {
+          kind: "capability_belief",
+          statement: "在当前会话中我能选择一个自称。",
+          epistemicClass: "inferred",
+          scope: { description: "本次选择情境" },
+          stance: "tentative",
+          basis: [
+            {
+              basis: {
+                case: "cognitionDependency",
+                value: {
+                  targetRevision: {
+                    kind: "memory_revision",
+                    value: memorySource.revisionId,
+                  },
+                  basisRole: "direct",
+                },
+              },
+            },
+          ],
+          validTime: {},
+        },
+      },
+    },
+  });
+  await c.memory.suppressMemory({
+    subjectId,
+    memoryId: memorySource.memoryId,
+    operationId: crypto.randomUUID(),
+    expectedObjectEpoch: memorySource.objectEpoch,
+  });
+  assert.equal(
+    (await c.self.get({ subjectId, id: dependent.objectRef!.value }))
+      .integrityState,
+    "revalidation_required",
+  );
   const narrative = await c.self.adopt({
     subjectId,
     operationId: crypto.randomUUID(),
@@ -240,6 +407,37 @@ try {
   });
   assert.equal(changed.objectRef?.value, first.objectRef?.value);
   assert.notEqual(changed.reference?.value, first.reference?.value);
+  const updatedInput = await c.cognition.buildManagedContext({
+    projection: managedInput,
+    knownCursor: synchronized.cursor,
+  });
+  assert.equal(updatedInput.kind, "RESET");
+  assert(
+    updatedInput.projection?.segments
+      .filter((s) => s.usage === "identity")
+      .every((s) => s.text.includes("澄砚") && !s.text.includes("青砚")),
+  );
+  const past = await c.cognition.query({
+    subjectId,
+    expression: {
+      operation: "atom",
+      cues: [
+        { cue: { case: "text", value: "旧自称" } },
+        { cue: { case: "reference", value: first.objectRef! } },
+      ],
+      modifiers: {
+        projection: { domains: ["self_facet"] },
+        asOf: first.recordedAt,
+      },
+    },
+  });
+  assert(
+    past.hits.some(
+      (h) =>
+        h.revision?.value === first.reference?.value &&
+        h.text?.includes("青砚"),
+    ),
+  );
   const old = await c.self.getRevision({
     subjectId,
     id: first.reference!.value,

@@ -232,6 +232,7 @@ describe("projection authority boundaries", () => {
         projection({
           ...segment("self", "Only under the full stated condition."),
           usage: "identity",
+          required: true,
         }),
         { maxItems: 1, maxTextBytes: 3 },
         required,

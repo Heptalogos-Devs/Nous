@@ -226,8 +226,13 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
             vec![],
             nous_runtime::CognitiveContributors {
                 shared: None,
-                memory: Some(rt.require_memory().unwrap()),
-                material: Some(&rt.material),
+                owners: [
+                    Some(rt.require_memory().unwrap() as &dyn nous_runtime::CognitiveContributor),
+                    Some(&rt.material),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
             },
         )
         .await

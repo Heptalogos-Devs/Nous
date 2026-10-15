@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 mod context;
 mod contract;
+mod historical;
 mod lifecycle;
 mod mutations;
+mod query;
 mod read;
 use chrono::{DateTime, Utc};
 pub use contract::*;

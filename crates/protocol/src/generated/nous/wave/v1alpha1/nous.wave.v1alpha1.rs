@@ -1612,6 +1612,8 @@ pub struct ContextSegment {
     pub usage: ::prost::alloc::string::String,
     #[prost(string, tag="10")]
     pub domain: ::prost::alloc::string::String,
+    #[prost(bool, tag="11")]
+    pub required: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Projection {
