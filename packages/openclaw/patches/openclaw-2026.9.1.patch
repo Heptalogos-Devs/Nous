@@ -193,6 +193,170 @@ diff --git a/dist/context-engine-turn-attempt-BPzr5IBp.js b/dist/context-engine-
  	};
  	if (resolution.configuredFailure) degradeBeforeStart(resolution.configuredFailure);
  	return {
+diff --git a/dist/deliver-B6F55ipQ.js b/dist/deliver-B6F55ipQ.js
+--- a/dist/deliver-B6F55ipQ.js
++++ b/dist/deliver-B6F55ipQ.js
+@@ -11,7 +11,7 @@
+ import { i as areOutboundPayloadsIntentionallySuppressed, n as OutboundDeliveryError, o as isOutboundDeliveryAdmissionClosedError, r as PlatformMessageNotDispatchedError } from "./deliver-types-Diy-VQKA.js";
+ import { i as findPlatformMessageRejectedError, s as isProvenDeliveryNotSentError } from "./delivery-recovery.shared-BHlrbHZ6.js";
+ import { a as settleDurableDelivery, i as rejectDurableDelivery, r as markDurableDeliveryQueued } from "./delivery-completion-Do3nBV6b.js";
+-import { d as suppressedPayloadOutcome, f as toOutboundDeliveryError, i as resolveOutboundDurableFinalDeliverySupport, n as throwIfAborted, o as createRenderedMessageBatchPlan, r as createChannelHandler, t as prepareOutboundPayloadBatch } from "./deliver-prepare-7gjKTwQN.js";
++import { z as resolveChannelDeliveryCustodyParams, d as suppressedPayloadOutcome, f as toOutboundDeliveryError, i as resolveOutboundDurableFinalDeliverySupport, n as throwIfAborted, o as createRenderedMessageBatchPlan, r as createChannelHandler, t as prepareOutboundPayloadBatch } from "./deliver-prepare-7gjKTwQN.js";
+ import { C as normalizeOutboundReplyFacts, x as createReplyToDeliveryPolicy } from "./reply-payload-y5EgUJuZ.js";
+ import { l as resolveOutboundPayloadMirrorText } from "./payloads-Ch7RD6Ym.js";
+ import { a as runOutboundDeliveryCommitHooks, c as deliveryKindForPayload, d as maybePinDeliveredMessage, f as normalizeEmptyPayloadForDelivery, h as stripInternalRuntimeScaffoldingFromPayload, l as hasDeliveryResultIdentity, m as resolveOutboundMediaAccessForSend, o as buildPayloadSummary, s as collectPayloadMediaSources, u as maybeNotifyAfterDeliveredPayload } from "./delivery-queue-reconciliation-DMcA7z0l.js";
+@@ -363,6 +363,9 @@
+ 	let activeSourceIndex;
+ 	const resolveMediaAccess = (mediaSources) => resolveOutboundMediaAccessForSend(params, channel, mediaSources);
+ 	const createHandler = (mediaSources) => createChannelHandler({
++		preparedBatch,
++		abortSignal,
++		session: params.session,
+ 		cfg,
+ 		agentId: params.session?.agentId,
+ 		channel,
+@@ -790,7 +793,7 @@
+ 	};
+ 	const wrappedParams = {
+ 		...params,
+-		...exactReconciliationRequired && params.payloads.length === 1 ? { deliveryQueueId: platformQueueId } : { deliveryQueueId: void 0 },
++		...(params.preparedBatch?.deliveryCustody || exactReconciliationRequired && params.payloads.length === 1) ? { deliveryQueueId: platformQueueId } : { deliveryQueueId: void 0 },
+ 		requiredUnknownSendReconciliation: exactReconciliationRequired,
+ 		onPlatformSendStart: async (route, sourceIndex) => {
+ 			params.abortSignal?.throwIfAborted();
+@@ -1144,6 +1147,7 @@
+ 	return await runOutboundDeliveryInternal(params);
+ }
+ async function runOutboundDeliveryInternal(input) {
++	input = await resolveChannelDeliveryCustodyParams(input);
+ 	const { replyToId, replyToMode, ...currentParams } = input;
+ 	const reply = normalizeOutboundReplyFacts({
+ 		reply: input.reply,
+diff --git a/dist/deliver-contracts-BrA0Kn8c.d.ts b/dist/deliver-contracts-BrA0Kn8c.d.ts
+--- a/dist/deliver-contracts-BrA0Kn8c.d.ts
++++ b/dist/deliver-contracts-BrA0Kn8c.d.ts
+@@ -188,11 +188,13 @@
+ };
+ type PreparedOutboundBatchEntry = PreparedOutboundAcceptedEntry | PreparedOutboundSuppressedEntry;
+ /** Canonical post-policy payload custody persisted by the durable outbound queue. */
+-type PreparedOutboundBatch = {
++export type PreparedOutboundBatch = {
+   schemaVersion: typeof PREPARED_OUTBOUND_BATCH_SCHEMA_VERSION;
+   sourcePayloadCount: number;
+   /** True only when accepted payloads already passed post-policy channel normalization. */
+   channelNormalized?: true;
++  /** Host-issued opaque adoption reference; persisted outside model payloads. */
++  deliveryCustody?: { reference: string };
+   runId?: string;
+   executionIdentityToken?: ExecutionIdentityAdmissionToken;
+   entries: PreparedOutboundBatchEntry[];
+diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
+--- a/dist/deliver-prepare-7gjKTwQN.js
++++ b/dist/deliver-prepare-7gjKTwQN.js
+@@ -372,6 +372,55 @@
+ 	const { plugin } = await loadBootstrappedChannelPlugin(params);
+ 	return { extractMarkdownImages: plugin?.outbound?.extractMarkdownImages === true ? true : void 0 };
+ }
++/** Route controlled producers, including runtime-owned message sends, through native custody. */
++async function resolveChannelDeliveryCustodyParams(params) {
++	const { plugin } = await loadBootstrappedChannelPlugin(params);
++	if (!plugin?.message?.deliveryCustody) return params;
++	if (params.skipQueue && params.deliveryQueueId) return { ...params, queuePolicy: "required" };
++	const deliveryIntentId = params.deliveryIntentId?.trim() || (params.mirror?.idempotencyKey ? JSON.stringify(["channel-custody", params.channel, params.accountId ?? "", params.mirror.idempotencyKey]) : void 0);
++	if (!deliveryIntentId) throw new PlatformMessageNotDispatchedError("Controlled channel requires a native stable producer intent", { retryable: false });
++	return { ...params, deliveryIntentId, completionRetention: params.completionRetention ?? "permanent", queuePolicy: "required", skipQueue: false };
++}
++/** Required channel custody is Host-issued authority, never reply payload metadata. */
++async function adoptChannelDeliveryCustody(params, batch, options) {
++	const { plugin } = await loadBootstrappedChannelPlugin(params);
++	const custody = plugin?.message?.deliveryCustody;
++	if (!custody || !batch.entries.some((entry) => entry.status === "accepted")) return batch;
++	if (options?.allowDeliveryCustodyAdoption === false) throw new PlatformMessageNotDispatchedError("Legacy delivery cannot acquire new Host custody during recovery", { retryable: false });
++	if (params.skipQueue || params.queuePolicy !== "required") throw new PlatformMessageNotDispatchedError("Controlled channel requires durable queue custody", { retryable: false });
++	const runId = batch.runId;
++	const executionIdentityToken = batch.executionIdentityToken;
++	const session = params.session;
++	if (!runId && !executionIdentityToken && !session?.key) throw new PlatformMessageNotDispatchedError("Required channel delivery provenance is unavailable", { retryable: false });
++	const adopted = await custody.adopt(structuredClone({
++		channel: params.channel, accountId: params.accountId, to: params.to,
++		threadId: params.threadId, reply: normalizeOutboundReplyFacts(params), deliveryIntentId: params.deliveryIntentId,
++		runId, executionIdentityToken, session, preparedBatch: batch
++	}));
++	if (!adopted || typeof adopted.reference !== "string" || !adopted.reference.trim()) throw new PlatformMessageNotDispatchedError("Required Host delivery adoption is unavailable", { retryable: false });
++	return { ...batch, deliveryCustody: { reference: adopted.reference } };
++}
++async function authorizeChannelDeliveryCustody(params, route) {
++	const custody = params.message?.deliveryCustody;
++	if (!custody) return;
++	const batch = params.preparedBatch;
++	if (!params.deliveryQueueId || !batch?.deliveryCustody?.reference) throw new PlatformMessageNotDispatchedError("Required Host delivery custody is unavailable", { retryable: false });
++	try {
++		await custody.authorize(structuredClone({
++		channel: params.channel, accountId: params.accountId, to: params.to,
++		threadId: route.threadId, replyToId: route.replyToId,
++		deliveryQueueId: params.deliveryQueueId,
++		phase: "dispatch", custody: batch.deliveryCustody, preparedBatch: batch,
++		runId: batch.runId, executionIdentityToken: batch.executionIdentityToken,
++		session: params.session,
++		payload: { kind: route.kind ?? (route.mediaUrl ? "media" : "text"), text: route.text, mediaUrl: route.mediaUrl, payload: route.payload,
++			deliveryPartIndex: route.deliveryPartIndex, deliveryPartCount: route.deliveryPartCount }
++		}));
++	} catch (error) {
++		if (error instanceof PlatformMessageNotDispatchedError) throw error;
++		throw new PlatformMessageNotDispatchedError("Host rejected channel delivery", { retryable: false, cause: error });
++	}
++}
+ async function createChannelHandler(params) {
+ 	const { plugin, pluginRegistry } = await loadBootstrappedChannelPlugin(params);
+ 	const handler = withPluginRuntimeRegistryScope(pluginRegistry, () => createPluginHandler({
+@@ -501,6 +550,8 @@
+ 	const dispatchToAdapter = async (route, send) => {
+ 		await params.onPlatformSendStart?.(route);
+ 		await params.onDirectAdapterHandoff?.();
++		await authorizeChannelDeliveryCustody(params, route);
++		if (params.message?.deliveryCustody && params.abortSignal?.aborted) throw new PlatformMessageNotDispatchedError("Controlled channel delivery was cancelled before dispatch", { retryable: false });
+ 		params.assertDirectAdapterHandoff?.();
+ 		return await send();
+ 	};
+@@ -731,6 +782,8 @@
+ 	gatewayClientScopes: params.gatewayClientScopes,
+ 	conversationReadOrigin: params.conversationReadOrigin,
+ 	deliveryQueueId: params.deliveryQueueId,
++	deliveryCustody: params.preparedBatch?.deliveryCustody,
++	signal: params.message?.deliveryCustody ? params.abortSignal : void 0,
+ 	preparedMessageId: params.preparedMessageId,
+ 	assertDirectAdapterHandoff: params.assertDirectAdapterHandoff,
+ 	onPlatformSendDispatch: params.onPlatformSendDispatch,
+@@ -915,14 +968,14 @@
+ 			preparedMediaCount: buildPayloadSummary(compactPayload).mediaUrls.length
+ 		});
+ 	}
+-	return {
++	return await adoptChannelDeliveryCustody(params, {
+ 		schemaVersion: 1,
+ 		sourcePayloadCount: params.payloads.length,
+ 		channelNormalized: true,
+ 		...params.runId ?? params.replyPayloadSendingHook?.runId ? { runId: params.runId ?? params.replyPayloadSendingHook?.runId } : {},
+ 		...params.executionIdentityToken ? { executionIdentityToken: params.executionIdentityToken } : {},
+ 		entries
+-	};
++	}, options);
+ }
+ //#endregion
+-export { createRenderedMessageBatch as a, buildInboundReplyPayloadSendingBeforeDeliver as c, suppressedPayloadOutcome as d, toOutboundDeliveryError as f, resolveOutboundDurableFinalDeliverySupport as i, buildLegacyInboundMessageSendingBeforeDeliver as l, recordReplyUsageState as m, throwIfAborted as n, createRenderedMessageBatchPlan as o, buildReplyUsageState as p, createChannelHandler as r, applyMessageSendingHook as s, prepareOutboundPayloadBatch as t, buildProjectedInboundMessageSendingBeforeDeliver as u };
++export { resolveChannelDeliveryCustodyParams as z, createRenderedMessageBatch as a, buildInboundReplyPayloadSendingBeforeDeliver as c, suppressedPayloadOutcome as d, toOutboundDeliveryError as f, resolveOutboundDurableFinalDeliverySupport as i, buildLegacyInboundMessageSendingBeforeDeliver as l, recordReplyUsageState as m, throwIfAborted as n, createRenderedMessageBatchPlan as o, buildReplyUsageState as p, createChannelHandler as r, applyMessageSendingHook as s, prepareOutboundPayloadBatch as t, buildProjectedInboundMessageSendingBeforeDeliver as u };
+diff --git a/dist/delivery-queue-migration-BZ8aX6BT.js b/dist/delivery-queue-migration-BZ8aX6BT.js
+--- a/dist/delivery-queue-migration-BZ8aX6BT.js
++++ b/dist/delivery-queue-migration-BZ8aX6BT.js
+@@ -108,7 +108,7 @@
+ 		const leaseTimer = setInterval(renewLeaseSafely, LEGACY_PREPARATION_LEASE_RENEW_MS);
+ 		leaseTimer.unref();
+ 		try {
+-			preparedBatch = await prepareOutboundPayloadBatch(preparationParams, { onBeforeFirstModifier: () => {
++			preparedBatch = await prepareOutboundPayloadBatch(preparationParams, { allowDeliveryCustodyAdoption: false, onBeforeFirstModifier: () => {
+ 				if (leaseLost) throw new Error(`Legacy delivery ${params.entry.id} preparation lease was lost`);
+ 				const startedEntry = {
+ 					...sourceEntry,
 diff --git a/dist/history-image-prune-Dg0CDQ4a.js b/dist/history-image-prune-Dg0CDQ4a.js
 --- a/dist/history-image-prune-Dg0CDQ4a.js
 +++ b/dist/history-image-prune-Dg0CDQ4a.js
@@ -229,6 +393,119 @@ diff --git a/dist/host-compat-xESS3bi6.js b/dist/host-compat-xESS3bi6.js
  	if (!requirements || requirements.requiredCapabilities.length === 0) return {
  		ok: true,
  		requirements,
+diff --git a/dist/host-hook-cleanup-BQvPj1LG.js b/dist/host-hook-cleanup-BQvPj1LG.js
+--- a/dist/host-hook-cleanup-BQvPj1LG.js
++++ b/dist/host-hook-cleanup-BQvPj1LG.js
+@@ -258,7 +258,10 @@
+ 	let cleanupCount = 0;
+ 	for (const pluginId of previousPluginIds) {
+ 		if (!shouldCleanup()) break;
+-		const restarted = nextPluginIds.has(pluginId);
++		// Removing a runtime registry during host teardown is not a configuration
++        // disable. Preserve durable Session extensions; a real replacement that
++        // excludes the plugin still performs disable cleanup.
++        const restarted = !params.nextRegistry || nextPluginIds.has(pluginId);
+ 		const result = await runPluginHostCleanup({
+ 			cfg: params.cfg,
+ 			registry: previousRegistry,
+diff --git a/dist/install-security-scan.types-C51Ik81l.d.ts b/dist/install-security-scan.types-C51Ik81l.d.ts
+--- a/dist/install-security-scan.types-C51Ik81l.d.ts
++++ b/dist/install-security-scan.types-C51Ik81l.d.ts
+@@ -7990,6 +7990,7 @@
+   gatewayClientScopes?: readonly string[];
+   /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
+   deliveryQueueId?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
+   /** @internal Stable platform-send index within one durable payload. */
+   deliveryPartIndex?: number;
+   /** @internal Exact platform-send count within one durable payload. */
+@@ -8166,6 +8167,7 @@
+ /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
+ type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
+   id?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyAdapter;
+   durableFinal?: ChannelMessageDurableFinalAdapter;
+   send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
+   live?: ChannelMessageLiveAdapterShape;
+diff --git a/dist/install-security-scan.types-CimJAuMq.d.ts b/dist/install-security-scan.types-CimJAuMq.d.ts
+--- a/dist/install-security-scan.types-CimJAuMq.d.ts
++++ b/dist/install-security-scan.types-CimJAuMq.d.ts
+@@ -14002,6 +14002,7 @@
+   gatewayClientScopes?: readonly string[];
+   /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
+   deliveryQueueId?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
+   /** @internal Stable platform-send index within one durable payload. */
+   deliveryPartIndex?: number;
+   /** @internal Exact platform-send count within one durable payload. */
+@@ -14178,6 +14179,7 @@
+ /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
+ type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
+   id?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyAdapter;
+   durableFinal?: ChannelMessageDurableFinalAdapter;
+   send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
+   live?: ChannelMessageLiveAdapterShape;
+diff --git a/dist/plugin-entry-C-sjzaBe.d.ts b/dist/plugin-entry-C-sjzaBe.d.ts
+--- a/dist/plugin-entry-C-sjzaBe.d.ts
++++ b/dist/plugin-entry-C-sjzaBe.d.ts
+@@ -5042,6 +5042,7 @@
+   gatewayClientScopes?: readonly string[];
+   /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
+   deliveryQueueId?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
+   /** @internal Stable platform-send index within one durable payload. */
+   deliveryPartIndex?: number;
+   /** @internal Exact platform-send count within one durable payload. */
+@@ -5218,6 +5219,7 @@
+ /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
+ type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
+   id?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyAdapter;
+   durableFinal?: ChannelMessageDurableFinalAdapter;
+   send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
+   live?: ChannelMessageLiveAdapterShape;
+diff --git a/dist/plugin-entry-r6eDtEsn.d.ts b/dist/plugin-entry-r6eDtEsn.d.ts
+--- a/dist/plugin-entry-r6eDtEsn.d.ts
++++ b/dist/plugin-entry-r6eDtEsn.d.ts
+@@ -14449,6 +14449,7 @@
+   gatewayClientScopes?: readonly string[];
+   /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
+   deliveryQueueId?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
+   /** @internal Stable platform-send index within one durable payload. */
+   deliveryPartIndex?: number;
+   /** @internal Exact platform-send count within one durable payload. */
+@@ -14625,6 +14626,7 @@
+ /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
+ type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
+   id?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyAdapter;
+   durableFinal?: ChannelMessageDurableFinalAdapter;
+   send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
+   live?: ChannelMessageLiveAdapterShape;
+diff --git a/dist/plugin-sdk/channel-message.d.ts b/dist/plugin-sdk/channel-message.d.ts
+--- a/dist/plugin-sdk/channel-message.d.ts
++++ b/dist/plugin-sdk/channel-message.d.ts
+@@ -14,4 +14,5 @@
+ import { A as createChannelIngressError, C as createChannelProgressDraftCompositor, D as createTypingKeepaliveLoop, E as resolveChannelDraftStreamingChunking, M as isRecentOutboundMessageIdentity, N as recordOutboundMessageIdentity, O as INGRESS_CLAIM_PROCESS_ID, S as ChannelProgressDraftCompositorSnapshot, T as ChannelDraftStreamingChunking, _ as createDurableInboundReceiveJournalFromQueue, a as withDurableMessageSendContext, b as deriveDurableFinalDeliveryRequirements, c as createMessageReceiveContext, d as resolveMessageReceiptPrimaryId, f as verifyChannelMessageAdapterCapabilityProofs, g as verifyDurableFinalCapabilityProofs, h as verifyChannelMessageReceiveAckPolicyAdapterProofs, i as sendDurableMessageBatch, j as OutboundMessageIdentity, k as processPidFromOwnerId, l as createMessageReceiptFromOutboundResults, m as verifyChannelMessageLiveFinalizerProofs, n as deliverInboundReplyWithMessageSendContext, o as MessageAckPolicy, p as verifyChannelMessageLiveCapabilityAdapterProofs, r as resolveChannelProgressDraftRender, s as MessageReceiveContext, t as ChannelProgressDraftRenderMode, u as listMessageReceiptPlatformIds, v as createChannelMessageAdapterFromOutbound, w as createChannelProgressWorkCounter, x as ChannelProgressDraftCompositorLine, y as defineChannelMessageAdapter } from "../channel-outbound-DQoKU4mp.js";
+ import { n as createRuntimeOutboundDelegates } from "../runtime-forwarders-DcXimhey.js";
+ import { t as sanitizeForPlainText } from "../sanitize-text-CVPN3pRC.js";
+-export { type AgentPlanStep, type AgentPlanStepStatus, CHANNEL_INGRESS_RETENTION_DEFAULTS, type ChannelDeliveryStreamingConfig, type ChannelDraftStreamingChunking, type ChannelIngressDrain, type ChannelIngressMonitorDeliveryResult, type ChannelIngressMonitorLifecycle, type ChannelIngressQueue, type ChannelIngressQueueClaim, type ChannelIngressQueueClaimRef, type ChannelIngressQueueCorruptClaim, type ChannelIngressQueueRecord, type ChannelMessageAdapterShape, type ChannelMessageDurableFinalAdapter, type ChannelMessageSendMediaContext, type ChannelMessageSendPayloadContext, type ChannelMessageSendResult, type ChannelMessageSendTextContext, type ChannelMessageUnknownSendContext, type ChannelMessageUnknownSendReconciliationResult, type ChannelPreviewStreamingConfig, type ChannelProgressDraftCompositorLine, type ChannelProgressDraftCompositorSnapshot, type ChannelProgressDraftLine, ChannelProgressDraftRenderMode, type ChannelStreamingBlockConfig, type ChannelStreamingProgressConfig, DEFAULT_INGRESS_ADOPTION_STALL_MS, DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS, DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS, type DurableMessageBatchSendResult, INGRESS_CLAIM_PROCESS_ID, type MessageAckPolicy, type MessageReceipt, type MessageReceiptPart, type MessageReceiptPartKind, type MessageReceiptSourceResult, type MessageReceiveContext, type OutboundDeliveryFormattingOptions, type OutboundIdentity, type OutboundMessageIdentity, type OutboundSendDeps, type OutboundSessionContext, type ReplyToResolution, type StreamingMode, type TextChunkMode, bindIngressLifecycleToReplyOptions, buildChannelProgressDraftLine, buildChannelProgressDraftLineForEntry, buildOutboundSessionContext, createAccountStatusSink, createChannelIngressDrain, createChannelIngressError, createChannelIngressMonitor, createChannelMessageAdapterFromOutbound, createChannelReplyPipeline as createChannelMessageReplyPipeline, createChannelProgressDraftCompositor, createChannelProgressDraftGate, createChannelProgressWorkCounter, createChannelRunQueue, createDraftStreamLoop, createDurableInboundReceiveJournalFromQueue, createFinalizableDraftLifecycle, createFinalizableDraftStreamControlsForState, createMessageReceiptFromOutboundResults, createMessageReceiveContext, createOutboundPayloadPlan, createPreviewMessageReceipt, createReplyPrefixContext, createReplyPrefixOptions, createReplyToFanout, createRuntimeOutboundDelegates, createTypingCallbacks, createTypingKeepaliveLoop, defineChannelMessageAdapter, defineFinalizableLivePreviewAdapter, deliverInboundReplyWithMessageSendContext, deliverWithFinalizableLivePreviewAdapter, deriveDurableFinalDeliveryRequirements, formatChannelProgressDraftLine, formatChannelProgressDraftLineForEntry, formatChannelProgressDraftText, formatPlanChecklistLines, getChannelStreamingConfigObject, hasFinalChannelTurnDispatch, hasVisibleChannelTurnDispatch, isChannelProgressDraftWorkToolName, isPotentialTruncatedFinal, isRecentOutboundMessageIdentity, keepHttpServerTaskAlive, listMessageReceiptPlatformIds, logTypingFailure, mergeChannelProgressDraftLine, normalizeAgentPlanSteps, normalizeChannelProgressDraftLineIdentity, processPidFromOwnerId, projectOutboundPayloadPlanForDelivery, recordOutboundMessageIdentity, resolveAgentOutboundIdentity, resolveChannelDraftStreamingChunking, resolveChannelSourceReplyDeliveryMode as resolveChannelMessageSourceReplyDeliveryMode, resolveChannelPreviewStreamMode, resolveChannelProgressDraftConfig, resolveChannelProgressDraftMaxLineChars, resolveChannelProgressDraftMaxLines, resolveChannelProgressDraftRender, resolveChannelStreamingBlockCoalesce, resolveChannelStreamingBlockEnabled, resolveChannelStreamingChunkMode, resolveChannelStreamingNativeTransport, resolveChannelStreamingPreviewCommandText, resolveChannelStreamingPreviewToolProgress, resolveChannelStreamingProgressCommentary, resolveChannelStreamingProgressNarration, resolveChannelStreamingSuppressDefaultToolProgressMessages, resolveChannelTurnDispatchCounts, resolveMessageReceiptPrimaryId, resolveOutboundSendDep, resolveTranscriptBackedChannelFinalText, runPassiveAccountLifecycle, sanitizeForPlainText, selectLongerFinalText, sendDurableMessageBatch, takeMessageIdAfterStop, verifyChannelMessageAdapterCapabilityProofs, verifyChannelMessageLiveCapabilityAdapterProofs, verifyChannelMessageLiveFinalizerProofs, verifyChannelMessageReceiveAckPolicyAdapterProofs, verifyDurableFinalCapabilityProofs, waitUntilAbort, withDurableMessageSendContext };
+\ No newline at end of file
++export { type AgentPlanStep, type AgentPlanStepStatus, CHANNEL_INGRESS_RETENTION_DEFAULTS, type ChannelDeliveryStreamingConfig, type ChannelDraftStreamingChunking, type ChannelIngressDrain, type ChannelIngressMonitorDeliveryResult, type ChannelIngressMonitorLifecycle, type ChannelIngressQueue, type ChannelIngressQueueClaim, type ChannelIngressQueueClaimRef, type ChannelIngressQueueCorruptClaim, type ChannelIngressQueueRecord, type ChannelMessageAdapterShape, type ChannelMessageDurableFinalAdapter, type ChannelMessageSendMediaContext, type ChannelMessageSendPayloadContext, type ChannelMessageSendResult, type ChannelMessageSendTextContext, type ChannelMessageUnknownSendContext, type ChannelMessageUnknownSendReconciliationResult, type ChannelPreviewStreamingConfig, type ChannelProgressDraftCompositorLine, type ChannelProgressDraftCompositorSnapshot, type ChannelProgressDraftLine, ChannelProgressDraftRenderMode, type ChannelStreamingBlockConfig, type ChannelStreamingProgressConfig, DEFAULT_INGRESS_ADOPTION_STALL_MS, DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS, DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS, type DurableMessageBatchSendResult, INGRESS_CLAIM_PROCESS_ID, type MessageAckPolicy, type MessageReceipt, type MessageReceiptPart, type MessageReceiptPartKind, type MessageReceiptSourceResult, type MessageReceiveContext, type OutboundDeliveryFormattingOptions, type OutboundIdentity, type OutboundMessageIdentity, type OutboundSendDeps, type OutboundSessionContext, type ReplyToResolution, type StreamingMode, type TextChunkMode, bindIngressLifecycleToReplyOptions, buildChannelProgressDraftLine, buildChannelProgressDraftLineForEntry, buildOutboundSessionContext, createAccountStatusSink, createChannelIngressDrain, createChannelIngressError, createChannelIngressMonitor, createChannelMessageAdapterFromOutbound, createChannelReplyPipeline as createChannelMessageReplyPipeline, createChannelProgressDraftCompositor, createChannelProgressDraftGate, createChannelProgressWorkCounter, createChannelRunQueue, createDraftStreamLoop, createDurableInboundReceiveJournalFromQueue, createFinalizableDraftLifecycle, createFinalizableDraftStreamControlsForState, createMessageReceiptFromOutboundResults, createMessageReceiveContext, createOutboundPayloadPlan, createPreviewMessageReceipt, createReplyPrefixContext, createReplyPrefixOptions, createReplyToFanout, createRuntimeOutboundDelegates, createTypingCallbacks, createTypingKeepaliveLoop, defineChannelMessageAdapter, defineFinalizableLivePreviewAdapter, deliverInboundReplyWithMessageSendContext, deliverWithFinalizableLivePreviewAdapter, deriveDurableFinalDeliveryRequirements, formatChannelProgressDraftLine, formatChannelProgressDraftLineForEntry, formatChannelProgressDraftText, formatPlanChecklistLines, getChannelStreamingConfigObject, hasFinalChannelTurnDispatch, hasVisibleChannelTurnDispatch, isChannelProgressDraftWorkToolName, isPotentialTruncatedFinal, isRecentOutboundMessageIdentity, keepHttpServerTaskAlive, listMessageReceiptPlatformIds, logTypingFailure, mergeChannelProgressDraftLine, normalizeAgentPlanSteps, normalizeChannelProgressDraftLineIdentity, processPidFromOwnerId, projectOutboundPayloadPlanForDelivery, recordOutboundMessageIdentity, resolveAgentOutboundIdentity, resolveChannelDraftStreamingChunking, resolveChannelSourceReplyDeliveryMode as resolveChannelMessageSourceReplyDeliveryMode, resolveChannelPreviewStreamMode, resolveChannelProgressDraftConfig, resolveChannelProgressDraftMaxLineChars, resolveChannelProgressDraftMaxLines, resolveChannelProgressDraftRender, resolveChannelStreamingBlockCoalesce, resolveChannelStreamingBlockEnabled, resolveChannelStreamingChunkMode, resolveChannelStreamingNativeTransport, resolveChannelStreamingPreviewCommandText, resolveChannelStreamingPreviewToolProgress, resolveChannelStreamingProgressCommentary, resolveChannelStreamingProgressNarration, resolveChannelStreamingSuppressDefaultToolProgressMessages, resolveChannelTurnDispatchCounts, resolveMessageReceiptPrimaryId, resolveOutboundSendDep, resolveTranscriptBackedChannelFinalText, runPassiveAccountLifecycle, sanitizeForPlainText, selectLongerFinalText, sendDurableMessageBatch, takeMessageIdAfterStop, verifyChannelMessageAdapterCapabilityProofs, verifyChannelMessageLiveCapabilityAdapterProofs, verifyChannelMessageLiveFinalizerProofs, verifyChannelMessageReceiveAckPolicyAdapterProofs, verifyDurableFinalCapabilityProofs, waitUntilAbort, withDurableMessageSendContext };
++export type { ChannelDeliveryCustodyAdapter, ChannelDeliveryCustodyAdmission, ChannelDeliveryCustodyReference } from "../types-BzYyevxm.js";
+diff --git a/dist/plugin-sdk/channel-outbound.d.ts b/dist/plugin-sdk/channel-outbound.d.ts
+--- a/dist/plugin-sdk/channel-outbound.d.ts
++++ b/dist/plugin-sdk/channel-outbound.d.ts
+@@ -13,4 +13,5 @@
+ import { A as createChannelIngressError, C as createChannelProgressDraftCompositor, D as createTypingKeepaliveLoop, E as resolveChannelDraftStreamingChunking, M as isRecentOutboundMessageIdentity, N as recordOutboundMessageIdentity, O as INGRESS_CLAIM_PROCESS_ID, S as ChannelProgressDraftCompositorSnapshot, T as ChannelDraftStreamingChunking, _ as createDurableInboundReceiveJournalFromQueue, a as withDurableMessageSendContext, b as deriveDurableFinalDeliveryRequirements, c as createMessageReceiveContext, d as resolveMessageReceiptPrimaryId, f as verifyChannelMessageAdapterCapabilityProofs, g as verifyDurableFinalCapabilityProofs, h as verifyChannelMessageReceiveAckPolicyAdapterProofs, i as sendDurableMessageBatch, j as OutboundMessageIdentity, k as processPidFromOwnerId, l as createMessageReceiptFromOutboundResults, m as verifyChannelMessageLiveFinalizerProofs, n as deliverInboundReplyWithMessageSendContext, o as MessageAckPolicy, p as verifyChannelMessageLiveCapabilityAdapterProofs, r as resolveChannelProgressDraftRender, s as MessageReceiveContext, t as ChannelProgressDraftRenderMode, u as listMessageReceiptPlatformIds, v as createChannelMessageAdapterFromOutbound, w as createChannelProgressWorkCounter, x as ChannelProgressDraftCompositorLine, y as defineChannelMessageAdapter } from "../channel-outbound-DQoKU4mp.js";
+ import { n as createRuntimeOutboundDelegates } from "../runtime-forwarders-DcXimhey.js";
+ import { t as sanitizeForPlainText } from "../sanitize-text-CVPN3pRC.js";
+-export { type AgentPlanStep, type AgentPlanStepStatus, CHANNEL_INGRESS_RETENTION_DEFAULTS, type ChannelDeliveryStreamingConfig, type ChannelDraftStreamingChunking, type ChannelIngressDrain, type ChannelIngressMonitorDeliveryResult, type ChannelIngressMonitorLifecycle, type ChannelIngressQueue, type ChannelIngressQueueClaim, type ChannelIngressQueueClaimRef, type ChannelIngressQueueCorruptClaim, type ChannelIngressQueueRecord, type ChannelMessageAdapterShape, type ChannelMessageDurableFinalAdapter, type ChannelMessageSendMediaContext, type ChannelMessageSendPayloadContext, type ChannelMessageSendResult, type ChannelMessageSendTextContext, type ChannelMessageUnknownSendContext, type ChannelMessageUnknownSendReconciliationResult, type ChannelPreviewStreamingConfig, type ChannelProgressDraftCompositorLine, type ChannelProgressDraftCompositorSnapshot, type ChannelProgressDraftLine, ChannelProgressDraftRenderMode, type ChannelStreamingBlockConfig, type ChannelStreamingProgressConfig, DEFAULT_INGRESS_ADOPTION_STALL_MS, DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS, DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS, type DurableMessageBatchSendResult, INGRESS_CLAIM_PROCESS_ID, type MessageAckPolicy, type MessageReceipt, type MessageReceiptPart, type MessageReceiptPartKind, type MessageReceiptSourceResult, type MessageReceiveContext, type OutboundDeliveryFormattingOptions, type OutboundIdentity, type OutboundMessageIdentity, type OutboundSendDeps, type OutboundSessionContext, type ReplyToResolution, type StreamingMode, type TextChunkMode, bindIngressLifecycleToReplyOptions, buildChannelProgressDraftLine, buildChannelProgressDraftLineForEntry, buildOutboundSessionContext, createAccountStatusSink, createChannelIngressDrain, createChannelIngressError, createChannelIngressMonitor, createChannelMessageAdapterFromOutbound, createChannelReplyPipeline as createChannelMessageReplyPipeline, createChannelProgressDraftCompositor, createChannelProgressDraftGate, createChannelProgressWorkCounter, createChannelRunQueue, createDraftStreamLoop, createDurableInboundReceiveJournalFromQueue, createFinalizableDraftLifecycle, createFinalizableDraftStreamControlsForState, createMessageReceiptFromOutboundResults, createMessageReceiveContext, createOutboundPayloadPlan, createPreviewMessageReceipt, createReplyPrefixContext, createReplyPrefixOptions, createReplyToFanout, createRuntimeOutboundDelegates, createTypingCallbacks, createTypingKeepaliveLoop, defineChannelMessageAdapter, defineFinalizableLivePreviewAdapter, deliverInboundReplyWithMessageSendContext, deliverWithFinalizableLivePreviewAdapter, deriveDurableFinalDeliveryRequirements, formatChannelProgressDraftLine, formatChannelProgressDraftLineForEntry, formatChannelProgressDraftText, formatPlanChecklistLines, getChannelStreamingConfigObject, isChannelProgressDraftWorkToolName, isPotentialTruncatedFinal, isRecentOutboundMessageIdentity, keepHttpServerTaskAlive, listMessageReceiptPlatformIds, logTypingFailure, mergeChannelProgressDraftLine, normalizeAgentPlanSteps, normalizeChannelProgressDraftLineIdentity, processPidFromOwnerId, projectOutboundPayloadPlanForDelivery, recordOutboundMessageIdentity, resolveAgentOutboundIdentity, resolveChannelDraftStreamingChunking, resolveChannelSourceReplyDeliveryMode as resolveChannelMessageSourceReplyDeliveryMode, resolveChannelPreviewStreamMode, resolveChannelProgressDraftConfig, resolveChannelProgressDraftMaxLineChars, resolveChannelProgressDraftMaxLines, resolveChannelProgressDraftRender, resolveChannelStreamingBlockCoalesce, resolveChannelStreamingBlockEnabled, resolveChannelStreamingChunkMode, resolveChannelStreamingNativeTransport, resolveChannelStreamingPreviewCommandText, resolveChannelStreamingPreviewToolProgress, resolveChannelStreamingProgressCommentary, resolveChannelStreamingProgressNarration, resolveChannelStreamingSuppressDefaultToolProgressMessages, resolveMessageReceiptPrimaryId, resolveOutboundSendDep, resolveTranscriptBackedChannelFinalText, runPassiveAccountLifecycle, sanitizeForPlainText, selectLongerFinalText, sendDurableMessageBatch, takeMessageIdAfterStop, verifyChannelMessageAdapterCapabilityProofs, verifyChannelMessageLiveCapabilityAdapterProofs, verifyChannelMessageLiveFinalizerProofs, verifyChannelMessageReceiveAckPolicyAdapterProofs, verifyDurableFinalCapabilityProofs, waitUntilAbort, withDurableMessageSendContext };
+\ No newline at end of file
++export { type AgentPlanStep, type AgentPlanStepStatus, CHANNEL_INGRESS_RETENTION_DEFAULTS, type ChannelDeliveryStreamingConfig, type ChannelDraftStreamingChunking, type ChannelIngressDrain, type ChannelIngressMonitorDeliveryResult, type ChannelIngressMonitorLifecycle, type ChannelIngressQueue, type ChannelIngressQueueClaim, type ChannelIngressQueueClaimRef, type ChannelIngressQueueCorruptClaim, type ChannelIngressQueueRecord, type ChannelMessageAdapterShape, type ChannelMessageDurableFinalAdapter, type ChannelMessageSendMediaContext, type ChannelMessageSendPayloadContext, type ChannelMessageSendResult, type ChannelMessageSendTextContext, type ChannelMessageUnknownSendContext, type ChannelMessageUnknownSendReconciliationResult, type ChannelPreviewStreamingConfig, type ChannelProgressDraftCompositorLine, type ChannelProgressDraftCompositorSnapshot, type ChannelProgressDraftLine, ChannelProgressDraftRenderMode, type ChannelStreamingBlockConfig, type ChannelStreamingProgressConfig, DEFAULT_INGRESS_ADOPTION_STALL_MS, DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS, DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS, type DurableMessageBatchSendResult, INGRESS_CLAIM_PROCESS_ID, type MessageAckPolicy, type MessageReceipt, type MessageReceiptPart, type MessageReceiptPartKind, type MessageReceiptSourceResult, type MessageReceiveContext, type OutboundDeliveryFormattingOptions, type OutboundIdentity, type OutboundMessageIdentity, type OutboundSendDeps, type OutboundSessionContext, type ReplyToResolution, type StreamingMode, type TextChunkMode, bindIngressLifecycleToReplyOptions, buildChannelProgressDraftLine, buildChannelProgressDraftLineForEntry, buildOutboundSessionContext, createAccountStatusSink, createChannelIngressDrain, createChannelIngressError, createChannelIngressMonitor, createChannelMessageAdapterFromOutbound, createChannelReplyPipeline as createChannelMessageReplyPipeline, createChannelProgressDraftCompositor, createChannelProgressDraftGate, createChannelProgressWorkCounter, createChannelRunQueue, createDraftStreamLoop, createDurableInboundReceiveJournalFromQueue, createFinalizableDraftLifecycle, createFinalizableDraftStreamControlsForState, createMessageReceiptFromOutboundResults, createMessageReceiveContext, createOutboundPayloadPlan, createPreviewMessageReceipt, createReplyPrefixContext, createReplyPrefixOptions, createReplyToFanout, createRuntimeOutboundDelegates, createTypingCallbacks, createTypingKeepaliveLoop, defineChannelMessageAdapter, defineFinalizableLivePreviewAdapter, deliverInboundReplyWithMessageSendContext, deliverWithFinalizableLivePreviewAdapter, deriveDurableFinalDeliveryRequirements, formatChannelProgressDraftLine, formatChannelProgressDraftLineForEntry, formatChannelProgressDraftText, formatPlanChecklistLines, getChannelStreamingConfigObject, isChannelProgressDraftWorkToolName, isPotentialTruncatedFinal, isRecentOutboundMessageIdentity, keepHttpServerTaskAlive, listMessageReceiptPlatformIds, logTypingFailure, mergeChannelProgressDraftLine, normalizeAgentPlanSteps, normalizeChannelProgressDraftLineIdentity, processPidFromOwnerId, projectOutboundPayloadPlanForDelivery, recordOutboundMessageIdentity, resolveAgentOutboundIdentity, resolveChannelDraftStreamingChunking, resolveChannelSourceReplyDeliveryMode as resolveChannelMessageSourceReplyDeliveryMode, resolveChannelPreviewStreamMode, resolveChannelProgressDraftConfig, resolveChannelProgressDraftMaxLineChars, resolveChannelProgressDraftMaxLines, resolveChannelProgressDraftRender, resolveChannelStreamingBlockCoalesce, resolveChannelStreamingBlockEnabled, resolveChannelStreamingChunkMode, resolveChannelStreamingNativeTransport, resolveChannelStreamingPreviewCommandText, resolveChannelStreamingPreviewToolProgress, resolveChannelStreamingProgressCommentary, resolveChannelStreamingProgressNarration, resolveChannelStreamingSuppressDefaultToolProgressMessages, resolveMessageReceiptPrimaryId, resolveOutboundSendDep, resolveTranscriptBackedChannelFinalText, runPassiveAccountLifecycle, sanitizeForPlainText, selectLongerFinalText, sendDurableMessageBatch, takeMessageIdAfterStop, verifyChannelMessageAdapterCapabilityProofs, verifyChannelMessageLiveCapabilityAdapterProofs, verifyChannelMessageLiveFinalizerProofs, verifyChannelMessageReceiveAckPolicyAdapterProofs, verifyDurableFinalCapabilityProofs, waitUntilAbort, withDurableMessageSendContext };
++export type { ChannelDeliveryCustodyAdapter, ChannelDeliveryCustodyAdmission, ChannelDeliveryCustodyReference } from "../types-BzYyevxm.js";
 diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
 --- a/dist/registry-BdPa2vko.js
 +++ b/dist/registry-BdPa2vko.js
@@ -280,6 +557,25 @@ diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
  		recordContextEngineQuarantine({
  			engineId,
  			owner: entry.owner,
+diff --git a/dist/runtime-api-DDF9iz51.d.ts b/dist/runtime-api-DDF9iz51.d.ts
+--- a/dist/runtime-api-DDF9iz51.d.ts
++++ b/dist/runtime-api-DDF9iz51.d.ts
+@@ -11892,6 +11892,7 @@
+   gatewayClientScopes?: readonly string[];
+   /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
+   deliveryQueueId?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
+   /** @internal Stable platform-send index within one durable payload. */
+   deliveryPartIndex?: number;
+   /** @internal Exact platform-send count within one durable payload. */
+@@ -12068,6 +12069,7 @@
+ /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
+ type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
+   id?: string;
++  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyAdapter;
+   durableFinal?: ChannelMessageDurableFinalAdapter;
+   send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
+   live?: ChannelMessageLiveAdapterShape;
 diff --git a/dist/runtime-plugins-CWkOjN1D.js b/dist/runtime-plugins-CWkOjN1D.js
 --- a/dist/runtime-plugins-CWkOjN1D.js
 +++ b/dist/runtime-plugins-CWkOjN1D.js
@@ -390,18 +686,58 @@ diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B
  	});
  }
  //#endregion
-diff --git a/dist/host-hook-cleanup-BQvPj1LG.js b/dist/host-hook-cleanup-BQvPj1LG.js
---- a/dist/host-hook-cleanup-BQvPj1LG.js
-+++ b/dist/host-hook-cleanup-BQvPj1LG.js
-@@ -258,7 +258,10 @@
- 	let cleanupCount = 0;
- 	for (const pluginId of previousPluginIds) {
- 		if (!shouldCleanup()) break;
--		const restarted = nextPluginIds.has(pluginId);
-+		// Removing a runtime registry during host teardown is not a configuration
-+        // disable. Preserve durable Session extensions; a real replacement that
-+        // excludes the plugin still performs disable cleanup.
-+        const restarted = !params.nextRegistry || nextPluginIds.has(pluginId);
- 		const result = await runPluginHostCleanup({
- 			cfg: params.cfg,
- 			registry: previousRegistry,
+diff --git a/dist/types-BzYyevxm.d.ts b/dist/types-BzYyevxm.d.ts
+--- a/dist/types-BzYyevxm.d.ts
++++ b/dist/types-BzYyevxm.d.ts
+@@ -1,3 +1,5 @@
++import type { PreparedOutboundBatch, f as OutboundSessionContext } from "./deliver-contracts-BrA0Kn8c.js";
++import type { it as ExecutionIdentityAdmissionToken } from "./templating-Bn9LFFBS.js";
+ import { r as OpenClawConfig } from "./types.openclaw-DQK9GQyv.js";
+ import { C as ReplyToMode } from "./types.base-D2CyC728.js";
+ import "./types-B6GeWkdz.js";
+@@ -168,6 +170,7 @@
+   gatewayClientScopes?: readonly string[];
+   /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
+   deliveryQueueId?: string;
++  deliveryCustody?: ChannelDeliveryCustodyReference;
+   /** @internal Stable platform-send index within one durable payload. */
+   deliveryPartIndex?: number;
+   /** @internal Exact platform-send count within one durable payload. */
+@@ -341,9 +344,37 @@
+   defaultAckPolicy?: ChannelMessageReceiveAckPolicy;
+   supportedAckPolicies?: readonly ChannelMessageReceiveAckPolicy[];
+ };
++/** Host-issued non-secret reference; the Host binds it to adopted behavior and content. */
++export type ChannelDeliveryCustodyReference = { reference: string };
++/** Native producer provenance and the exact post-policy batch; never supplied by message metadata. */
++export type ChannelDeliveryCustodyAdmission = {
++  channel: string;
++  accountId?: string;
++  to: string;
++  threadId?: string | number | null;
++  deliveryIntentId?: string;
++  reply?: OutboundReplyFacts;
++  runId?: string;
++  executionIdentityToken?: ExecutionIdentityAdmissionToken;
++  session?: OutboundSessionContext;
++  preparedBatch: PreparedOutboundBatch;
++};
++/** Required authority; exceptions abort delivery, including replay and per-part fanout. */
++export type ChannelDeliveryCustodyAdapter = {
++  adopt(context: ChannelDeliveryCustodyAdmission): Promise<ChannelDeliveryCustodyReference>;
++  authorize(context: Omit<ChannelDeliveryCustodyAdmission, "deliveryIntentId"> & {
++    phase: "dispatch";
++    deliveryQueueId?: string;
++    replyToId?: string | null;
++    custody: ChannelDeliveryCustodyReference;
++    payload: { kind: string; text?: string; mediaUrl?: string; payload?: unknown; deliveryPartIndex?: number; deliveryPartCount?: number };
++  }): Promise<void>;
++};
+ /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
+ type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
+   id?: string;
++  /** Required Host authority for controlled channels; absent leaves generic channels unchanged. */
++  deliveryCustody?: ChannelDeliveryCustodyAdapter;
+   durableFinal?: ChannelMessageDurableFinalAdapter;
+   send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
+   live?: ChannelMessageLiveAdapterShape;

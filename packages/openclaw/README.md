@@ -39,8 +39,12 @@ MCP HTTP OAuth 若已配置，升级前保存的凭据必须有正确 issuer 或
 {
   "plugins": {
     "allow": ["nous-cognition"],
-    "load": {"paths": ["/absolute/path/subject-runtime/node_modules/@nous-wave/openclaw"]},
-    "slots": {"contextEngine": "nous-cognition", "memory": "none"},
+    "load": {
+      "paths": [
+        "/absolute/path/subject-runtime/node_modules/@nous-wave/openclaw"
+      ]
+    },
+    "slots": { "contextEngine": "nous-cognition", "memory": "none" },
     "entries": {
       "nous-cognition": {
         "enabled": true,
@@ -54,7 +58,7 @@ MCP HTTP OAuth 若已配置，升级前保存的凭据必须有正确 issuer 或
     }
   },
   "agents": {
-    "defaults": {"compaction": {"memoryFlush": {"enabled": false}}}
+    "defaults": { "compaction": { "memoryFlush": { "enabled": false } } }
   }
 }
 ```
@@ -74,6 +78,40 @@ RESET 替换临时 slice，APPEND 仅接受相同 track/epoch 的连续前缀。
 用户/模型内容按接触记录 Observation，实际工具结果保留结构与错误标志并进入经历。模型输出只记为 `model_output`，不冒充已外发。ReportUse 的 `presented` 在输入提交前记录已经纳入待发送输入的 exact refs；传输失败不被记为模型选择、动作或外发成功。普通“记住/忘记”不获得认知 mutation/purge 工具。
 
 当前采用认知时不加载可写 SOUL/IDENTITY/USER/MEMORY 作为第二份状态。Self 使用同一正式贡献与输入路径，插件不会合成个人经历。Self 通过正式领域操作形成、反思与修订；普通对话不直接修改持久状态。框架无关 API 见 [`@nous-wave/client/managed`](https://github.com/Heptalogos-Devs/Nous-Wave/blob/master/packages/client/src/managed.ts)，产品合同见 [Managed OpenClaw](https://github.com/Heptalogos-Devs/Nous-Wave/blob/master/docs/specs/active/cognitive-runtime/openclaw.md)。
+
+## 宿主控制的渠道派发
+
+受控渠道在 `ChannelPlugin.message.deliveryCustody` 实现必需的 `adopt` 与
+`authorize`。类型从 `openclaw/plugin-sdk/channel-message` 或
+`channel-outbound` 导出。未声明此接口的通用渠道保持原生行为。
+
+`adopt` 在最终 policy/normalization 之后、durable queue 写入之前接收原生
+run/execution identity/session、目标、回复事实与 prepared batch。宿主必须核验真实
+Activity/Behavior 的当前采纳范围；缺少可信来源时拒绝，不能从模型正文或 metadata
+补造权限。返回非秘密的 `{ reference }`，它位于原生 prepared batch 顶层，随现有
+SQLite queue 保全。统一入口将 runtime-owned message 的 `skipQueue` 分支纳入同一
+`queuePolicy=required` 队列，稳定 intent 来自原生既有 `deliveryIntentId` 或
+`mirror.idempotencyKey`；缺失时拒绝，不从正文补造。默认使用原生 permanent
+completion retention 防止已结清 intent 重复发送；不能在 queue 写入失败后直接发送。
+旧队列迁移不得重新取得采纳，恢复只使用原 reference。
+
+每个 text/media/payload 及原生分段的 adapter handoff 前，原生等待 `authorize`，
+传入 reference、已保存 batch、实际本段正文/媒体、回复目标和原生 queue 身份；拒绝会
+阻止协议调用。宿主每次核验当前取消/停止、受众、载荷、来源范围和会话发送权限；
+observe-only 会话由宿主及第一方 Channel 拒绝外发，通用层不硬编码平台账号。
+Channel 内的媒体子发送、编辑/撤回及自定义 actions 也必须复用同一宿主授权执行器，
+不能注册原始协议工具或直发旁路。原生未知发送、completion 与回执语义保持不变，
+Host 回写失败不成为重新发送的理由。
+
+仅做本机无网络 native fixture：
+
+```sh
+pnpm exec tsx scripts/tests/openclaw/custody.ts /absolute/path/openclaw-package-root
+```
+
+此场景使用已安装生产函数和实际原生 SQLite queue，检查稳定 intent 去重、reference
+保全、恢复不重新采纳、逐段授权、取消和 observe-only 拒绝及普通渠道行为。它不证明
+QQ、真实 Host API 或模型交互；这些由产品集成验证。
 
 ## 验证
 
