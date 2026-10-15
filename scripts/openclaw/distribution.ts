@@ -57,9 +57,16 @@ export async function buildDistribution(destination: string) {
     await cp(join(repo, name), join(destination, name));
   const packages = new Set<string>();
   const notices: string[] = [];
+  const inlineNotices = new Set<string>();
   for (const input of Object.keys(result.metafile.inputs)) {
     const marker = input.lastIndexOf("node_modules/");
     if (marker < 0) continue;
+    // Protobuf's BSD varint code carries its additional terms in the source
+    // header, separately from the package's root Apache license.
+    const header = (await readFile(resolve(repo, input), "utf8")).match(
+      /^(?:\/\/[^\n]*\n)+/u,
+    )?.[0];
+    if (header?.includes("Redistribution and use")) inlineNotices.add(header);
     const tail = input.slice(marker + 13).split("/");
     const root = resolve(
       repo,
@@ -112,6 +119,6 @@ export async function buildDistribution(destination: string) {
   }
   await writeFile(
     join(destination, "THIRD_PARTY_NOTICES.txt"),
-    notices.join("\n\n"),
+    [...notices, ...inlineNotices].join("\n\n"),
   );
 }
