@@ -1525,6 +1525,38 @@ pub struct SetActiveWorkContextRequest {
     #[prost(string, optional, tag="5")]
     pub work_context_id: ::core::option::Option<::prost::alloc::string::String>,
 }
+/// Host-supplied invocation scope. This describes use, never grants authority.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CognitionParticipant {
+    #[prost(string, tag="1")]
+    pub entity_ref: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub role: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CognitionAudience {
+    #[prost(string, tag="1")]
+    pub conversation_ref: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="2")]
+    pub recipient_entity_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag="3")]
+    pub visibility: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CognitionUsage {
+    #[prost(string, tag="1")]
+    pub agent_instance_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub purpose: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub intent: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="4")]
+    pub activity_ref: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="5")]
+    pub participants: ::prost::alloc::vec::Vec<CognitionParticipant>,
+    #[prost(message, optional, tag="6")]
+    pub audience: ::core::option::Option<CognitionAudience>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProjectionRequest {
     #[prost(string, tag="1")]
@@ -1551,6 +1583,8 @@ pub struct ProjectionRequest {
     pub resource_requirement: ::prost::alloc::string::String,
     #[prost(bool, tag="12")]
     pub materialize: bool,
+    #[prost(message, optional, tag="13")]
+    pub usage: ::core::option::Option<CognitionUsage>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ContextSegment {
@@ -1570,6 +1604,8 @@ pub struct ContextSegment {
     pub stability: ::prost::alloc::string::String,
     #[prost(string, optional, tag="8")]
     pub source_revision: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag="9")]
+    pub usage: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Projection {
@@ -1589,6 +1625,8 @@ pub struct Projection {
     pub session_id: ::prost::alloc::string::String,
     #[prost(string, optional, tag="8")]
     pub active_work_context_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="9")]
+    pub usage: ::core::option::Option<CognitionUsage>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ContextCursor {

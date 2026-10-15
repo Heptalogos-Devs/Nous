@@ -86,6 +86,7 @@ async function main() {
         capabilities: create(SubjectCapabilitiesSchema, { memory: true }),
       }),
     );
+    const createdSeed = await client.subjects.getCognitiveSeed({ subjectId });
     const sessionA = await client.runtime.openSession(
       create(SubjectRequestSchema, { subjectId }),
     );
@@ -316,14 +317,16 @@ async function main() {
       throw new Error(
         "CLI Subject create changed-input retry did not conflict",
       );
-    const createdSeed = await client.subjects.getCognitiveSeed({
-      subjectId: createdSubject.data.subjectId,
-    });
-    if (
-      !createdSubject.data.subjectId ||
-      createdSeed.operationId !== createOperation
-    )
-      throw new Error("CLI Subject create ignored operation identity");
+    let noSeed = false;
+    try {
+      await client.subjects.getCognitiveSeed({
+        subjectId: createdSubject.data.subjectId,
+      });
+    } catch (error) {
+      noSeed = error instanceof NousError && error.code === 5;
+    }
+    if (!createdSubject.data.subjectId || !noSeed)
+      throw new Error("CLI Subject create synthesized an unrequested Seed");
     const cliCreated = (await runCli([
       "context",
       "create",
@@ -421,7 +424,7 @@ async function main() {
     )
       throw new Error("Material cleanup returned invalid counts");
     const seedAfterCleanup = await client.subjects.getCognitiveSeed({
-      subjectId: createdSubject.data.subjectId,
+      subjectId,
     });
     if (seedAfterCleanup.artifactId !== createdSeed.artifactId)
       throw new Error("Material cleanup lost another Subject's Artifact");

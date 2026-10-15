@@ -408,8 +408,10 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         .err()
         .expect("unrequested old memory must require explicit recall");
     assert!(aged.to_string().contains("accessibility"));
-    let explicit = sources.next().unwrap().unwrap();
-    assert_eq!(explicit.text.as_deref(), Some("Grounded"));
+    assert!(matches!(
+        sources.next().unwrap(),
+        Err(nous_core::Error::Unavailable(_))
+    ));
     let permissive_policy = nous_memory::AccessibilityPolicy {
         normal_threshold: -100.0,
         deep_threshold: -101.0,
@@ -421,7 +423,7 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
             &[(reference.clone(), false)],
             &permissive_policy,
             runtime.cognition.now(subject) + Duration::days(36_500),
-            8,
+            256,
         )
         .await
         .unwrap()
@@ -450,12 +452,26 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         }],
         ..Default::default()
     };
+    let omitted = service
+        .build_contribution_batch(request.clone())
+        .await
+        .unwrap();
+    assert!(omitted.segments.is_empty());
+    assert!(
+        omitted.degradation[0]
+            .detail
+            .contains("complete cognitive unit")
+    );
+    let request = nous_protocol::public::ProjectionRequest {
+        max_text_bytes: 256,
+        ..request
+    };
     let projection = service
         .build_contribution_batch(request.clone())
         .await
         .expect("projection");
     assert!(projection.degradation.is_empty());
-    assert_eq!(projection.segments[0].text, "Grounded");
+    assert_eq!(projection.segments[0].text, "Grounded projection content");
     assert_eq!(projection.segments[0].evidence.len(), 1);
     assert_eq!(
         projection.segments[0].source_revision.as_deref(),
@@ -476,7 +492,7 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
         .await
         .unwrap();
     assert_eq!(material.segments.len(), 1);
-    assert_eq!(material.segments[0].text, "Grounded");
+    assert_eq!(material.segments[0].text, "Grounded projection content");
     assert_eq!(material.segments[0].authority, "evidence");
     let owner = service.0.require_memory().unwrap();
     owner

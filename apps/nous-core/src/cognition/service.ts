@@ -27,6 +27,7 @@ import { QueryOrchestrator } from "../query/orchestrator.js";
 import { ResourceRegistry } from "../resources/registry.js";
 import { ContextCompiler } from "./context.js";
 import { ProjectionPlanner } from "./projection.js";
+import { bindProjectionUsage } from "./usage.js";
 
 type Execution = ReturnType<typeof executionOptions>;
 
@@ -108,6 +109,7 @@ export class CoreCognition {
   async buildProjection(input: ProjectionRequest, calls: Execution) {
     const policy = this.planner.policy(input.consumerId);
     const request = create(ProjectionRequestSchema, input);
+    bindProjectionUsage(request);
     request.memoryRequirement = policy.memory;
     request.runtimeRequirement = policy.runtime;
     request.resourceRequirement = policy.resource;
@@ -127,11 +129,18 @@ export class CoreCognition {
           subjectId: request.subjectId,
           sessionId: request.sessionId,
           expression: request.query,
+          workContextId: request.activeWorkContextId,
+          situation: {
+            consumer: request.consumerId,
+          },
         }),
         calls,
       );
       request.situationRefs.push(
-        ...query.hits.flatMap((hit) => (hit.reference ? [hit.reference] : [])),
+        ...query.hits.flatMap((hit) => {
+          const reference = hit.revision ?? hit.reference;
+          return reference ? [reference] : [];
+        }),
       );
       queryDegradation.push(...query.degradation);
       request.query = undefined;
@@ -151,6 +160,11 @@ export class CoreCognition {
         Code.InvalidArgument,
       );
     const input = request.projection;
+    if (!input.usage)
+      throw new ConnectError(
+        "Managed context requires actual invocation usage",
+        Code.InvalidArgument,
+      );
     const projection = await this.buildProjection(input, calls);
     const policy = this.planner.policy(input.consumerId);
     return create(
@@ -161,6 +175,7 @@ export class CoreCognition {
           sessionId: projection.sessionId,
           consumerId: projection.consumerId,
           workContextId: projection.activeWorkContextId,
+          usage: projection.usage,
         },
         policy.revision,
         projection,

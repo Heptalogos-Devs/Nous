@@ -103,11 +103,11 @@ async fn envelope_subject(rt: &nous_kernel::NousRuntime) -> SubjectId {
         .create_subject(nous_subject::CreateSubject {
             subject_id: None,
             operation_id: OperationId::new(),
-            cognitive_seed: nous_subject::CognitiveSeedInput {
+            cognitive_seed: Some(nous_subject::CognitiveSeedInput {
                 text: "schema_version = 1".into(),
                 format: nous_subject::COGNITIVE_SEED_FORMAT.into(),
                 provenance: serde_json::json!({}),
-            },
+            }),
             metadata: serde_json::json!({}),
             capabilities: None,
         })

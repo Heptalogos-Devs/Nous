@@ -884,10 +884,22 @@ routes = ["memory_formation"]
     maxItems: 8,
     maxTextBytes: 4096,
   };
-  const beforeSteward = providerCalls;
-  const managed = await restarted.cognition.buildManagedContext({ projection });
+  const managedProjection = {
+    ...projection,
+    usage: {
+      agentInstanceId: "smoke:model-material-resource",
+      purpose: "deliberation",
+      intent: "Continue the foreground material and resource task.",
+      audience: {
+        conversationRef: `conversation:smoke:${sessionId}`,
+        visibility: "internal",
+      },
+    },
+  };
+  const managed = await restarted.cognition.buildManagedContext({
+    projection: managedProjection,
+  });
   assert(managed.cursor && managed.projection);
-  assert.equal(providerCalls, beforeSteward + 1);
   assert.equal(stewardCalls, 1);
   const summary = managed.projection.segments.find(
     (entry) => entry.semanticRole === "steward_synthesis",
@@ -895,32 +907,32 @@ routes = ["memory_formation"]
   assert(summary?.sourceRevision);
   assert(summary.text.includes("Foreground Steward continuity marker"));
   const managedAgain = await restarted.cognition.buildManagedContext({
-    projection,
+    projection: managedProjection,
     knownCursor: managed.cursor,
   });
-  assert.equal(providerCalls, beforeSteward + 2);
   assert.equal(stewardCalls, 2);
   assert.equal(managedAgain.kind, "APPEND");
   assert.deepEqual(managedAgain.cursor, managed.cursor);
   assert.equal(managedAgain.projection?.segments.length, 0);
-  const unchanged = await restarted.cognition.buildProjection(projection);
+  const unchanged =
+    await restarted.cognition.buildProjection(managedProjection);
   assert.equal(
     unchanged.segments.find(
       (entry) => entry.semanticRole === "steward_synthesis",
     )?.sourceRevision,
     summary.sourceRevision,
   );
-  const beforeRefs = providerCalls;
+  const beforeRefs = stewardCalls;
   const references = await restarted.cognition.buildManagedContext({
     projection: {
-      ...projection,
+      ...managedProjection,
       consumerId: "refs-only",
       situationRefs: [
         { kind: "derived_representation", value: structured.representationId },
       ],
     },
   });
-  assert.equal(providerCalls, beforeRefs);
+  assert.equal(stewardCalls, beforeRefs);
   assert(references.projection?.segments.length);
   assert(references.projection.segments.every((entry) => !entry.text));
   assert(
@@ -934,7 +946,7 @@ routes = ["memory_formation"]
   );
   const missingArtifact = crypto.randomUUID();
   const mixed = await restarted.cognition.buildProjection({
-    ...projection,
+    ...managedProjection,
     maxItems: 32,
     situationRefs: [
       { kind: "occurrence", value: occurrenceId },

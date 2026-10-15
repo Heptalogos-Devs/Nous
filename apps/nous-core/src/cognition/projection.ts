@@ -114,6 +114,7 @@ export class ProjectionPlanner {
               authority: "interpretation",
               stability: "EPOCH_STABLE",
               sourceRevision: revision,
+              usage: "task_evidence",
             }),
           ];
         }
@@ -132,26 +133,40 @@ export class ProjectionPlanner {
         );
       }
     }
-    const segments = budget(
+    const selected = budget(
       [...required, ...refined],
       items,
       bytes,
       policy.materialize,
-    ).map((segment) => {
+    );
+    const selectedIds = new Set(selected.map((segment) => segment.segmentId));
+    if (
+      required.some(
+        (segment) =>
+          ["identity", "situational_guidance"].includes(segment.usage) &&
+          !selectedIds.has(segment.segmentId),
+      )
+    )
+      throw new ConnectError(
+        "Required cognition does not fit the input budget",
+        Code.ResourceExhausted,
+      );
+    if (selected.length < required.length + refined.length)
+      degradation.push(
+        create(DegradationSchema, {
+          code: "context_budget_omission",
+          detail: "Optional semantic units omitted whole",
+        }),
+      );
+    const segments = selected.map((segment) => {
       // Contribution IDs identify one source read; projected IDs identify the
       // actual selected content, evidence and revision delivered to a consumer.
       const { segmentId: _contributionId, ...content } = segment;
       return { ...content, segmentId: canonicalDigest([1, content]) };
     });
-    for (const f of ["memory", "runtime", "resource"] as const) {
-      if (policy[f] === "REQUIRED" && !segments.some((s) => family(s) === f))
-        degradation.push(
-          create(DegradationSchema, {
-            code: "required_contribution_missing",
-            detail: f,
-          }),
-        );
-    }
+    // Required owners must be available, but an empty relevant view is valid:
+    // a new Subject has no adopted cognition to invent. Kernel checks owner
+    // availability; mandatory identity/guidance units above must still fit.
     const projectionId = canonicalDigest([policy.revision, segments]);
     return create(ProjectionSchema, {
       ...batch,
@@ -171,13 +186,8 @@ function budget(
   let bytes = 0;
   for (const source of segments) {
     if (result.length >= items) break;
-    let text = materialize ? source.text : "";
-    if (Buffer.byteLength(text) > maxBytes - bytes) {
-      const encoded = Buffer.from(text);
-      let end = maxBytes - bytes;
-      while ((encoded[end]! & 0xc0) === 0x80) end--;
-      text = encoded.toString("utf-8", 0, end);
-    }
+    const text = materialize ? source.text : "";
+    if (Buffer.byteLength(text) > maxBytes - bytes) continue;
     if (source.text && materialize && !text) continue;
     bytes += Buffer.byteLength(text);
     result.push({ ...source, text });

@@ -8,6 +8,7 @@
     "node": ">=24.21.0"
   },
   "scripts": {
+    "openclaw:prepare": "tsx scripts/openclaw/prepare.ts",
     "dev": "tsx scripts/dev/nous.ts serve",
     "nous": "tsx scripts/dev/nous.ts",
     "runtime:pack": "tsx scripts/runtime/pack.ts",
@@ -41,9 +42,11 @@
     "research:media-live": "tsx scripts/research/media.ts",
     "dev:portable": "tsx scripts/dev/portable.ts",
     "smoke:configuration": "tsx scripts/smoke/configuration.ts",
+    "smoke:openclaw": "tsx scripts/smoke/openclaw.ts",
     "inspect:model-contracts": "tsx scripts/research/model-contracts.ts",
     "inspect:model-trace": "tsx scripts/research/model-trace.ts",
-    "clean:local": "tsx scripts/maintenance/clean.ts"
+    "clean:local": "tsx scripts/maintenance/clean.ts",
+    "openclaw:pack": "tsx scripts/openclaw/pack.ts"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.73.0",

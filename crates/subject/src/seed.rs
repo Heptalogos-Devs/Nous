@@ -274,10 +274,9 @@ pub(super) async fn insert_seed(
         .ensure_identity_addresses_in(
             tx,
             subject,
-            &[
-                nous_core::CognitiveRef::Subject(subject),
-                nous_core::CognitiveRef::CognitiveSeedVersion(CognitiveSeedVersionId(seed_version)),
-            ],
+            &[nous_core::CognitiveRef::CognitiveSeedVersion(
+                CognitiveSeedVersionId(seed_version),
+            )],
             "",
         )
         .await?;

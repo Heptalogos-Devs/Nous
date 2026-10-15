@@ -74,12 +74,9 @@ impl CognitiveRuntimeService {
                 reference: reference.clone(),
                 source_revision: None,
                 text: (max_bytes > 0).then(|| {
-                    crate::projection::bounded_text(
-                        descriptor
-                            .display_label
-                            .unwrap_or_else(|| resource.as_str().to_owned()),
-                        max_bytes,
-                    )
+                    descriptor
+                        .display_label
+                        .unwrap_or_else(|| resource.as_str().to_owned())
                 }),
                 authority: AuthorityClass::ResourceDescriptor,
                 evidence: Vec::new(),
@@ -99,7 +96,7 @@ impl CognitiveRuntimeService {
                 .await?
                 .into_iter()
                 .find(|descriptor| descriptor.reference == *reference)
-                .map(|descriptor| bounded_text(descriptor.text, max_bytes))
+                .map(|descriptor| descriptor.text)
         } else {
             None
         };
@@ -209,7 +206,12 @@ impl CognitiveRuntimeService {
         };
         references
             .retain(|(reference, ..)| requirement(reference) != RequirementStrength::Forbidden);
-        references.sort_by_key(|(reference, ..)| requirement(reference));
+        references.sort_by_key(|(reference, ..)| {
+            (
+                !matches!(reference, CognitiveRef::WorkContext(_)),
+                requirement(reference),
+            )
+        });
         let explicit_refs = references
             .iter()
             .filter(|(_, _, _, explicit)| *explicit)
@@ -227,6 +229,15 @@ impl CognitiveRuntimeService {
         let mut degradation = Vec::new();
         let mut references = references.into_iter();
         while segments.len() < input.max_items {
+            if input.materialize && remaining == 0 {
+                if references.next().is_some() {
+                    degradation.push(Degradation {
+                        code: "context_budget_omission".into(),
+                        detail: Some("remaining semantic units omitted whole".into()),
+                    });
+                }
+                break;
+            }
             let batch = references
                 .by_ref()
                 .filter(|(r, ..)| !emitted.contains(r))
@@ -256,7 +267,7 @@ impl CognitiveRuntimeService {
                 } else {
                     sources.next().expect("resolver preserves request order")
                 };
-                let mut source = match source {
+                let source = match source {
                     Ok(source) => source,
                     Err(
                         Error::Invalid(message)
@@ -274,8 +285,22 @@ impl CognitiveRuntimeService {
                 if !emitted.insert(source.reference.clone()) {
                     continue;
                 }
-                if let Some(text) = source.text.as_mut() {
-                    text.truncate(text.floor_char_boundary(remaining));
+                let exceeds_budget = input.materialize
+                    && source
+                        .text
+                        .as_ref()
+                        .is_some_and(|text| text.len() > remaining);
+                if exceeds_budget && matches!(source.reference, CognitiveRef::WorkContext(_)) {
+                    return Err(Error::Unavailable(
+                        "required WorkContext exceeds projection budget".into(),
+                    ));
+                }
+                if exceeds_budget {
+                    degradation.push(Degradation {
+                        code: "context_budget_omission".into(),
+                        detail: Some(format!("{reference}: complete semantic unit omitted")),
+                    });
+                    continue;
                 }
                 remaining = remaining.saturating_sub(source.text.as_ref().map_or(0, String::len));
                 segments.push(ProjectionSegment {
@@ -317,16 +342,11 @@ impl CognitiveRuntimeService {
     }
 }
 
-pub(crate) fn bounded_text(mut text: String, max_bytes: usize) -> String {
-    text.truncate(text.floor_char_boundary(max_bytes));
-    text
-}
-
 fn work_context_source(context: &WorkContextView, max_bytes: usize) -> ContextSource {
     ContextSource {
         reference: CognitiveRef::WorkContext(WorkContextId(context.work_context_id)),
         source_revision: Some(context.revision.to_string()),
-        text: (max_bytes > 0).then(|| bounded_text(context.task_text(), max_bytes)),
+        text: (max_bytes > 0).then(|| context.task_text()),
         authority: AuthorityClass::ExternalCurrentAuthority,
         evidence: Vec::new(),
     }

@@ -75,6 +75,20 @@ impl MaterialService {
                 let media_type = payload.media_type.clone();
                 let producer = payload.producer.take();
                 let provenance = std::mem::take(&mut payload.provenance);
+                let length = payload
+                    .selected
+                    .map_or(payload.length, |range| range.end - range.start);
+                if max_bytes > 0
+                    && matches!(
+                        media_modality(&media_type),
+                        Modality::Text | Modality::Structured
+                    )
+                    && length > max_bytes as u64
+                {
+                    return Err(Error::Unavailable(
+                        "complete Material semantic unit exceeds projection budget".into(),
+                    ));
+                }
                 let text = if max_bytes > 0
                     && matches!(
                         media_modality(&media_type),

@@ -230,6 +230,7 @@ async fn private_database_settings(
         .password(password)
         .installation_dir(install_dir)
         .trust_installation_dir(true)
+        .timeout(Some(std::time::Duration::from_secs(30)))
         .data_dir(data_dir)
         .password_file(password_file)
         .temporary(false)

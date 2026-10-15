@@ -10,6 +10,7 @@ import {
   type Projection,
   type ContextSegment as Segment,
   type ManagedContextResponse,
+  type CognitionUsage,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 
 type ContextPatch = Omit<
@@ -38,6 +39,7 @@ export class ContextCompiler {
       sessionId: string;
       workContextId?: string;
       consumerId: string;
+      usage?: CognitionUsage;
     },
     profile: string,
     projection: Projection,
@@ -48,6 +50,7 @@ export class ContextCompiler {
       key.sessionId,
       key.workContextId ?? "",
       key.consumerId,
+      key.usage ?? null,
     ]);
     const previous = this.tracks.get(trackId);
     const synchronized =

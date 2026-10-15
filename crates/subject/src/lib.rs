@@ -33,7 +33,7 @@ pub struct SubjectCoreService {
 pub struct CreateSubject {
     pub subject_id: Option<SubjectId>,
     pub operation_id: OperationId,
-    pub cognitive_seed: CognitiveSeedInput,
+    pub cognitive_seed: Option<CognitiveSeedInput>,
     #[serde(default)]
     pub metadata: serde_json::Value,
     pub capabilities: Option<SubjectCapabilities>,
@@ -127,20 +127,30 @@ impl SubjectCoreService {
             &digest,
         )
         .await?;
-        seed::insert_seed(
-            &self.store,
-            &self.objects,
-            &mut tx,
-            input.cognitive_seed,
-            seed::SeedAdoptionWrite {
+        self.store
+            .ensure_identity_addresses_in(
+                &mut tx,
                 subject,
-                operation_id: input.operation_id,
-                kind: SeedAdoptionKind::Initial,
-                digest: &digest,
-                now: self.clock.now(subject),
-            },
-        )
-        .await?;
+                &[nous_core::CognitiveRef::Subject(subject)],
+                "",
+            )
+            .await?;
+        if let Some(cognitive_seed) = input.cognitive_seed {
+            seed::insert_seed(
+                &self.store,
+                &self.objects,
+                &mut tx,
+                cognitive_seed,
+                seed::SeedAdoptionWrite {
+                    subject,
+                    operation_id: input.operation_id,
+                    kind: SeedAdoptionKind::Initial,
+                    digest: &digest,
+                    now: self.clock.now(subject),
+                },
+            )
+            .await?;
+        }
         nous_persistence::commit_receipt(
             &mut tx,
             subject,

@@ -1,0 +1,45 @@
+{
+  "version": "2026.9.1",
+  "files": {
+    "dist/agent-core-BxgCPa8O.js": {
+      "original": "0c9bcca812ac44e9cd79a8df3ce627c55cd569182a4e9f0f6623d54483f149fa",
+      "patched": "81d3186bc2f7796cf854e9f8c96fcc4a5af9f09d89ec64029084f0d844073cfa"
+    },
+    "dist/agent-exec-DQrJo6Wo.js": {
+      "original": "233e7376ce3481a5905fa1083d0077cdade601164303c122d07fbbb8810ac669",
+      "patched": "7665d628b56dacbb879d944e4e8ebad8bf25b1e5d80af2326028adbdbab6700e"
+    },
+    "dist/builtin-openclaw-zQV8Wwjr.js": {
+      "original": "62599de51a360163f8020d3f2c9ffbf7481a2424b850363d77308a99056a5303",
+      "patched": "63c6a16f40e512c5aba056ae8a97cc8be245f270f06f71d0cc6999fd0591c46b"
+    },
+    "dist/context-engine-turn-attempt-BPzr5IBp.js": {
+      "original": "4cc537188596b09ee72b9d1cff7f027e4eebc836ee43859a414b15eaac36d0fc",
+      "patched": "2afbee78e7799a5c748c01745f140a1e394add211d226362d0686c1fd982884b"
+    },
+    "dist/history-image-prune-Dg0CDQ4a.js": {
+      "original": "a4261a044f88060be7d9412186c8b7df02710d1138a9eb836056ee63123b820f",
+      "patched": "c50e82ef73ad4e9c6e3d3b8f4527f5965da40905d2200f50ab41fe5d48acdd58"
+    },
+    "dist/host-compat-xESS3bi6.js": {
+      "original": "393bb69a0f0ea534479ac6888ce0fc4fc1996fcfe5f35ae180a9ed63836ae36a",
+      "patched": "49d1be4da3598d98c7de7c4b431c982620794efb118dbd60e4e0ea465abd9fe7"
+    },
+    "dist/registry-BdPa2vko.js": {
+      "original": "e0d223429562e6b2b4aa715c1a45989470a59c5a4e6362163f816245419e99b8",
+      "patched": "4580c644b9fcd3be0d8599961dcbe44b0a7d86f4861900dd170de2f8445fd496"
+    },
+    "dist/runtime-plugins-CWkOjN1D.js": {
+      "original": "e7353bc15138284b23a343949c78cbcfc17bcdb6a469951f176ed50ebeedcbff",
+      "patched": "f8a3df5d20ea22e19fcd07622a3dd3e2f40ec68b238f387b310676fd65936a07"
+    },
+    "dist/sessions-spawn-tool-1FQMTkIo.js": {
+      "original": "a21770222831b6574680621577da6bb0727903117210f20968afdb59a83975b8",
+      "patched": "1f5d8b6f34ae2f736e328343e0b783463fddf18940912674dd3f1011a997cbc9"
+    },
+    "dist/system-prompt-params-B645JcX8.js": {
+      "original": "df80c676f3d6fd201212bd4c95db25898c6a00dd61f4b598f7e8c5db04d94750",
+      "patched": "fef1fd89fb3733c40ecfe2a1017beae9df04cd6732ce6eed515b2eddcd948829"
+    }
+  }
+}

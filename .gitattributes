@@ -16,3 +16,4 @@
 *.7z -text
 *.wasm -text
 *.bin -text
+packages/openclaw/patches/*.patch whitespace=-space-before-tab

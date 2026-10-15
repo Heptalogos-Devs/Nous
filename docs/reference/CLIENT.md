@@ -10,6 +10,8 @@ configuration override 的 `value` 使用 generated `Value`，调用者用 `from
 
 Persist the operation ID and exact request before mutations. 同 ID、同规范化输入不会重复修改；创建不可变内容的操作重放原修订，mutable state 与 evidence 增补返回当前对象视图。输入改变则冲突。 Read the current object epoch/head before a new revision or lifecycle change, then freeze that expected value for retries. A model proposal is not an Authority mutation until its owner commits it.
 
+`subjects.createSubject` 可省略 `cognitiveSeed`；未提供时不生成默认 Seed 或个人经历。显式采用源文档使用原有 adoption 操作。
+
 ## Required vocabulary
 
 | Field                                     | Accepted values and meaning                                                                                                                                              |
@@ -59,6 +61,8 @@ ExternalObject 的目录名称与别名也通过 `identity.bindIdentity` 登记�
 Context projection 由 Runtime 读取真实 Session foreground，拒绝关闭的 Session，并提供 WorkContext 的 purpose、问题、任务正文及非空的 constraints、恢复条件和预算摘要；这些任务描述不自动修改执行策略或触发恢复。Memory 提供四类 cognition 的正文与 basis，以及 active canonical Tag 的名称、描述、kind；consumer 的 `memory` policy 同时约束这些 Tag。Entity 使用已绑定的目录名称与别名，未绑定时仅提供引用。材料由 Material 解释；仅引用的投影不调用 Steward。family policy 与预算先限制选中来源，Core steward 再表达。`sourceRefs` 表达实际解析后的来源，`sourceRevision` 表达真实内容修订标记，不用对象 ID 冒充修订。
 
 `cognition.buildProjection/buildManagedContext` require a `consumerId` with an operator-configured policy. A valid Subject or Session does not grant access to an unknown consumer. `config` can list/get/describe/set current policy/configuration within its advertised scope; model and resource profile changes require Core restart. Managed-context cursor reuse must preserve consumer identity, policy, source revisions and lifecycle.
+
+`cognition.buildManagedContext` 还要求实际 `usage`；用途、执行者及受众参与 track/scope。框架无关 `@nous-wave/client/managed` 提供 prepare/apply/report/close，应用成功才推进 cursor，RESET 替换 slice。完整自动运行合同见 [Managed OpenClaw](../specs/active/cognitive-runtime/openclaw.md)，安装见 [独立集成包](../../packages/openclaw/README.md)。
 
 ## Maintenance and model execution
 
