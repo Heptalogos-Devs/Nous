@@ -3,7 +3,16 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFile, cp, mkdtemp, rm, symlink } from "node:fs/promises";
+import {
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -26,7 +35,30 @@ test("controlled native custody survives SQLite and gates real delivery producer
   try {
     await cp(join(source, "dist"), join(native, "dist"), { recursive: true });
     await copyFile(join(source, "package.json"), join(native, "package.json"));
-    await symlink(dirname(source), join(native, "node_modules"), "junction");
+    // Link each dependency to its physical package root. A junction to pnpm's
+    // node_modules leaves scoped packages behind another relative junction;
+    // Windows ESM package lookup cannot reliably traverse that nested shape.
+    const dependencies = dirname(source);
+    const modules = join(native, "node_modules");
+    await mkdir(modules);
+    for (const entry of await readdir(dependencies)) {
+      if (entry.startsWith(".") || entry === "openclaw") continue;
+      if (entry.startsWith("@")) {
+        await mkdir(join(modules, entry));
+        for (const name of await readdir(join(dependencies, entry)))
+          await symlink(
+            await realpath(join(dependencies, entry, name)),
+            join(modules, entry, name),
+            "junction",
+          );
+      } else {
+        await symlink(
+          await realpath(join(dependencies, entry)),
+          join(modules, entry),
+          "junction",
+        );
+      }
+    }
     const env = {
       ...process.env,
       // Reproduce Windows/user Git newline preferences on every platform;
