@@ -67,7 +67,10 @@ function fixture() {
       requests.push(structuredClone(input as ManagedContextRequest));
       return { message: response };
     }
-    reports.push(input as ReportUseRequest);
+    if (method.name === "ReportUse") {
+      reports.push(input as ReportUseRequest);
+      return { message: create(method.output, { modelInputChecked: true }) };
+    }
     return { message: create(method.output) };
   };
   const client = createNousClient({ unary } as unknown as Transport);
@@ -210,10 +213,13 @@ test("actual presented reports use the internal applied references and stable na
     occurredAt: new Date(1000),
     outcome: "completed" as const,
   };
-  await current.binding.report(result);
+  await expect(current.binding.report(result)).rejects.toThrow("admitted");
+  await current.binding.admit(result);
+  await current.binding.admit(result);
   await current.binding.report(result);
   expect(current.reports[0]?.events[0]?.reference?.value).toBe("revision-a");
   expect(current.reports[0]?.events[0]?.kind).toBe("presented");
+  expect(current.reports[0]?.modelInput).toBe(true);
   expect(current.reports[1]?.events[0]?.eventId).toBe(
     current.reports[0]?.events[0]?.eventId,
   );

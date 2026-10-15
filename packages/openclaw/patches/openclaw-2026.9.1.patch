@@ -1,8 +1,7 @@
 diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
-index 56406d3..d37f219 100644
 --- a/dist/agent-core-BxgCPa8O.js
 +++ b/dist/agent-core-BxgCPa8O.js
-@@ -424,20 +424,31 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
+@@ -424,20 +424,31 @@
  	if (config.transformContext) messages = await config.transformContext(messages, signal);
  	messages = normalizeCoreContextMessages(messages);
  	const llmMessages = await config.convertToLlm(messages);
@@ -37,7 +36,7 @@ index 56406d3..d37f219 100644
  	for await (const event of response) switch (event.type) {
  		case "start": {
  			const message = event.partial;
-@@ -474,6 +485,13 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
+@@ -474,6 +485,13 @@
  		case "error": return await finalizeAssistantMessage();
  	}
  	return await finalizeAssistantMessage();
@@ -51,7 +50,7 @@ index 56406d3..d37f219 100644
  	async function finalizeAssistantMessage() {
  		const finalMessage = withAssistantTurnTaint(ensureToolTurnIdentity(removeNonExecutableToolCalls(await response.result())), turnTainted);
  		if (addedPartial) context.messages[context.messages.length - 1] = finalMessage;
-@@ -488,6 +506,8 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
+@@ -488,6 +506,8 @@
  			type: "message_end",
  			message: finalMessage
  		});
@@ -60,7 +59,7 @@ index 56406d3..d37f219 100644
  		return finalMessage;
  	}
  }
-@@ -615,7 +635,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
+@@ -615,7 +635,7 @@
  			}
  			if (launched) await Promise.all(launched.started.map(async ({ index, entry, outcome }) => settle(index, entry, await outcome)));
  			for (const finalized of ordered) if (finalized) {
@@ -69,7 +68,7 @@ index 56406d3..d37f219 100644
  				finalizedCalls.push(finalized);
  			}
  		} finally {
-@@ -633,7 +653,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
+@@ -633,7 +653,7 @@
  		const toolCall = toolCalls[cursor];
  		if (!toolCall) continue;
  		const finalized = await completeUnstartedToolCall(batch, toolCall, { reason: skippedReason });
@@ -78,7 +77,7 @@ index 56406d3..d37f219 100644
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -1108,7 +1128,7 @@ async function completeToolLoopInterventionBatch(batch, params) {
+@@ -1108,7 +1128,7 @@
  			...hideFromChannelProgress ? { hideFromChannelProgress: true } : {}
  		}, validation?.kind === "prepared" ? validation.args : toolCall.arguments);
  		await emitToolExecutionEnd(finalized, batch.emit);
@@ -87,7 +86,7 @@ index 56406d3..d37f219 100644
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -1162,7 +1182,7 @@ async function emitToolExecutionEnd(finalized, emit) {
+@@ -1162,7 +1182,7 @@
  		...finalized.hideFromChannelProgress === true ? { hideFromChannelProgress: true } : {}
  	});
  }
@@ -96,7 +95,7 @@ index 56406d3..d37f219 100644
  	const message = copyInternalToolResultState(finalized.result, withToolResultContentSource({
  		role: "toolResult",
  		toolCallId: finalized.toolCall.id,
-@@ -1180,6 +1200,7 @@ async function emitToolResultMessage(finalized, emit) {
+@@ -1180,6 +1200,7 @@
  		type: "message_end",
  		message
  	});
@@ -104,7 +103,7 @@ index 56406d3..d37f219 100644
  	return message;
  }
  function readTurnTaintMetadata(message) {
-@@ -1531,6 +1552,7 @@ var Agent$1 = class {
+@@ -1531,6 +1552,7 @@
  			} : void 0,
  			convertToLlm: this.convertToLlm,
  			transformContext: this.transformContext,
@@ -113,10 +112,9 @@ index 56406d3..d37f219 100644
  			getSteeringMessages,
  			getFollowUpMessages: async () => this.followUpQueue.drain(),
 diff --git a/dist/agent-exec-DQrJo6Wo.js b/dist/agent-exec-DQrJo6Wo.js
-index e8ee3cd..8cf5105 100644
 --- a/dist/agent-exec-DQrJo6Wo.js
 +++ b/dist/agent-exec-DQrJo6Wo.js
-@@ -13,6 +13,8 @@ import path from "node:path";
+@@ -13,6 +13,8 @@
  import fs$1 from "node:fs/promises";
  import os from "node:os";
  import { randomUUID } from "node:crypto";
@@ -125,7 +123,7 @@ index e8ee3cd..8cf5105 100644
  //#region src/commands/agent-exec-input.ts
  const AGENT_EXEC_MESSAGE_MAX_BYTES = 4194304;
  const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
-@@ -452,6 +454,8 @@ async function agentExecCommand(positionalMessage, opts, runtime, deps = {}) {
+@@ -452,6 +454,8 @@
  	runCleanupStep(() => restoreRuntimeConfigSnapshot ? restoreRuntimeConfigSnapshot() : configIo?.clearRuntimeConfigSnapshot());
  	runCleanupStep(() => runtimePaths?.pinRuntimePaths());
  	if (temporaryStateDir) try {
@@ -135,28 +133,31 @@ index e8ee3cd..8cf5105 100644
  			recursive: true,
  			force: true
 diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.js
-index 63c12b4..0579ccf 100644
 --- a/dist/builtin-openclaw-zQV8Wwjr.js
 +++ b/dist/builtin-openclaw-zQV8Wwjr.js
-@@ -238,6 +238,7 @@ import { a as extractAssistantThinking, c as extractThinkingFromTaggedStream, d
+@@ -238,6 +238,8 @@
  import { n as claimHeartbeatOutcomeForRun, t as buildHeartbeatOutcomeContext } from "./heartbeat-outcome-store-BoT9c8Af.js";
  import { I as streamWithPayloadPatch } from "./provider-stream-shared-BmB0vX9b.js";
  import { i as resolveEmbeddedAgentStream, n as resolveEmbeddedAgentApiKey, r as resolveEmbeddedAgentBaseStreamFn, t as wrapStreamFnWithDiagnosticModelCallEvents } from "./attempt.model-diagnostic-events-B4dGIs0S.js";
 +import { D as estimateNousInputTokensNative, O as estimateNousRenderedTokensNative } from "./helpers-BTOsl-oB.js";
++import { i as persistNousSessionExtension } from "./host-hook-state-CqMIyt2W.js";
  import { a as appendModelIdentitySystemPrompt, c as buildProjectMemoryWriteInstruction, i as buildConfiguredAgentSystemPrompt, l as prepareProjectMemoryBootstrap, o as buildModelIdentityPromptLine, s as resolveAgentPromptSurfaceForSessionKey } from "./system-prompt-params-B645JcX8.js";
  import { o as resolveUserTimezone, r as formatDateStamp } from "./date-time-C7YbYLih.js";
  import { n as prepareWatchedSessionsPrompt } from "./watched-sessions-prompt-C9QfwkEy.js";
-@@ -14248,6 +14249,22 @@ async function runEmbeddedAttemptExecutionPhase(input) {
+@@ -14248,6 +14250,25 @@
  		state.terminal = mergeAgentRunAttemptTerminal(state.terminal, incoming);
  	};
  	const idleTimeoutTriggerRef = {};
 +	if (input.activeContextEngine?.info.managedModelInputRequired === true || attempt.config?.plugins?.slots?.contextEngine?.trim() === "nous-cognition") {
 +		const engine = input.activeContextEngine;
 +		if (engine?.info.id !== "nous-cognition" || typeof engine.prepareModelInput !== "function" || typeof engine.reportModelOutcome !== "function") throw new Error("Required Nous cognition engine is unavailable at the native model boundary");
++		const nativeHistoryGeneration = sessionManager.getBranch().findLast((entry) => entry.type === "reset")?.id ?? attempt.sessionId;
++		const nativeHistoryWasEmpty = activeSession.messages.length === 0;
 +		let capturedInput;
 +		activeSession.agent.managedCognition = {
 +			prepare: (model, context, signal, budget) => {
-+				capturedInput = { sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", model, context, signal: signal ?? input.runAbortController.signal,
++				capturedInput = { boundaryVersion: 2, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
++                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", model, context, signal: signal ?? input.runAbortController.signal,
 +					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: budget.reservedOutputTokens,
 +					audience: { visibility: attempt.sessionKey?.includes(":subagent:") ? "internal" : attempt.chatType === "direct" ? "direct" : attempt.chatType === "group" ? "group" : attempt.chatType === "channel" ? "public" : "internal", channel: attempt.messageChannel ?? attempt.messageProvider, senderId: attempt.senderId, destination: attempt.currentChannelId },
 +					measureContext: (value) => estimateNousInputTokensNative({ messages: value.messages, systemPrompt: value.systemPrompt, prompt: "" }) + estimateNousRenderedTokensNative({ systemPrompt: JSON.stringify(value.tools ?? []), prompt: "" }) };
@@ -170,10 +171,9 @@ index 63c12b4..0579ccf 100644
  		attempt,
  		session: activeSession,
 diff --git a/dist/context-engine-turn-attempt-BPzr5IBp.js b/dist/context-engine-turn-attempt-BPzr5IBp.js
-index 0c1c60c..0424796 100644
 --- a/dist/context-engine-turn-attempt-BPzr5IBp.js
 +++ b/dist/context-engine-turn-attempt-BPzr5IBp.js
-@@ -40,6 +40,7 @@ async function createContextEngineLogicalTurnLease(params) {
+@@ -40,6 +40,7 @@
  		(params.warn ?? console.warn)(`[context-engine] Context engine "${sanitizeForLog(resolution.configuredId)}" degraded to "${sanitizeForLog(resolution.fallback.registeredId)}" for this logical turn: ${sanitizeForLog(reason)}. The "${sanitizeForLog(resolution.fallback.registeredId)}" engine will handle only this turn; configuration is unchanged, and "${sanitizeForLog(resolution.configuredId)}" will be retried next turn.`);
  	};
  	const degradeBeforeStart = (reason) => {
@@ -181,7 +181,7 @@ index 0c1c60c..0424796 100644
  		if (state === "disposed") throw new Error("context-engine logical turn selection is already pinned");
  		if (isBaselineEngineSelection) {
  			if (state === "unselected") state = "selected";
-@@ -60,8 +61,9 @@ async function createContextEngineLogicalTurnLease(params) {
+@@ -60,8 +61,9 @@
  		});
  		if (!support.ok) return `host "${selection.host.id}" is missing ${support.missingCapabilities.join(", ")}`;
  		if (isBaselineEngineSelection) return;
@@ -194,10 +194,9 @@ index 0c1c60c..0424796 100644
  	if (resolution.configuredFailure) degradeBeforeStart(resolution.configuredFailure);
  	return {
 diff --git a/dist/history-image-prune-Dg0CDQ4a.js b/dist/history-image-prune-Dg0CDQ4a.js
-index dfbd9c1..4aac267 100644
 --- a/dist/history-image-prune-Dg0CDQ4a.js
 +++ b/dist/history-image-prune-Dg0CDQ4a.js
-@@ -1777,6 +1777,7 @@ async function prepareEmbeddedAttemptHistory(input) {
+@@ -1777,6 +1777,7 @@
  		}
  	} catch (error) {
  		log.warn(`context engine assemble failed, using pipeline messages: ${String(error)}`);
@@ -206,10 +205,9 @@ index dfbd9c1..4aac267 100644
  	return {
  		contextEnginePromptAuthority,
 diff --git a/dist/host-compat-xESS3bi6.js b/dist/host-compat-xESS3bi6.js
-index 0a3e6ab..242abc7 100644
 --- a/dist/host-compat-xESS3bi6.js
 +++ b/dist/host-compat-xESS3bi6.js
-@@ -12,6 +12,7 @@ const OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST = {
+@@ -12,6 +12,7 @@
  	id: "openclaw-embedded",
  	label: "OpenClaw embedded runner",
  	capabilities: [
@@ -217,7 +215,7 @@ index 0a3e6ab..242abc7 100644
  		"bootstrap",
  		"assemble-before-prompt",
  		"after-turn",
-@@ -43,7 +44,12 @@ function buildGenericCliContextEngineHostSupport(params) {
+@@ -43,7 +44,12 @@
  }
  /** Evaluate whether a context-engine host can safely run the requested operation. */
  function evaluateContextEngineHostSupport(params) {
@@ -232,10 +230,9 @@ index 0a3e6ab..242abc7 100644
  		ok: true,
  		requirements,
 diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
-index 115e3a6..6d3c930 100644
 --- a/dist/registry-BdPa2vko.js
 +++ b/dist/registry-BdPa2vko.js
-@@ -150,7 +150,7 @@ function projectContextEngineHostParams(engine, methodName, params) {
+@@ -150,7 +150,7 @@
  	return Object.fromEntries(Object.entries(params).filter(([key]) => accepted.includes(key) || !CONTEXT_ENGINE_HOST_PARAMS.has(key) || methodName === "compact" && key === "abortSignal"));
  }
  function wrapResolvedContextEngine(engine, metadata) {
@@ -244,7 +241,7 @@ index 115e3a6..6d3c930 100644
  		defaultEngineId: metadata.defaultEngineId,
  		factoryCtx: metadata.factoryCtx
  	} : void 0;
-@@ -489,15 +489,19 @@ async function resolveContextEngine(config, options) {
+@@ -489,15 +489,19 @@
  	const slotValue = config?.plugins?.slots?.contextEngine;
  	const engineId = typeof slotValue === "string" && slotValue.trim() ? slotValue.trim() : defaultEngineId;
  	const isDefaultEngine = engineId === defaultEngineId;
@@ -266,7 +263,7 @@ index 115e3a6..6d3c930 100644
  		recordContextEngineQuarantine({
  			engineId,
  			operation: "resolve",
-@@ -507,6 +511,7 @@ async function resolveContextEngine(config, options) {
+@@ -507,6 +511,7 @@
  		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
  	}
  	if (!isDefaultEngine && entry.lifecycle === "readOnlyDiscovery") {
@@ -274,7 +271,7 @@ index 115e3a6..6d3c930 100644
  		console.warn(`[context-engine] Context engine "${engineId}" owner=${entry.owner} is registered for read-only discovery only; falling back to default engine "${defaultEngineId}" without quarantine until runtime activation registers it.`);
  		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
  	}
-@@ -518,7 +523,7 @@ async function resolveContextEngine(config, options) {
+@@ -518,7 +523,7 @@
  		const contractError = describeResolvedContextEngineContractError(engineId, engine);
  		if (contractError) throw new Error(contractError);
  	} catch (error) {
@@ -284,10 +281,9 @@ index 115e3a6..6d3c930 100644
  			engineId,
  			owner: entry.owner,
 diff --git a/dist/runtime-plugins-CWkOjN1D.js b/dist/runtime-plugins-CWkOjN1D.js
-index 842fe5a..b13953c 100644
 --- a/dist/runtime-plugins-CWkOjN1D.js
 +++ b/dist/runtime-plugins-CWkOjN1D.js
-@@ -5,7 +5,7 @@ import { a as loadPluginMetadataSnapshot } from "./plugin-metadata-snapshot-BuNx
+@@ -5,7 +5,7 @@
  import { d as getActivePluginRegistry, m as getActivePluginRegistryWorkspaceDir } from "./runtime-MupoouIC.js";
  import { a as getPluginRuntimeGatewayRequestScope, d as withPluginRuntimeRegistryScope } from "./gateway-request-scope-CmMd3nUp.js";
  import { a as registryContainsRuntimePluginIds, i as listRuntimePluginIdsFromRegistry, r as listLoadedRuntimePluginIds } from "./active-runtime-registry-D12UHfQh.js";
@@ -296,7 +292,7 @@ index 842fe5a..b13953c 100644
  import { r as adoptRuntimeContextEngineRegistrations } from "./registry-BdPa2vko.js";
  import { a as resolveAgentRuntimePluginSelections, i as resolveAgentRuntimePluginLoadPlan } from "./runtime-plugin-load-plan-Bm46qisR.js";
  import { t as adoptRuntimeMemoryRegistrations } from "./memory-state-D4Yq0L6U.js";
-@@ -81,10 +81,11 @@ function resolveAgentRuntimePluginRegistryLoad(params) {
+@@ -81,10 +81,11 @@
  /** Loads the registry handle owned by an agent prepared-runtime generation. */
  function loadAgentRuntimePluginRegistryHandle(params) {
  	const loadOptions = resolveAgentRuntimePluginRegistryLoad(params);
@@ -312,10 +308,35 @@ index 842fe5a..b13953c 100644
  	const activeRegistry = getActivePluginRegistry();
  	if (!activeRegistry) return pluginRegistry;
 diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQMTkIo.js
-index 93a9926..b537079 100644
 --- a/dist/sessions-spawn-tool-1FQMTkIo.js
 +++ b/dist/sessions-spawn-tool-1FQMTkIo.js
-@@ -3616,7 +3616,8 @@ function createSessionsSpawnTool(opts) {
+@@ -1,3 +1,4 @@
++import { i as persistNousSessionExtension } from "./host-hook-state-CqMIyt2W.js";
+ import { h as finiteSecondsToTimerSafeMilliseconds } from "./number-coercion-CLj0HTDM.js";
+ import { c as isRecord } from "./record-coerce-DItp3I4t.js";
+ import { l as normalizeOptionalString, u as normalizeOptionalStringifiedId } from "./string-coerce-CIXf7egm.js";
+@@ -1991,8 +1992,9 @@
+ 		return {
+ 			status: "ok",
+ 			preparation: await (await deps.resolveContextEngine(params.cfg)).prepareSubagentSpawn?.({
+-				parentSessionKey: params.requesterInternalKey,
+-				childSessionKey: params.childSessionKey,
++				persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: params.cfg, sessionKey: params.childSessionKey, value }); if (!written.ok) throw new Error(`Required Nous handoff binding was not persisted: ${written.error ?? "unknown child session"}`); },
++                parentSessionKey: params.requesterInternalKey,
++                childSessionKey: params.childSessionKey,
+ 				contextMode: params.context.mode,
+ 				parentSessionId: params.context.parentEntry?.sessionId,
+ 				parentSessionFile: params.requesterInternalKey,
+@@ -2880,7 +2882,7 @@
+ 		const pipelineResult = await runSpawnPipeline({
+ 			adapter: {
+ 				async initialize() {
+-					const result = params.lightContext && preparedSpawnContext.mode === "isolated" ? {
++					const result = params.lightContext && preparedSpawnContext.mode === "isolated" && cfg.plugins?.slots?.contextEngine?.trim() !== "nous-cognition" ? {
+ 						status: "ok",
+ 						preparation: void 0
+ 					} : await prepareContextEngineSubagentSpawn({
+@@ -3616,7 +3618,8 @@
  			const cleanup = params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
  			const expectsCompletionMessage = collect ? false : params.expectsCompletionMessage !== false;
  			const sandbox = params.sandbox === "require" ? "require" : "inherit";
@@ -326,10 +347,9 @@ index 93a9926..b537079 100644
  			const lightContext = params.lightContext === true;
  			const roleContext = requestedAgentId ? { role: requestedAgentId } : {};
 diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B645JcX8.js
-index d5764bd..e46e5b0 100644
 --- a/dist/system-prompt-params-B645JcX8.js
 +++ b/dist/system-prompt-params-B645JcX8.js
-@@ -530,10 +530,11 @@ function appendModelIdentitySystemPrompt(params) {
+@@ -530,10 +530,11 @@
  	return base ? `${base}\n\n${line}` : line;
  }
  function buildAgentSystemPrompt(params) {
@@ -342,7 +362,7 @@ index d5764bd..e46e5b0 100644
  	const acpEnabled = params.acpEnabled === true;
  	const promptSurface = params.promptSurface ?? "openclaw_main";
  	const sandboxedRuntime = params.sandboxInfo?.enabled === true;
-@@ -806,7 +807,7 @@ function buildAgentSystemPrompt(params) {
+@@ -806,7 +807,7 @@
  		stableContextFiles: contextFiles
  	}), () => {
  		const lines = [
@@ -351,7 +371,7 @@ index d5764bd..e46e5b0 100644
  			"",
  			...includeToolGuidance ? [
  				"## Tooling",
-@@ -1062,6 +1063,7 @@ function resolveAgentSystemPromptConfig(params) {
+@@ -1062,6 +1063,7 @@
  /** Builds the agent system prompt after applying config-derived prompt fields. */
  function buildConfiguredAgentSystemPrompt(params) {
  	const { config, agentId, ...renderParams } = params;
@@ -359,7 +379,7 @@ index d5764bd..e46e5b0 100644
  	const configParams = config ? resolveAgentSystemPromptConfig({
  		config,
  		agentId,
-@@ -1070,7 +1072,9 @@ function buildConfiguredAgentSystemPrompt(params) {
+@@ -1070,7 +1072,9 @@
  	}) : {};
  	return buildAgentSystemPrompt({
  		...renderParams,
@@ -370,3 +390,18 @@ index d5764bd..e46e5b0 100644
  	});
  }
  //#endregion
+diff --git a/dist/host-hook-cleanup-BQvPj1LG.js b/dist/host-hook-cleanup-BQvPj1LG.js
+--- a/dist/host-hook-cleanup-BQvPj1LG.js
++++ b/dist/host-hook-cleanup-BQvPj1LG.js
+@@ -258,7 +258,10 @@
+ 	let cleanupCount = 0;
+ 	for (const pluginId of previousPluginIds) {
+ 		if (!shouldCleanup()) break;
+-		const restarted = nextPluginIds.has(pluginId);
++		// Removing a runtime registry during host teardown is not a configuration
++        // disable. Preserve durable Session extensions; a real replacement that
++        // excludes the plugin still performs disable cleanup.
++        const restarted = !params.nextRegistry || nextPluginIds.has(pluginId);
+ 		const result = await runPluginHostCleanup({
+ 			cfg: params.cfg,
+ 			registry: previousRegistry,

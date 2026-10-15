@@ -22,7 +22,8 @@ message ListSubjectsResponse { repeated Subject items = 1; string next_page_toke
 message CognitiveSeedVersion { CognitiveSeed seed = 1; string seed_version_id = 2 [(reference_kind) = "cognitive_seed_version"]; string subject_id = 3 [(reference_kind) = "subject"]; string artifact_id = 4 [(reference_kind) = "artifact"]; string format = 5; string content_hash = 6; google.protobuf.Timestamp created_at = 7; string adoption_id = 8; string adoption_kind = 9; string operation_id = 10; }
 message AdoptCognitiveSeedRequest { string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; CognitiveSeed seed = 3; string kind = 4; }
 message Resident { CognitiveRef reference = 1; string entry_reason = 2; string state = 3; google.protobuf.Timestamp entered_at = 4; google.protobuf.Timestamp last_meaningful_use_at = 5; google.protobuf.Timestamp hold_until = 6; }
-message Session { string session_id = 1 [(reference_kind) = "session"]; string subject_id = 2 [(reference_kind) = "subject"]; int64 runtime_revision = 3; google.protobuf.Timestamp closed_at = 4; repeated Resident resident = 5; optional string active_work_context_id = 6 [(reference_kind) = "work_context"]; google.protobuf.Timestamp opened_at = 7; google.protobuf.Timestamp last_activity_at = 8; google.protobuf.Timestamp last_meaningful_use_at = 9; }
+message OpenSessionRequest { string subject_id = 1 [(reference_kind) = "subject"]; optional string parent_session_id = 2 [(reference_kind) = "session"]; }
+message Session { string session_id = 1 [(reference_kind) = "session"]; string subject_id = 2 [(reference_kind) = "subject"]; int64 runtime_revision = 3; google.protobuf.Timestamp closed_at = 4; repeated Resident resident = 5; optional string active_work_context_id = 6 [(reference_kind) = "work_context"]; google.protobuf.Timestamp opened_at = 7; google.protobuf.Timestamp last_activity_at = 8; google.protobuf.Timestamp last_meaningful_use_at = 9; optional string parent_session_id = 10 [(reference_kind) = "session"]; bool history_invalidated = 11; repeated string history_domains = 12; }
 message ListSessionsResponse { repeated Session items = 1; string next_page_token = 2; }
 
 message EntityMention { string surface = 1; optional string entity_ref = 2 [(reference_kind) = "entity"]; optional string semantic_role = 3; }
@@ -119,9 +120,9 @@ message QueryDiagnostics { map<string, uint64> candidate_counts = 1; map<string,
 message HitScore { double baseline = 1; double preference = 2; optional double rerank = 3; double final = 4; uint32 baseline_rank = 5; uint32 final_rank = 6; uint32 best_lane_rank = 7; repeated string variants = 8; }
 message QueryResponse { string query_id = 1; string status = 2; repeated Hit hits = 3; repeated ResourceAction resource_actions = 4; repeated Degradation degradation = 5; optional string bound_query = 6; QueryDiagnostics diagnostics = 7; repeated ExternalResourceRecord resource_records = 10; }
 
-message ReportUseRequest { string subject_id = 1 [(reference_kind) = "subject"]; optional string session_id = 2 [(reference_kind) = "session"]; string consumer_ref = 3; repeated UseEvent events = 4; }
+message ReportUseRequest { string subject_id = 1 [(reference_kind) = "subject"]; optional string session_id = 2 [(reference_kind) = "session"]; string consumer_ref = 3; repeated UseEvent events = 4; bool model_input = 5; }
 message UseEvent { string event_id = 1; CognitiveRef reference = 2; string kind = 3; google.protobuf.Timestamp occurred_at = 4; google.protobuf.Struct context = 5; optional string query_id = 6; }
-message ReportUseResponse { uint32 accepted_count = 1; uint32 duplicate_count = 2; optional int64 session_runtime_revision = 3; }
+message ReportUseResponse { uint32 accepted_count = 1; uint32 duplicate_count = 2; optional int64 session_runtime_revision = 3; bool model_input_checked = 4; }
 
 message EvidenceRef {
   string occurrence_id = 1 [(reference_kind) = "occurrence"];

@@ -474,6 +474,13 @@ pub struct Resident {
     #[prost(message, optional, tag="6")]
     pub hold_until: ::core::option::Option<::prost_types::Timestamp>,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OpenSessionRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="2")]
+    pub parent_session_id: ::core::option::Option<::prost::alloc::string::String>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Session {
     #[prost(string, tag="1")]
@@ -494,6 +501,12 @@ pub struct Session {
     pub last_activity_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="9")]
     pub last_meaningful_use_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(string, optional, tag="10")]
+    pub parent_session_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag="11")]
+    pub history_invalidated: bool,
+    #[prost(string, repeated, tag="12")]
+    pub history_domains: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListSessionsResponse {
@@ -966,6 +979,8 @@ pub struct ReportUseRequest {
     pub consumer_ref: ::prost::alloc::string::String,
     #[prost(message, repeated, tag="4")]
     pub events: ::prost::alloc::vec::Vec<UseEvent>,
+    #[prost(bool, tag="5")]
+    pub model_input: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UseEvent {
@@ -990,6 +1005,8 @@ pub struct ReportUseResponse {
     pub duplicate_count: u32,
     #[prost(int64, optional, tag="3")]
     pub session_runtime_revision: ::core::option::Option<i64>,
+    #[prost(bool, tag="4")]
+    pub model_input_checked: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EvidenceRef {

@@ -265,7 +265,7 @@ async fn episode_media_synopsis_tracks_ready_derivation_without_revising_authori
     let subject = create_subject(&rt).await;
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     let region = episode_media_source(&rt, subject, session.session_id).await;

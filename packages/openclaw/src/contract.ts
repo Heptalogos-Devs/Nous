@@ -10,8 +10,13 @@ type ContextEngine = Awaited<
 >;
 /** The required model-boundary extension carried by the controlled OpenClaw distribution. */
 export interface ManagedModelInput {
+  boundaryVersion: 2;
+  historyIsFresh: boolean;
+  historyGeneration: string;
+  persistSessionBinding(value: Record<string, string>): Promise<void>;
   sessionId: string;
   sessionKey?: string;
+  parentSessionKey?: string;
   agentId: string;
   runId: string;
   prompt: string;
@@ -38,6 +43,13 @@ export interface ManagedContextEngine extends ContextEngine {
     managedModelInputRequired: true;
     transcriptPersistence: "host";
   };
+  prepareSubagentSpawn(
+    params: Parameters<
+      NonNullable<ContextEngine["prepareSubagentSpawn"]>
+    >[0] & {
+      persistSessionBinding(value: Record<string, string>): Promise<void>;
+    },
+  ): Promise<{ rollback(): Promise<void> }>;
   prepareModelInput(input: ManagedModelInput): Promise<ManagedModelApplication>;
   recordNativeEvent(
     input: ManagedModelInput,

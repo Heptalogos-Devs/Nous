@@ -69,7 +69,7 @@ pub(crate) async fn journal_source_episode(
 ) -> EpisodeView {
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     for source in ["object:source-a", "object:source-b"] {

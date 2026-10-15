@@ -267,6 +267,7 @@ impl KernelService {
         self.0
             .cognition
             .use_feedback(nous_runtime::UseFeedback {
+                model_input: input.model_input,
                 subject: SubjectId(id(&input.subject_id)?),
                 session_id: input
                     .session_id
@@ -300,6 +301,7 @@ impl KernelService {
                         accepted_count,
                         duplicate_count,
                         session_runtime_revision,
+                        model_input_checked: input.model_input,
                     }
                 },
             )

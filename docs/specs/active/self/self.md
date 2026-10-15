@@ -53,6 +53,10 @@ Self 使用现有 CognitiveContributor、共享 lexical/dense Serving、固定 f
 
 返回 `domain=self`、`status=applied/kept/partial/failed` 与逐项结果。目标版本冲突明确失败，不能覆盖新状态；模型解释失败不撤销已经创建的 Subject 或保存的 Seed。来源保存与领域解释是两个正式、可分别核对结果的操作。调用方应先保存来源，再显式解释所需领域。
 
+## 原生历史清除边界
+
+正式 managed binding 在模型发送前通过 Runtime 检查来源和 Session 历史。显式 purge/suppression/withdrawal 使已经接触该来源的历史待 reset，沿父 Session 关系传递；删除认知与清理 UseEvent 在同一 owner 事务中保留该屏障。未接触来源的独立 Session 不被一并清空。标记跨 Core/Gateway 重启保留，旧实际模型输出和压缩摘要不能因新 slice 移除来源就继续发送。详细原生合同见 [Managed OpenClaw](../cognitive-runtime/openclaw.md)。
+
 ## 当前施工范围
 
 本功能分支已接通 owner、公开 RPC/Client、自动选择、共享查询和模型形成/反思。CLI/MCP 已提供正式 owner 操作、来源解释与只读 soul；正式 OpenClaw 的 Self 使用场景继续在同一功能内实现；完成状态由实际代码与运行证据确认。

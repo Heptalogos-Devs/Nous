@@ -44,7 +44,7 @@ async fn resource_continuation_fences_identity_access_and_descriptor_drift() {
         .unwrap();
     let session = runtime
         .cognition
-        .open_session(owner, serde_json::json!({}))
+        .open_session(owner, None, serde_json::json!({}))
         .await
         .unwrap();
     let projection = nous_kernel::transport::KernelService(runtime.clone())

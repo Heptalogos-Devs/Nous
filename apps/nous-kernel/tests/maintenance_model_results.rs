@@ -26,7 +26,7 @@ async fn drafts_commit_replay_and_ack_reclaim_runtime_rows() {
     let subject = create_subject(&rt).await;
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     let mut occurrences = Vec::new();

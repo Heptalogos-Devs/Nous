@@ -195,7 +195,14 @@ export async function createCore(settings: CoreOptions) {
           forward(ConfigurationService, kernel.configuration),
         ),
       );
-      router.service(RuntimeService, forward(RuntimeService, kernel.runtime));
+      router.service(RuntimeService, {
+        ...forward(RuntimeService, kernel.runtime),
+        reportUse: (request, context) =>
+          composition.reportUse(
+            request,
+            executionOptions(kernel.execution.opportunity, options(context)),
+          ),
+      });
       router.service(
         ResourceRegistryService,
         forward(ResourceRegistryService, kernel.resourceRegistry),

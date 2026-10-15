@@ -54,6 +54,7 @@ fn feedback(
     now: chrono::DateTime<chrono::Utc>,
 ) -> UseFeedback {
     UseFeedback {
+        model_input: false,
         subject,
         session_id: None,
         consumer_ref: "consumer:host:test".into(),

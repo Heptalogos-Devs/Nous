@@ -89,6 +89,7 @@ pub(crate) async fn check_model_catalog_activity(
     );
     rt.cognition
         .use_feedback(nous_runtime::UseFeedback {
+            model_input: false,
             subject,
             session_id: None,
             consumer_ref: "consumer:host:concept".into(),

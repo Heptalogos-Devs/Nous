@@ -106,6 +106,16 @@ impl MemoryService {
             .execute(&mut **mutation.tx())
             .await
             .map_err(db)?;
+        if matches!(
+            action,
+            LifecycleAction::Suppress | LifecycleAction::Withdraw
+        ) {
+            let (revision_kind, revisions) =
+                cognition_revisions_in(mutation.tx(), subject, kind, id).await?;
+            self.cognition
+                .invalidate_session_history_in(mutation.tx(), subject, revision_kind, &revisions)
+                .await?;
+        }
         if matches!(kind, "memory" | "schema") {
             let (revision_kind, revisions) =
                 cognition_revisions_in(mutation.tx(), subject, kind, id).await?;

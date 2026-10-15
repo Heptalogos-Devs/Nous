@@ -72,6 +72,9 @@ pub struct ResidentMutationOutcome {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionView {
+    pub parent_session_id: Option<SessionId>,
+    pub history_invalidated: bool,
+    pub history_domains: Vec<String>,
     pub session_id: SessionId,
     pub subject_id: SubjectId,
     pub opened_at: DateTime<Utc>,
@@ -95,6 +98,7 @@ pub struct ResidentView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UseFeedback {
+    pub model_input: bool,
     #[serde(default)]
     pub subject: SubjectId,
     pub session_id: Option<SessionId>,

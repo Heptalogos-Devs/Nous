@@ -15,6 +15,8 @@ impl CognitiveRuntimeService {
         kind: &str,
         revisions: &[String],
     ) -> Result<()> {
+        self.invalidate_session_history_in(tx, subject, kind, revisions)
+            .await?;
         sqlx::query("INSERT INTO purged_use_receipts(subject_id,consumer_ref,event_id,request_digest,purged_at) SELECT subject_id,consumer_ref,event_id,request_digest,$4 FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind=$2 AND ref_value=ANY($3::text[]) ON CONFLICT DO NOTHING")
             .bind(subject.0).bind(kind).bind(revisions).bind(self.now(subject)).execute(&mut **tx).await.map_err(db)?;
         sqlx::query("DELETE FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind=$2 AND ref_value=ANY($3::text[])")
@@ -42,15 +44,30 @@ impl CognitiveRuntimeService {
         clippy::too_many_lines,
         reason = "batch UseEvent transaction owns atomic idempotency and runtime side effects"
     )]
-    pub async fn use_feedback(&self, input: UseFeedback) -> Result<(u32, u32, Option<i64>)> {
+    pub async fn use_feedback(&self, mut input: UseFeedback) -> Result<(u32, u32, Option<i64>)> {
         self.require_subject(input.subject).await?;
         validate_consumer_ref(&input.consumer_ref)?;
-        if input.events.is_empty() || input.events.len() > 256 {
+        if (!input.model_input && input.events.is_empty())
+            || input.events.len() > 256
+            || (input.model_input && input.session_id.is_none())
+        {
             return Err(Error::Invalid(
-                "ReportUse events must contain 1..256 items".into(),
+                "ReportUse requires 1..256 events, or a Session-bound model input with 0..256 events".into(),
             ));
         }
-        for event in &input.events {
+        for event in &mut input.events {
+            if input.model_input {
+                let context = event
+                    .context
+                    .as_object_mut()
+                    .ok_or_else(|| Error::Invalid("Model input context must be metadata".into()))?;
+                context.insert("model_input".into(), serde_json::json!(true));
+            }
+            if input.model_input && event.use_kind != UseKind::Presented {
+                return Err(Error::Invalid(
+                    "Model input admission accepts presented events only".into(),
+                ));
+            }
             if event.occurred_at < DateTime::<Utc>::UNIX_EPOCH
                 || event.occurred_at > self.now(input.subject) + chrono::Duration::minutes(5)
             {
@@ -78,14 +95,6 @@ impl CognitiveRuntimeService {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let current_session_revision = if let Some(session) = input.session_id {
-            Some(
-                self.lock_open_session_in(&mut tx, input.subject, session)
-                    .await?,
-            )
-        } else {
-            None
-        };
         #[derive(Clone)]
         struct Prepared {
             event: UseFeedbackEvent,
@@ -113,11 +122,11 @@ impl CognitiveRuntimeService {
         let mut seen = HashMap::new();
         for event in input.events {
             let (kind, value) = reference_parts(&event.reference);
-            let digest = canonical_request_digest(
-                "use_event",
-                input.subject,
-                &serde_json::json!({"consumer_ref":input.consumer_ref,"event_id":event.event_id,"session_id":input.session_id,"reference":event.reference,"kind":event.use_kind,"occurred_at":event.occurred_at,"context":event.context,"query_id":event.query_id}),
-            )?;
+            let mut semantic = serde_json::json!({"consumer_ref":input.consumer_ref,"event_id":event.event_id,"session_id":input.session_id,"reference":event.reference,"kind":event.use_kind,"occurred_at":event.occurred_at,"context":event.context,"query_id":event.query_id});
+            if input.model_input {
+                semantic["model_input"] = serde_json::json!(true);
+            }
+            let digest = canonical_request_digest("use_event", input.subject, &semantic)?;
             if let Some(existing) =
                 seen.insert((input.consumer_ref.clone(), event.event_id), digest.clone())
             {
@@ -149,22 +158,33 @@ impl CognitiveRuntimeService {
                 .with_context("event_id", event.event_id.0)
                 .into());
             }
-            if stored_digest.is_none() {
-                if validated_targets.insert(event.reference.clone()) {
-                    validate_use_target_in(&mut tx, input.subject, &event.reference).await?;
-                }
-                if let Some(query_id) = event.query_id
-                    && validated_queries.insert((query_id, event.reference.clone()))
+            if (stored_digest.is_none() || input.model_input)
+                && validated_targets.insert(event.reference.clone())
+            {
+                validate_use_target_in(&mut tx, input.subject, &event.reference).await?;
+                if input.model_input
+                    && !self
+                        .store
+                        .cognition_available_in(&mut tx, input.subject, &event.reference)
+                        .await?
                 {
-                    crate::query_feedback::validate_query_use_in(
-                        &mut tx,
-                        input.subject,
-                        query_id,
-                        &event.reference,
-                        self.now(input.subject),
-                    )
-                    .await?;
+                    return Err(Error::FailedPrecondition(
+                        "Model input source is no longer available".into(),
+                    ));
                 }
+            }
+            if stored_digest.is_none()
+                && let Some(query_id) = event.query_id
+                && validated_queries.insert((query_id, event.reference.clone()))
+            {
+                crate::query_feedback::validate_query_use_in(
+                    &mut tx,
+                    input.subject,
+                    query_id,
+                    &event.reference,
+                    self.now(input.subject),
+                )
+                .await?;
             }
             prepared.push(Prepared {
                 event,
@@ -173,6 +193,35 @@ impl CognitiveRuntimeService {
                 digest,
                 duplicate: stored_digest.is_some(),
             });
+        }
+        // Match cognition lifecycle lock order: exact sources, then Session.
+        let current_session_revision = if let Some(session) = input.session_id {
+            Some(
+                self.lock_open_session_in(&mut tx, input.subject, session)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        if let Some(session) = input.session_id {
+            if input.model_input {
+                self.require_safe_history_in(&mut tx, input.subject, session)
+                    .await?;
+            }
+            let domains = prepared
+                .iter()
+                .map(|item| match item.event.reference.domain() {
+                    CognitiveDomain::Memory => "memory",
+                    CognitiveDomain::SelfCognition => "self",
+                    _ => unreachable!("validated cognition revision"),
+                })
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            if input.model_input {
+                sqlx::query("UPDATE cognitive_sessions SET history_domains=ARRAY(SELECT DISTINCT value FROM unnest(history_domains || $2::text[]) value ORDER BY value) WHERE session_id=$1")
+                .bind(session.0).bind(domains).execute(&mut *tx).await.map_err(db)?;
+            }
         }
         let recorded_at = self.now(input.subject);
         let mut accepted = 0u32;

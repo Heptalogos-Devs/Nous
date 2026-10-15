@@ -50,6 +50,7 @@ export function createManagedBinding(options: {
   let preparing = false;
   let closed = false;
   const applications = new WeakMap<AppliedCognition, Projection>();
+  const admissions = new WeakMap<AppliedCognition, Set<string>>();
   const assertOpen = () => {
     if (closed) throw new Error("Managed cognition binding is closed");
   };
@@ -161,6 +162,59 @@ export function createManagedBinding(options: {
       pending = undefined;
       return { input, applied };
     },
+    async admit(
+      result: Pick<
+        ActualInvocationOutcome,
+        "invocationId" | "applied" | "occurredAt"
+      >,
+      request?: RequestOptions,
+    ): Promise<void> {
+      assertOpen();
+      const projection = applications.get(result.applied);
+      if (!projection || !result.invocationId.trim())
+        throw new Error(
+          "Model input admission requires an actual application from this binding",
+        );
+      const client = await options.client();
+      const references = [
+        ...new Map(
+          projection.segments
+            .flatMap((segment) => segment.sourceRefs)
+            .map((ref) => [`${ref.kind}:${ref.value}`, ref]),
+        ).values(),
+      ].filter((ref) => ref.kind.endsWith("_revision"));
+      const admitted = await client.runtime.reportUse(
+        {
+          subjectId: options.subjectId,
+          sessionId: options.sessionId,
+          consumerRef: options.consumerId,
+          modelInput: true,
+          events: await Promise.all(
+            references.map(async (reference) => ({
+              eventId: await eventIdentity(
+                `${result.invocationId}:presented:${reference.kind}:${reference.value}`,
+              ),
+              reference,
+              kind: "presented",
+              occurredAt: timestampFromDate(result.occurredAt),
+              context: {
+                invocation_id: result.invocationId,
+                projection_id: projection.projectionId,
+                stage: "model_input",
+              },
+            })),
+          ),
+        },
+        request,
+      );
+      if (!admitted.modelInputChecked)
+        throw new Error(
+          "Core did not enforce the required model input history check",
+        );
+      let accepted = admissions.get(result.applied);
+      if (!accepted) admissions.set(result.applied, (accepted = new Set()));
+      accepted.add(result.invocationId);
+    },
     async report(
       result: ActualInvocationOutcome,
       request?: RequestOptions,
@@ -172,37 +226,34 @@ export function createManagedBinding(options: {
         throw new Error(
           "Outcome requires an actual application from this binding",
         );
-      const references = [
-        ...new Map(
-          projection.segments
-            .flatMap((segment) => segment.sourceRefs)
-            .map((ref) => [`${ref.kind}:${ref.value}`, ref]),
-        ).values(),
-      ].filter((ref) => ref.kind.endsWith("_revision"));
-      if (references.length)
-        await client.runtime.reportUse(
-          {
-            subjectId: options.subjectId,
-            sessionId: options.sessionId,
-            consumerRef: options.consumerId,
-            events: await Promise.all(
-              references.map(async (reference) => ({
-                eventId: await eventIdentity(
-                  `${result.invocationId}:presented:${reference.kind}:${reference.value}`,
-                ),
-                reference,
-                kind: "presented",
-                occurredAt: timestampFromDate(result.occurredAt),
-                context: {
-                  invocation_id: result.invocationId,
-                  projection_id: projection.projectionId,
-                  outcome: result.outcome,
-                },
-              })),
-            ),
+      if (!admissions.get(result.applied)?.has(result.invocationId))
+        throw new Error("Outcome requires an admitted native model input");
+      await client.runtime.recordObservation(
+        {
+          subjectId: options.subjectId,
+          sessionId: options.sessionId,
+          requestId: await eventIdentity(`${result.invocationId}:outcome`),
+          sourceClass: "host_event",
+          material: {
+            case: "inlineText",
+            value: {
+              mediaType: "application/json",
+              text: JSON.stringify({
+                invocation_id: result.invocationId,
+                projection_id: projection.projectionId,
+                outcome: result.outcome,
+              }),
+            },
           },
-          request,
-        );
+          admit: false,
+          context: {
+            invocation_id: result.invocationId,
+            projection_id: projection.projectionId,
+            outcome: result.outcome,
+          },
+        },
+        request,
+      );
       for (const observation of result.observations ?? []) {
         if (
           observation.subjectId !== options.subjectId ||

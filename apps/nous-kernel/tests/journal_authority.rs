@@ -77,7 +77,7 @@ async fn journal_lineage_revalidation_and_receipt_are_exact() {
     let dependencies = create_journal_dependents(&rt, subject, &episode, &journal).await;
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     let service = nous_kernel::transport::KernelService(rt.clone());
@@ -285,10 +285,11 @@ async fn assert_longitudinal_use(
     assert_eq!(context.cognition_anchors, references);
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     let input = nous_runtime::UseFeedback {
+        model_input: false,
         subject,
         session_id: Some(session.session_id),
         consumer_ref: "consumer:test:longitudinal".into(),

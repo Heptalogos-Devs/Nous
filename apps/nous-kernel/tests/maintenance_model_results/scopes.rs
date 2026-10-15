@@ -18,7 +18,7 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
     let subject = create_subject(&rt).await;
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     let mut episodes = Vec::new();

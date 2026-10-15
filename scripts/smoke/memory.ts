@@ -24,7 +24,7 @@ import {
   ReportUseRequestSchema,
   RevisionBasisSchema,
   SubjectCapabilitiesSchema,
-  SubjectRequestSchema,
+  OpenSessionRequestSchema,
   TemporalExtentSchema,
   UseEventSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
@@ -115,10 +115,10 @@ async function main() {
       throw new Error("Subject identity mismatch");
 
     const sessionA = await client.runtime.openSession(
-      create(SubjectRequestSchema, { subjectId }),
+      create(OpenSessionRequestSchema, { subjectId }),
     );
     const sessionB = await client.runtime.openSession(
-      create(SubjectRequestSchema, { subjectId }),
+      create(OpenSessionRequestSchema, { subjectId }),
     );
     const observed = await client.runtime.recordObservation(
       create(ObservationInputSchema, {

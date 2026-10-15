@@ -174,12 +174,21 @@ impl KernelService {
         let view = self.0.cognition.session(subject, session).await?;
         Ok(session_proto(view))
     }
-    pub(super) async fn open_session(&self, input: p::SubjectRequest) -> Result<p::Session> {
+    pub(super) async fn open_session(&self, input: p::OpenSessionRequest) -> Result<p::Session> {
         let subject = SubjectId(id(&input.subject_id)?);
         let view = self
             .0
             .cognition
-            .open_session(subject, serde_json::json!({}))
+            .open_session(
+                subject,
+                input
+                    .parent_session_id
+                    .as_deref()
+                    .map(id)
+                    .transpose()?
+                    .map(SessionId),
+                serde_json::json!({}),
+            )
             .await?;
         Ok(session_proto(view))
     }
@@ -232,6 +241,9 @@ fn session_proto(view: nous_runtime::SessionView) -> p::Session {
         session_id: view.session_id.0.to_string(),
         subject_id: view.subject_id.0.to_string(),
         runtime_revision: view.runtime_revision,
+        parent_session_id: view.parent_session_id.map(|id| id.0.to_string()),
+        history_invalidated: view.history_invalidated,
+        history_domains: view.history_domains,
         closed_at: view.closed_at.map(timestamp),
         opened_at: Some(timestamp(view.opened_at)),
         last_activity_at: Some(timestamp(view.last_activity_at)),

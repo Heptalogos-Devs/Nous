@@ -46,12 +46,23 @@ if (!states.every(({ actual, hashes }) => actual === hashes.patched)) {
       "OpenClaw installation contains only part of the required patch",
     );
   const patch = join(plugin, `patches/openclaw-${manifest.version}.patch`);
-  const args = ["apply", "--no-index", "--unsafe-paths"];
+  const args = ["apply", "--no-index", "--unsafe-paths", "--whitespace=nowarn"];
+  // A package can live below an unrelated Git checkout. Stop repository
+  // discovery here so Git cannot silently skip package-relative patch paths.
+  const environment = {
+    ...process.env,
+    GIT_CEILING_DIRECTORIES: dirname(native),
+  };
   execFileSync("git", [...args, "--check", patch], {
     cwd: native,
+    env: environment,
     windowsHide: true,
   });
-  execFileSync("git", [...args, patch], { cwd: native, windowsHide: true });
+  execFileSync("git", [...args, patch], {
+    cwd: native,
+    env: environment,
+    windowsHide: true,
+  });
 }
 for (const [path, hashes] of Object.entries(manifest.files)) {
   if (digest(await readFile(join(native, path))) !== hashes.patched)

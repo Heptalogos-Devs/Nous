@@ -282,12 +282,13 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
         .unwrap();
     let session = runtime
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     runtime
         .cognition
         .use_feedback(UseFeedback {
+            model_input: false,
             subject,
             session_id: Some(session.session_id),
             consumer_ref: "consumer:test:exact".into(),

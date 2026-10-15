@@ -9,6 +9,7 @@ pub use planning::{ExperienceMetadata, UseSummary};
 pub use policy::execution::QUERY_SLOTS;
 mod clock;
 mod experience;
+mod history;
 mod maintenance;
 mod query;
 mod query_feedback;

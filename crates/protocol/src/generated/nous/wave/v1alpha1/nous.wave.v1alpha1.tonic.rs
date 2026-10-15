@@ -4643,7 +4643,7 @@ pub mod runtime_service_server {
         ///
         async fn open_session(
             &self,
-            request: tonic::Request<super::SubjectRequest>,
+            request: tonic::Request<super::OpenSessionRequest>,
         ) -> std::result::Result<tonic::Response<super::Session>, tonic::Status>;
         ///
         async fn get_session(
@@ -4823,7 +4823,7 @@ pub mod runtime_service_server {
                     struct OpenSessionSvc<T: RuntimeService>(pub Arc<T>);
                     impl<
                         T: RuntimeService,
-                    > tonic::server::UnaryService<super::SubjectRequest>
+                    > tonic::server::UnaryService<super::OpenSessionRequest>
                     for OpenSessionSvc<T> {
                         type Response = super::Session;
                         type Future = BoxFuture<
@@ -4832,7 +4832,7 @@ pub mod runtime_service_server {
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::SubjectRequest>,
+                            request: tonic::Request<super::OpenSessionRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {

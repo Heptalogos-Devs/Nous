@@ -25,7 +25,7 @@ async fn experience_capture_cursor_idle_and_reopen_are_stable() {
     let subject = create_subject(&rt).await;
     let first_session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     let input = observation(subject, Some(first_session.session_id));
@@ -52,7 +52,7 @@ async fn experience_capture_cursor_idle_and_reopen_are_stable() {
         .unwrap();
     let second_session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     rt.material
@@ -221,7 +221,7 @@ async fn ended_work_context_wakes_and_closes_experience_before_idle_deadline() {
         .unwrap();
     let session = rt
         .cognition
-        .open_session(subject, serde_json::json!({}))
+        .open_session(subject, None, serde_json::json!({}))
         .await
         .unwrap();
     rt.cognition

@@ -19,6 +19,7 @@ import {
   type ManagedContextRequest,
   type ProjectionRequest,
   type QueryRequest,
+  type ReportUseRequest,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { ConsumerPolicy } from "../domain.js";
 import type { executionOptions } from "../execution.js";
@@ -200,6 +201,12 @@ export class CoreCognition {
         "Managed context requires actual invocation usage",
         Code.InvalidArgument,
       );
+    await this.checkModelHistory(
+      input.subjectId,
+      input.sessionId,
+      input.consumerId,
+      calls,
+    );
     const projection = await this.buildProjection(input, calls);
     const policy = this.planner.policy(input.consumerId);
     return create(
@@ -217,6 +224,56 @@ export class CoreCognition {
         request.knownCursor,
       ),
     );
+  }
+
+  async reportUse(request: ReportUseRequest, calls: Execution) {
+    if (request.modelInput) {
+      if (!request.sessionId)
+        throw new ConnectError(
+          "Model input requires a Session",
+          Code.InvalidArgument,
+        );
+      await this.checkModelHistory(
+        request.subjectId,
+        request.sessionId,
+        request.consumerRef,
+        calls,
+      );
+    }
+    return this.kernel.runtime.reportUse(request, calls);
+  }
+  private async checkModelHistory(
+    subjectId: string,
+    sessionId: string,
+    consumerId: string,
+    calls: Execution,
+  ) {
+    const history = await this.kernel.runtime.getSession(
+      { subjectId: subjectId, id: sessionId },
+      calls,
+    );
+    const consumer = this.planner.policy(consumerId);
+    if (
+      history.historyInvalidated ||
+      history.historyDomains.some(
+        (domain) =>
+          (domain === "memory" && consumer.memory === "FORBIDDEN") ||
+          (domain === "self" && consumer.selfCognition === "FORBIDDEN"),
+      )
+    ) {
+      throw domainError(
+        "Native history requires reset after cognition withdrawal or a narrower consumer scope",
+        Code.FailedPrecondition,
+        {
+          code: DomainErrorCode.STALE_CONTEXT,
+          recovery: ErrorRecovery.REFRESH_STATE,
+          context: {
+            history_reset_required: "true",
+            session_id: sessionId,
+          },
+        },
+      );
+    }
   }
 
   private async bindQueryInput(request: QueryRequest, calls: CallOptions) {

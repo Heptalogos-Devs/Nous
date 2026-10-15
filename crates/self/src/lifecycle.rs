@@ -59,6 +59,16 @@ impl SelfService {
             &revisions,
         )
         .await?;
+        if matches!(action, "suppress" | "withdraw") {
+            self.runtime
+                .invalidate_session_history_in(
+                    mutation.tx(),
+                    subject,
+                    before.reference().kind(),
+                    &revisions,
+                )
+                .await?;
+        }
         self.runtime
             .forget_resident_cognition_in(
                 mutation.tx(),

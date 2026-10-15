@@ -143,6 +143,7 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
     };
     assert_eq!(runtime.query(exact()).await.unwrap().results.len(), 1);
     let use_input = UseFeedback {
+        model_input: false,
         subject,
         session_id: None,
         consumer_ref: "default".into(),
@@ -413,6 +414,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
     runtime
         .cognition
         .use_feedback(UseFeedback {
+            model_input: false,
             subject,
             session_id: None,
             consumer_ref: "consumer:test:association".into(),

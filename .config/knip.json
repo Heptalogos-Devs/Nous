@@ -8,7 +8,7 @@
         "scripts/openclaw/{prepare,pack}.ts!",
         "scripts/maintenance/clean.ts!",
         "scripts/release/{assemble,archive,prepare-notices,verify-portable}.ts!",
-        "scripts/smoke/{memory,runtime-episode,model-material-resource,media-routes,longitudinal,configuration,openclaw,self,self-model}.ts!",
+        "scripts/smoke/{memory,runtime-episode,model-material-resource,media-routes,longitudinal,configuration,openclaw,self,self-model,self-history}.ts!",
         "scripts/research/{media,serve-gateway,longitudinal,model-contracts,model-trace,dogfooding}.ts!",
         "scripts/tests/**/*.test.ts"
       ]
