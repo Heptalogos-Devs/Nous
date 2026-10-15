@@ -15,14 +15,23 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm openclaw:pack
 ```
 
-将生成的 `data/releases/openclaw/nous-wave-openclaw-0.2.0.tgz` 交给宿主。在独立安装目录中：
+将生成的 `data/releases/openclaw/nous-wave-openclaw-0.2.1.tgz` 交给宿主。在独立安装目录中：
 
 ```sh
-npm install --prefix ./subject-runtime openclaw@2026.9.1 /absolute/path/nous-wave-openclaw-0.2.0.tgz
-node ./subject-runtime/node_modules/@nous-wave/openclaw/bin/prepare.mjs ./subject-runtime/node_modules/openclaw
+npm exec --yes --package=/absolute/path/nous-wave-openclaw-0.2.1.tgz -- nous-openclaw-install /absolute/path/subject-runtime
 ```
 
-安装器核对版本和全部原始/已修正文件哈希后一次应用补丁；版本不符、代码漂移或部分补丁会拒绝安装。重复执行安全。安装目录位于其他 Git checkout 内也使用包根目录执行补丁，避免 Git 静默跳过相对路径。它不改动 operator 配置、凭据或会话。开发仓库的 `corepack pnpm openclaw:prepare [openclaw-package-root]` 使用相同安装器；缺省选择 `data/runtime/openclaw/node_modules/openclaw`。
+原生安装器创建自己的 npm 根与持久插件 tarball，固定 OpenClaw 和经过修复的传递依赖，生成可重装的 lockfile，然后运行入口准备。只接受新目录或先前由该安装器创建的目录，不覆盖任意应用的依赖配置；配置、密钥和主体数据应放在运行代码目录之外。原 OpenClaw 2026.9.1 将 Undici/MCP SDK 固定在受影响版本，因此不能以普通 `npm install openclaw` 代替此入口。当前实际固定 Undici 8.10.2、MCP SDK 1.31.0；`prepare` 同时检查 OpenClaw 和 proxyline 实际解析的版本，旧依赖拒绝准备。
+
+需要重复核对或准备已有受控安装时：
+
+```sh
+node /absolute/path/subject-runtime/node_modules/@nous-wave/openclaw/bin/prepare.mjs /absolute/path/subject-runtime/node_modules/openclaw
+```
+
+MCP HTTP OAuth 若已配置，升级前保存的凭据必须有正确 issuer 或重新登录；自定义 provider 保存完整 issuer，bundled provider 另需 expectedIssuer。stdio 和 SDK server 不适用此 OAuth 客户端风险。详见 [维护者安全公告](https://github.com/advisories/GHSA-6qxp-vccf-f47h)。
+
+入口准备器核对版本和全部原始/已修正文件哈希后一次应用补丁；版本不符、代码漂移或部分补丁会拒绝安装。重复执行安全。安装目录位于其他 Git checkout 内也使用包根目录执行补丁，避免 Git 静默跳过相对路径。它不改动 operator 配置、凭据或会话。开发仓库的 `corepack pnpm openclaw:prepare [openclaw-package-root]` 使用相同安装器；缺省选择 `data/runtime/openclaw/node_modules/openclaw`。
 
 在该实例的 OpenClaw 配置中启用：
 

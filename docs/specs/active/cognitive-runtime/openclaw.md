@@ -44,7 +44,7 @@ ReportUse 仅把实际待发送输入的 exact cognition refs 记为 presented�
 
 ## 发行与验证
 
-[包说明](../../../../packages/openclaw/README.md) 是安装/配置命令的唯一完整入口。`openclaw:pack` 生成 bundled 插件及安装器 tarball，宿主原样安装；`openclaw:prepare` 使用同一产物安装到开发实例。
+[包说明](../../../../packages/openclaw/README.md) 是安装/配置命令的唯一完整入口。`openclaw:pack` 生成 bundled 插件及安装器 tarball，宿主原样安装；`openclaw:prepare` 使用同一产物安装到开发实例。 原生安装使用发行物的 `nous-openclaw-install`：安装根持有固定传递依赖的 npm overrides、lockfile 和可重装插件 tarball；依赖包自身的 overrides 不被当作消费者保障。准备器在原始/补丁哈希前核验 OpenClaw 与 proxyline 解析到的 Undici、MCP SDK 实际版本；不接受旧易受影响的解析路径。
 
 `smoke:openclaw` 使用真实模型 gateway 与正式安装的原生 Gateway，核验最终 provider 输入、工具后续、RESET、原生 compact、子 Agent、真实 Material 回流、必需 Core 不可用时零发送及恢复，并核验真实自我选择的输出进入实际 native compaction summary 后，purge 和进程重启均阻止发送，正式 reset 后新输入不含旧标记。准备/应用日志不冒充已传输证明。未测试的渠道、Computer use 平台和语言人格质量不由该接线场景推定。
 

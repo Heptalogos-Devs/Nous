@@ -14,7 +14,7 @@
       ]
     },
     "packages/openclaw": {
-      "entry": ["src/index.ts!", "bin/prepare.mjs!"],
+      "entry": ["src/index.ts!", "bin/{prepare,install}.mjs!"],
       "project": ["src/**/*.ts!", "bin/*.mjs!"],
       "ignoreDependencies": ["openclaw"]
     },

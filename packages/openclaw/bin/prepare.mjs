@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 // Ships inside the standalone plugin, without build tools or a repository.
 const plugin = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -14,7 +15,7 @@ if (!process.argv[2])
   throw new Error("Usage: nous-openclaw-prepare <openclaw-package-root>");
 const native = await realpath(resolve(process.argv[2]));
 const manifest =
-  /** @type {{version: string, files: Record<string, {original: string, patched: string}>}} */ (
+  /** @type {{version: string, files: Record<string, {original: string, patched: string}>, dependencies: Record<string,string>}} */ (
     JSON.parse(await readFile(join(plugin, "patches/manifest.json"), "utf8"))
   );
 const installed = /** @type {{name: string, version: string}} */ (
@@ -22,6 +23,47 @@ const installed = /** @type {{name: string, version: string}} */ (
 );
 if (installed.name !== "openclaw" || installed.version !== manifest.version)
   throw new Error(`Managed cognition requires OpenClaw ${manifest.version}`);
+// Validate actual Node resolution, including hoisted and pnpm-installed dependencies.
+const nativeRequire = createRequire(join(native, "package.json"));
+const requires = [
+  nativeRequire,
+  createRequire(nativeRequire.resolve("@openclaw/proxyline")),
+];
+for (const require of requires)
+  for (const [name, version] of Object.entries(manifest.dependencies)) {
+    let directory = dirname(
+      require.resolve(
+        name === "@modelcontextprotocol/sdk" ? `${name}/client/index.js` : name,
+      ),
+    );
+    for (;;) {
+      const metadata = await readFile(join(directory, "package.json"), "utf8")
+        .then(
+          (text) =>
+            /** @type {{name?:string,version?:string}} */ (JSON.parse(text)),
+        )
+        .catch((error) => {
+          if (
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT"
+          )
+            return undefined;
+          throw error;
+        });
+      if (metadata?.name === name) {
+        if (metadata.version !== version)
+          throw new Error(
+            `Controlled runtime requires ${name}@${version}; use nous-openclaw-install`,
+          );
+        break;
+      }
+      const parent = dirname(directory);
+      if (parent === directory)
+        throw new Error(`Cannot verify native dependency ${name}`);
+      directory = parent;
+    }
+  }
 /** @param {Uint8Array} bytes */
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const states = await Promise.all(
