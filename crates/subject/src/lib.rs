@@ -127,6 +127,14 @@ impl SubjectCoreService {
             &digest,
         )
         .await?;
+        self.store
+            .ensure_identity_addresses_in(
+                &mut tx,
+                subject,
+                &[nous_core::CognitiveRef::Subject(subject)],
+                "",
+            )
+            .await?;
         if let Some(cognitive_seed) = input.cognitive_seed {
             seed::insert_seed(
                 &self.store,
