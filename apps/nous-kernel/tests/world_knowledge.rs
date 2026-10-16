@@ -332,3 +332,179 @@ async fn late_realization_has_story_knowledge_without_backdating_real_history() 
     assert_eq!(restored_clock.time_domain_ref, "time:school");
     assert_eq!(restored_clock.world_now, expected_clock.world_now);
 }
+
+async fn knowledge_derivation(
+    runtime: &nous_kernel::NousRuntime,
+    subject: SubjectId,
+    root: CognitiveRef,
+    strategy: &str,
+    text: &str,
+) -> DerivedRepresentation {
+    runtime
+        .material
+        .persist_derived_representation(
+            DerivedRepresentation {
+                formed_stamp: None,
+                derived_representation_id: DerivedRepresentationId::new(),
+                subject_id: subject,
+                inputs: vec![DerivationInput {
+                    ordinal: 0,
+                    reference: root,
+                    role: "source".into(),
+                }],
+                strategy: strategy.into(),
+                representation_kind: RepresentationKind::ExtractedText,
+                producer: test_support::longitudinal::consolidation_producer(),
+                revision: 1,
+                payload_text: Some(text.into()),
+                payload_json: None,
+                payload_artifact_id: None,
+                quality: serde_json::json!({}),
+                created_at: Utc::now(),
+                supersedes: None,
+            },
+            None,
+        )
+        .await
+        .unwrap()
+}
+async fn knowledge_exact(
+    runtime: &nous_kernel::NousRuntime,
+    subject: SubjectId,
+    reference: CognitiveRef,
+    clock: &nous_runtime::ClockSnapshot,
+) -> Result<usize> {
+    let mut query = test_support::query::query(subject);
+    query.projection.domains = vec![ResultDomain::Evidence];
+    query.expression.targets = vec![QueryTarget::Exact { reference }];
+    query.temporal_frame.knowledge_at_world_time = Some(Box::new(DomainStamp {
+        time_domain_ref: clock.time_domain_ref.clone(),
+        at: clock.world_now,
+        recorded_at: Utc::now(),
+    }));
+    runtime
+        .execute_query(query, None)
+        .await
+        .map(|result| result.result.results.len())
+}
+#[tokio::test]
+async fn exact_world_knowledge_requires_each_derivation_and_region_formation() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = test_support::query::subject(&runtime).await;
+    let source = test_support::observation(
+        &runtime,
+        subject,
+        "The original source is already available",
+    )
+    .await;
+    let root_ref =
+        CognitiveRef::SourceRegion(source.source_region.as_ref().unwrap().source_region_id);
+    let unmapped = knowledge_derivation(
+        &runtime,
+        subject,
+        root_ref.clone(),
+        "real-interpretation",
+        "Real-domain interpretation before world mapping",
+    )
+    .await;
+    let t1 = runtime
+        .change_clock(
+            subject,
+            OperationId::new(),
+            nous_runtime::ClockChange::Configure {
+                time_domain_ref: "time:derivation-cut".into(),
+                rate: 0.0,
+                world_time: Some(Utc::now()),
+            },
+        )
+        .await
+        .unwrap();
+    let mut contact = test_support::longitudinal::observation(subject, None);
+    contact.material = ObservationMaterial::ArtifactRef {
+        artifact_id: source.artifact.as_ref().unwrap().artifact_id,
+    };
+    let known = runtime.material.record_observation(contact).await.unwrap();
+    let known_raw = CognitiveRef::Artifact(source.artifact.as_ref().unwrap().artifact_id);
+    assert_eq!(
+        known.occurrence.observed_stamp.time_domain_ref,
+        t1.time_domain_ref
+    );
+    let early = knowledge_derivation(
+        &runtime,
+        subject,
+        root_ref.clone(),
+        "initial-extraction",
+        "Known interpretation before the cut",
+    )
+    .await;
+    let t2 = runtime
+        .change_clock(
+            subject,
+            OperationId::new(),
+            nous_runtime::ClockChange::Advance { seconds: 3600.0 },
+        )
+        .await
+        .unwrap();
+    let late = knowledge_derivation(
+        &runtime,
+        subject,
+        root_ref,
+        "later-translation",
+        "New translation after the cut",
+    )
+    .await;
+    let early_regions = runtime
+        .material
+        .segment_description(subject, early.derived_representation_id)
+        .await
+        .unwrap();
+    let late_regions = runtime
+        .material
+        .segment_description(subject, late.derived_representation_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        knowledge_exact(&runtime, subject, known_raw, &t1)
+            .await
+            .unwrap(),
+        1
+    );
+    let early_ref = CognitiveRef::DerivedRepresentation(early.derived_representation_id);
+    assert_eq!(
+        knowledge_exact(&runtime, subject, early_ref, &t1)
+            .await
+            .unwrap(),
+        1
+    );
+    for reference in [
+        CognitiveRef::DerivedRepresentation(late.derived_representation_id),
+        CognitiveRef::DerivedRegion(early_regions[0].region.derived_region_id),
+        CognitiveRef::DerivedRegion(late_regions[0].region.derived_region_id),
+    ] {
+        assert!(matches!(
+            knowledge_exact(&runtime, subject, reference.clone(), &t1).await,
+            Err(Error::NotFound(_))
+        ));
+        assert_eq!(
+            knowledge_exact(&runtime, subject, reference, &t2)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+    assert!(
+        matches!(
+            knowledge_exact(
+                &runtime,
+                subject,
+                CognitiveRef::DerivedRepresentation(unmapped.derived_representation_id),
+                &t2
+            )
+            .await,
+            Err(Error::NotFound(_))
+        ),
+        "real-domain formation has no implicit order against the world cut"
+    );
+    runtime.store.close().await;
+}

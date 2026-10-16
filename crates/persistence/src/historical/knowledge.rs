@@ -87,15 +87,15 @@ WITH revisions(kind,id,domain,formed) AS (
         for id in regions {
             material.insert(CognitiveRef::SourceRegion(SourceRegionId(id)));
         }
-        let representations:Vec<uuid::Uuid> = sqlx::query_scalar("SELECT d.derived_representation_id FROM derived_representations d WHERE d.subject_id=$1 AND d.created_at<=$2 AND EXISTS(SELECT 1 FROM representation_source_regions($1,d.derived_representation_id)) AND NOT EXISTS(SELECT 1 FROM representation_source_regions($1,d.derived_representation_id) roots JOIN source_regions s USING(source_region_id) WHERE NOT s.artifact_id=ANY($3::uuid[]))")
-            .bind(view.subject.0).bind(view.as_of).bind(&artifacts).fetch_all(&mut *tx).await.map_err(db)?;
+        let representations:Vec<uuid::Uuid> = sqlx::query_scalar("SELECT d.derived_representation_id FROM derived_representations d WHERE d.subject_id=$1 AND d.created_at<=$2 AND d.formed_stamp->>'time_domain_ref'=$4 AND (d.formed_stamp->>'at')::timestamptz<=$5 AND EXISTS(SELECT 1 FROM representation_source_regions($1,d.derived_representation_id)) AND NOT EXISTS(SELECT 1 FROM representation_source_regions($1,d.derived_representation_id) roots JOIN source_regions s USING(source_region_id) WHERE NOT s.artifact_id=ANY($3::uuid[]))")
+            .bind(view.subject.0).bind(view.as_of).bind(&artifacts).bind(&cut.time_domain_ref).bind(cut.at).fetch_all(&mut *tx).await.map_err(db)?;
         for id in &representations {
             material.insert(CognitiveRef::DerivedRepresentation(
                 DerivedRepresentationId(*id),
             ));
         }
-        let regions:Vec<uuid::Uuid> = sqlx::query_scalar("SELECT derived_region_id FROM derived_regions WHERE subject_id=$1 AND derived_representation_id=ANY($2::uuid[]) AND created_at<=$3")
-            .bind(view.subject.0).bind(&representations).bind(view.as_of).fetch_all(&mut *tx).await.map_err(db)?;
+        let regions:Vec<uuid::Uuid> = sqlx::query_scalar("SELECT derived_region_id FROM derived_regions WHERE subject_id=$1 AND derived_representation_id=ANY($2::uuid[]) AND created_at<=$3 AND formed_stamp->>'time_domain_ref'=$4 AND (formed_stamp->>'at')::timestamptz<=$5")
+            .bind(view.subject.0).bind(&representations).bind(view.as_of).bind(&cut.time_domain_ref).bind(cut.at).fetch_all(&mut *tx).await.map_err(db)?;
         for id in regions {
             material.insert(CognitiveRef::DerivedRegion(DerivedRegionId(id)));
         }

@@ -40,6 +40,8 @@ Self/Social/Motivation 自身拥有 formed、valid 与现实 recorded；它们�
 
 ## 世界见闻与现实数据库历史
 
+派生表示与 DerivedRegion 在世界见闻快照中分别核对自身 formed stamp：只有同域且不晚于 knowledge cut 才可见。已知原 Artifact 不使后来生成的翻译、摘要或分段回填为旧知识；跨域缺 mapping 保守不纳入。
+
 角色的 `knowledgeAtWorldTime` 表示已实现故事截至指定世界时刻的可见见闻；`asRecordedAt` 表示数据库在现实提交截点实际持有的记录。二者是不同读取参数，可以同时限定，不能把一个裸 timestamp 或 formed 谓词当成另一问题。
 
 晚实现的虚拟事件可在早晨生成并正式释放昨夜的角色见闻：occurred/世界观察点指向昨夜，realized、现实 observed/交接与 recorded 如实指向早晨。世界见闻切面可使用已合法回填的接触；早于实际入库的现实 as-of 不得读取它。回填必须兼容已确定事件、角色已表达的知情/不知情和相关 Claim；不相容时拒绝或作为当前新发现/新回忆处理。真实 QQ、网页、工具接触不适用虚拟回填规则。
@@ -54,7 +56,7 @@ Self/Social/Motivation 自身拥有 formed、valid 与现实 recorded；它们�
 
 当前选择、时间检索和历史候选先在原 owner SQL 内做域、具体来源联合谓词与许可过滤，再应用候选预算或读正文。Social/Motivation 显式历史 valid 范围替代当前 standing 点筛选；布尔分支可保守扩大授权元数据候选，最终仍由原 Query 树判断。
 
-Projection 输出同一次捕获的 `semanticClock`。自动 Self/Social/Motivation 选择复用它；实际 renderer、Projection Steward 与 reflection 计划读取正式时间元数据。官方 Client 的严格 prepare 要求该 stamp，缺失时在 provider 前明确失败，独立模式也相同。时间戳经官方 protobuf JSON codec 进入内容指纹与增量比较，时间证据变化不会被漏掉；钟每次读取的变化不强迫所有既有段重置。
+Projection 输出同一次捕获的 `semanticClock`。自动 Self/Social/Motivation 选择复用它；实际 renderer、Projection Steward 与 reflection 计划读取正式时间元数据。官方 Client 的严格 prepare 要求该 stamp，缺失时在 provider 前明确失败，独立模式也相同。时间戳经官方 protobuf JSON codec 进入内容指纹与增量比较，时间证据变化不会被漏掉；钟每次读取的变化不强迫所有既有段重置。 managed track 使用官方 CognitionUsage JSON 编码；worldTime 的坐标与记录时点是刷新元数据，时间域、world、role/view 与 SourceRead scope 仍参与 track 隔离。
 
 Authority history 在原 `authority_object_states` 同时保存 semantic 提交 stamp 与现实 recorded/order。OwnerState 及 relation evaluator 只在同域实际历史中判断；缺 mapping、历史缺口或异域来源返回 UNKNOWN。外部 QQ 流仍然是 open/limited/gap，deadline 过去不构成完整覆盖。
 
