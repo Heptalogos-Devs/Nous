@@ -16,7 +16,7 @@ import {
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "vitest";
 import { buildDistribution } from "../../openclaw/distribution.js";
 import { repositoryRoot } from "../../workspace.js";
