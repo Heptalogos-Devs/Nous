@@ -24,10 +24,7 @@ import { fileURLToPath } from "node:url";
 /** @typedef {{name?:string,version?:string,nousNativeState?:unknown,openclaw?:{extensions?:unknown}}} PluginPackage */
 /** @typedef {NodeJS.ReadableStream & {type:string,path:string,size:number,resume():void}} TarEntry */
 /** @typedef {{t(options:{file:string,sync:true,strict:true,onReadEntry(entry:TarEntry):void}):void}} TarReader */
-const nativeStateCapabilities = [
-  "openChannelIngressQueue",
-  "openKeyedStore",
-];
+const nativeStateCapabilities = ["openChannelIngressQueue", "openKeyedStore"];
 const installedLeases = new Set();
 /** @param {Uint8Array} bytes */
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -37,7 +34,11 @@ const json = (path) =>
 /** @param {string} path */
 const privateFile = (path) => {
   const stat = lstatSync(path);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 0o077)
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    (process.platform !== "win32" && stat.mode & 0o077)
+  )
     throw Error(
       "Controlled installation record must be a protected regular file",
     );

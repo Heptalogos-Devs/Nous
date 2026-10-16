@@ -10,7 +10,7 @@ import {
   rm,
   access,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "vitest";
 import { buildDistribution } from "../../openclaw/distribution.js";
@@ -25,7 +25,7 @@ interface InstallationRegistry {
   plugins: Array<{ artifact: string }>;
 }
 
-// Exercises the actual npm installer against the cached pinned release, never an operator runtime.
+// Exercises the actual pinned npm installer; optional offline mode uses its existing release cache.
 test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
   "controlled local install grants only declared state, verifies artifacts and refuses replacement while state holders run",
   async () => {
@@ -35,7 +35,9 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
     const source = join(temporary, "local-package");
     const env = {
       ...process.env,
-      npm_config_offline: "true",
+      ...(process.env.NOUS_TEST_NATIVE_INSTALLER_OFFLINE === "1"
+        ? { npm_config_offline: "true" }
+        : {}),
       OPENCLAW_STATE_DIR: join(temporary, "profile"),
       OPENCLAW_CONFIG_PATH: join(temporary, "profile/config.json"),
     };
@@ -55,8 +57,16 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
         stdio: "pipe",
       });
     const install = (...args: string[]) => run(installer, [runtime, ...args]);
+    const npmCli = join(
+      dirname(process.execPath),
+      "node_modules/npm/bin/npm-cli.js",
+    );
+    const npmExecutable =
+      process.platform === "win32" ? process.execPath : "npm";
+    const npmArgs = (args: string[]) =>
+      process.platform === "win32" ? [npmCli, ...args] : args;
     const npm = (...args: string[]) =>
-      execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", args, {
+      execFileSync(npmExecutable, npmArgs(args), {
         cwd: runtime,
         env,
         encoding: "utf8",
@@ -82,14 +92,14 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
         (
           JSON.parse(
             execFileSync(
-              "npm",
-              [
+              npmExecutable,
+              npmArgs([
                 "pack",
                 "--json",
                 "--ignore-scripts",
                 "--pack-destination",
                 temporary,
-              ],
+              ]),
               { cwd: source, env, encoding: "utf8" },
             ),
           ) as Array<{ filename: string }>
@@ -123,6 +133,16 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
       );
       const artifact = await makeArtifact("first");
       install();
+      const staleLock = join(runtime, ".nous-install-lock");
+      await mkdir(staleLock);
+      await writeFile(
+        join(staleLock, "owner.json"),
+        JSON.stringify({ pid: process.pid }),
+      );
+      assert.throws(() => install(), /Controlled installer lock exists/u);
+      assert.throws(() => install(), /Controlled installer lock exists/u);
+      await access(staleLock);
+      await rm(staleLock, { recursive: true });
       const packageJson = join(runtime, "package.json");
       const operator = JSON.parse(
         await readFile(packageJson, "utf8"),
@@ -138,14 +158,14 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
       );
       const otherPacked = JSON.parse(
         execFileSync(
-          "npm",
-          [
+          npmExecutable,
+          npmArgs([
             "pack",
             "--json",
             "--ignore-scripts",
             "--pack-destination",
             temporary,
-          ],
+          ]),
           { cwd: other, env, encoding: "utf8" },
         ),
       ) as Array<{ filename: string }>;

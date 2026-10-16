@@ -89,28 +89,10 @@ try {
 } catch (error) {
   if (!(error instanceof Error && "code" in error && error.code === "EEXIST"))
     throw error;
-  await ownedDirectory(lock);
-  const owner = /** @type {{pid:number}} */ (
-    JSON.parse(await readFile(join(lock, "owner.json"), "utf8"))
+  throw Error(
+    `Controlled installer lock exists at ${lock}; verify that its installer has stopped, then remove the lock explicitly before retrying`,
+    { cause: error },
   );
-  if (!Number.isSafeInteger(owner.pid) || owner.pid < 1)
-    throw Error("Controlled installer lock owner is invalid", { cause: error });
-  try {
-    process.kill(owner.pid, 0);
-    throw Error("Another controlled installer is active", { cause: error });
-  } catch (status) {
-    if (!(
-      status instanceof Error &&
-      "code" in status &&
-      status.code === "ESRCH"
-    ))
-      throw Error(
-        "Cannot confirm that the previous controlled installer has stopped",
-        { cause: status },
-      );
-  }
-  await rm(lock, { recursive: true });
-  await mkdir(lock, { mode: 0o700 });
 }
 await writeFile(
   join(lock, "owner.json"),

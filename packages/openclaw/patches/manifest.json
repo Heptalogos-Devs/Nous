@@ -107,6 +107,6 @@
     "@modelcontextprotocol/sdk": "1.31.0"
   },
   "managedFiles": {
-    "dist/nous-controlled-plugin.mjs": "8e9824b04ba69224af36412d11e441384424f489272541748266f4c9af5a866c"
+    "dist/nous-controlled-plugin.mjs": "8bb072948c8fc389d53eda8a8ec239abeeda27631450bdf2e78907fc1d7bfb3e"
   }
 }
