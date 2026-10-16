@@ -300,4 +300,17 @@ pub fn validate_exact_basis(basis: &[RevisionBasis]) -> Result<()> {
 pub struct SourceReadScope {
     pub subject_id: Option<SubjectId>,
     pub source_refs: Vec<CognitiveRef>,
+    #[serde(default)]
+    pub origin_conversation_refs: Vec<String>,
+}
+
+/// Trusted, request-scoped authorization resolved from SourceReadScope metadata.
+/// This is neither model input nor a durable permission index.
+#[derive(Debug, Clone, Default)]
+pub struct SourceReadView {
+    pub subject: SubjectId,
+    pub root_keys: Vec<String>,
+    pub origin_conversation_refs: Vec<String>,
+    pub explicit_refs: Vec<serde_json::Value>,
+    pub work_contexts: Vec<uuid::Uuid>,
 }

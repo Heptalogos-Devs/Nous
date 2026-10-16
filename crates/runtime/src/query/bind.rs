@@ -287,9 +287,31 @@ impl CognitiveRuntimeService {
             let QueryTarget::Exact { reference } = target else {
                 continue;
             };
+            if let Some(read) = &query.source_read {
+                let mut tx = self.store.read_view().await?;
+                if !nous_persistence::AuthorityStore::source_read_allowed_in(
+                    &mut tx, read, reference,
+                )
+                .await?
+                {
+                    return Err(Error::Unavailable(
+                        "exact target unavailable under source scope".into(),
+                    ));
+                }
+            }
             let (bound_ref, epoch, mutable_object) = self
                 .prepared_reference(query.subject, reference, view, bindings)
                 .await?;
+            if let Some(read) = &query.source_read {
+                let mut tx = self.store.read_view().await?;
+                if !nous_persistence::AuthorityStore::source_read_allowed_in(
+                    &mut tx, read, &bound_ref,
+                )
+                .await?
+                {
+                    return Err(Error::Unavailable("exact target source read denied (unknown/cyclic/over-budget lineage is withheld)".into()));
+                }
+            }
             if !mutable_object
                 && matches!(
                     reference,
@@ -389,6 +411,38 @@ impl CognitiveRuntimeService {
             &mut bindings,
         )
         .await?;
+        if let Some(read) = &query.source_read {
+            let mut tx = self.store.read_view().await?;
+            let mut admitted = Vec::new();
+            for source in context_snapshot.source_refs.drain(..) {
+                if nous_persistence::AuthorityStore::source_read_allowed_in(
+                    &mut tx,
+                    read,
+                    &source.reference,
+                )
+                .await?
+                {
+                    admitted.push(source);
+                }
+            }
+            context_snapshot.source_refs = admitted;
+            let admitted_refs = context_snapshot
+                .source_refs
+                .iter()
+                .flat_map(|source| [source.requested_ref.clone(), source.reference.clone()])
+                .collect::<HashSet<_>>();
+            if let Some(session) = &mut context_snapshot.session {
+                session
+                    .resident
+                    .retain(|resident| admitted_refs.contains(&resident.reference));
+            }
+            query.situation.current_refs.retain(|r| {
+                context_snapshot
+                    .source_refs
+                    .iter()
+                    .any(|s| &s.reference == r)
+            });
+        }
         // Captured owner views retain their object/revision semantics. Merged Tags have
         // only one canonical identity in the frozen input, including its raw anchors.
         let canonical_tag = |reference: &mut CognitiveRef| {

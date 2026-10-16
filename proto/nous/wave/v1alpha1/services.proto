@@ -29,6 +29,7 @@ service RuntimeService {
   rpc SetActiveWorkContext(SetActiveWorkContextRequest) returns (Session) { option idempotency_level = IDEMPOTENT; }
 }
 service CognitionService {
+ rpc ReadSources(ReadSourcesRequest) returns (ReadSourcesResponse);
   rpc Trace(CognitionTraceRequest) returns (CognitionTrace);
   rpc GrantMaintenance(MaintenanceGrantRequest) returns (MaintenanceGrantResponse);
   rpc PrepareQuery(QueryRequest) returns (PreparedQueryResponse);

@@ -271,6 +271,12 @@ impl nous_runtime::CognitiveContributor for MaterialService {
                 .push(")");
         }
         let limit = plan.lane_budget(EvidenceFamily::Temporal);
+        nous_persistence::push_source_read_filter(
+            &mut sql,
+            bound.source_query.source_read.as_ref(),
+            "'occurrence'",
+            "occurrence_id::text",
+        );
         sql.push(" ORDER BY observed_at DESC,occurrence_id LIMIT ")
             .push_bind((limit + 1) as i64);
         let ids: Vec<Uuid> = sql
@@ -320,7 +326,7 @@ impl nous_runtime::CognitiveContributor for MaterialService {
             .await?;
         let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
         let rows = sqlx::query(r#"
-WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) AS r(kind,value)),
+WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) AS r(kind,value) WHERE $4::boolean OR source_read_allowed($1,r.kind,r.value,$5,$6,$7,$8)),
 records AS (
  SELECT r.kind,r.value,a.created_at recorded_at,NULL::timestamptz formed_at,a.media_type,NULL::text payload_text FROM requested r JOIN artifacts a ON r.kind='artifact' AND a.artifact_id::text=r.value AND a.subject_id=$1
  UNION ALL
@@ -333,7 +339,13 @@ records AS (
  SELECT r.kind,r.value,g.created_at,d.created_at,'text/plain',NULL::text FROM requested r JOIN derived_regions g ON r.kind='derived_region' AND g.derived_region_id::text=r.value AND g.subject_id=$1 JOIN derived_representations d ON d.derived_representation_id=g.derived_representation_id AND d.subject_id=$1
 )
 SELECT * FROM records
-"#).bind(subject.0).bind(kinds).bind(values).fetch_all(self.store.pool()).await.map_err(database_error)?;
+"#).bind(subject.0).bind(kinds).bind(values)
+.bind(query.source_read.is_none())
+.bind(query.source_read.as_ref().map(|v|v.root_keys.clone()).unwrap_or_default())
+.bind(query.source_read.as_ref().map(|v|v.work_contexts.clone()).unwrap_or_default())
+.bind(query.source_read.as_ref().map(|v|v.origin_conversation_refs.clone()).unwrap_or_default())
+.bind(query.source_read.as_ref().map(|v|serde_json::json!(&v.explicit_refs)).unwrap_or_else(||serde_json::json!([])))
+.fetch_all(self.store.pool()).await.map_err(database_error)?;
         let mut hits = Vec::new();
         let mut drops = std::collections::BTreeMap::new();
         for row in rows {

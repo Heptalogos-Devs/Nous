@@ -173,3 +173,102 @@ fn build_index(assets: &VcpGeneration, tags_only: bool) -> Result<DenseGeneratio
     }
     Ok(index)
 }
+
+impl VcpServingGeneration {
+    /// Recompute request-local numerical assets from retained vectors and authorized support.
+    /// This never invokes an embedding or generation provider and does not mutate stored assets.
+    pub(crate) fn authorized(
+        &self,
+        allowed: &std::collections::HashSet<CognitiveRef>,
+    ) -> Result<Self> {
+        let mut documents = Vec::new();
+        for (id, vector) in &self.assets.vectors {
+            let reference = self.assets.identities.reference(*id)?;
+            if !allowed.contains(reference) {
+                continue;
+            }
+            let curve = self.assets.curves.iter().find(|c| c.id == *id);
+            let concept_refs = curve
+                .into_iter()
+                .flat_map(|c| &c.tags)
+                .filter_map(|tag| self.assets.identities.reference(tag.id).ok())
+                .filter(|r| allowed.contains(*r))
+                .cloned()
+                .collect();
+            documents.push(VcpProjectedDocument {
+                reference: reference.clone(),
+                representation_text: self
+                    .assets
+                    .labels
+                    .iter()
+                    .find(|v| v.0 == *id)
+                    .map(|v| v.1.clone())
+                    .unwrap_or_default(),
+                vector: vector.clone(),
+                concept_refs,
+                curve_order: self
+                    .assets
+                    .curve_orders
+                    .iter()
+                    .find(|v| v.0 == *id)
+                    .map(|v| v.1)
+                    .unwrap_or(VcpCurveOrder::StableIdentity),
+                evidence_roots: self
+                    .assets
+                    .candidate_evidence_roots
+                    .iter()
+                    .find(|v| v.0 == *id)
+                    .map(|v| v.1.clone())
+                    .unwrap_or_default(),
+            });
+        }
+        let mut edges = Vec::new();
+        for edge in &self.assets.graph.evidence {
+            let from = self.assets.identities.reference(edge.source_id)?;
+            let to = self.assets.identities.reference(edge.target_id)?;
+            if !allowed.contains(from)
+                || !allowed.contains(to)
+                || edge.source_refs.is_empty()
+                || !edge.source_refs.iter().all(|r| allowed.contains(r))
+            {
+                continue;
+            }
+            edges.push(WaveEdgeEvidence {
+                source_refs: edge.source_refs.clone(),
+                from: from.clone(),
+                to: to.clone(),
+                basis_class: edge.basis_class.clone(),
+                association_kind: edge.association_kind.clone(),
+                polarity: "positive".into(),
+                support_mass: edge.support_mass,
+                provenance_root: edge.provenance_root.clone(),
+            });
+        }
+        let identities = VcpIdentityMap::new(
+            documents
+                .iter()
+                .map(|d| d.reference.clone())
+                .chain(edges.iter().flat_map(|e| [e.from.clone(), e.to.clone()])),
+        );
+        let assets = VcpGeneration::build(
+            self.assets.generation_id,
+            self.assets.cognitive_profile,
+            VcpProjectionMaterial {
+                authority_watermark: self.assets.authority_watermark,
+                space: self.assets.space.clone(),
+                producer: self.assets.producer.clone(),
+                identities,
+                edges,
+                documents,
+            },
+            self.assets.policy.clone(),
+        )?;
+        let candidates = build_index(&assets, false)?;
+        let tags = build_index(&assets, true)?;
+        Ok(Self {
+            assets,
+            candidates,
+            tags,
+        })
+    }
+}

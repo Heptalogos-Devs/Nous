@@ -5,12 +5,35 @@ use super::*;
 use nous_runtime::BoundQuery;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "captured source authorization and bounded owner materialization stay in one read view"
+)]
 pub(super) async fn materialize_longitudinal(
     service: &MemoryService,
     bound: &BoundQuery,
     references: &[CognitiveRef],
 ) -> Result<(Vec<CognitiveHit>, BTreeMap<String, usize>)> {
     let subject = bound.source_query.subject;
+    let mut tx = service.store.read_view().await?;
+    let mut admitted = Vec::new();
+    for reference in references {
+        if bound.source_query.source_read.is_none()
+            || AuthorityStore::source_read_allowed_in(
+                &mut tx,
+                bound
+                    .source_query
+                    .source_read
+                    .as_ref()
+                    .expect("checked read"),
+                reference,
+            )
+            .await?
+        {
+            admitted.push(reference.clone());
+        }
+    }
+    let references = admitted.as_slice();
     let mut objects = BTreeMap::<&str, Vec<Uuid>>::new();
     let mut revisions = BTreeMap::<&str, Vec<Uuid>>::new();
     for reference in references {
@@ -43,7 +66,7 @@ pub(super) async fn materialize_longitudinal(
             .bind(subject.0)
             .bind(&object_ids)
             .bind(&revision_ids)
-            .fetch_all(service.store.pool())
+            .fetch_all(&mut *tx)
             .await
             .map_err(db)?;
         let rows = rows
@@ -66,6 +89,7 @@ pub(super) async fn materialize_longitudinal(
         let evidence = if bound.source_query.result_need.need_evidence {
             longitudinal_evidence(
                 service,
+                &mut tx,
                 subject,
                 kind,
                 &ids,
@@ -77,6 +101,7 @@ pub(super) async fn materialize_longitudinal(
         };
         let mut renderings = longitudinal_renderings(
             service,
+            &mut tx,
             subject,
             kind,
             &ids,
@@ -87,7 +112,7 @@ pub(super) async fn materialize_longitudinal(
         )
         .await?;
         let mut metadata = longitudinal_metadata(
-            service,
+            &mut tx,
             subject,
             kind,
             &ids,
@@ -271,6 +296,7 @@ fn longitudinal_filter(
 }
 async fn longitudinal_evidence(
     service: &MemoryService,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subject: SubjectId,
     kind: &str,
     ids: &[Uuid],
@@ -288,7 +314,10 @@ async fn longitudinal_evidence(
         .collect::<Vec<_>>();
     let mut result = BTreeMap::new();
     for references in references.chunks(256) {
-        for (reference, support) in service.exact_supports(subject, references, view).await? {
+        for (reference, support) in service
+            .exact_supports_in(tx, subject, references, view)
+            .await?
+        {
             let mut seen = BTreeSet::new();
             let handles = support
                 .basis
@@ -310,6 +339,7 @@ struct LongitudinalRendering {
 
 async fn longitudinal_renderings(
     service: &MemoryService,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subject: SubjectId,
     kind: &str,
     ids: &[Uuid],
@@ -319,7 +349,7 @@ async fn longitudinal_renderings(
     let mut result = BTreeMap::<Uuid, LongitudinalRendering>::new();
     if kind == "journal" {
         let rows = sqlx::query("SELECT journal_revision_id,text FROM journal_revision_points WHERE journal_revision_id=ANY($1::uuid[]) ORDER BY journal_revision_id,ordinal")
-            .bind(ids).fetch_all(service.store.pool()).await.map_err(db)?;
+            .bind(ids).fetch_all(&mut **tx).await.map_err(db)?;
         for row in rows {
             append_rendering(
                 &mut result
@@ -387,7 +417,7 @@ pub(super) struct LongitudinalMetadata {
 }
 
 pub(super) async fn longitudinal_metadata(
-    service: &MemoryService,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subject: SubjectId,
     kind: &str,
     ids: &[Uuid],
@@ -400,11 +430,7 @@ pub(super) async fn longitudinal_metadata(
     let mut sql = sqlx::QueryBuilder::new("");
     super::source_facts::push_source_facts(&mut sql, subject, &roots, view)?;
     sql.push("SELECT * FROM source_occurrences ORDER BY root,occurrence_id");
-    let rows = sql
-        .build()
-        .fetch_all(service.store.pool())
-        .await
-        .map_err(db)?;
+    let rows = sql.build().fetch_all(&mut **tx).await.map_err(db)?;
     let mut result = BTreeMap::<Uuid, LongitudinalMetadata>::new();
     for row in rows {
         let value = result.entry(row.get("root")).or_default();

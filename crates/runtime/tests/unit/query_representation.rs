@@ -4,6 +4,8 @@
 use super::*;
 fn query() -> CognitiveQuery {
     CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         subject: SubjectId::new(),
         projection: Default::default(),
         temporal_frame: Default::default(),

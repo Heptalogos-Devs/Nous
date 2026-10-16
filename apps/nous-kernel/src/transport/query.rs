@@ -196,6 +196,8 @@ pub(super) fn compile_query(
     let expression = required(input.expression, "expression")?;
     let modifiers = expression.modifiers.clone().unwrap_or_default();
     let query = CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         projection: match modifiers.projection.as_ref() {
             Some(projection) => ResultProjection {
                 domains: projection

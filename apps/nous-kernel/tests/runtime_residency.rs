@@ -399,6 +399,7 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
             &policy,
             runtime.cognition.now(subject) + Duration::days(36_500),
             8,
+            None,
         )
         .await
         .unwrap()
@@ -425,6 +426,7 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
             &permissive_policy,
             runtime.cognition.now(subject) + Duration::days(36_500),
             256,
+            None,
         )
         .await
         .unwrap()

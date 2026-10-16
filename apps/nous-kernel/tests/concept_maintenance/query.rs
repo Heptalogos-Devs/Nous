@@ -31,6 +31,8 @@ pub(super) async fn assert_maintained_concept_query(
         _ => unreachable!(),
     };
     let query = CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         subject,
         projection: Default::default(),
         temporal_frame: Default::default(),

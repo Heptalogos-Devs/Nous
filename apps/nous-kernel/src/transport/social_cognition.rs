@@ -504,6 +504,7 @@ impl Selection {
                 .source_read
                 .map(|s| {
                     Ok::<_, Error>(SourceReadScope {
+                        origin_conversation_refs: s.origin_conversation_refs.clone(),
                         subject_id: Some(SubjectId(id(&s.subject_id)?)),
                         source_refs: s
                             .source_refs
@@ -571,6 +572,7 @@ impl KernelService {
             return Ok((Vec::new(), false));
         }
         let read = SourceReadScope {
+            origin_conversation_refs: read.origin_conversation_refs.clone(),
             subject_id: Some(SubjectId(id(&read.subject_id)?)),
             source_refs: read
                 .source_refs

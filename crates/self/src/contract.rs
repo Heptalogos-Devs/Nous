@@ -231,6 +231,7 @@ pub struct ReviseSelf {
 
 /// A bounded owner read, distinct from complete management pagination.
 pub struct SelfSelectionRequest<'a> {
+    pub source_read: Option<&'a SourceReadView>,
     pub scope: &'a SelfScope,
     pub targets: &'a [CognitiveRef],
     pub sources: &'a [CognitiveRef],

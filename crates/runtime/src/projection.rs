@@ -17,6 +17,7 @@ pub struct ContextSource {
 
 #[derive(Default)]
 pub struct InvocationScope {
+    pub work_context: Option<WorkContextId>,
     pub source_read: SourceReadScope,
     pub group: Option<EntityRef>,
     pub channel: Option<String>,
@@ -41,6 +42,18 @@ pub struct AutomaticContext {
 }
 #[async_trait::async_trait]
 pub trait ContextResolver: Send + Sync {
+    async fn source_read_view(
+        &self,
+        subject: SubjectId,
+        scope: &SourceReadScope,
+    ) -> Result<SourceReadView> {
+        let _ = scope;
+        Ok(SourceReadView {
+            subject,
+            ..Default::default()
+        })
+    }
+
     async fn automatic_context_sources(
         &self,
         _subject: SubjectId,
@@ -64,6 +77,8 @@ pub trait ContextResolver: Send + Sync {
         max_bytes: usize,
         now: DateTime<Utc>,
         configuration: &nous_configuration::ConfigSnapshot,
+        source_read: Option<&SourceReadView>,
+        scope: Option<&InvocationScope>,
     ) -> Result<Vec<Result<ContextSource>>>;
 }
 
@@ -166,6 +181,15 @@ impl CognitiveRuntimeService {
                 "projection requires a positive item budget".into(),
             ));
         }
+        let source_read = if let Some(scope) = &input.scope {
+            Some(
+                resolver
+                    .source_read_view(input.subject, &scope.source_read)
+                    .await?,
+            )
+        } else {
+            None
+        };
         let mut tx = self.store.read_view().await?;
         let session = self
             .session_in(input.subject, input.session, &mut tx)
@@ -185,45 +209,87 @@ impl CognitiveRuntimeService {
         let now = self.now(input.subject);
         let configuration = self.configuration.snapshot_for_subject(input.subject)?;
         let mut foreground = None;
+        let mut foreground_revision: Option<i64> = None;
         let mut references = session
             .resident
             .into_iter()
             .map(|resident| (resident.reference, "runtime_resident", "checkpoint", false))
             .collect::<Vec<_>>();
         if let Some(id) = session.active_work_context_id {
-            let context = self.work_context_in(input.subject, id, &mut tx).await?;
-            if context.state != WorkContextState::Open {
-                return Err(DomainError::new(
-                    DomainErrorCode::StaleContext,
-                    "projection WorkContext is no longer open",
-                )
-                .into());
+            foreground_revision=sqlx::query_scalar("SELECT revision FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 AND state='open'").bind(input.subject.0).bind(id).fetch_optional(&mut *tx).await.map_err(nous_persistence::database_error)?;
+            if foreground_revision.is_none() {
+                return Err(Error::Unavailable("active WorkContext unavailable".into()));
             }
-            references.extend(
-                context
-                    .cognition_anchors
-                    .iter()
-                    .cloned()
-                    .chain(
-                        context
-                            .entity_anchors
-                            .iter()
-                            .cloned()
-                            .map(CognitiveRef::Entity),
+            let context_read = if let Some(read) = &source_read {
+                nous_persistence::AuthorityStore::source_read_allowed_in(
+                    &mut tx,
+                    read,
+                    &CognitiveRef::WorkContext(WorkContextId(id)),
+                )
+                .await?
+            } else {
+                true
+            };
+            if !context_read {
+                let anchors:Vec<(String,String)>=sqlx::query_as("SELECT r.ref_kind,r.ref_value FROM work_context_refs r JOIN work_contexts w USING(work_context_id) WHERE w.subject_id=$1 AND w.work_context_id=$2").bind(input.subject.0).bind(id).fetch_all(&mut *tx).await.map_err(nous_persistence::database_error)?;
+                for (kind, value) in anchors {
+                    references.push((
+                        parse_reference(&kind, &value)?,
+                        "runtime_work_context",
+                        "checkpoint",
+                        true,
+                    ));
+                }
+            } else {
+                let context = self.work_context_in(input.subject, id, &mut tx).await?;
+                if context.state != WorkContextState::Open {
+                    return Err(DomainError::new(
+                        DomainErrorCode::StaleContext,
+                        "projection WorkContext is no longer open",
                     )
-                    .chain(context.tag_anchors.iter().copied().map(CognitiveRef::Tag))
-                    .map(|reference| (reference, "runtime_work_context", "checkpoint", true)),
-            );
-            references.insert(
-                0,
-                (
-                    CognitiveRef::WorkContext(WorkContextId(id)),
-                    "runtime_work_context",
-                    "checkpoint",
-                    true,
-                ),
-            );
-            foreground = Some(context);
+                    .into());
+                }
+                references.extend(
+                    context
+                        .cognition_anchors
+                        .iter()
+                        .cloned()
+                        .chain(
+                            context
+                                .entity_anchors
+                                .iter()
+                                .cloned()
+                                .map(CognitiveRef::Entity),
+                        )
+                        .chain(context.tag_anchors.iter().copied().map(CognitiveRef::Tag))
+                        .map(|reference| (reference, "runtime_work_context", "checkpoint", true)),
+                );
+                references.insert(
+                    0,
+                    (
+                        CognitiveRef::WorkContext(WorkContextId(id)),
+                        "runtime_work_context",
+                        "checkpoint",
+                        true,
+                    ),
+                );
+                foreground = Some(context);
+            }
+        }
+        if let Some(read) = &source_read {
+            let mut admitted = Vec::new();
+            for reference in references.drain(..) {
+                if nous_persistence::AuthorityStore::source_read_allowed_in(
+                    &mut tx,
+                    read,
+                    &reference.0,
+                )
+                .await?
+                {
+                    admitted.push(reference);
+                }
+            }
+            references = admitted;
         }
         tx.commit()
             .await
@@ -234,6 +300,18 @@ impl CognitiveRuntimeService {
                 .into_iter()
                 .map(|reference| (reference, "request_situation", "request", true)),
         );
+        if let Some(read) = &source_read {
+            let mut tx = self.store.read_view().await?;
+            let mut admitted = Vec::new();
+            for r in references.drain(..) {
+                if nous_persistence::AuthorityStore::source_read_allowed_in(&mut tx, read, &r.0)
+                    .await?
+                {
+                    admitted.push(r);
+                }
+            }
+            references = admitted;
+        }
         let automatic = if input.self_cognition != RequirementStrength::Forbidden
             || input.social_cognition != RequirementStrength::Forbidden
         {
@@ -355,7 +433,15 @@ impl CognitiveRuntimeService {
                 .map(|(r, ..)| (r.clone(), explicit_refs.contains(r)))
                 .collect::<Vec<_>>();
             let mut sources = resolver
-                .context_sources(input.subject, &requested, remaining, now, &configuration)
+                .context_sources(
+                    input.subject,
+                    &requested,
+                    remaining,
+                    now,
+                    &configuration,
+                    source_read.as_ref(),
+                    input.scope.as_ref(),
+                )
                 .await?
                 .into_iter();
             for (reference, role, stability, _) in batch {
@@ -424,7 +510,7 @@ impl CognitiveRuntimeService {
         .bind(input.session.0)
         .bind(session.runtime_revision)
         .bind(session.active_work_context_id)
-        .bind(foreground.as_ref().map(|context| context.revision))
+        .bind(foreground_revision)
         .fetch_one(self.store.pool())
         .await
         .map_err(nous_persistence::database_error)?;

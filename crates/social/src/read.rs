@@ -143,3 +143,43 @@ impl SocialService {
         Ok(ids.iter().filter_map(|id| records.remove(id)).collect())
     }
 }
+
+impl SocialService {
+    pub async fn context_source_authorized(
+        &self,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+        read: &SourceReadView,
+        scope: &nous_runtime::InvocationScope,
+        materialize: bool,
+    ) -> Result<nous_runtime::ContextSource> {
+        self.require_enabled(subject).await?;
+        let mut tx = self.store.read_view().await?;
+        let entities = scope
+            .entities
+            .iter()
+            .map(EntityRef::as_str)
+            .collect::<Vec<_>>();
+        let revision:Option<Uuid>=sqlx::query_scalar("SELECT r.revision_id FROM social_objects o JOIN social_revisions r ON r.object_id=o.object_id WHERE o.subject_id=$1 AND (($2 AND r.revision_id=$3) OR (NOT $2 AND o.object_id=$3 AND r.revision_id=o.current_revision_id)) AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND source_read_allowed($1,o.family||'_revision',r.revision_id::text,$4,$5,$6,$7) AND COALESCE(r.content#>'{value,scope,entities}','[]'::jsonb)<@to_jsonb($8::text[]) AND (r.content#>>'{value,scope,group}' IS NULL OR r.content#>>'{value,scope,group}'=$9) AND (r.content#>>'{value,scope,channel}' IS NULL OR r.content#>>'{value,scope,channel}'=$10) AND (r.content#>>'{value,scope,conversation}' IS NULL OR r.content#>>'{value,scope,conversation}'=$11) AND (r.content#>>'{value,scope,domain}' IS NULL OR r.content#>>'{value,scope,domain}'=$12) AND (r.content#>>'{value,scope,work_context}' IS NULL OR r.content#>>'{value,scope,work_context}'=$13)").bind(subject.0).bind(reference.is_cognition_revision()).bind(reference.uuid()).bind(&read.root_keys).bind(&read.work_contexts).bind(&read.origin_conversation_refs).bind(serde_json::json!(&read.explicit_refs)).bind(entities).bind(scope.group.as_ref().map(EntityRef::as_str)).bind(&scope.channel).bind(&scope.conversation).bind(&scope.domain).bind(scope.work_context.map(|v|v.0.to_string())).fetch_optional(&mut *tx).await.map_err(db)?;
+        let revision =
+            revision.ok_or_else(|| Error::Unavailable("Social source/scope unavailable".into()))?;
+        let record = self.read_in(&mut tx, subject, revision, true).await?;
+        if record.reference().kind()
+            != if reference.is_cognition_revision() {
+                reference.kind()
+            } else {
+                match reference {
+                    CognitiveRef::SocialRelation(_) => "social_relation_revision",
+                    CognitiveRef::LanguageConvention(_) => "language_convention_revision",
+                    _ => return Err(Error::Invalid("Social owned ref required".into())),
+                }
+            }
+        {
+            return Err(Error::Unavailable(
+                "Social reference family unavailable".into(),
+            ));
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(Self::record_context(&record, materialize))
+    }
+}

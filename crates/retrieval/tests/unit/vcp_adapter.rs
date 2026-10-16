@@ -53,6 +53,7 @@ fn identity_curve_evidence_and_readout_mapping_preserve_generation_contracts() {
     source.members[0].vector = vec![1.0];
     assert!(vcp_candidate_curve(&ids, &source).is_err());
     let edge = WaveEdgeEvidence {
+        source_refs: Vec::new(),
         from: first.clone(),
         to: second.clone(),
         basis_class: "source_evidence".into(),

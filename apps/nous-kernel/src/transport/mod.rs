@@ -47,7 +47,7 @@ mod work_context;
 
 use crate::NousRuntime;
 use convert::*;
-use nous_core::{Error, SessionId, SubjectId};
+use nous_core::{Error, SessionId, SubjectId, WorkContextId};
 use nous_protocol::{kernel as k, public as p};
 use tonic::{Request, Response, Status};
 
@@ -65,6 +65,10 @@ impl KernelService {
         self.0.require_memory()
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "captured source authorization and bounded owner materialization stay in one read view"
+    )]
     pub async fn build_contribution_batch(
         &self,
         input: p::ProjectionRequest,
@@ -104,11 +108,20 @@ impl KernelService {
                         .as_ref()
                         .map(|u| {
                             Ok::<_, nous_core::Error>(nous_runtime::InvocationScope {
+                                work_context: input
+                                    .active_work_context_id
+                                    .as_deref()
+                                    .map(id)
+                                    .transpose()?
+                                    .map(WorkContextId),
                                 source_read: u
                                     .source_read
                                     .as_ref()
                                     .map(|s| {
                                         Ok::<_, Error>(nous_core::SourceReadScope {
+                                            origin_conversation_refs: s
+                                                .origin_conversation_refs
+                                                .clone(),
                                             subject_id: Some(SubjectId(id(&s.subject_id)?)),
                                             source_refs: s
                                                 .source_refs

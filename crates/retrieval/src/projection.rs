@@ -296,6 +296,10 @@ fn expand_edges(
 ) -> Result<Vec<WaveEdgeEvidence>> {
     let mut edges = Vec::new();
     for edge in edges_input {
+        let source_refs = match &edge.provenance {
+            ProjectionEdgeProvenance::Structure(_) => vec![edge.from.clone(), edge.to.clone()],
+            ProjectionEdgeProvenance::AuthorityBasis(reference) => vec![reference.clone()],
+        };
         let origins: Vec<_> = match edge.provenance {
             ProjectionEdgeProvenance::Structure(identity) => vec![Some(identity)],
             ProjectionEdgeProvenance::AuthorityBasis(reference) => {
@@ -314,6 +318,7 @@ fn expand_edges(
         };
         for provenance_root in origins {
             edges.push(WaveEdgeEvidence {
+                source_refs: source_refs.clone(),
                 from: edge.from.clone(),
                 to: edge.to.clone(),
                 basis_class: edge.basis_class.clone(),

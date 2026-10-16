@@ -40,13 +40,10 @@ impl SocialService {
             return Err(Error::Invalid("invalid Social selection budget".into()));
         }
         let mut tx = self.store.read_view().await?;
-        let allowed = self
+        let read = self
             .roots
-            .roots_in(&mut tx, subject, &input.source_read.source_refs)
-            .await?
-            .into_iter()
-            .map(|r| r.root_key)
-            .collect::<Vec<_>>();
+            .read_scope_in(&mut tx, subject, input.source_read)
+            .await?;
         let entities = input
             .scope
             .entities
@@ -76,15 +73,14 @@ WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='v
  AND (r.content#>>'{value,scope,conversation}' IS NULL OR r.content#>>'{value,scope,conversation}'=$6)
  AND (r.content#>>'{value,scope,work_context}' IS NULL OR r.content#>>'{value,scope,work_context}'=$7)
  AND (r.content#>>'{value,scope,domain}' IS NULL OR r.content#>>'{value,scope,domain}'=$8)
- AND EXISTS(SELECT 1 FROM social_source_roots roots WHERE roots.revision_id=r.revision_id)
- AND NOT EXISTS(SELECT 1 FROM social_source_roots roots WHERE roots.revision_id=r.revision_id AND NOT(roots.root_key=ANY($9::text[])))
+ AND source_read_allowed($1,o.family||'_revision',r.revision_id::text,$9,$19,$20,$21)
  AND ($10::text IS NULL OR (o.family='language_convention' AND (
   position(r.content#>>'{value,expression}' in $10)>0 OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(r.content#>'{value,variants}') v WHERE position(v in $10)>0)
   OR (COALESCE((r.content#>>'{value,case_insensitive}')::boolean,false) AND (position(lower(r.content#>>'{value,expression}') in lower($10))>0 OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(r.content#>'{value,variants}') v WHERE position(lower(v) in lower($10))>0))))))
  AND ($11::text IS NULL OR (o.family='social_relation' AND (r.content#>>'{value,from}'=$11 OR r.content#>>'{value,to}'=$11)))
  AND ($13::text IS NULL OR (r.content#>>'{value,from}'=$13 OR r.content#>>'{value,to}'=$13))
 ORDER BY r.revision_id LIMIT $12
-"#).bind(subject.0).bind(input.after).bind(entities).bind(input.scope.group.as_ref().map(EntityRef::as_str)).bind(&input.scope.channel).bind(&input.scope.conversation).bind(input.scope.work_context.map(|v|v.0.to_string())).bind(&input.scope.domain).bind(allowed).bind(input.expression).bind(input.endpoint.map(EntityRef::as_str)).bind((input.max_items+1) as i64).bind(input.counterpart.map(EntityRef::as_str)).bind(now.year()).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond())).bind(input.as_of).bind(input.history).fetch_all(&mut *tx).await.map_err(db)?;
+"#).bind(subject.0).bind(input.after).bind(entities).bind(input.scope.group.as_ref().map(EntityRef::as_str)).bind(&input.scope.channel).bind(&input.scope.conversation).bind(input.scope.work_context.map(|v|v.0.to_string())).bind(&input.scope.domain).bind(&read.root_keys).bind(input.expression).bind(input.endpoint.map(EntityRef::as_str)).bind((input.max_items+1) as i64).bind(input.counterpart.map(EntityRef::as_str)).bind(now.year()).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond())).bind(input.as_of).bind(input.history).bind(&read.work_contexts).bind(&read.origin_conversation_refs).bind(serde_json::json!(&read.explicit_refs)).fetch_all(&mut *tx).await.map_err(db)?;
         let mut ids = Vec::new();
         let mut bytes = 0usize;
         let mut omitted = false;

@@ -8,6 +8,8 @@ use nous_subject::{CognitiveSeedInput, CreateSubject};
 
 pub(crate) fn query(subject: nous_core::SubjectId) -> CognitiveQuery {
     CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         projection: Default::default(),
         temporal_frame: Default::default(),
 
@@ -58,6 +60,8 @@ pub(crate) async fn subject(runtime: &nous_kernel::NousRuntime) -> nous_core::Su
 
 pub(crate) fn text_query(subject: nous_core::SubjectId) -> CognitiveQuery {
     CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         projection: Default::default(),
         temporal_frame: Default::default(),
 

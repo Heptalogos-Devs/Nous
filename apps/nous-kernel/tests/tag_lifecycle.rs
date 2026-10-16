@@ -489,6 +489,8 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
         .cognition
         .bind_query(
             CognitiveQuery {
+                source_read: None,
+                source_allowed: None,
                 subject,
                 projection: Default::default(),
                 temporal_frame: Default::default(),

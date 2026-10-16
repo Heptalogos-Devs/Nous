@@ -385,6 +385,8 @@ async fn historical_material_query_runs_without_memory_micro_system() {
     let cut = rt.cognition.now(subject);
     let future = observation(&rt, subject, "future material archival chronicle").await;
     let request = CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         subject,
         session: None,
         work_context: None,

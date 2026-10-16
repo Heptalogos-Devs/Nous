@@ -354,6 +354,14 @@ impl CognitiveRuntimeService {
         bound: &super::BoundQuery,
         reference: &CognitiveRef,
     ) -> Result<Option<&'static str>> {
+        if let Some(read) = &bound.source_query.source_read {
+            let mut tx = self.store.read_view().await?;
+            if !nous_persistence::AuthorityStore::source_read_allowed_in(&mut tx, read, reference)
+                .await?
+            {
+                return Ok(Some("source_read_denied"));
+            }
+        }
         let subject = bound.source_query.subject;
         if let Some(binding) = bound
             .exact_bindings

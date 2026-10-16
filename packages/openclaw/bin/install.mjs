@@ -266,6 +266,26 @@ try {
     ...registry,
     plugins: [...retained, ...installed],
   });
+  // This reviewable template grants nothing to existing operator profiles.
+  await writeFile(
+    join(prefix, "nous-source-policy.example.json"),
+    JSON.stringify(
+      {
+        sourceRead: {
+          currentConversation: true,
+          sourceRefs: [],
+          originConversationRefs: [],
+          routes: [],
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600, flag: "wx" },
+  ).catch((error) => {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST"))
+      throw error;
+  });
   process.stdout.write(`Installed controlled runtime: ${prefix}\n`);
 } finally {
   await rm(lock, { recursive: true, force: true });

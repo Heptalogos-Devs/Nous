@@ -121,6 +121,17 @@ export async function showCommands(env: CliEnvironment, reference?: string) {
   const ref = await resolveReference(
     required(reference, "Exact reference or result:N"),
   );
+  if (
+    (client as unknown as Record<symbol, unknown>)[
+      Symbol.for("nous.scopedSourceReader")
+    ]
+  )
+    return client.cognition.readSources({
+      subjectId,
+      references: [ref],
+      maxTextBytes: 65536,
+      workContextId: await env.workContextId,
+    });
   const input = { subjectId, id: ref.value };
   const cognition = cognitionRevisionReader(ref.kind);
   if (cognition) return cognition.read(client, input);
@@ -165,6 +176,17 @@ export async function readCommands(env: CliEnvironment, reference?: string) {
   const ref = await env.resolveReference(
     env.required(reference, "Material reference or result:N"),
   );
+  if (
+    (env.client as unknown as Record<symbol, unknown>)[
+      Symbol.for("nous.scopedSourceReader")
+    ]
+  )
+    return env.client.cognition.readSources({
+      subjectId: await env.subjectId,
+      references: [ref],
+      maxTextBytes: 65536,
+      workContextId: await env.workContextId,
+    });
   if (
     ![
       "occurrence",

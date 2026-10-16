@@ -3,8 +3,43 @@
 use super::*;
 impl SelfService {
     pub async fn get(&self, subject: SubjectId, id: Uuid, exact: bool) -> Result<SelfRecord> {
+        self.get_authorized(subject, id, exact, None).await
+    }
+    pub(crate) async fn get_authorized(
+        &self,
+        subject: SubjectId,
+        id: Uuid,
+        exact: bool,
+        source_read: Option<&SourceReadView>,
+    ) -> Result<SelfRecord> {
         self.require_enabled(subject).await?;
         let mut tx = self.store.read_view().await?;
+        if let Some(read) = source_read {
+            let family: Option<String> = if exact {
+                sqlx::query_scalar("SELECT o.family FROM self_revisions r JOIN self_objects o USING(object_id) WHERE r.subject_id=$1 AND r.revision_id=$2").bind(subject.0).bind(id).fetch_optional(&mut *tx).await.map_err(db)?
+            } else {
+                sqlx::query_scalar(
+                    "SELECT family FROM self_objects WHERE subject_id=$1 AND object_id=$2",
+                )
+                .bind(subject.0)
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?
+            };
+            let kind = family
+                .ok_or_else(|| Error::NotFound("Self reference unavailable".into()))?
+                + if exact { "_revision" } else { "" };
+            if !AuthorityStore::source_read_allowed_in(
+                &mut tx,
+                read,
+                &parse_reference(&kind, &id.to_string())?,
+            )
+            .await?
+            {
+                return Err(Error::Unavailable("Self source read denied".into()));
+            }
+        }
         let record = self.read_in(&mut tx, subject, id, exact).await?;
         tx.commit().await.map_err(db)?;
         Ok(record)

@@ -13,6 +13,15 @@ pub(crate) struct SourceRoots {
 }
 #[async_trait::async_trait]
 impl nous_runtime::SourceRootResolver for SourceRoots {
+    async fn read_scope_in(
+        &self,
+        tx: &mut nous_persistence::AuthorityTransaction<'_>,
+        subject: SubjectId,
+        scope: &SourceReadScope,
+    ) -> Result<SourceReadView> {
+        self.view_in(tx, subject, scope).await
+    }
+
     async fn roots_in(
         &self,
         tx: &mut nous_persistence::AuthorityTransaction<'_>,
@@ -119,5 +128,88 @@ impl nous_runtime::SourceRootResolver for SourceRoots {
             pending.extend(children.into_iter().map(|r| (r, path.clone())));
         }
         Ok(roots)
+    }
+}
+
+impl SourceRoots {
+    pub async fn view_in(
+        &self,
+        tx: &mut nous_persistence::AuthorityTransaction<'_>,
+        subject: SubjectId,
+        scope: &SourceReadScope,
+    ) -> Result<SourceReadView> {
+        let mut view = SourceReadView {
+            subject,
+            ..Default::default()
+        };
+        if scope.subject_id.is_none()
+            && scope.source_refs.is_empty()
+            && scope.origin_conversation_refs.is_empty()
+        {
+            return Ok(view);
+        }
+        if scope.subject_id != Some(subject) {
+            return Err(Error::Invalid("source read Subject mismatch".into()));
+        }
+        if scope.origin_conversation_refs.len() > 64
+            || scope
+                .origin_conversation_refs
+                .iter()
+                .any(|v| v.trim().is_empty() || v.len() > 1024)
+        {
+            return Err(Error::Invalid("invalid trusted origin source scope".into()));
+        }
+        view.origin_conversation_refs = scope.origin_conversation_refs.clone();
+        let mut sources = Vec::new();
+        for reference in &scope.source_refs {
+            if !self
+                .store
+                .reference_in_subject_tx(tx, subject, reference)
+                .await?
+            {
+                return Err(Error::Invalid(
+                    "source read reference outside Subject".into(),
+                ));
+            }
+            if let CognitiveRef::WorkContext(id) = reference {
+                view.work_contexts.push(id.0);
+            } else {
+                sources.push(reference.clone());
+            }
+        }
+        let roots = nous_runtime::SourceRootResolver::roots_in(self, tx, subject, &sources).await?;
+        if roots
+            .iter()
+            .any(|root| root.certainty != EvidenceRootCertainty::Known)
+        {
+            return Err(Error::Unavailable(
+                "unknown source authorization lineage".into(),
+            ));
+        }
+        view.root_keys = roots.into_iter().map(|root| root.root_key).collect();
+        let metadata =
+            AuthorityStore::source_read_metadata_closure_in(tx, subject, &sources).await?;
+        if metadata.len() > 1024 || metadata.iter().any(|v| v.2) {
+            return Err(Error::Unavailable(
+                "explicit source metadata closure exceeds budget or cycles".into(),
+            ));
+        }
+        view.explicit_refs = metadata
+            .into_iter()
+            .map(|(kind, id, _)| serde_json::json!({"kind":kind,"id":id}))
+            .collect();
+        Ok(view)
+    }
+    pub async fn view(
+        &self,
+        subject: SubjectId,
+        scope: &SourceReadScope,
+    ) -> Result<SourceReadView> {
+        let mut tx = self.store.read_view().await?;
+        let view = self.view_in(&mut tx, subject, scope).await?;
+        tx.commit()
+            .await
+            .map_err(nous_persistence::database_error)?;
+        Ok(view)
     }
 }

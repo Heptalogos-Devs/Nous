@@ -118,6 +118,8 @@ export async function createCore(settings: CoreOptions) {
         .send({ code: "unauthenticated", message: "Core credential required" });
   });
   const cognition: ServiceImpl<typeof CognitionService> = {
+    readSources: (request, context) =>
+      kernel.queryWorkflow.readSources(request, options(context)),
     trace: (request, context) =>
       kernel.queryWorkflow.trace(request, options(context)),
     grantMaintenance: (r, c) =>

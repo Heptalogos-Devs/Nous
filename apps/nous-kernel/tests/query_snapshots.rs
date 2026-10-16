@@ -414,6 +414,8 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
     );
     let historical = runtime
         .query(CognitiveQuery {
+            source_read: None,
+            source_allowed: None,
             projection: Default::default(),
             temporal_frame: Default::default(),
 

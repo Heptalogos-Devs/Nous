@@ -54,11 +54,25 @@ impl MaterialService {
         subject: SubjectId,
         references: &[CognitiveRef],
         max_bytes: usize,
+        source_read: Option<&SourceReadView>,
     ) -> Result<Vec<Result<nous_runtime::ContextSource>>> {
         self.store.require_subject(subject).await?;
         let mut tx = self.store.read_view().await?;
+        let mut admitted = Vec::new();
+        for reference in references {
+            if source_read.is_none()
+                || AuthorityStore::source_read_allowed_in(
+                    &mut tx,
+                    source_read.expect("checked read"),
+                    reference,
+                )
+                .await?
+            {
+                admitted.push(reference.clone());
+            }
+        }
         let mut inputs = self
-            .read_inputs_in(&mut tx, subject, references, None, max_bytes > 0)
+            .read_inputs_in(&mut tx, subject, &admitted, None, max_bytes > 0)
             .await?;
         tx.commit().await.map_err(db)?;
         let mut results = Vec::with_capacity(references.len());

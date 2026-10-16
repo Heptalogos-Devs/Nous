@@ -99,6 +99,8 @@ fn query(subject: SubjectId, mut cues: Vec<Cue>) -> CognitiveQuery {
         );
     }
     CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         subject,
         session: None,
         projection: Default::default(),

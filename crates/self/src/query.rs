@@ -121,7 +121,12 @@ impl SelfService {
                 ));
             }
             let mut record = self
-                .get(subject, selected.uuid().expect("Self UUID"), true)
+                .get_authorized(
+                    subject,
+                    selected.uuid().expect("Self UUID"),
+                    true,
+                    bound.source_query.source_read.as_ref(),
+                )
                 .await?;
             if !record.is_current_available() {
                 return Err(Error::Unavailable(
@@ -147,10 +152,11 @@ impl SelfService {
             record.evidence.retain(|e| e.recorded_at <= view.as_of);
             record
         } else {
-            self.get(
+            self.get_authorized(
                 subject,
                 reference.uuid().expect("Self UUID"),
                 reference.is_cognition_revision(),
+                bound.source_query.source_read.as_ref(),
             )
             .await?
         };
@@ -178,12 +184,14 @@ impl SelfService {
         &self,
         subject: SubjectId,
         reference: &CognitiveRef,
+        source_read: Option<&SourceReadView>,
     ) -> Result<QueryDescriptor> {
         let record = self
-            .get(
+            .get_authorized(
                 subject,
                 reference.uuid().expect("Self UUID"),
                 reference.is_cognition_revision(),
+                source_read,
             )
             .await?;
         if !record.is_current_available() {

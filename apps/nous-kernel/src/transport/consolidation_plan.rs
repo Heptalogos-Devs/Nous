@@ -203,6 +203,8 @@ impl KernelService {
 fn consolidation_query(subject: SubjectId, cue: String, limit: usize) -> CognitiveQuery {
     let constraints = QueryConstraints::default();
     CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         // This cue is quoted source content for similarity lookup, not a user intent.
         projection: ResultProjection {
             domains: vec![ResultDomain::Memory, ResultDomain::Schema],

@@ -5,6 +5,12 @@ use nous_core::*;
 use std::collections::BTreeSet;
 #[async_trait::async_trait]
 pub trait SourceRootResolver: Send + Sync {
+    async fn read_scope_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        scope: &SourceReadScope,
+    ) -> Result<SourceReadView>;
     async fn roots_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

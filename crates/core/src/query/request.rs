@@ -5,6 +5,10 @@ use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CognitiveQuery {
+    #[serde(skip)]
+    pub source_read: Option<SourceReadView>,
+    #[serde(skip)]
+    pub source_allowed: Option<Vec<CognitiveRef>>,
     #[serde(default)]
     pub projection: ResultProjection,
     #[serde(default)]

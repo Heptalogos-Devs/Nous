@@ -147,6 +147,7 @@ impl MemoryService {
                 self.cognition.now(subject),
                 &snapshot,
                 None,
+                None,
             )
             .await?
             .into_iter()

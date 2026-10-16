@@ -152,6 +152,11 @@ impl p::self_service_server::SelfService for KernelService {
     ) -> std::result::Result<Response<p::SelfSelectionResponse>, Status> {
         let r = r.into_inner();
         rpc_reply(async {
+            let subject=SubjectId(id(&r.subject_id)?);
+            let source_read=if let Some(read)=&r.source_read {
+                Some(crate::source_read::SourceRoots{store:self.0.store.clone(),material:self.0.material.clone(),memory:self.0.memory.clone(),self_cognition:self.0.self_cognition.clone()}.view(subject,&SourceReadScope{subject_id:Some(SubjectId(id(&read.subject_id)?)),source_refs:read.source_refs.clone().into_iter().map(from_ref).collect::<Result<_>>()?,origin_conversation_refs:read.origin_conversation_refs.clone()}).await?)
+            }else{None};
+            let allowed=if let Some(read)=&source_read {Some(self.0.require_self()?.authorized_references(subject,read,false).await?)}else{None};
             let scope = r.scope.unwrap_or_default();
             let scope = SelfScope {
                 description: scope.description,
@@ -191,11 +196,12 @@ impl p::self_service_server::SelfService for KernelService {
             let (discovered, discovery_degradation) = self
                 .0
                 .serving
-                .lexical_candidates(
+                .lexical_candidates_authorized(
                     SubjectId(id(&r.subject_id)?),
                     &r.intent,
                     r.max_items as usize,
                     &["self_facet", "narrative_thread"],
+                    allowed.as_deref(),
                 )
                 .await?;
             ranked.extend(discovered);
@@ -205,6 +211,7 @@ impl p::self_service_server::SelfService for KernelService {
                 .select(
                     SubjectId(id(&r.subject_id)?),
                     nous_self::SelfSelectionRequest {
+                        source_read: source_read.as_ref(),
                         scope: &scope,
                         targets: &targets,
                         sources: &sources,

@@ -185,6 +185,7 @@ export async function prepareSelfCandidates(
     sourceText: string;
     source: unknown;
     ranked?: CognitiveRef[];
+    sourceRead?: import("@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js").SourceReadScope;
   },
   maxBytes: number,
   options: ExecutionOptions,
@@ -205,6 +206,7 @@ export async function prepareSelfCandidates(
       targets: request.targets,
       sources,
       ranked: prepared.ranked,
+      sourceRead: prepared.sourceRead,
       intent,
       maxItems: maxCandidates,
       maxBytes: Math.floor(maxBytes / 4),

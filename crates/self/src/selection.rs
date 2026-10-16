@@ -125,7 +125,7 @@ WITH anchors AS (
  SELECT o.family||'_revision',o.current_revision_id::text FROM self_objects o
  WHERE o.subject_id=$1 AND (o.family||':'||o.object_id::text=ANY($3::text[]) OR o.family||'_revision:'||o.current_revision_id::text=ANY($3::text[]))
 ), eligible AS (
- SELECT o.object_id,o.current_revision_id AS revision_id,r.content,r.reason,r.recorded_at,
+ SELECT o.family,o.object_id,o.current_revision_id AS revision_id,r.content,r.reason,r.recorded_at,
   o.family||':'||o.object_id::text=ANY($3::text[]) OR o.family||'_revision:'||r.revision_id::text=ANY($3::text[]) AS targeted,
   COALESCE(array_position($4::text[],o.family||'_revision:'||r.revision_id::text),array_position($4::text[],o.family||':'||o.object_id::text)) AS rank,
   (EXISTS(SELECT 1 FROM self_dependencies d JOIN anchors s ON d.ref_kind=s.kind AND d.ref_value=s.value WHERE d.revision_id=r.revision_id)
@@ -153,7 +153,7 @@ SELECT revision_id,targeted,
  2*octet_length(content::text)+octet_length(reason)+1024+
  COALESCE((SELECT sum(2*octet_length(e.basis::text)+octet_length(e.role)+128) FROM self_evidence e WHERE e.revision_id=eligible.revision_id),0)::bigint AS read_bytes
 FROM eligible
-WHERE (NOT $2 OR identity=$12) AND ($2 OR targeted OR related OR rank IS NOT NULL OR identity)
+WHERE ($16::text[] IS NULL OR CASE WHEN $2 THEN source_read_allowed($1,family||'_revision',revision_id::text,$16,$17,$18,$19) ELSE source_read_metadata_allowed($1,family||'_revision',revision_id::text,$16,$17,$18,$19) END) AND (NOT $2 OR identity=$12) AND ($2 OR targeted OR related OR rank IS NOT NULL OR identity)
  AND ($2 OR NOT $12)
 ORDER BY targeted DESC,related DESC,rank NULLS LAST,recorded_at DESC,revision_id
 LIMIT $13
@@ -161,6 +161,24 @@ LIMIT $13
         .bind(subject.0).bind(input.automatic).bind(refs(input.targets)).bind(refs(input.ranked))
         .bind(kinds).bind(values).bind(now.year()).bind(&input.scope.purposes)
         .bind(input.scope.work_context.map(|w| w.0.to_string())).bind(&input.scope.conversation)
-        .bind(entities).bind(required).bind(limit as i64).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond() % 1_000_000_000)).fetch_all(&mut **tx).await.map_err(db)
+        .bind(entities).bind(required).bind(limit as i64).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond() % 1_000_000_000)).bind(input.source_read.map(|r|r.root_keys.clone())).bind(input.source_read.map(|r|r.work_contexts.clone()).unwrap_or_default()).bind(input.source_read.map(|r|r.origin_conversation_refs.clone()).unwrap_or_default()).bind(input.source_read.map(|r|serde_json::json!(&r.explicit_refs)).unwrap_or_else(||serde_json::json!([]))).fetch_all(&mut **tx).await.map_err(db)
+    }
+}
+
+impl SelfService {
+    /// Complete permitted metadata set for shared Serving filtering; never a ranked first page.
+    pub async fn authorized_references(
+        &self,
+        subject: SubjectId,
+        read: &SourceReadView,
+        automatic: bool,
+    ) -> Result<Vec<CognitiveRef>> {
+        if read.subject != subject {
+            return Err(Error::Invalid("Self source read Subject mismatch".into()));
+        }
+        let rows:Vec<(String,String)>=sqlx::query_as("SELECT o.family||'_revision',o.current_revision_id::text FROM self_objects o WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND (NOT $6 OR o.integrity_state='valid') AND o.suppression_state='normal' AND CASE WHEN $6 THEN source_read_allowed($1,o.family||'_revision',o.current_revision_id::text,$2,$3,$4,$5) ELSE source_read_metadata_allowed($1,o.family||'_revision',o.current_revision_id::text,$2,$3,$4,$5) END").bind(subject.0).bind(&read.root_keys).bind(&read.work_contexts).bind(&read.origin_conversation_refs).bind(serde_json::json!(&read.explicit_refs)).bind(automatic).fetch_all(self.store.pool()).await.map_err(db)?;
+        rows.into_iter()
+            .map(|(k, v)| parse_reference(&k, &v))
+            .collect()
     }
 }

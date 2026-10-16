@@ -1,7 +1,11 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { create } from "@bufbuild/protobuf";
+import { toJson } from "@bufbuild/protobuf";
+import {
+  standaloneSourceConfiguration,
+  standaloneUsage,
+} from "./standalone-source.js";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { connectNousInstance } from "@nous-wave/client/node";
 import {
@@ -47,6 +51,7 @@ const configuration = z
     consumerId: z.string().min(1),
     workContextId: z.uuid().optional(),
     hostBridge: hostBridgeConfiguration.optional(),
+    sourceRead: standaloneSourceConfiguration.optional(),
     cognitionTokenCap: z.number().int().min(512).default(4096),
   })
   .strict();
@@ -99,7 +104,14 @@ function register(api: OpenClawPluginApi): void {
       );
     };
     let invocation = 0;
-    const observedEvents = new Set<string>();
+    const observedEvents = new Map<
+      string,
+      Awaited<
+        ReturnType<
+          Awaited<ReturnType<typeof connect>>["runtime"]["recordObservation"]
+        >
+      >
+    >();
     const worker = (input: ManagedModelInput) => {
       const key = `${input.sessionId}:${input.runId}`;
       let pending = workers.get(key);
@@ -230,8 +242,9 @@ function register(api: OpenClawPluginApi): void {
           : content;
       if (!material) return;
       const key = `${input.sessionId}:${message.role}:${message.timestamp}:${"toolCallId" in message ? message.toolCallId : content}`;
-      if (observedEvents.has(key)) return;
-      await connected.runtime.recordObservation(
+      const previous = observedEvents.get(key);
+      if (previous) return previous;
+      const receipt = await connected.runtime.recordObservation(
         {
           subjectId: config.subjectId,
           sessionId: binding.sessionId,
@@ -263,6 +276,19 @@ function register(api: OpenClawPluginApi): void {
           },
           admit: message.role === "toolResult",
           context: {
+            ...(config.sourceRead
+              ? {
+                  cognition_usage: toJson(
+                    CognitionUsageSchema,
+                    standaloneUsage(
+                      input,
+                      config.subjectId,
+                      config.sourceRead,
+                      true,
+                    ),
+                  ),
+                }
+              : {}),
             native_session_id: input.sessionId,
             role: message.role,
             audience_visibility: input.audience.visibility,
@@ -289,7 +315,10 @@ function register(api: OpenClawPluginApi): void {
         },
         { signal: input.signal },
       );
-      observedEvents.add(key);
+      observedEvents.set(key, receipt);
+      if (observedEvents.size > 4096)
+        observedEvents.delete(observedEvents.keys().next().value!);
+      return receipt;
     };
 
     const engine: ManagedContextEngine = {
@@ -354,7 +383,9 @@ function register(api: OpenClawPluginApi): void {
       captureNativeEvent(input, message, application, outcome) {
         hosted?.capture(input, message, application, outcome);
       },
-      recordNativeEvent: observe,
+      async recordNativeEvent(input, message) {
+        await observe(input, message);
+      },
       async prepareSubagentSpawn(params) {
         if (
           params.contextMode !== "isolated" ||
@@ -505,10 +536,14 @@ function register(api: OpenClawPluginApi): void {
         const currentTurn = input.context.messages.findLastIndex(
           (message) => message.role === "user",
         );
+        const standaloneReceipts = [];
         for (const message of input.context.messages.slice(
           Math.max(0, currentTurn),
         )) {
-          if (!hosted) await observe(input, message);
+          if (!hosted) {
+            const receipt = await observe(input, message);
+            if (receipt) standaloneReceipts.push(receipt);
+          }
         }
         const reservedOutput = input.reservedOutputTokens;
         const contextWindow = input.contextTokenBudget;
@@ -521,19 +556,11 @@ function register(api: OpenClawPluginApi): void {
         const budget = Math.min(config.cognitionTokenCap, available);
         const usage =
           permission?.usage ??
-          create(CognitionUsageSchema, {
-            agentInstanceId: `${input.sessionId}:${input.runId}`,
-            purpose: input.sessionKey?.includes(":subagent:")
-              ? "worker"
-              : "deliberation",
-            intent:
-              input.prompt.trim() ||
-              "Continue the current work using the actual tool results.",
-            audience: {
-              conversationRef: input.sessionKey ?? input.sessionId,
-              visibility: input.audience.visibility,
-            },
-          });
+          withAcceptedContactRoots(
+            standaloneUsage(input, config.subjectId, config.sourceRead),
+            config.subjectId,
+            standaloneReceipts,
+          );
         const prepared = await binding.prepare({
           usage,
           workContextId:

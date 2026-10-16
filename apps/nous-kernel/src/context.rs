@@ -7,6 +7,21 @@ use nous_runtime::{ContextResolver, ContextSource};
 
 #[async_trait::async_trait]
 impl ContextResolver for NousRuntime {
+    async fn source_read_view(
+        &self,
+        subject: SubjectId,
+        scope: &SourceReadScope,
+    ) -> Result<SourceReadView> {
+        crate::source_read::SourceRoots {
+            store: self.store.clone(),
+            material: self.material.clone(),
+            memory: self.memory.clone(),
+            self_cognition: self.self_cognition.clone(),
+        }
+        .view(subject, scope)
+        .await
+    }
+
     async fn automatic_context_sources(
         &self,
         subject: SubjectId,
@@ -31,7 +46,8 @@ impl ContextResolver for NousRuntime {
         };
         if capabilities.social_cognition
             && input.scope.source_read.subject_id == Some(subject)
-            && !input.scope.source_read.source_refs.is_empty()
+            && (!input.scope.source_read.source_refs.is_empty()
+                || !input.scope.source_read.origin_conversation_refs.is_empty())
         {
             let scope = nous_social::SocialScope {
                 description: "Actual Host invocation".into(),
@@ -156,6 +172,7 @@ impl ContextResolver for NousRuntime {
                     query.temporal_frame.clock_now,
                     configuration,
                     historical,
+                    query.source_read.as_ref(),
                 )
                 .await?
         };
@@ -167,7 +184,12 @@ impl ContextResolver for NousRuntime {
             });
         descriptors.extend(
             self.material
-                .query_descriptors(query.subject, &material, historical)
+                .query_descriptors(
+                    query.subject,
+                    &material,
+                    historical,
+                    query.source_read.as_ref(),
+                )
                 .await?,
         );
         let (selves, identities): (Vec<_>, Vec<_>) = identities
@@ -176,7 +198,7 @@ impl ContextResolver for NousRuntime {
         for reference in selves {
             match self
                 .require_self()?
-                .query_descriptor(query.subject, &reference)
+                .query_descriptor(query.subject, &reference, query.source_read.as_ref())
                 .await
             {
                 Ok(value) => descriptors.push(value),
@@ -203,6 +225,8 @@ impl ContextResolver for NousRuntime {
         max_bytes: usize,
         now: chrono::DateTime<chrono::Utc>,
         configuration: &nous_configuration::ConfigSnapshot,
+        source_read: Option<&SourceReadView>,
+        scope: Option<&nous_runtime::InvocationScope>,
     ) -> Result<Vec<Result<ContextSource>>> {
         let mut result = (0..references.len())
             .map(|_| Err(Error::NotFound("context source not found".into())))
@@ -224,6 +248,7 @@ impl ContextResolver for NousRuntime {
                     &policy,
                     now,
                     max_bytes,
+                    source_read,
                 )
                 .await?;
             for ((index, _), source) in cognition.into_iter().zip(sources) {
@@ -245,6 +270,7 @@ impl ContextResolver for NousRuntime {
                         .map(|(_, (r, _))| r.clone())
                         .collect::<Vec<_>>(),
                     max_bytes,
+                    source_read,
                 )
                 .await?;
             for ((index, _), source) in material.into_iter().zip(sources) {
@@ -252,10 +278,37 @@ impl ContextResolver for NousRuntime {
             }
         }
         for (index, (reference, _)) in other {
+            if let Some(read) = source_read {
+                let mut tx = self.store.read_view().await?;
+                if !nous_persistence::AuthorityStore::source_read_allowed_in(
+                    &mut tx, read, reference,
+                )
+                .await?
+                {
+                    continue;
+                }
+            }
             result[index] = if reference.domain() == CognitiveDomain::SelfCognition {
                 self.require_self()?
-                    .context_source(subject, reference, max_bytes > 0)
+                    .context_source(subject, reference, max_bytes > 0, source_read)
                     .await
+            } else if reference.domain() == CognitiveDomain::SocialCognition {
+                match (source_read, scope) {
+                    (Some(read), Some(scope)) => {
+                        self.require_social()?
+                            .context_source_authorized(
+                                subject,
+                                reference,
+                                read,
+                                scope,
+                                max_bytes > 0,
+                            )
+                            .await
+                    }
+                    _ => Err(Error::Unavailable(
+                        "Social requires actual source and invocation scope".into(),
+                    )),
+                }
             } else {
                 self.cognition
                     .runtime_context_source(subject, reference, max_bytes)
@@ -281,19 +334,28 @@ impl NousRuntime {
         {
             return Ok(nous_runtime::AutomaticContext::default());
         }
+        let read = self
+            .source_read_view(subject, &input.scope.source_read)
+            .await?;
+        let allowed = self
+            .require_self()?
+            .authorized_references(subject, &read, true)
+            .await?;
         let (discovered, degradation) = self
             .serving
-            .lexical_candidates(
+            .lexical_candidates_authorized(
                 subject,
                 &input.scope.intent.chars().take(2048).collect::<String>(),
                 input.max_items.min(128),
                 &["self_facet"],
+                Some(&allowed),
             )
             .await?;
         let mut ranked = input.ranked.to_vec();
         ranked.extend(discovered);
-        ranked.retain(|r| r.domain() == CognitiveDomain::SelfCognition);
+        ranked.retain(|r| r.domain() == CognitiveDomain::SelfCognition && allowed.contains(r));
         ranked.truncate(128);
+
         let mut selected = self
             .require_self()?
             .automatic_context(
@@ -302,6 +364,7 @@ impl NousRuntime {
                     ranked: &ranked,
                     ..input
                 },
+                &read,
             )
             .await?;
         selected.degradation.extend(degradation);
