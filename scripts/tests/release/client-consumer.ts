@@ -19,7 +19,10 @@ import {
   criterionFactContext,
   decodeCriterionFact,
 } from "@nous-wave/client/motivation";
-export const motivationFacts = { criterionFactContext, decodeCriterionFact };
+export const motivationFacts: {
+  criterionFactContext: typeof criterionFactContext;
+  decodeCriterionFact: typeof decodeCriterionFact;
+} = { criterionFactContext, decodeCriterionFact };
 import {
   createManagedBinding,
   eventIdentity,

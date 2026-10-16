@@ -7,7 +7,11 @@ import {
   type MessageInitShape,
   type JsonValue,
 } from "@bufbuild/protobuf";
-import { CriterionFactSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
+import {
+  CriterionFactSchema,
+  type CriterionFact,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
+export type { CriterionFact } from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
 /** Canonical typed facts on actual ObservationInput context. Source provenance,
  * observation time and SourceRead remain the real observation owner's contract. */
 export function criterionFactContext(
@@ -32,5 +36,5 @@ export function criterionFactContext(
     );
   return { criterion_fact: toJson(CriterionFactSchema, fact) };
 }
-export const decodeCriterionFact = (json: JsonValue) =>
+export const decodeCriterionFact = (json: JsonValue): CriterionFact =>
   fromJson(CriterionFactSchema, json);
