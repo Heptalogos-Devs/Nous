@@ -132,10 +132,14 @@ impl SubjectClockService {
             RunningClock {
                 snapshot: ClockSnapshot {
                     subject_id: subject,
-                    time_domain_ref: REAL_TIME_DOMAIN.into(),
+                    time_domain_ref: self.fallback.time_domain_ref(subject),
                     world_anchor: world,
                     real_anchor: Utc::now(),
-                    rate: 1.0,
+                    rate: if self.fallback.time_domain_ref(subject) == REAL_TIME_DOMAIN {
+                        1.0
+                    } else {
+                        0.0
+                    },
                     world_now: world,
                     recorded_at: Utc::now(),
                     revision: 0,
@@ -144,6 +148,14 @@ impl SubjectClockService {
                 high_water: world,
             }
         });
+        if entry.snapshot.revision == 0
+            && self.fallback.time_domain_ref(subject) != REAL_TIME_DOMAIN
+        {
+            entry.high_water = entry
+                .high_water
+                .max(self.fallback.now(subject).trunc_subsecs(6));
+            entry.snapshot.world_anchor = entry.high_water;
+        }
         let world = entry.now();
         ClockSnapshot {
             world_now: world,
@@ -231,6 +243,7 @@ impl SubjectClockService {
                 }
                 if snapshot.time_domain_ref != REAL_TIME_DOMAIN
                     && snapshot.time_domain_ref != time_domain_ref
+                    && snapshot.revision != 0
                 {
                     return Err(Error::Invalid("Subject has one primary time domain; use an isolated Subject for another world".into()));
                 }
@@ -305,7 +318,26 @@ impl SubjectClockService {
         Ok(snapshot)
     }
 }
+#[async_trait::async_trait]
 impl CognitiveClock for SubjectClockService {
+    fn time_domain_ref(&self, subject: SubjectId) -> String {
+        self.snapshot(subject).time_domain_ref
+    }
+    async fn read_stamp(&self, subject: SubjectId) -> Result<DomainStamp> {
+        let s = self.read(subject).await?;
+        Ok(DomainStamp {
+            time_domain_ref: s.time_domain_ref,
+            at: s.world_now,
+            recorded_at: s.recorded_at,
+        })
+    }
+    async fn capture_in(
+        &self,
+        tx: &mut nous_persistence::AuthorityTransaction<'_>,
+        subject: SubjectId,
+    ) -> Result<DomainStamp> {
+        SubjectClockService::capture_in(self, tx, subject).await
+    }
     fn now(&self, subject: SubjectId) -> DateTime<Utc> {
         self.snapshot(subject).world_now
     }

@@ -169,3 +169,51 @@ pub struct DomainTemporalEvidence {
     pub recorded_at: Option<DateTime<Utc>>,
     pub observed_real_at: Option<DateTime<Utc>>,
 }
+
+impl DomainTemporalExtent {
+    pub fn real(extent: TemporalExtent) -> Self {
+        Self {
+            time_domain_ref: "time:real".into(),
+            extent,
+        }
+    }
+    pub fn validate(&self) -> Result<()> {
+        if self.time_domain_ref.trim().is_empty() || self.time_domain_ref.len() > 256 {
+            return Err(Error::Invalid("time domain requires 1..256 bytes".into()));
+        }
+        self.extent.validate()
+    }
+}
+impl Default for DomainTemporalExtent {
+    fn default() -> Self {
+        Self::real(TemporalExtent::Unknown)
+    }
+}
+/// A reference predicate has a domain; numeric equality across worlds is unknown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DomainTimePredicate {
+    pub time_domain_ref: String,
+    pub predicate: TimePredicate,
+}
+impl DomainTimePredicate {
+    pub fn validate(&self) -> Result<()> {
+        if self.time_domain_ref.trim().is_empty() || self.time_domain_ref.len() > 256 {
+            return Err(Error::Invalid(
+                "time predicate domain requires 1..256 bytes".into(),
+            ));
+        }
+        self.predicate.validate()
+    }
+    pub fn matches_extent(&self, value: &DomainTemporalExtent) -> Option<bool> {
+        (self.time_domain_ref == value.time_domain_ref
+            && !matches!(value.extent, TemporalExtent::Unknown))
+        .then(|| self.predicate.matches_extent(&value.extent))
+    }
+    pub fn matches_stamp(&self, value: &DomainStamp) -> Option<bool> {
+        if self.time_domain_ref == value.time_domain_ref {
+            Some(self.predicate.contains(value.at))
+        } else {
+            None
+        }
+    }
+}

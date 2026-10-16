@@ -11,8 +11,8 @@ mod trace;
 pub use trace::CognitionTraceSources;
 mod time;
 pub use time::{
-    DomainStamp, DomainTemporalEvidence, DomainTemporalExtent, TemporalExtent, TimeInterval,
-    TimePredicate,
+    DomainStamp, DomainTemporalEvidence, DomainTemporalExtent, DomainTimePredicate, TemporalExtent,
+    TimeInterval, TimePredicate,
 };
 mod model_results;
 pub use model_results::{

@@ -316,3 +316,72 @@ async fn clock_process_resume_worker() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn one_owner_transaction_keeps_one_stamp_while_clock_control_waits() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let selected = subject(&runtime).await;
+    let other = subject(&runtime).await;
+    runtime
+        .clocks
+        .change(selected, OperationId::new(), ClockChange::Pause)
+        .await
+        .unwrap();
+    let cognition = nous_runtime::CognitiveRuntimeService::with_clock(
+        runtime.store.clone(),
+        64,
+        runtime.configuration.clone(),
+        Arc::new(runtime.clocks.clone()),
+    )
+    .unwrap();
+    let mut tx = runtime.store.begin().await.unwrap();
+    let first = cognition
+        .capture_semantic_in(&mut tx, selected)
+        .await
+        .unwrap();
+    let clock = runtime.clocks.clone();
+    let control = tokio::spawn(async move {
+        clock
+            .change(
+                selected,
+                OperationId::new(),
+                ClockChange::Advance { seconds: 86400.0 },
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted)",
+            )
+            .fetch_one(runtime.store.pool())
+            .await
+            .unwrap();
+            if waiting {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("clock control must actually wait on this owner transaction");
+    let second = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        cognition.capture_semantic_in(&mut tx, selected),
+    )
+    .await
+    .expect("repeat capture must not wait on the control mutex")
+    .unwrap();
+    assert_eq!(first.at, second.at);
+    assert_eq!(first.recorded_at, second.recorded_at);
+    assert!(cognition.capture_semantic_in(&mut tx, other).await.is_err());
+    assert!((first.recorded_at - Utc::now()).num_seconds().abs() < 3);
+    tx.commit().await.unwrap();
+    let advanced = control.await.unwrap().unwrap();
+    assert!(advanced.world_now >= first.at + Duration::days(1));
+    assert!(
+        (advanced.recorded_at - Utc::now()).num_seconds().abs() < 3,
+        "one world day is not a physical elapsed day"
+    );
+}

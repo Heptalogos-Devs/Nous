@@ -132,6 +132,34 @@ impl CognitiveRuntimeService {
         self.clock.now(subject)
     }
 
+    /// UTC infrastructure/record time is independent of the Subject semantic clock.
+    pub fn recorded_now(&self) -> DateTime<Utc> {
+        Utc::now()
+    }
+    pub async fn read_clock(&self, subject: SubjectId) -> Result<DomainStamp> {
+        self.clock.read_stamp(subject).await
+    }
+    /// One semantic instant per committing owner transaction; no second pool checkout.
+    pub async fn capture_semantic_in(
+        &self,
+        tx: &mut nous_persistence::AuthorityTransaction<'_>,
+        subject: SubjectId,
+    ) -> Result<DomainStamp> {
+        let (prior, prior_subject):(Option<String>,Option<String>)=sqlx::query_as("SELECT NULLIF(current_setting('nous.semantic_stamp',true),''),NULLIF(current_setting('nous.semantic_subject',true),'')")
+            .fetch_one(&mut **tx).await.map_err(nous_persistence::database_error)?;
+        if let Some(prior) = prior {
+            if prior_subject.as_deref() != Some(subject.0.to_string().as_str()) {
+                return Err(Error::Invalid(
+                    "owner transaction has another semantic Subject".into(),
+                ));
+            }
+            return serde_json::from_str(&prior).map_err(|e| Error::Infrastructure(e.to_string()));
+        }
+        let stamp = self.clock.capture_in(tx, subject).await?;
+        sqlx::query("SELECT set_config('nous.semantic_stamp',$1,true),set_config('nous.authority_time',$2,true),set_config('nous.semantic_subject',$3,true)")
+            .bind(serde_json::to_string(&stamp).map_err(|e|Error::Infrastructure(e.to_string()))?).bind(stamp.recorded_at.to_rfc3339()).bind(subject.0.to_string()).execute(&mut **tx).await.map_err(nous_persistence::database_error)?;
+        Ok(stamp)
+    }
     pub async fn require_subject(&self, subject: SubjectId) -> Result<()> {
         self.store.require_subject(subject).await
     }
