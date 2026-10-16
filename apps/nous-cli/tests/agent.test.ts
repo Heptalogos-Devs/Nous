@@ -305,7 +305,8 @@ describe("Agent CLI protocol", () => {
   it("supports discovery without an instance and emits parse errors only on stderr", async () => {
     const entry = "apps/nous-cli/src/main.ts";
     const help = await exec(process.execPath, [
-      "node_modules/tsx/dist/cli.mjs",
+      "--import",
+      "tsx",
       entry,
       "help",
       "--json",
@@ -315,7 +316,8 @@ describe("Agent CLI protocol", () => {
     expect(help.stdout).toContain('"command":"query prepare|inspect"');
     expect(help.stderr).toBe("");
     const failure: unknown = await exec(process.execPath, [
-      "node_modules/tsx/dist/cli.mjs",
+      "--import",
+      "tsx",
       entry,
       "--nonexistent",
       "--json",
