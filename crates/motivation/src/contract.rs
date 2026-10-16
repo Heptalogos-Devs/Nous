@@ -112,7 +112,7 @@ impl Criterion {
                     *n += 1;
                     *version == 1
                         && ((matches!(reference, CognitiveRef::WorkContext(_))
-                            && ["active", "paused", "ended"].contains(&state.as_str()))
+                            && ["open", "paused", "ended"].contains(&state.as_str()))
                             || reference.is_cognition_revision()
                                 && [
                                     "accepted",
