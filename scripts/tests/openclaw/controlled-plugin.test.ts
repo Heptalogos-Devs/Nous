@@ -144,7 +144,10 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
       );
       const artifact = await makeArtifact("first");
       install();
-      run(hostedProbe, [runtime]);
+      run(hostedProbe, [
+        join(runtime, "node_modules/openclaw"),
+        join(runtime, "node_modules/@nous-wave/openclaw"),
+      ]);
       const staleLock = join(runtime, ".nous-install-lock");
       await mkdir(staleLock);
       await writeFile(

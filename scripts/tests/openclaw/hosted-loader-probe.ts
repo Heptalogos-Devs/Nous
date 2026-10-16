@@ -4,11 +4,11 @@
 import assert from "node:assert/strict";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-const runtime = resolve(process.argv[2]!);
+const native = resolve(process.argv[2]!);
+const packageRoot = resolve(process.argv[3]!);
 const pluginId = "nous-cognition";
 const { t: loadRoot } = (await import(
-  pathToFileURL(join(runtime, "node_modules/openclaw/dist/loader-UHuBXZwI.js"))
-    .href
+  pathToFileURL(join(native, "dist/loader-UHuBXZwI.js")).href
 )) as {
   t: (options: unknown) => {
     plugins: { id: string; status: string; toolNames: string[] }[];
@@ -21,18 +21,18 @@ const registry = loadRoot({
     plugins: {
       enabled: true,
       allow: [pluginId],
-      load: { paths: [join(runtime, "node_modules/@nous-wave/openclaw")] },
+      load: { paths: [packageRoot] },
       slots: { contextEngine: pluginId, memory: "none" },
       entries: {
         [pluginId]: {
           enabled: true,
           config: {
-            runRoot: join(runtime, "fixture-nous-run"),
+            runRoot: join(packageRoot, "fixture-nous-run"),
             subjectId: "00000000-0000-4000-8000-000000000001",
             consumerId: "consumer:fixture:hosted",
             hostBridge: {
               origin: "http://127.0.0.1:1",
-              credentialFile: join(runtime, "fixture-not-read.token"),
+              credentialFile: join(packageRoot, "fixture-not-read.token"),
             },
           },
         },

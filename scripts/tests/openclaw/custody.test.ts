@@ -17,6 +17,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
+import { buildDistribution } from "../../openclaw/distribution.js";
 import { repositoryRoot } from "../../workspace.js";
 
 test("controlled native custody survives SQLite and gates real delivery producers", async () => {
@@ -93,6 +94,23 @@ test("controlled native custody survives SQLite and gates real delivery producer
       { cwd: repositoryRoot, env, encoding: "utf8", windowsHide: true },
     );
     assert(tools.includes('"nativeToolExecutionGuard":"PASS"'));
+    const plugin = join(modules, "@nous-wave/openclaw");
+    await buildDistribution(plugin);
+    await symlink(native, join(modules, "openclaw"), "junction");
+    const hosted = execFileSync(
+      process.execPath,
+      [
+        join(repositoryRoot, "scripts/tests/openclaw/hosted-loader-probe.ts"),
+        native,
+        plugin,
+      ],
+      { cwd: repositoryRoot, env, encoding: "utf8", windowsHide: true },
+    );
+    assert(
+      hosted.includes(
+        "Actual installed SDK hosted tool declaration/registration PASS",
+      ),
+    );
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
