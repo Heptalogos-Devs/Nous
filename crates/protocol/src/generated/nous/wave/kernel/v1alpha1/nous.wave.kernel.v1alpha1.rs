@@ -265,7 +265,7 @@ pub struct ExperienceMember {
     #[prost(bool, tag="12")]
     pub text_partial: bool,
     #[prost(message, optional, tag="13")]
-    pub occurred_time: ::core::option::Option<super::super::v1alpha1::TemporalExtent>,
+    pub occurred_time: ::core::option::Option<super::super::v1alpha1::DomainTemporalExtent>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BasisCatalogEntry {

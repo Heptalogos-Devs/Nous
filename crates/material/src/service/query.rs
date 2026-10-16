@@ -83,11 +83,11 @@ origins AS (
  UNION ALL
  SELECT r.kind,r.value,o.occurrence_id,NULL::timestamptz,s.created_at FROM requested r JOIN source_regions s ON r.kind='source_region' AND s.source_region_id::text=r.value AND s.subject_id=$1 JOIN observation_occurrences o ON o.artifact_id=s.artifact_id AND o.subject_id=$1
  UNION ALL
- SELECT r.kind,r.value,o.occurrence_id,d.created_at,COALESCE(g.created_at,d.created_at) FROM requested r JOIN derived_representations d ON d.subject_id=$1 AND (r.kind='derived_representation' AND d.derived_representation_id::text=r.value OR r.kind='derived_region' AND EXISTS(SELECT 1 FROM derived_regions g WHERE g.subject_id=$1 AND g.derived_region_id::text=r.value AND g.derived_representation_id=d.derived_representation_id))
+ SELECT r.kind,r.value,o.occurrence_id,CASE WHEN d.formed_stamp->>'time_domain_ref'='time:real' THEN (d.formed_stamp->>'at')::timestamptz END,COALESCE(g.created_at,d.created_at) FROM requested r JOIN derived_representations d ON d.subject_id=$1 AND (r.kind='derived_representation' AND d.derived_representation_id::text=r.value OR r.kind='derived_region' AND EXISTS(SELECT 1 FROM derived_regions g WHERE g.subject_id=$1 AND g.derived_region_id::text=r.value AND g.derived_representation_id=d.derived_representation_id))
  LEFT JOIN derived_regions g ON r.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id::text=r.value
  JOIN LATERAL representation_source_regions($1,d.derived_representation_id) roots ON true JOIN source_regions s USING(source_region_id) JOIN observation_occurrences o ON o.artifact_id=s.artifact_id AND o.subject_id=$1
 )
-SELECT DISTINCT p.kind,p.value,p.formed_at,o.occurrence_id,o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at,p.recorded_at,o.source_class FROM origins p JOIN observation_occurrences o USING(occurrence_id) WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4)
+SELECT DISTINCT p.kind,p.value,p.formed_at,o.occurrence_id,o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.occurred_time_domain_ref,o.observed_at,p.recorded_at,o.source_class FROM origins p JOIN observation_occurrences o USING(occurrence_id) WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4)
 "#).bind(subject.0).bind(&kinds).bind(&values).bind(view.map(|v|v.as_of)).fetch_all(self.store.pool()).await.map_err(database_error)?;
         for row in rows {
             let reference = parse_reference(
@@ -97,13 +97,16 @@ SELECT DISTINCT p.kind,p.value,p.formed_at,o.occurrence_id,o.occurred_time_kind,
             let kind: String = row.get("occurred_time_kind");
             let start: Option<DateTime<Utc>> = row.get("occurred_time_start");
             let end = row.get("occurred_time_end");
-            let occurred = match kind.as_str() {
-                "instant" => TemporalExtent::Instant {
+            let occurred = match (
+                row.get::<String, _>("occurred_time_domain_ref").as_str(),
+                kind.as_str(),
+            ) {
+                ("time:real", "instant") => TemporalExtent::Instant {
                     at: start.ok_or_else(|| {
                         Error::Infrastructure("instant occurrence has no time".into())
                     })?,
                 },
-                "interval" => TemporalExtent::Interval { start, end },
+                ("time:real", "interval") => TemporalExtent::Interval { start, end },
                 _ => TemporalExtent::Unknown,
             };
             let times = result
@@ -235,6 +238,7 @@ impl nous_runtime::CognitiveContributor for MaterialService {
         }
         use nous_persistence::{TimeColumns, push_time_predicate};
         if let Some(predicate) = c.occurred {
+            sql.push(" AND occurred_time_domain_ref='time:real'");
             push_time_predicate(
                 &mut sql,
                 TimeColumns::Extent {

@@ -311,11 +311,14 @@ function register(api: OpenClawPluginApi): void {
                 : "message",
           externalObjectRef: `object:openclaw:${await eventIdentity(key)}`,
           conversationRef: input.sessionKey,
-          observedAt: timestampFromDate(new Date(message.timestamp)),
+          observedAt: timestampFromDate(new Date()),
           occurredTime: {
-            value: {
-              case: "instant",
-              value: timestampFromDate(new Date(message.timestamp)),
+            timeDomainRef: "time:real",
+            extent: {
+              value: {
+                case: "instant",
+                value: timestampFromDate(new Date(message.timestamp)),
+              },
             },
           },
           material: {

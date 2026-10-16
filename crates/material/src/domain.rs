@@ -49,7 +49,9 @@ pub struct ObservationOccurrence {
     pub source_class: SourceClass,
     pub external_object_ref: Option<ObjectRef>,
     pub occurred_time: TemporalExtent,
+    pub occurred_time_domain_ref: String,
     pub observed_at: DateTime<Utc>,
+    pub observed_stamp: nous_core::DomainStamp,
     pub conversation_ref: Option<String>,
     pub actor_entity_ref: Option<EntityRef>,
     pub context: serde_json::Value,
@@ -58,6 +60,11 @@ pub struct ObservationOccurrence {
 
 impl ObservationOccurrence {
     pub fn validate(&self) -> Result<()> {
+        nous_core::DomainTemporalExtent {
+            time_domain_ref: self.occurred_time_domain_ref.clone(),
+            extent: self.occurred_time.clone(),
+        }
+        .validate()?;
         if self.observed_at < DateTime::<Utc>::UNIX_EPOCH {
             return Err(Error::Invalid("observed_at is before Unix epoch".into()));
         }
@@ -86,6 +93,7 @@ pub struct DerivationInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DerivedRepresentation {
+    pub formed_stamp: Option<nous_core::DomainStamp>,
     pub derived_representation_id: DerivedRepresentationId,
     pub subject_id: SubjectId,
     pub inputs: Vec<DerivationInput>,
@@ -187,6 +195,11 @@ pub struct OccurrenceDescriptor {
     pub source_class: SourceClass,
     pub external_object_ref: Option<ObjectRef>,
     pub occurred_time: TemporalExtent,
+    #[serde(
+        default = "real_time_domain",
+        skip_serializing_if = "is_real_time_domain"
+    )]
+    pub occurred_time_domain_ref: String,
     #[serde(default)]
     pub observed_at: Option<DateTime<Utc>>,
     pub conversation_ref: Option<String>,
@@ -244,4 +257,11 @@ pub struct AcceptedObservation {
     pub mention_ids: Vec<Uuid>,
     pub resident: bool,
     pub memory_revisions: Vec<nous_core::MemoryRevisionId>,
+}
+
+fn real_time_domain() -> String {
+    "time:real".into()
+}
+fn is_real_time_domain(value: &String) -> bool {
+    value == "time:real"
 }

@@ -47,6 +47,7 @@ async fn observation_admission_is_a_single_idempotent_runtime_batch() {
         subject,
         session: Some(session.session_id),
         occurrence: OccurrenceDescriptor {
+            occurred_time_domain_ref: "time:real".into(),
             source_class: nous_core::SourceClass::Message,
             external_object_ref: None,
             occurred_time: nous_core::TemporalExtent::Unknown,

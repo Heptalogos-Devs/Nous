@@ -208,6 +208,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                 .material
                 .persist_derived_representation(
                     nous_material::DerivedRepresentation {
+                        formed_stamp: None,
                         derived_representation_id: nous_core::DerivedRepresentationId::new(),
                         subject_id: subject,
                         inputs,

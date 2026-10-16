@@ -60,7 +60,11 @@ impl MaterialService {
                 return Ok(accepted);
             }
         }
-        let now = self.cognition.now(input.subject);
+        let observed_stamp = self
+            .cognition
+            .capture_semantic_in(&mut tx, input.subject)
+            .await?;
+        let now = observed_stamp.recorded_at;
         let object_guard = if matches!(
             &input.material,
             ObservationMaterial::InlineText { .. }
@@ -89,6 +93,8 @@ impl MaterialService {
                 }
             }),
             occurred_time: input.occurrence.occurred_time.clone(),
+            occurred_time_domain_ref: input.occurrence.occurred_time_domain_ref.clone(),
+            observed_stamp,
             observed_at: input.occurrence.observed_at.unwrap_or(now),
             conversation_ref: input.occurrence.conversation_ref.clone(),
             actor_entity_ref: input.occurrence.actor_entity_ref.clone(),
@@ -104,8 +110,8 @@ impl MaterialService {
         }
         let (occurred_kind, occurred_start, occurred_end) =
             temporal_columns(&occurrence.occurred_time);
-        sqlx::query("INSERT INTO observation_occurrences(occurrence_id,subject_id,artifact_id,source_class,external_object_ref,occurred_time_kind,occurred_time_start,occurred_time_end,observed_at,conversation_ref,actor_entity_ref,context,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
-            .bind(occurrence.occurrence_id.0).bind(occurrence.subject_id.0).bind(occurrence.artifact_id.map(|id| id.0)).bind(occurrence.source_class.as_str()).bind(occurrence.external_object_ref.as_ref().map(ObjectRef::as_str)).bind(occurred_kind).bind(occurred_start).bind(occurred_end).bind(occurrence.observed_at).bind(&occurrence.conversation_ref).bind(occurrence.actor_entity_ref.as_ref().map(EntityRef::as_str)).bind(&occurrence.context).bind(occurrence.created_at).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO observation_occurrences(occurrence_id,subject_id,artifact_id,source_class,external_object_ref,occurred_time_kind,occurred_time_start,occurred_time_end,observed_at,conversation_ref,actor_entity_ref,context,created_at,occurred_time_domain_ref,observed_stamp) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)")
+            .bind(occurrence.occurrence_id.0).bind(occurrence.subject_id.0).bind(occurrence.artifact_id.map(|id| id.0)).bind(occurrence.source_class.as_str()).bind(occurrence.external_object_ref.as_ref().map(ObjectRef::as_str)).bind(occurred_kind).bind(occurred_start).bind(occurred_end).bind(occurrence.observed_at).bind(&occurrence.conversation_ref).bind(occurrence.actor_entity_ref.as_ref().map(EntityRef::as_str)).bind(&occurrence.context).bind(occurrence.created_at).bind(&occurrence.occurred_time_domain_ref).bind(serde_json::to_value(&occurrence.observed_stamp).map_err(|e|Error::Infrastructure(e.to_string()))?).execute(&mut *tx).await.map_err(db)?;
         let source_region = if let Some(artifact) = &artifact {
             let coordinate = serde_json::json!({});
             let coordinate_hash = blake3::hash(b"{}").to_hex().to_string();

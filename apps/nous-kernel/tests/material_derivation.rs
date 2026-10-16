@@ -79,6 +79,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
     let source = observed.source_region.unwrap().source_region_id;
     let make = |input: CognitiveRef, kind| {
         DerivedRepresentation {
+                        formed_stamp: None,
         derived_representation_id: DerivedRepresentationId::new(),
         subject_id: subject,
         inputs: vec![DerivationInput {
@@ -120,6 +121,19 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
         supersedes: None,
     }
     };
+    let world = runtime
+        .clocks
+        .change(
+            subject,
+            nous_core::OperationId::new(),
+            nous_runtime::ClockChange::Configure {
+                time_domain_ref: "time:media-fixture".into(),
+                rate: 0.0,
+                world_time: Some(Utc::now() + chrono::Duration::days(2)),
+            },
+        )
+        .await
+        .unwrap();
     let description = runtime
         .material
         .persist_derived_representation(
@@ -131,6 +145,15 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
         )
         .await
         .unwrap();
+    assert_eq!(
+        description.formed_stamp.as_ref().unwrap().time_domain_ref,
+        world.time_domain_ref
+    );
+    assert_eq!(
+        description.formed_stamp.as_ref().unwrap().at,
+        world.world_now
+    );
+    assert!((description.created_at - Utc::now()).num_seconds().abs() < 2);
     assert_ne!(
         description.producer.signature_hash,
         "untrusted supplied hash"
@@ -140,6 +163,7 @@ async fn ordered_derivation_graph_preserves_roots_and_reuses_success() {
         .derived_representation(subject, description.derived_representation_id)
         .await
         .unwrap();
+    assert_eq!(exact.formed_stamp.as_ref().unwrap().at, world.world_now);
     assert_eq!(
         exact.inputs[0].reference,
         CognitiveRef::SourceRegion(source)

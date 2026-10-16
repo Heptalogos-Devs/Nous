@@ -64,7 +64,7 @@ message ObservationInput {
   optional string request_id = 3;
   string source_class = 4;
   optional string external_object_ref = 5;
-  TemporalExtent occurred_time = 6;
+  DomainTemporalExtent occurred_time = 6;
   google.protobuf.Timestamp observed_at = 7;
   optional string conversation_ref = 8;
   optional string actor_entity_ref = 9 [(reference_kind) = "entity"];

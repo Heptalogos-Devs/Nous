@@ -174,7 +174,9 @@ impl KernelService {
                             .external_object_ref
                             .map(ObjectRef::new)
                             .transpose()?,
-                        occurred_time: temporal(input.occurred_time)?,
+                        occurred_time_domain_ref: domain_temporal(input.occurred_time.clone())?
+                            .time_domain_ref,
+                        occurred_time: domain_temporal(input.occurred_time)?.extent,
                         observed_at: time(input.observed_at)?,
                         conversation_ref: input.conversation_ref,
                         actor_entity_ref: input.actor_entity_ref.map(EntityRef::new).transpose()?,

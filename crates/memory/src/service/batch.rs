@@ -111,7 +111,13 @@ impl MemoryService {
             occurrences.sort_by_key(|o| o.observed_at);
             let entry = temporal.entry(*revision).or_default();
             for occurrence in occurrences {
-                entry.occurred.push(occurrence.occurred_time.clone());
+                entry
+                    .occurred
+                    .push(if occurrence.occurred_time_domain_ref == "time:real" {
+                        occurrence.occurred_time.clone()
+                    } else {
+                        TemporalExtent::Unknown
+                    });
                 {
                     entry.observed_at = Some(occurrence.observed_at);
                 }

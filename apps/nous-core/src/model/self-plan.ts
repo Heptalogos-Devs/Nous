@@ -5,6 +5,7 @@ import { TimestampSchema, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   RevisionBasisSchema,
+  DomainTemporalExtentSchema,
   TemporalExtentSchema,
   type CognitiveRef,
   CognitiveRefSchema,
@@ -163,7 +164,7 @@ export async function prepareInterpretationSource(
       context: occurrence.context,
       partial: material.partial,
       occurredTime: occurrence.occurredTime
-        ? toJson(TemporalExtentSchema, occurrence.occurredTime)
+        ? toJson(DomainTemporalExtentSchema, occurrence.occurredTime)
         : undefined,
       observedAt: occurrence.observedAt
         ? toJson(TimestampSchema, occurrence.observedAt)

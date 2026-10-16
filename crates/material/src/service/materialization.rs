@@ -712,7 +712,7 @@ async fn perception_metadata_in(
     references: &[CognitiveRef],
 ) -> Result<std::collections::HashMap<CognitiveRef, serde_json::Value>> {
     let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
-    let rows=sqlx::query("WITH refs AS (SELECT * FROM unnest($2::text[],$3::text[]) q(kind,value)) SELECT q.kind,q.value,d.quality FROM refs q LEFT JOIN derived_regions g ON q.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id::text=q.value JOIN derived_representations d ON d.subject_id=$1 AND ((q.kind='derived_representation' AND d.derived_representation_id::text=q.value) OR d.derived_representation_id=g.derived_representation_id)").bind(subject.0).bind(kinds).bind(values).fetch_all(&mut **tx).await.map_err(db)?;
+    let rows=sqlx::query("WITH refs AS (SELECT * FROM unnest($2::text[],$3::text[]) q(kind,value)) SELECT q.kind,q.value,d.quality,d.formed_stamp,d.created_at FROM refs q LEFT JOIN derived_regions g ON q.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id::text=q.value JOIN derived_representations d ON d.subject_id=$1 AND ((q.kind='derived_representation' AND d.derived_representation_id::text=q.value) OR d.derived_representation_id=g.derived_representation_id)").bind(subject.0).bind(kinds).bind(values).fetch_all(&mut **tx).await.map_err(db)?;
     let keys = [
         "input_access",
         "source_media_type",
@@ -736,6 +736,15 @@ async fn perception_metadata_in(
             )?;
             let quality: serde_json::Value = row.try_get("quality").map_err(db)?;
             let mut visible = serde_json::Map::new();
+            visible.insert(
+                "formed_stamp".into(),
+                row.try_get("formed_stamp").map_err(db)?,
+            );
+            visible.insert(
+                "recorded_at".into(),
+                serde_json::to_value(row.try_get::<DateTime<Utc>, _>("created_at").map_err(db)?)
+                    .map_err(|e| Error::Infrastructure(e.to_string()))?,
+            );
             for key in keys {
                 if let Some(value) = quality.get(key) {
                     visible.insert(key.into(), value.clone());

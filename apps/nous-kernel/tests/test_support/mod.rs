@@ -171,6 +171,7 @@ pub(crate) async fn observation(
             subject,
             session: None,
             occurrence: OccurrenceDescriptor {
+                occurred_time_domain_ref: "time:real".into(),
                 source_class: nous_core::SourceClass::Message,
                 external_object_ref: None,
                 occurred_time: TemporalExtent::Unknown,
@@ -202,6 +203,7 @@ pub(crate) async fn external_observation(
             subject,
             session: None,
             occurrence: OccurrenceDescriptor {
+                occurred_time_domain_ref: "time:real".into(),
                 source_class: nous_core::SourceClass::Message,
                 external_object_ref: Some(object_ref.clone()),
                 occurred_time: TemporalExtent::Unknown,
@@ -235,6 +237,7 @@ pub(crate) async fn external_actor_observation(
             subject,
             session: None,
             occurrence: OccurrenceDescriptor {
+                occurred_time_domain_ref: "time:real".into(),
                 source_class: nous_core::SourceClass::Message,
                 external_object_ref: Some(object_ref.clone()),
                 occurred_time: TemporalExtent::Unknown,
@@ -264,6 +267,7 @@ pub(crate) async fn occurrence_only_observation(
             subject,
             session: None,
             occurrence: OccurrenceDescriptor {
+                occurred_time_domain_ref: "time:real".into(),
                 source_class: nous_core::SourceClass::HostEvent,
                 external_object_ref: None,
                 occurred_time: TemporalExtent::Unknown,

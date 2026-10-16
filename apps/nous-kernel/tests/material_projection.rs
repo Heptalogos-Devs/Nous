@@ -50,6 +50,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         .material
         .persist_derived_representation(
             DerivedRepresentation {
+                formed_stamp: None,
                 derived_representation_id: DerivedRepresentationId::new(),
                 subject_id: subject,
                 inputs: sources

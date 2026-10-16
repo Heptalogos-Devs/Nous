@@ -34,6 +34,7 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
                     subject,
                     session: None,
                     occurrence: OccurrenceDescriptor {
+                        occurred_time_domain_ref: "time:real".into(),
                         source_class: nous_core::SourceClass::Message,
                         external_object_ref: None,
                         occurred_time: TemporalExtent::Instant { at: time },
@@ -214,6 +215,7 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
                     subject,
                     session: None,
                     occurrence: OccurrenceDescriptor {
+                        occurred_time_domain_ref: "time:real".into(),
                         source_class: nous_core::SourceClass::File,
                         external_object_ref: None,
                         occurred_time: TemporalExtent::Instant { at: occurred },
@@ -248,6 +250,7 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
         .material
         .persist_derived_representation(
             DerivedRepresentation {
+                formed_stamp: None,
                 derived_representation_id: nous_core::DerivedRepresentationId::new(),
                 subject_id: subject,
                 inputs: vec![DerivationInput {

@@ -394,7 +394,10 @@ export async function outcomeObservation(input: {
       ? timestampFromDate(input.observedAt)
       : undefined,
     occurredTime: {
-      value: { case: "instant", value: timestampFromDate(result.occurredAt) },
+      timeDomainRef: "time:real",
+      extent: {
+        value: { case: "instant", value: timestampFromDate(result.occurredAt) },
+      },
     },
     material: {
       case: "inlineText",

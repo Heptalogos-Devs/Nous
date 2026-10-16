@@ -50,6 +50,10 @@ impl MaterialService {
         representation.producer = AuthorityStore::canonical_producer(&representation.producer)?;
         let (input_digest, key) = derivation_identity(&representation)?;
         let mut tx = self.store.begin().await?;
+        let formed_stamp = self
+            .cognition
+            .capture_semantic_in(&mut tx, representation.subject_id)
+            .await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
             .bind(&key)
             .execute(&mut *tx)
@@ -85,6 +89,10 @@ impl MaterialService {
                 .map(ArtifactId);
             representation.quality = row.try_get("quality").map_err(db)?;
             representation.created_at = row.try_get("created_at").map_err(db)?;
+            representation.formed_stamp = Some(
+                serde_json::from_value(row.try_get("formed_stamp").map_err(db)?)
+                    .map_err(|e| Error::Infrastructure(e.to_string()))?,
+            );
             representation.revision = row.try_get("revision").map_err(db)?;
             if let Some(identity) = operation {
                 AuthorityStore::publish_material_result_in(
@@ -97,11 +105,12 @@ impl MaterialService {
             tx.commit().await.map_err(db)?;
             return Ok(representation);
         }
-        representation.created_at = self.cognition.now(representation.subject_id);
+        representation.created_at = formed_stamp.recorded_at;
+        representation.formed_stamp = Some(formed_stamp);
         let producer_id =
             AuthorityStore::register_producer_in(&mut tx, &representation.producer).await?;
-        sqlx::query("INSERT INTO derived_representations(derived_representation_id,subject_id,input_digest,strategy,derivation_key,representation_kind,producer_signature_id,revision,payload_text,payload_artifact_id,quality,created_at,supersedes,payload_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
-            .bind(representation.derived_representation_id.0).bind(representation.subject_id.0).bind(input_digest).bind(&representation.strategy).bind(key).bind(representation.representation_kind.as_str()).bind(producer_id).bind(representation.revision).bind(&representation.payload_text).bind(representation.payload_artifact_id.map(|id| id.0)).bind(&representation.quality).bind(representation.created_at).bind(representation.supersedes.map(|id| id.0)).bind(&representation.payload_json).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO derived_representations(derived_representation_id,subject_id,input_digest,strategy,derivation_key,representation_kind,producer_signature_id,revision,payload_text,payload_artifact_id,quality,created_at,supersedes,payload_json,formed_stamp) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)")
+            .bind(representation.derived_representation_id.0).bind(representation.subject_id.0).bind(input_digest).bind(&representation.strategy).bind(key).bind(representation.representation_kind.as_str()).bind(producer_id).bind(representation.revision).bind(&representation.payload_text).bind(representation.payload_artifact_id.map(|id| id.0)).bind(&representation.quality).bind(representation.created_at).bind(representation.supersedes.map(|id| id.0)).bind(&representation.payload_json).bind(serde_json::to_value(&representation.formed_stamp).map_err(|e|Error::Infrastructure(e.to_string()))?).execute(&mut *tx).await.map_err(db)?;
         for input in &representation.inputs {
             let (source, derived, region) = match input.reference {
                 CognitiveRef::SourceRegion(id) => (Some(id.0), None, None),

@@ -89,7 +89,8 @@ impl NousRuntime {
             resident_limit,
             configuration.clone(),
             clock,
-        )?;
+        )?
+        .with_semantic_clock(Arc::new(clocks.clone()));
         let material = MaterialService::new(
             store.clone(),
             objects.clone(),

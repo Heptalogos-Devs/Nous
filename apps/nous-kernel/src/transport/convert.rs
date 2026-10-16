@@ -308,3 +308,30 @@ pub fn page_cursor(page: Option<p::Page>, scope: &str) -> Result<(i64, Option<St
 pub fn next_token(scope: &str, id: impl std::fmt::Display) -> String {
     format!("{}.{}", blake3::hash(scope.as_bytes()).to_hex(), id)
 }
+
+pub fn domain_temporal(
+    value: Option<p::DomainTemporalExtent>,
+) -> Result<nous_core::DomainTemporalExtent> {
+    let Some(value) = value else {
+        return Ok(nous_core::DomainTemporalExtent::default());
+    };
+    let result = nous_core::DomainTemporalExtent {
+        time_domain_ref: value.time_domain_ref,
+        extent: temporal(value.extent)?,
+    };
+    result.validate()?;
+    Ok(result)
+}
+pub fn domain_temporal_proto(domain: &str, value: &TemporalExtent) -> p::DomainTemporalExtent {
+    p::DomainTemporalExtent {
+        time_domain_ref: domain.into(),
+        extent: Some(temporal_proto(value)),
+    }
+}
+pub fn domain_stamp_proto(value: &nous_core::DomainStamp) -> p::DomainStamp {
+    p::DomainStamp {
+        time_domain_ref: value.time_domain_ref.clone(),
+        at: Some(timestamp(value.at)),
+        recorded_at: Some(timestamp(value.recorded_at)),
+    }
+}

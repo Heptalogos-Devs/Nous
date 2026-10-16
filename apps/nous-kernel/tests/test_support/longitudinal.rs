@@ -45,6 +45,7 @@ pub(crate) fn observation(
         subject,
         session,
         occurrence: OccurrenceDescriptor {
+            occurred_time_domain_ref: "time:real".into(),
             source_class: SourceClass::Message,
             external_object_ref: None,
             occurred_time: TemporalExtent::Unknown,

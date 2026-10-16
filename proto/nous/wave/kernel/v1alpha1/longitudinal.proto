@@ -80,7 +80,7 @@ message ExperienceMember {
   string source_class = 10;
   string text = 11;
   bool text_partial = 12;
-  nous.wave.v1alpha1.TemporalExtent occurred_time = 13;
+  nous.wave.v1alpha1.DomainTemporalExtent occurred_time = 13;
 }
 message BasisCatalogEntry { string key = 1; nous.wave.v1alpha1.RevisionBasis basis = 2; }
 message MaintenancePlan {

@@ -296,7 +296,7 @@ pub struct ObservationInput {
     #[prost(string, optional, tag="5")]
     pub external_object_ref: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="6")]
-    pub occurred_time: ::core::option::Option<TemporalExtent>,
+    pub occurred_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(message, optional, tag="7")]
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(string, optional, tag="8")]
@@ -2702,7 +2702,7 @@ pub struct Occurrence {
     #[prost(string, optional, tag="5")]
     pub external_object_ref: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="6")]
-    pub occurred_time: ::core::option::Option<TemporalExtent>,
+    pub occurred_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(message, optional, tag="7")]
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(string, optional, tag="8")]
@@ -2711,6 +2711,10 @@ pub struct Occurrence {
     pub actor_entity_ref: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="10")]
     pub context: ::core::option::Option<::prost_types::Struct>,
+    #[prost(message, optional, tag="11")]
+    pub observed_stamp: ::core::option::Option<DomainStamp>,
+    #[prost(message, optional, tag="12")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OccurrenceListRequest {
@@ -2771,6 +2775,10 @@ pub struct DerivedRepresentation {
     pub strategy: ::prost::alloc::string::String,
     #[prost(message, optional, tag="13")]
     pub structured_payload: ::core::option::Option<::prost_types::Struct>,
+    #[prost(message, optional, tag="14")]
+    pub formed_stamp: ::core::option::Option<DomainStamp>,
+    #[prost(message, optional, tag="15")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RepresentationListResponse {

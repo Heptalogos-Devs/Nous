@@ -385,3 +385,92 @@ async fn one_owner_transaction_keeps_one_stamp_while_clock_control_waits() {
         "one world day is not a physical elapsed day"
     );
 }
+
+#[tokio::test]
+async fn material_keeps_real_contact_and_world_stamp_across_restart_and_replay() {
+    use nous_core::{SourceClass, TemporalExtent};
+    use nous_material::{
+        ObservationInput, ObservationMaterial, OccurrenceDescriptor, RuntimeDirective,
+    };
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = subject(&runtime).await;
+    let configured = configure_and_advance(&runtime, subject).await;
+    runtime
+        .clocks
+        .change(subject, OperationId::new(), ClockChange::Pause)
+        .await
+        .unwrap();
+    let world = runtime.clocks.read(subject).await.unwrap();
+    let input = ObservationInput {
+        subject,
+        session: None,
+        occurrence: OccurrenceDescriptor {
+            source_class: SourceClass::Message,
+            external_object_ref: None,
+            occurred_time: TemporalExtent::Instant { at: Utc::now() },
+            occurred_time_domain_ref: "time:real".into(),
+            observed_at: None,
+            conversation_ref: None,
+            actor_entity_ref: None,
+            context: serde_json::json!({}),
+        },
+        material: ObservationMaterial::InlineText {
+            text: "actual contact while world clock is paused".into(),
+            media_type: "text/plain".into(),
+        },
+        entities: vec![],
+        runtime: RuntimeDirective {
+            admit: false,
+            hold_until: None,
+        },
+    };
+    // Default-real has the original semantic identity representation; adding the
+    // domain to the public wire must not invalidate already-bound real requests.
+    let serialized = serde_json::to_value(&input).unwrap();
+    assert!(
+        serialized["occurrence"]
+            .get("occurred_time_domain_ref")
+            .is_none()
+    );
+    let request = uuid::Uuid::now_v7();
+    let accepted = runtime
+        .material
+        .record_observation_once(input.clone(), Some(request))
+        .await
+        .unwrap();
+    let actual = &accepted.occurrence;
+    assert_eq!(actual.observed_stamp.time_domain_ref, "time:course");
+    assert_eq!(actual.observed_stamp.at, world.world_now);
+    assert!(actual.observed_stamp.at >= configured.world_now);
+    assert!((actual.observed_at - Utc::now()).num_seconds().abs() < 2);
+    assert!((actual.created_at - Utc::now()).num_seconds().abs() < 2);
+    assert_eq!(actual.observed_stamp.recorded_at, actual.created_at);
+    let reopened = open_runtime(&url, &root).await;
+    let replay = reopened
+        .material
+        .record_observation_once(input.clone(), Some(request))
+        .await
+        .unwrap();
+    assert_eq!(replay.occurrence.occurrence_id, actual.occurrence_id);
+    assert_eq!(replay.occurrence.observed_stamp.at, world.world_now);
+    let mut other_world = input;
+    other_world.occurrence.occurred_time_domain_ref = "time:other".into();
+    assert!(
+        reopened
+            .material
+            .record_observation_once(other_world.clone(), Some(request))
+            .await
+            .is_err()
+    );
+    let other = reopened
+        .material
+        .record_observation_once(other_world, Some(uuid::Uuid::now_v7()))
+        .await
+        .unwrap();
+    // The old mathematical-only source interface cannot turn another world's
+    // coincident numeric timestamp into a physical QQ event time.
+    let kind: String = sqlx::query_scalar("SELECT occurred_time_kind FROM material_occurrence_facts($1,NULL,NULL) WHERE occurrence_id=$2")
+        .bind(subject.0).bind(other.occurrence.occurrence_id.0).fetch_one(reopened.store.pool()).await.unwrap();
+    assert_eq!(kind, "unknown");
+}

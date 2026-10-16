@@ -212,7 +212,10 @@ impl KernelService {
                     source_class: occurrence.source_class.as_str().to_owned(),
                     text: member.text,
                     text_partial: member.text_partial,
-                    occurred_time: Some(temporal_proto(&occurrence.occurred_time)),
+                    occurred_time: Some(domain_temporal_proto(
+                        &occurrence.occurred_time_domain_ref,
+                        &occurrence.occurred_time,
+                    )),
                 }
             })
             .collect();

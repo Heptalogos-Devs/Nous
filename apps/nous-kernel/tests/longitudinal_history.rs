@@ -471,6 +471,7 @@ async fn persist_media_synopsis(
     rt.material
         .persist_derived_representation(
             nous_material::DerivedRepresentation {
+                formed_stamp: None,
                 derived_representation_id: nous_core::DerivedRepresentationId::new(),
                 subject_id: subject,
                 inputs: vec![nous_material::DerivationInput {

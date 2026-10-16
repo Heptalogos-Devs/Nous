@@ -172,11 +172,14 @@ async function fixture(hosted = true) {
                 actorEntityRef: `entity:author-${index}`,
                 observedAt: timestampFromDate(observedAt),
                 occurredTime: {
-                  value: {
-                    case: "instant",
-                    value: timestampFromDate(
-                      new Date(observedAt.getTime() - 3600000 - index * 1000),
-                    ),
+                  timeDomainRef: "time:real",
+                  extent: {
+                    value: {
+                      case: "instant",
+                      value: timestampFromDate(
+                        new Date(observedAt.getTime() - 3600000 - index * 1000),
+                      ),
+                    },
                   },
                 },
                 material: {
@@ -551,7 +554,9 @@ test("strict hosted preparation preserves two authors and event/acquisition prov
     for (const observation of f.stored.values()) {
       expect(observation.externalObjectRef).toMatch(/^object:qq:fact:/);
       expect(timestampDate(observation.observedAt!).getTime()).toBeGreaterThan(
-        timestampDate(observation.occurredTime!.value.value as never).getTime(),
+        timestampDate(
+          observation.occurredTime!.extent!.value.value as never,
+        ).getTime(),
       );
     }
     f.state.workContextId = secondWork;
