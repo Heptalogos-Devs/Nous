@@ -69,6 +69,7 @@ tokio-stream = { version = "0.1", features = ["net"] }
 nous-protocol = { path = "crates/protocol" }
 nous-core = { path = "crates/core" }
 nous-subject = { path = "crates/subject" }
+nous-motivation = { path = "crates/motivation" }
 nous-social = { path = "crates/social" }
 nous-self = { path = "crates/self" }
 nous-runtime = { path = "crates/runtime" }

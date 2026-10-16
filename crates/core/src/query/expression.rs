@@ -14,6 +14,9 @@ pub enum QueryTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResultDomain {
+    Desire,
+    Concern,
+    DesiredCondition,
     SocialRelation,
     LanguageConvention,
     SelfFacet,
@@ -29,6 +32,7 @@ impl ResultDomain {
     pub fn owner(self) -> CognitiveDomain {
         match self {
             Self::Memory | Self::Schema | Self::Episode | Self::Journal => CognitiveDomain::Memory,
+            Self::Desire | Self::Concern | Self::DesiredCondition => CognitiveDomain::Motivation,
             Self::SocialRelation | Self::LanguageConvention => CognitiveDomain::SocialCognition,
             Self::SelfFacet | Self::NarrativeThread => CognitiveDomain::SelfCognition,
             Self::Evidence => CognitiveDomain::Material,
@@ -38,6 +42,9 @@ impl ResultDomain {
 
     pub fn name(self) -> &'static str {
         match self {
+            Self::Desire => "desire",
+            Self::Concern => "concern",
+            Self::DesiredCondition => "desired_condition",
             Self::SocialRelation => "social_relation",
             Self::LanguageConvention => "language_convention",
             Self::SelfFacet => "self_facet",
@@ -81,7 +88,10 @@ impl ResultProjection {
         self.domains.iter().any(|domain| {
             matches!(
                 domain,
-                ResultDomain::SocialRelation
+                ResultDomain::Desire
+                    | ResultDomain::Concern
+                    | ResultDomain::DesiredCondition
+                    | ResultDomain::SocialRelation
                     | ResultDomain::LanguageConvention
                     | ResultDomain::SelfFacet
                     | ResultDomain::NarrativeThread
@@ -135,6 +145,11 @@ impl Default for TemporalFrame {
 
 pub fn reference_query_domain(reference: &CognitiveRef) -> &'static str {
     match reference {
+        CognitiveRef::Desire(_) | CognitiveRef::DesireRevision(_) => "desire",
+        CognitiveRef::Concern(_) | CognitiveRef::ConcernRevision(_) => "concern",
+        CognitiveRef::DesiredCondition(_) | CognitiveRef::DesiredConditionRevision(_) => {
+            "desired_condition"
+        }
         CognitiveRef::SocialRelation(_) | CognitiveRef::SocialRelationRevision(_) => {
             "social_relation"
         }

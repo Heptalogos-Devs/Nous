@@ -58,6 +58,7 @@ type GenerationInput = {
   context?: (input: InputModalities) => Record<string, unknown>;
 };
 type GenerationOptions<R extends ModelRole, T> = {
+  operation?: "motivation_criterion";
   signal?: AbortSignal;
   prepared?: PreparedModelRole;
   prompt?: ModelRole | { role: ModelRole; path: string };
@@ -349,7 +350,7 @@ export class ModelInvocations {
     >(
       name,
       async (role, { input, content: supplied }) => {
-        const outputContract = providerContractForRole(name);
+        const outputContract = providerContractForRole(name, options.operation);
         const { adapter, ...output } = await generateProvider(
           role,
           supplied,

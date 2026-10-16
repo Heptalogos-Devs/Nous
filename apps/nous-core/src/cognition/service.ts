@@ -116,6 +116,7 @@ export class CoreCognition {
     request.memoryRequirement = policy.memory;
     request.selfRequirement = policy.selfCognition;
     request.socialRequirement = policy.socialCognition;
+    request.motivationRequirement = policy.motivation;
     request.runtimeRequirement = policy.runtime;
     request.resourceRequirement = policy.resource;
     request.materialize = policy.materialize;
@@ -145,6 +146,11 @@ export class CoreCognition {
         subject.capabilities?.socialCognition &&
         request.usage?.sourceRead
           ? ["social_relation", "language_convention"]
+          : []),
+        ...(policy.motivation !== "FORBIDDEN" &&
+        subject.capabilities?.motivation &&
+        request.usage?.sourceRead
+          ? ["desire", "concern", "desired_condition"]
           : []),
         ...(policy.runtime !== "FORBIDDEN" ? ["evidence"] : []),
         ...(policy.resource !== "FORBIDDEN" ? ["resource"] : []),
@@ -266,7 +272,8 @@ export class CoreCognition {
         (domain) =>
           (domain === "memory" && consumer.memory === "FORBIDDEN") ||
           (domain === "self" && consumer.selfCognition === "FORBIDDEN") ||
-          (domain === "social" && consumer.socialCognition === "FORBIDDEN"),
+          (domain === "social" && consumer.socialCognition === "FORBIDDEN") ||
+          (domain === "motivation" && consumer.motivation === "FORBIDDEN"),
       )
     ) {
       throw domainError(

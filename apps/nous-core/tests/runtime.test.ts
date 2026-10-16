@@ -47,6 +47,7 @@ const policy: ConsumerPolicy = {
   memory: "PREFERRED",
   selfCognition: "PREFERRED",
   socialCognition: "OPTIONAL",
+  motivation: "OPTIONAL",
   resource: "FORBIDDEN",
   runtime: "OPTIONAL",
   maxItems: 10,

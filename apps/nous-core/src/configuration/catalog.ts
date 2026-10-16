@@ -26,6 +26,7 @@ export const consumersSchema = z
       memory: requirement.default("PREFERRED"),
       self_cognition: requirement.default("PREFERRED"),
       social_cognition: requirement.default("OPTIONAL"),
+      motivation: requirement.default("OPTIONAL"),
       runtime: requirement.default("OPTIONAL"),
       resource: requirement.default("OPTIONAL"),
       max_items: z.number().int().min(1).max(2048).default(32),

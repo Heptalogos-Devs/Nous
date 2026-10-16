@@ -2006,6 +2006,7 @@ dependencies = [
  "nous-core",
  "nous-material",
  "nous-memory",
+ "nous-motivation",
  "nous-object-store",
  "nous-persistence",
  "nous-protocol",
@@ -2062,6 +2063,25 @@ dependencies = [
  "nous-persistence",
  "nous-runtime",
  "schemars",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "uuid",
+]
+
+[[package]]
+name = "nous-motivation"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "nous-configuration",
+ "nous-core",
+ "nous-material",
+ "nous-object-store",
+ "nous-persistence",
+ "nous-runtime",
+ "nous-social",
  "serde",
  "serde_json",
  "sqlx",

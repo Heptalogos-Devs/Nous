@@ -105,6 +105,17 @@ impl nous_runtime::SourceRootResolver for SourceRoots {
                         .ok_or_else(|| Error::Unavailable("Self unavailable".into()))?;
                     owner.source_references_in(tx, subject, &reference).await?
                 }
+                CognitiveDomain::Motivation => {
+                    let rows = nous_persistence::AuthorityStore::motivation_source_edges_in(
+                        tx,
+                        subject,
+                        reference.uuid().expect("Motivation UUID"),
+                    )
+                    .await?;
+                    rows.into_iter()
+                        .map(|(k, v)| parse_reference(&k, &v))
+                        .collect::<Result<Vec<_>>>()?
+                }
                 CognitiveDomain::SocialCognition => {
                     let resolved = AuthorityStore::social_source_roots_in(
                         tx,

@@ -40,6 +40,7 @@ import { contextCommands } from "./context.js";
 import { queryCommands, showCommands, readCommands } from "./query.js";
 import { materialCommands } from "./material.js";
 import { reflectionCommands } from "./reflection.js";
+import { motivationCommands } from "./motivation.js";
 import { socialCommands } from "./social.js";
 import { selfCommands } from "./self.js";
 import { memoryCommands } from "./memory.js";
@@ -307,6 +308,24 @@ export async function runCli(
       reflection: family("reflection", reflectionCommands, [
         "status",
         "repair",
+      ]),
+      motivation: family("motivation", motivationCommands, [
+        "list",
+        "select",
+        "adopt",
+        "get",
+        "revision",
+        "history",
+        "revise",
+        "evidence",
+        "suppress",
+        "restore",
+        "withdraw",
+        "reaccept",
+        "purge",
+        "evaluate",
+        "evaluation",
+        "evaluations",
       ]),
       social: family("social", socialCommands, [
         "list",

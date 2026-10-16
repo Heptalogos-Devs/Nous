@@ -16,6 +16,7 @@
 - [Episode Authority](active/episode/episode-authority.md)
 - [Episode Runtime integration](active/episode/episode-runtime-integration.md)
 
+- [Motivation 与条件评价](active/motivation/motivation.md)
 - [Self](active/self/self.md)
 - [SocialRelation 与 LanguageConvention](active/social/social.md)
 

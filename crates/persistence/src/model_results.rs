@@ -153,6 +153,7 @@ impl AuthorityStore {
         subject: SubjectId,
         references: &[String],
     ) -> Result<()> {
+        sqlx::query("DELETE FROM motivation_evaluations e WHERE subject_id=$1 AND EXISTS(SELECT 1 FROM jsonb_array_elements(e.document->'inputs') dependency WHERE dependency->>'id'=ANY($2::text[]))").bind(subject.0).bind(references).execute(&mut **tx).await.map_err(db)?;
         sqlx::query("UPDATE model_results w SET context=NULL,proposal=NULL,outcome=$3,dependencies='[]',updated_at=clock_timestamp() WHERE subject_id=$1 AND EXISTS(SELECT 1 FROM jsonb_array_elements(w.dependencies) dependency WHERE dependency->>'id'=ANY($2::text[]))")
             .bind(subject.0).bind(references)
             .bind(Json(ResultPayload { purged: true, ..Default::default() }))

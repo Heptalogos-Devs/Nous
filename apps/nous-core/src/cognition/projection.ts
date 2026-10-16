@@ -16,10 +16,18 @@ import { canonicalDigest } from "../digest.js";
 
 function family(
   segment: Segment,
-): "memory" | "selfCognition" | "socialCognition" | "runtime" | "resource" {
+):
+  | "memory"
+  | "selfCognition"
+  | "socialCognition"
+  | "motivation"
+  | "runtime"
+  | "resource" {
   switch (segment.domain) {
     case "memory":
       return "memory";
+    case "motivation":
+      return "motivation";
     case "social":
       return "socialCognition";
     case "self":

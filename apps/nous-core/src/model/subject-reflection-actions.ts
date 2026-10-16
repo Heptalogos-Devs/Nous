@@ -1,14 +1,18 @@
+import {
+  AdoptMotivationRequestSchema,
+  ReviseMotivationRequestSchema,
+  AddMotivationEvidenceRequestSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
+import { chosenBasis, temporal } from "./reflection-catalog.js";
+import { compileMotivationAction } from "./motivation.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
-import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   FormMemoryRequestSchema,
   ReviseMemoryRequestSchema,
   MemorySchema,
-  RevisionBasisSchema,
-  TemporalExtentSchema,
   type ProducerSignature,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { InterpretSelfRequestSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
@@ -54,45 +58,6 @@ export type CompiledReflectionAction = {
 function invalid(message: string): never {
   throw new ConnectError(message, Code.InvalidArgument);
 }
-function chosenBasis(plan: ReflectionPlan, keys: string[], target?: string) {
-  if (
-    !keys.some((k) => plan.sourceKeys.includes(k)) ||
-    new Set(keys).size !== keys.length ||
-    keys.includes(target ?? "")
-  )
-    invalid(
-      "A reflection mutation must cite this batch's actual new source; no recursive self support",
-    );
-  return keys.map((k) => {
-    const b = new Map(plan.basis).get(k);
-    return b
-      ? fromJson(RevisionBasisSchema, b)
-      : invalid("Reflection basis key is outside actual supplied catalog");
-  });
-}
-function temporal(
-  v:
-    | { kind: "unknown" }
-    | { kind: "instant"; at: string }
-    | { kind: "interval"; start: string | null; end: string | null },
-) {
-  return create(TemporalExtentSchema, {
-    value:
-      v.kind === "unknown"
-        ? undefined
-        : v.kind === "instant"
-          ? { case: "instant", value: timestampFromDate(new Date(v.at)) }
-          : {
-              case: "interval",
-              value: {
-                start: v.start
-                  ? timestampFromDate(new Date(v.start))
-                  : undefined,
-                end: v.end ? timestampFromDate(new Date(v.end)) : undefined,
-              },
-            },
-  });
-}
 export function reflectionActionId(
   operation: string,
   action: SubjectReflectionProposal["actions"][number],
@@ -137,6 +102,17 @@ export function compileReflectionActions(
         : new Map(plan.scopes).get(typed.scopeKey);
     if (typed.scopeKey !== null && !scoped)
       invalid("Reflection scope key is outside actual captured scopes");
+    if (typed.domain === "motivation")
+      return {
+        ...base,
+        ...compileMotivationAction(
+          plan,
+          typed.proposal,
+          scoped?.social,
+          id,
+          producer,
+        ),
+      };
     if (typed.domain === "self") {
       const selfPlan = restoreSelfPlan(plan);
       const request = create(InterpretSelfRequestSchema, {
@@ -389,6 +365,17 @@ export async function applyReflectionActions(
           if (r.currentRevisionId !== head.value)
             invalid("Reviewed Self repair head is no longer current");
           object = r.objectRef;
+        } else if (action.domain === "motivation") {
+          const r = await kernel.motivation.getRevision(
+            {
+              subjectId: (action.request as { subjectId: string }).subjectId,
+              id: head.value,
+            },
+            options,
+          );
+          if (r.currentRevisionId !== head.value)
+            invalid("Reviewed Motivation repair head is no longer current");
+          object = r.objectRef;
         } else if (action.domain === "social") {
           const r = await kernel.social.getRevision(
             {
@@ -445,6 +432,27 @@ export async function applyReflectionActions(
             references = [record.objectRef!, record.reference!];
             ownerResult = { case: "selfRecord", value: record };
           }
+        } else if (action.domain === "motivation") {
+          const record =
+            action.action === "adopt"
+              ? await kernel.motivation.adopt(
+                  fromJson(AdoptMotivationRequestSchema, action.request!),
+                  options,
+                )
+              : action.action === "revise"
+                ? await kernel.motivation.revise(
+                    fromJson(ReviseMotivationRequestSchema, action.request!),
+                    options,
+                  )
+                : await kernel.motivation.addEvidence(
+                    fromJson(
+                      AddMotivationEvidenceRequestSchema,
+                      action.request!,
+                    ),
+                    options,
+                  );
+          references = [record.objectRef!, record.reference!];
+          ownerResult = { case: "motivationRecord", value: record };
         } else if (action.domain === "social") {
           const record =
             action.action === "adopt"

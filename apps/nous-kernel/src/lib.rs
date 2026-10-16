@@ -29,6 +29,7 @@ pub struct NousRuntime {
     pub store: AuthorityStore,
     pub subjects: SubjectCoreService,
     pub self_cognition: Option<nous_self::SelfService>,
+    pub motivation: Option<nous_motivation::MotivationService>,
     pub social_cognition: Option<nous_social::SocialService>,
     pub cognition: CognitiveRuntimeService,
     pub memory: Option<MemoryService>,
@@ -130,6 +131,21 @@ impl NousRuntime {
                 }),
             )
         });
+        let motivation = process_capabilities.motivation.then(|| {
+            nous_motivation::MotivationService::new(
+                store.clone(),
+                material.clone(),
+                objects.clone(),
+                cognition.clone(),
+                clocks.clone(),
+                Arc::new(source_read::SourceRoots {
+                    store: store.clone(),
+                    material: material.clone(),
+                    memory: memory.clone(),
+                    self_cognition: self_cognition.clone(),
+                }),
+            )
+        });
         let serving = ServingService::new(
             store.clone(),
             material.clone(),
@@ -151,6 +167,7 @@ impl NousRuntime {
             subjects,
             self_cognition,
             social_cognition,
+            motivation,
             cognition,
             memory,
             process_capabilities,
@@ -176,6 +193,16 @@ impl NousRuntime {
                 "Social MicroSystem is disabled",
             )
             .with_context("capability", "social_cognition")
+            .into()
+        })
+    }
+    pub fn require_motivation(&self) -> Result<&nous_motivation::MotivationService> {
+        self.motivation.as_ref().ok_or_else(|| {
+            DomainError::new(
+                DomainErrorCode::CapabilityUnavailable,
+                "Motivation MicroSystem is disabled",
+            )
+            .with_context("capability", "motivation")
             .into()
         })
     }
@@ -210,6 +237,11 @@ impl NousRuntime {
         {
             owners.push(owner);
         }
+        if capabilities.motivation
+            && let Some(owner) = &self.motivation
+        {
+            owners.push(owner);
+        }
         owners
     }
     pub async fn query(&self, query: CognitiveQuery) -> Result<CognitiveQueryResult> {
@@ -233,6 +265,7 @@ impl NousRuntime {
         query.projection.domains.retain(|d| match d.owner() {
             CognitiveDomain::Memory => caps.memory,
             CognitiveDomain::SelfCognition => caps.self_cognition,
+            CognitiveDomain::Motivation => caps.motivation && !social_authorized_refs.is_empty(),
             CognitiveDomain::SocialCognition => {
                 caps.social_cognition && !social_authorized_refs.is_empty()
             }
@@ -308,6 +341,13 @@ impl NousRuntime {
         if capabilities.social_cognition {
             view.cognition.extend(
                 self.require_social()?
+                    .project_as_of(subject, at, revision_view)
+                    .await?,
+            );
+        }
+        if capabilities.motivation {
+            view.cognition.extend(
+                self.require_motivation()?
                     .project_as_of(subject, at, revision_view)
                     .await?,
             );
@@ -438,6 +478,18 @@ impl NousRuntime {
                     .is_none()
                     .then(|| "disabled in composition".into()),
             },
+            CapabilityStatus {
+                capability_id: "motivation".into(),
+                status: if self.motivation.is_some() {
+                    Readiness::Ready
+                } else {
+                    Readiness::Unavailable
+                },
+                reason: self
+                    .motivation
+                    .is_none()
+                    .then(|| "disabled in composition".into()),
+            },
         ];
         RuntimeStatus {
             ready: self.store.check().await.is_ok(),
@@ -454,6 +506,7 @@ pub fn configuration_catalog(
     nous_configuration::register_configuration(&mut registry)?;
     nous_runtime::register_configuration(&mut registry)?;
     nous_memory::register_configuration(&mut registry)?;
+    nous_motivation::register_configuration(&mut registry)?;
     nous_material::register_configuration(&mut registry)?;
     nous_retrieval::register_configuration(&mut registry)?;
     nous_retrieval::register_wave_configuration(&mut registry)?;

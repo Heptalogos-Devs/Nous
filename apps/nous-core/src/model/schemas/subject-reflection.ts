@@ -1,3 +1,4 @@
+import { motivationActionSchema } from "./motivation.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
@@ -158,6 +159,11 @@ export const subjectReflectionSchema = z
       .array(
         z.discriminatedUnion("domain", [
           z.strictObject({
+            domain: z.literal("motivation"),
+            scopeKey: key,
+            proposal: motivationActionSchema,
+          }),
+          z.strictObject({
             domain: z.literal("self"),
             scopeKey: key.nullable(),
             proposal: selfInterpretationSchema.shape.actions.element,
@@ -180,6 +186,6 @@ export const subjectReflectionSchema = z
   .meta({
     title: "Shared Subject reflection",
     description:
-      "One actual observed source batch, typed key-only proposals to implemented owners; no Motivation placeholder, management or purge action.",
+      "One actual observed source batch, typed key-only proposals to implemented owners; Motivation is cognition only; no management, Pursuit or purge action.",
   });
 export type SubjectReflectionProposal = z.infer<typeof subjectReflectionSchema>;

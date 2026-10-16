@@ -13,12 +13,13 @@ impl AuthorityStore {
 WITH RECURSIVE edges AS (
  SELECT 'self' owner,o.object_id,o.current_revision_id,o.family,d.ref_kind,d.ref_value FROM self_objects o JOIN self_dependencies d ON d.revision_id=o.current_revision_id WHERE o.subject_id=$1
  UNION ALL SELECT 'social',o.object_id,o.current_revision_id,o.family,d.ref_kind,d.ref_value FROM social_objects o JOIN social_dependencies d ON d.revision_id=o.current_revision_id WHERE o.subject_id=$1
+ UNION ALL SELECT 'motivation',o.object_id,o.current_revision_id,o.family,d.ref_kind,d.ref_value FROM motivation_objects o JOIN motivation_dependencies d ON d.revision_id=o.current_revision_id WHERE o.subject_id=$1
 ), affected(owner,object_id,current_revision_id,family) AS (
  SELECT owner,object_id,current_revision_id,family FROM edges WHERE ref_kind=$2 AND ref_value=ANY($3::text[])
  UNION SELECT e.owner,e.object_id,e.current_revision_id,e.family FROM edges e JOIN affected a ON e.ref_kind=a.family||'_revision' AND e.ref_value=a.current_revision_id::text
 ), updated AS (
  UPDATE self_objects o SET integrity_state='revalidation_required',object_epoch=object_epoch+1 FROM affected a WHERE a.owner='self' AND o.object_id=a.object_id AND o.integrity_state='valid' RETURNING o.object_id
-) UPDATE social_objects o SET integrity_state='revalidation_required',object_epoch=object_epoch+1 FROM affected a WHERE a.owner='social' AND o.object_id=a.object_id AND o.integrity_state='valid'
+), updated_motivation AS (UPDATE motivation_objects o SET integrity_state='revalidation_required',object_epoch=object_epoch+1 FROM affected a WHERE a.owner='motivation' AND o.object_id=a.object_id AND o.integrity_state='valid' RETURNING o.object_id) UPDATE social_objects o SET integrity_state='revalidation_required',object_epoch=object_epoch+1 FROM affected a WHERE a.owner='social' AND o.object_id=a.object_id AND o.integrity_state='valid'
 "#).bind(subject.0).bind(kind).bind(values).execute(&mut **tx).await.map_err(database_error)?;
         Ok(())
     }
@@ -32,6 +33,7 @@ WITH RECURSIVE edges AS (
 WITH RECURSIVE edges AS (
  SELECT r.revision_id,o.family,d.ref_kind,d.ref_value FROM self_objects o JOIN self_revisions r USING(object_id) JOIN self_dependencies d USING(revision_id) WHERE o.subject_id=$1
  UNION ALL SELECT r.revision_id,o.family,d.ref_kind,d.ref_value FROM social_objects o JOIN social_revisions r USING(object_id) JOIN social_dependencies d USING(revision_id) WHERE o.subject_id=$1
+ UNION ALL SELECT r.revision_id,o.family,d.ref_kind,d.ref_value FROM motivation_objects o JOIN motivation_revisions r USING(object_id) JOIN motivation_dependencies d USING(revision_id) WHERE o.subject_id=$1
 ), affected(revision_id,family) AS (
  SELECT revision_id,family FROM edges WHERE ref_kind=$2 AND ref_value=ANY($3::text[])
  UNION SELECT e.revision_id,e.family FROM edges e JOIN affected a ON e.ref_kind=a.family||'_revision' AND e.ref_value=a.revision_id::text
@@ -55,6 +57,7 @@ impl AuthorityStore {
 WITH RECURSIVE edges(src_kind,src_value,dst_kind,dst_value) AS (
  SELECT o.family||'_revision',r.revision_id::text,d.ref_kind,d.ref_value FROM self_revisions r JOIN self_objects o USING(object_id) JOIN self_dependencies d USING(revision_id) WHERE o.subject_id=$1
  UNION ALL SELECT o.family||'_revision',r.revision_id::text,d.ref_kind,d.ref_value FROM social_revisions r JOIN social_objects o USING(object_id) JOIN social_dependencies d USING(revision_id) WHERE o.subject_id=$1
+ UNION ALL SELECT o.family||'_revision',r.revision_id::text,d.ref_kind,d.ref_value FROM motivation_revisions r JOIN motivation_objects o USING(object_id) JOIN motivation_dependencies d USING(revision_id) WHERE o.subject_id=$1
  UNION ALL SELECT 'memory_revision',r.memory_revision_id::text,d.target_ref_kind,d.target_ref FROM memory_revisions r JOIN memory_revision_dependencies d USING(memory_revision_id) WHERE r.subject_id=$1
  UNION ALL SELECT 'cognitive_schema_revision',r.schema_revision_id::text,d.basis_kind,d.basis_ref FROM cognitive_schema_revisions r JOIN cognitive_schemas o USING(schema_id) JOIN cognitive_schema_evidence_links d USING(schema_revision_id) WHERE o.subject_id=$1
  UNION ALL SELECT 'episode_revision',r.episode_revision_id::text,d.basis_kind,d.basis_ref FROM episode_revisions r JOIN episode_revision_basis d USING(episode_revision_id) WHERE r.subject_id=$1

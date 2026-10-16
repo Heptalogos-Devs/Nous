@@ -106,7 +106,7 @@ const outputText =
     .map((item) => item.text ?? "")
     .join("");
 const matchedContract = roleNames
-  .map(providerContractForRole)
+  .map((role) => providerContractForRole(role))
   .find((contract) => schemaDigest && contract?.digest === schemaDigest);
 let validation;
 if (matchedContract && outputText) {
