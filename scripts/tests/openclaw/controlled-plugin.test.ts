@@ -57,6 +57,7 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
                 ...env,
                 npm_command: "exec",
                 npm_config_allow_scripts: "@fixture/exec-only-policy",
+                npm_config_allowScripts: "@fixture/exec-only-policy",
               }
             : env,
         encoding: "utf8",

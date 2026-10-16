@@ -156,9 +156,15 @@ try {
   // the project-scoped installs this controlled installer owns. Preserve all
   // other operator npm settings, including an explicit ignore-scripts policy.
   const npmEnvironment = { ...process.env };
-  if (npmEnvironment.npm_command === "exec") {
-    delete npmEnvironment.npm_config_allow_scripts;
-    delete npmEnvironment.NPM_CONFIG_ALLOW_SCRIPTS;
+  if (
+    Object.entries(npmEnvironment).some(
+      ([key, value]) => key.toLowerCase() === "npm_command" && value === "exec",
+    )
+  ) {
+    for (const key of Object.keys(npmEnvironment)) {
+      if (/^npm_config_allow[_-]?scripts$/i.test(key))
+        delete npmEnvironment[key];
+    }
   }
   /** @param {string[]} args @param {boolean} [capture] */
   const npmRun = (args, capture = false) =>
