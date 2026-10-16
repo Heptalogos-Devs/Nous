@@ -743,6 +743,14 @@ test("subagent handoff requires Host admission and closes rejected child; standa
     expect(JSON.stringify([...f.pending.values()])).toContain(
       "PRIVATE EXECUTION RESULT",
     );
+    expect(
+      [...f.pending.values()].some(
+        (value) =>
+          (value.context as Record<string, unknown>)
+            ?.native_provider_controls &&
+          JSON.stringify(value.context).includes('"maxOutputTokens":128'),
+      ),
+    ).toBe(true);
     expect(f.prepares.at(-1)?.native.parentSessionKey).toBe("native:main");
     expect(f.build.mock.calls.at(-1)?.[0].projection.usage).toMatchObject({
       purpose: "professional_execution",
