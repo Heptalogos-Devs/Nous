@@ -233,3 +233,42 @@ export function withHostObservationScope(
   };
   return observation;
 }
+
+/** Host-selected contacts become readable only through their actual accepted roots.
+ * The caller must supply receipts for exactly its selected contacts. */
+export function withAcceptedContactRoots(
+  value: MessageInitShape<typeof CognitionUsageSchema>,
+  subjectId: string,
+  receipts: readonly MessageInitShape<typeof AcceptedObservationSchema>[],
+) {
+  const usage = create(CognitionUsageSchema, value);
+  if (
+    !subjectId ||
+    !usage.sourceRead ||
+    usage.sourceRead.subjectId !== subjectId
+  )
+    throw new Error(
+      "Accepted contacts require an explicit same-Subject SourceRead scope",
+    );
+  const seen = new Set(
+    usage.sourceRead.sourceRefs.map((ref) => `${ref.kind}:${ref.value}`),
+  );
+  for (const receipt of receipts) {
+    const id = create(AcceptedObservationSchema, receipt).occurrenceId;
+    if (!id)
+      throw new Error("Accepted contact requires its actual occurrenceId");
+    const key = `occurrence:${id}`;
+    if (!seen.has(key)) {
+      usage.sourceRead.sourceRefs.push(
+        create(CognitionUsageSchema, {
+          sourceRead: {
+            subjectId,
+            sourceRefs: [{ kind: "occurrence", value: id }],
+          },
+        }).sourceRead!.sourceRefs[0]!,
+      );
+      seen.add(key);
+    }
+  }
+  return usage;
+}

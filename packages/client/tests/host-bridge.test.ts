@@ -9,6 +9,7 @@ import {
   encodeObservationInput,
   timestampFromDate,
   withHostObservationScope,
+  withAcceptedContactRoots,
 } from "../src/host-bridge.js";
 test("public Host bridge schemas use draft 7 for the formal Fastify/Ajv owner", () => {
   for (const schema of Object.values(HOST_BRIDGE_JSON_SCHEMAS)) {
@@ -69,4 +70,32 @@ test("public codecs preserve canonical scope and reject unknown cognition fields
     contact_request_id: "contact:current",
     cognition_usage: encodeCognitionUsage(usage),
   });
+});
+
+test("accepted contact roots extend only explicit same-Subject scope using actual receipts", () => {
+  const original = {
+    sourceRead: {
+      subjectId: "s",
+      sourceRefs: [{ kind: "material", value: "m" }],
+    },
+  };
+  const actual = withAcceptedContactRoots(original, "s", [
+    { occurrenceId: "actual" },
+    { occurrenceId: "actual" },
+  ]);
+  expect(encodeCognitionUsage(actual).sourceRead).toEqual({
+    subjectId: "s",
+    sourceRefs: [
+      { kind: "material", value: "m" },
+      { kind: "occurrence", value: "actual" },
+    ],
+  });
+  expect(original.sourceRead.sourceRefs).toHaveLength(1);
+  expect(() => withAcceptedContactRoots({}, "s", [])).toThrow(/explicit/);
+  expect(() => withAcceptedContactRoots(original, "other", [])).toThrow(
+    /same-Subject/,
+  );
+  expect(() => withAcceptedContactRoots(original, "s", [{}])).toThrow(
+    /occurrenceId/,
+  );
 });

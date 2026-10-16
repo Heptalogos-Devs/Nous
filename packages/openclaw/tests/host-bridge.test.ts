@@ -10,6 +10,8 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
   hostPrepareRequestSchema,
+  hostAdmittedRequestSchema,
+  decodeProjection,
   hostFeedbackRequestSchema,
   hostHandoffRequestSchema,
   HOST_BRIDGE_PATHS,
@@ -125,6 +127,10 @@ async function fixture(hosted = true) {
           agentInstanceId: `${request.native.sessionId}:${request.native.runId}`,
           purpose: request.native.parentSessionKey ? "worker" : "deliberation",
           intent: "Trusted current Activity",
+          sourceRead: {
+            subjectId,
+            sourceRefs: [{ kind: "occurrence", value: "registered-root" }],
+          },
           audience: {
             conversationRef: "conversation:qq:room",
             visibility: "group",
@@ -189,6 +195,12 @@ async function fixture(hosted = true) {
                   ? "worker"
                   : "deliberation",
                 intent: "Trusted current Activity",
+                sourceRead: {
+                  subjectId,
+                  sourceRefs: [
+                    { kind: "occurrence", value: "registered-root" },
+                  ],
+                },
                 audience: {
                   conversationRef: "conversation:qq:room",
                   visibility: "group",
@@ -204,6 +216,13 @@ async function fixture(hosted = true) {
           }),
         );
         return;
+      }
+      if (req.url === HOST_BRIDGE_PATHS.admitted) {
+        const admitted = hostAdmittedRequestSchema.parse(body);
+        usages.set(
+          admitted.contactRequestId,
+          decodeProjection(admitted.projection).usage!,
+        );
       }
       if (req.url === HOST_BRIDGE_PATHS.feedback) {
         const request = hostFeedbackRequestSchema.parse(body);
@@ -446,6 +465,16 @@ test("strict hosted preparation preserves two authors and event/acquisition prov
     expect(f.prepares[0]?.promptDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(f.prepares)).not.toContain(input.prompt);
     expect(f.stored.size).toBe(2);
+    const actualRoots = [...f.stored.keys()];
+    const projected = f.build.mock.calls[0]![0].projection.usage as ReturnType<
+      typeof create<typeof CognitionUsageSchema>
+    >;
+    expect(projected.sourceRead?.sourceRefs.map((ref) => ref.value)).toEqual([
+      "registered-root",
+      ...(await Promise.all(
+        actualRoots.map((id) => eventIdentity(`receipt:${id}`)),
+      )),
+    ]);
     for (const record of f.stored.values()) {
       expect(record.context?.activity_ref).toBe(firstWork);
       expect(record.context?.contact_request_id).toMatch(/^[0-9a-f-]{36}$/);

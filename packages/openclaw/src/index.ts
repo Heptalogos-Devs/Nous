@@ -4,6 +4,10 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { connectNousInstance } from "@nous-wave/client/node";
+import {
+  withAcceptedContactRoots,
+  decodeAcceptedObservation,
+} from "@nous-wave/client/host-bridge";
 import { createManagedBinding, eventIdentity } from "@nous-wave/client/managed";
 import { CognitionUsageSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
@@ -481,6 +485,14 @@ function register(api: OpenClawPluginApi): void {
               ),
             });
         }
+        if (permission)
+          permission.usage = withAcceptedContactRoots(
+            permission.usage,
+            config.subjectId,
+            occurrences.map((entry) =>
+              decodeAcceptedObservation(entry.receipt),
+            ),
+          );
         const currentTurn = input.context.messages.findLastIndex(
           (message) => message.role === "user",
         );
