@@ -1,8 +1,8 @@
 diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
-index 56406d3..54a8328 100644
+index 56406d3..f3d90f1 100644
 --- a/dist/agent-core-BxgCPa8O.js
 +++ b/dist/agent-core-BxgCPa8O.js
-@@ -424,20 +424,31 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
+@@ -424,20 +424,35 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
  	if (config.transformContext) messages = await config.transformContext(messages, signal);
  	messages = normalizeCoreContextMessages(messages);
  	const llmMessages = await config.convertToLlm(messages);
@@ -17,12 +17,16 @@ index 56406d3..54a8328 100644
 +	const application = managed ? await managed.prepare(config.model, llmContext, signal, { reservedOutputTokens: config.maxTokens ?? config.model.maxTokens }) : void 0;
 +	if (managed && (!application?.applied || !application?.context)) throw new Error("Required Nous model input was not applied");
 +	if (application) llmContext = application.context;
++    const nativeOutputLimit = config.maxTokens ?? config.model.maxTokens;
++    const controlledOutputLimit = application?.providerControls?.maxOutputTokens ?? nativeOutputLimit;
++    if (managed && (!Number.isSafeInteger(application?.providerControls?.maxOutputTokens) || controlledOutputLimit<1 || controlledOutputLimit>nativeOutputLimit || controlledOutputLimit>config.model.maxTokens)) throw Error("Required managed provider output budget is unavailable or exceeds the native limit");
  	const streamFunction = resolveAgentCoreStreamFn(runtime, streamFn);
  	const resolvedApiKey = (config.getApiKey ? await config.getApiKey(config.model.provider) : void 0) || config.apiKey;
 -	const response = await streamFunction(config.model, llmContext, {
 +	let response;
 +	try { response = await streamFunction(config.model, llmContext, {
  		...config,
++        ...(managed ? {maxTokens: controlledOutputLimit} : {}),
  		apiKey: resolvedApiKey,
  		signal
 -	});
@@ -37,7 +41,7 @@ index 56406d3..54a8328 100644
  	for await (const event of response) switch (event.type) {
  		case "start": {
  			const message = event.partial;
-@@ -474,6 +485,13 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
+@@ -474,6 +489,13 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
  		case "error": return await finalizeAssistantMessage();
  	}
  	return await finalizeAssistantMessage();
@@ -51,7 +55,7 @@ index 56406d3..54a8328 100644
  	async function finalizeAssistantMessage() {
  		const finalMessage = withAssistantTurnTaint(ensureToolTurnIdentity(removeNonExecutableToolCalls(await response.result())), turnTainted);
  		if (addedPartial) context.messages[context.messages.length - 1] = finalMessage;
-@@ -484,10 +502,14 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
+@@ -484,10 +506,14 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
  				message: { ...finalMessage }
  			});
  		}
@@ -66,7 +70,7 @@ index 56406d3..54a8328 100644
  		return finalMessage;
  	}
  }
-@@ -615,7 +637,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
+@@ -615,7 +641,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
  			}
  			if (launched) await Promise.all(launched.started.map(async ({ index, entry, outcome }) => settle(index, entry, await outcome)));
  			for (const finalized of ordered) if (finalized) {
@@ -75,7 +79,7 @@ index 56406d3..54a8328 100644
  				finalizedCalls.push(finalized);
  			}
  		} finally {
-@@ -633,7 +655,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
+@@ -633,7 +659,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
  		const toolCall = toolCalls[cursor];
  		if (!toolCall) continue;
  		const finalized = await completeUnstartedToolCall(batch, toolCall, { reason: skippedReason });
@@ -84,7 +88,7 @@ index 56406d3..54a8328 100644
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -665,7 +687,7 @@ async function prepareToolCallEntry(batch, toolCall) {
+@@ -665,7 +691,7 @@ async function prepareToolCallEntry(batch, toolCall) {
  	const execution = await prepareToolCallExecution(preparation, {
  		assistantMessage: batch.assistantMessage,
  		toolCall: preparation.toolCall
@@ -93,7 +97,7 @@ index 56406d3..54a8328 100644
  	return execution.kind === "immediate" ? await finalizeExecutedToolCall(batch, preparation, execution.outcome, preparation.args) : {
  		...preparation,
  		execution
-@@ -875,7 +897,10 @@ async function validateToolCallForBatchAdmission(batch, toolCall) {
+@@ -875,7 +901,10 @@ async function validateToolCallForBatchAdmission(batch, toolCall) {
  		args: validatedArgs
  	};
  }
@@ -105,7 +109,7 @@ index 56406d3..54a8328 100644
  	const updateEvents = [];
  	let acceptingUpdates = true;
  	const onUpdate = (partialResult) => {
-@@ -927,7 +952,10 @@ async function prepareToolCallExecution(prepared, executionContext, signal, emit
+@@ -927,7 +956,10 @@ async function prepareToolCallExecution(prepared, executionContext, signal, emit
  						executionStarted: false
  					};
  					try {
@@ -117,7 +121,7 @@ index 56406d3..54a8328 100644
  							try {
  								onImplementationStart?.();
  							} catch (error) {
-@@ -936,6 +964,7 @@ async function prepareToolCallExecution(prepared, executionContext, signal, emit
+@@ -936,6 +968,7 @@ async function prepareToolCallExecution(prepared, executionContext, signal, emit
  							}
  							executionStarted = true;
  						});
@@ -125,7 +129,7 @@ index 56406d3..54a8328 100644
  						if (implementationStartError) throw implementationStartError.error;
  						return {
  							result,
-@@ -968,12 +997,13 @@ async function prepareToolCallExecution(prepared, executionContext, signal, emit
+@@ -968,12 +1001,13 @@ async function prepareToolCallExecution(prepared, executionContext, signal, emit
  	});
  	let internalPreparation;
  	try {
@@ -140,7 +144,7 @@ index 56406d3..54a8328 100644
  	} catch (error) {
  		return await immediateError(error);
  	}
-@@ -1108,7 +1138,7 @@ async function completeToolLoopInterventionBatch(batch, params) {
+@@ -1108,7 +1142,7 @@ async function completeToolLoopInterventionBatch(batch, params) {
  			...hideFromChannelProgress ? { hideFromChannelProgress: true } : {}
  		}, validation?.kind === "prepared" ? validation.args : toolCall.arguments);
  		await emitToolExecutionEnd(finalized, batch.emit);
@@ -149,7 +153,7 @@ index 56406d3..54a8328 100644
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -1162,7 +1192,7 @@ async function emitToolExecutionEnd(finalized, emit) {
+@@ -1162,7 +1196,7 @@ async function emitToolExecutionEnd(finalized, emit) {
  		...finalized.hideFromChannelProgress === true ? { hideFromChannelProgress: true } : {}
  	});
  }
@@ -158,7 +162,7 @@ index 56406d3..54a8328 100644
  	const message = copyInternalToolResultState(finalized.result, withToolResultContentSource({
  		role: "toolResult",
  		toolCallId: finalized.toolCall.id,
-@@ -1176,10 +1206,12 @@ async function emitToolResultMessage(finalized, emit) {
+@@ -1176,10 +1210,12 @@ async function emitToolResultMessage(finalized, emit) {
  		type: "message_start",
  		message
  	});
@@ -171,7 +175,7 @@ index 56406d3..54a8328 100644
  	return message;
  }
  function readTurnTaintMetadata(message) {
-@@ -1531,6 +1563,7 @@ var Agent$1 = class {
+@@ -1531,6 +1567,7 @@ var Agent$1 = class {
  			} : void 0,
  			convertToLlm: this.convertToLlm,
  			transformContext: this.transformContext,
@@ -258,7 +262,7 @@ index 2b36e9a..3932f9c 100644
  		runTimeoutOverrideMs: params.runTimeoutOverrideMs,
  		runId: params.runId,
 diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.js
-index 63c12b4..7290d50 100644
+index 63c12b4..021f35a 100644
 --- a/dist/builtin-openclaw-zQV8Wwjr.js
 +++ b/dist/builtin-openclaw-zQV8Wwjr.js
 @@ -238,6 +238,8 @@ import { a as extractAssistantThinking, c as extractThinkingFromTaggedStream, d
@@ -270,7 +274,25 @@ index 63c12b4..7290d50 100644
  import { a as appendModelIdentitySystemPrompt, c as buildProjectMemoryWriteInstruction, i as buildConfiguredAgentSystemPrompt, l as prepareProjectMemoryBootstrap, o as buildModelIdentityPromptLine, s as resolveAgentPromptSurfaceForSessionKey } from "./system-prompt-params-B645JcX8.js";
  import { o as resolveUserTimezone, r as formatDateStamp } from "./date-time-C7YbYLih.js";
  import { n as prepareWatchedSessionsPrompt } from "./watched-sessions-prompt-C9QfwkEy.js";
-@@ -14248,6 +14250,32 @@ async function runEmbeddedAttemptExecutionPhase(input) {
+@@ -279,7 +281,7 @@ import crypto$1, { randomUUID } from "node:crypto";
+ import { Type } from "typebox";
+ import { Buffer as Buffer$1 } from "node:buffer";
+ import { responsesPromptObserver } from "@openclaw/ai/internal/openai";
+-import { CompactionReplayRefreshRequiredError, mergeTransportHeaders, replaceCompactionReplayOwnerContent, resolveCompactionReplayEligibility, sanitizeTransportPayloadText, stripCompactionReplayCheckpoint, stripCompactionReplayCheckpointInPlace } from "@openclaw/ai/transports";
++import { resolveMaxTokensParam, CompactionReplayRefreshRequiredError, mergeTransportHeaders, replaceCompactionReplayOwnerContent, resolveCompactionReplayEligibility, sanitizeTransportPayloadText, stripCompactionReplayCheckpoint, stripCompactionReplayCheckpointInPlace } from "@openclaw/ai/transports";
+ import { onLlmRequestActivity, parseStreamingJson } from "@openclaw/ai/internal/runtime";
+ import { SYSTEM_PROMPT_CACHE_BOUNDARY, ensureSystemPromptCacheBoundary, sanitizeSurrogates, sortPromptCacheToolsByName, splitSystemPromptCacheBoundary, stripSystemPromptCacheBoundary } from "@openclaw/ai/internal/shared";
+ import { OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH } from "@openclaw/ai/providers";
+@@ -5522,7 +5524,7 @@ function observeEmbeddedAttemptPrompt(input) {
+ async function prepareEmbeddedAttemptPromptAssembly(input) {
+ 	const { attempt } = input;
+ 	const isSettledTurnFinalization = attempt.operation === "settled-tool-finalization";
+-	const preserveExactPrompt = input.isRawModelRun || isSettledTurnFinalization;
++	const preserveExactPrompt = input.isRawModelRun || isSettledTurnFinalization || (attempt.config?.plugins?.slots?.contextEngine?.trim() === "nous-cognition" && !!attempt.config?.plugins?.entries?.["nous-cognition"]?.config?.hostBridge);
+ 	let systemPromptText = input.systemPromptText;
+ 	const setSystemPrompt = (next) => {
+ 		systemPromptText = next;
+@@ -14248,6 +14250,33 @@ async function runEmbeddedAttemptExecutionPhase(input) {
  		state.terminal = mergeAgentRunAttemptTerminal(state.terminal, incoming);
  	};
  	const idleTimeoutTriggerRef = {};
@@ -283,12 +305,13 @@ index 63c12b4..7290d50 100644
 +		let capturedApplication;
 +		activeSession.agent.managedCognition = {
 +			prepare: async (model, context, signal, budget) => {
-+				capturedInput = { boundaryVersion: 4, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
++				capturedInput = { boundaryVersion: 5, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
 +                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", model, context, signal: signal ?? input.runAbortController.signal,
-+					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: budget.reservedOutputTokens,
++					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: Math.min(budget.reservedOutputTokens, resolveMaxTokensParam(sessionRuntime.transport.effectiveExtraParams ?? {}) ?? budget.reservedOutputTokens),
 +					audience: { visibility: attempt.sessionKey?.includes(":subagent:") ? "internal" : attempt.chatType === "direct" ? "direct" : attempt.chatType === "group" ? "group" : attempt.chatType === "channel" ? "public" : "internal", channel: attempt.messageChannel ?? attempt.messageProvider, senderId: attempt.senderId, destination: attempt.currentChannelId },
 +					measureContext: (value) => estimateNousInputTokensNative({ messages: value.messages, systemPrompt: value.systemPrompt, prompt: "" }) + estimateNousRenderedTokensNative({ systemPrompt: JSON.stringify(value.tools ?? []), prompt: "" }) };
 +				capturedApplication = await engine.prepareModelInput(capturedInput);
++                if (!Number.isSafeInteger(capturedApplication?.providerControls?.maxOutputTokens) || capturedApplication.providerControls.maxOutputTokens<1 || capturedApplication.providerControls.maxOutputTokens>capturedInput.reservedOutputTokens) throw Error("Managed output budget exceeds the actual native profile output limit");
 +				return capturedApplication;
 +			},
 +			authorizeToolExecution: (execution) => {
@@ -303,6 +326,15 @@ index 63c12b4..7290d50 100644
  	const { cacheObservabilityEnabled, promptCacheTools } = installEmbeddedAttemptStreamGuards({
  		attempt,
  		session: activeSession,
+@@ -16828,7 +16857,7 @@ async function prepareEmbeddedAttemptAgentSession(input) {
+ }
+ async function prepareEmbeddedAttemptSessionBoundary(input) {
+ 	const { activeSession, attempt, isRawModelRun, sessionManager } = input;
+-	const preserveExactPrompt = isRawModelRun || attempt.operation === "settled-tool-finalization";
++	const preserveExactPrompt = isRawModelRun || attempt.operation === "settled-tool-finalization" || (attempt.config?.plugins?.slots?.contextEngine?.trim() === "nous-cognition" && !!attempt.config?.plugins?.entries?.["nous-cognition"]?.config?.hostBridge);
+ 	if (isRawModelRun) {
+ 		activeSession.agent.reset();
+ 		input.setActiveSessionSystemPrompt("");
 diff --git a/dist/cli-backend.types-LHE5t00D.d.ts b/dist/cli-backend.types-LHE5t00D.d.ts
 index a37da26..365a415 100644
 --- a/dist/cli-backend.types-LHE5t00D.d.ts
@@ -316,6 +348,26 @@ index a37da26..365a415 100644
      parentSessionKey: string;
      childSessionKey: string;
      contextMode?: "isolated" | "fork";
+diff --git a/dist/compaction-DlElLXrZ.js b/dist/compaction-DlElLXrZ.js
+index 02fc494..da4d5e3 100644
+--- a/dist/compaction-DlElLXrZ.js
++++ b/dist/compaction-DlElLXrZ.js
+@@ -137,6 +137,7 @@ function convertToLlm(messages) {
+ 				};
+ 			}
+ 			case "branchSummary": return {
++                nousNativeHistoryKind: "branch_summary",
+ 				role: "user",
+ 				content: [{
+ 					type: "text",
+@@ -145,6 +146,7 @@ function convertToLlm(messages) {
+ 				timestamp: message.timestamp
+ 			};
+ 			case "compactionSummary": return {
++                nousNativeHistoryKind: "compaction_summary",
+ 				role: "user",
+ 				content: [{
+ 					type: "text",
 diff --git a/dist/context-engine-turn-attempt-BPzr5IBp.js b/dist/context-engine-turn-attempt-BPzr5IBp.js
 index 0c1c60c..0424796 100644
 --- a/dist/context-engine-turn-attempt-BPzr5IBp.js
@@ -813,6 +865,30 @@ index decddd2..dd18665 100644
 \ No newline at end of file
 +export { type AgentPlanStep, type AgentPlanStepStatus, CHANNEL_INGRESS_RETENTION_DEFAULTS, type ChannelDeliveryStreamingConfig, type ChannelDraftStreamingChunking, type ChannelIngressDrain, type ChannelIngressMonitorDeliveryResult, type ChannelIngressMonitorLifecycle, type ChannelIngressQueue, type ChannelIngressQueueClaim, type ChannelIngressQueueClaimRef, type ChannelIngressQueueCorruptClaim, type ChannelIngressQueueRecord, type ChannelMessageAdapterShape, type ChannelMessageDurableFinalAdapter, type ChannelMessageSendMediaContext, type ChannelMessageSendPayloadContext, type ChannelMessageSendResult, type ChannelMessageSendTextContext, type ChannelMessageUnknownSendContext, type ChannelMessageUnknownSendReconciliationResult, type ChannelPreviewStreamingConfig, type ChannelProgressDraftCompositorLine, type ChannelProgressDraftCompositorSnapshot, type ChannelProgressDraftLine, ChannelProgressDraftRenderMode, type ChannelStreamingBlockConfig, type ChannelStreamingProgressConfig, DEFAULT_INGRESS_ADOPTION_STALL_MS, DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS, DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS, type DurableMessageBatchSendResult, INGRESS_CLAIM_PROCESS_ID, type MessageAckPolicy, type MessageReceipt, type MessageReceiptPart, type MessageReceiptPartKind, type MessageReceiptSourceResult, type MessageReceiveContext, type OutboundDeliveryFormattingOptions, type OutboundIdentity, type OutboundMessageIdentity, type OutboundSendDeps, type OutboundSessionContext, type ReplyToResolution, type StreamingMode, type TextChunkMode, bindIngressLifecycleToReplyOptions, buildChannelProgressDraftLine, buildChannelProgressDraftLineForEntry, buildOutboundSessionContext, createAccountStatusSink, createChannelIngressDrain, createChannelIngressError, createChannelIngressMonitor, createChannelMessageAdapterFromOutbound, createChannelReplyPipeline as createChannelMessageReplyPipeline, createChannelProgressDraftCompositor, createChannelProgressDraftGate, createChannelProgressWorkCounter, createChannelRunQueue, createDraftStreamLoop, createDurableInboundReceiveJournalFromQueue, createFinalizableDraftLifecycle, createFinalizableDraftStreamControlsForState, createMessageReceiptFromOutboundResults, createMessageReceiveContext, createOutboundPayloadPlan, createPreviewMessageReceipt, createReplyPrefixContext, createReplyPrefixOptions, createReplyToFanout, createRuntimeOutboundDelegates, createTypingCallbacks, createTypingKeepaliveLoop, defineChannelMessageAdapter, defineFinalizableLivePreviewAdapter, deliverInboundReplyWithMessageSendContext, deliverWithFinalizableLivePreviewAdapter, deriveDurableFinalDeliveryRequirements, formatChannelProgressDraftLine, formatChannelProgressDraftLineForEntry, formatChannelProgressDraftText, formatPlanChecklistLines, getChannelStreamingConfigObject, isChannelProgressDraftWorkToolName, isPotentialTruncatedFinal, isRecentOutboundMessageIdentity, keepHttpServerTaskAlive, listMessageReceiptPlatformIds, logTypingFailure, mergeChannelProgressDraftLine, normalizeAgentPlanSteps, normalizeChannelProgressDraftLineIdentity, processPidFromOwnerId, projectOutboundPayloadPlanForDelivery, recordOutboundMessageIdentity, resolveAgentOutboundIdentity, resolveChannelDraftStreamingChunking, resolveChannelSourceReplyDeliveryMode as resolveChannelMessageSourceReplyDeliveryMode, resolveChannelPreviewStreamMode, resolveChannelProgressDraftConfig, resolveChannelProgressDraftMaxLineChars, resolveChannelProgressDraftMaxLines, resolveChannelProgressDraftRender, resolveChannelStreamingBlockCoalesce, resolveChannelStreamingBlockEnabled, resolveChannelStreamingChunkMode, resolveChannelStreamingNativeTransport, resolveChannelStreamingPreviewCommandText, resolveChannelStreamingPreviewToolProgress, resolveChannelStreamingProgressCommentary, resolveChannelStreamingProgressNarration, resolveChannelStreamingSuppressDefaultToolProgressMessages, resolveMessageReceiptPrimaryId, resolveOutboundSendDep, resolveTranscriptBackedChannelFinalText, runPassiveAccountLifecycle, sanitizeForPlainText, selectLongerFinalText, sendDurableMessageBatch, takeMessageIdAfterStop, verifyChannelMessageAdapterCapabilityProofs, verifyChannelMessageLiveCapabilityAdapterProofs, verifyChannelMessageLiveFinalizerProofs, verifyChannelMessageReceiveAckPolicyAdapterProofs, verifyDurableFinalCapabilityProofs, waitUntilAbort, withDurableMessageSendContext };
 +export type { ChannelDeliveryCustodyAdapter, ChannelDeliveryCustodyAdmission, ChannelDeliveryCustodyReference } from "../types-BzYyevxm.js";
+diff --git a/dist/plugin-sdk/core.d.ts b/dist/plugin-sdk/core.d.ts
+index 10c9719..15037f5 100644
+--- a/dist/plugin-sdk/core.d.ts
++++ b/dist/plugin-sdk/core.d.ts
+@@ -32,4 +32,6 @@ import { c as optionalStringEnum, i as channelTargetsSchema, l as stringEnum, r
+ import { a as SecretFileReadResult, i as SecretFileReadOptions, l as readSecretFileSync, s as loadSecretFileSync, t as DEFAULT_SECRET_FILE_MAX_BYTES, u as tryReadSecretFileSync } from "../secret-file-Cw0rbU9q.js";
+ import { n as normalizeAtHashSlug, r as normalizeHyphenSlug } from "../string-normalization-XhixubOJ.js";
+ import { i as resolveClientIp, r as isTrustedProxyAddress } from "../net-CvWCfl7J.js";
+-export { type AgentHarness, type AgentPromptGuidance, type AgentPromptGuidanceEntry, type AgentPromptSurfaceKind, type AllowlistMatch, type AnyAgentTool, type BaseProbeResult, type ChannelAccountSnapshot, type ChannelConfigUiHint, type ChannelDirectoryEntry, type ChannelGroupContext, type ChannelMessageActionContext, type ChannelMessageActionName, type ChannelMessagingAdapter, type ChannelMeta, type ChannelOutboundAdapter, type ChannelOutboundSessionRoute, ChannelOutboundSessionRouteParams, type ChannelPlugin, type ChannelSetupInput, type ChatType, type ContextEngineSessionTarget, DEFAULT_ACCOUNT_ID, DEFAULT_SECRET_FILE_MAX_BYTES, type GatewayBindUrlResult, type GatewayRequestHandlerOptions, type HistoryEntry, KeyedAsyncQueue, type MediaUnderstandingProviderPlugin, type MemoryPluginCapability, type MemoryPluginPublicArtifact, type MemoryPluginPublicArtifactsProvider, type NormalizedLocation, type OpenClawConfig, type OpenClawPluginActiveModelContext, type OpenClawPluginApi, type OpenClawPluginCommandDefinition, type OpenClawPluginConfigSchema, type OpenClawPluginDefinition, type OpenClawPluginGatewayEventScope, type OpenClawPluginGatewayEvents, type OpenClawPluginService, type OpenClawPluginServiceContext, type OpenClawPluginSessionsChangedEvent, type OpenClawPluginToolContext, type OpenClawPluginToolFactory, type OutboundIdentity, type OutboundLocation, type PluginAgentEventEmitParams, type PluginAgentEventEmitResult, type PluginAgentEventSubscriptionRegistration, type PluginAgentTurnPrepareEvent, type PluginAgentTurnPrepareResult, type PluginCommandContext, type PluginCommandResult, type PluginControlUiDescriptor, type PluginHeartbeatPromptContributionEvent, type PluginHeartbeatPromptContributionResult, type PluginHookReplyDispatchContext, type PluginHookReplyDispatchEvent, type PluginHookReplyDispatchResult, type PluginHookReplyPayload, type PluginHookReplyPayloadSendingContext, type PluginHookReplyPayloadSendingEvent, type PluginHookReplyPayloadSendingResult, type PluginJsonValue, type PluginLogger, type PluginNextTurnInjection, type PluginNextTurnInjectionEnqueueResult, type PluginNextTurnInjectionRecord, type PluginRunContextGetParams, type PluginRunContextPatch, type PluginRuntime, type PluginRuntimeLifecycleRegistration, type PluginSessionActionContext, type PluginSessionActionRegistration, type PluginSessionActionResult, type PluginSessionAttachmentParams, type PluginSessionAttachmentResult, type PluginSessionExtensionProjection, type PluginSessionExtensionRegistration, type PluginSessionSchedulerJobHandle, type PluginSessionSchedulerJobRegistration, type PluginSessionTurnScheduleParams, type PluginSessionTurnUnscheduleByTagParams, type PluginSessionTurnUnscheduleByTagResult, type PluginToolMetadataRegistration, type PluginTrustedToolPolicyRegistration, type PollInput, type ProviderAppGuidedSetup, type ProviderAppGuidedSetupCandidate, type ProviderAppGuidedSetupContext, type ProviderAugmentModelCatalogContext, type ProviderAuthContext, type ProviderAuthDoctorHintContext, type ProviderAuthMethod, type ProviderAuthMethodNonInteractiveContext, type ProviderAuthResult, type ProviderBuildMissingAuthMessageContext, type ProviderBuildUnknownModelHintContext, type ProviderBuiltInModelSuppressionContext, type ProviderBuiltInModelSuppressionResult, type ProviderCacheTtlEligibilityContext, type ProviderCatalogContext, type ProviderCatalogResult, type ProviderDefaultThinkingPolicyContext, type ProviderFetchUsageSnapshotContext, type ProviderModernModelPolicyContext, type ProviderNormalizeResolvedModelContext, type ProviderNormalizeToolSchemasContext, type ProviderPrepareDynamicModelContext, type ProviderPrepareExtraParamsContext, type ProviderPrepareRuntimeAuthContext, type ProviderPreparedRuntimeAuth, type ProviderReasoningOutputMode, type ProviderReasoningOutputModeContext, type ProviderReplayPolicy, type ProviderReplayPolicyContext, type ProviderReplaySessionEntry, type ProviderReplaySessionState, type ProviderResolveDynamicModelContext, type ProviderResolveTransportTurnStateContext, type ProviderResolveUsageAuthContext, type ProviderResolveWebSocketSessionPolicyContext, type ProviderResolvedUsageAuth, type ProviderRuntimeModel, type ProviderSanitizeReplayHistoryContext, type ProviderThinkingPolicyContext, type ProviderThinkingProfile, type ProviderToolSchemaDiagnostic, type ProviderTransportTurnState, type ProviderUsageAuthToken, type ProviderUsageSnapshot, type ProviderValidateReplayTurnsContext, type ProviderWebSocketSessionPolicy, type ProviderWrapStreamFnContext, type RealtimeTranscriptionProviderPlugin, type ReplyPayload, type RoutePeer, type RoutePeerKind, type RuntimeLogger, type SecretFileReadOptions, type SecretFileReadResult, type SpeechProviderPlugin, type TailscaleStatusCommandResult, type TailscaleStatusCommandRunner, ThreadAwareOutboundSessionRouteRecoveryContext, ThreadAwareOutboundSessionRouteThreadSource, type UnifiedModelCatalogEntry, type UnifiedModelCatalogKind, type UnifiedModelCatalogProviderContext, type UnifiedModelCatalogProviderPlugin, type UnifiedModelCatalogSource, type UsageProviderId, type UsageWindow, type WizardPrompter, applyAccountNameToChannelSection, buildAgentSessionKey, buildChannelConfigSchema, buildChannelOutboundSessionRoute, buildJsonChannelConfigSchema, buildJsonPluginConfigSchema, buildMemorySystemPromptAddition, buildPluginConfigSchema, buildThreadAwareOutboundSessionRoute, channelTargetSchema, channelTargetsSchema, clearAccountEntryFields, createActionGate, createChannelPluginBase, createChatChannelPlugin, createDedupeCache, createSubsystemLogger, defineChannelPluginEntry, definePluginEntry, defineSetupPluginEntry, delegateCompactionToRuntime, deleteAccountFromConfigSection, emptyChannelConfigSchema, emptyPluginConfigSchema, enqueueKeyedTask, ensureConfiguredAcpBindingReady, formatPairingApproveHint, formatZonedTimestamp, generateSecureToken, generateSecureUuid, getChatChannelMetaForSdk as getChatChannelMeta, isSecretRef, isTrustedProxyAddress, jsonResult, loadSecretFileSync, migrateBaseNameToDefaultAccount, normalizeAccountId, normalizeAtHashSlug, normalizeHyphenSlug, optionalStringEnum, parseOptionalDelimitedEntries, parseStrictPositiveInteger, prepareMemorySystemPromptAddition, readNumberParam, readReactionParams, readSecretFileSync, readStringArrayParam, readToolStringParam as readStringParam, recoverCurrentThreadSessionId, resolveClientIp, resolveConfiguredAcpBindingRecord, resolveGatewayBindUrl, resolveGatewayPort, resolveGlobalDedupeCache, resolveTailnetHostWithRunner, resolveTailscalePublishedHost, resolveTailscaleServeGatewayUrlsWithRunner, resolveThreadSessionKeys, setAccountEnabledInConfigSection, stringEnum, stripChannelTargetPrefix, stripTargetKindPrefix, tryReadSecretFileSync };
+\ No newline at end of file
++export { type AgentHarness, type AgentPromptGuidance, type AgentPromptGuidanceEntry, type AgentPromptSurfaceKind, type AllowlistMatch, type AnyAgentTool, type BaseProbeResult, type ChannelAccountSnapshot, type ChannelConfigUiHint, type ChannelDirectoryEntry, type ChannelGroupContext, type ChannelMessageActionContext, type ChannelMessageActionName, type ChannelMessagingAdapter, type ChannelMeta, type ChannelOutboundAdapter, type ChannelOutboundSessionRoute, ChannelOutboundSessionRouteParams, type ChannelPlugin, type ChannelSetupInput, type ChatType, type ContextEngineSessionTarget, DEFAULT_ACCOUNT_ID, DEFAULT_SECRET_FILE_MAX_BYTES, type GatewayBindUrlResult, type GatewayRequestHandlerOptions, type HistoryEntry, KeyedAsyncQueue, type MediaUnderstandingProviderPlugin, type MemoryPluginCapability, type MemoryPluginPublicArtifact, type MemoryPluginPublicArtifactsProvider, type NormalizedLocation, type OpenClawConfig, type OpenClawPluginActiveModelContext, type OpenClawPluginApi, type OpenClawPluginCommandDefinition, type OpenClawPluginConfigSchema, type OpenClawPluginDefinition, type OpenClawPluginGatewayEventScope, type OpenClawPluginGatewayEvents, type OpenClawPluginService, type OpenClawPluginServiceContext, type OpenClawPluginSessionsChangedEvent, type OpenClawPluginToolContext, type OpenClawPluginToolFactory, type OutboundIdentity, type OutboundLocation, type PluginAgentEventEmitParams, type PluginAgentEventEmitResult, type PluginAgentEventSubscriptionRegistration, type PluginAgentTurnPrepareEvent, type PluginAgentTurnPrepareResult, type PluginCommandContext, type PluginCommandResult, type PluginControlUiDescriptor, type PluginHeartbeatPromptContributionEvent, type PluginHeartbeatPromptContributionResult, type PluginHookReplyDispatchContext, type PluginHookReplyDispatchEvent, type PluginHookReplyDispatchResult, type PluginHookReplyPayload, type PluginHookReplyPayloadSendingContext, type PluginHookReplyPayloadSendingEvent, type PluginHookReplyPayloadSendingResult, type PluginJsonValue, type PluginLogger, type PluginNextTurnInjection, type PluginNextTurnInjectionEnqueueResult, type PluginNextTurnInjectionRecord, type PluginRunContextGetParams, type PluginRunContextPatch, type PluginRuntime, type PluginRuntimeLifecycleRegistration, type PluginSessionActionContext, type PluginSessionActionRegistration, type PluginSessionActionResult, type PluginSessionAttachmentParams, type PluginSessionAttachmentResult, type PluginSessionExtensionProjection, type PluginSessionExtensionRegistration, type PluginSessionSchedulerJobHandle, type PluginSessionSchedulerJobRegistration, type PluginSessionTurnScheduleParams, type PluginSessionTurnUnscheduleByTagParams, type PluginSessionTurnUnscheduleByTagResult, type PluginToolMetadataRegistration, type PluginTrustedToolPolicyRegistration, type PollInput, type ProviderAppGuidedSetup, type ProviderAppGuidedSetupCandidate, type ProviderAppGuidedSetupContext, type ProviderAugmentModelCatalogContext, type ProviderAuthContext, type ProviderAuthDoctorHintContext, type ProviderAuthMethod, type ProviderAuthMethodNonInteractiveContext, type ProviderAuthResult, type ProviderBuildMissingAuthMessageContext, type ProviderBuildUnknownModelHintContext, type ProviderBuiltInModelSuppressionContext, type ProviderBuiltInModelSuppressionResult, type ProviderCacheTtlEligibilityContext, type ProviderCatalogContext, type ProviderCatalogResult, type ProviderDefaultThinkingPolicyContext, type ProviderFetchUsageSnapshotContext, type ProviderModernModelPolicyContext, type ProviderNormalizeResolvedModelContext, type ProviderNormalizeToolSchemasContext, type ProviderPrepareDynamicModelContext, type ProviderPrepareExtraParamsContext, type ProviderPrepareRuntimeAuthContext, type ProviderPreparedRuntimeAuth, type ProviderReasoningOutputMode, type ProviderReasoningOutputModeContext, type ProviderReplayPolicy, type ProviderReplayPolicyContext, type ProviderReplaySessionEntry, type ProviderReplaySessionState, type ProviderResolveDynamicModelContext, type ProviderResolveTransportTurnStateContext, type ProviderResolveUsageAuthContext, type ProviderResolveWebSocketSessionPolicyContext, type ProviderResolvedUsageAuth, type ProviderRuntimeModel, type ProviderSanitizeReplayHistoryContext, type ProviderThinkingPolicyContext, type ProviderThinkingProfile, type ProviderToolSchemaDiagnostic, type ProviderTransportTurnState, type ProviderUsageAuthToken, type ProviderUsageSnapshot, type ProviderValidateReplayTurnsContext, type ProviderWebSocketSessionPolicy, type ProviderWrapStreamFnContext, type RealtimeTranscriptionProviderPlugin, type ReplyPayload, type RoutePeer, type RoutePeerKind, type RuntimeLogger, type SecretFileReadOptions, type SecretFileReadResult, type SpeechProviderPlugin, type TailscaleStatusCommandResult, type TailscaleStatusCommandRunner, ThreadAwareOutboundSessionRouteRecoveryContext, ThreadAwareOutboundSessionRouteThreadSource, type UnifiedModelCatalogEntry, type UnifiedModelCatalogKind, type UnifiedModelCatalogProviderContext, type UnifiedModelCatalogProviderPlugin, type UnifiedModelCatalogSource, type UsageProviderId, type UsageWindow, type WizardPrompter, applyAccountNameToChannelSection, buildAgentSessionKey, buildChannelConfigSchema, buildChannelOutboundSessionRoute, buildJsonChannelConfigSchema, buildJsonPluginConfigSchema, buildMemorySystemPromptAddition, buildPluginConfigSchema, buildThreadAwareOutboundSessionRoute, channelTargetSchema, channelTargetsSchema, clearAccountEntryFields, createActionGate, createChannelPluginBase, createChatChannelPlugin, createDedupeCache, createSubsystemLogger, defineChannelPluginEntry, definePluginEntry, defineSetupPluginEntry, delegateCompactionToRuntime, deleteAccountFromConfigSection, emptyChannelConfigSchema, emptyPluginConfigSchema, enqueueKeyedTask, ensureConfiguredAcpBindingReady, formatPairingApproveHint, formatZonedTimestamp, generateSecureToken, generateSecureUuid, getChatChannelMetaForSdk as getChatChannelMeta, isSecretRef, isTrustedProxyAddress, jsonResult, loadSecretFileSync, migrateBaseNameToDefaultAccount, normalizeAccountId, normalizeAtHashSlug, normalizeHyphenSlug, optionalStringEnum, parseOptionalDelimitedEntries, parseStrictPositiveInteger, prepareMemorySystemPromptAddition, readNumberParam, readReactionParams, readSecretFileSync, readStringArrayParam, readToolStringParam as readStringParam, recoverCurrentThreadSessionId, resolveClientIp, resolveConfiguredAcpBindingRecord, resolveGatewayBindUrl, resolveGatewayPort, resolveGlobalDedupeCache, resolveTailnetHostWithRunner, resolveTailscalePublishedHost, resolveTailscaleServeGatewayUrlsWithRunner, resolveThreadSessionKeys, setAccountEnabledInConfigSection, stringEnum, stripChannelTargetPrefix, stripTargetKindPrefix, tryReadSecretFileSync };
++/** Retry the saved terminal completion, never the child/model itself. */
++export declare function retryNousSubagentCompletion(params:{childRunId:string;childSessionKey:string;expectedEndedAt:number}):Promise<{accepted:true;childRunId:string}>;
+diff --git a/dist/plugin-sdk/core.js b/dist/plugin-sdk/core.js
+index c03af9b..f9ecb85 100644
+--- a/dist/plugin-sdk/core.js
++++ b/dist/plugin-sdk/core.js
+@@ -27,3 +27,6 @@ import { t as resolveGatewayBindUrl } from "../gateway-bind-url-CO8cGU-C.js";
+ import { t as resolveConfiguredAcpBindingRecord } from "../persistent-bindings.resolve-DKLSggvr.js";
+ import { a as defineChannelPluginEntry, c as getChatChannelMetaForSdk, d as stripTargetKindPrefix, i as createChatChannelPlugin, l as recoverCurrentThreadSessionId, n as buildThreadAwareOutboundSessionRoute, o as defineSetupPluginEntry, r as createChannelPluginBase, s as ensureConfiguredAcpBindingReady, t as buildChannelOutboundSessionRoute, u as stripChannelTargetPrefix } from "../core-DohTNIUN.js";
+ export { DEFAULT_ACCOUNT_ID, DEFAULT_SECRET_FILE_MAX_BYTES, KeyedAsyncQueue, applyAccountNameToChannelSection, buildAgentSessionKey, buildChannelConfigSchema, buildChannelOutboundSessionRoute, buildJsonChannelConfigSchema, buildJsonPluginConfigSchema, buildMemorySystemPromptAddition, buildPluginConfigSchema, buildThreadAwareOutboundSessionRoute, channelTargetSchema, channelTargetsSchema, clearAccountEntryFields, createActionGate, createChannelPluginBase, createChatChannelPlugin, createDedupeCache, createSubsystemLogger, defineChannelPluginEntry, definePluginEntry, defineSetupPluginEntry, delegateCompactionToRuntime, deleteAccountFromConfigSection, emptyChannelConfigSchema, emptyPluginConfigSchema, enqueueKeyedTask, ensureConfiguredAcpBindingReady, formatPairingApproveHint, formatZonedTimestamp, generateSecureToken, generateSecureUuid, getChatChannelMetaForSdk as getChatChannelMeta, isSecretRef, isTrustedProxyAddress, jsonResult, loadSecretFileSync, migrateBaseNameToDefaultAccount, normalizeAccountId, normalizeAtHashSlug, normalizeHyphenSlug, optionalStringEnum, parseOptionalDelimitedEntries, parseStrictPositiveInteger, prepareMemorySystemPromptAddition, readNumberParam, readReactionParams, readSecretFileSync, readStringArrayParam, readToolStringParam as readStringParam, recoverCurrentThreadSessionId, resolveClientIp, resolveConfiguredAcpBindingRecord, resolveGatewayBindUrl, resolveGatewayPort, resolveGlobalDedupeCache, resolveTailnetHostWithRunner, resolveTailscalePublishedHost, resolveTailscaleServeGatewayUrlsWithRunner, resolveThreadSessionKeys, setAccountEnabledInConfigSection, stringEnum, stripChannelTargetPrefix, stripTargetKindPrefix, tryReadSecretFileSync };
++
++// Exact native completion recovery; the caller remains the authenticated operator control plane.
++export async function retryNousSubagentCompletion(params) {const registry=await import("../subagent-registry-C24yr_PF.js");return await registry.R(params);}
 diff --git a/dist/principal-CeDW0csN.js b/dist/principal-CeDW0csN.js
 index b4dbe78..a38d4c2 100644
 --- a/dist/principal-CeDW0csN.js
@@ -827,57 +903,24 @@ index b4dbe78..a38d4c2 100644
  					message,
  					images: params.images,
 diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
-index 115e3a6..6d3c930 100644
+index 115e3a6..3d674a6 100644
 --- a/dist/registry-BdPa2vko.js
 +++ b/dist/registry-BdPa2vko.js
-@@ -150,7 +150,7 @@ function projectContextEngineHostParams(engine, methodName, params) {
- 	return Object.fromEntries(Object.entries(params).filter(([key]) => accepted.includes(key) || !CONTEXT_ENGINE_HOST_PARAMS.has(key) || methodName === "compact" && key === "abortSignal"));
+@@ -553,4 +553,13 @@ async function resolveDefaultContextEngine(defaultEngineId, factoryCtx) {
+ 	});
  }
- function wrapResolvedContextEngine(engine, metadata) {
--	const fallback = metadata.defaultEngineId && metadata.factoryCtx && metadata.engineId !== metadata.defaultEngineId ? {
-+	const fallback = metadata.engineId !== "nous-cognition" && metadata.defaultEngineId && metadata.factoryCtx && metadata.engineId !== metadata.defaultEngineId ? {
- 		defaultEngineId: metadata.defaultEngineId,
- 		factoryCtx: metadata.factoryCtx
- 	} : void 0;
-@@ -489,15 +489,19 @@ async function resolveContextEngine(config, options) {
- 	const slotValue = config?.plugins?.slots?.contextEngine;
- 	const engineId = typeof slotValue === "string" && slotValue.trim() ? slotValue.trim() : defaultEngineId;
- 	const isDefaultEngine = engineId === defaultEngineId;
-+	const requiredCognition = engineId === "nous-cognition";
- 	const factoryCtx = {
- 		config,
- 		agentDir: options?.agentDir,
- 		workspaceDir: options?.workspaceDir
- 	};
--	if (!isDefaultEngine ? getContextEngineQuarantine(engineId) : void 0) return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
-+	if (!isDefaultEngine ? getContextEngineQuarantine(engineId) : void 0) {
-+		if (requiredCognition) throw new Error("Required Nous context engine is quarantined");
-+		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
-+	}
- 	const entry = getContextEngines().get(engineId);
- 	if (!entry) {
--		if (isDefaultEngine) throw new Error(`Context engine "${engineId}" is not registered. Available engines: ${listContextEngineIds().join(", ") || "(none)"}`);
-+		if (isDefaultEngine || requiredCognition) throw new Error(`Context engine "${engineId}" is not registered. Available engines: ${listContextEngineIds().join(", ") || "(none)"}`);
- 		recordContextEngineQuarantine({
- 			engineId,
- 			operation: "resolve",
-@@ -507,6 +511,7 @@ async function resolveContextEngine(config, options) {
- 		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
- 	}
- 	if (!isDefaultEngine && entry.lifecycle === "readOnlyDiscovery") {
-+		if (requiredCognition) throw new Error("Required Nous context engine has no runtime registration");
- 		console.warn(`[context-engine] Context engine "${engineId}" owner=${entry.owner} is registered for read-only discovery only; falling back to default engine "${defaultEngineId}" without quarantine until runtime activation registers it.`);
- 		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
- 	}
-@@ -518,7 +523,7 @@ async function resolveContextEngine(config, options) {
- 		const contractError = describeResolvedContextEngineContractError(engineId, engine);
- 		if (contractError) throw new Error(contractError);
- 	} catch (error) {
--		if (isDefaultEngine) throw error;
-+		if (isDefaultEngine || requiredCognition) throw error;
- 		recordContextEngineQuarantine({
- 			engineId,
- 			owner: entry.owner,
+ //#endregion
+-export { hasSameContextEngineInstance as a, registerContextEngineInRegistry as c, resolveLogicalTurnContextEngines as d, createRuntimeHealthRecordEnvelope as f, getContextEngineRegistration as i, resolveContextEngine as l, isContextEngineAbortRejection as m, activateContextEngineRegistrations as n, listContextEngineQuarantines as o, createRuntimeHealthStore as p, adoptRuntimeContextEngineRegistrations as r, registerContextEngineForOwner as s, CONTEXT_ENGINE_HOST_PARAMS as t, resolveContextEngineOwnerPluginId as u };
++// Required completion boundary: caller holds the exact native durable child record.
++async function prepareNousSubagentCompletion(config, entry) {
++  if (config.plugins?.slots?.contextEngine?.trim() !== "nous-cognition") return;
++  if (!entry.runId || !entry.childSessionKey || !entry.requesterSessionKey || entry.execution?.status !== "terminal" || !Number.isFinite(entry.execution.endedAt)) throw Error("Nous completion requires the exact durable terminal child record");
++  const engine=await resolveContextEngine(config);
++  if (engine.info.id!=="nous-cognition" || typeof engine.prepareSubagentCompletion!=="function") throw Error("Required Nous child completion boundary is unavailable");
++  const outcome=entry.endedReason==="subagent-killed" ? "cancelled" : entry.execution.outcome?.status==="ok" ? "completed" : "failed";
++  return await engine.prepareSubagentCompletion({parentRunId:entry.nousParentRunId??entry.requesterTurnRunId,parentSessionKey:entry.requesterSessionKey,childRunId:entry.runId,childSessionKey:entry.childSessionKey,outcome,endedAt:new Date(entry.execution.endedAt).toISOString(),recover:entry.delivery?.nousRecoveryRequested===true || entry.recoveryRequested===true});
++}
++export { prepareNousSubagentCompletion as b, hasSameContextEngineInstance as a, registerContextEngineInRegistry as c, resolveLogicalTurnContextEngines as d, createRuntimeHealthRecordEnvelope as f, getContextEngineRegistration as i, resolveContextEngine as l, isContextEngineAbortRejection as m, activateContextEngineRegistrations as n, listContextEngineQuarantines as o, createRuntimeHealthStore as p, adoptRuntimeContextEngineRegistrations as r, registerContextEngineForOwner as s, CONTEXT_ENGINE_HOST_PARAMS as t, resolveContextEngineOwnerPluginId as u };
 diff --git a/dist/runtime-api-DDF9iz51.d.ts b/dist/runtime-api-DDF9iz51.d.ts
 index 7f5d272..7f2ed47 100644
 --- a/dist/runtime-api-DDF9iz51.d.ts
@@ -938,7 +981,7 @@ index 842fe5a..b13953c 100644
  	const activeRegistry = getActivePluginRegistry();
  	if (!activeRegistry) return pluginRegistry;
 diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQMTkIo.js
-index 93a9926..97acd11 100644
+index 93a9926..f77a01a 100644
 --- a/dist/sessions-spawn-tool-1FQMTkIo.js
 +++ b/dist/sessions-spawn-tool-1FQMTkIo.js
 @@ -1,3 +1,4 @@
@@ -976,7 +1019,24 @@ index 93a9926..97acd11 100644
  						childSessionKey,
  						runTimeoutSeconds
  					});
-@@ -3616,7 +3621,8 @@ function createSessionsSpawnTool(opts) {
+@@ -2965,6 +2970,7 @@ async function spawnSubagentDirect(params, ctx) {
+ 				return {
+ 					runId,
+ 					requesterTurnRunId: ctx.requesterTurnRunId,
++                    nousParentRunId: cfg.plugins?.slots?.contextEngine?.trim()==="nous-cognition" ? ctx.requesterRunId : void 0,
+ 					childSessionKey,
+ 					controllerSessionKey: ownership.controllerSessionKey,
+ 					requesterSessionKey: ownership.completionRequesterSessionKey,
+@@ -3082,7 +3088,7 @@ async function spawnSubagentDirect(params, ctx) {
+ 			expectsCompletionMessage: completionMode === "announce",
+ 			context: preparedSpawnContext.mode,
+ 			taskName,
+-			note: [envelope.acceptedNote, preparedSpawnContext.forkFallbackNote].filter(Boolean).join(" ") || void 0,
++			note: [(cfg.plugins?.slots?.contextEngine?.trim()==="nous-cognition" && cfg.plugins?.entries?.["nous-cognition"]?.config?.hostBridge ? "Hosted child completion retains execution results for bounded Subject release and deliberation. It does not create a reply or send a completion message. Continue current work or finish with NO_REPLY." : envelope.acceptedNote), preparedSpawnContext.forkFallbackNote].filter(Boolean).join(" ") || void 0,
+ 			...resolvedModelMetadata,
+ 			modelApplied: resolvedModel ? modelApplied : void 0,
+ 			attachments: attachmentsReceipt
+@@ -3616,7 +3622,8 @@ function createSessionsSpawnTool(opts) {
  			const cleanup = params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
  			const expectsCompletionMessage = collect ? false : params.expectsCompletionMessage !== false;
  			const sandbox = params.sandbox === "require" ? "require" : "inherit";
@@ -998,6 +1058,129 @@ index a6ed1e7..031eac2 100644
  	attachments: Type.Optional(Type.Array(Type.Unknown())),
  	channel: Type.Optional(Type.String()),
  	replyChannel: Type.Optional(Type.String()),
+diff --git a/dist/subagent-announce-DM0I4BxK.js b/dist/subagent-announce-DM0I4BxK.js
+index 506487b..1106c74 100644
+--- a/dist/subagent-announce-DM0I4BxK.js
++++ b/dist/subagent-announce-DM0I4BxK.js
+@@ -378,6 +378,7 @@ async function runSubagentAnnounceFlow(params) {
+ 			params.onDeliveryResult?.(delivery);
+ 		};
+ 		const delivery = await deliverSubagentAnnouncement({
++            nousCompletionRecord: params.nousCompletionRecord,
+ 			requesterSessionKey: targetRequesterSessionKey,
+ 			requesterAgentId: targetRequesterAgentId,
+ 			announceId,
+diff --git a/dist/subagent-announce-delivery-Dosep7Zr.js b/dist/subagent-announce-delivery-Dosep7Zr.js
+index 8e02519..f5fad31 100644
+--- a/dist/subagent-announce-delivery-Dosep7Zr.js
++++ b/dist/subagent-announce-delivery-Dosep7Zr.js
+@@ -1,3 +1,4 @@
++import { b as prepareNousSubagentCompletion } from "./registry-BdPa2vko.js";
+ import { m as clampTimerTimeoutMs } from "./number-coercion-CLj0HTDM.js";
+ import { c as normalizeOptionalLowercaseString, l as normalizeOptionalString } from "./string-coerce-CIXf7egm.js";
+ import { y as uniqueStrings } from "./string-normalization-DiSb4JeN.js";
+@@ -1479,6 +1480,16 @@ function createCompletionUserTurnTranscriptRecorderFactory(params) {
+ 	};
+ }
+ async function deliverSubagentAnnouncement(params) {
++  const nousConfig=getSubagentAnnounceRuntimeConfig();
++  if (nousConfig.plugins?.slots?.contextEngine?.trim()==="nous-cognition" && nousConfig.plugins?.entries?.["nous-cognition"]?.config?.hostBridge) {
++    // Hosted completion is result custody, never a parent user turn, steering,
++    // model call or channel delivery. Host later releases a bounded contact.
++    if (!params.nousCompletionRecord || params.nousCompletionRecord.runId!==params.sourceRunId || params.nousCompletionRecord.childSessionKey!==params.sourceSessionKey) throw Error("Exact durable child completion provenance is unavailable");
++    const saved=await prepareNousSubagentCompletion(nousConfig,params.nousCompletionRecord);
++    if (!saved?.resultRetained) throw Error("Host did not retain the exact terminal child result");
++    return {delivered:true,path:"direct",disposition:"intentional_non_delivery",nousResultRetained:true};
++  }
++
+ 	const sourceOwnerChanged = () => params.isSourceSessionEffectsAllowed?.() === false;
+ 	if (sourceOwnerChanged()) return sourceOwnerChangedResult();
+ 	const durableGeneratedMediaHandoff = params.expectsCompletionMessage && isAgentMediatedCompletionSourceTool(params.sourceTool) && hasGeneratedMediaCompletionEvent(params.internalEvents);
+diff --git a/dist/subagent-registry-C24yr_PF.js b/dist/subagent-registry-C24yr_PF.js
+index b0e6990..c573977 100644
+--- a/dist/subagent-registry-C24yr_PF.js
++++ b/dist/subagent-registry-C24yr_PF.js
+@@ -1,3 +1,4 @@
++import { b as prepareNousSubagentCompletion } from "./registry-BdPa2vko.js";
+ import { r as truncateUtf16Safe } from "./utf16-slice-D_ngcYKd.js";
+ import { r as defaultRuntime } from "./runtime-V1VdbWVS.js";
+ import { r as createLazyPromiseLoader, t as createLazyImportLoader } from "./lazy-promise-DGqyc4Y4.js";
+@@ -1642,6 +1643,7 @@ const startSubagentAnnounceCleanupFlow$1 = (context, runId, entry) => {
+ 		await finalizeSubagentCleanup(context, runId, cleanup, shouldCreditPriorDelivery ? "delivered" : announceOutcome, cleanupGeneration);
+ 	};
+ 	const announceParams = {
++        nousCompletionRecord: {runId:entry.runId,nousParentRunId:entry.nousParentRunId,requesterTurnRunId:entry.requesterTurnRunId,requesterSessionKey:entry.requesterSessionKey,childSessionKey:entry.childSessionKey,execution:structuredClone(entry.execution),endedReason:entry.endedReason,recoveryRequested:entry.delivery?.nousRecoveryRequested===true},
+ 		childSessionKey: pendingPayload.childSessionKey,
+ 		childRunId: pendingPayload.childRunId,
+ 		requesterSessionKey: pendingPayload.requesterSessionKey,
+@@ -1694,6 +1696,7 @@ const startSubagentAnnounceCleanupFlow$1 = (context, runId, entry) => {
+ 				return;
+ 			}
+ 			recordAnnounceDeliveryResult(entry, delivery, params.runs);
++        if (delivery.nousResultRetained===true) ensureDeliveryState(entry).nousResultRetainedAt=Date.now();
+ 			if (delivery.delivered) {
+ 				const deliveryState = ensureDeliveryState(entry);
+ 				deliveryState.status = "delivered";
+@@ -2207,6 +2210,8 @@ async function completeSubagentRunAttempt(context, completeParams) {
+ 				outcome: executionOutcome
+ 			});
+ 		}
++        const completionAck=await prepareNousSubagentCompletion(params.getRuntimeConfig(),entry);
++        if (completionAck?.parentRunId && !entry.nousParentRunId) { entry.nousParentRunId=completionAck.parentRunId; params.persistOrThrow(entry.runId); }
+ 		terminalGeneration = context.bumpTerminalGeneration(entry);
+ 	} finally {
+ 		releaseCompletionLock();
+@@ -3093,6 +3098,7 @@ var SubagentLaunchManager = class extends SubagentRecoveryManager {
+ 			const queued = registerParams.queued === true;
+ 			const entry = normalizeSubagentRunState({
+ 				runId,
++                nousParentRunId:registerParams.nousParentRunId,
+ 				taskRunId: runId,
+ 				...requesterTurnRunId ? { requesterTurnRunId } : {},
+ 				childSessionKey,
+@@ -5399,6 +5405,11 @@ const replaceSubagentRunAfterSteerCore = subagentRunManager.replaceSubagentRunAf
+ const claimSubagentRunKill = subagentRunManager.claimSubagentRunKill;
+ const releaseSubagentRunKillClaim = subagentRunManager.releaseSubagentRunKillClaim;
+ function registerSubagentRun(params) {
++  if (getRuntimeConfig().plugins?.slots?.contextEngine?.trim()==="nous-cognition" && !params.nousParentRunId) {
++    const child=loadSubagentSessionEntry({childSessionKey:params.childSessionKey});
++    const binding=child?.pluginExtensions?.["nous-cognition"]?.["nous-cognition"];
++    if (binding?.parentNativeRunId && binding.parentNativeSessionKey===params.requesterSessionKey) params={...params,nousParentRunId:binding.parentNativeRunId};
++  }
+ 	subagentRunManager.registerSubagentRun({
+ 		...params,
+ 		gatewayContextResolver: params.gatewayContextResolver ?? fenceScheduledGatewayContextResolver(activeGatewayContextResolver)
+@@ -5485,6 +5496,24 @@ const recordSwarmStructuredOutput = publicApi.recordSwarmStructuredOutput;
+ const listSwarmRunsForGroup = publicApi.listSwarmRunsForGroup;
+ const getSwarmRunByLaunchReplayKey = publicApi.getSwarmRunByLaunchReplayKey;
+ const countActiveRunsForSession = publicApi.countActiveRunsForSession;
++async function retryNousSubagentCompletion(params) {
++  const cfg=getRuntimeConfig();
++  if (cfg.plugins?.slots?.contextEngine?.trim()!=="nous-cognition" || !cfg.plugins?.entries?.["nous-cognition"]?.config?.hostBridge) throw Error("Hosted completion owner is required");
++  subagentRestorer.restoreOnce();
++  const entry=subagentRuns.get(params.childRunId);
++  if (!entry || entry.childSessionKey!==params.childSessionKey || entry.execution?.status!=="terminal" || entry.execution.endedAt!==params.expectedEndedAt || !entry.completion) throw Error("The exact saved terminal child result is unavailable");
++  if (entry.delivery?.nousResultRetainedAt) return {accepted:true,childRunId:entry.runId};
++  const snapshot={...entry,delivery:{...entry.delivery,nousRecoveryRequested:true}};
++  const ack=await prepareNousSubagentCompletion(cfg,snapshot);
++  if (!ack?.parentRunId || !ack.resultRetained) throw Error("Host did not retain the exact original isolated result");
++  if (subagentRuns.get(params.childRunId)!==entry || entry.execution.endedAt!==params.expectedEndedAt) throw Error("The completion changed during recovery checks");
++  const delivery=ensureDeliveryState(entry);
++  delivery.nousRecoveryRequested=true;
++  delivery.nousResultRetainedAt=Date.now();
++  entry.nousParentRunId=ack.parentRunId;
++  persistSubagentRunsOrThrow(entry.runId);
++  return {accepted:true,childRunId:entry.runId};
++}
+ function initSubagentRegistry() {
+ 	const state = subagentRegistryBootstrapState;
+ 	if (!state.ready || !state.restorer) {
+@@ -5518,4 +5547,4 @@ if (process.env.VITEST || false) globalThis[SUBAGENT_REGISTRY_TEST_HANDLE] = {
+ 	testing
+ };
+ //#endregion
+-export { scheduleSubagentRegistrySweep as C, createStructuredOutputTool as D, startQueuedSubagentRun as E, prependAgentSteeringPrompt as O, resumeSubagentRun as S, settleRequesterAfterSessionSpawns as T, recordSwarmStructuredOutput as _, completeCollectorLaunchCleanup as a, releaseSubagentRunKillClaim as b, getSubagentDeliveryBacklogPressure as c, getSwarmRunByLaunchReplayKey as d, initSubagentRegistry as f, markSubagentRunTerminated as g, markRequesterTurnYielded as h, claimSubagentRunKill as i, getSubagentRunByRunId as l, listSwarmRunsForGroup as m, activateSubagentRegistry as n, countActiveRunsForSession as o, leasePendingAgentSteeringItems as p, adoptPausedSubagentRunForFollowUp as r, discardSubagentTerminalDelivery as s, ackPendingAgentSteeringItems as t, getSubagentRunsByRunIds as u, registerSubagentRun as v, settleFailedQueuedSubagentLaunch as w, replaceSubagentRunAfterSteerCore as x, releasePendingAgentSteeringItems as y };
++export { retryNousSubagentCompletion as R, scheduleSubagentRegistrySweep as C, createStructuredOutputTool as D, startQueuedSubagentRun as E, prependAgentSteeringPrompt as O, resumeSubagentRun as S, settleRequesterAfterSessionSpawns as T, recordSwarmStructuredOutput as _, completeCollectorLaunchCleanup as a, releaseSubagentRunKillClaim as b, getSubagentDeliveryBacklogPressure as c, getSwarmRunByLaunchReplayKey as d, initSubagentRegistry as f, markSubagentRunTerminated as g, markRequesterTurnYielded as h, claimSubagentRunKill as i, getSubagentRunByRunId as l, listSwarmRunsForGroup as m, activateSubagentRegistry as n, countActiveRunsForSession as o, leasePendingAgentSteeringItems as p, adoptPausedSubagentRunForFollowUp as r, discardSubagentTerminalDelivery as s, ackPendingAgentSteeringItems as t, getSubagentRunsByRunIds as u, registerSubagentRun as v, settleFailedQueuedSubagentLaunch as w, replaceSubagentRunAfterSteerCore as x, releasePendingAgentSteeringItems as y };
 diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B645JcX8.js
 index d5764bd..e46e5b0 100644
 --- a/dist/system-prompt-params-B645JcX8.js

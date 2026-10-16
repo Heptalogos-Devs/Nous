@@ -15,6 +15,7 @@ import {
   type Projection,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { NousClient, RequestOptions } from "./index.js";
+import type { HostRoleScope } from "./host-bridge.js";
 
 export type { CognitionUsage, ContextSegment };
 export interface AppliedCognition {
@@ -52,6 +53,8 @@ export interface ManagedBinding {
     response: ManagedContextResponse,
     renderer: ContextRenderer<T>,
   ): { input: T; applied: AppliedCognition };
+  /** Exact full Projection used by apply, including APPEND's retained prefix. */
+  appliedProjection(applied: AppliedCognition): Projection;
   admit(
     result: Pick<
       ActualInvocationOutcome,
@@ -72,6 +75,10 @@ export function createManagedBinding(options: {
   subjectId: string;
   sessionId: string;
   consumerId: string;
+  /** Trusted integration caller scope. Standalone defaults to Subject experience. */
+  roleScope?: HostRoleScope;
+  /** Execution-only outcomes remain with their RoleRun owner, outside cognition. */
+  retainExecutionOutcome?: (result: ActualInvocationOutcome) => Promise<void>;
 }): ManagedBinding {
   let cursor: ContextCursor | undefined;
   let current: Projection | undefined;
@@ -113,7 +120,15 @@ export function createManagedBinding(options: {
               sessionId: options.sessionId,
               consumerId: options.consumerId,
               activeWorkContextId: input.workContextId,
-              usage: input.usage,
+              usage: options.roleScope
+                ? {
+                    ...input.usage,
+                    role: options.roleScope.role,
+                    purpose: options.roleScope.purpose,
+                    view: options.roleScope.view,
+                    contactNature: options.roleScope.contactNature,
+                  }
+                : input.usage,
               currentMaterials: [...(input.currentMaterials ?? [])],
               // UTF-8 byte count bounds text tokens conservatively. The host
               // measures the complete rendered input, including attribution.
@@ -193,6 +208,15 @@ export function createManagedBinding(options: {
       cursor = structuredClone(nextCursor);
       pending = undefined;
       return { input, applied };
+    },
+    appliedProjection(applied) {
+      assertOpen();
+      const projection = applications.get(applied);
+      if (!projection)
+        throw new Error(
+          "Projection requires an actual application from this binding",
+        );
+      return structuredClone(projection);
     },
     async admit(
       result: Pick<
@@ -297,6 +321,14 @@ export function createManagedBinding(options: {
         );
       if (!admissions.get(result.applied)?.has(result.invocationId))
         throw new Error("Outcome requires an admitted native model input");
+      if (options.roleScope?.contactNature === "execution_only") {
+        if (!options.retainExecutionOutcome)
+          throw new Error(
+            "Execution-only managed binding requires its actual RoleRun result owner",
+          );
+        await options.retainExecutionOutcome(result);
+        return;
+      }
       await client.runtime.recordObservation(
         await outcomeObservation({
           subjectId: options.subjectId,

@@ -10,7 +10,7 @@ type ContextEngine = Awaited<
 >;
 /** The required model-boundary extension carried by the controlled OpenClaw distribution. */
 export interface ManagedModelInput {
-  boundaryVersion: 4;
+  boundaryVersion: 5;
   historyIsFresh: boolean;
   historyGeneration: string;
   persistSessionBinding(value: Record<string, string>): Promise<void>;
@@ -37,6 +37,8 @@ export interface ManagedModelApplication {
   context: Context;
   invocationId: string;
   applied: AppliedCognition;
+  /** Applied by the controlled native stream owner after all generic options. */
+  providerControls: { maxOutputTokens: number };
 }
 export interface ManagedToolExecution {
   readonly toolName: string;
@@ -46,7 +48,24 @@ export interface ManagedToolExecution {
 export interface ManagedToolExecutionGuard {
   run<T>(implementation: () => T | Promise<T>): Promise<T>;
 }
+/** Carried only by the native durable child terminal/announcement owner. */
+export interface NativeSubagentCompletion {
+  parentRunId?: string;
+  parentSessionKey: string;
+  childRunId: string;
+  childSessionKey: string;
+  outcome: "completed" | "failed" | "cancelled";
+  endedAt: string;
+  recover?: boolean;
+}
 export interface ManagedContextEngine extends ContextEngine {
+  prepareSubagentCompletion(input: NativeSubagentCompletion): Promise<
+    | {
+        parentRunId: string;
+        resultRetained: true;
+      }
+    | undefined
+  >;
   authorizeToolExecution(
     input: ManagedModelInput,
     application: ManagedModelApplication,
@@ -82,4 +101,14 @@ export interface ManagedContextEngine extends ContextEngine {
     outcome: "completed" | "failed" | "cancelled",
     message?: Context["messages"][number],
   ): Promise<void>;
+}
+
+/** The pinned runtime patch supplies this export; source checks also run before
+ * preparation, against the pristine upstream package declarations. */
+declare module "openclaw/plugin-sdk/core" {
+  function retryNousSubagentCompletion(params: {
+    childRunId: string;
+    childSessionKey: string;
+    expectedEndedAt: number;
+  }): Promise<{ accepted: true; childRunId: string }>;
 }

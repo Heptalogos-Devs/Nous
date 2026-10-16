@@ -11,6 +11,8 @@ export const HOST_BRIDGE_PATHS = Object.freeze({
   handoff: "/nous/v1/handoff",
   feedback: "/nous/v1/feedback",
   toolExecution: "/nous/v1/tool-execution",
+  completion: "/nous/v1/completion",
+  releaseResult: "/nous/v1/result-release",
 });
 const canonicalJson = z.record(z.string(), z.json());
 export const nativeIdentitySchema = z
@@ -36,6 +38,18 @@ export const hostPrepareRequestSchema = z
   .object({
     ...contactIdentity,
     promptDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    historyUsers: z
+      .array(
+        z
+          .object({
+            key: z.string().min(1).max(4096),
+            nativeRunId: z.string().min(1).max(2048),
+            promptDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .strict(),
+      )
+      .max(2048)
+      .optional(),
   })
   .strict();
 export const hostScopeSchema = z
@@ -45,12 +59,76 @@ export const hostScopeSchema = z
     context: canonicalJson.default({}),
   })
   .strict();
+/** Supplied by the authenticated caller/Host, never by model tool arguments. */
+export const hostRoleScopeSchema = z
+  .object({
+    role: z.enum([
+      "world.planner",
+      "subject.deliberation",
+      "subject.execution",
+      "subject.render",
+      "narrative.review",
+      "subject.reflection",
+      "system.maintenance",
+    ]),
+    purpose: z.enum([
+      "world_authoring",
+      "subject_deliberation",
+      "professional_execution",
+      "subject_rendering",
+      "narrative_review",
+      "reflection",
+      "maintenance",
+    ]),
+    view: z.enum([
+      "world_author",
+      "subject",
+      "worker",
+      "renderer",
+      "review",
+      "reflection",
+      "maintenance",
+    ]),
+    contactNature: z.enum(["execution_only", "subject_experience"]),
+  })
+  .strict()
+  .refine((value) => {
+    const expected: Record<string, readonly [string, string]> = {
+      "world.planner": ["world_authoring", "world_author"],
+      "subject.deliberation": ["subject_deliberation", "subject"],
+      "subject.execution": ["professional_execution", "worker"],
+      "subject.render": ["subject_rendering", "renderer"],
+      "narrative.review": ["narrative_review", "review"],
+      "subject.reflection": ["reflection", "reflection"],
+      "system.maintenance": ["maintenance", "maintenance"],
+    };
+    const pair = expected[value.role];
+    return pair?.[0] === value.purpose && pair[1] === value.view;
+  }, "Role, purpose and cognitive view must describe the same trusted invocation");
+
+export type HostRoleScope = z.infer<typeof hostRoleScopeSchema>;
+
+/** Trusted per-attempt bounds over the complete native input and provider output. */
+export const hostTokenBudgetSchema = z
+  .object({
+    inputTokens: z.number().int().positive(),
+    outputTokens: z.number().int().positive(),
+  })
+  .strict();
+export type HostTokenBudget = z.infer<typeof hostTokenBudgetSchema>;
 export const hostPrepareResponseSchema = z
   .object({
     version: z.literal(1),
     contactRequestId: z.uuid(),
     workContextId: z.uuid(),
+    roleScope: hostRoleScopeSchema,
+    tokenBudget: hostTokenBudgetSchema,
     allowedToolNames: z.array(z.string().min(1).max(512)).max(1024),
+    currentSources: z.array(canonicalJson).max(64).default([]),
+    allowedHistoryUserKeys: z
+      .array(z.string().min(1).max(4096))
+      .max(2048)
+      .default([]),
     usage: canonicalJson,
     contacts: z.array(
       z
@@ -107,12 +185,81 @@ export const hostHandoffRequestSchema = z
     parentSessionKey: z.string().min(1),
     parentSessionId: z.string().min(1),
     parentNousSessionId: z.uuid(),
+    childNativeAgentId: z.string().min(1),
     childSessionKey: z.string().min(1),
     childSessionId: z.string().min(1),
     childNousSessionId: z.uuid(),
     contextMode: z.literal("isolated"),
   })
   .strict();
+/** Native durable child causality; no model or ordinary tool input can mint this request. */
+export const hostCompletionRequestSchema = z
+  .object({
+    version: z.literal(1),
+    subjectId: z.uuid(),
+    parentRunId: z.string().min(1).max(2048).optional(),
+    parentSessionKey: z.string().min(1),
+    parentSessionId: z.string().min(1).optional(),
+    parentNousSessionId: z.uuid().optional(),
+    childRunId: z.string().min(1).max(2048),
+    childSessionKey: z.string().min(1),
+    childSessionId: z.string().min(1),
+    childNousSessionId: z.uuid(),
+    outcome: z.enum(["completed", "failed", "cancelled"]),
+    endedAt: z.iso.datetime(),
+    recover: z.boolean().optional(),
+  })
+  .strict();
+export const hostCompletionResponseSchema = z
+  .object({
+    version: z.literal(1),
+    accepted: z.literal(true),
+    activityRef: z.string().min(1),
+    parentRunId: z.string().min(1),
+    resultRetained: z.literal(true),
+    resultIds: z.array(z.uuid()).max(64),
+    resultsOmitted: z.boolean(),
+  })
+  .strict();
+export type HostCompletionRequest = z.infer<typeof hostCompletionRequestSchema>;
+export type HostCompletionResponse = z.infer<
+  typeof hostCompletionResponseSchema
+>;
+/** Trusted Host release selector; it cannot supply replacement result text. */
+export const hostResultReleaseRequestSchema = z
+  .object({
+    version: z.literal(1),
+    requestId: z.uuid(),
+    subjectId: z.uuid(),
+    parentRunId: z.string().min(1),
+    childRunId: z.string().min(1),
+    resultIds: z.array(z.uuid()).min(1).max(64),
+  })
+  .strict();
+export const hostResultReleaseResponseSchema = z
+  .object({
+    version: z.literal(1),
+    accepted: z.literal(true),
+    activityRef: z.string().min(1),
+    contactNature: z.literal("subject_experience"),
+    contacts: hostPrepareResponseSchema.shape.contacts,
+    opportunity: z
+      .object({
+        kind: z.literal("activity_result"),
+        parentRunId: z.string().min(1),
+        childRunId: z.string().min(1),
+        releaseRef: z.uuid(),
+      })
+      .strict(),
+  })
+  .strict();
+export type HostResultReleaseRequest = z.infer<
+  typeof hostResultReleaseRequestSchema
+>;
+export type HostResultReleaseResponse = z.infer<
+  typeof hostResultReleaseResponseSchema
+>;
+
 export const hostFeedbackRequestSchema = z.discriminatedUnion("stage", [
   z
     .object({
@@ -138,6 +285,7 @@ export const hostFeedbackResponseSchema = z.discriminatedUnion("stage", [
       version: z.literal(1),
       stage: z.literal("pending"),
       accepted: z.literal(true),
+      retainedOnly: z.boolean().optional(),
       observation: canonicalJson,
     })
     .strict(),
@@ -174,6 +322,10 @@ function httpSchema(schema: z.ZodType) {
   return generated;
 }
 export const HOST_BRIDGE_JSON_SCHEMAS = {
+  resultReleaseRequest: httpSchema(hostResultReleaseRequestSchema),
+  resultReleaseResponse: httpSchema(hostResultReleaseResponseSchema),
+  completionRequest: httpSchema(hostCompletionRequestSchema),
+  completionResponse: httpSchema(hostCompletionResponseSchema),
   toolExecutionRequest: httpSchema(hostToolExecutionRequestSchema),
   toolExecutionResponse: httpSchema(hostToolExecutionResponseSchema),
   prepareRequest: httpSchema(hostPrepareRequestSchema),

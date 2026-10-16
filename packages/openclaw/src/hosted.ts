@@ -28,6 +28,7 @@ import {
   occurrenceJson,
   type HostedPermission,
 } from "./host.js";
+import { historyUsers } from "./hosted-history.js";
 import { runHostedTool } from "./readonly-tools.js";
 import type {
   ManagedToolExecution,
@@ -41,6 +42,10 @@ const markerSchema = z
     observedAt: z.iso.datetime(),
     outcome: z.enum(["completed", "failed", "cancelled"]).optional(),
     projectionId: z.string().optional(),
+    providerControls: z
+      .object({ maxOutputTokens: z.number().int().positive() })
+      .strict()
+      .optional(),
   })
   .strict();
 type Message = Context["messages"][number];
@@ -95,6 +100,7 @@ export class HostedLifecycle {
           ? { parentSessionKey: input.parentSessionKey }
           : {}),
       },
+      historyUsers: await historyUsers(input.context),
       promptDigest: [...digest]
         .map((v) => v.toString(16).padStart(2, "0"))
         .join(""),
@@ -187,6 +193,11 @@ export class HostedLifecycle {
     signal?: AbortSignal,
   ) {
     if (this.acknowledged.has(observation.requestId!)) return;
+    if (marker.providerControls)
+      observation.context = {
+        ...observation.context,
+        native_provider_controls: { ...marker.providerControls },
+      };
     const originalScope = [...this.current.values()].find(
       (value) =>
         value.identity.contactRequestId === marker.identity.contactRequestId,
@@ -207,6 +218,12 @@ export class HostedLifecycle {
     );
     if (pending.stage !== "pending")
       throw new Error("Host did not persist pending observation");
+    // Execution-only results belong to the authenticated RoleRun. They never
+    // become Subject observations, episodes or reflection inputs.
+    if (pending.retainedOnly) {
+      this.acknowledged.add(observation.requestId!);
+      return;
+    }
     const saved = decodeHostObservation(pending.observation, marker.identity);
     const actualUsage = decodeCognitionUsage(
       saved.context![HOST_COGNITION_USAGE_CONTEXT_KEY]!,
@@ -299,6 +316,15 @@ export class HostedLifecycle {
         native_run_id: marker.identity.native.runId,
         contact_request_id: marker.identity.contactRequestId,
         role: message.role,
+        ...("model" in message && typeof message.model === "string"
+          ? { native_model: message.model }
+          : {}),
+        ...("provider" in message && typeof message.provider === "string"
+          ? { native_provider: message.provider }
+          : {}),
+        ...("api" in message && typeof message.api === "string"
+          ? { native_api: message.api }
+          : {}),
         ...(message.role === "toolResult"
           ? {
               tool_name: message.toolName,
@@ -334,6 +360,8 @@ export class HostedLifecycle {
   ) {
     if (message.role === "user") return;
     const marker = this.mark(input, message);
+    if (application)
+      marker.providerControls = { ...application.providerControls };
     if (application && outcome) {
       marker.outcome = outcome;
       marker.projectionId = application.applied.projectionId;
@@ -363,6 +391,7 @@ export class HostedLifecycle {
       const marker = {
         identity: permission.identity,
         observedAt: new Date().toISOString(),
+        providerControls: { ...application.providerControls },
       };
       try {
         await this.submit(
@@ -388,6 +417,7 @@ export class HostedLifecycle {
     }
     const marker = this.mark(input, message);
     marker.outcome = outcome;
+    marker.providerControls = { ...application.providerControls };
     marker.projectionId = application.applied.projectionId;
     (message as MarkedMessage).nousHostBridge = marker;
     await this.observe(input, message);

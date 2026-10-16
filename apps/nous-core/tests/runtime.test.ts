@@ -242,3 +242,73 @@ describe("projection authority boundaries", () => {
     ).rejects.toMatchObject({ code: 8 });
   });
 });
+
+it("narrows execution views before any Subject cognition candidate reaches retrieval or projection", async () => {
+  const execution = coreExecutionSchema.parse(undefined);
+  const calls: unknown[] = [];
+  const kernel = {
+    execution,
+    subjects: {
+      getSubject: async () => ({
+        capabilities: {
+          memory: true,
+          selfCognition: true,
+          socialCognition: true,
+          motivation: true,
+        },
+      }),
+    },
+    projection: {
+      buildContributionBatch: async (request: unknown) => {
+        calls.push(request);
+        return projection();
+      },
+    },
+  } as unknown as KernelClient;
+  const service = new CoreCognition(
+    kernel,
+    new ModelRuntime(),
+    new ResourceRegistry(),
+    [
+      {
+        ...policy,
+        materialize: false,
+        selfCognition: "REQUIRED",
+        memory: "REQUIRED",
+      },
+    ],
+  );
+  for (const [role, purpose, view] of [
+    ["world.planner", "world_authoring", "world_author"],
+    ["subject.execution", "professional_execution", "worker"],
+    ["narrative.review", "narrative_review", "review"],
+  ]) {
+    await service.buildProjection(
+      create(ProjectionRequestSchema, {
+        subjectId: "s",
+        sessionId: "session",
+        consumerId: "test",
+        usage: {
+          agentInstanceId: "actual-run",
+          role,
+          purpose,
+          view,
+          contactNature: "execution_only",
+          intent: "Only this task",
+          audience: { visibility: "internal" },
+          sourceRead: { subjectId: "s", sourceRefs: [] },
+        },
+      }),
+      executionOptions(execution.opportunity),
+    );
+  }
+  expect(calls).toHaveLength(3);
+  for (const request of calls)
+    expect(request).toMatchObject({
+      memoryRequirement: "FORBIDDEN",
+      selfRequirement: "FORBIDDEN",
+      socialRequirement: "FORBIDDEN",
+      motivationRequirement: "FORBIDDEN",
+      query: undefined,
+    });
+});

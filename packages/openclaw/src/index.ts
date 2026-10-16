@@ -1,11 +1,14 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { toJson } from "@bufbuild/protobuf";
+import { toJson, fromJson } from "@bufbuild/protobuf";
+import { invocationBudget } from "./budget.js";
+import { scopeCallerHistory } from "./hosted-history.js";
 import {
   standaloneSourceConfiguration,
   standaloneUsage,
 } from "./standalone-source.js";
+import { resolveAgentIdFromSessionKey } from "openclaw/plugin-sdk/routing";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { connectNousInstance } from "@nous-wave/client/node";
 import {
@@ -13,9 +16,13 @@ import {
   decodeAcceptedObservation,
 } from "@nous-wave/client/host-bridge";
 import { createManagedBinding, eventIdentity } from "@nous-wave/client/managed";
-import { CognitionUsageSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import {
+  CognitionUsageSchema,
+  EvidenceRefSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
   delegateCompactionToRuntime,
+  retryNousSubagentCompletion,
   definePluginEntry,
   buildJsonPluginConfigSchema,
   type OpenClawPluginApi,
@@ -47,6 +54,8 @@ const sessionBinding = z
     nativeSessionId: z.string().min(1),
     nativeHistoryGeneration: z.string().min(1),
     nousSessionId: z.uuid(),
+    parentNativeRunId: z.string().min(1).optional(),
+    parentNativeSessionKey: z.string().min(1).optional(),
   })
   .strict();
 const configuration = z
@@ -68,6 +77,37 @@ function register(api: OpenClawPluginApi): void {
   const bridge = config.hostBridge
     ? new HostBridge(config.hostBridge)
     : undefined;
+  if (bridge)
+    api.registerGatewayMethod(
+      "nous.subagentCompletion.retry",
+      async ({ params, respond }) => {
+        const input = z
+          .object({
+            childRunId: z.string().min(1),
+            childSessionKey: z.string().min(1),
+            expectedEndedAt: z.number().finite(),
+          })
+          .strict()
+          .safeParse(params);
+        if (!input.success) {
+          respond(false, undefined, {
+            code: "INVALID_REQUEST",
+            message: "Exact terminal child identity is required",
+          });
+          return;
+        }
+        try {
+          respond(true, await retryNousSubagentCompletion(input.data));
+        } catch {
+          respond(false, undefined, {
+            code: "INVALID_REQUEST",
+            message:
+              "The exact completion cannot be safely recovered; its paid result is retained",
+          });
+        }
+      },
+      { scope: "operator.admin" },
+    );
   api.session.state.registerSessionExtension({
     namespace,
     description:
@@ -400,6 +440,41 @@ function register(api: OpenClawPluginApi): void {
       async recordNativeEvent(input, message) {
         await observe(input, message);
       },
+      async prepareSubagentCompletion(params) {
+        if (!bridge) return undefined;
+        const child = api.runtime.agent.session.getSessionEntry({
+          sessionKey: params.childSessionKey,
+          agentId: resolveAgentIdFromSessionKey(params.childSessionKey),
+          readConsistency: "latest",
+        });
+        const childBinding = sessionBinding.parse(
+          child?.pluginExtensions?.[namespace]?.[namespace],
+        );
+        if (
+          childBinding.subjectId !== config.subjectId ||
+          childBinding.nativeSessionId !== child?.sessionId
+        )
+          throw Error(
+            "Native completion has no exact same-Subject generation binding",
+          );
+        // Retry only existing actual native transcript facts; never rerun the child/model.
+        await flushNativeHistory(
+          child.sessionId,
+          params.childSessionKey,
+          resolveAgentIdFromSessionKey(params.childSessionKey),
+        );
+        const ack = await bridge.completion({
+          version: 1,
+          subjectId: config.subjectId,
+          ...params,
+          childSessionId: child.sessionId,
+          childNousSessionId: childBinding.nousSessionId,
+        });
+        return {
+          parentRunId: ack.parentRunId,
+          resultRetained: ack.resultRetained,
+        };
+      },
       async prepareSubagentSpawn(params) {
         if (
           params.contextMode !== "isolated" ||
@@ -453,6 +528,9 @@ function register(api: OpenClawPluginApi): void {
               parentSessionKey: params.parentSessionKey,
               parentSessionId: parsed.data.nativeSessionId,
               parentNousSessionId: parsed.data.nousSessionId,
+              childNativeAgentId: resolveAgentIdFromSessionKey(
+                params.childSessionKey,
+              ),
               childSessionKey: params.childSessionKey,
               childSessionId: child.sessionId,
               childNousSessionId: session.sessionId,
@@ -463,6 +541,8 @@ function register(api: OpenClawPluginApi): void {
             nativeSessionId: child.sessionId,
             nativeHistoryGeneration: child.sessionId,
             nousSessionId: session.sessionId,
+            parentNativeRunId: params.parentRunId,
+            parentNativeSessionKey: params.parentSessionKey,
           });
         } catch (error) {
           await connected.runtime.closeSession({
@@ -482,7 +562,7 @@ function register(api: OpenClawPluginApi): void {
       },
       async authorizeToolExecution(input, application, execution) {
         input.signal.throwIfAborted();
-        if (input.boundaryVersion !== 4)
+        if (input.boundaryVersion !== 5)
           throw new Error(
             "Required native tool execution boundary is unavailable",
           );
@@ -492,7 +572,7 @@ function register(api: OpenClawPluginApi): void {
       },
       async prepareModelInput(input) {
         if (
-          input.boundaryVersion !== 4 ||
+          input.boundaryVersion !== 5 ||
           typeof input.historyGeneration !== "string" ||
           !input.historyGeneration ||
           typeof input.historyIsFresh !== "boolean" ||
@@ -569,6 +649,72 @@ function register(api: OpenClawPluginApi): void {
               input.signal,
             )
           : { sources: [], textBytes: 0, omissions: [] };
+        if (permission?.response.currentSources.length) {
+          const connected = await connect();
+          const sources = permission.response.currentSources.map((raw) =>
+            fromJson(EvidenceRefSchema, raw),
+          );
+          if (
+            sources.some(
+              (source) =>
+                !source.occurrenceId ||
+                source.locator.case !== "wholeOccurrence" ||
+                !source.locator.value,
+            )
+          )
+            throw Error(
+              "Host completion sources require exact actual whole Occurrences",
+            );
+          const checked = await connected.cognition.readSources(
+            {
+              subjectId: config.subjectId,
+              usage: permission.usage,
+              materialSources: sources,
+              maxTextBytes: 1048576,
+            },
+            { signal: input.signal },
+          );
+          if (
+            checked.degradation.length ||
+            sources.some(
+              (source) =>
+                !checked.items.some((item) =>
+                  item.sourceRefs.some(
+                    (ref) =>
+                      ref.kind === "occurrence" &&
+                      ref.value === source.occurrenceId,
+                  ),
+                ),
+            )
+          )
+            throw Error(
+              "Actual child completion sources are unavailable or omitted",
+            );
+          await connected.runtime.reportUse(
+            {
+              subjectId: config.subjectId,
+              sessionId: binding.sessionId,
+              consumerRef: config.consumerId,
+              events: await Promise.all(
+                sources.map(async (source) => ({
+                  eventId: await eventIdentity(
+                    `${permission.identity.contactRequestId}:completion:${source.occurrenceId}`,
+                  ),
+                  reference: { kind: "occurrence", value: source.occurrenceId },
+                  kind: "presented",
+                  occurredAt: timestampFromDate(new Date()),
+                  context: { native_completion: true },
+                })),
+              ),
+            },
+            { signal: input.signal },
+          );
+          currentMaterials.sources.push(...sources);
+          currentMaterials.textBytes += checked.items.reduce(
+            (sum, item) => sum + Buffer.byteLength(item.text),
+            0,
+          );
+        }
         const currentTurn = input.context.messages.findLastIndex(
           (message) => message.role === "user",
         );
@@ -583,7 +729,10 @@ function register(api: OpenClawPluginApi): void {
         }
         let modelContext = permission
           ? {
-              ...input.context,
+              ...scopeCallerHistory(
+                input.context,
+                permission.response.allowedHistoryUserKeys,
+              ),
               tools: input.context.tools?.filter((tool) =>
                 permission.response.allowedToolNames.includes(tool.name),
               ),
@@ -600,14 +749,11 @@ function register(api: OpenClawPluginApi): void {
               .filter(Boolean)
               .join("\n\n"),
           };
-        const reservedOutput = input.reservedOutputTokens;
-        const contextWindow = input.contextTokenBudget;
-        if (!contextWindow)
-          throw new Error(
-            "Managed invocation requires the selected model's context window",
-          );
-        const available =
-          contextWindow - reservedOutput - input.measureContext(modelContext);
+        const providerBudget = invocationBudget(
+          input,
+          permission?.response.tokenBudget,
+        );
+        const available = providerBudget.available(modelContext);
         const budget = Math.min(
           config.cognitionTokenCap + currentMaterials.textBytes,
           available,
@@ -637,13 +783,7 @@ function register(api: OpenClawPluginApi): void {
                 segments,
                 invocationUsage,
               );
-              if (
-                input.measureContext(rendered) + reservedOutput >
-                contextWindow
-              )
-                throw new Error(
-                  "Complete model input exceeds the native context budget",
-                );
+              providerBudget.assertFits(rendered);
               return rendered;
             },
           },
@@ -652,6 +792,7 @@ function register(api: OpenClawPluginApi): void {
           context,
           applied,
           invocationId,
+          providerControls: { maxOutputTokens: providerBudget.outputTokens },
         };
         await binding.admit(
           {
@@ -664,7 +805,7 @@ function register(api: OpenClawPluginApi): void {
         if (hosted && permission)
           await hosted.admitted(
             permission,
-            prepared.projection!,
+            binding.appliedProjection(applied),
             occurrences,
             input.signal,
           );

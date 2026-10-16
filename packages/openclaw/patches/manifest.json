@@ -3,7 +3,7 @@
   "files": {
     "dist/agent-core-BxgCPa8O.js": {
       "original": "0c9bcca812ac44e9cd79a8df3ce627c55cd569182a4e9f0f6623d54483f149fa",
-      "patched": "7b62c4c7f92f99fab6cf3f73862a0d8cc36064155269030a412b3b983e256caa"
+      "patched": "b2104080831542b31990945e27790c06f07eea390533894b9181a31b13481ad5"
     },
     "dist/agent-exec-DQrJo6Wo.js": {
       "original": "233e7376ce3481a5905fa1083d0077cdade601164303c122d07fbbb8810ac669",
@@ -11,7 +11,7 @@
     },
     "dist/builtin-openclaw-zQV8Wwjr.js": {
       "original": "62599de51a360163f8020d3f2c9ffbf7481a2424b850363d77308a99056a5303",
-      "patched": "eed3e3a1729c9c4d59bb33e747dc27d0213fee31b94824c0a59645a7c35e68db"
+      "patched": "5235673b3c639650607b3f90324ea0ba721ffe57c489a4ca4d21ed065dee5d69"
     },
     "dist/context-engine-turn-attempt-BPzr5IBp.js": {
       "original": "4cc537188596b09ee72b9d1cff7f027e4eebc836ee43859a414b15eaac36d0fc",
@@ -71,7 +71,7 @@
     },
     "dist/registry-BdPa2vko.js": {
       "original": "e0d223429562e6b2b4aa715c1a45989470a59c5a4e6362163f816245419e99b8",
-      "patched": "4580c644b9fcd3be0d8599961dcbe44b0a7d86f4861900dd170de2f8445fd496"
+      "patched": "55ea1afa7cf58cd3221e4b4bc4677cde83218658db17ebdbc4a186be8fbcaa09"
     },
     "dist/runtime-api-DDF9iz51.d.ts": {
       "original": "56b584b45458dd0ce1c5d593d92bad569e2aa3526be97588c3ec7f51d1dc6cc9",
@@ -83,7 +83,7 @@
     },
     "dist/sessions-spawn-tool-1FQMTkIo.js": {
       "original": "a21770222831b6574680621577da6bb0727903117210f20968afdb59a83975b8",
-      "patched": "bff6d040a277a1becc313848f116fa53c59cd8c97db77abb17f5fba8e4b76bf4"
+      "patched": "3cb62bbd2ffb554ce9750442245e5d660820caba16b7224bd62ba47e3edfb97b"
     },
     "dist/system-prompt-params-B645JcX8.js": {
       "original": "df80c676f3d6fd201212bd4c95db25898c6a00dd61f4b598f7e8c5db04d94750",
@@ -132,6 +132,30 @@
     "dist/attempt-execution-BUOS5Nu-.js": {
       "original": "e09d82ae056c3d04295f66661950890e587bf5431b51ad7d56703442898a4f57",
       "patched": "a9ad5b173cb0517e3b115f1ef87bfa485e63702d99b7d25d963d3049b4496da6"
+    },
+    "dist/subagent-announce-DM0I4BxK.js": {
+      "original": "d9325ef8b2a0240eaf79d259f85f9f2484981d39dcaf4e7f778c62d62ea727b5",
+      "patched": "c13c36a42a47f0bffc86ad20dbede6ec74147d63040df3533ae5812b8c896157"
+    },
+    "dist/subagent-announce-delivery-Dosep7Zr.js": {
+      "original": "c14b886cb8852d528de58cfdef28d45de42267e1dd372166b6075a74929c41bc",
+      "patched": "213d9e96ea0c9999068e4d102188f03d94ee0139a2adf72f7830189224d95d96"
+    },
+    "dist/subagent-registry-C24yr_PF.js": {
+      "original": "f0b833de66236db51c7feac999ba7229a6559fbd16a581a40b19f8ee6d752bec",
+      "patched": "12a6684a54491913cc850cdaea6d468e5adf5295b519f405b25c4a4c04e6edb1"
+    },
+    "dist/plugin-sdk/core.d.ts": {
+      "original": "aa47c72a89964abc55fcbaa79ca8265d5bc20cbb1d48a1dec64e00dcdbe35b84",
+      "patched": "a6eaaa1b2672de877267d930eef60a035faec8acd76f8566555608e305aa1955"
+    },
+    "dist/plugin-sdk/core.js": {
+      "original": "63cc8eb8e771fbf6a273b8f4381facdf4c9320fc7aff777f4ac23ff6a6cd1b44",
+      "patched": "e089bd9203f222a7c4dd01dbd60452f975753ea728ba8dc49e503c371d1a9249"
+    },
+    "dist/compaction-DlElLXrZ.js": {
+      "original": "5b27e4c36a99deb33bafa818ae2525a2a3566ffb2104f471e004f2ddf4739cc0",
+      "patched": "d133f2531e7a6e61d8d684d4b0c4ab2a99ae32923b4296f31caf2bdca71b4244"
     }
   },
   "dependencyOverrides": {

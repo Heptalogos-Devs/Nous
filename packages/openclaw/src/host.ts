@@ -18,6 +18,8 @@ import {
   hostAcknowledgementSchema,
   hostFeedbackRequestSchema,
   hostHandoffRequestSchema,
+  hostCompletionRequestSchema,
+  hostCompletionResponseSchema,
   hostAdmittedRequestSchema,
   hostToolExecutionRequestSchema,
   hostToolExecutionResponseSchema,
@@ -107,6 +109,10 @@ export class HostBridge {
     if (
       usage.agentInstanceId !==
         `${request.native.sessionId}:${request.native.runId}` ||
+      usage.role !== response.roleScope.role ||
+      usage.purpose !== response.roleScope.purpose ||
+      usage.view !== response.roleScope.view ||
+      usage.contactNature !== response.roleScope.contactNature ||
       !usage.audience ||
       !usage.intent.trim()
     )
@@ -156,6 +162,15 @@ export class HostBridge {
       hostAdmittedRequestSchema.parse(request),
       hostAcknowledgementSchema,
       signal,
+    );
+  }
+  async completion(
+    request: Parameters<typeof hostCompletionRequestSchema.parse>[0],
+  ) {
+    return this.call(
+      "completion",
+      hostCompletionRequestSchema.parse(request),
+      hostCompletionResponseSchema,
     );
   }
   async handoff(request: Parameters<typeof hostHandoffRequestSchema.parse>[0]) {

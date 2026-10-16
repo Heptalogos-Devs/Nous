@@ -1,6 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
-// Exercise the pinned production executor after the real installer applied v4.
+// Exercise the pinned production executor after the real installer applied v5.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";

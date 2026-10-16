@@ -10,6 +10,7 @@ import {
   mkdtemp,
   readdir,
   realpath,
+  readFile,
   rm,
   symlink,
 } from "node:fs/promises";
@@ -44,25 +45,40 @@ test("controlled native custody survives SQLite and gates real delivery producer
     // Link each dependency to its physical package root. A junction to pnpm's
     // node_modules leaves scoped packages behind another relative junction;
     // Windows ESM package lookup cannot reliably traverse that nested shape.
-    const dependencies = dirname(source);
+    // A package may bundle a few dependencies while pnpm stores the rest
+    // beside it. Preserve Node's nested-first lookup without mutating sources.
     const modules = join(native, "node_modules");
     await mkdir(modules);
-    for (const entry of await readdir(dependencies)) {
-      if (entry.startsWith(".") || entry === "openclaw") continue;
-      if (entry.startsWith("@")) {
-        await mkdir(join(modules, entry));
-        for (const name of await readdir(join(dependencies, entry)))
-          await symlink(
-            await realpath(join(dependencies, entry, name)),
-            join(modules, entry, name),
-            "junction",
-          );
-      } else {
-        await symlink(
-          await realpath(join(dependencies, entry)),
-          join(modules, entry),
-          "junction",
-        );
+    const linked = new Set<string>();
+    const linkDependency = async (root: string, name: string) => {
+      if (linked.has(name)) return;
+      const candidate = join(root, name);
+      const metadata = await readFile(join(candidate, "package.json"), "utf8")
+        .then((text) => JSON.parse(text) as { name?: string })
+        .catch(() => undefined);
+      if (
+        !metadata?.name ||
+        ["openclaw", "@nous-wave/openclaw", "binding-fixture"].includes(
+          metadata.name,
+        )
+      )
+        return;
+      await mkdir(dirname(join(modules, name)), { recursive: true });
+      await symlink(await realpath(candidate), join(modules, name), "junction");
+      linked.add(name);
+    };
+    for (const dependencies of [
+      join(source, "node_modules"),
+      dirname(source),
+    ]) {
+      for (const entry of await readdir(dependencies).catch(
+        () => [] as string[],
+      )) {
+        if (entry.startsWith(".")) continue;
+        if (entry.startsWith("@")) {
+          for (const name of await readdir(join(dependencies, entry)))
+            await linkDependency(dependencies, join(entry, name));
+        } else await linkDependency(dependencies, entry);
       }
     }
     const env = {
@@ -123,6 +139,16 @@ test("controlled native custody survives SQLite and gates real delivery producer
       { cwd: repositoryRoot, env, encoding: "utf8", windowsHide: true },
     );
     assert(bindings.includes('"nativeAgentRpcToolBindings":"PASS"'));
+    const completion = execFileSync(
+      process.execPath,
+      [
+        join(repositoryRoot, "scripts/tests/openclaw/subagent-completion.ts"),
+        native,
+      ],
+      { cwd: repositoryRoot, env, encoding: "utf8", windowsHide: true },
+    );
+    assert(completion.includes('"terminalCustodyWithoutModelOrSend":"PASS"'));
+    assert(completion.includes('"exactSavedChildRecovery":"PASS"'));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
