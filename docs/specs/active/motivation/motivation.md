@@ -4,7 +4,7 @@
 
 ## Authority 与消费
 
-`crates/motivation` 拥有 Desire、Concern 和 DesiredCondition，迁移为 `0010_motivation.sql`。`motivation` 是独立可选 Subject capability；既有 Subject 默认关闭，Memory-only 不依赖它。愿望允许尚未形式化，关切表示持续关注，期望条件才保存可评价的命题。采用/撤回状态与评价结果分别维护。Heptalogos 的 Pursuit、活动、工具范围、计划和外部承诺不进入此 owner。
+`crates/motivation` 拥有 Desire、Concern 和 DesiredCondition，迁移为 `0010_motivation.sql`；`0012_motivation_source_read.sql` 在正式 `0011_source_read.sql` 后扩展唯一固定 dispatcher，不改写已发布迁移。`motivation` 是独立可选 Subject capability；既有 Subject 默认关闭，Memory-only 不依赖它。愿望允许尚未形式化，关切表示持续关注，期望条件才保存可评价的命题。采用/撤回状态与评价结果分别维护。Heptalogos 的 Pursuit、活动、工具范围、计划和外部承诺不进入此 owner。
 
 对象和不可变 revision 有正式独立引用，采用、精确 head/epoch 修订、追加证据、历史分页、生命周期和 purge 复用 MutationEnvelope、RevisionBasis、producer、来源闭包与历史传播屏障。matterKey 是稳定事项身份；scope、陈述和条件可以修订。细化、前置、冲突、替代、支持和长期优先关系引用精确 Motivation revision，不表示当前调度优先级。
 
