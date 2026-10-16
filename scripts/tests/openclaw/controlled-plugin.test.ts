@@ -49,21 +49,55 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
       repositoryRoot,
       "scripts/tests/openclaw/local-plugin-probe.ts",
     );
-    const run = (path: string, args: string[] = []) =>
-      execFileSync(process.execPath, [path, ...args], {
-        env:
-          path === installer
-            ? {
-                ...env,
-                npm_command: "exec",
-                npm_config_allow_scripts: "@fixture/exec-only-policy",
-                npm_config_allowScripts: "@fixture/exec-only-policy",
-              }
-            : env,
-        encoding: "utf8",
-        windowsHide: true,
-        stdio: "pipe",
+    let phase = 0;
+    let holder: ReturnType<typeof spawn> | undefined;
+    const stopHolder = async () => {
+      if (!holder || holder.exitCode !== null || holder.signalCode !== null)
+        return;
+      const child = holder;
+      await new Promise<void>((done, fail) => {
+        const timer = setTimeout(
+          () =>
+            fail(Error("Native state holder did not stop within 10 seconds")),
+          10000,
+        );
+        child.once("exit", () => {
+          clearTimeout(timer);
+          done();
+        });
+        child.once("error", (error) => {
+          clearTimeout(timer);
+          fail(error);
+        });
+        child.kill("SIGTERM");
       });
+    };
+    const run = (path: string, args: string[] = []) => {
+      const started = Date.now();
+      const label = path === installer ? "installer" : "native-probe";
+      console.info(`[controlled-install] phase=${++phase} ${label} start`);
+      try {
+        return execFileSync(process.execPath, [path, ...args], {
+          env:
+            path === installer
+              ? {
+                  ...env,
+                  npm_command: "exec",
+                  npm_config_allow_scripts: "@fixture/exec-only-policy",
+                  npm_config_allowScripts: "@fixture/exec-only-policy",
+                }
+              : env,
+          encoding: "utf8",
+          windowsHide: true,
+          stdio: "pipe",
+          timeout: path === installer ? 180000 : 30000,
+        });
+      } finally {
+        console.info(
+          `[controlled-install] ${label} elapsedMs=${Date.now() - started}`,
+        );
+      }
+    };
     const install = (...args: string[]) => run(installer, [runtime, ...args]);
     const hostedProbe = join(
       repositoryRoot,
@@ -83,6 +117,7 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
         env,
         encoding: "utf8",
         windowsHide: true,
+        timeout: 180000,
       });
     const probeState = (location = packageRoot) => {
       const output = run(probe, [runtime, location, pluginId]);
@@ -119,7 +154,9 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
       );
     };
     try {
+      console.info("[controlled-install] build distribution start");
       await buildDistribution(distribution);
+      console.info("[controlled-install] build distribution completed");
       await mkdir(source);
       await mkdir(join(temporary, "profile"));
       await writeFile(
@@ -241,20 +278,46 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
       await writeFile(registryPath, "{invalid record", { mode: 0o600 });
       assert.equal(probeState().openKeyedStore, "denied");
       await writeFile(registryPath, originalRegistry, { mode: 0o600 });
-      const holder = spawn(
+      const activeHolder = spawn(
         process.execPath,
         [probe, runtime, packageRoot, pluginId],
         { env: { ...env, PROBE_HOLD: "1" }, stdio: ["ignore", "pipe", "pipe"] },
       );
+      holder = activeHolder;
       await new Promise<void>((resolve, reject) => {
-        let text = "";
-        holder.stdout.on("data", (chunk: Buffer) => {
-          text += chunk.toString("utf8");
-          if (text.includes("NATIVE_STATE_PROBE:")) resolve();
+        let text = "",
+          errors = "";
+        const timer = setTimeout(
+          () =>
+            reject(
+              Error(
+                "Native state holder did not become ready within 30 seconds: " +
+                  errors.slice(-4000),
+              ),
+            ),
+          30000,
+        );
+        const fail = (error: Error) => {
+          clearTimeout(timer);
+          reject(error);
+        };
+        activeHolder.stderr.on("data", (chunk: Buffer) => {
+          errors += chunk.toString("utf8");
         });
-        holder.once("error", reject);
-        holder.once("exit", () =>
-          reject(Error("State holder stopped before admission")),
+        activeHolder.stdout.on("data", (chunk: Buffer) => {
+          text += chunk.toString("utf8");
+          if (text.includes("NATIVE_STATE_PROBE:")) {
+            clearTimeout(timer);
+            resolve();
+          }
+        });
+        activeHolder.once("error", fail);
+        activeHolder.once("exit", () =>
+          fail(
+            Error(
+              "State holder stopped before admission: " + errors.slice(-4000),
+            ),
+          ),
         );
       });
       try {
@@ -263,10 +326,7 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
           /Stop the controlled runtime/u,
         );
       } finally {
-        holder.kill("SIGTERM");
-        await new Promise<void>((resolve) =>
-          holder.once("exit", () => resolve()),
-        );
+        await stopHolder();
       }
       assert.equal(
         (
@@ -318,8 +378,11 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
         [],
       );
     } finally {
+      await stopHolder();
       await rm(temporary, { recursive: true, force: true });
     }
   },
-  120_000,
+  // Includes a cold npm runtime install, multiple artifact replacements and
+  // independent native loader processes; each subprocess has its own bound.
+  360_000,
 );
