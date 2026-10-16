@@ -55,3 +55,5 @@ Tag owner 操作使用 `concepts.reviseTag/mergeTags/splitTag`。所有 target �
 Concept maintenance 的 model suggestion list 由 Core 逐项调用 canonical Tag/Association owner APIs；Client 没有 batch concept/consolidation envelope。Tag lineage basis 接受 owner 验证的 Evidence 或 cognition revision；create/revise/split/association 可携带 structured ProducerSignature。每项 mutation 的稳定 operation ID 保证恢复时精确 replay 已提交结果。
 
 配置读取使用 `configuration.getConfiguration({ paths, ... })`，descriptor 使用 `getConfigDescriptor({ path })`；override 使用 canonical `setSystemOverride/setSubjectOverride`，value 在调用者的 JSON 输入边界通过 `fromJson(ValueSchema, value)` 编码。字段保持 generated request 形状。普通 RPC 与模型 deadline 使用一个方法 decorator 保留 typed NousError、显式 CallOptions 和取消；传入的 Transport 不要求重建。
+
+Subject 的认证生活世界时钟使用 `client.clocks.readClock/configureClock/pauseClock/advanceClock/resumeClock`；`projectWorldDeadline` 与 `compareDomainStamps` 从 Client 主入口导出。映射、管理权限、checkpoint 与当前五轴接入边界见[时钟合同](../../docs/specs/active/cognitive-runtime/clock.md)。

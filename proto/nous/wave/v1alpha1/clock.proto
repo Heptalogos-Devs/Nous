@@ -1,0 +1,61 @@
+// Copyright 2026 Aravine Zhu
+// SPDX-License-Identifier: Apache-2.0
+syntax = "proto3";
+package nous.wave.v1alpha1;
+import "google/protobuf/timestamp.proto";
+import "nous/wave/v1alpha1/types.proto";
+import "nous/wave/v1alpha1/presentation.proto";
+
+// Authenticated management only. This service is not exposed as a native model tool.
+service CognitiveClockService {
+  rpc ReadClock(SubjectRequest) returns (SubjectClock);
+  rpc ConfigureClock(ConfigureClockRequest) returns (SubjectClock) { option idempotency_level = IDEMPOTENT; }
+  rpc PauseClock(ClockMutationRequest) returns (SubjectClock) { option idempotency_level = IDEMPOTENT; }
+  rpc AdvanceClock(AdvanceClockRequest) returns (SubjectClock) { option idempotency_level = IDEMPOTENT; }
+  rpc ResumeClock(ResumeClockRequest) returns (SubjectClock) { option idempotency_level = IDEMPOTENT; }
+}
+message DomainStamp {
+  string time_domain_ref = 1;
+  google.protobuf.Timestamp at = 2;
+  google.protobuf.Timestamp recorded_at = 3; // Real UTC recording time, never virtual.
+}
+message DomainTemporalExtent { string time_domain_ref = 1; TemporalExtent extent = 2; }
+// Host event semantics keep independent axes. Absent axes remain unknown.
+message DomainTemporalEvidence {
+  DomainTemporalExtent occurred = 1;
+  DomainStamp observed = 2;
+  DomainTemporalExtent valid = 3;
+  DomainStamp formed = 4;
+  google.protobuf.Timestamp recorded_at = 5;
+  google.protobuf.Timestamp observed_real_at = 6; // Actual real-world acquisition, distinct from recording.
+}
+message SubjectClock {
+  string subject_id = 1 [(reference_kind) = "subject"];
+  string time_domain_ref = 2;
+  google.protobuf.Timestamp world_anchor = 3;
+  google.protobuf.Timestamp real_anchor = 4;
+  double rate = 5;
+  DomainStamp now = 6;
+  int64 revision = 7;
+}
+message ClockMutationRequest {
+  string subject_id = 1 [(reference_kind) = "subject"];
+  string operation_id = 2;
+}
+message ConfigureClockRequest {
+  string subject_id = 1 [(reference_kind) = "subject"];
+  string operation_id = 2;
+  string time_domain_ref = 3;
+  double rate = 4;
+  google.protobuf.Timestamp world_time = 5;
+}
+message AdvanceClockRequest {
+  string subject_id = 1 [(reference_kind) = "subject"];
+  string operation_id = 2;
+  double seconds = 3;
+}
+message ResumeClockRequest {
+  string subject_id = 1 [(reference_kind) = "subject"];
+  string operation_id = 2;
+  double rate = 3;
+}

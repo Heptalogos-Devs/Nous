@@ -1,4 +1,5 @@
 import { SocialService } from "@nous-wave/protocol/nous/wave/v1alpha1/social_pb.js";
+import { CognitiveClockService } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
 import { SelfService } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
@@ -177,6 +178,10 @@ export async function createCore(settings: CoreOptions) {
   };
   await app.register(fastifyConnectPlugin, {
     routes: (router) => {
+      router.service(
+        CognitiveClockService,
+        forward(CognitiveClockService, kernel.clocks),
+      );
       router.service(SubjectService, forward(SubjectService, kernel.subjects));
       router.service(SelfService, forward(SelfService, kernel.self));
       router.service(SocialService, forward(SocialService, kernel.social));

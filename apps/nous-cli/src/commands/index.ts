@@ -23,6 +23,7 @@ import { CliError, commandInventory } from "../agent.js";
 import { nousqlHelp } from "../nousql-help.js";
 import { configCommands } from "./config.js";
 import { statusCommands } from "./status.js";
+import { clockCommands } from "./clock.js";
 import { subjectCommands } from "./subject.js";
 import { sessionCommands } from "./session.js";
 import { observeCommands } from "./observe.js";
@@ -243,6 +244,13 @@ export async function runCli(
         "get",
         "set",
         "clear",
+      ]),
+      clock: family("clock", clockCommands, [
+        "read",
+        "configure",
+        "pause",
+        "advance",
+        "resume",
       ]),
       subject: family("subject", subjectCommands, [
         "create",
