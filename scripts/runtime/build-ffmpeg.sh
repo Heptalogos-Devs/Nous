@@ -58,9 +58,10 @@ flags+=(
   --enable-protocol=file,pipe
   --enable-demuxer=mov,matroska,ogg,avi,mpegts,mpegvideo,wav,mp3,gif,image2,png_pipe
   --enable-decoder=h264,hevc,vp8,vp9,aac,mp3,vorbis,opus,mjpeg,png,pcm_s16le,gif
+  --enable-parser=gif
   --enable-encoder=mjpeg,pcm_s16le
   --enable-muxer=image2,wav,mov,mp4,null
-  --enable-filter=scale,showinfo,format,aformat,aresample,anull
+  --enable-filter=scale,showinfo,trim,format,aformat,aresample,anull
   --extra-cflags=-ffile-prefix-map=.=./
 )
 printf '%s\n' "${flags[@]}" > "$output/licenses/ffmpeg/build-config.txt"

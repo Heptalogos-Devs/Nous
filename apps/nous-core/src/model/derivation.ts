@@ -102,9 +102,9 @@ async function deriveMaterialOnce(
         Code.Internal,
       );
     const header = first.value.part.value;
+    const headerMime = header.mediaType.split(";")[0]!.trim().toLowerCase();
     const isVideo =
-      header.mediaType.toLowerCase().startsWith("video/") ||
-      header.mediaType.toLowerCase() === "image/gif";
+      headerMime.startsWith("video/") || headerMime === "image/gif";
     const isAudio = header.mediaType.toLowerCase().startsWith("audio/");
     const maxSourceBytes = isAudio
       ? models.configuration.audio.max_source_bytes

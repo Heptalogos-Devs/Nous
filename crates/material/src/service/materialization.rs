@@ -150,91 +150,114 @@ impl MaterialService {
             } else {
                 inputs.remove(reference)
             };
-            let result = async {
-                let mut payload = input
-                    .ok_or_else(|| Error::Unavailable("material metadata is unavailable".into()))?
-                    .payload?;
-                let media_type = payload.media_type.clone();
-                let producer = payload.producer.take();
-                let provenance = std::mem::take(&mut payload.provenance);
-                let length = payload
-                    .selected
-                    .map_or(payload.length, |range| range.end - range.start);
-                if max_bytes > 0
-                    && matches!(
-                        media_modality(&media_type),
-                        Modality::Text | Modality::Structured
-                    )
-                    && length > max_bytes as u64
-                {
-                    return Err(Error::Unavailable(
-                        "complete Material semantic unit exceeds projection budget".into(),
-                    ));
-                }
-                let mut text = if max_bytes > 0
-                    && matches!(
-                        media_modality(&media_type),
-                        Modality::Text | Modality::Structured
-                    ) {
-                    let selected = self
-                        .materialize_payload(
-                            MaterializeRequest {
-                                reference: reference.clone(),
-                                byte_range: None,
-                                max_bytes: max_bytes as u64,
-                            },
-                            payload,
-                        )
-                        .await?;
-                    let end = std::str::from_utf8(&selected.bytes)
-                        .map_or_else(|error| error.valid_up_to(), str::len);
-                    Some(
-                        String::from_utf8(selected.bytes[..end].to_vec())
-                            .map_err(|error| Error::Infrastructure(error.to_string()))?,
-                    )
-                } else {
-                    None
-                };
-                let mut evidence: Vec<_> = provenance
-                    .into_iter()
-                    .map(|reference| EvidenceHandle {
-                        epistemic_relation: None,
-                        reference,
-                        basis_role: "source".into(),
-                    })
-                    .collect();
-                if let Some(paths)=paths {
-                    if let Some(body)=text.as_mut() {
-                        let provenance=serde_json::json!({"actual_occurrence":paths[index].occurrence_id.0,"material_reference":reference.to_string(),"current_access":"representation","quality":metadata.get(reference)});
-                        *body=format!("Current actual material perception {}\n{}",provenance,body);
-                        if body.len()>max_bytes {return Err(Error::Unavailable("complete current material perception exceeds context budget".into()));}
-                    }
-                }
-                if let Some(paths) = paths {
-                    evidence.push(EvidenceHandle {
-                        reference: CognitiveRef::Occurrence(paths[index].occurrence_id),
-                        basis_role: "actual_occurrence".into(),
-                        epistemic_relation: None,
-                    });
-                }
-                Ok(nous_runtime::ContextSource {
-                    usage: "task_evidence",
-                    required: false,
-                    reference: reference.clone(),
-                    source_revision: None,
-                    text,
-                    authority: if producer.is_some() {
-                        AuthorityClass::Interpretation
-                    } else {
-                        AuthorityClass::Evidence
-                    },
-                    evidence,
-                })
-            }
-            .await;
+            let result = self
+                .context_source_from_input(
+                    input,
+                    reference,
+                    max_bytes,
+                    paths.map(|p| &p[index]),
+                    metadata.get(reference),
+                )
+                .await;
             results.push(result);
         }
         Ok(results)
+    }
+
+    async fn context_source_from_input(
+        &self,
+        input: Option<MaterialReadInput>,
+        reference: &CognitiveRef,
+        max_bytes: usize,
+        path: Option<&EvidenceRef>,
+        metadata: Option<&serde_json::Value>,
+    ) -> Result<nous_runtime::ContextSource> {
+        let mut payload = input
+            .ok_or_else(|| Error::Unavailable("material metadata is unavailable".into()))?
+            .payload?;
+        let media_type = payload.media_type.clone();
+        let producer = payload.producer.take();
+        let provenance = std::mem::take(&mut payload.provenance);
+        let length = payload
+            .selected
+            .map_or(payload.length, |range| range.end - range.start);
+        if max_bytes > 0
+            && matches!(
+                media_modality(&media_type),
+                Modality::Text | Modality::Structured
+            )
+            && length > max_bytes as u64
+        {
+            return Err(Error::Unavailable(
+                "complete Material semantic unit exceeds projection budget".into(),
+            ));
+        }
+        let mut text = if max_bytes > 0
+            && matches!(
+                media_modality(&media_type),
+                Modality::Text | Modality::Structured
+            ) {
+            let selected = self
+                .materialize_payload(
+                    MaterializeRequest {
+                        reference: reference.clone(),
+                        byte_range: None,
+                        max_bytes: max_bytes as u64,
+                    },
+                    payload,
+                )
+                .await?;
+            let end = std::str::from_utf8(&selected.bytes)
+                .map_or_else(|error| error.valid_up_to(), str::len);
+            Some(
+                String::from_utf8(selected.bytes[..end].to_vec())
+                    .map_err(|error| Error::Infrastructure(error.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let mut evidence: Vec<_> = provenance
+            .into_iter()
+            .map(|reference| EvidenceHandle {
+                epistemic_relation: None,
+                reference,
+                basis_role: "source".into(),
+            })
+            .collect();
+        if let Some(path) = path
+            && let Some(body) = text.as_mut()
+        {
+            let provenance = serde_json::json!({"actual_occurrence":path.occurrence_id.0,"material_reference":reference.to_string(),"current_access":"representation","quality":metadata});
+            *body = format!(
+                "Current actual material perception {}\n{}",
+                provenance, body
+            );
+            if body.len() > max_bytes {
+                return Err(Error::Unavailable(
+                    "complete current material perception exceeds context budget".into(),
+                ));
+            }
+        }
+        if let Some(path) = path {
+            evidence.push(EvidenceHandle {
+                reference: CognitiveRef::Occurrence(path.occurrence_id),
+                basis_role: "actual_occurrence".into(),
+                epistemic_relation: None,
+            });
+        }
+        Ok(nous_runtime::ContextSource {
+            usage: "task_evidence",
+            required: false,
+            reference: reference.clone(),
+            source_revision: None,
+            text,
+            authority: if producer.is_some() {
+                AuthorityClass::Interpretation
+            } else {
+                AuthorityClass::Evidence
+            },
+            evidence,
+        })
     }
 
     /// Select exact formation evidence and resolved mentions in one captured read.
@@ -698,6 +721,7 @@ async fn perception_metadata_in(
         "requested_timestamps",
         "sampled_timestamps",
         "frame_coverage",
+        "partial_coverage",
         "truncated",
         "video_degradation",
         "sampling_policy",

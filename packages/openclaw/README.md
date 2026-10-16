@@ -189,3 +189,11 @@ Host prepare 必须返回当前 Activity 允许的实际 `allowedToolNames`。�
 Hosted 正式只读工具 `nous_query` 和 `nous_read` 复用 Client `/managed` 的 bounded read helpers 与公共 Query/ReadSources。Subject、Session、WorkContext 和 SourceRead 只从最终执行 guard 的私有 AsyncLocalStorage 获取；普通参数只有 NousQL 或 exact references，不能传入 contact、usage、grant 或管理操作。返回正文前，实际返回 refs 必须在该 NoUS Session 成功 `ReportUse.presented` 并通过历史检查；原认知撤回、purge 等继续使后续模型输入拒绝，不把工具结果的新 Observation 当作原依赖的替代。空结果不制造来源。
 
 Hosted Subject profile 不配置静态跨会话 NoUS MCP 权限；认知读取使用上述唯一动态入口。普通 MCP 的显式 startup SourceRead 保留其独立使用场景，通用 MCP 工具仍受同一实际执行 guard。发送继续由 Host Agency 和渠道 custody 检查，worker 不取得主线程效果权限。工具名授权不隔离文件系统、秘密或网络资源；实际工具开放仍需要 Host 的 OS sandbox。
+
+### Host 选中当前媒体
+
+Host 已上传真实 artifact 后，在 `prepare.contacts` 提供附属 contact：`contactRef=attachment:<UUID>`，`sourceClass=message`，`externalObjectRef=object:heptalogos:attachment:<UUID>`，保留真实 actor/conversation/time。context 必须含 `host_selected_media=true`、`message_ref=message:<UUID>`、`attachment_ref=attachment:<UUID>`、`part_index` 和 `original_media_type`。聊天文本中的同名标记不触发此入口。
+
+插件只用本批 AcceptedObservation 的实际 Occurrence/SourceRegion 派生 `description_only`，经 `currentMaterials` 交现有 ContextCompiler，实际引用在模型调用前记为 presented。读取始终按具体 Occurrence 配对来源许可；同 artifact 的其他私聊归属不会扩授。`materialInputs.maxItems` 默认 8，`maxTextBytes` 默认 65536；超预算/不支持项在本次实际输入明确列为未解释，不补写第二条描述 Observation。已有成功 model-results 沿原派生入口复用。
+
+GIF 使用现有 video sampler 的有界多帧与时间戳，再由既有 scene description 解释；`frame_coverage=sampled`、`partial_coverage=true` 和截断元数据进入当前输入，不能推断未见帧。

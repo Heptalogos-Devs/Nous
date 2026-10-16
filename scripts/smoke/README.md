@@ -53,3 +53,9 @@ NOUS_SELF_SELECTION_MODEL=<已配置的反思模型> pnpm smoke:self-selection /
 ```
 
 默认使用本地确定性模型替身，检查真实 Core/Kernel/PostgreSQL 的容量、分页和读取边界，不证明模型判断。提供已有 OpenClaw provider 配置与受控 runtime 后，复用 native runner 的实际 HTTP 捕获，调用真实 self_reflection 并验证原生对话的实际输入和输出含第一页之后的身份。可用 `NOUS_SELF_SELECTION_MODEL` 选择已有配置中实际可用的反思模型，默认采用 provider 的最后一个模型；只消费现有 provider 模型。配置/凭据只用于隔离副本，证据及成果保留在打印的 `data/temp/smoke/self-selection-*` 路径。成功或失败均停止本次 Core/Gateway，付费结果一产生就保存在副本中。
+
+## 当前媒体与真实 GIF sampler
+
+`pnpm exec tsx scripts/smoke/current-materials.ts` 使用隔离真实 PostgreSQL 和官方 Client，验证 paired current material → ReadSources/ContextCompiler → presented，及 public/private Occurrence 权限。文本 verified extraction 不调用模型。
+
+`NOUS_MEDIA_FFMPEG=/absolute/path/ffmpeg pnpm exec tsx scripts/smoke/animated-media.ts` 使用已安装 Pillow 生成四色 GIF/PNG，再调用正式 sampler 与原生 FFmpeg，检查实际颜色变化、时长/时间戳、有界截断和 PNG decoder。manifest 保留在输出路径；无模型调用。

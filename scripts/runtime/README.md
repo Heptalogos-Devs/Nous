@@ -29,3 +29,11 @@ corepack pnpm runtime:pack --component postgresql --version 18.6.0 --source <来
 ```
 
 component/version/source/license/root 五个参数必填；component 为 `node`、`postgresql` 或 `ffmpeg`。runtime 目录必须已有必要可执行文件和 license notices。命令写入文件 digest manifest、`data/runtime/packs/` ZIP 和 `data/runtime/manifest/runtimes.json` catalog；当前只支持 Windows x64。`--output` 是 pack/catalog 输出根，默认 `data/runtime/`；runtime 目录和输出根均位于仓库 `data/` 下。
+
+## Linux 本机 FFmpeg
+
+```bash
+bash scripts/runtime/build-ffmpeg.sh --linux data/cache/runtime-sources/ffmpeg-9.0.2.tar.xz data/runtime/installed/ffmpeg
+```
+
+同一固定官方 source SHA 验证后使用现有 gcc/make 构建，输出 `bin/ffmpeg`、`bin/ffprobe` 与 `licenses/ffmpeg` 中的 source archive、许可证、build flags、工具链和可执行文件摘要。GIF parser/decoder、PNG decoder 与有界 sampler 所需 filter 在同一组件内；Core 和真实抽帧 smoke 共用该路径。Windows 原交叉构建入口保留。

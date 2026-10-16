@@ -75,14 +75,16 @@ export async function sampleVideo(
       const at =
         policy.max_frames === 1
           ? 0
-          : (ordinal * Math.max(0, bounded - policy.frame_end_margin_seconds)) /
-            (policy.max_frames - 1);
+          : animatedGif
+            ? (ordinal * bounded) / policy.max_frames
+            : (ordinal *
+                Math.max(0, bounded - policy.frame_end_margin_seconds)) /
+              (policy.max_frames - 1);
       requested.push(at);
       const output = join(root, `frame-${ordinal}.jpg`);
       const info = await run("frame", [
         ...inputArgs,
-        "-ss",
-        String(at),
+        ...(!animatedGif ? ["-ss", String(at)] : []),
         "-i",
         input,
         "-map",
@@ -93,7 +95,8 @@ export async function sampleVideo(
         "-threads",
         "1",
         "-vf",
-        "scale=512:512:force_original_aspect_ratio=decrease,showinfo",
+        `${animatedGif ? `trim=start=${at},` : ""}scale=512:512:force_original_aspect_ratio=decrease,showinfo`,
+        ...(animatedGif ? ["-pix_fmt", "yuvj420p"] : []),
         "-q:v",
         "3",
         "-fs",
@@ -101,7 +104,14 @@ export async function sampleVideo(
         "-y",
         output,
       ]);
-      const size = (await stat(output)).size;
+      const outputStat = await stat(output).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (animatedGif && error.code === "ENOENT") return undefined;
+          throw error;
+        },
+      );
+      if (!outputStat) continue;
+      const size = outputStat.size;
       if (size < 4 || size > policy.max_frame_bytes)
         throw new Error("Video frame exceeds bounds");
       const frame = await readFile(output);
@@ -117,7 +127,7 @@ export async function sampleVideo(
           info.stderr,
         );
       if (!pts) throw new Error("Sample frame timestamp is unavailable");
-      const timestamp = at + Number(pts[1]);
+      const timestamp = (animatedGif ? 0 : at) + Number(pts[1]);
       if (
         !Number.isFinite(timestamp) ||
         timestamp < 0 ||
@@ -183,6 +193,7 @@ export async function sampleVideo(
               source_media_type: "image/gif",
               frame_coverage: "sampled",
               animated_timeline: true,
+              partial_coverage: true,
             }
           : {}),
       },

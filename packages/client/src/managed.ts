@@ -208,41 +208,78 @@ export function createManagedBinding(options: {
           "Model input admission requires an actual application from this binding",
         );
       const client = await options.client();
+      const materialKinds = new Set([
+        "occurrence",
+        "derived_representation",
+        "derived_region",
+      ]);
       const references = [
         ...new Map(
           projection.segments
-            .flatMap((segment) => segment.sourceRefs)
+            .flatMap((segment) => [
+              ...segment.sourceRefs,
+              ...segment.evidence
+                .filter(
+                  (e) => e.basisRole === "actual_occurrence" && e.reference,
+                )
+                .map((e) => e.reference!),
+            ])
+            .filter(
+              (ref) =>
+                ref.kind.endsWith("_revision") || materialKinds.has(ref.kind),
+            )
             .map((ref) => [`${ref.kind}:${ref.value}`, ref]),
         ).values(),
-      ].filter((ref) => ref.kind.endsWith("_revision"));
-      const admitted = await client.runtime.reportUse(
-        {
-          subjectId: options.subjectId,
-          sessionId: options.sessionId,
-          consumerRef: options.consumerId,
-          modelInput: true,
-          events: await Promise.all(
-            references.map(async (reference) => ({
-              eventId: await eventIdentity(
-                `${result.invocationId}:presented:${reference.kind}:${reference.value}`,
-              ),
-              reference,
-              kind: "presented",
-              occurredAt: timestampFromDate(result.occurredAt),
-              context: {
-                invocation_id: result.invocationId,
-                projection_id: projection.projectionId,
-                stage: "model_input",
-              },
-            })),
-          ),
-        },
-        request,
-      );
-      if (!admitted.modelInputChecked)
-        throw new Error(
-          "Core did not enforce the required model input history check",
+      ];
+      for (
+        let offset = 0;
+        offset < Math.max(references.length, 1);
+        offset += 256
+      ) {
+        const admitted = await client.runtime.reportUse(
+          {
+            subjectId: options.subjectId,
+            sessionId: options.sessionId,
+            consumerRef: options.consumerId,
+            modelInput: true,
+            events: await Promise.all(
+              references.slice(offset, offset + 256).map(async (reference) => {
+                const source = projection.segments.find((segment) =>
+                  segment.sourceRefs.some(
+                    (ref) =>
+                      ref.kind === reference.kind &&
+                      ref.value === reference.value,
+                  ),
+                );
+                const actual = source?.evidence.find(
+                  (e) =>
+                    e.basisRole === "actual_occurrence" &&
+                    e.reference?.kind === "occurrence",
+                )?.reference?.value;
+                return {
+                  eventId: await eventIdentity(
+                    `${result.invocationId}:presented:${reference.kind}:${reference.value}`,
+                  ),
+                  reference,
+                  kind: "presented",
+                  occurredAt: timestampFromDate(result.occurredAt),
+                  context: {
+                    invocation_id: result.invocationId,
+                    projection_id: projection.projectionId,
+                    stage: "model_input",
+                    ...(actual ? { actual_occurrence_id: actual } : {}),
+                  },
+                };
+              }),
+            ),
+          },
+          request,
         );
+        if (!admitted.modelInputChecked)
+          throw new Error(
+            "Core did not enforce the required model input history check",
+          );
+      }
       let accepted = admissions.get(result.applied);
       if (!accepted) admissions.set(result.applied, (accepted = new Set()));
       accepted.add(result.invocationId);
