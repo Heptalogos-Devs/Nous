@@ -342,3 +342,5 @@ export async function outcomeObservation(input: {
     },
   };
 }
+
+export { readOnlyQuery, readOnlySources } from "./readonly.js";

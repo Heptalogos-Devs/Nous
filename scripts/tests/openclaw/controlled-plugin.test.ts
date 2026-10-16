@@ -51,12 +51,24 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
     );
     const run = (path: string, args: string[] = []) =>
       execFileSync(process.execPath, [path, ...args], {
-        env,
+        env:
+          path === installer
+            ? {
+                ...env,
+                npm_command: "exec",
+                npm_config_allow_scripts: "@fixture/exec-only-policy",
+                npm_config_allowScripts: "@fixture/exec-only-policy",
+              }
+            : env,
         encoding: "utf8",
         windowsHide: true,
         stdio: "pipe",
       });
     const install = (...args: string[]) => run(installer, [runtime, ...args]);
+    const hostedProbe = join(
+      repositoryRoot,
+      "scripts/tests/openclaw/hosted-loader-probe.ts",
+    );
     const npmCli = join(
       dirname(process.execPath),
       "node_modules/npm/bin/npm-cli.js",
@@ -133,6 +145,10 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
       );
       const artifact = await makeArtifact("first");
       install();
+      run(hostedProbe, [
+        join(runtime, "node_modules/openclaw"),
+        join(runtime, "node_modules/@nous-wave/openclaw"),
+      ]);
       const staleLock = join(runtime, ".nous-install-lock");
       await mkdir(staleLock);
       await writeFile(

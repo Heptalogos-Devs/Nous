@@ -24,6 +24,7 @@
     "@bufbuild/protobuf": "2.15.0",
     "@nous-wave/client": "workspace:*",
     "@nous-wave/protocol": "workspace:*",
+    "typebox": "1.3.17",
     "zod": "4.6.5"
   },
   "devDependencies": {

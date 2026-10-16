@@ -1,5 +1,6 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+import { readOnlyQuery, readOnlySources } from "@nous-wave/client/managed";
 import { cognitionRevisionReader } from "../cognition-owner.js";
 import { CliError, boundedInteger } from "../agent.js";
 import type { CliEnvironment } from "../runtime.js";
@@ -49,7 +50,7 @@ export async function queryCommands(
     workContextId: request.workContextId,
     lastQuery: undefined,
   });
-  const response = await client.cognition.query(request);
+  const response = await readOnlyQuery(client, request);
   const refs = response.hits.map((hit) => hit.revision ?? hit.reference);
   if (refs.some((ref) => !ref))
     throw new CliError(
@@ -126,7 +127,7 @@ export async function showCommands(env: CliEnvironment, reference?: string) {
       Symbol.for("nous.scopedSourceReader")
     ]
   )
-    return client.cognition.readSources({
+    return readOnlySources(client, {
       subjectId,
       references: [ref],
       maxTextBytes: 65536,

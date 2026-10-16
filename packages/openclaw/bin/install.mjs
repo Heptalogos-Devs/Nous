@@ -152,12 +152,27 @@ try {
   const npm = npmCli ? process.execPath : "npm";
   /** @param {string[]} args */
   const npmArguments = (args) => (npmCli ? [npmCli, ...args] : args);
+  // npm exec exports its own allow-scripts policy. npm rejects that option for
+  // the project-scoped installs this controlled installer owns. Preserve all
+  // other operator npm settings, including an explicit ignore-scripts policy.
+  const npmEnvironment = { ...process.env };
+  if (
+    Object.entries(npmEnvironment).some(
+      ([key, value]) => key.toLowerCase() === "npm_command" && value === "exec",
+    )
+  ) {
+    for (const key of Object.keys(npmEnvironment)) {
+      if (/^npm_config_allow[_-]?scripts$/i.test(key))
+        delete npmEnvironment[key];
+    }
+  }
   /** @param {string[]} args @param {boolean} [capture] */
   const npmRun = (args, capture = false) =>
     execFileSync(npm, npmArguments(args), {
       cwd: prefix,
       encoding: "utf8",
       stdio: capture ? "pipe" : "inherit",
+      env: npmEnvironment,
       windowsHide: true,
     });
   const packed = /** @type {Array<{filename:string,shasum:string}>} */ (

@@ -1,7 +1,8 @@
 diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
+index 56406d3..54a8328 100644
 --- a/dist/agent-core-BxgCPa8O.js
 +++ b/dist/agent-core-BxgCPa8O.js
-@@ -424,20 +424,31 @@
+@@ -424,20 +424,31 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
  	if (config.transformContext) messages = await config.transformContext(messages, signal);
  	messages = normalizeCoreContextMessages(messages);
  	const llmMessages = await config.convertToLlm(messages);
@@ -36,7 +37,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	for await (const event of response) switch (event.type) {
  		case "start": {
  			const message = event.partial;
-@@ -474,6 +485,13 @@
+@@ -474,6 +485,13 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
  		case "error": return await finalizeAssistantMessage();
  	}
  	return await finalizeAssistantMessage();
@@ -50,7 +51,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	async function finalizeAssistantMessage() {
  		const finalMessage = withAssistantTurnTaint(ensureToolTurnIdentity(removeNonExecutableToolCalls(await response.result())), turnTainted);
  		if (addedPartial) context.messages[context.messages.length - 1] = finalMessage;
-@@ -484,10 +502,14 @@
+@@ -484,10 +502,14 @@ async function streamAssistantResponse(context, config, signal, emit, streamFn,
  				message: { ...finalMessage }
  			});
  		}
@@ -65,7 +66,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  		return finalMessage;
  	}
  }
-@@ -615,7 +637,7 @@
+@@ -615,7 +637,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
  			}
  			if (launched) await Promise.all(launched.started.map(async ({ index, entry, outcome }) => settle(index, entry, await outcome)));
  			for (const finalized of ordered) if (finalized) {
@@ -74,7 +75,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  				finalizedCalls.push(finalized);
  			}
  		} finally {
-@@ -633,7 +655,7 @@
+@@ -633,7 +655,7 @@ async function executeToolCallGroups(batch, toolCalls, sequential) {
  		const toolCall = toolCalls[cursor];
  		if (!toolCall) continue;
  		const finalized = await completeUnstartedToolCall(batch, toolCall, { reason: skippedReason });
@@ -83,7 +84,63 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -1108,7 +1130,7 @@
+@@ -665,7 +687,7 @@ async function prepareToolCallEntry(batch, toolCall) {
+ 	const execution = await prepareToolCallExecution(preparation, {
+ 		assistantMessage: batch.assistantMessage,
+ 		toolCall: preparation.toolCall
+-	}, batch.signal, batch.emit);
++	}, batch.signal, batch.emit, batch.config.managedCognition);
+ 	return execution.kind === "immediate" ? await finalizeExecutedToolCall(batch, preparation, execution.outcome, preparation.args) : {
+ 		...preparation,
+ 		execution
+@@ -875,7 +897,10 @@ async function validateToolCallForBatchAdmission(batch, toolCall) {
+ 		args: validatedArgs
+ 	};
+ }
+-async function prepareToolCallExecution(prepared, executionContext, signal, emit) {
++async function prepareToolCallExecution(prepared, executionContext, signal, emit, managed) {
++	const nativeTool = { toolName: prepared.tool.name, toolCallId: prepared.toolCall.id };
++	const prepareGuard = managed ? await managed.authorizeToolExecution({ ...nativeTool, phase: "prepare" }) : void 0;
++	if (managed && typeof prepareGuard?.run !== "function") throw new Error("Required native tool preparation guard is unavailable");
+ 	const updateEvents = [];
+ 	let acceptingUpdates = true;
+ 	const onUpdate = (partialResult) => {
+@@ -927,7 +952,10 @@ async function prepareToolCallExecution(prepared, executionContext, signal, emit
+ 						executionStarted: false
+ 					};
+ 					try {
+-						const result = await run(() => {
++						const executionGuard = managed ? await managed.authorizeToolExecution({ ...nativeTool, phase: "execute" }) : void 0;
++						if (managed && typeof executionGuard?.run !== "function") throw new Error("Required native tool execution guard is unavailable");
++						if (signal?.aborted) throw signal.reason ?? new Error("Operation aborted");
++						const invoke = () => run(() => {
+ 							try {
+ 								onImplementationStart?.();
+ 							} catch (error) {
+@@ -936,6 +964,7 @@ async function prepareToolCallExecution(prepared, executionContext, signal, emit
+ 							}
+ 							executionStarted = true;
+ 						});
++						const result = await (executionGuard ? executionGuard.run(invoke) : invoke());
+ 						if (implementationStartError) throw implementationStartError.error;
+ 						return {
+ 							result,
+@@ -968,12 +997,13 @@ async function prepareToolCallExecution(prepared, executionContext, signal, emit
+ 	});
+ 	let internalPreparation;
+ 	try {
+-		internalPreparation = await runWithAgentToolExecutionContext(executionContext, () => preparer({
++		const invokePreparer = () => runWithAgentToolExecutionContext(executionContext, () => preparer({
+ 			toolCallId: prepared.toolCall.id,
+ 			args: prepared.args,
+ 			...signal ? { signal } : {},
+ 			onUpdate
+ 		}));
++		internalPreparation = await (prepareGuard ? prepareGuard.run(invokePreparer) : invokePreparer());
+ 	} catch (error) {
+ 		return await immediateError(error);
+ 	}
+@@ -1108,7 +1138,7 @@ async function completeToolLoopInterventionBatch(batch, params) {
  			...hideFromChannelProgress ? { hideFromChannelProgress: true } : {}
  		}, validation?.kind === "prepared" ? validation.args : toolCall.arguments);
  		await emitToolExecutionEnd(finalized, batch.emit);
@@ -92,7 +149,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -1162,7 +1184,7 @@
+@@ -1162,7 +1192,7 @@ async function emitToolExecutionEnd(finalized, emit) {
  		...finalized.hideFromChannelProgress === true ? { hideFromChannelProgress: true } : {}
  	});
  }
@@ -101,7 +158,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	const message = copyInternalToolResultState(finalized.result, withToolResultContentSource({
  		role: "toolResult",
  		toolCallId: finalized.toolCall.id,
-@@ -1176,10 +1198,12 @@
+@@ -1176,10 +1206,12 @@ async function emitToolResultMessage(finalized, emit) {
  		type: "message_start",
  		message
  	});
@@ -114,7 +171,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	return message;
  }
  function readTurnTaintMetadata(message) {
-@@ -1531,6 +1555,7 @@
+@@ -1531,6 +1563,7 @@ var Agent$1 = class {
  			} : void 0,
  			convertToLlm: this.convertToLlm,
  			transformContext: this.transformContext,
@@ -123,9 +180,10 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  			getSteeringMessages,
  			getFollowUpMessages: async () => this.followUpQueue.drain(),
 diff --git a/dist/agent-exec-DQrJo6Wo.js b/dist/agent-exec-DQrJo6Wo.js
+index e8ee3cd..8cf5105 100644
 --- a/dist/agent-exec-DQrJo6Wo.js
 +++ b/dist/agent-exec-DQrJo6Wo.js
-@@ -13,6 +13,8 @@
+@@ -13,6 +13,8 @@ import path from "node:path";
  import fs$1 from "node:fs/promises";
  import os from "node:os";
  import { randomUUID } from "node:crypto";
@@ -134,7 +192,7 @@ diff --git a/dist/agent-exec-DQrJo6Wo.js b/dist/agent-exec-DQrJo6Wo.js
  //#region src/commands/agent-exec-input.ts
  const AGENT_EXEC_MESSAGE_MAX_BYTES = 4194304;
  const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
-@@ -452,6 +454,8 @@
+@@ -452,6 +454,8 @@ async function agentExecCommand(positionalMessage, opts, runtime, deps = {}) {
  	runCleanupStep(() => restoreRuntimeConfigSnapshot ? restoreRuntimeConfigSnapshot() : configIo?.clearRuntimeConfigSnapshot());
  	runCleanupStep(() => runtimePaths?.pinRuntimePaths());
  	if (temporaryStateDir) try {
@@ -143,10 +201,37 @@ diff --git a/dist/agent-exec-DQrJo6Wo.js b/dist/agent-exec-DQrJo6Wo.js
  		await fs$1.rm(temporaryStateDir, {
  			recursive: true,
  			force: true
+diff --git a/dist/agent-harness-runtime-CBvQyLlU.d.ts b/dist/agent-harness-runtime-CBvQyLlU.d.ts
+index 23e7dae..28263f7 100644
+--- a/dist/agent-harness-runtime-CBvQyLlU.d.ts
++++ b/dist/agent-harness-runtime-CBvQyLlU.d.ts
+@@ -16350,6 +16350,8 @@ interface ContextEngine {
+    * fails after preparation succeeds.
+    */
+   prepareSubagentSpawn?(params: {
++    /** Exact native model run requesting this child; supplied by the native tool context. */
++    parentRunId?: string;
+     parentSessionKey: string;
+     childSessionKey: string;
+     contextMode?: "isolated" | "fork";
+diff --git a/dist/agent-harness-runtime-DUs0hfX9.d.ts b/dist/agent-harness-runtime-DUs0hfX9.d.ts
+index 014e63a..e00a82e 100644
+--- a/dist/agent-harness-runtime-DUs0hfX9.d.ts
++++ b/dist/agent-harness-runtime-DUs0hfX9.d.ts
+@@ -20088,6 +20088,8 @@ interface ContextEngine {
+    * fails after preparation succeeds.
+    */
+   prepareSubagentSpawn?(params: {
++    /** Exact native model run requesting this child; supplied by the native tool context. */
++    parentRunId?: string;
+     parentSessionKey: string;
+     childSessionKey: string;
+     contextMode?: "isolated" | "fork";
 diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.js
+index 63c12b4..7290d50 100644
 --- a/dist/builtin-openclaw-zQV8Wwjr.js
 +++ b/dist/builtin-openclaw-zQV8Wwjr.js
-@@ -238,6 +238,8 @@
+@@ -238,6 +238,8 @@ import { a as extractAssistantThinking, c as extractThinkingFromTaggedStream, d
  import { n as claimHeartbeatOutcomeForRun, t as buildHeartbeatOutcomeContext } from "./heartbeat-outcome-store-BoT9c8Af.js";
  import { I as streamWithPayloadPatch } from "./provider-stream-shared-BmB0vX9b.js";
  import { i as resolveEmbeddedAgentStream, n as resolveEmbeddedAgentApiKey, r as resolveEmbeddedAgentBaseStreamFn, t as wrapStreamFnWithDiagnosticModelCallEvents } from "./attempt.model-diagnostic-events-B4dGIs0S.js";
@@ -155,24 +240,30 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
  import { a as appendModelIdentitySystemPrompt, c as buildProjectMemoryWriteInstruction, i as buildConfiguredAgentSystemPrompt, l as prepareProjectMemoryBootstrap, o as buildModelIdentityPromptLine, s as resolveAgentPromptSurfaceForSessionKey } from "./system-prompt-params-B645JcX8.js";
  import { o as resolveUserTimezone, r as formatDateStamp } from "./date-time-C7YbYLih.js";
  import { n as prepareWatchedSessionsPrompt } from "./watched-sessions-prompt-C9QfwkEy.js";
-@@ -14248,6 +14250,26 @@
+@@ -14248,6 +14250,32 @@ async function runEmbeddedAttemptExecutionPhase(input) {
  		state.terminal = mergeAgentRunAttemptTerminal(state.terminal, incoming);
  	};
  	const idleTimeoutTriggerRef = {};
 +	if (input.activeContextEngine?.info.managedModelInputRequired === true || attempt.config?.plugins?.slots?.contextEngine?.trim() === "nous-cognition") {
 +		const engine = input.activeContextEngine;
-+		if (engine?.info.id !== "nous-cognition" || typeof engine.prepareModelInput !== "function" || typeof engine.reportModelOutcome !== "function") throw new Error("Required Nous cognition engine is unavailable at the native model boundary");
++		if (engine?.info.id !== "nous-cognition" || typeof engine.prepareModelInput !== "function" || typeof engine.reportModelOutcome !== "function" || typeof engine.authorizeToolExecution !== "function") throw new Error("Required Nous cognition engine is unavailable at the native model boundary");
 +		const nativeHistoryGeneration = sessionManager.getBranch().findLast((entry) => entry.type === "reset")?.id ?? attempt.sessionId;
 +		const nativeHistoryWasEmpty = activeSession.messages.length === 0;
 +		let capturedInput;
++		let capturedApplication;
 +		activeSession.agent.managedCognition = {
-+			prepare: (model, context, signal, budget) => {
-+				capturedInput = { boundaryVersion: 3, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
++			prepare: async (model, context, signal, budget) => {
++				capturedInput = { boundaryVersion: 4, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
 +                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", model, context, signal: signal ?? input.runAbortController.signal,
 +					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: budget.reservedOutputTokens,
 +					audience: { visibility: attempt.sessionKey?.includes(":subagent:") ? "internal" : attempt.chatType === "direct" ? "direct" : attempt.chatType === "group" ? "group" : attempt.chatType === "channel" ? "public" : "internal", channel: attempt.messageChannel ?? attempt.messageProvider, senderId: attempt.senderId, destination: attempt.currentChannelId },
 +					measureContext: (value) => estimateNousInputTokensNative({ messages: value.messages, systemPrompt: value.systemPrompt, prompt: "" }) + estimateNousRenderedTokensNative({ systemPrompt: JSON.stringify(value.tools ?? []), prompt: "" }) };
-+				return engine.prepareModelInput(capturedInput);
++				capturedApplication = await engine.prepareModelInput(capturedInput);
++				return capturedApplication;
++			},
++			authorizeToolExecution: (execution) => {
++				if (!capturedInput || !capturedApplication) throw new Error("Native tool execution has no actual model input contact");
++				return engine.authorizeToolExecution(capturedInput, capturedApplication, execution);
 +			},
 +			captureEvent: (message, application, outcome) => engine.captureNativeEvent?.(capturedInput, message, application, outcome),
 +			report: (application, outcome, message) => engine.reportModelOutcome(capturedInput, application, outcome, message),
@@ -182,10 +273,24 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
  	const { cacheObservabilityEnabled, promptCacheTools } = installEmbeddedAttemptStreamGuards({
  		attempt,
  		session: activeSession,
+diff --git a/dist/cli-backend.types-LHE5t00D.d.ts b/dist/cli-backend.types-LHE5t00D.d.ts
+index a37da26..365a415 100644
+--- a/dist/cli-backend.types-LHE5t00D.d.ts
++++ b/dist/cli-backend.types-LHE5t00D.d.ts
+@@ -25122,6 +25122,8 @@ interface ContextEngine {
+    * fails after preparation succeeds.
+    */
+   prepareSubagentSpawn?(params: {
++    /** Exact native model run requesting this child; supplied by the native tool context. */
++    parentRunId?: string;
+     parentSessionKey: string;
+     childSessionKey: string;
+     contextMode?: "isolated" | "fork";
 diff --git a/dist/context-engine-turn-attempt-BPzr5IBp.js b/dist/context-engine-turn-attempt-BPzr5IBp.js
+index 0c1c60c..0424796 100644
 --- a/dist/context-engine-turn-attempt-BPzr5IBp.js
 +++ b/dist/context-engine-turn-attempt-BPzr5IBp.js
-@@ -40,6 +40,7 @@
+@@ -40,6 +40,7 @@ async function createContextEngineLogicalTurnLease(params) {
  		(params.warn ?? console.warn)(`[context-engine] Context engine "${sanitizeForLog(resolution.configuredId)}" degraded to "${sanitizeForLog(resolution.fallback.registeredId)}" for this logical turn: ${sanitizeForLog(reason)}. The "${sanitizeForLog(resolution.fallback.registeredId)}" engine will handle only this turn; configuration is unchanged, and "${sanitizeForLog(resolution.configuredId)}" will be retried next turn.`);
  	};
  	const degradeBeforeStart = (reason) => {
@@ -193,7 +298,7 @@ diff --git a/dist/context-engine-turn-attempt-BPzr5IBp.js b/dist/context-engine-
  		if (state === "disposed") throw new Error("context-engine logical turn selection is already pinned");
  		if (isBaselineEngineSelection) {
  			if (state === "unselected") state = "selected";
-@@ -60,8 +61,9 @@
+@@ -60,8 +61,9 @@ async function createContextEngineLogicalTurnLease(params) {
  		});
  		if (!support.ok) return `host "${selection.host.id}" is missing ${support.missingCapabilities.join(", ")}`;
  		if (isBaselineEngineSelection) return;
@@ -206,9 +311,10 @@ diff --git a/dist/context-engine-turn-attempt-BPzr5IBp.js b/dist/context-engine-
  	if (resolution.configuredFailure) degradeBeforeStart(resolution.configuredFailure);
  	return {
 diff --git a/dist/deliver-B6F55ipQ.js b/dist/deliver-B6F55ipQ.js
+index 0b0a22a..4ea751c 100644
 --- a/dist/deliver-B6F55ipQ.js
 +++ b/dist/deliver-B6F55ipQ.js
-@@ -11,7 +11,7 @@
+@@ -11,7 +11,7 @@ import { t as resolveMirroredTranscriptText } from "./transcript-mirror-DxrLtJZQ
  import { i as areOutboundPayloadsIntentionallySuppressed, n as OutboundDeliveryError, o as isOutboundDeliveryAdmissionClosedError, r as PlatformMessageNotDispatchedError } from "./deliver-types-Diy-VQKA.js";
  import { i as findPlatformMessageRejectedError, s as isProvenDeliveryNotSentError } from "./delivery-recovery.shared-BHlrbHZ6.js";
  import { a as settleDurableDelivery, i as rejectDurableDelivery, r as markDurableDeliveryQueued } from "./delivery-completion-Do3nBV6b.js";
@@ -217,7 +323,7 @@ diff --git a/dist/deliver-B6F55ipQ.js b/dist/deliver-B6F55ipQ.js
  import { C as normalizeOutboundReplyFacts, x as createReplyToDeliveryPolicy } from "./reply-payload-y5EgUJuZ.js";
  import { l as resolveOutboundPayloadMirrorText } from "./payloads-Ch7RD6Ym.js";
  import { a as runOutboundDeliveryCommitHooks, c as deliveryKindForPayload, d as maybePinDeliveredMessage, f as normalizeEmptyPayloadForDelivery, h as stripInternalRuntimeScaffoldingFromPayload, l as hasDeliveryResultIdentity, m as resolveOutboundMediaAccessForSend, o as buildPayloadSummary, s as collectPayloadMediaSources, u as maybeNotifyAfterDeliveredPayload } from "./delivery-queue-reconciliation-DMcA7z0l.js";
-@@ -363,6 +363,10 @@
+@@ -363,6 +363,10 @@ async function deliverOutboundPayloadsCore(params) {
  	let activeSourceIndex;
  	const resolveMediaAccess = (mediaSources) => resolveOutboundMediaAccessForSend(params, channel, mediaSources);
  	const createHandler = (mediaSources) => createChannelHandler({
@@ -228,7 +334,7 @@ diff --git a/dist/deliver-B6F55ipQ.js b/dist/deliver-B6F55ipQ.js
  		cfg,
  		agentId: params.session?.agentId,
  		channel,
-@@ -790,7 +794,7 @@
+@@ -790,7 +794,7 @@ async function deliverOutboundPayloadsWithQueueCleanup(params, queueId, auditSta
  	};
  	const wrappedParams = {
  		...params,
@@ -237,7 +343,7 @@ diff --git a/dist/deliver-B6F55ipQ.js b/dist/deliver-B6F55ipQ.js
  		requiredUnknownSendReconciliation: exactReconciliationRequired,
  		onPlatformSendStart: async (route, sourceIndex) => {
  			params.abortSignal?.throwIfAborted();
-@@ -1144,6 +1148,7 @@
+@@ -1144,6 +1148,7 @@ async function runOutboundDelivery(params) {
  	return await runOutboundDeliveryInternal(params);
  }
  async function runOutboundDeliveryInternal(input) {
@@ -246,9 +352,10 @@ diff --git a/dist/deliver-B6F55ipQ.js b/dist/deliver-B6F55ipQ.js
  	const reply = normalizeOutboundReplyFacts({
  		reply: input.reply,
 diff --git a/dist/deliver-contracts-BrA0Kn8c.d.ts b/dist/deliver-contracts-BrA0Kn8c.d.ts
+index 2c186ae..3d64da5 100644
 --- a/dist/deliver-contracts-BrA0Kn8c.d.ts
 +++ b/dist/deliver-contracts-BrA0Kn8c.d.ts
-@@ -188,11 +188,13 @@
+@@ -188,11 +188,13 @@ type PreparedOutboundSuppressedEntry = {
  };
  type PreparedOutboundBatchEntry = PreparedOutboundAcceptedEntry | PreparedOutboundSuppressedEntry;
  /** Canonical post-policy payload custody persisted by the durable outbound queue. */
@@ -264,9 +371,10 @@ diff --git a/dist/deliver-contracts-BrA0Kn8c.d.ts b/dist/deliver-contracts-BrA0K
    executionIdentityToken?: ExecutionIdentityAdmissionToken;
    entries: PreparedOutboundBatchEntry[];
 diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
+index 737dd36..e7e327d 100644
 --- a/dist/deliver-prepare-7gjKTwQN.js
 +++ b/dist/deliver-prepare-7gjKTwQN.js
-@@ -372,6 +372,57 @@
+@@ -372,6 +372,57 @@ async function resolveChannelOutboundDirectiveOptions(params) {
  	const { plugin } = await loadBootstrappedChannelPlugin(params);
  	return { extractMarkdownImages: plugin?.outbound?.extractMarkdownImages === true ? true : void 0 };
  }
@@ -324,7 +432,7 @@ diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
  async function createChannelHandler(params) {
  	const { plugin, pluginRegistry } = await loadBootstrappedChannelPlugin(params);
  	const handler = withPluginRuntimeRegistryScope(pluginRegistry, () => createPluginHandler({
-@@ -501,6 +552,8 @@
+@@ -501,6 +552,8 @@ function createPluginHandler(params) {
  	const dispatchToAdapter = async (route, send) => {
  		await params.onPlatformSendStart?.(route);
  		await params.onDirectAdapterHandoff?.();
@@ -333,7 +441,7 @@ diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
  		params.assertDirectAdapterHandoff?.();
  		return await send();
  	};
-@@ -731,6 +784,9 @@
+@@ -731,6 +784,9 @@ const createChannelOutboundContextBase = (params) => ({
  	gatewayClientScopes: params.gatewayClientScopes,
  	conversationReadOrigin: params.conversationReadOrigin,
  	deliveryQueueId: params.deliveryQueueId,
@@ -343,7 +451,7 @@ diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
  	preparedMessageId: params.preparedMessageId,
  	assertDirectAdapterHandoff: params.assertDirectAdapterHandoff,
  	onPlatformSendDispatch: params.onPlatformSendDispatch,
-@@ -915,14 +971,14 @@
+@@ -915,14 +971,14 @@ async function prepareOutboundPayloadBatch(params, options) {
  			preparedMediaCount: buildPayloadSummary(compactPayload).mediaUrls.length
  		});
  	}
@@ -362,9 +470,10 @@ diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
 -export { createRenderedMessageBatch as a, buildInboundReplyPayloadSendingBeforeDeliver as c, suppressedPayloadOutcome as d, toOutboundDeliveryError as f, resolveOutboundDurableFinalDeliverySupport as i, buildLegacyInboundMessageSendingBeforeDeliver as l, recordReplyUsageState as m, throwIfAborted as n, createRenderedMessageBatchPlan as o, buildReplyUsageState as p, createChannelHandler as r, applyMessageSendingHook as s, prepareOutboundPayloadBatch as t, buildProjectedInboundMessageSendingBeforeDeliver as u };
 +export { resolveChannelDeliveryCustodyParams as z, createRenderedMessageBatch as a, buildInboundReplyPayloadSendingBeforeDeliver as c, suppressedPayloadOutcome as d, toOutboundDeliveryError as f, resolveOutboundDurableFinalDeliverySupport as i, buildLegacyInboundMessageSendingBeforeDeliver as l, recordReplyUsageState as m, throwIfAborted as n, createRenderedMessageBatchPlan as o, buildReplyUsageState as p, createChannelHandler as r, applyMessageSendingHook as s, prepareOutboundPayloadBatch as t, buildProjectedInboundMessageSendingBeforeDeliver as u };
 diff --git a/dist/delivery-queue-migration-BZ8aX6BT.js b/dist/delivery-queue-migration-BZ8aX6BT.js
+index 5040367..4af6e73 100644
 --- a/dist/delivery-queue-migration-BZ8aX6BT.js
 +++ b/dist/delivery-queue-migration-BZ8aX6BT.js
-@@ -108,7 +108,7 @@
+@@ -108,7 +108,7 @@ async function prepareLegacyEntryCheckpoint(params) {
  		const leaseTimer = setInterval(renewLeaseSafely, LEGACY_PREPARATION_LEASE_RENEW_MS);
  		leaseTimer.unref();
  		try {
@@ -373,10 +482,45 @@ diff --git a/dist/delivery-queue-migration-BZ8aX6BT.js b/dist/delivery-queue-mig
  				if (leaseLost) throw new Error(`Legacy delivery ${params.entry.id} preparation lease was lost`);
  				const startedEntry = {
  					...sourceEntry,
+diff --git a/dist/delivery.runtime-CAsclR-9.js b/dist/delivery.runtime-CAsclR-9.js
+index 0c7e2b5..d1cf687 100644
+--- a/dist/delivery.runtime-CAsclR-9.js
++++ b/dist/delivery.runtime-CAsclR-9.js
+@@ -7,7 +7,7 @@ import { t as formatErrorMessage } from "./errors-u9zSVTak.js";
+ import { m as resolveAgentWorkspaceDir, y as resolveDefaultAgentId } from "./agent-scope-config-CUiGBd59.js";
+ import { _ as resolveSessionAgentId } from "./agent-scope-CSlN0kZb.js";
+ import { c as formatUnknownChannelMessage } from "./error-format-Cae7EwnT.js";
+-import { i as copyReplyPayloadMetadata } from "./reply-payload-DahKk-7n.js";
++import { a as getReplyPayloadMetadata, i as copyReplyPayloadMetadata } from "./reply-payload-DahKk-7n.js";
+ import { a as normalizeChannelId, t as getChannelPlugin } from "./registry-CkcjiYIl.js";
+ import "./plugins-BssTyOqH.js";
+ import { a as isInternalMessageChannel } from "./message-channel-BGKf9KPa.js";
+@@ -611,12 +611,20 @@ async function deliverAgentCommandResult(params) {
+ 			const restartAbort = createRestartOnlyAbortSignal(opts.abortSignal);
+ 			let send;
+ 			try {
++				const producers = deliveryPayloads.map((payload) => getReplyPayloadMetadata(payload)?.nativeFinalProducer);
++				const producer = producers[0];
++				const nativeFinalProducer = producer && producer.runId === opts.runId && producer.sessionKey === effectiveSessionKey && producers.every((value) => value?.runId === producer.runId && value?.sessionKey === producer.sessionKey && value?.invocationId === producer.invocationId) ? producer : void 0;
+ 				send = await sendDurableMessageBatchCore({
+ 					cfg,
+ 					channel: deliveryChannel,
+ 					to: deliveryTarget,
+ 					accountId: resolvedAccountId,
+ 					payloads: deliveryPayloads,
++					...nativeFinalProducer ? {
++						deliveryIntentId: JSON.stringify(["native-agent-final", nativeFinalProducer.runId, nativeFinalProducer.invocationId]),
++						runId: nativeFinalProducer.runId,
++						completionRetention: "permanent"
++					} : {},
+ 					session: outboundSession,
+ 					identity: resolveAgentOutboundIdentity(cfg, deliveryAgentId),
+ 					replyPayloadSendingHook: {
 diff --git a/dist/history-image-prune-Dg0CDQ4a.js b/dist/history-image-prune-Dg0CDQ4a.js
+index dfbd9c1..4aac267 100644
 --- a/dist/history-image-prune-Dg0CDQ4a.js
 +++ b/dist/history-image-prune-Dg0CDQ4a.js
-@@ -1777,6 +1777,7 @@
+@@ -1777,6 +1777,7 @@ async function prepareEmbeddedAttemptHistory(input) {
  		}
  	} catch (error) {
  		log.warn(`context engine assemble failed, using pipeline messages: ${String(error)}`);
@@ -385,9 +529,10 @@ diff --git a/dist/history-image-prune-Dg0CDQ4a.js b/dist/history-image-prune-Dg0
  	return {
  		contextEnginePromptAuthority,
 diff --git a/dist/host-compat-xESS3bi6.js b/dist/host-compat-xESS3bi6.js
+index 0a3e6ab..242abc7 100644
 --- a/dist/host-compat-xESS3bi6.js
 +++ b/dist/host-compat-xESS3bi6.js
-@@ -12,6 +12,7 @@
+@@ -12,6 +12,7 @@ const OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST = {
  	id: "openclaw-embedded",
  	label: "OpenClaw embedded runner",
  	capabilities: [
@@ -395,7 +540,7 @@ diff --git a/dist/host-compat-xESS3bi6.js b/dist/host-compat-xESS3bi6.js
  		"bootstrap",
  		"assemble-before-prompt",
  		"after-turn",
-@@ -43,7 +44,12 @@
+@@ -43,7 +44,12 @@ function buildGenericCliContextEngineHostSupport(params) {
  }
  /** Evaluate whether a context-engine host can safely run the requested operation. */
  function evaluateContextEngineHostSupport(params) {
@@ -410,9 +555,10 @@ diff --git a/dist/host-compat-xESS3bi6.js b/dist/host-compat-xESS3bi6.js
  		ok: true,
  		requirements,
 diff --git a/dist/host-hook-cleanup-BQvPj1LG.js b/dist/host-hook-cleanup-BQvPj1LG.js
+index e9f4a80..7792ccb 100644
 --- a/dist/host-hook-cleanup-BQvPj1LG.js
 +++ b/dist/host-hook-cleanup-BQvPj1LG.js
-@@ -258,7 +258,10 @@
+@@ -258,7 +258,10 @@ async function cleanupReplacedPluginHostRegistry(params) {
  	let cleanupCount = 0;
  	for (const pluginId of previousPluginIds) {
  		if (!shouldCleanup()) break;
@@ -425,9 +571,10 @@ diff --git a/dist/host-hook-cleanup-BQvPj1LG.js b/dist/host-hook-cleanup-BQvPj1L
  			cfg: params.cfg,
  			registry: previousRegistry,
 diff --git a/dist/install-security-scan.types-C51Ik81l.d.ts b/dist/install-security-scan.types-C51Ik81l.d.ts
+index a0a8458..b77dafd 100644
 --- a/dist/install-security-scan.types-C51Ik81l.d.ts
 +++ b/dist/install-security-scan.types-C51Ik81l.d.ts
-@@ -7990,6 +7990,9 @@
+@@ -7990,6 +7990,9 @@ type ChannelMessageSendTextContext<TConfig = OpenClawConfig> = {
    gatewayClientScopes?: readonly string[];
    /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
    deliveryQueueId?: string;
@@ -437,7 +584,7 @@ diff --git a/dist/install-security-scan.types-C51Ik81l.d.ts b/dist/install-secur
    /** @internal Stable platform-send index within one durable payload. */
    deliveryPartIndex?: number;
    /** @internal Exact platform-send count within one durable payload. */
-@@ -8166,6 +8169,7 @@
+@@ -8166,6 +8169,7 @@ type ChannelMessageReceiveAdapterShape = {
  /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
  type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
    id?: string;
@@ -446,9 +593,10 @@ diff --git a/dist/install-security-scan.types-C51Ik81l.d.ts b/dist/install-secur
    send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
    live?: ChannelMessageLiveAdapterShape;
 diff --git a/dist/install-security-scan.types-CimJAuMq.d.ts b/dist/install-security-scan.types-CimJAuMq.d.ts
+index fd04556..5ee6db7 100644
 --- a/dist/install-security-scan.types-CimJAuMq.d.ts
 +++ b/dist/install-security-scan.types-CimJAuMq.d.ts
-@@ -14002,6 +14002,9 @@
+@@ -14002,6 +14002,9 @@ type ChannelMessageSendTextContext<TConfig = OpenClawConfig> = {
    gatewayClientScopes?: readonly string[];
    /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
    deliveryQueueId?: string;
@@ -458,7 +606,7 @@ diff --git a/dist/install-security-scan.types-CimJAuMq.d.ts b/dist/install-secur
    /** @internal Stable platform-send index within one durable payload. */
    deliveryPartIndex?: number;
    /** @internal Exact platform-send count within one durable payload. */
-@@ -14178,6 +14181,7 @@
+@@ -14178,6 +14181,7 @@ type ChannelMessageReceiveAdapterShape = {
  /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
  type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
    id?: string;
@@ -466,7 +614,91 @@ diff --git a/dist/install-security-scan.types-CimJAuMq.d.ts b/dist/install-secur
    durableFinal?: ChannelMessageDurableFinalAdapter;
    send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
    live?: ChannelMessageLiveAdapterShape;
+diff --git a/dist/loader-UHuBXZwI.js b/dist/loader-UHuBXZwI.js
+index 5fdef04..b4069f1 100644
+--- a/dist/loader-UHuBXZwI.js
++++ b/dist/loader-UHuBXZwI.js
+@@ -1,3 +1,4 @@
++import { allowControlledPluginState } from "./nous-controlled-plugin.mjs";
+ import { D as resolveExpiresAtMsFromDurationMs, R as timestampMsToIsoString } from "./number-coercion-CLj0HTDM.js";
+ import { a as sanitizeCommandDescriptorDescription, i as normalizeCommandDescriptorName } from "./command-descriptor-utils-DII8rwLT.js";
+ import { a as getPluginCache, f as withPluginCache } from "./plugin-cache-DGWspMEc.js";
+@@ -4626,7 +4627,7 @@ function createPluginRuntimeResolver(state) {
+ 		let scopedAgentRuntime;
+ 		const assertTrustedPluginRuntime = (methodName) => {
+ 			const record = pluginRuntimeRecordById.get(pluginId) ?? registry.plugins.find((entry) => entry.id === pluginId);
+-			if (record?.origin !== "bundled" && record?.trustedOfficialInstall !== true) throw new Error(`${methodName} is only available for trusted plugins in this release. Plugin "${pluginId}" loaded with origin "${record?.origin ?? "unknown"}"; reinstall it from its official npm package or ClawHub listing to enable trusted plugin state.`);
++			if (record?.origin !== "bundled" && record?.trustedOfficialInstall !== true && !allowControlledPluginState({ pluginId, pluginSource: record?.source, methodName })) throw new Error(`${methodName} is only available for trusted plugins in this release. Plugin "${pluginId}" loaded with origin "${record?.origin ?? "unknown"}"; reinstall it from its official npm package or ClawHub listing to enable trusted plugin state.`);
+ 		};
+ 		const runtime = new Proxy(registryParams.runtime, { get(target, prop, receiver) {
+ 			const runWithPluginScope = (run) => {
+diff --git a/dist/payloads-B7_zRmw4.js b/dist/payloads-B7_zRmw4.js
+index d9dcef9..6b3535c 100644
+--- a/dist/payloads-B7_zRmw4.js
++++ b/dist/payloads-B7_zRmw4.js
+@@ -458,6 +458,15 @@ function buildEmbeddedRunPayloads(params) {
+ 		if (item.isReasoning === true) payload.isReasoning = true;
+ 		if (item.isError === true && params.sourceReplyDeliveryMode === "message_tool_only" && explicitFinalSourceReply === false) markReplyPayloadForSourceSuppressionDelivery(payload);
+ 		if (heartbeatTerminalToolFailure) setReplyPayloadMetadata(payload, { heartbeatTerminalToolFailure });
++		// Preserve the completed native application identity before assistant messages
++		// become transport payloads. This is internal metadata, never model content.
++		const applied = (params.currentAssistant ?? params.lastAssistant)?.nousHostBridge;
++		const appliedIdentity = applied?.outcome === "completed" ? applied.identity : void 0;
++		if (!item.isError && !item.isReasoning && appliedIdentity?.native?.runId === params.runId && typeof appliedIdentity.invocationId === "string" && appliedIdentity.invocationId.length > 0) setReplyPayloadMetadata(payload, { nativeFinalProducer: {
++			runId: appliedIdentity.native.runId,
++			sessionKey: appliedIdentity.native.sessionKey,
++			invocationId: appliedIdentity.invocationId
++		} });
+ 		if (!item.isError && !item.isReasoning && (params.assistantMessageIndex !== void 0 || params.assistantTranscriptOwned === true)) setReplyPayloadMetadata(payload, {
+ 			...params.assistantMessageIndex !== void 0 ? { assistantMessageIndex: params.assistantMessageIndex } : {},
+ 			...item.media?.length ? { assistantTranscriptMediaUrls: [...item.media] } : {},
+diff --git a/dist/payloads-Ch7RD6Ym.js b/dist/payloads-Ch7RD6Ym.js
+index 3a91d77..1b3668d 100644
+--- a/dist/payloads-Ch7RD6Ym.js
++++ b/dist/payloads-Ch7RD6Ym.js
+@@ -1,3 +1,4 @@
++import { i as copyReplyPayloadMetadata } from "./reply-payload-DahKk-7n.js";
+ import { ut as stripLeadingInboundMetadata } from "./openclaw-state-db-Bh3Bq87y.js";
+ import { d as normalizeLegacyInteractiveReply, f as normalizeMessagePresentation, g as renderMessagePresentationChartFallbackText, i as hasReplyChannelData, n as hasLegacyInteractiveReplyBlocks, o as hasReplyPayloadContent, r as hasMessagePresentationBlocks, y as renderMessagePresentationTableFallbackText } from "./payload-DYE7bQ2k.js";
+ import { T as formatLocationText } from "./reply-payload-y5EgUJuZ.js";
+@@ -89,7 +90,7 @@ function createOutboundPayloadPlanEntry(payload, context = {}) {
+ 	const parsedText = strippedParsed.text ?? "";
+ 	const suppressedText = strippedParsed.isSilent || isSuppressedRelayStatusText(parsedText);
+ 	const resolvedMediaUrl = mergedMedia.length > 1 ? void 0 : explicitMediaUrl;
+-	const normalizedPayload = {
++	const normalizedPayload = copyReplyPayloadMetadata(payload, {
+ 		...payload,
+ 		text: formatBtwTextForExternalDelivery({
+ 			...payload,
+@@ -101,7 +102,7 @@ function createOutboundPayloadPlanEntry(payload, context = {}) {
+ 		replyToTag: payload.replyToTag || parsed.replyToTag,
+ 		replyToCurrent: payload.replyToCurrent || parsed.replyToCurrent,
+ 		audioAsVoice: Boolean(payload.audioAsVoice || parsed.audioAsVoice)
+-	};
++	});
+ 	if (!(suppressedText ? hasReplyPayloadContent(normalizedPayload) : isRenderablePayload(normalizedPayload))) return null;
+ 	const hasChannelData = hasReplyChannelData(normalizedPayload.channelData);
+ 	return {
+@@ -143,7 +144,7 @@ function projectOutboundPayloadPlanForOutbound(plan) {
+ 			hasChannelData: entry.hasChannelData,
+ 			extraContent: payload.location != null
+ 		})) continue;
+-		normalizedPayloads.push({
++		normalizedPayloads.push(copyReplyPayloadMetadata(payload, {
+ 			text,
+ 			mediaUrls: entry.parts.mediaUrls,
+ 			audioAsVoice: payload.audioAsVoice === true ? true : void 0,
+@@ -153,7 +154,7 @@ function projectOutboundPayloadPlanForOutbound(plan) {
+ 			...entry.hasInteractive ? { interactive: payload.interactive } : {},
+ 			...entry.hasChannelData ? { channelData: payload.channelData } : {},
+ 			...payload.location ? { location: payload.location } : {}
+-		});
++		}));
+ 	}
+ 	return normalizedPayloads;
+ }
 diff --git a/dist/plugin-entry-C-sjzaBe.d.ts b/dist/plugin-entry-C-sjzaBe.d.ts
+index ffb23d9..efd267c 100644
 --- a/dist/plugin-entry-C-sjzaBe.d.ts
 +++ b/dist/plugin-entry-C-sjzaBe.d.ts
 @@ -5042,6 +5042,9 @@ type ChannelMessageSendTextContext<TConfig = OpenClawConfig> = {
@@ -497,6 +729,7 @@ diff --git a/dist/plugin-entry-C-sjzaBe.d.ts b/dist/plugin-entry-C-sjzaBe.d.ts
      childSessionKey: string;
      contextMode?: "isolated" | "fork";
 diff --git a/dist/plugin-entry-r6eDtEsn.d.ts b/dist/plugin-entry-r6eDtEsn.d.ts
+index 4518ef9..66f0a91 100644
 --- a/dist/plugin-entry-r6eDtEsn.d.ts
 +++ b/dist/plugin-entry-r6eDtEsn.d.ts
 @@ -14449,6 +14449,9 @@ type ChannelMessageSendTextContext<TConfig = OpenClawConfig> = {
@@ -527,9 +760,10 @@ diff --git a/dist/plugin-entry-r6eDtEsn.d.ts b/dist/plugin-entry-r6eDtEsn.d.ts
      childSessionKey: string;
      contextMode?: "isolated" | "fork";
 diff --git a/dist/plugin-sdk/channel-message.d.ts b/dist/plugin-sdk/channel-message.d.ts
+index e66081b..c93f4b3 100644
 --- a/dist/plugin-sdk/channel-message.d.ts
 +++ b/dist/plugin-sdk/channel-message.d.ts
-@@ -14,4 +14,5 @@
+@@ -14,4 +14,5 @@ import { _ as createAccountStatusSink, a as createFinalizableDraftStreamControls
  import { A as createChannelIngressError, C as createChannelProgressDraftCompositor, D as createTypingKeepaliveLoop, E as resolveChannelDraftStreamingChunking, M as isRecentOutboundMessageIdentity, N as recordOutboundMessageIdentity, O as INGRESS_CLAIM_PROCESS_ID, S as ChannelProgressDraftCompositorSnapshot, T as ChannelDraftStreamingChunking, _ as createDurableInboundReceiveJournalFromQueue, a as withDurableMessageSendContext, b as deriveDurableFinalDeliveryRequirements, c as createMessageReceiveContext, d as resolveMessageReceiptPrimaryId, f as verifyChannelMessageAdapterCapabilityProofs, g as verifyDurableFinalCapabilityProofs, h as verifyChannelMessageReceiveAckPolicyAdapterProofs, i as sendDurableMessageBatch, j as OutboundMessageIdentity, k as processPidFromOwnerId, l as createMessageReceiptFromOutboundResults, m as verifyChannelMessageLiveFinalizerProofs, n as deliverInboundReplyWithMessageSendContext, o as MessageAckPolicy, p as verifyChannelMessageLiveCapabilityAdapterProofs, r as resolveChannelProgressDraftRender, s as MessageReceiveContext, t as ChannelProgressDraftRenderMode, u as listMessageReceiptPlatformIds, v as createChannelMessageAdapterFromOutbound, w as createChannelProgressWorkCounter, x as ChannelProgressDraftCompositorLine, y as defineChannelMessageAdapter } from "../channel-outbound-DQoKU4mp.js";
  import { n as createRuntimeOutboundDelegates } from "../runtime-forwarders-DcXimhey.js";
  import { t as sanitizeForPlainText } from "../sanitize-text-CVPN3pRC.js";
@@ -538,9 +772,10 @@ diff --git a/dist/plugin-sdk/channel-message.d.ts b/dist/plugin-sdk/channel-mess
 +export { type AgentPlanStep, type AgentPlanStepStatus, CHANNEL_INGRESS_RETENTION_DEFAULTS, type ChannelDeliveryStreamingConfig, type ChannelDraftStreamingChunking, type ChannelIngressDrain, type ChannelIngressMonitorDeliveryResult, type ChannelIngressMonitorLifecycle, type ChannelIngressQueue, type ChannelIngressQueueClaim, type ChannelIngressQueueClaimRef, type ChannelIngressQueueCorruptClaim, type ChannelIngressQueueRecord, type ChannelMessageAdapterShape, type ChannelMessageDurableFinalAdapter, type ChannelMessageSendMediaContext, type ChannelMessageSendPayloadContext, type ChannelMessageSendResult, type ChannelMessageSendTextContext, type ChannelMessageUnknownSendContext, type ChannelMessageUnknownSendReconciliationResult, type ChannelPreviewStreamingConfig, type ChannelProgressDraftCompositorLine, type ChannelProgressDraftCompositorSnapshot, type ChannelProgressDraftLine, ChannelProgressDraftRenderMode, type ChannelStreamingBlockConfig, type ChannelStreamingProgressConfig, DEFAULT_INGRESS_ADOPTION_STALL_MS, DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS, DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS, type DurableMessageBatchSendResult, INGRESS_CLAIM_PROCESS_ID, type MessageAckPolicy, type MessageReceipt, type MessageReceiptPart, type MessageReceiptPartKind, type MessageReceiptSourceResult, type MessageReceiveContext, type OutboundDeliveryFormattingOptions, type OutboundIdentity, type OutboundMessageIdentity, type OutboundSendDeps, type OutboundSessionContext, type ReplyToResolution, type StreamingMode, type TextChunkMode, bindIngressLifecycleToReplyOptions, buildChannelProgressDraftLine, buildChannelProgressDraftLineForEntry, buildOutboundSessionContext, createAccountStatusSink, createChannelIngressDrain, createChannelIngressError, createChannelIngressMonitor, createChannelMessageAdapterFromOutbound, createChannelReplyPipeline as createChannelMessageReplyPipeline, createChannelProgressDraftCompositor, createChannelProgressDraftGate, createChannelProgressWorkCounter, createChannelRunQueue, createDraftStreamLoop, createDurableInboundReceiveJournalFromQueue, createFinalizableDraftLifecycle, createFinalizableDraftStreamControlsForState, createMessageReceiptFromOutboundResults, createMessageReceiveContext, createOutboundPayloadPlan, createPreviewMessageReceipt, createReplyPrefixContext, createReplyPrefixOptions, createReplyToFanout, createRuntimeOutboundDelegates, createTypingCallbacks, createTypingKeepaliveLoop, defineChannelMessageAdapter, defineFinalizableLivePreviewAdapter, deliverInboundReplyWithMessageSendContext, deliverWithFinalizableLivePreviewAdapter, deriveDurableFinalDeliveryRequirements, formatChannelProgressDraftLine, formatChannelProgressDraftLineForEntry, formatChannelProgressDraftText, formatPlanChecklistLines, getChannelStreamingConfigObject, hasFinalChannelTurnDispatch, hasVisibleChannelTurnDispatch, isChannelProgressDraftWorkToolName, isPotentialTruncatedFinal, isRecentOutboundMessageIdentity, keepHttpServerTaskAlive, listMessageReceiptPlatformIds, logTypingFailure, mergeChannelProgressDraftLine, normalizeAgentPlanSteps, normalizeChannelProgressDraftLineIdentity, processPidFromOwnerId, projectOutboundPayloadPlanForDelivery, recordOutboundMessageIdentity, resolveAgentOutboundIdentity, resolveChannelDraftStreamingChunking, resolveChannelSourceReplyDeliveryMode as resolveChannelMessageSourceReplyDeliveryMode, resolveChannelPreviewStreamMode, resolveChannelProgressDraftConfig, resolveChannelProgressDraftMaxLineChars, resolveChannelProgressDraftMaxLines, resolveChannelProgressDraftRender, resolveChannelStreamingBlockCoalesce, resolveChannelStreamingBlockEnabled, resolveChannelStreamingChunkMode, resolveChannelStreamingNativeTransport, resolveChannelStreamingPreviewCommandText, resolveChannelStreamingPreviewToolProgress, resolveChannelStreamingProgressCommentary, resolveChannelStreamingProgressNarration, resolveChannelStreamingSuppressDefaultToolProgressMessages, resolveChannelTurnDispatchCounts, resolveMessageReceiptPrimaryId, resolveOutboundSendDep, resolveTranscriptBackedChannelFinalText, runPassiveAccountLifecycle, sanitizeForPlainText, selectLongerFinalText, sendDurableMessageBatch, takeMessageIdAfterStop, verifyChannelMessageAdapterCapabilityProofs, verifyChannelMessageLiveCapabilityAdapterProofs, verifyChannelMessageLiveFinalizerProofs, verifyChannelMessageReceiveAckPolicyAdapterProofs, verifyDurableFinalCapabilityProofs, waitUntilAbort, withDurableMessageSendContext };
 +export type { ChannelDeliveryCustodyAdapter, ChannelDeliveryCustodyAdmission, ChannelDeliveryCustodyReference } from "../types-BzYyevxm.js";
 diff --git a/dist/plugin-sdk/channel-outbound.d.ts b/dist/plugin-sdk/channel-outbound.d.ts
+index decddd2..dd18665 100644
 --- a/dist/plugin-sdk/channel-outbound.d.ts
 +++ b/dist/plugin-sdk/channel-outbound.d.ts
-@@ -13,4 +13,5 @@
+@@ -13,4 +13,5 @@ import { _ as createAccountStatusSink, a as createFinalizableDraftStreamControls
  import { A as createChannelIngressError, C as createChannelProgressDraftCompositor, D as createTypingKeepaliveLoop, E as resolveChannelDraftStreamingChunking, M as isRecentOutboundMessageIdentity, N as recordOutboundMessageIdentity, O as INGRESS_CLAIM_PROCESS_ID, S as ChannelProgressDraftCompositorSnapshot, T as ChannelDraftStreamingChunking, _ as createDurableInboundReceiveJournalFromQueue, a as withDurableMessageSendContext, b as deriveDurableFinalDeliveryRequirements, c as createMessageReceiveContext, d as resolveMessageReceiptPrimaryId, f as verifyChannelMessageAdapterCapabilityProofs, g as verifyDurableFinalCapabilityProofs, h as verifyChannelMessageReceiveAckPolicyAdapterProofs, i as sendDurableMessageBatch, j as OutboundMessageIdentity, k as processPidFromOwnerId, l as createMessageReceiptFromOutboundResults, m as verifyChannelMessageLiveFinalizerProofs, n as deliverInboundReplyWithMessageSendContext, o as MessageAckPolicy, p as verifyChannelMessageLiveCapabilityAdapterProofs, r as resolveChannelProgressDraftRender, s as MessageReceiveContext, t as ChannelProgressDraftRenderMode, u as listMessageReceiptPlatformIds, v as createChannelMessageAdapterFromOutbound, w as createChannelProgressWorkCounter, x as ChannelProgressDraftCompositorLine, y as defineChannelMessageAdapter } from "../channel-outbound-DQoKU4mp.js";
  import { n as createRuntimeOutboundDelegates } from "../runtime-forwarders-DcXimhey.js";
  import { t as sanitizeForPlainText } from "../sanitize-text-CVPN3pRC.js";
@@ -549,9 +784,10 @@ diff --git a/dist/plugin-sdk/channel-outbound.d.ts b/dist/plugin-sdk/channel-out
 +export { type AgentPlanStep, type AgentPlanStepStatus, CHANNEL_INGRESS_RETENTION_DEFAULTS, type ChannelDeliveryStreamingConfig, type ChannelDraftStreamingChunking, type ChannelIngressDrain, type ChannelIngressMonitorDeliveryResult, type ChannelIngressMonitorLifecycle, type ChannelIngressQueue, type ChannelIngressQueueClaim, type ChannelIngressQueueClaimRef, type ChannelIngressQueueCorruptClaim, type ChannelIngressQueueRecord, type ChannelMessageAdapterShape, type ChannelMessageDurableFinalAdapter, type ChannelMessageSendMediaContext, type ChannelMessageSendPayloadContext, type ChannelMessageSendResult, type ChannelMessageSendTextContext, type ChannelMessageUnknownSendContext, type ChannelMessageUnknownSendReconciliationResult, type ChannelPreviewStreamingConfig, type ChannelProgressDraftCompositorLine, type ChannelProgressDraftCompositorSnapshot, type ChannelProgressDraftLine, ChannelProgressDraftRenderMode, type ChannelStreamingBlockConfig, type ChannelStreamingProgressConfig, DEFAULT_INGRESS_ADOPTION_STALL_MS, DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS, DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS, type DurableMessageBatchSendResult, INGRESS_CLAIM_PROCESS_ID, type MessageAckPolicy, type MessageReceipt, type MessageReceiptPart, type MessageReceiptPartKind, type MessageReceiptSourceResult, type MessageReceiveContext, type OutboundDeliveryFormattingOptions, type OutboundIdentity, type OutboundMessageIdentity, type OutboundSendDeps, type OutboundSessionContext, type ReplyToResolution, type StreamingMode, type TextChunkMode, bindIngressLifecycleToReplyOptions, buildChannelProgressDraftLine, buildChannelProgressDraftLineForEntry, buildOutboundSessionContext, createAccountStatusSink, createChannelIngressDrain, createChannelIngressError, createChannelIngressMonitor, createChannelMessageAdapterFromOutbound, createChannelReplyPipeline as createChannelMessageReplyPipeline, createChannelProgressDraftCompositor, createChannelProgressDraftGate, createChannelProgressWorkCounter, createChannelRunQueue, createDraftStreamLoop, createDurableInboundReceiveJournalFromQueue, createFinalizableDraftLifecycle, createFinalizableDraftStreamControlsForState, createMessageReceiptFromOutboundResults, createMessageReceiveContext, createOutboundPayloadPlan, createPreviewMessageReceipt, createReplyPrefixContext, createReplyPrefixOptions, createReplyToFanout, createRuntimeOutboundDelegates, createTypingCallbacks, createTypingKeepaliveLoop, defineChannelMessageAdapter, defineFinalizableLivePreviewAdapter, deliverInboundReplyWithMessageSendContext, deliverWithFinalizableLivePreviewAdapter, deriveDurableFinalDeliveryRequirements, formatChannelProgressDraftLine, formatChannelProgressDraftLineForEntry, formatChannelProgressDraftText, formatPlanChecklistLines, getChannelStreamingConfigObject, isChannelProgressDraftWorkToolName, isPotentialTruncatedFinal, isRecentOutboundMessageIdentity, keepHttpServerTaskAlive, listMessageReceiptPlatformIds, logTypingFailure, mergeChannelProgressDraftLine, normalizeAgentPlanSteps, normalizeChannelProgressDraftLineIdentity, processPidFromOwnerId, projectOutboundPayloadPlanForDelivery, recordOutboundMessageIdentity, resolveAgentOutboundIdentity, resolveChannelDraftStreamingChunking, resolveChannelSourceReplyDeliveryMode as resolveChannelMessageSourceReplyDeliveryMode, resolveChannelPreviewStreamMode, resolveChannelProgressDraftConfig, resolveChannelProgressDraftMaxLineChars, resolveChannelProgressDraftMaxLines, resolveChannelProgressDraftRender, resolveChannelStreamingBlockCoalesce, resolveChannelStreamingBlockEnabled, resolveChannelStreamingChunkMode, resolveChannelStreamingNativeTransport, resolveChannelStreamingPreviewCommandText, resolveChannelStreamingPreviewToolProgress, resolveChannelStreamingProgressCommentary, resolveChannelStreamingProgressNarration, resolveChannelStreamingSuppressDefaultToolProgressMessages, resolveMessageReceiptPrimaryId, resolveOutboundSendDep, resolveTranscriptBackedChannelFinalText, runPassiveAccountLifecycle, sanitizeForPlainText, selectLongerFinalText, sendDurableMessageBatch, takeMessageIdAfterStop, verifyChannelMessageAdapterCapabilityProofs, verifyChannelMessageLiveCapabilityAdapterProofs, verifyChannelMessageLiveFinalizerProofs, verifyChannelMessageReceiveAckPolicyAdapterProofs, verifyDurableFinalCapabilityProofs, waitUntilAbort, withDurableMessageSendContext };
 +export type { ChannelDeliveryCustodyAdapter, ChannelDeliveryCustodyAdmission, ChannelDeliveryCustodyReference } from "../types-BzYyevxm.js";
 diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
+index 115e3a6..6d3c930 100644
 --- a/dist/registry-BdPa2vko.js
 +++ b/dist/registry-BdPa2vko.js
-@@ -150,7 +150,7 @@
+@@ -150,7 +150,7 @@ function projectContextEngineHostParams(engine, methodName, params) {
  	return Object.fromEntries(Object.entries(params).filter(([key]) => accepted.includes(key) || !CONTEXT_ENGINE_HOST_PARAMS.has(key) || methodName === "compact" && key === "abortSignal"));
  }
  function wrapResolvedContextEngine(engine, metadata) {
@@ -560,7 +796,7 @@ diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
  		defaultEngineId: metadata.defaultEngineId,
  		factoryCtx: metadata.factoryCtx
  	} : void 0;
-@@ -489,15 +489,19 @@
+@@ -489,15 +489,19 @@ async function resolveContextEngine(config, options) {
  	const slotValue = config?.plugins?.slots?.contextEngine;
  	const engineId = typeof slotValue === "string" && slotValue.trim() ? slotValue.trim() : defaultEngineId;
  	const isDefaultEngine = engineId === defaultEngineId;
@@ -582,7 +818,7 @@ diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
  		recordContextEngineQuarantine({
  			engineId,
  			operation: "resolve",
-@@ -507,6 +511,7 @@
+@@ -507,6 +511,7 @@ async function resolveContextEngine(config, options) {
  		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
  	}
  	if (!isDefaultEngine && entry.lifecycle === "readOnlyDiscovery") {
@@ -590,7 +826,7 @@ diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
  		console.warn(`[context-engine] Context engine "${engineId}" owner=${entry.owner} is registered for read-only discovery only; falling back to default engine "${defaultEngineId}" without quarantine until runtime activation registers it.`);
  		return resolveDefaultContextEngine(defaultEngineId, factoryCtx);
  	}
-@@ -518,7 +523,7 @@
+@@ -518,7 +523,7 @@ async function resolveContextEngine(config, options) {
  		const contractError = describeResolvedContextEngineContractError(engineId, engine);
  		if (contractError) throw new Error(contractError);
  	} catch (error) {
@@ -600,6 +836,7 @@ diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
  			engineId,
  			owner: entry.owner,
 diff --git a/dist/runtime-api-DDF9iz51.d.ts b/dist/runtime-api-DDF9iz51.d.ts
+index 7f5d272..7f2ed47 100644
 --- a/dist/runtime-api-DDF9iz51.d.ts
 +++ b/dist/runtime-api-DDF9iz51.d.ts
 @@ -11892,6 +11892,9 @@ type ChannelMessageSendTextContext<TConfig = OpenClawConfig> = {
@@ -630,9 +867,10 @@ diff --git a/dist/runtime-api-DDF9iz51.d.ts b/dist/runtime-api-DDF9iz51.d.ts
      childSessionKey: string;
      contextMode?: "isolated" | "fork";
 diff --git a/dist/runtime-plugins-CWkOjN1D.js b/dist/runtime-plugins-CWkOjN1D.js
+index 842fe5a..b13953c 100644
 --- a/dist/runtime-plugins-CWkOjN1D.js
 +++ b/dist/runtime-plugins-CWkOjN1D.js
-@@ -5,7 +5,7 @@
+@@ -5,7 +5,7 @@ import { a as loadPluginMetadataSnapshot } from "./plugin-metadata-snapshot-BuNx
  import { d as getActivePluginRegistry, m as getActivePluginRegistryWorkspaceDir } from "./runtime-MupoouIC.js";
  import { a as getPluginRuntimeGatewayRequestScope, d as withPluginRuntimeRegistryScope } from "./gateway-request-scope-CmMd3nUp.js";
  import { a as registryContainsRuntimePluginIds, i as listRuntimePluginIdsFromRegistry, r as listLoadedRuntimePluginIds } from "./active-runtime-registry-D12UHfQh.js";
@@ -641,7 +879,7 @@ diff --git a/dist/runtime-plugins-CWkOjN1D.js b/dist/runtime-plugins-CWkOjN1D.js
  import { r as adoptRuntimeContextEngineRegistrations } from "./registry-BdPa2vko.js";
  import { a as resolveAgentRuntimePluginSelections, i as resolveAgentRuntimePluginLoadPlan } from "./runtime-plugin-load-plan-Bm46qisR.js";
  import { t as adoptRuntimeMemoryRegistrations } from "./memory-state-D4Yq0L6U.js";
-@@ -81,10 +81,11 @@
+@@ -81,10 +81,11 @@ function resolveAgentRuntimePluginRegistryLoad(params) {
  /** Loads the registry handle owned by an agent prepared-runtime generation. */
  function loadAgentRuntimePluginRegistryHandle(params) {
  	const loadOptions = resolveAgentRuntimePluginRegistryLoad(params);
@@ -657,6 +895,7 @@ diff --git a/dist/runtime-plugins-CWkOjN1D.js b/dist/runtime-plugins-CWkOjN1D.js
  	const activeRegistry = getActivePluginRegistry();
  	if (!activeRegistry) return pluginRegistry;
 diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQMTkIo.js
+index 93a9926..97acd11 100644
 --- a/dist/sessions-spawn-tool-1FQMTkIo.js
 +++ b/dist/sessions-spawn-tool-1FQMTkIo.js
 @@ -1,3 +1,4 @@
@@ -705,9 +944,10 @@ diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQ
  			const lightContext = params.lightContext === true;
  			const roleContext = requestedAgentId ? { role: requestedAgentId } : {};
 diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B645JcX8.js
+index d5764bd..e46e5b0 100644
 --- a/dist/system-prompt-params-B645JcX8.js
 +++ b/dist/system-prompt-params-B645JcX8.js
-@@ -530,10 +530,11 @@
+@@ -530,10 +530,11 @@ function appendModelIdentitySystemPrompt(params) {
  	return base ? `${base}\n\n${line}` : line;
  }
  function buildAgentSystemPrompt(params) {
@@ -720,7 +960,7 @@ diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B
  	const acpEnabled = params.acpEnabled === true;
  	const promptSurface = params.promptSurface ?? "openclaw_main";
  	const sandboxedRuntime = params.sandboxInfo?.enabled === true;
-@@ -806,7 +807,7 @@
+@@ -806,7 +807,7 @@ function buildAgentSystemPrompt(params) {
  		stableContextFiles: contextFiles
  	}), () => {
  		const lines = [
@@ -729,7 +969,7 @@ diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B
  			"",
  			...includeToolGuidance ? [
  				"## Tooling",
-@@ -1062,6 +1063,7 @@
+@@ -1062,6 +1063,7 @@ function resolveAgentSystemPromptConfig(params) {
  /** Builds the agent system prompt after applying config-derived prompt fields. */
  function buildConfiguredAgentSystemPrompt(params) {
  	const { config, agentId, ...renderParams } = params;
@@ -737,7 +977,7 @@ diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B
  	const configParams = config ? resolveAgentSystemPromptConfig({
  		config,
  		agentId,
-@@ -1070,7 +1072,9 @@
+@@ -1070,7 +1072,9 @@ function buildConfiguredAgentSystemPrompt(params) {
  	}) : {};
  	return buildAgentSystemPrompt({
  		...renderParams,
@@ -749,6 +989,7 @@ diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B
  }
  //#endregion
 diff --git a/dist/types-BzYyevxm.d.ts b/dist/types-BzYyevxm.d.ts
+index 4c828ee..1ca79d3 100644
 --- a/dist/types-BzYyevxm.d.ts
 +++ b/dist/types-BzYyevxm.d.ts
 @@ -1,3 +1,5 @@
@@ -757,7 +998,7 @@ diff --git a/dist/types-BzYyevxm.d.ts b/dist/types-BzYyevxm.d.ts
  import { r as OpenClawConfig } from "./types.openclaw-DQK9GQyv.js";
  import { C as ReplyToMode } from "./types.base-D2CyC728.js";
  import "./types-B6GeWkdz.js";
-@@ -168,6 +170,9 @@
+@@ -168,6 +170,9 @@ type ChannelMessageSendTextContext<TConfig = OpenClawConfig> = {
    gatewayClientScopes?: readonly string[];
    /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
    deliveryQueueId?: string;
@@ -767,7 +1008,7 @@ diff --git a/dist/types-BzYyevxm.d.ts b/dist/types-BzYyevxm.d.ts
    /** @internal Stable platform-send index within one durable payload. */
    deliveryPartIndex?: number;
    /** @internal Exact platform-send count within one durable payload. */
-@@ -341,9 +346,37 @@
+@@ -341,9 +346,37 @@ type ChannelMessageReceiveAdapterShape = {
    defaultAckPolicy?: ChannelMessageReceiveAckPolicy;
    supportedAckPolicies?: readonly ChannelMessageReceiveAckPolicy[];
  };
@@ -805,56 +1046,3 @@ diff --git a/dist/types-BzYyevxm.d.ts b/dist/types-BzYyevxm.d.ts
    durableFinal?: ChannelMessageDurableFinalAdapter;
    send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
    live?: ChannelMessageLiveAdapterShape;
-diff --git a/dist/loader-UHuBXZwI.js b/dist/loader-UHuBXZwI.js
---- a/dist/loader-UHuBXZwI.js
-+++ b/dist/loader-UHuBXZwI.js
-@@ -1,3 +1,4 @@
-+import { allowControlledPluginState } from "./nous-controlled-plugin.mjs";
- import { D as resolveExpiresAtMsFromDurationMs, R as timestampMsToIsoString } from "./number-coercion-CLj0HTDM.js";
- import { a as sanitizeCommandDescriptorDescription, i as normalizeCommandDescriptorName } from "./command-descriptor-utils-DII8rwLT.js";
- import { a as getPluginCache, f as withPluginCache } from "./plugin-cache-DGWspMEc.js";
-@@ -4626,7 +4627,7 @@
- 		let scopedAgentRuntime;
- 		const assertTrustedPluginRuntime = (methodName) => {
- 			const record = pluginRuntimeRecordById.get(pluginId) ?? registry.plugins.find((entry) => entry.id === pluginId);
--			if (record?.origin !== "bundled" && record?.trustedOfficialInstall !== true) throw new Error(`${methodName} is only available for trusted plugins in this release. Plugin "${pluginId}" loaded with origin "${record?.origin ?? "unknown"}"; reinstall it from its official npm package or ClawHub listing to enable trusted plugin state.`);
-+			if (record?.origin !== "bundled" && record?.trustedOfficialInstall !== true && !allowControlledPluginState({ pluginId, pluginSource: record?.source, methodName })) throw new Error(`${methodName} is only available for trusted plugins in this release. Plugin "${pluginId}" loaded with origin "${record?.origin ?? "unknown"}"; reinstall it from its official npm package or ClawHub listing to enable trusted plugin state.`);
- 		};
- 		const runtime = new Proxy(registryParams.runtime, { get(target, prop, receiver) {
- 			const runWithPluginScope = (run) => {
-diff --git a/dist/cli-backend.types-LHE5t00D.d.ts b/dist/cli-backend.types-LHE5t00D.d.ts
---- a/dist/cli-backend.types-LHE5t00D.d.ts
-+++ b/dist/cli-backend.types-LHE5t00D.d.ts
-@@ -25122,6 +25122,8 @@ interface ContextEngine {
-    * fails after preparation succeeds.
-    */
-   prepareSubagentSpawn?(params: {
-+    /** Exact native model run requesting this child; supplied by the native tool context. */
-+    parentRunId?: string;
-     parentSessionKey: string;
-     childSessionKey: string;
-     contextMode?: "isolated" | "fork";
-diff --git a/dist/agent-harness-runtime-DUs0hfX9.d.ts b/dist/agent-harness-runtime-DUs0hfX9.d.ts
---- a/dist/agent-harness-runtime-DUs0hfX9.d.ts
-+++ b/dist/agent-harness-runtime-DUs0hfX9.d.ts
-@@ -20088,6 +20088,8 @@ interface ContextEngine {
-    * fails after preparation succeeds.
-    */
-   prepareSubagentSpawn?(params: {
-+    /** Exact native model run requesting this child; supplied by the native tool context. */
-+    parentRunId?: string;
-     parentSessionKey: string;
-     childSessionKey: string;
-     contextMode?: "isolated" | "fork";
-diff --git a/dist/agent-harness-runtime-CBvQyLlU.d.ts b/dist/agent-harness-runtime-CBvQyLlU.d.ts
---- a/dist/agent-harness-runtime-CBvQyLlU.d.ts
-+++ b/dist/agent-harness-runtime-CBvQyLlU.d.ts
-@@ -16350,6 +16350,8 @@ interface ContextEngine {
-    * fails after preparation succeeds.
-    */
-   prepareSubagentSpawn?(params: {
-+    /** Exact native model run requesting this child; supplied by the native tool context. */
-+    parentRunId?: string;
-     parentSessionKey: string;
-     childSessionKey: string;
-     contextMode?: "isolated" | "fork";

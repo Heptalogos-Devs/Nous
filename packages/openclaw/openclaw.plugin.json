@@ -124,5 +124,8 @@
         }
       }
     }
+  },
+  "contracts": {
+    "tools": ["nous_query", "nous_read"]
   }
 }

@@ -10,7 +10,7 @@ type ContextEngine = Awaited<
 >;
 /** The required model-boundary extension carried by the controlled OpenClaw distribution. */
 export interface ManagedModelInput {
-  boundaryVersion: 3;
+  boundaryVersion: 4;
   historyIsFresh: boolean;
   historyGeneration: string;
   persistSessionBinding(value: Record<string, string>): Promise<void>;
@@ -38,7 +38,20 @@ export interface ManagedModelApplication {
   invocationId: string;
   applied: AppliedCognition;
 }
+export interface ManagedToolExecution {
+  readonly toolName: string;
+  readonly toolCallId: string;
+  readonly phase: "prepare" | "execute";
+}
+export interface ManagedToolExecutionGuard {
+  run<T>(implementation: () => T | Promise<T>): Promise<T>;
+}
 export interface ManagedContextEngine extends ContextEngine {
+  authorizeToolExecution(
+    input: ManagedModelInput,
+    application: ManagedModelApplication,
+    execution: ManagedToolExecution,
+  ): Promise<ManagedToolExecutionGuard>;
   readonly info: ContextEngine["info"] & {
     managedModelInputRequired: true;
     transcriptPersistence: "host";

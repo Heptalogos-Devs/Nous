@@ -7,9 +7,11 @@ import {
   ObservationInputSchema,
   AcceptedObservationSchema,
   ManagedContextResponseSchema,
+  ReadSourcesResponseSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
   hostPrepareRequestSchema,
+  hostToolExecutionRequestSchema,
   hostAdmittedRequestSchema,
   decodeProjection,
   hostFeedbackRequestSchema,
@@ -29,7 +31,7 @@ import { writeFile, rm, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { expect, test, vi } from "vitest";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type {
   ManagedContextEngine,
   ManagedModelInput,
@@ -75,6 +77,8 @@ async function fixture(hosted = true) {
     recordReject: false,
     handoffReject: false,
     foreign: false,
+    toolReject: false,
+    allowedToolNames: ["nous_query", "nous_read", "actual_read"],
     workContextId: firstWork,
   };
   const prepares: HostPrepareRequest[] = [];
@@ -187,6 +191,7 @@ async function fixture(hosted = true) {
             version: 1,
             contactRequestId: request.contactRequestId,
             workContextId: state.workContextId,
+            allowedToolNames: state.allowedToolNames,
             usage: toJson(
               CognitionUsageSchema,
               create(CognitionUsageSchema, {
@@ -223,6 +228,28 @@ async function fixture(hosted = true) {
           admitted.contactRequestId,
           decodeProjection(admitted.projection).usage!,
         );
+      }
+      if (req.url === HOST_BRIDGE_PATHS.toolExecution) {
+        const request = hostToolExecutionRequestSchema.parse(body);
+        if (
+          state.toolReject ||
+          !state.allowedToolNames.includes(request.toolName)
+        ) {
+          res.writeHead(403);
+          res.end("{}");
+          return;
+        }
+        res.end(
+          JSON.stringify({
+            version: 1,
+            allowed: true,
+            contactRequestId: request.contactRequestId,
+            toolName: request.toolName,
+            toolCallId: request.toolCallId,
+            usage: encodeCognitionUsage(usages.get(request.contactRequestId)!),
+          }),
+        );
+        return;
       }
       if (req.url === HOST_BRIDGE_PATHS.feedback) {
         const request = hostFeedbackRequestSchema.parse(body);
@@ -334,7 +361,11 @@ async function fixture(hosted = true) {
         });
       },
     ),
-    reportUse: vi.fn(async () => ({ modelInputChecked: true })),
+    reportUse: vi.fn(async (request?: { events?: unknown[] }) => ({
+      modelInputChecked: true,
+      acceptedCount: request?.events?.length ?? 0,
+      duplicateCount: 0,
+    })),
     closeSession: vi.fn(async () => ({})),
   };
   const build = vi.fn(
@@ -356,7 +387,26 @@ async function fixture(hosted = true) {
         },
       } as never),
   );
-  mocks.client = { runtime, cognition: { buildManagedContext: build } };
+  const readSources = vi.fn(async () =>
+    create(ReadSourcesResponseSchema, {
+      items: [
+        {
+          text: "ACTUAL RETURNED SOURCE",
+          sourceRefs: [
+            {
+              kind: "self_facet_revision",
+              value: "00000000-0000-4000-8000-000000000099",
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  mocks.client = {
+    runtime,
+    cognition: { buildManagedContext: build, readSources },
+  };
+  const tools: AnyAgentTool[] = [];
   const entries = new Map<
     string,
     { sessionId: string; pluginExtensions?: Record<string, unknown> }
@@ -384,6 +434,9 @@ async function fixture(hosted = true) {
         },
       },
     },
+    registerTool: (factory: () => AnyAgentTool[]) => {
+      tools.push(...factory());
+    },
     registerContextEngine: (
       _id: string,
       createEngine: () => ManagedContextEngine,
@@ -395,7 +448,7 @@ async function fixture(hosted = true) {
   plugin.register(api as unknown as OpenClawPluginApi);
   const input = (runId = "native-run"): ManagedModelInput =>
     ({
-      boundaryVersion: 3,
+      boundaryVersion: 4,
       historyIsFresh: true,
       historyGeneration: "native-session",
       sessionId: "native-session",
@@ -443,6 +496,8 @@ async function fixture(hosted = true) {
     runtime,
     build,
     entries,
+    tools,
+    readSources,
     engine: engine!,
     reopen: () => engineFactory(),
     input,
@@ -742,5 +797,85 @@ test("bridge refuses external origins, nonprivate credentials, and offline Host"
     expect(offline.build).not.toHaveBeenCalled();
   } finally {
     await offline.close();
+  }
+});
+
+test("v4 Host tools filter model visibility and readonly execution uses only the current private native scope with presented dependencies", async () => {
+  const f = await fixture();
+  mocks.history = [];
+  try {
+    const input = f.input();
+    input.context.tools = [...f.tools, { ...f.tools[0]!, name: "not_adopted" }];
+    const application = await f.engine.prepareModelInput(input);
+    expect(
+      application.context.tools?.map((candidate) => candidate.name),
+    ).toEqual(["nous_query", "nous_read"]);
+    const tool = f.tools.find((candidate) => candidate.name === "nous_read")!;
+    const args = {
+      references: [
+        {
+          kind: "self_facet_revision",
+          value: "00000000-0000-4000-8000-000000000099",
+        },
+      ],
+    };
+    await expect(tool.execute("native-call", args)).rejects.toThrow(
+      "trusted native",
+    );
+    const guard = await f.engine.authorizeToolExecution(input, application, {
+      toolName: "nous_read",
+      toolCallId: "native-call",
+      phase: "execute",
+    });
+    const returned = await guard.run(() => tool.execute("native-call", args));
+    expect(JSON.stringify(returned)).toContain("ACTUAL RETURNED SOURCE");
+    const read = f.readSources.mock.calls[0] as unknown as [
+      {
+        usage: {
+          sourceRead: { sourceRefs: unknown[] };
+          agentInstanceId: string;
+        };
+      },
+    ];
+    expect(read[0].usage.agentInstanceId).toBe("native-session:native-run");
+    expect(read[0].usage.sourceRead.sourceRefs.length).toBe(3);
+    const presented = f.runtime.reportUse.mock.calls.at(-1)?.[0]?.events;
+    expect(presented).toHaveLength(1);
+    expect(presented?.[0]).toMatchObject({
+      kind: "presented",
+      reference: {
+        kind: "self_facet_revision",
+        value: args.references[0]!.value,
+      },
+    });
+    await expect(
+      guard.run(() => tool.execute("forged-call", args)),
+    ).rejects.toThrow("trusted native");
+    await expect(
+      guard.run(() =>
+        tool.execute("native-call", {
+          ...args,
+          usage: { sourceRead: { originConversationRefs: ["private"] } },
+        }),
+      ),
+    ).rejects.toThrow();
+    f.state.toolReject = true;
+    await expect(
+      f.engine.authorizeToolExecution(input, application, {
+        toolName: "nous_read",
+        toolCallId: "native-next",
+        phase: "execute",
+      }),
+    ).rejects.toThrow("rejected");
+    expect(f.readSources).toHaveBeenCalledTimes(1);
+    f.state.toolReject = false;
+    f.runtime.reportUse.mockRejectedValueOnce(
+      new Error("ReportUse unavailable"),
+    );
+    await expect(
+      guard.run(() => tool.execute("native-call", args)),
+    ).rejects.toThrow("ReportUse unavailable");
+  } finally {
+    await f.close();
   }
 });
