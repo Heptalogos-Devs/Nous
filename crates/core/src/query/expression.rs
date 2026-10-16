@@ -127,6 +127,8 @@ pub enum RevisionView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemporalFrame {
     pub clock_now: Option<DomainStamp>,
+    #[serde(default)]
+    pub knowledge_at_world_time: Option<Box<DomainStamp>>,
     pub authority_now: DateTime<Utc>,
     pub authority_view: AuthorityView,
     pub revision_view: RevisionView,
@@ -144,6 +146,7 @@ impl Default for TemporalFrame {
     fn default() -> Self {
         Self {
             clock_now: None,
+            knowledge_at_world_time: None,
             authority_now: DateTime::<Utc>::UNIX_EPOCH,
             authority_view: AuthorityView::Current,
             revision_view: RevisionView::Current,

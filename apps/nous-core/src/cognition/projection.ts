@@ -15,6 +15,7 @@ import {
 import type { ConsumerPolicy } from "../domain.js";
 import { ModelRuntime } from "../model/runtime.js";
 import { canonicalDigest } from "../digest.js";
+import { epistemicView } from "./epistemic.js";
 
 function family(
   segment: Segment,
@@ -221,6 +222,7 @@ export class ProjectionPlanner {
     return create(ProjectionSchema, {
       ...batch,
       projectionId,
+      epistemicView: epistemicView(segments, degradation),
       segments,
       degradation,
     });

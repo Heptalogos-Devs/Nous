@@ -51,6 +51,16 @@ pub(super) fn occurrence(value: nous_material::ObservationOccurrence) -> p::Occu
         subject_id: value.subject_id.0.to_string(),
         artifact_id: value.artifact_id.map(|id| id.0.to_string()),
         source_class: value.source_class.as_str().into(),
+        world_realized: value.world_realized.map(|source| p::WorldRealizedSource {
+            world_id: source.world_id,
+            event_id: source.event_id,
+            event_revision: source.event_revision,
+            producer_ref: source.producer_ref,
+            generation_method: source.generation_method,
+            realized_at: Some(timestamp(source.realized_at)),
+            world_observed: Some(domain_stamp_proto(&source.world_observed)),
+            shared_origin_refs: source.shared_origin_refs,
+        }),
         external_object_ref: value
             .external_object_ref
             .map(|value| value.as_str().to_owned()),

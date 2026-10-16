@@ -6,6 +6,8 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct ContextSource {
+    pub domain_knowledge: Option<Box<DomainKnowledge>>,
+    pub epistemic_class: Option<EpistemicClass>,
     pub temporal: Option<FreshnessDescriptor>,
     pub usage: &'static str,
     pub required: bool,
@@ -146,6 +148,8 @@ impl CognitiveRuntimeService {
         if let CognitiveRef::Resource(resource) = reference {
             let descriptor = self.resource(subject, resource).await?.descriptor;
             return Ok(crate::ContextSource {
+                epistemic_class: None,
+                domain_knowledge: None,
                 temporal: None,
                 usage: "task_evidence",
                 required: false,
@@ -179,6 +183,8 @@ impl CognitiveRuntimeService {
             None
         };
         Ok(crate::ContextSource {
+            epistemic_class: None,
+            domain_knowledge: None,
             temporal: None,
             usage: "task_evidence",
             required: false,
@@ -606,6 +612,8 @@ impl CognitiveRuntimeService {
 
 fn work_context_source(context: &WorkContextView, max_bytes: usize) -> ContextSource {
     ContextSource {
+        epistemic_class: None,
+        domain_knowledge: None,
         temporal: None,
         usage: "situational_guidance",
         required: true,

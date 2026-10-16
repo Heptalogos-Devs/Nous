@@ -277,6 +277,11 @@ impl SelfService {
             .await?;
         match &input.content {
             SelfContent::SelfFacet(v) => {
+                if let Some(knowledge) = &v.domain_knowledge {
+                    for reference in &knowledge.interest_refs {
+                        self.track_reference(tx, revision, reference).await?;
+                    }
+                }
                 for e in &v.exceptions {
                     self.track_basis(tx, revision, &e.basis).await?;
                 }

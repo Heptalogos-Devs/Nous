@@ -36,9 +36,11 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
                     occurrence: OccurrenceDescriptor {
                         occurred_time_domain_ref: "time:real".into(),
                         source_class: nous_core::SourceClass::Message,
+                        world_realized: None,
                         external_object_ref: None,
                         occurred_time: TemporalExtent::Instant { at: time },
                         observed_at: Some(now),
+                        observed_stamp: None,
                         conversation_ref: None,
                         actor_entity_ref: None,
                         context: serde_json::json!({}),
@@ -215,9 +217,11 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
                     occurrence: OccurrenceDescriptor {
                         occurred_time_domain_ref: "time:real".into(),
                         source_class: nous_core::SourceClass::File,
+                        world_realized: None,
                         external_object_ref: None,
                         occurred_time: TemporalExtent::Instant { at: occurred },
                         observed_at: Some(observed),
+                        observed_stamp: None,
                         conversation_ref: None,
                         actor_entity_ref: None,
                         context: serde_json::json!({}),

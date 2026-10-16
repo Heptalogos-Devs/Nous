@@ -775,7 +775,7 @@ impl KernelService {
                         .and_then(|m| m.clock_now.clone())
                         .map(domain_stamp)
                         .transpose()?,
-                    as_of: time(modifiers.and_then(|m| m.as_of))?,
+                    as_of: time(modifiers.and_then(|m| m.as_recorded_at))?,
                     history: modifiers.is_some_and(|m| m.history),
                     valid_predicates: valid_predicates.as_deref(),
                 },

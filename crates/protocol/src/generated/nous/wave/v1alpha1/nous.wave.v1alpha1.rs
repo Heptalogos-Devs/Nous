@@ -280,6 +280,25 @@ pub mod time_predicate {
         Range(super::TimeInterval),
     }
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WorldRealizedSource {
+    #[prost(string, tag="1")]
+    pub world_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub event_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub event_revision: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub producer_ref: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub generation_method: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="6")]
+    pub realized_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="7")]
+    pub world_observed: ::core::option::Option<DomainStamp>,
+    #[prost(string, repeated, tag="8")]
+    pub shared_origin_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ObservationInput {
     #[prost(string, tag="1")]
@@ -304,6 +323,12 @@ pub struct ObservationInput {
     pub context: ::core::option::Option<::prost_types::Struct>,
     #[prost(message, repeated, tag="11")]
     pub entities: ::prost::alloc::vec::Vec<EntityMention>,
+    /// Host-captured mapping at actual contact; never inferred for old contacts.
+    #[prost(message, optional, tag="15")]
+    pub observed_stamp: ::core::option::Option<DomainStamp>,
+    /// Authenticated Host release only; never model input.
+    #[prost(message, optional, tag="14")]
+    pub world_realized: ::core::option::Option<WorldRealizedSource>,
     #[prost(bool, tag="12")]
     pub admit: bool,
     #[prost(message, optional, tag="13")]
@@ -425,13 +450,15 @@ pub struct QueryModifiers {
     #[prost(message, repeated, tag="9")]
     pub preferences: ::prost::alloc::vec::Vec<Preference>,
     #[prost(message, optional, tag="10")]
-    pub as_of: ::core::option::Option<::prost_types::Timestamp>,
+    pub as_recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(bool, tag="11")]
     pub history: bool,
     #[prost(message, optional, tag="12")]
     pub clock_now: ::core::option::Option<DomainStamp>,
     #[prost(string, repeated, tag="13")]
     pub temporal_expressions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="14")]
+    pub knowledge_at_world_time: ::core::option::Option<DomainStamp>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Preference {
@@ -1314,6 +1341,8 @@ pub struct CognitionUsage {
     pub contact_nature: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag="12")]
     pub world_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="13")]
+    pub world_time: ::core::option::Option<DomainStamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProjectionRequest {
@@ -1353,6 +1382,57 @@ pub struct ProjectionRequest {
     pub current_materials: ::prost::alloc::vec::Vec<EvidenceRef>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DomainKnowledge {
+    #[prost(string, tag="1")]
+    pub domain_ref: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub familiarity: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="3")]
+    pub can_do: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag="4")]
+    pub limitations: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag="5")]
+    pub experience_kinds: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="6")]
+    pub interest_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EpistemicEntry {
+    #[prost(message, repeated, tag="1")]
+    pub source_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(string, tag="2")]
+    pub text: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub attribution: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="4")]
+    pub temporal: ::core::option::Option<DomainTemporalEvidence>,
+    #[prost(message, repeated, tag="5")]
+    pub evidence: ::prost::alloc::vec::Vec<Evidence>,
+    #[prost(message, optional, tag="6")]
+    pub domain_knowledge: ::core::option::Option<DomainKnowledge>,
+    #[prost(string, optional, tag="7")]
+    pub epistemic_class: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EpistemicView {
+    #[prost(message, repeated, tag="1")]
+    pub familiar_domains: ::prost::alloc::vec::Vec<EpistemicEntry>,
+    #[prost(message, repeated, tag="2")]
+    pub accepted_facts_and_reports: ::prost::alloc::vec::Vec<EpistemicEntry>,
+    #[prost(message, repeated, tag="3")]
+    pub experiences: ::prost::alloc::vec::Vec<EpistemicEntry>,
+    #[prost(message, repeated, tag="4")]
+    pub unknowns: ::prost::alloc::vec::Vec<EpistemicEntry>,
+    #[prost(message, repeated, tag="5")]
+    pub execution_assistance: ::prost::alloc::vec::Vec<EpistemicEntry>,
+    #[prost(message, repeated, tag="6")]
+    pub learning_opportunities: ::prost::alloc::vec::Vec<EpistemicEntry>,
+    #[prost(bool, tag="7")]
+    pub complete: bool,
+    #[prost(message, repeated, tag="8")]
+    pub coverage: ::prost::alloc::vec::Vec<Degradation>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ContextSegment {
     #[prost(string, tag="1")]
     pub segment_id: ::prost::alloc::string::String,
@@ -1378,6 +1458,10 @@ pub struct ContextSegment {
     pub required: bool,
     #[prost(message, optional, tag="12")]
     pub temporal: ::core::option::Option<DomainTemporalEvidence>,
+    #[prost(message, optional, tag="13")]
+    pub domain_knowledge: ::core::option::Option<DomainKnowledge>,
+    #[prost(string, optional, tag="14")]
+    pub epistemic_class: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Projection {
@@ -1401,6 +1485,8 @@ pub struct Projection {
     pub usage: ::core::option::Option<CognitionUsage>,
     #[prost(message, optional, tag="10")]
     pub semantic_clock: ::core::option::Option<DomainStamp>,
+    #[prost(message, optional, tag="11")]
+    pub epistemic_view: ::core::option::Option<EpistemicView>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ContextCursor {
@@ -2725,6 +2811,8 @@ pub struct Occurrence {
     pub observed_stamp: ::core::option::Option<DomainStamp>,
     #[prost(message, optional, tag="12")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="13")]
+    pub world_realized: ::core::option::Option<WorldRealizedSource>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OccurrenceListRequest {
@@ -2995,6 +3083,8 @@ pub struct SelfFacetContent {
     pub producer: ::core::option::Option<ProducerSignature>,
     #[prost(string, tag="9")]
     pub epistemic_class: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="10")]
+    pub domain_knowledge: ::core::option::Option<DomainKnowledge>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NarrativeContent {

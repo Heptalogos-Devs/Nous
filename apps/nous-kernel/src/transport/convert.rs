@@ -391,3 +391,30 @@ pub fn temporal_metadata_proto(
         recorded_at: value.recorded_at.map(timestamp),
     }
 }
+
+pub fn domain_knowledge(value: p::DomainKnowledge) -> Result<nous_core::DomainKnowledge> {
+    let knowledge = nous_core::DomainKnowledge {
+        domain_ref: value.domain_ref,
+        familiarity: value.familiarity,
+        can_do: value.can_do,
+        limitations: value.limitations,
+        experience_kinds: value.experience_kinds,
+        interest_refs: value
+            .interest_refs
+            .into_iter()
+            .map(from_ref)
+            .collect::<Result<_>>()?,
+    };
+    knowledge.validate()?;
+    Ok(knowledge)
+}
+pub fn domain_knowledge_proto(value: nous_core::DomainKnowledge) -> p::DomainKnowledge {
+    p::DomainKnowledge {
+        domain_ref: value.domain_ref,
+        familiarity: value.familiarity,
+        can_do: value.can_do,
+        limitations: value.limitations,
+        experience_kinds: value.experience_kinds,
+        interest_refs: value.interest_refs.into_iter().map(to_ref).collect(),
+    }
+}

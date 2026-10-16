@@ -57,8 +57,10 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
                 occurred_time_domain_ref: "time:real".into(),
                 occurred_time: TemporalExtent::Unknown,
                 source_class: SourceClass::Message,
+                world_realized: None,
                 external_object_ref: None,
                 observed_at: None,
+                observed_stamp: None,
                 conversation_ref: Some("conversation:fixture:testing".into()),
                 actor_entity_ref: Some(EntityRef::new("entity:fixture:author").unwrap()),
                 context: serde_json::json!({}),
@@ -102,6 +104,7 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
             content: nous_self::SelfContent::SelfFacet(nous_self::SelfFacetContent {
                 valid_time_domain_ref: "time:course".into(),
                 kind: "preference".into(),
+                domain_knowledge: None,
                 statement: "I prefer careful tests".into(),
                 epistemic_class: EpistemicClass::Narrative,
                 scope: nous_self::SelfScope {
@@ -684,10 +687,9 @@ async fn paused_world_idle_waits_for_semantic_advance_and_wakes_on_real_schedule
         matured.ready[0].boundary_reason.as_deref(),
         Some("hard_idle")
     );
-    assert!(
-        (matured.ready[0].observed_end - Utc::now())
-            .num_seconds()
-            .abs()
-            < 2
+    assert_eq!(matured.ready[0].experience_time_domain_ref, "time:course");
+    assert_eq!(
+        matured.ready[0].observed_end,
+        source.occurrence.observed_stamp.at
     );
 }

@@ -23,6 +23,8 @@ pub struct SelfException {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelfFacetContent {
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_knowledge: Option<Box<DomainKnowledge>>,
     pub statement: String,
     pub epistemic_class: EpistemicClass,
     pub scope: SelfScope,
@@ -105,6 +107,19 @@ impl SelfContent {
                 v.interpretation
             ),
         };
+        let body = if let Self::SelfFacet(facet) = self {
+            facet
+                .domain_knowledge
+                .as_ref()
+                .map_or(body.clone(), |knowledge| {
+                    format!(
+                        "{body}\nDomain knowledge: {}",
+                        serde_json::to_string(knowledge).expect("typed domain knowledge")
+                    )
+                })
+        } else {
+            body
+        };
         format!(
             "{body}\nValidity: {}",
             serde_json::to_string(self.valid_time()).expect("Temporal primitives are serializable")
@@ -133,6 +148,7 @@ impl SelfContent {
                     "identity",
                     "role",
                     "capability_belief",
+                    "domain_knowledge",
                     "limitation",
                     "tendency",
                     "value",
@@ -145,10 +161,21 @@ impl SelfContent {
                     || !bounded(&v.scope.description, 8192)
                     || v.exceptions.len() > 32
                     || v.scope.purposes.iter().any(|p| {
-                        !["deliberation", "expression", "reflection", "worker"]
-                            .contains(&p.as_str())
+                        ![
+                            "deliberation",
+                            "expression",
+                            "reflection",
+                            "worker",
+                            "world_authoring",
+                            "subject_deliberation",
+                            "professional_execution",
+                            "subject_rendering",
+                            "narrative_review",
+                            "maintenance",
+                        ]
+                        .contains(&p.as_str())
                     })
-                    || v.scope.purposes.len() > 4
+                    || v.scope.purposes.len() > 10
                     || v.scope
                         .conversation
                         .as_ref()
@@ -156,6 +183,14 @@ impl SelfContent {
                     || v.scope.entities.len() > 64
                 {
                     return Err(Error::Invalid("invalid Self facet content or scope".into()));
+                }
+                if (v.kind == "domain_knowledge") != v.domain_knowledge.is_some() {
+                    return Err(Error::Invalid(
+                        "domain_knowledge facet requires its typed knowledge content".into(),
+                    ));
+                }
+                if let Some(knowledge) = &v.domain_knowledge {
+                    knowledge.validate()?;
                 }
                 for exception in &v.exceptions {
                     if !bounded(&exception.statement, 8192) {

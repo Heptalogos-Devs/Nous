@@ -320,6 +320,8 @@ impl MaterialService {
             });
         }
         Ok(nous_runtime::ContextSource {
+            epistemic_class: None,
+            domain_knowledge: None,
             temporal,
             usage: "task_evidence",
             required: false,

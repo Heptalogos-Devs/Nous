@@ -99,6 +99,7 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
                             format!("time:manual:{}", subject.0)
                         },
                         kind: if index < 2 { "identity" } else { "preference" }.into(),
+                        domain_knowledge: None,
                         statement: format!("Exact temporal case {index}"),
                         epistemic_class: EpistemicClass::Narrative,
                         scope: SelfScope {

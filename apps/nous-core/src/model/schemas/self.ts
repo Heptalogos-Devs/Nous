@@ -21,19 +21,72 @@ const content = z.discriminatedUnion("family", [
       "identity",
       "role",
       "capability_belief",
+      "domain_knowledge",
       "limitation",
       "tendency",
       "value",
       "preference",
     ]),
+    domainKnowledge: z
+      .strictObject({
+        domainRef: z.string().min(1).max(1024),
+        familiarity: z.enum([
+          "unfamiliar",
+          "aware",
+          "conversational",
+          "practiced",
+          "specialized",
+        ]),
+        canDo: z.array(z.string().min(1).max(8192)).max(32),
+        limitations: z.array(z.string().min(1).max(8192)).max(32),
+        experienceKinds: z
+          .array(
+            z.enum([
+              "lived",
+              "heard",
+              "read",
+              "learned",
+              "practiced",
+              "reported",
+            ]),
+          )
+          .max(8),
+        interestRefs: z
+          .array(
+            z.strictObject({
+              kind: z.enum([
+                "desire_revision",
+                "concern_revision",
+                "desired_condition_revision",
+              ]),
+              value: z.string().min(1),
+            }),
+          )
+          .max(32),
+      })
+      .nullable()
+      .optional(),
     statement: z.string().min(1).max(16384),
     stance: z.enum(["adopted", "tentative", "aspirational", "attributed"]),
     epistemicClass,
     scope: z.strictObject({
       description: z.string().min(1).max(8192),
       purposes: z
-        .array(z.enum(["deliberation", "expression", "reflection", "worker"]))
-        .max(4),
+        .array(
+          z.enum([
+            "deliberation",
+            "expression",
+            "reflection",
+            "worker",
+            "world_authoring",
+            "subject_deliberation",
+            "professional_execution",
+            "subject_rendering",
+            "narrative_review",
+            "maintenance",
+          ]),
+        )
+        .max(10),
       bindToInvocation: z
         .boolean()
         .describe(

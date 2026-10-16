@@ -44,7 +44,8 @@ pub(super) fn validate_view(
     query: &CognitiveQuery,
     historical_authority: Option<&HistoricalAuthoritySnapshot>,
 ) -> Result<()> {
-    let required = query.temporal_frame.authority_view != AuthorityView::Current
+    let required = query.temporal_frame.knowledge_at_world_time.is_some()
+        || query.temporal_frame.authority_view != AuthorityView::Current
         || query.temporal_frame.revision_view != RevisionView::Current;
     if required != historical_authority.is_some() {
         return Err(Error::Unavailable(
@@ -56,7 +57,9 @@ pub(super) fn validate_view(
             AuthorityView::AsOf(at) => at,
             AuthorityView::Current => query.temporal_frame.authority_now,
         };
-        if view.subject != query.subject
+        if view.knowledge_at_world_time.as_ref()
+            != query.temporal_frame.knowledge_at_world_time.as_deref()
+            || view.subject != query.subject
             || view.as_of != cutoff
             || view.revision_view != query.temporal_frame.revision_view
         {

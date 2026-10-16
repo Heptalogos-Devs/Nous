@@ -2,6 +2,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 pub(crate) mod binding;
+mod knowledge;
 pub(crate) mod text;
 
 use crate::{AuthorityStore, database_error as db};

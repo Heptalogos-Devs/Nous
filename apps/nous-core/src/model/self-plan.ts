@@ -348,6 +348,7 @@ export function proposedSelfContent(
         case: "facet",
         value: {
           kind: content.kind,
+          domainKnowledge: content.domainKnowledge ?? undefined,
           statement: content.statement,
           stance: content.stance,
           epistemicClass: content.epistemicClass,

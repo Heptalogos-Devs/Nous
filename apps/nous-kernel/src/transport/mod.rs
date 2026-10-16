@@ -215,6 +215,7 @@ fn projection_proto(
     usage: Option<p::CognitionUsage>,
 ) -> p::Projection {
     p::Projection {
+        epistemic_view: None,
         semantic_clock: Some(domain_stamp_proto(&view.clock)),
         projection_id: uuid::Uuid::now_v7().to_string(),
         consumer_id: view.consumer_id,
@@ -227,6 +228,15 @@ fn projection_proto(
             .segments
             .into_iter()
             .map(|segment| p::ContextSegment {
+                epistemic_class: segment
+                    .source
+                    .epistemic_class
+                    .map(|class| class.as_str().into()),
+                domain_knowledge: segment
+                    .source
+                    .domain_knowledge
+                    .clone()
+                    .map(|knowledge| domain_knowledge_proto(*knowledge)),
                 temporal: segment
                     .source
                     .temporal

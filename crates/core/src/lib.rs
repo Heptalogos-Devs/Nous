@@ -192,6 +192,7 @@ pub enum SourceClass {
     Web,
     HostEvent,
     Simulation,
+    WorldRealized,
     Generated,
     Import,
     Other(String),
@@ -206,6 +207,7 @@ impl SourceClass {
             Self::Web => "web",
             Self::HostEvent => "host_event",
             Self::Simulation => "simulation",
+            Self::WorldRealized => "world_realized",
             Self::Generated => "generated",
             Self::Import => "import",
             Self::Other(value) => value,
@@ -222,6 +224,7 @@ impl From<String> for SourceClass {
             "web" => Self::Web,
             "host_event" => Self::HostEvent,
             "simulation" => Self::Simulation,
+            "world_realized" => Self::WorldRealized,
             "generated" => Self::Generated,
             "import" => Self::Import,
             _ => Self::Other(value),
@@ -426,3 +429,6 @@ pub struct QueryDescriptor {
     pub reference: CognitiveRef,
     pub text: String,
 }
+
+mod epistemic;
+pub use epistemic::DomainKnowledge;

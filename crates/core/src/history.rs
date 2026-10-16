@@ -43,6 +43,8 @@ pub struct HistoricalLexicalVisibility {
 pub struct HistoricalAuthoritySnapshot {
     pub subject: SubjectId,
     pub as_of: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    pub knowledge_at_world_time: Option<DomainStamp>,
     pub revision_view: RevisionView,
     pub cognition: Vec<HistoricalCognitionState>,
     pub tags: Vec<HistoricalTagState>,
@@ -66,6 +68,7 @@ impl HistoricalAuthoritySnapshot {
         Self {
             subject,
             as_of,
+            knowledge_at_world_time: None,
             revision_view,
             cognition: vec![],
             tags: vec![],
@@ -83,7 +86,7 @@ impl HistoricalAuthoritySnapshot {
         // Owners finish assembly before capture; any builder mutation refreshes both identities.
         self.lookup.take();
         let identities=self.cognition.iter().map(|state|serde_json::json!({"object":state.object,"head":state.head,"revisions":state.revisions,"acceptance":state.state["acceptance_state"],"integrity":state.state["integrity_state"],"suppression":state.state["suppression_state"],"accessibility":state.state["accessibility_mode"]})).collect::<Vec<_>>();
-        let value = serde_json::json!({"subject":self.subject,"revision_view":self.revision_view,"cognition":identities,"tags":self.tags,"associations":self.associations,"schema_evidence_links":self.schema_evidence_links,"entity_bindings":self.entity_bindings,"material":self.material_visibility,"material_documents":self.material_documents,"lexical":self.lexical_visibility});
+        let value = serde_json::json!({"subject":self.subject,"knowledge_at_world_time":self.knowledge_at_world_time.as_ref().map(|cut|serde_json::json!({"time_domain_ref":cut.time_domain_ref,"at":cut.at})),"revision_view":self.revision_view,"cognition":identities,"tags":self.tags,"associations":self.associations,"schema_evidence_links":self.schema_evidence_links,"entity_bindings":self.entity_bindings,"material":self.material_visibility,"material_documents":self.material_documents,"lexical":self.lexical_visibility});
         self.snapshot_digest = blake3::hash(
             &serde_json::to_vec(&value)
                 .map_err(|error| Error::Infrastructure(error.to_string()))?,

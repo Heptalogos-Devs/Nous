@@ -447,7 +447,7 @@ try {
       ],
       modifiers: {
         projection: { domains: ["self_facet"] },
-        asOf: first.recordedAt,
+        asRecordedAt: first.recordedAt,
       },
     },
   });

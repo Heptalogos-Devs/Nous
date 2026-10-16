@@ -25,6 +25,7 @@ message SelfFacetContent {
   DomainTemporalExtent valid_time = 7;
   ProducerSignature producer = 8;
   string epistemic_class = 9;
+  DomainKnowledge domain_knowledge = 10;
 }
 message NarrativeContent {
   string theme = 1;

@@ -41,6 +41,22 @@ pub(super) fn push_source_facts(
         .push("::uuid[] bindings, ")
         .push_bind(view.map(|view| view.as_of))
         .push("::timestamptz cut, ")
+        .push_bind(
+            view.map(|view| {
+                view.material_visibility
+                    .iter()
+                    .filter_map(|reference| {
+                        if let CognitiveRef::Occurrence(id) = reference {
+                            Some(id.0)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        )
+        .push("::uuid[] known_occurrences, ")
         .push_bind(read.is_none())
         .push("::boolean unrestricted, ")
         .push_bind(read.map(|r| r.root_keys.clone()).unwrap_or_default())
@@ -79,7 +95,7 @@ lineage(root_kind,root,kind,value) AS (
   o.entities
  FROM lineage l CROSS JOIN source_settings x
  JOIN LATERAL material_occurrence_facts(x.subject,x.cut,CASE WHEN x.historical THEN x.bindings ELSE NULL END) o ON o.occurrence_id=CASE WHEN l.kind='occurrence' THEN l.value::uuid END
- WHERE x.unrestricted OR source_read_allowed(x.subject,'occurrence',o.occurrence_id::text,x.read_roots,x.read_work,x.read_origins,x.read_explicit)
+ WHERE (NOT x.historical OR o.occurrence_id=ANY(x.known_occurrences)) AND (x.unrestricted OR source_read_allowed(x.subject,'occurrence',o.occurrence_id::text,x.read_roots,x.read_work,x.read_origins,x.read_explicit))
 
 )
 "#);

@@ -164,6 +164,24 @@ impl SelfService {
                         "Self scope WorkContext is outside Subject".into(),
                     ));
                 }
+                for reference in v
+                    .domain_knowledge
+                    .iter()
+                    .flat_map(|knowledge| &knowledge.interest_refs)
+                {
+                    self.store
+                        .bind_exact_reference_in(tx, subject, reference)
+                        .await?;
+                    if !self
+                        .store
+                        .cognition_available_in(tx, subject, reference)
+                        .await?
+                    {
+                        return Err(Error::Unavailable(
+                            "knowledge interest is unavailable".into(),
+                        ));
+                    }
+                }
                 for e in &v.scope.entities {
                     if !self
                         .store

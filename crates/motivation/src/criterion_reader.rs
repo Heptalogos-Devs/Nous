@@ -302,6 +302,11 @@ impl OfficialCriterionReader {
             ) {
                 continue;
             }
+            if o.source_class == SourceClass::WorldRealized
+                && o.occurred_time_domain_ref != interval.time_domain_ref
+            {
+                continue;
+            }
             let Some(raw) = o.context.get("criterion_fact") else {
                 continue;
             };

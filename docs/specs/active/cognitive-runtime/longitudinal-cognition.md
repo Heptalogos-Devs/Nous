@@ -10,17 +10,19 @@ Runtime 持有 CognitiveClock、Experience feed、segmentation cursor/draft 与 
 
 ## 时间与经验捕获
 
-正常运行使用 SystemCognitiveClock；内部测试和研究可注入按 Subject 单调推进的 ManualCognitiveClock。HTTP/DB timeout 和重试使用基础设施时间。公开 RPC 不提供 clock mutation。Core 通过 private `KernelQueryService.GetCognitiveTime` 读取 Subject clock；NousQL 的相对时间窗口也使用该认知时间。
+时间与历史切面统一由[时钟合同](clock.md)拥有。Nous 复用正式 CognitiveClockService；现实 observed/recorded、网络/数据库 timeout 与 retry/lease 不受世界变速影响。形成和实际提交的世界语境分别保留，工作流恢复沿用原成果形成时间。Memory/Schema/Episode/Journal 的输入不接受任意 caller 形成时间。
 
-Observation `observed_at` 可省略，缺省使用 CognitiveClock。发生时间保留调用方提供的已知或 unknown 语义。Subject、Cognitive Seed、Material 来源、Memory、CognitiveSchema、Episode、Journal 及语义 lifecycle/UseEvent 的 timestamps 由 owner 提交分配；工作流重放保留原 formation time。Memory、CognitiveSchema、Episode、Journal 的创建和修订输入不接受 caller `formed_at`；Schema 使用 `CognitiveSchemaContent` 输入。
+只有实际释放给 Subject 的 subject_experience 进入自动 ExperienceItem/反思路径。受信 WorldLife 的角色可见 world_realized 是合法虚拟经历；world author/review 草稿、未释放 worker 结果和隐藏 NPC 状态作为 execution_only 保存在其所属能力，不进入此 feed。该性质由正式 Host/角色绑定提供，不能由普通模型字符串选择。
 
-Session-bound Observation 在 Material 提交事务内写入一个 ExperienceItem，复用现有 invalidation 返回的 Subject `authority_seq` 作为 `recorded_seq`。记录包含 Session、foreground WorkContext ID/revision 和边界上下文，并 upsert 到期的 `episode_segment` need。无 Session 的 Observation 保持普通 Material/Evidence，不进入自动分段。摄入过程中不调用模型。
+Session-bound 接触在同一 Material 事务写入 ExperienceItem，保留 Session、WorkContext、正式接触来源与时间域，并产生现有 episode_segment need。重复交接使用原请求身份与 receipt，不重复写经验或再次执行工具。摄入事务不调用模型。无 Session 的普通 Material 不自动分段；内部世界活动通过正式非 conversation 运行取得适用的 Subject Session，不发明 QQ 会话。
+
+real recorded sequence 决定摄入与 exactly-once 次序；生活组织使用接触所属域与角色可见世界见闻点，保留实际现实 observed/recorded。晚实现虚拟见闻可触发同域有界 repair，但不能穿越显式现实 as-of 或改写已经确定的角色知情/Claim。不同域无 mapping 时不按裸数字混合排序、邻域或聚合。experience_items 同时保留实际 observed_at 与 experience_at/domain；draft、初始 Episode、partition 和 repair 使用同域经历时点，真实记录次序负责 exactly-once。
 
 ## 初始 Episode 与语义 refinement
 
 初始自动 track 为 `interaction`。Runtime 按 recorded sequence 推进 durable cursor/draft；Session 变化本身保持连续。hard idle、结束的 WorkContext、多个上下文切换，或 soft idle 伴随上下文/Session 切换可关闭 draft。无新观察时，到期维护负责 idle closure。ready draft 使用稳定 operation identity 经 Memory 提交；ack 验证对应 commit receipt 后删除 draft 和成员，cursor 不保留已删除 draft 的引用。Memory commit 后、ack 前崩溃时，ready draft 和稳定 operation identity 重放得到原 Episode，再完成 ack。迟到观察排入有界局部 resegmentation。
 
-`recorded_seq` 决定 exactly-once processing、durable cursor 和摄入顺序；experience chronology 使用 `(observed_at, recorded_seq)`。draft 最终成员、局部 repair、模型 partition input 与提交的 Episode 都按 experience chronology 排列，同 observed time 用 recorded sequence 确定顺序。
+`recorded_seq` 决定 exactly-once processing、durable cursor 和摄入顺序；experience chronology 在同一适用域内使用正式接触时点与 recorded sequence。draft 最终成员、局部 repair、模型 partition input 与提交的 Episode 都按 experience chronology 排列，同 observed time 用 recorded sequence 确定顺序。
 
 历史 repair 以迟到 Observation 的 observed time 定位同 parent/track 的 overlapping current Episodes 和两侧最近邻，构建局部 partition 后加入迟到 occurrence。`episode.max_neighbor_span_seconds` 限制受影响 neighborhood 的 experience span；经历距今天的年龄不限制 repair。neighborhood 的 Episode 数、experience span 或 materialization safety budget 超界时进入 `historical_repair_scope_exceeded` blocked。
 
@@ -30,7 +32,7 @@ Session-bound Observation 在 Material 提交事务内写入一个 ExperienceIte
 
 `RuntimeService` 承载 canonical Session、WorkContext、Observation 和 Use 操作；Core 的 `CognitionService` 提供公开维护 grant 与查询/投影编排。Core 通过 private `KernelMaintenanceService` 调用 durable need 和 longitudinal owner commit，通过 `KernelModelResultsService` 保存和复用实际模型结果。
 
-MaintenanceNeed 在 active scope 内合并 trigger，due time 使用 CognitiveClock。单一 Core 按 Subject 串行执行 Host grant；Runtime 从 pending needs 选择固定 trigger snapshot，执行期间记录仍为 pending。每次新 trigger 推进 trigger revision；ack 只对匹配 captured authority sequence/revision 的 pending need 应用 disposition，因此新工作不丢失。Core crash 后工作立即可重新选择，不需要租约过期或 takeover。
+MaintenanceNeed 在 active scope 内合并 trigger；due_at 是现实唤醒时间，认知 idle/settle 使用同域语义接触/提交点判断。暂停、变速或恢复后由正式 Clock 操作唤醒既有义务重评，不授执行/模型预算，也不清网络重试限制。单一 Core 按 Subject 串行执行 Host grant；Runtime 从 pending needs 选择固定 trigger snapshot，执行期间记录仍为 pending。每次新 trigger 推进 trigger revision；ack 只对匹配 captured authority sequence/revision 的 pending need 应用 disposition，因此新工作不丢失。Core crash 后工作立即可重新选择，不需要租约过期或 takeover。
 
 公开 `GrantMaintenance` 接收 `max_operations`、`max_model_calls`、`max_elapsed_ms`。Core standalone loop 完整使用 active Subject pagination，保存跨 poll tick 的 continuation；每个 Subject 每次获得至多一个操作机会，耗尽 tick budget 后从停止处继续，列表尾部 wrap。删除、停用或失效 page token 会跳过或重新建立 cursor。Core restart 可以从稳定列表起点开始。全局 operation/model/elapsed budgets 限制每次 tick；Kernel 没有自主认知 cron，只持有 durable needs、trigger-fenced acknowledgement 与 owner semantics。
 
@@ -52,7 +54,7 @@ Episode/Journal/Memory/Schema revisions 是 durable cognition history；Observat
 
 一次 grant 按 priority 降序、due 和 need ID 的既有顺序有界翻页；游标使用选取时的位置，已查看 ID 只保留在本次调用。未获得生成机会的项不消耗操作预算，也不确认 pending、重置 retry 或重写 due；随后继续查看已有成果和确定性操作。每个实际处理的 need（含终结或失败尝试）消耗一个操作名额，公开响应返回 `operationsConsumed`，scheduler 直接使用它。模型预算只计实际 provider attempt，跳过 route 不计。执行期限覆盖整次机会。scheduler 的 grant RPC 失败时停止本轮，不猜测未知的操作消耗；下一轮继续已推进的 Subject 顺序。required 角色不可用或执行失败保留正式 `ErrorDetail` 的 capability、requirement 与恢复建议，optional 的有效降级结果由功能 owner 决定。
 
-Core 的 `model_results` 在实际生成后保存 proposal、必要的 owner 输入、依赖与 telemetry，提交后保存 outcome；执行前不登记 snapshot。identity 由 need、trigger authority sequence 和 trigger revision 生成。后续显式机会复用已存 proposal/outcome；只有重新生成才检查角色可用性和模型调用预算。确定性 Journal 撤回不创建模型记录。多 action 提案按原顺序调用 owner，稳定 child operation ID 和 owner receipt 重放已提交结果，不持久化逐项 progress、临时绑定或第二份回执。后项失败不回滚已提交的独立前项。结果关联 need/trigger，ack 删除已完成记录，selection/ack 清理被新 trigger 替代的记录。显式形成、Material 结果和仍需提交的当前提案保留其结果合同。owner 验证 Subject、head、epoch、lifecycle、来源和 authority sequence；变化返回 stale 并刷新维护计划。取消与机会耗尽保留 need 原有 CognitiveClock due，不写基础设施 wall-clock nextDue。
+Core 的 `model_results` 在实际生成后保存 proposal、必要的 owner 输入、依赖与 telemetry，提交后保存 outcome；执行前不登记 snapshot。identity 由 need、trigger authority sequence 和 trigger revision 生成。后续显式机会复用已存 proposal/outcome；只有重新生成才检查角色可用性和模型调用预算。确定性 Journal 撤回不创建模型记录。多 action 提案按原顺序调用 owner，稳定 child operation ID 和 owner receipt 重放已提交结果，不持久化逐项 progress、临时绑定或第二份回执。后项失败不回滚已提交的独立前项。结果关联 need/trigger，ack 删除已完成记录，selection/ack 清理被新 trigger 替代的记录。显式形成、Material 结果和仍需提交的当前提案保留其结果合同。owner 验证 Subject、head、epoch、lifecycle、来源和 authority sequence；变化返回 stale 并刷新维护计划。取消与机会耗尽保留 need 与实际已存成果；现实唤醒点不改变认知条件本身的域或真假。
 
 Workflow owner 是 1..64 字节的 semantic identifier，格式为 `[a-z][a-z0-9_]*`；Persistence 不枚举认知领域。private Kernel API 仅接受已实现的 `memory / material` 调用路径；Longitudinal 的 Memory-domain operations 使用 `memory`。
 

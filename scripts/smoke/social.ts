@@ -168,7 +168,7 @@ try {
       ],
       modifiers: {
         projection: { domains: ["social_relation"] },
-        asOf: forward.recordedAt,
+        asRecordedAt: forward.recordedAt,
         materialize: true,
       },
     },

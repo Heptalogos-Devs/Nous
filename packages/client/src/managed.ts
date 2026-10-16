@@ -11,6 +11,7 @@ import {
   type ContextCursor,
   type ContextSegment,
   type DomainStamp,
+  type EpistemicView,
   type CognitiveRef,
   type ManagedContextResponse,
   type Projection,
@@ -18,7 +19,7 @@ import {
 import type { NousClient, RequestOptions } from "./index.js";
 import type { HostRoleScope } from "./host-bridge.js";
 
-export type { CognitionUsage, ContextSegment, DomainStamp };
+export type { CognitionUsage, ContextSegment, DomainStamp, EpistemicView };
 export interface AppliedCognition {
   readonly projectionId: string;
   readonly sourceRefs: readonly CognitiveRef[];
@@ -30,6 +31,7 @@ export interface ContextRenderer<T> {
     segments: readonly ContextSegment[],
     usage: CognitionUsage,
     clock: DomainStamp,
+    epistemicView?: EpistemicView,
   ): T;
 }
 export interface ActualInvocationOutcome {
@@ -201,6 +203,7 @@ export function createManagedBinding(options: {
         structuredClone(segments),
         structuredClone(projection.usage),
         structuredClone(projection.semanticClock),
+        structuredClone(projection.epistemicView),
       );
       pending.signal.throwIfAborted();
       const sourceRefs = [

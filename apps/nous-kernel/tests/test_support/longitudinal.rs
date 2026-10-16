@@ -47,9 +47,11 @@ pub(crate) fn observation(
         occurrence: OccurrenceDescriptor {
             occurred_time_domain_ref: "time:real".into(),
             source_class: SourceClass::Message,
+            world_realized: None,
             external_object_ref: None,
             occurred_time: TemporalExtent::Unknown,
             observed_at: None,
+            observed_stamp: None,
             conversation_ref: None,
             actor_entity_ref: None,
             context: serde_json::json!({}),

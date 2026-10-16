@@ -292,6 +292,10 @@ impl KernelService {
             }
             bytes += text.len();
             items.push(p::ContextSegment {
+                epistemic_class: source.epistemic_class.map(|class| class.as_str().into()),
+                domain_knowledge: source
+                    .domain_knowledge
+                    .map(|knowledge| domain_knowledge_proto(*knowledge)),
                 temporal: source.temporal.as_ref().map(temporal_metadata_proto),
                 segment_id: uuid::Uuid::now_v7().to_string(),
                 text,

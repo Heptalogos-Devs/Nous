@@ -55,7 +55,7 @@ impl NousRuntime {
                     content: nous_memory::EpisodeContent {
                         title: None,
                         parent_episode_revision_id: None,
-                        experience_time_domain_ref: "time:real".into(),
+                        experience_time_domain_ref: draft.experience_time_domain_ref.clone(),
                         experience_time,
                         boundary_explanation: draft
                             .boundary_reason

@@ -80,6 +80,14 @@ impl SelfService {
             }
         });
         nous_runtime::ContextSource {
+            epistemic_class: Some(match &record.content {
+                SelfContent::SelfFacet(v) => v.epistemic_class,
+                SelfContent::NarrativeThread(v) => v.epistemic_class,
+            }),
+            domain_knowledge: match &record.content {
+                SelfContent::SelfFacet(facet) => facet.domain_knowledge.clone(),
+                _ => None,
+            },
             temporal: Some(FreshnessDescriptor {
                 temporal_evidence: TemporalEvidence::default(),
                 valid_time: DomainTemporalExtent {
@@ -113,7 +121,20 @@ impl SelfService {
     ) -> Result<nous_runtime::AutomaticContext> {
         let scope = SelfScope {
             description: String::new(),
-            purposes: vec![input.scope.purpose.clone()],
+            purposes: {
+                let mut purposes = vec![input.scope.purpose.clone()];
+                // Self scopes describe cognitive use; native execution roles
+                // can have a more specific purpose for that same use.
+                if let Some(cognitive_use) = match input.scope.purpose.as_str() {
+                    "subject_deliberation" => Some("deliberation"),
+                    "subject_rendering" => Some("expression"),
+                    "professional_execution" => Some("worker"),
+                    _ => None,
+                } {
+                    purposes.push(cognitive_use.into());
+                }
+                purposes
+            },
             entities: input.scope.entities.clone(),
             work_context: input.work_context.map(WorkContextId),
             conversation: Some(input.scope.conversation.clone()),

@@ -63,6 +63,8 @@ impl MotivationService {
             }
         });
         nous_runtime::ContextSource {
+            epistemic_class: None,
+            domain_knowledge: None,
             temporal: Some(FreshnessDescriptor {
                 temporal_evidence: TemporalEvidence::default(),
                 valid_time: DomainTemporalExtent {

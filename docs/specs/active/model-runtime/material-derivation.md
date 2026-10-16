@@ -14,6 +14,18 @@ DerivedRepresentation 保存 ordered exact inputs、strategy、representation ki
 
 成功 derivation identity 由 Subject、ordered input digest、representation kind、producer signature、strategy 和 supersedes 组成。同一请求重试复用成功表示；改变 lineage 或 inputs 会得到新的 identity。Core 对相同 source region 的派生执行串行处理；已保存的 paid proposal/outcome 不重新读取媒体。原始 bytes 按需要加载，frames mode 按源引用、采样参数、模型/Prompt 与转写配置直接读取保存成果，proposal 保存正式 CommitInterpretationRequest；命中时不读取原 bytes、不探测 FFmpeg、不抽帧或调用模型。实际 FFmpeg version 在生成分支解析并随成果及 Producer 保存，不作为复用前置条件。
 
+## 受信世界来源与角色接触
+
+Material 使用一份正式来源合同区分真实外部接触、已实现虚拟世界事件、初始设定/采用历史、梦/假设、生成草稿与主观陈述。`world_realized` 由认证 WorldLife 操作提供：稳定 world/event 身份与版本、发生时段、角色可见投影、世界 seen/heard 点、现实 realized/observed/recorded、实际 producer/规则和因果/共源引用。worldId 与时间域分别保存；虚拟 actor 复用 Host 的 world-scoped EntityRef，不冒充 QQ 账号。
+
+该性质由正式 Host 调用身份及已提交事件核验，模型填写 sourceClass、role 或正文标签不授予世界权威。世界 author/review、worker 后台结果的 execution_only 内容保存在所属运行/世界能力，不因通用结果回流而成为 Subject Observation 或自动反思来源。正式释放给 Subject 的 subject_experience 创建新的接触，引用实际事件/原运行结果；同一事件版本向同一接触的重复交接保留请求身份与 receipt，不重做世界实现或工具动作。
+
+真实 occurred、现实 observed 和现实 recorded 保留原意义。普通真实来源可带认证 Host 在实际接触时捕获的 observedStamp；stamp.recordedAt 与 observedAt 共同保留实际捕获，缺少当时 mapping 的旧接触不事后转换为 world。受信晚实现虚拟接触可同时持有过去的世界观察点和当前现实交接/记录；角色见闻与数据库历史按[时间合同](../cognitive-runtime/clock.md)分开读取。隐藏事件、NPC 幕后动机和世界 planner 提示不作为 Subject 来源，不能先进入候选/摘要再删除。
+
+原始 Artifact 是 bytes 身份，不足以表达世界来源权威或独立性。不同 NPC 的事件保持稳定人物与事件身份；同次生成/共同转述保留共享起源，不能以人数或多份摘要增加独立支持。派生、trace、purge、索引与结果记录沿同一正式 provenance 传播这些性质，不另建虚拟记忆库。
+
+worldRealized 是 canonical typed provenance，独立持久列包含 world/event/revision、producerRef、generationMethod、realizedAt、worldObserved 与 sharedOriginRefs；与 sourceClass=world_realized 成对校验。sharedOriginRefs 首项标识共同生成起源，缺省用事件身份；同起源 NPC 投影保留同一证据根。普通 sourceClass 字符串缺少正式来源会被拒绝。实际 WorldLife 身份与事件采用由认证 Host 保证，模型工具不暴露世界来源填写入口。
+
 ## Selected text 与 Serving
 
 Material 对 Occurrence、Artifact、SourceRegion、DerivedRepresentation 和 DerivedRegion 提供有界文本视图。视图包含 exact reference、实际读取的 UTF-8 byte selection、总 byte 数、所选文本的 BLAKE3 content identity，以及历史 Authority snapshot digest。显式坐标必须位于合法 UTF-8 边界；读取预算截断只保留完整字符。精确读取、Serving 文档与 embedding preparation 共用这一读取实现，Region 的索引正文只包含所选片段。Material 同时提供元数据头与字节流；`partial` 表示未完整读取所请求来源的选区，完整有界 Region 不因其不是整份 Artifact 而标为截断。`range_start/end` 与 `total_bytes` 保留实际 payload 坐标与大小。

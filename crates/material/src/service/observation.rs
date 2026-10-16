@@ -65,6 +65,45 @@ impl MaterialService {
             .capture_semantic_in(&mut tx, input.subject)
             .await?;
         let now = observed_stamp.recorded_at;
+        if (input.occurrence.source_class == SourceClass::WorldRealized)
+            != input.occurrence.world_realized.is_some()
+        {
+            return Err(Error::Invalid(
+                "world_realized requires canonical Host event provenance".into(),
+            ));
+        }
+        let mut world_realized = input.occurrence.world_realized.clone();
+        if let Some(source) = &mut world_realized {
+            source.validate(&input.occurrence.occurred_time_domain_ref, now)?;
+            if input
+                .occurrence
+                .observed_at
+                .is_some_and(|at| at < source.realized_at)
+            {
+                return Err(Error::Invalid(
+                    "world contact cannot precede its actual realization".into(),
+                ));
+            }
+            source.world_observed.recorded_at = now;
+        }
+        if let Some(mapping) = &input.occurrence.observed_stamp {
+            let actual = input.occurrence.observed_at.ok_or_else(|| {
+                Error::Invalid("a Host contact mapping requires its actual observed_at".into())
+            })?;
+            if world_realized.is_some()
+                || (mapping.time_domain_ref != "time:real"
+                    && mapping.time_domain_ref != observed_stamp.time_domain_ref)
+                || mapping.time_domain_ref.trim().is_empty()
+                || (actual - mapping.recorded_at).num_seconds().abs() > 300
+                || mapping.recorded_at > now + chrono::Duration::minutes(5)
+                || (mapping.time_domain_ref == observed_stamp.time_domain_ref
+                    && mapping.at > observed_stamp.at)
+            {
+                return Err(Error::Invalid(
+                    "invalid actual-contact clock mapping".into(),
+                ));
+            }
+        }
         let object_guard = if matches!(
             &input.material,
             ObservationMaterial::InlineText { .. }
@@ -84,6 +123,7 @@ impl MaterialService {
             subject_id: input.subject,
             artifact_id: artifact.as_ref().map(|artifact| artifact.artifact_id),
             source_class: input.occurrence.source_class.clone(),
+            world_realized: world_realized.clone().map(Box::new),
             external_object_ref: input.occurrence.external_object_ref.clone().or_else(|| {
                 match &input.material {
                     ObservationMaterial::ExternalObjectRef { object_ref } => {
@@ -94,14 +134,20 @@ impl MaterialService {
             }),
             occurred_time: input.occurrence.occurred_time.clone(),
             occurred_time_domain_ref: input.occurrence.occurred_time_domain_ref.clone(),
-            observed_stamp: input.occurrence.observed_at.map_or_else(
-                || observed_stamp.clone(),
-                |at| nous_core::DomainStamp {
-                    time_domain_ref: "time:real".into(),
-                    at,
-                    recorded_at: now,
-                },
-            ),
+            observed_stamp: world_realized
+                .as_ref()
+                .map(|source| source.world_observed.clone())
+                .or_else(|| input.occurrence.observed_stamp.clone())
+                .unwrap_or_else(|| {
+                    input.occurrence.observed_at.map_or_else(
+                        || observed_stamp.clone(),
+                        |at| nous_core::DomainStamp {
+                            time_domain_ref: "time:real".into(),
+                            at,
+                            recorded_at: now,
+                        },
+                    )
+                }),
             observed_at: input.occurrence.observed_at.unwrap_or(now),
             conversation_ref: input.occurrence.conversation_ref.clone(),
             actor_entity_ref: input.occurrence.actor_entity_ref.clone(),
@@ -117,8 +163,8 @@ impl MaterialService {
         }
         let (occurred_kind, occurred_start, occurred_end) =
             temporal_columns(&occurrence.occurred_time);
-        sqlx::query("INSERT INTO observation_occurrences(occurrence_id,subject_id,artifact_id,source_class,external_object_ref,occurred_time_kind,occurred_time_start,occurred_time_end,observed_at,conversation_ref,actor_entity_ref,context,created_at,occurred_time_domain_ref,observed_stamp) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)")
-            .bind(occurrence.occurrence_id.0).bind(occurrence.subject_id.0).bind(occurrence.artifact_id.map(|id| id.0)).bind(occurrence.source_class.as_str()).bind(occurrence.external_object_ref.as_ref().map(ObjectRef::as_str)).bind(occurred_kind).bind(occurred_start).bind(occurred_end).bind(occurrence.observed_at).bind(&occurrence.conversation_ref).bind(occurrence.actor_entity_ref.as_ref().map(EntityRef::as_str)).bind(&occurrence.context).bind(occurrence.created_at).bind(&occurrence.occurred_time_domain_ref).bind(serde_json::to_value(&occurrence.observed_stamp).map_err(|e|Error::Infrastructure(e.to_string()))?).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO observation_occurrences(occurrence_id,subject_id,artifact_id,source_class,external_object_ref,occurred_time_kind,occurred_time_start,occurred_time_end,observed_at,conversation_ref,actor_entity_ref,context,created_at,occurred_time_domain_ref,observed_stamp,world_realized) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
+            .bind(occurrence.occurrence_id.0).bind(occurrence.subject_id.0).bind(occurrence.artifact_id.map(|id| id.0)).bind(occurrence.source_class.as_str()).bind(occurrence.external_object_ref.as_ref().map(ObjectRef::as_str)).bind(occurred_kind).bind(occurred_start).bind(occurred_end).bind(occurrence.observed_at).bind(&occurrence.conversation_ref).bind(occurrence.actor_entity_ref.as_ref().map(EntityRef::as_str)).bind(&occurrence.context).bind(occurrence.created_at).bind(&occurrence.occurred_time_domain_ref).bind(serde_json::to_value(&occurrence.observed_stamp).map_err(|e|Error::Infrastructure(e.to_string()))?).bind(world_realized.as_ref().map(serde_json::to_value).transpose().map_err(|e|Error::Infrastructure(e.to_string()))?).execute(&mut *tx).await.map_err(db)?;
         let source_region = if let Some(artifact) = &artifact {
             let coordinate = serde_json::json!({});
             let coordinate_hash = blake3::hash(b"{}").to_hex().to_string();
@@ -189,6 +235,7 @@ impl MaterialService {
                         occurrence: occurrence_id,
                         session,
                         observed_at: occurrence.observed_at,
+                        observed_stamp: occurrence.observed_stamp.clone(),
                         source_class: occurrence.source_class.as_str().into(),
                         conversation_ref: occurrence.conversation_ref.clone(),
                         actor_entity_ref: occurrence

@@ -13,6 +13,11 @@ fn content(input: p::SelfContent) -> Result<SelfContent> {
             let scope = required(v.scope, "Self scope")?;
             SelfContent::SelfFacet(SelfFacetContent {
                 kind: v.kind,
+                domain_knowledge: v
+                    .domain_knowledge
+                    .map(domain_knowledge)
+                    .transpose()?
+                    .map(Box::new),
                 statement: v.statement,
                 epistemic_class: enum_value(&v.epistemic_class)?,
                 scope: SelfScope {
@@ -66,6 +71,9 @@ fn content_proto(value: SelfContent) -> p::SelfContent {
     let content = match value {
         SelfContent::SelfFacet(v) => p::self_content::Content::Facet(p::SelfFacetContent {
             kind: v.kind,
+            domain_knowledge: v
+                .domain_knowledge
+                .map(|value| domain_knowledge_proto(*value)),
             statement: v.statement,
             epistemic_class: v.epistemic_class.as_str().into(),
             scope: Some(p::SelfScope {

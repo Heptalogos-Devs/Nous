@@ -6,7 +6,7 @@
 
 `crates/self` 拥有 SelfFacet、NarrativeThread、修订、来源与生命周期。Runtime 继续拥有 Session/WorkContext/UseEvent，Core 拥有模型与公共宿主，Subject owner 拥有身份、能力供给和 Seed 来源。
 
-SelfFacet 是可独立修订的事项：kind、完整 statement、scope、stance、exceptions、epistemic class、RevisionBasis、valid time 和 producer。kind 为 identity、role、capability_belief、limitation、tendency、value 或 preference；stance 为 adopted、tentative、aspirational 或 attributed。scope 保留自然语言说明，并可按现有 purpose、Entity、WorkContext、conversation 约束。
+SelfFacet 是可独立修订的事项：kind、完整 statement、scope、stance、exceptions、epistemic class、RevisionBasis、valid time 和 producer。kind 为 identity、role、capability_belief、limitation、tendency、value、preference 或 domain_knowledge；stance 为 adopted、tentative、aspirational 或 attributed。scope 保留自然语言说明，并可按现有 purpose、Entity、WorkContext、conversation 约束。
 
 NarrativeThread 保存 theme、interpretation、exact cognition sources 与 basis。叙事重解释修订原 thread；它不重写历史来源。两类对象分别使用 `self_facet`/`narrative_thread` 和对应 `_revision` 引用，不与 Memory 共用对象族。
 
@@ -75,3 +75,11 @@ CLI/MCP 提供正式 owner 操作、来源解释与只读 soul；OpenClaw 自动
 ## 容量验证
 
 `pnpm smoke:self-selection` 已接入 `smoke:self`，在隔离实例中通过正式 API 先创建 121 项容量背景（多数撤回，其余不匹配 purpose/conversation/WorkContext 或已过期），再建立第一页之后的当前身份。检查管理分页与完整 evidence、精确历史、自动身份/省略、有界来源/目标及一跳依赖候选和反思输入范围。真实配置与 native 运行方法见 [公共 smoke](../../../../scripts/smoke/README.md)，不修改原 Subject。
+
+## 领域知识与本次认识投影
+
+`kind=domain_knowledge` 使用正式 `domainKnowledge` 内容：稳定 `domainRef`、`familiarity`（unfamiliar/aware/conversational/practiced/specialized）、`canDo`、`limitations`、`experienceKinds` 和 exact Motivation `interestRefs`。熟悉度是本人认识，不能授予工具权限或代表模型能力；亲历、耳闻、阅读、学会和实际练习保留区别。更新时间使用 owner 形成/记录时间，支持与反例继续使用原 basis/evidence/exceptions。普通 facet 不携带这一内容。
+
+领域概括仍是独立 Self revision，具体事实、学习材料和经历继续由 Memory/Material owner 保存。后台 worker 结果仅在正式释放并被主体接触后成为学习来源；一次读取不自动升格专业能力，查询和使用不自动追加支持。interestRefs 进入既有 exact-reference、来源权限、依赖失效与 purge 图。没有 Seed 或明确学习背景时不补造专业、课程或旧经历。
+
+官方 Projection 的 `epistemicView` 组合已经过来源许可和预算选择的 Self、Memory、Social 与当前材料贡献，返回 familiarDomains、acceptedFactsAndReports、experiences、unknowns、executionAssistance、learningOpportunities 和 coverage。Memory 保留其实际 epistemicClass，未知/省略不推导永久无知；当前协助不冒充既有个人能力。该视图是当次派生输出，Host 不拼装第二套领域知识库。官方 Managed Context 将同一视图交给 provider 前 renderer，理解、是否参与、委派和表达共同使用它。

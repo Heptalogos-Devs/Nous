@@ -433,6 +433,13 @@ pub(super) async fn longitudinal_metadata(
     let rows = sql.build().fetch_all(&mut **tx).await.map_err(db)?;
     let mut result = BTreeMap::<Uuid, LongitudinalMetadata>::new();
     for row in rows {
+        if view.is_some_and(|view| {
+            !view.material_contains(&CognitiveRef::Occurrence(OccurrenceId(
+                row.get("occurrence_id"),
+            )))
+        }) {
+            continue;
+        }
         let value = result.entry(row.get("root")).or_default();
         let source = SourceClass::from(row.get::<String, _>("source_class"));
         if !value.source_classes.contains(&source) {

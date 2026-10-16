@@ -178,7 +178,7 @@ impl SubjectClockService {
             .await
             .map_err(db)?;
         let snapshot = self.snapshot(subject);
-        sqlx::query("INSERT INTO subject_clocks(subject_id,time_domain_ref,rate,checkpoint_world,checkpoint_real,revision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(subject_id) DO UPDATE SET checkpoint_world=GREATEST(subject_clocks.checkpoint_world,excluded.checkpoint_world),checkpoint_real=GREATEST(subject_clocks.checkpoint_real,excluded.checkpoint_real)")
+        sqlx::query("INSERT INTO subject_clocks(subject_id,time_domain_ref,rate,checkpoint_world,checkpoint_real,revision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(subject_id) DO UPDATE SET checkpoint_world=CASE WHEN subject_clocks.time_domain_ref=excluded.time_domain_ref THEN GREATEST(subject_clocks.checkpoint_world,excluded.checkpoint_world) ELSE excluded.checkpoint_world END,checkpoint_real=GREATEST(subject_clocks.checkpoint_real,excluded.checkpoint_real)")
             .bind(subject.0).bind(&snapshot.time_domain_ref).bind(snapshot.rate).bind(snapshot.world_now).bind(snapshot.recorded_at).bind(snapshot.revision).execute(&mut **tx).await.map_err(db)?;
         Ok(DomainStamp {
             time_domain_ref: snapshot.time_domain_ref,
@@ -194,7 +194,7 @@ impl SubjectClockService {
         Ok(snapshot)
     }
     async fn persist_checkpoint(&self, snapshot: &ClockSnapshot) -> Result<()> {
-        sqlx::query("INSERT INTO subject_clocks(subject_id,time_domain_ref,rate,checkpoint_world,checkpoint_real,revision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(subject_id) DO UPDATE SET checkpoint_world=GREATEST(subject_clocks.checkpoint_world,excluded.checkpoint_world),checkpoint_real=CASE WHEN excluded.checkpoint_world>=subject_clocks.checkpoint_world THEN GREATEST(subject_clocks.checkpoint_real,excluded.checkpoint_real) ELSE subject_clocks.checkpoint_real END")
+        sqlx::query("INSERT INTO subject_clocks(subject_id,time_domain_ref,rate,checkpoint_world,checkpoint_real,revision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(subject_id) DO UPDATE SET checkpoint_world=CASE WHEN subject_clocks.time_domain_ref=excluded.time_domain_ref THEN GREATEST(subject_clocks.checkpoint_world,excluded.checkpoint_world) ELSE excluded.checkpoint_world END,checkpoint_real=CASE WHEN subject_clocks.time_domain_ref<>excluded.time_domain_ref THEN excluded.checkpoint_real WHEN excluded.checkpoint_world>=subject_clocks.checkpoint_world THEN GREATEST(subject_clocks.checkpoint_real,excluded.checkpoint_real) ELSE subject_clocks.checkpoint_real END")
             .bind(snapshot.subject_id.0).bind(&snapshot.time_domain_ref).bind(snapshot.rate).bind(snapshot.world_now).bind(snapshot.recorded_at).bind(snapshot.revision).execute(self.store.pool()).await.map_err(db)?;
         Ok(())
     }
@@ -230,6 +230,7 @@ impl SubjectClockService {
         };
         let mut snapshot = self.snapshot(subject);
         let previous = snapshot.world_now;
+        let previous_domain = snapshot.time_domain_ref.clone();
         match change {
             ClockChange::Configure {
                 time_domain_ref,
@@ -271,7 +272,7 @@ impl SubjectClockService {
                 }
             }
         }
-        if snapshot.world_now < previous {
+        if snapshot.time_domain_ref == previous_domain && snapshot.world_now < previous {
             return Err(Error::Invalid(
                 "CognitiveClock cannot move backwards".into(),
             ));
@@ -285,7 +286,7 @@ impl SubjectClockService {
         snapshot.world_anchor = snapshot.world_now;
         snapshot.recorded_at = snapshot.real_anchor;
         snapshot.revision += 1;
-        sqlx::query("INSERT INTO subject_clocks(subject_id,time_domain_ref,rate,checkpoint_world,checkpoint_real,revision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(subject_id) DO UPDATE SET time_domain_ref=excluded.time_domain_ref,rate=excluded.rate,checkpoint_world=GREATEST(subject_clocks.checkpoint_world,excluded.checkpoint_world),checkpoint_real=excluded.checkpoint_real,revision=excluded.revision")
+        sqlx::query("INSERT INTO subject_clocks(subject_id,time_domain_ref,rate,checkpoint_world,checkpoint_real,revision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(subject_id) DO UPDATE SET time_domain_ref=excluded.time_domain_ref,rate=excluded.rate,checkpoint_world=CASE WHEN subject_clocks.time_domain_ref=excluded.time_domain_ref THEN GREATEST(subject_clocks.checkpoint_world,excluded.checkpoint_world) ELSE excluded.checkpoint_world END,checkpoint_real=excluded.checkpoint_real,revision=excluded.revision")
             .bind(subject.0).bind(&snapshot.time_domain_ref).bind(snapshot.rate).bind(snapshot.world_now).bind(snapshot.real_anchor).bind(snapshot.revision).execute(&mut **mutation.tx()).await.map_err(db)?;
         sqlx::query(
             "INSERT INTO subject_clock_changes(subject_id,operation_id,snapshot) VALUES($1,$2,$3)",

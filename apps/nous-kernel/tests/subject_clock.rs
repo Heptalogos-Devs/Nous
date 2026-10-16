@@ -410,10 +410,12 @@ async fn material_keeps_real_contact_and_world_stamp_across_restart_and_replay()
         session: None,
         occurrence: OccurrenceDescriptor {
             source_class: SourceClass::Message,
+            world_realized: None,
             external_object_ref: None,
             occurred_time: TemporalExtent::Instant { at: Utc::now() },
             occurred_time_domain_ref: "time:real".into(),
             observed_at: None,
+            observed_stamp: None,
             conversation_ref: None,
             actor_entity_ref: None,
             context: serde_json::json!({}),

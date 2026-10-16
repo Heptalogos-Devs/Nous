@@ -41,12 +41,58 @@ pub struct Artifact {
     pub metadata: serde_json::Value,
 }
 
+/// Authenticated Host WorldLife release of an adopted, role-visible event.
+/// This is provenance, not a claim that a virtual event occurred physically.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldRealizedSource {
+    pub world_id: String,
+    pub event_id: String,
+    pub event_revision: String,
+    pub producer_ref: String,
+    pub generation_method: String,
+    pub realized_at: DateTime<Utc>,
+    pub world_observed: nous_core::DomainStamp,
+    #[serde(default)]
+    pub shared_origin_refs: Vec<String>,
+}
+impl WorldRealizedSource {
+    pub fn validate(&self, occurred_domain: &str, recorded_at: DateTime<Utc>) -> Result<()> {
+        if [
+            &self.world_id,
+            &self.event_id,
+            &self.event_revision,
+            &self.producer_ref,
+            &self.generation_method,
+        ]
+        .iter()
+        .any(|value| value.trim().is_empty())
+            || self.world_observed.time_domain_ref == "time:real"
+            || self.world_observed.time_domain_ref != occurred_domain
+            || self.realized_at > recorded_at
+        {
+            return Err(Error::Invalid(
+                "invalid canonical world event release".into(),
+            ));
+        }
+        nous_core::DomainTemporalExtent {
+            time_domain_ref: self.world_observed.time_domain_ref.clone(),
+            extent: TemporalExtent::Instant {
+                at: self.world_observed.at,
+            },
+        }
+        .validate()?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservationOccurrence {
     pub occurrence_id: OccurrenceId,
     pub subject_id: SubjectId,
     pub artifact_id: Option<ArtifactId>,
     pub source_class: SourceClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_realized: Option<Box<WorldRealizedSource>>,
     pub external_object_ref: Option<ObjectRef>,
     pub occurred_time: TemporalExtent,
     pub occurred_time_domain_ref: String,
@@ -194,6 +240,8 @@ pub enum ObservationMaterial {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OccurrenceDescriptor {
     pub source_class: SourceClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_realized: Option<WorldRealizedSource>,
     pub external_object_ref: Option<ObjectRef>,
     pub occurred_time: TemporalExtent,
     #[serde(
@@ -203,6 +251,8 @@ pub struct OccurrenceDescriptor {
     pub occurred_time_domain_ref: String,
     #[serde(default)]
     pub observed_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_stamp: Option<nous_core::DomainStamp>,
     pub conversation_ref: Option<String>,
     pub actor_entity_ref: Option<EntityRef>,
     #[serde(default)]

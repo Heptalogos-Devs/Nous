@@ -150,17 +150,17 @@ impl MemoryService {
                 source.revision.experience_time_domain_ref.clone(),
             )
         } else if scope_kind == "track" {
-            let late = sqlx::query("SELECT e.occurrence_id,e.observed_at FROM runtime_available_experience($1,$2) e WHERE NOT EXISTS(SELECT 1 FROM episode_revision_members m JOIN episode_objects o ON o.current_revision_id=m.episode_revision_id WHERE o.subject_id=$1 AND o.track_key=$3 AND o.acceptance_state='accepted' AND m.ref_kind='occurrence' AND m.ref_value=e.occurrence_id::text) ORDER BY e.recorded_seq LIMIT 1")
+            let late = sqlx::query("SELECT e.occurrence_id,(o.observed_stamp->>'at')::timestamptz experience_at,o.observed_stamp->>'time_domain_ref' experience_domain FROM runtime_available_experience($1,$2) e JOIN observation_occurrences o ON o.subject_id=$1 AND o.occurrence_id=e.occurrence_id WHERE NOT EXISTS(SELECT 1 FROM episode_revision_members m JOIN episode_objects o ON o.current_revision_id=m.episode_revision_id WHERE o.subject_id=$1 AND o.track_key=$3 AND o.acceptance_state='accepted' AND m.ref_kind='occurrence' AND m.ref_value=e.occurrence_id::text) ORDER BY e.recorded_seq LIMIT 1")
                 .bind(subject.0).bind(trigger).bind(scope).fetch_optional(self.store.pool()).await.map_err(db)?;
             let Some(late) = late else {
                 return Ok(MaintenanceScope::empty("obsolete"));
             };
             (
                 scope.to_owned(),
-                Some(late.get::<DateTime<Utc>, _>("observed_at")),
+                Some(late.get::<DateTime<Utc>, _>("experience_at")),
                 Some(OccurrenceId(late.get("occurrence_id"))),
                 None,
-                "time:real".into(),
+                late.get::<String, _>("experience_domain"),
             )
         } else {
             return Err(Error::Invalid("invalid Episode review scope kind".into()));
@@ -466,7 +466,8 @@ impl MemoryService {
             .await?;
         sources.sort_by_key(|(occurrence, _)| {
             (
-                occurrence.observed_at,
+                occurrence.observed_stamp.time_domain_ref.clone(),
+                occurrence.observed_stamp.at,
                 experience
                     .get(&occurrence.occurrence_id)
                     .and_then(|item| item.recorded_seq)

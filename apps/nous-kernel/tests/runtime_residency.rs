@@ -32,6 +32,10 @@ async fn admit(
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one admission journey checks transaction, observation identity and runtime batch replay together"
+)]
 async fn observation_admission_is_a_single_idempotent_runtime_batch() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
@@ -49,9 +53,11 @@ async fn observation_admission_is_a_single_idempotent_runtime_batch() {
         occurrence: OccurrenceDescriptor {
             occurred_time_domain_ref: "time:real".into(),
             source_class: nous_core::SourceClass::Message,
+            world_realized: None,
             external_object_ref: None,
             occurred_time: nous_core::TemporalExtent::Unknown,
             observed_at: Some(Utc::now()),
+            observed_stamp: None,
             conversation_ref: None,
             actor_entity_ref: None,
             context: serde_json::json!({}),

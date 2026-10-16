@@ -73,6 +73,13 @@ origins AS (
 SELECT DISTINCT p.kind,p.value,o.occurrence_id,o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.occurred_time_domain_ref,o.observed_at,o.observed_stamp,o.created_at recorded_at,o.source_class FROM origins p JOIN observation_occurrences o USING(occurrence_id) WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4) AND ($5 OR source_read_allowed($1,'occurrence',o.occurrence_id::text,$6,$7,$8,$9))
 "#).bind(subject.0).bind(&kinds).bind(&values).bind(view.map(|v|v.as_of)).bind(source_read.is_none()).bind(source_read.map(|v|v.root_keys.clone()).unwrap_or_default()).bind(source_read.map(|v|v.work_contexts.clone()).unwrap_or_default()).bind(source_read.map(|v|v.origin_conversation_refs.clone()).unwrap_or_default()).bind(source_read.map(|v|serde_json::json!(&v.explicit_refs)).unwrap_or_else(||serde_json::json!([]))).fetch_all(self.store.pool()).await.map_err(database_error)?;
         for row in rows {
+            if view.is_some_and(|view| {
+                !view.material_contains(&CognitiveRef::Occurrence(OccurrenceId(
+                    row.get("occurrence_id"),
+                )))
+            }) {
+                continue;
+            }
             let reference = parse_reference(
                 &row.get::<String, _>("kind"),
                 &row.get::<String, _>("value"),
@@ -467,6 +474,7 @@ WHERE ($14::text[] IS NULL OR c.kind||':'||c.id::text=ANY($14))
  JOIN source_regions region ON region.subject_id=$1 AND region.source_region_id=lineage.source_region_id
  JOIN observation_occurrences o ON o.subject_id=$1 AND o.artifact_id=region.artifact_id
  WHERE (NOT $8 OR source_read_allowed($1,'occurrence',o.occurrence_id::text,$9,$10,$11,$12))
+ AND ($15::uuid[] IS NULL OR o.occurrence_id=ANY($15))
  AND (cardinality($6::text[])=0 OR o.source_class=ANY($6)) AND o.source_class<>ALL($7)
  AND ($4::jsonb IS NULL OR domain_temporal_matches(jsonb_build_object('kind',o.occurred_time_kind,'at',o.occurred_time_start,'start',o.occurred_time_start,'end',o.occurred_time_end),o.occurred_time_domain_ref,$4))
  AND ($5::jsonb IS NULL OR domain_temporal_matches(jsonb_build_object('kind','instant','at',CASE WHEN $5->>'time_domain_ref'='time:real' THEN to_jsonb(o.observed_at) ELSE o.observed_stamp->'at' END),CASE WHEN $5->>'time_domain_ref'='time:real' THEN 'time:real' ELSE o.observed_stamp->>'time_domain_ref' END,$5))))
@@ -474,7 +482,7 @@ ORDER BY c.recorded_at DESC,c.kind,c.id LIMIT $13
 "#).bind(q.subject.0).bind(predicate(TimeAxis::Formed)?).bind(predicate(TimeAxis::Recorded)?).bind(predicate(TimeAxis::Occurred)?).bind(predicate(TimeAxis::Observed)?)
 .bind(c.source_classes_include.iter().map(|v|v.as_str().to_owned()).collect::<Vec<_>>()).bind(c.source_classes_exclude.iter().map(|v|v.as_str().to_owned()).collect::<Vec<_>>())
 .bind(scope.is_some()).bind(scope.map(|r|r.root_keys.clone()).unwrap_or_default()).bind(scope.map(|r|r.work_contexts.clone()).unwrap_or_default()).bind(scope.map(|r|r.origin_conversation_refs.clone()).unwrap_or_default()).bind(scope.map(|r|serde_json::json!(r.explicit_refs)).unwrap_or_else(||serde_json::json!([])))
-.bind((limit+1) as i64).bind(historical).fetch_all(self.store.pool()).await.map_err(database_error)?;
+.bind((limit+1) as i64).bind(historical).bind(bound.historical_authority.as_deref().map(|view|view.material_visibility.iter().filter_map(|r|if let CognitiveRef::Occurrence(id)=r{Some(id.0)}else{None}).collect::<Vec<_>>())).fetch_all(self.store.pool()).await.map_err(database_error)?;
         let mut output = LaneOutput::empty(
             EvidenceFamily::Temporal,
             if rows.len() > limit {

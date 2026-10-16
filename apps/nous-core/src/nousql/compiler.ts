@@ -106,7 +106,8 @@ export async function compileNousQL(
     for (const directive of syntax.directives)
       applyDirective(modifiers, directive, clock);
     authorityTime =
-      modifiers.asOf ?? (modifiers.history ? clock.recordedAt : undefined);
+      modifiers.asRecordedAt ??
+      (modifiers.history ? clock.recordedAt : undefined);
     for (const preference of syntax.preferences) {
       if (preference.operand.kind === "key") {
         if (
@@ -206,7 +207,7 @@ function applyDirective(m: QueryModifiers, d: Directive, clock: DomainStamp) {
       )
         point = subtractDuration(clock.recordedAt!, d.named.ago);
       else invalid("Use $asof(timestamp) or $asof(ago=duration)");
-      m.asOf = point;
+      m.asRecordedAt = point;
       d.positional = [timestampText(point)];
       d.named = {};
       break;

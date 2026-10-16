@@ -210,8 +210,13 @@ pub(super) fn compile_query(
         },
         temporal_frame: TemporalFrame {
             clock_now: modifiers.clock_now.map(domain_stamp).transpose()?,
+            knowledge_at_world_time: modifiers
+                .knowledge_at_world_time
+                .map(domain_stamp)
+                .transpose()?
+                .map(Box::new),
             authority_now: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
-            authority_view: time(modifiers.as_of)?
+            authority_view: time(modifiers.as_recorded_at)?
                 .map_or(AuthorityView::Current, AuthorityView::AsOf),
             original_expressions: modifiers.temporal_expressions.clone(),
             revision_view: if modifiers.history {
@@ -295,9 +300,10 @@ fn compile_expression(
             || !modifiers.exploration.is_empty()
             || modifiers.materialize
             || modifiers.projection.is_some()
-            || modifiers.as_of.is_some()
+            || modifiers.as_recorded_at.is_some()
             || modifiers.history
             || modifiers.clock_now.is_some()
+            || modifiers.knowledge_at_world_time.is_some()
             || !modifiers.temporal_expressions.is_empty())
     {
         return Err(Error::Invalid("execution controls are root-only".into()));

@@ -53,7 +53,7 @@ it("captures relative as-of and multiple independent time axes", async () => {
     now,
   );
   const m = result.expression.modifiers!;
-  expect(m.asOf?.seconds).toBe(now.at!.seconds - 30n * 86400n);
+  expect(m.asRecordedAt?.seconds).toBe(now.at!.seconds - 30n * 86400n);
   expect(m.history).toBe(true);
   expect(m.clockNow?.at?.seconds).toBe(now.at!.seconds);
   const observed = m.constraints?.observed?.predicate;
@@ -98,7 +98,7 @@ it("captures relative as-of and multiple independent time axes", async () => {
   expect(point?.case).toBe("point");
   expect(point?.case === "point" && point.value.nanos).toBe(123456789);
   expect(modifiers.clockNow).toEqual(clock);
-  expect(modifiers.asOf?.nanos).toBe(122456789);
+  expect(modifiers.asRecordedAt?.nanos).toBe(122456789);
   const range = modifiers.constraints?.observed?.predicate;
   expect(range?.case === "range" && range.value.start?.nanos).toBe(122456789);
   expect(precise.boundCanonical).toContain(

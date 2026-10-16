@@ -299,16 +299,20 @@ impl NousRuntime {
             .into());
         }
         self.cognition.capture_query_clock(&mut query).await?;
-        let historical = query.temporal_frame.authority_view != AuthorityView::Current
+        let historical = query.temporal_frame.knowledge_at_world_time.is_some()
+            || query.temporal_frame.authority_view != AuthorityView::Current
             || query.temporal_frame.revision_view != RevisionView::Current;
         let view = if historical {
             let at = match query.temporal_frame.authority_view {
                 AuthorityView::AsOf(at) => at,
                 AuthorityView::Current => query.temporal_frame.authority_now,
             };
-            let view = self
+            let mut view = self
                 .historical_authority_view(query.subject, at, query.temporal_frame.revision_view)
                 .await?;
+            if let Some(cut) = &query.temporal_frame.knowledge_at_world_time {
+                self.store.project_world_knowledge(&mut view, cut).await?;
+            }
             Some(Arc::new(view))
         } else {
             None
