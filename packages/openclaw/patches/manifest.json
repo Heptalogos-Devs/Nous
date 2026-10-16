@@ -103,11 +103,11 @@
     },
     "dist/agent-harness-runtime-DUs0hfX9.d.ts": {
       "original": "a2d82e430780a210a28d5f8c75700cd7bb0369b38a4592d24867f7040405e2d1",
-      "patched": "1d6d6c8380c45f1b9fbb204968041ea0a0f5dd1216b23965ec90754227828acf"
+      "patched": "cb3a36d78247521f667a897ed009de70aa304ec9a15674c3191fca6e006446bc"
     },
     "dist/agent-harness-runtime-CBvQyLlU.d.ts": {
       "original": "3cfc17d784465aa55353cd625cddba5c923eab6f102df8eb8ec21c4c3375ae35",
-      "patched": "133adeba1ba755f3fbac4f2072cfddfea8fd878d84bc0ea928e0827423674d52"
+      "patched": "c24c904f3c0b9baf61f0c3e1c4ee104ca74f2d71f08f1556bc5989d91a332d77"
     },
     "dist/payloads-B7_zRmw4.js": {
       "original": "9e350f90dde0ff304d2d9394f7c7f4ecd8209d58994d11154993a93d5f59068d",
@@ -120,6 +120,18 @@
     "dist/payloads-Ch7RD6Ym.js": {
       "original": "a570a6431794810da8f44ed67fb45cd8ae5a0c1d3db198b77bfcefae775bc804",
       "patched": "96d7d15c0db06503458b9367f14cfa53b9cdf19902bf15400807299ec335514b"
+    },
+    "dist/src-B9mb84px.js": {
+      "original": "c3a060a7deb79384ec1294f6e551cb21c3e3c423ab9ac19ea1985a08334c41a0",
+      "patched": "ff8b6c7ce3157ac2c89145452056dc4afdadc3cf58abc1cbeab8d0c6bc7703ae"
+    },
+    "dist/principal-CeDW0csN.js": {
+      "original": "ce84a9236363457f591ace96244082481400e1ced3d5573f10aeb0ed19bdd721",
+      "patched": "81efe7f7d90e908e9d1c756cde61d545d6be7b205f4f2e7e2c6fd3ac99c28682"
+    },
+    "dist/attempt-execution-BUOS5Nu-.js": {
+      "original": "e09d82ae056c3d04295f66661950890e587bf5431b51ad7d56703442898a4f57",
+      "patched": "a9ad5b173cb0517e3b115f1ef87bfa485e63702d99b7d25d963d3049b4496da6"
     }
   },
   "dependencyOverrides": {

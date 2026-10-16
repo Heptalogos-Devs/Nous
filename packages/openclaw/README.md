@@ -197,3 +197,7 @@ Host 已上传真实 artifact 后，在 `prepare.contacts` 提供附属 contact�
 插件只用本批 AcceptedObservation 的实际 Occurrence/SourceRegion 派生 `description_only`，经 `currentMaterials` 交现有 ContextCompiler，实际引用在模型调用前记为 presented。读取始终按具体 Occurrence 配对来源许可；同 artifact 的其他私聊归属不会扩授。`materialInputs.maxItems` 默认 8，`maxTextBytes` 默认 65536；超预算/不支持项在本次实际输入明确列为未解释，不补写第二条描述 Observation。已有成功 model-results 沿原派生入口复用。
 
 GIF 使用现有 video sampler 的有界多帧与时间戳，再由既有 scene description 解释；`frame_coverage=sampled`、`partial_coverage=true` 和截断元数据进入当前输入，不能推断未见帧。
+
+### 原生 agent RPC 的每 run 工具绑定
+
+受控 2026.9.1 的 `agent` 请求支持与 `chat.send` 相同的 `toolBindings` namespace map（最多16个namespace，键长1..128，值opaque）。可信调用者在模型参数之外提供它；RPC ingress 和 embedded attempt 原样传到既有 `PluginToolContext.toolBindings`。绑定不写入 Session，不从 prompt、tool args 或“最近run”补值；下一run缺失绑定就是缺失。该元数据只定位宿主实际run，不授予工具/发送权限，宿主仍须检查当前Activity与operator grants。
