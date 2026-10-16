@@ -14,6 +14,7 @@ pub struct SocialSelectionRequest<'a> {
     pub endpoint: Option<&'a EntityRef>,
     pub counterpart: Option<&'a EntityRef>,
     pub at: Option<DomainStamp>,
+    pub valid_predicates: Option<&'a [nous_core::DomainTimePredicate]>,
     pub as_of: Option<DateTime<Utc>>,
     pub history: bool,
 }
@@ -68,13 +69,13 @@ FROM social_objects o JOIN social_revisions r ON r.object_id=o.object_id
 WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
  AND ($2::uuid IS NULL OR r.revision_id>$2)
  AND (($17::timestamptz IS NULL AND ($18 OR r.revision_id=o.current_revision_id)) OR (r.recorded_at<=$17 AND ($18 OR r.revision_id=(SELECT prior.revision_id FROM social_revisions prior WHERE prior.object_id=o.object_id AND prior.recorded_at<=$17 ORDER BY prior.recorded_at DESC,prior.revision_id DESC LIMIT 1))))
- AND (r.content#>>'{value,valid_time,kind}'='unknown' OR COALESCE(r.content#>>'{value,valid_time_domain_ref}','time:real')=$22)
+ AND (($23::jsonb IS NULL AND ((r.content#>>'{value,valid_time,kind}'='unknown' OR COALESCE(r.content#>>'{value,valid_time_domain_ref}','time:real')=$22)
  AND (r.content#>>'{value,valid_time,kind}'='unknown'
  OR (r.content#>>'{value,valid_time,kind}'='instant' AND ROW(temporal.instant_time[1]::integer,temporal.instant_time[2],rpad(COALESCE(temporal.instant_time[3],''),9,'0')::bigint)=ROW($14::integer,$15::text,$16::bigint))
  OR (r.content#>>'{value,valid_time,kind}'='interval'
  AND (r.content#>>'{value,valid_time,start}' IS NULL OR ROW(temporal.start_time[1]::integer,temporal.start_time[2],rpad(COALESCE(temporal.start_time[3],''),9,'0')::bigint)<=ROW($14::integer,$15::text,$16::bigint))
  AND (r.content#>>'{value,valid_time,end}' IS NULL OR ROW(temporal.end_time[1]::integer,temporal.end_time[2],rpad(COALESCE(temporal.end_time[3],''),9,'0')::bigint)>ROW($14::integer,$15::text,$16::bigint))))
- AND COALESCE(r.content#>'{value,scope,entities}','[]'::jsonb)<@to_jsonb($3::text[])
+)) OR ($23::jsonb IS NOT NULL AND (jsonb_array_length($23::jsonb)=0 OR EXISTS(SELECT 1 FROM jsonb_array_elements($23::jsonb) p WHERE domain_temporal_matches(r.content#>'{value,valid_time}',COALESCE(r.content#>>'{value,valid_time_domain_ref}','time:real'),p))))) AND COALESCE(r.content#>'{value,scope,entities}','[]'::jsonb)<@to_jsonb($3::text[])
  AND (r.content#>>'{value,scope,group}' IS NULL OR r.content#>>'{value,scope,group}'=$4)
  AND (r.content#>>'{value,scope,channel}' IS NULL OR r.content#>>'{value,scope,channel}'=$5)
  AND (r.content#>>'{value,scope,conversation}' IS NULL OR r.content#>>'{value,scope,conversation}'=$6)
@@ -87,7 +88,7 @@ WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='v
  AND ($11::text IS NULL OR (o.family='social_relation' AND (r.content#>>'{value,from}'=$11 OR r.content#>>'{value,to}'=$11)))
  AND ($13::text IS NULL OR (r.content#>>'{value,from}'=$13 OR r.content#>>'{value,to}'=$13))
 ORDER BY r.revision_id LIMIT $12
-"#).bind(subject.0).bind(input.after).bind(entities).bind(input.scope.group.as_ref().map(EntityRef::as_str)).bind(&input.scope.channel).bind(&input.scope.conversation).bind(input.scope.work_context.map(|v|v.0.to_string())).bind(&input.scope.domain).bind(&read.root_keys).bind(input.expression).bind(input.endpoint.map(EntityRef::as_str)).bind((input.max_items+1) as i64).bind(input.counterpart.map(EntityRef::as_str)).bind(now.year()).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond())).bind(input.as_of).bind(input.history).bind(&read.work_contexts).bind(&read.origin_conversation_refs).bind(serde_json::json!(&read.explicit_refs)).bind(domain).fetch_all(&mut *tx).await.map_err(db)?;
+"#).bind(subject.0).bind(input.after).bind(entities).bind(input.scope.group.as_ref().map(EntityRef::as_str)).bind(&input.scope.channel).bind(&input.scope.conversation).bind(input.scope.work_context.map(|v|v.0.to_string())).bind(&input.scope.domain).bind(&read.root_keys).bind(input.expression).bind(input.endpoint.map(EntityRef::as_str)).bind((input.max_items+1) as i64).bind(input.counterpart.map(EntityRef::as_str)).bind(now.year()).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond())).bind(input.as_of).bind(input.history).bind(&read.work_contexts).bind(&read.origin_conversation_refs).bind(serde_json::json!(&read.explicit_refs)).bind(domain).bind(input.valid_predicates.map(serde_json::to_value).transpose().map_err(|e| Error::Invalid(e.to_string()))?).fetch_all(&mut *tx).await.map_err(db)?;
         let mut ids = Vec::new();
         let mut bytes = 0usize;
         let mut omitted = false;

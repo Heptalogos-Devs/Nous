@@ -432,6 +432,7 @@ impl Selection {
             max_bytes: self.max_bytes,
             after: self.after,
             at: self.at.clone(),
+            valid_predicates: None,
             as_of: self.as_of,
             history: self.history,
         }
@@ -758,6 +759,7 @@ impl KernelService {
                 .map(WorkContextId),
         };
         let modifiers = query.expression.as_ref().and_then(|e| e.modifiers.as_ref());
+        let valid_predicates = super::query::selection_valid_predicates(query.expression.as_ref())?;
         let selected = self
             .0
             .require_motivation()?
@@ -775,6 +777,7 @@ impl KernelService {
                         .transpose()?,
                     as_of: time(modifiers.and_then(|m| m.as_of))?,
                     history: modifiers.is_some_and(|m| m.history),
+                    valid_predicates: valid_predicates.as_deref(),
                 },
             )
             .await?;

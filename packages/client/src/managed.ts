@@ -171,8 +171,14 @@ export function createManagedBinding(options: {
         throw new Error(
           "Required cognition preparation is unavailable or has foreign scope",
         );
-      if (!projection.semanticClock?.at || !projection.semanticClock.recordedAt || !projection.semanticClock.timeDomainRef.trim())
-        throw new Error("Required Subject semantic clock is missing; update and prepare the official Nous runtime and plugin");
+      if (
+        !projection.semanticClock?.at ||
+        !projection.semanticClock.recordedAt ||
+        !projection.semanticClock.timeDomainRef.trim()
+      )
+        throw new Error(
+          "Required Subject semantic clock is missing; update and prepare the official Nous runtime and plugin",
+        );
       let segments: ContextSegment[];
       if (response.kind === "RESET") segments = projection.segments;
       else if (

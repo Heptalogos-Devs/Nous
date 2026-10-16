@@ -37,7 +37,11 @@ export const need = create(MaintenanceNeedSchema, {
 export const plan = create(MaintenancePlanSchema, {
   subjectId: subject,
   authoritySeq: 4n,
-  cognitiveNow: { timeDomainRef:"time:real", at: timestampFromDate(new Date("2026-10-03T00:00:00Z")), recordedAt: timestampFromDate(new Date("2026-10-03T00:00:00Z")) },
+  cognitiveNow: {
+    timeDomainRef: "time:real",
+    at: timestampFromDate(new Date("2026-10-03T00:00:00Z")),
+    recordedAt: timestampFromDate(new Date("2026-10-03T00:00:00Z")),
+  },
   status: "ready",
   sources: [{ revisionId: revision, expectedEpoch: 1n }],
   basis: [

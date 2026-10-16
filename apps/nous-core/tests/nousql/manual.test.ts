@@ -31,7 +31,11 @@ it("keeps all Agent manual and structured help queries executable", async () => 
         lexicalRef:
           locator.kind === "lexical" ? locator.value : "tag:kavaj-logiv-bufog",
       }),
-      fromJson(DomainStampSchema, {timeDomainRef:"time:real",at:"2026-10-07T00:00:00Z",recordedAt:"2026-10-07T00:00:00Z"}),
+      fromJson(DomainStampSchema, {
+        timeDomainRef: "time:real",
+        at: "2026-10-07T00:00:00Z",
+        recordedAt: "2026-10-07T00:00:00Z",
+      }),
     );
     expect(compiled.expression, example).toBeDefined();
   }

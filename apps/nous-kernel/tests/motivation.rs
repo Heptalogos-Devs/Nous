@@ -440,6 +440,7 @@ async fn selector_metadata_authorization(
                 max_bytes: 1024 * 1024,
                 after: Some(ended.revision_id),
                 at: None,
+                valid_predicates: None,
                 as_of: None,
                 history: false,
             },

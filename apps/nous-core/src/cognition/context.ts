@@ -3,9 +3,10 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { create, type Message } from "@bufbuild/protobuf";
+import { create, toJson, type Message } from "@bufbuild/protobuf";
 import {
   ContextCursorSchema,
+  ContextSegmentSchema,
   type ContextCursor as Cursor,
   type Projection,
   type ContextSegment as Segment,
@@ -64,7 +65,8 @@ export class ContextCompiler {
       previous.segments.length <= projection.segments.length &&
       previous.segments.every(
         (segment, index) =>
-          digest(segment) === digest(projection.segments[index]),
+          digest(toJson(ContextSegmentSchema, segment)) ===
+          digest(toJson(ContextSegmentSchema, projection.segments[index]!)),
       );
     if (!appendable) {
       const cursor = create(ContextCursorSchema, {

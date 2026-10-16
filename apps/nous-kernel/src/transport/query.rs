@@ -547,3 +547,79 @@ fn predicate_domain(value: &Option<p::TimePredicate>) -> Result<Option<String>> 
     }
     Ok(Some(value.time_domain_ref.clone()))
 }
+
+/// Candidate selection may broaden a boolean branch, but cannot discard a
+/// historical valid range by applying today's standing-valid point first.
+pub(super) fn selection_valid_predicates(
+    expression: Option<&p::QueryExpr>,
+) -> Result<Option<Vec<nous_core::DomainTimePredicate>>> {
+    fn walk(
+        expr: &p::QueryExpr,
+        inherited: Option<nous_core::DomainTimePredicate>,
+        domain: &str,
+        found: &mut bool,
+        unrestricted: &mut bool,
+        result: &mut Vec<nous_core::DomainTimePredicate>,
+        depth: usize,
+    ) -> Result<()> {
+        if depth > 16 {
+            return Err(Error::Invalid("query nesting exceeds 16".into()));
+        }
+        let modifiers = expr.modifiers.as_ref();
+        let domain = modifiers
+            .and_then(|m| m.clock_now.as_ref())
+            .map_or(domain, |s| s.time_domain_ref.as_str());
+        let local = modifiers
+            .and_then(|m| m.constraints.as_ref())
+            .and_then(|c| c.valid.clone());
+        *found |= local.is_some();
+        let selected = if let Some(value) = local {
+            Some(nous_core::DomainTimePredicate {
+                time_domain_ref: predicate_domain(&Some(value.clone()))?
+                    .unwrap_or_else(|| domain.to_owned()),
+                predicate: predicate(Some(value))?.expect("supplied predicate"),
+            })
+        } else {
+            inherited
+        };
+        if expr.operation == "not" {
+            *unrestricted = true;
+        }
+        if expr.children.is_empty() {
+            if let Some(value) = selected {
+                result.push(value);
+            } else {
+                *unrestricted = true;
+            }
+        } else {
+            for child in &expr.children {
+                walk(
+                    child,
+                    selected.clone(),
+                    domain,
+                    found,
+                    unrestricted,
+                    result,
+                    depth + 1,
+                )?;
+            }
+        }
+        Ok(())
+    }
+    let Some(expression) = expression else {
+        return Ok(None);
+    };
+    let mut found = false;
+    let mut unrestricted = false;
+    let mut predicates = Vec::new();
+    walk(
+        expression,
+        None,
+        "time:real",
+        &mut found,
+        &mut unrestricted,
+        &mut predicates,
+        0,
+    )?;
+    Ok(found.then(|| if unrestricted { Vec::new() } else { predicates }))
+}

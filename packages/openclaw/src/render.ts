@@ -1,5 +1,8 @@
 import { toJson } from "@bufbuild/protobuf";
-import { DomainStampSchema, DomainTemporalEvidenceSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import {
+  DomainStampSchema,
+  DomainTemporalEvidenceSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -15,7 +18,9 @@ export const cognitionRenderer: ContextRenderer<Context> = {
       role: segment.semanticRole,
       attribution: segment.sourceRefs.map((ref) => `${ref.kind}:${ref.value}`),
       authority: segment.authority,
-      temporal: segment.temporal ? toJson(DomainTemporalEvidenceSchema, segment.temporal) : undefined,
+      temporal: segment.temporal
+        ? toJson(DomainTemporalEvidenceSchema, segment.temporal)
+        : undefined,
       basis: segment.evidence.map((evidence) => ({
         reference:
           evidence.reference &&

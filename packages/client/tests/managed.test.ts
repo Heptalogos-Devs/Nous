@@ -26,7 +26,11 @@ function fixture(
     kind: "RESET",
     cursor: { trackId: "track", epochId: "epoch", revision: 1 },
     projection: {
-      semanticClock: { timeDomainRef: "time:real", at: timestampFromDate(new Date(0)), recordedAt: timestampFromDate(new Date(0)) },
+      semanticClock: {
+        timeDomainRef: "time:real",
+        at: timestampFromDate(new Date(0)),
+        recordedAt: timestampFromDate(new Date(0)),
+      },
       subjectId: "subject",
       sessionId: "session",
       consumerId: "consumer",

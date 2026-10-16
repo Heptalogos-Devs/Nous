@@ -196,6 +196,90 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
         .unwrap();
     assert_eq!(social.formed_time_domain_ref, "time:course");
     assert_eq!(social.formed_at, world.world_now);
+    let nous_social::SocialContent::LanguageConvention(mut historical) = social.content.clone()
+    else {
+        unreachable!()
+    };
+    historical.expression = "historical green".into();
+    historical.valid_time_domain_ref = "time:course".into();
+    historical.valid_time = TemporalExtent::Interval {
+        start: Some(world.world_now),
+        end: Some(world.world_now + Duration::hours(1)),
+    };
+    let historical = runtime
+        .require_social()
+        .unwrap()
+        .adopt(nous_social::AdoptSocial {
+            subject,
+            operation_id: OperationId::new(),
+            reason: "A dated supported convention".into(),
+            content: nous_social::SocialContent::LanguageConvention(historical),
+        })
+        .await
+        .unwrap();
+    let nano_extent = serde_json::json!({"kind":"instant","at":"2026-10-16T00:00:00.999999999Z"});
+    let nano_range = serde_json::json!({"time_domain_ref":"time:course","predicate":{"kind":"range","start":"2026-10-16T00:00:00Z","end":"2026-10-16T00:00:01Z"}});
+    let nano_match: bool =
+        sqlx::query_scalar("SELECT domain_temporal_matches($1,'time:course',$2)")
+            .bind(&nano_extent)
+            .bind(&nano_range)
+            .fetch_one(runtime.store.pool())
+            .await
+            .unwrap();
+    assert!(
+        nano_match,
+        "nanosecond must not round across the exclusive range end"
+    );
+    let cross_domain: bool =
+        sqlx::query_scalar("SELECT domain_temporal_matches($1,'time:other',$2)")
+            .bind(&nano_extent)
+            .bind(&nano_range)
+            .fetch_one(runtime.store.pool())
+            .await
+            .unwrap();
+    assert!(!cross_domain);
+    let past_predicate = [DomainTimePredicate {
+        time_domain_ref: "time:course".into(),
+        predicate: TimePredicate::Range {
+            start: Some(world.world_now),
+            end: Some(world.world_now + Duration::minutes(30)),
+        },
+    }];
+    let historical_scope = historical.content.scope().clone();
+    let authorization = SourceReadScope {
+        subject_id: Some(subject),
+        source_refs: vec![CognitiveRef::Occurrence(source.occurrence.occurrence_id)],
+        origin_conversation_refs: vec![],
+    };
+    let later = DomainStamp {
+        time_domain_ref: "time:course".into(),
+        at: world.world_now + Duration::days(1),
+        recorded_at: Utc::now(),
+    };
+    let selected = runtime
+        .require_social()
+        .unwrap()
+        .select(
+            subject,
+            nous_social::SocialSelectionRequest {
+                scope: &historical_scope,
+                source_read: &authorization,
+                max_items: 1,
+                max_bytes: 65536,
+                after: None,
+                expression: None,
+                endpoint: None,
+                counterpart: None,
+                at: Some(later),
+                valid_predicates: Some(&past_predicate),
+                as_of: None,
+                history: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(selected.records.len(), 1);
+    assert_eq!(selected.records[0].reference(), historical.reference());
     let clock = runtime.clocks.read(subject).await.unwrap();
     let stamp = DomainStamp {
         time_domain_ref: clock.time_domain_ref,
@@ -271,7 +355,7 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
     assert_eq!(recovered.revision.formed_at, stamp.at);
     assert_eq!(
         recovered.revision.formed_recorded_at,
-        chrono::SubsecRound::trunc_subsecs(stamp.recorded_at, 6)
+        chrono::SubsecRound::round_subsecs(stamp.recorded_at, 6)
     );
     assert_eq!(
         recovered.revision.formed_time_domain_ref,

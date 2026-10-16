@@ -390,7 +390,11 @@ async function fixture(hosted = true) {
         projection: {
           ...input.projection,
           projectionId: "projection:actual",
-          semanticClock: { timeDomainRef: "time:real", at: timestampFromDate(new Date(0)), recordedAt: timestampFromDate(new Date(0)) },
+          semanticClock: {
+            timeDomainRef: "time:real",
+            at: timestampFromDate(new Date(0)),
+            recordedAt: timestampFromDate(new Date(0)),
+          },
           segments: [],
         },
       } as never),

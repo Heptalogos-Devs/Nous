@@ -45,7 +45,8 @@ export async function compileNousQL(
   resolve: IdentityResolver,
   clock: DomainStamp,
 ) {
-  if (!clock.at || !clock.recordedAt || !clock.timeDomainRef) invalid("Query requires a captured semantic clock");
+  if (!clock.at || !clock.recordedAt || !clock.timeDomainRef)
+    invalid("Query requires a captured semantic clock");
   const syntax = parse(source);
   const sourceCanonical = canonical(syntax);
   const temporalExpressions = syntax.directives
@@ -104,7 +105,8 @@ export async function compileNousQL(
     const modifiers = create(QueryModifiersSchema, { constraints: {} });
     for (const directive of syntax.directives)
       applyDirective(modifiers, directive, clock);
-    authorityTime = modifiers.asOf ?? (modifiers.history ? clock.recordedAt : undefined);
+    authorityTime =
+      modifiers.asOf ?? (modifiers.history ? clock.recordedAt : undefined);
     for (const preference of syntax.preferences) {
       if (preference.operand.kind === "key") {
         if (
@@ -302,7 +304,7 @@ function applyDirective(m: QueryModifiers, d: Directive, clock: DomainStamp) {
         invalid(
           "Time axis must be occurred, observed, valid, formed or recorded",
         );
-      const keys = Object.keys(d.named).filter(k=>k!=="domain");
+      const keys = Object.keys(d.named).filter((k) => k !== "domain");
       if (
         !keys.length ||
         keys.some((k) => !["within", "from", "to", "at"].includes(k))
@@ -310,9 +312,13 @@ function applyDirective(m: QueryModifiers, d: Directive, clock: DomainStamp) {
         invalid("Invalid time arguments");
       const key = axis as
         "occurred" | "observed" | "valid" | "formed" | "recorded";
-      const domain = d.named.domain ?? (key === "recorded" ? "time:real" : clock.timeDomainRef);
-      if (key === "recorded" && domain !== "time:real") invalid("recorded time requires time:real");
-      if (typeof domain !== "string" || !domain.trim() || domain.length > 256) invalid("Invalid time domain");
+      const domain =
+        d.named.domain ??
+        (key === "recorded" ? "time:real" : clock.timeDomainRef);
+      if (key === "recorded" && domain !== "time:real")
+        invalid("recorded time requires time:real");
+      if (typeof domain !== "string" || !domain.trim() || domain.length > 256)
+        invalid("Invalid time domain");
       const referenceNow = key === "recorded" ? clock.recordedAt! : now;
       if (d.named.at !== undefined) {
         if (keys.length !== 1)
@@ -347,7 +353,7 @@ function applyDirective(m: QueryModifiers, d: Directive, clock: DomainStamp) {
         invalid("Time range requires start < end");
       c[key] = {
         $typeName: "nous.wave.v1alpha1.TimePredicate",
-          timeDomainRef: domain,
+        timeDomainRef: domain,
         predicate: {
           case: "range",
           value: { $typeName: "nous.wave.v1alpha1.TimeInterval", start, end },
