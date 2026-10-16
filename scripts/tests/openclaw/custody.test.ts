@@ -36,6 +36,11 @@ test("controlled native custody survives SQLite and gates real delivery producer
   try {
     await cp(join(source, "dist"), join(native, "dist"), { recursive: true });
     await copyFile(join(source, "package.json"), join(native, "package.json"));
+    await cp(
+      join(source, "docs/reference/templates"),
+      join(native, "docs/reference/templates"),
+      { recursive: true },
+    );
     // Link each dependency to its physical package root. A junction to pnpm's
     // node_modules leaves scoped packages behind another relative junction;
     // Windows ESM package lookup cannot reliably traverse that nested shape.
@@ -112,7 +117,13 @@ test("controlled native custody survives SQLite and gates real delivery producer
         "Actual installed SDK hosted tool declaration/registration PASS",
       ),
     );
+    const bindings = execFileSync(
+      process.execPath,
+      [join(repositoryRoot, "scripts/tests/openclaw/tool-bindings.ts"), native],
+      { cwd: repositoryRoot, env, encoding: "utf8", windowsHide: true },
+    );
+    assert(bindings.includes('"nativeAgentRpcToolBindings":"PASS"'));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
-}, 120_000);
+}, 180_000);
