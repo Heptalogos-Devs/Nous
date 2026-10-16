@@ -202,10 +202,19 @@ index e8ee3cd..8cf5105 100644
  			recursive: true,
  			force: true
 diff --git a/dist/agent-harness-runtime-CBvQyLlU.d.ts b/dist/agent-harness-runtime-CBvQyLlU.d.ts
-index 23e7dae..28263f7 100644
+index 23e7dae..2c38883 100644
 --- a/dist/agent-harness-runtime-CBvQyLlU.d.ts
 +++ b/dist/agent-harness-runtime-CBvQyLlU.d.ts
-@@ -16350,6 +16350,8 @@ interface ContextEngine {
+@@ -14409,6 +14409,8 @@ type AgentRunContext = {
+ /** Full trusted option surface for running an agent command. */
+ type AgentCommandOpts = {
+   message: string;
++  /** Opaque per-run bindings supplied by the trusted Gateway initiator, never model args. */
++  toolBindings?: Readonly<Record<string, unknown>>;
+   /** User-visible transcript body; defaults to message and excludes runtime-only context. */
+   transcriptMessage?: string;
+   /** Durable media metadata for the user-visible transcript turn. */
+@@ -16350,6 +16352,8 @@ interface ContextEngine {
     * fails after preparation succeeds.
     */
    prepareSubagentSpawn?(params: {
@@ -215,10 +224,19 @@ index 23e7dae..28263f7 100644
      childSessionKey: string;
      contextMode?: "isolated" | "fork";
 diff --git a/dist/agent-harness-runtime-DUs0hfX9.d.ts b/dist/agent-harness-runtime-DUs0hfX9.d.ts
-index 014e63a..e00a82e 100644
+index 014e63a..fe4f6f4 100644
 --- a/dist/agent-harness-runtime-DUs0hfX9.d.ts
 +++ b/dist/agent-harness-runtime-DUs0hfX9.d.ts
-@@ -20088,6 +20088,8 @@ interface ContextEngine {
+@@ -17781,6 +17781,8 @@ type AgentRunContext = {
+ /** Full trusted option surface for running an agent command. */
+ type AgentCommandOpts = {
+   message: string;
++  /** Opaque per-run bindings supplied by the trusted Gateway initiator, never model args. */
++  toolBindings?: Readonly<Record<string, unknown>>;
+   /** User-visible transcript body; defaults to message and excludes runtime-only context. */
+   transcriptMessage?: string;
+   /** Durable media metadata for the user-visible transcript turn. */
+@@ -20088,6 +20090,8 @@ interface ContextEngine {
     * fails after preparation succeeds.
     */
    prepareSubagentSpawn?(params: {
@@ -227,6 +245,18 @@ index 014e63a..e00a82e 100644
      parentSessionKey: string;
      childSessionKey: string;
      contextMode?: "isolated" | "fork";
+diff --git a/dist/attempt-execution-BUOS5Nu-.js b/dist/attempt-execution-BUOS5Nu-.js
+index 2b36e9a..3932f9c 100644
+--- a/dist/attempt-execution-BUOS5Nu-.js
++++ b/dist/attempt-execution-BUOS5Nu-.js
+@@ -774,6 +774,7 @@ function runAgentAttempt(params) {
+ 		execApprovalContinuationPromptRange: embeddedExecApprovalContinuationPromptRange,
+ 		execApprovalContinuationTranscriptPromptRange: continuationTranscriptPromptRange,
+ 		approvalReviewerDeviceId: params.opts.approvalReviewerDeviceId,
++		toolBindings: params.opts.toolBindings,
+ 		timeoutMs: params.timeoutMs,
+ 		runTimeoutOverrideMs: params.runTimeoutOverrideMs,
+ 		runId: params.runId,
 diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.js
 index 63c12b4..7290d50 100644
 --- a/dist/builtin-openclaw-zQV8Wwjr.js
@@ -783,6 +813,19 @@ index decddd2..dd18665 100644
 \ No newline at end of file
 +export { type AgentPlanStep, type AgentPlanStepStatus, CHANNEL_INGRESS_RETENTION_DEFAULTS, type ChannelDeliveryStreamingConfig, type ChannelDraftStreamingChunking, type ChannelIngressDrain, type ChannelIngressMonitorDeliveryResult, type ChannelIngressMonitorLifecycle, type ChannelIngressQueue, type ChannelIngressQueueClaim, type ChannelIngressQueueClaimRef, type ChannelIngressQueueCorruptClaim, type ChannelIngressQueueRecord, type ChannelMessageAdapterShape, type ChannelMessageDurableFinalAdapter, type ChannelMessageSendMediaContext, type ChannelMessageSendPayloadContext, type ChannelMessageSendResult, type ChannelMessageSendTextContext, type ChannelMessageUnknownSendContext, type ChannelMessageUnknownSendReconciliationResult, type ChannelPreviewStreamingConfig, type ChannelProgressDraftCompositorLine, type ChannelProgressDraftCompositorSnapshot, type ChannelProgressDraftLine, ChannelProgressDraftRenderMode, type ChannelStreamingBlockConfig, type ChannelStreamingProgressConfig, DEFAULT_INGRESS_ADOPTION_STALL_MS, DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS, DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS, type DurableMessageBatchSendResult, INGRESS_CLAIM_PROCESS_ID, type MessageAckPolicy, type MessageReceipt, type MessageReceiptPart, type MessageReceiptPartKind, type MessageReceiptSourceResult, type MessageReceiveContext, type OutboundDeliveryFormattingOptions, type OutboundIdentity, type OutboundMessageIdentity, type OutboundSendDeps, type OutboundSessionContext, type ReplyToResolution, type StreamingMode, type TextChunkMode, bindIngressLifecycleToReplyOptions, buildChannelProgressDraftLine, buildChannelProgressDraftLineForEntry, buildOutboundSessionContext, createAccountStatusSink, createChannelIngressDrain, createChannelIngressError, createChannelIngressMonitor, createChannelMessageAdapterFromOutbound, createChannelReplyPipeline as createChannelMessageReplyPipeline, createChannelProgressDraftCompositor, createChannelProgressDraftGate, createChannelProgressWorkCounter, createChannelRunQueue, createDraftStreamLoop, createDurableInboundReceiveJournalFromQueue, createFinalizableDraftLifecycle, createFinalizableDraftStreamControlsForState, createMessageReceiptFromOutboundResults, createMessageReceiveContext, createOutboundPayloadPlan, createPreviewMessageReceipt, createReplyPrefixContext, createReplyPrefixOptions, createReplyToFanout, createRuntimeOutboundDelegates, createTypingCallbacks, createTypingKeepaliveLoop, defineChannelMessageAdapter, defineFinalizableLivePreviewAdapter, deliverInboundReplyWithMessageSendContext, deliverWithFinalizableLivePreviewAdapter, deriveDurableFinalDeliveryRequirements, formatChannelProgressDraftLine, formatChannelProgressDraftLineForEntry, formatChannelProgressDraftText, formatPlanChecklistLines, getChannelStreamingConfigObject, isChannelProgressDraftWorkToolName, isPotentialTruncatedFinal, isRecentOutboundMessageIdentity, keepHttpServerTaskAlive, listMessageReceiptPlatformIds, logTypingFailure, mergeChannelProgressDraftLine, normalizeAgentPlanSteps, normalizeChannelProgressDraftLineIdentity, processPidFromOwnerId, projectOutboundPayloadPlanForDelivery, recordOutboundMessageIdentity, resolveAgentOutboundIdentity, resolveChannelDraftStreamingChunking, resolveChannelSourceReplyDeliveryMode as resolveChannelMessageSourceReplyDeliveryMode, resolveChannelPreviewStreamMode, resolveChannelProgressDraftConfig, resolveChannelProgressDraftMaxLineChars, resolveChannelProgressDraftMaxLines, resolveChannelProgressDraftRender, resolveChannelStreamingBlockCoalesce, resolveChannelStreamingBlockEnabled, resolveChannelStreamingChunkMode, resolveChannelStreamingNativeTransport, resolveChannelStreamingPreviewCommandText, resolveChannelStreamingPreviewToolProgress, resolveChannelStreamingProgressCommentary, resolveChannelStreamingProgressNarration, resolveChannelStreamingSuppressDefaultToolProgressMessages, resolveMessageReceiptPrimaryId, resolveOutboundSendDep, resolveTranscriptBackedChannelFinalText, runPassiveAccountLifecycle, sanitizeForPlainText, selectLongerFinalText, sendDurableMessageBatch, takeMessageIdAfterStop, verifyChannelMessageAdapterCapabilityProofs, verifyChannelMessageLiveCapabilityAdapterProofs, verifyChannelMessageLiveFinalizerProofs, verifyChannelMessageReceiveAckPolicyAdapterProofs, verifyDurableFinalCapabilityProofs, waitUntilAbort, withDurableMessageSendContext };
 +export type { ChannelDeliveryCustodyAdapter, ChannelDeliveryCustodyAdmission, ChannelDeliveryCustodyReference } from "../types-BzYyevxm.js";
+diff --git a/dist/principal-CeDW0csN.js b/dist/principal-CeDW0csN.js
+index b4dbe78..a38d4c2 100644
+--- a/dist/principal-CeDW0csN.js
++++ b/dist/principal-CeDW0csN.js
+@@ -3088,6 +3088,8 @@ function startAgentRunExecution(params) {
+ 				},
+ 				cronCreatorAuthority: prepared.cronCreatorAuthority,
+ 				ingressOpts: {
++					// Initiator-owned metadata stays outside model input and tool arguments.
++					toolBindings: params.request.toolBindings,
+ 					skillLibraryAuthoring,
+ 					message,
+ 					images: params.images,
 diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
 index 115e3a6..6d3c930 100644
 --- a/dist/registry-BdPa2vko.js
@@ -943,6 +986,18 @@ index 93a9926..97acd11 100644
  			const streamTo = runtime === "acp" && params.streamTo === "parent" ? "parent" : void 0;
  			const lightContext = params.lightContext === true;
  			const roleContext = requestedAgentId ? { role: requestedAgentId } : {};
+diff --git a/dist/src-B9mb84px.js b/dist/src-B9mb84px.js
+index a6ed1e7..031eac2 100644
+--- a/dist/src-B9mb84px.js
++++ b/dist/src-B9mb84px.js
+@@ -3934,6 +3934,7 @@ const AgentParamsSchema = closedObject({
+ 	expectedExistingSessionId: Type.Optional(NonEmptyString),
+ 	thinking: Type.Optional(Type.String()),
+ 	deliver: Type.Optional(Type.Boolean()),
++	toolBindings: Type.Optional(RunToolBindingsSchema),
+ 	attachments: Type.Optional(Type.Array(Type.Unknown())),
+ 	channel: Type.Optional(Type.String()),
+ 	replyChannel: Type.Optional(Type.String()),
 diff --git a/dist/system-prompt-params-B645JcX8.js b/dist/system-prompt-params-B645JcX8.js
 index d5764bd..e46e5b0 100644
 --- a/dist/system-prompt-params-B645JcX8.js
