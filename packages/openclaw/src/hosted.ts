@@ -36,6 +36,15 @@ import type {
   ManagedModelInput,
   ManagedModelApplication,
 } from "./contract.js";
+/** SHA256 of exact input bytes; absent and empty current context remain distinct. */
+export async function hostInputDigest(text: string) {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
+  );
+  return [...digest]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
 const markerSchema = z
   .object({
     identity: hostPrepareRequestSchema,
@@ -78,12 +87,6 @@ export class HostedLifecycle {
   ) {
     if (!input.sessionKey)
       throw new Error("Hosted input requires a persisted native Session key");
-    const digest = new Uint8Array(
-      await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(input.prompt),
-      ),
-    );
     const identity: HostPrepareRequest = {
       version: 1,
       subjectId: this.subjectId,
@@ -101,9 +104,14 @@ export class HostedLifecycle {
           : {}),
       },
       historyUsers: await historyUsers(input.context),
-      promptDigest: [...digest]
-        .map((v) => v.toString(16).padStart(2, "0"))
-        .join(""),
+      promptDigest: await hostInputDigest(input.prompt),
+      ...(input.extraSystemPrompt !== undefined
+        ? {
+            currentContextDigest: await hostInputDigest(
+              input.extraSystemPrompt,
+            ),
+          }
+        : {}),
     };
     const permission = {
       ...(await this.bridge.prepare(identity, input.signal)),

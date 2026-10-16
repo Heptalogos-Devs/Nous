@@ -113,7 +113,12 @@ export async function buildDistribution(destination: string) {
             `https://raw.githubusercontent.com/${repository}/v${pkg.version}/${name}`,
             { signal: AbortSignal.timeout(30000) },
           );
-          if (response.status === 404 && name === "NOTICE") continue;
+          if (response.status === 404 && name === "NOTICE") {
+            // A pinned publisher tag has no optional NOTICE. Retain that
+            // result so each offline verification does not refetch a 404.
+            await writeFile(join(cache, name), "");
+            continue;
+          }
           if (!response.ok)
             throw new Error(`Publisher ${name} unavailable: ${pkg.name}`);
           text = await response.text();

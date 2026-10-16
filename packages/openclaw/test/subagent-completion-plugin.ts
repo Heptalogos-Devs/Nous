@@ -16,6 +16,7 @@ assert(proof && parent);
 const log = (event: string, fields: Record<string, unknown> = {}) =>
   appendFileSync(proof, JSON.stringify({ event, ...fields }) + "\n");
 const handoffs = new Map<string, string>();
+const childSystems = new Map<string, string | undefined>();
 const registered = new Set([parent]);
 const admitted = new Set<string>();
 let counter = 0;
@@ -27,6 +28,19 @@ const engine: ManagedContextEngine = {
     ownsCompaction: false,
     managedModelInputRequired: true,
     transcriptPersistence: "host",
+  },
+  async runTerminal(request) {
+    assert(admitted.has(request.native.runId));
+    assert.equal(request.outcome, "completed");
+    log("runTerminal", { ...request });
+    return {
+      version: 1,
+      accepted: true,
+      runId: request.native.runId,
+      activityRef: "fixture-activity",
+      resultRetained: true,
+      ready: true,
+    };
   },
   async ingest() {
     return { ingested: false };
@@ -40,6 +54,11 @@ const engine: ManagedContextEngine = {
   async prepareSubagentSpawn(p) {
     if (!registered.has(p.parentRunId)) throw Error("Unregistered parent");
     handoffs.set(p.childSessionKey, p.parentRunId);
+    assert(typeof p.childExtraSystemPrompt === "string");
+    assert(
+      !p.childExtraSystemPrompt.includes("EPHEMERAL_CURRENT_CONTEXT_FIXTURE"),
+    );
+    childSystems.set(p.childSessionKey, p.childExtraSystemPrompt);
     await p.persistSessionBinding({
       parentNativeRunId: p.parentRunId,
       parentNativeSessionKey: p.parentSessionKey,
@@ -63,15 +82,49 @@ const engine: ManagedContextEngine = {
         throw Error("Unregistered actual input");
       registered.add(p.runId);
     }
+    if (p.runId === parent)
+      assert.equal(
+        p.extraSystemPrompt,
+        "  EPHEMERAL_CURRENT_CONTEXT_FIXTURE\n当前片段\n  ",
+      );
+    if (childSystems.has(p.sessionKey ?? ""))
+      assert.equal(p.extraSystemPrompt, childSystems.get(p.sessionKey ?? ""));
     admitted.add(p.runId);
     log("admitted", {
       runId: p.runId,
       prompt: p.prompt,
       sessionKey: p.sessionKey,
     });
+    const invocationId = p.runId + ":fixture:" + ++counter;
+    if (handoffs.has(p.sessionKey ?? "")) {
+      if (typeof p.persistAdmittedContact !== "function")
+        throw Error("Missing native admitted-contact custody");
+      await p.persistAdmittedContact(
+        {
+          version: 1,
+          subjectId: "00000000-0000-4000-8000-000000000001",
+          nousSessionId: "00000000-0000-4000-8000-000000000002",
+          contactRequestId: randomUUID(),
+          invocationId,
+          native: {
+            sessionKey: p.sessionKey!,
+            sessionId: p.sessionId,
+            runId: p.runId,
+            agentId: p.agentId,
+            historyGeneration: p.historyGeneration,
+          },
+        },
+        {
+          role: "subject.execution",
+          purpose: "professional_execution",
+          view: "worker",
+          contactNature: "execution_only",
+        },
+      );
+    }
     return {
       context: p.context,
-      invocationId: p.runId + ":fixture:" + ++counter,
+      invocationId,
       applied: { projectionId: randomUUID(), sourceRefs: [] },
       providerControls: {
         maxOutputTokens: Math.min(37, p.reservedOutputTokens),

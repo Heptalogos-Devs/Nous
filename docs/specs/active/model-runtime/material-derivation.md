@@ -16,6 +16,10 @@ DerivedRepresentation 保存 ordered exact inputs、strategy、representation ki
 
 ## 受信世界来源与角色接触
 
+`initial_setting` 是入场条件声明的正式来源分类。它可说明当前角色、地点和版本化 profile 的描述，不是已经发生的世界事件、童年或练习证明；Material 拒绝它携带 `worldRealized` 或非 unknown 的 occurredTime。首次实际接触仍保存真实 observedAt；有真实 Host clock capture 时携带该 observedStamp，不从设定中的日期反推观察映射。
+
+来源分类随每个 SourceTemporalEvidence.sourceClass 保留到正式 Query/Context 输出。仅由 initial_setting 支持的当前知识按 reported 呈现，并与已生活经历贡献分开；初始声明、原材料和原始付费文本不被改写为事件史。sourceClass 本身不授予管理或世界权威，Host 仍核验实际 profile、版本和 source identity。
+
 Material 使用一份正式来源合同区分真实外部接触、已实现虚拟世界事件、初始设定/采用历史、梦/假设、生成草稿与主观陈述。`world_realized` 由认证 WorldLife 操作提供：稳定 world/event 身份与版本、发生时段、角色可见投影、世界 seen/heard 点、现实 realized/observed/recorded、实际 producer/规则和因果/共源引用。worldId 与时间域分别保存；虚拟 actor 复用 Host 的 world-scoped EntityRef，不冒充 QQ 账号。
 
 该性质由正式 Host 调用身份及已提交事件核验，模型填写 sourceClass、role 或正文标签不授予世界权威。世界 author/review、worker 后台结果的 execution_only 内容保存在所属运行/世界能力，不因通用结果回流而成为 Subject Observation 或自动反思来源。正式释放给 Subject 的 subject_experience 创建新的接触，引用实际事件/原运行结果；同一事件版本向同一接触的重复交接保留请求身份与 receipt，不重做世界实现或工具动作。

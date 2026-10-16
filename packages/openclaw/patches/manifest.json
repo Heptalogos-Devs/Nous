@@ -3,7 +3,7 @@
   "files": {
     "dist/agent-core-BxgCPa8O.js": {
       "original": "0c9bcca812ac44e9cd79a8df3ce627c55cd569182a4e9f0f6623d54483f149fa",
-      "patched": "b2104080831542b31990945e27790c06f07eea390533894b9181a31b13481ad5"
+      "patched": "26f048539c715b4a8d6d0d670f72032a51607f6997ed54a39bb88e6484bae306"
     },
     "dist/agent-exec-DQrJo6Wo.js": {
       "original": "233e7376ce3481a5905fa1083d0077cdade601164303c122d07fbbb8810ac669",
@@ -11,7 +11,7 @@
     },
     "dist/builtin-openclaw-zQV8Wwjr.js": {
       "original": "62599de51a360163f8020d3f2c9ffbf7481a2424b850363d77308a99056a5303",
-      "patched": "5235673b3c639650607b3f90324ea0ba721ffe57c489a4ca4d21ed065dee5d69"
+      "patched": "5e0d5682e43c14b10d043398ba7b28aefb9e88234bf30c8d687a6f9182654453"
     },
     "dist/context-engine-turn-attempt-BPzr5IBp.js": {
       "original": "4cc537188596b09ee72b9d1cff7f027e4eebc836ee43859a414b15eaac36d0fc",
@@ -83,7 +83,7 @@
     },
     "dist/sessions-spawn-tool-1FQMTkIo.js": {
       "original": "a21770222831b6574680621577da6bb0727903117210f20968afdb59a83975b8",
-      "patched": "3cb62bbd2ffb554ce9750442245e5d660820caba16b7224bd62ba47e3edfb97b"
+      "patched": "b0ebc2e62536881dde63cc39a25c3193dea8555928946484ae4d161cbeb5e9b5"
     },
     "dist/system-prompt-params-B645JcX8.js": {
       "original": "df80c676f3d6fd201212bd4c95db25898c6a00dd61f4b598f7e8c5db04d94750",
@@ -155,7 +155,31 @@
     },
     "dist/compaction-DlElLXrZ.js": {
       "original": "5b27e4c36a99deb33bafa818ae2525a2a3566ffb2104f471e004f2ddf4739cc0",
-      "patched": "d133f2531e7a6e61d8d684d4b0c4ab2a99ae32923b4296f31caf2bdca71b4244"
+      "patched": "8cdf15213140b03e5d1c7aec3ba358cf7c85196e87fd85db6ab519f70101a58e"
+    },
+    "dist/agent-command-DPfawBbr.js": {
+      "original": "dda401d2c6f9ddb086c106d804c8860a544d1c7f8c458ee055549d95801ca83f",
+      "patched": "a8913ba8b94064fc2eec3cd2aaa29261485b9b31c26605b6207b140c1f202b8a"
+    },
+    "dist/compact-gStBcHDe.js": {
+      "original": "54be690135a3b02b256da3761f5c96d20ee1390da5e2e2cd03ce0c53cadc0e4f",
+      "patched": "7c169d8fb8d4475774fd9a085d4ea1b4a3653008c2ed90b1b2d874e621f80442"
+    },
+    "dist/session-manager-CNTG_BAJ.js": {
+      "original": "8db52c1a8d53e5f69e0bb2fe83c4fb0074b7abf6e2d03a4c832d5536fadc7024",
+      "patched": "af073ca3b44e71e21dccf79b44cb79e680fb689e7d75ab37b469e5c30a6b7a67"
+    },
+    "dist/sessions-CHgQo4vL.js": {
+      "original": "163893d16aab725f73d5ad6732dea1048b49c829a2d0f09540083b4ace1394d0",
+      "patched": "084d2f136014430d072ed8a7d3a9860ac6f1bc34177318ed468253d7fb6773b8"
+    },
+    "dist/agent-runner-memory-7VF-zwNt.js": {
+      "original": "8bca065f05bfd1f8baba4ab799dcfa131aade7b4876c0a4349a8eefd5a0a2317",
+      "patched": "d0bb59d708b5053e79f4bf6e55744690a921913d1a9c5d0f94bed97bb0d15d48"
+    },
+    "dist/embedded-agent-DaSvA-Yk.js": {
+      "original": "128a61c9e10a47d501ad425345f9f05a88c9dc66b665e32f979d12e29675cd67",
+      "patched": "731ba6159313317b08ec16f5d7f28699fa95ad317c3e44ff8200d7df2ed34587"
     }
   },
   "dependencyOverrides": {

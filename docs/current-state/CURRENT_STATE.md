@@ -35,3 +35,9 @@ Topology 是默认关闭的显式 lane，包含 weighted PCA/EPA、residual deco
 ## Deferred
 
 Self、Social Cognition、Motivation、Heptalogos integration 与 Linux source-less portable。
+
+## Reactor整包接续
+
+Objective：同一持续Subject的世界、知识、交往与长任务完整真实运行。Decisions：Host单前台程序Reactor、后台并行，独立自然文本renderer、正式结果release、同步继续信息与唯一原生固定前缀后台压缩；复用现有认知及域时间接口。
+
+Current Work：承接已合入的正式角色/视角/结果保管/预算，继续实际在途域时间、world来源、知识投影与历史修正；随后落实本节新增的原生固定前缀后台压缩消费者。当前已有原生compact委派不证明异步前缀/尾部保留完成；代码、CI、安装、真实角色模型/QQ及物理次日恢复分别验收。H唯一系列active Plan拥有产品Reactor/世界/注意/CLI授权，本仓不复制该产品运行系统。

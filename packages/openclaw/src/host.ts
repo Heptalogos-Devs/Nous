@@ -18,6 +18,8 @@ import {
   hostAcknowledgementSchema,
   hostFeedbackRequestSchema,
   hostHandoffRequestSchema,
+  hostRunTerminalRequestSchema,
+  hostRunTerminalResponseSchema,
   hostCompletionRequestSchema,
   hostCompletionResponseSchema,
   hostAdmittedRequestSchema,
@@ -162,6 +164,15 @@ export class HostBridge {
       hostAdmittedRequestSchema.parse(request),
       hostAcknowledgementSchema,
       signal,
+    );
+  }
+  async runTerminal(
+    request: Parameters<typeof hostRunTerminalRequestSchema.parse>[0],
+  ) {
+    return this.call(
+      "runTerminal",
+      hostRunTerminalRequestSchema.parse(request),
+      hostRunTerminalResponseSchema,
     );
   }
   async completion(

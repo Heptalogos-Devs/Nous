@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Context, Model } from "@openclaw/ai";
+import type {
+  HostContactIdentity,
+  HostRoleScope,
+  HostRunTerminalRequest,
+  HostRunTerminalResponse,
+} from "@nous-wave/client/host-bridge";
 import type { AppliedCognition } from "@nous-wave/client/managed";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
@@ -14,12 +20,18 @@ export interface ManagedModelInput {
   historyIsFresh: boolean;
   historyGeneration: string;
   persistSessionBinding(value: Record<string, string>): Promise<void>;
+  persistAdmittedContact?(
+    identity: HostContactIdentity,
+    roleScope: HostRoleScope,
+  ): Promise<void>;
   sessionId: string;
   sessionKey?: string;
   parentSessionKey?: string;
   agentId: string;
   runId: string;
   prompt: string;
+  /** Exact authored per-run system addition, before native framework hints; excluded from transcript history. */
+  extraSystemPrompt?: string;
   model: Model;
   context: Context;
   signal: AbortSignal;
@@ -59,6 +71,9 @@ export interface NativeSubagentCompletion {
   recover?: boolean;
 }
 export interface ManagedContextEngine extends ContextEngine {
+  runTerminal(
+    request: HostRunTerminalRequest,
+  ): Promise<HostRunTerminalResponse | undefined>;
   prepareSubagentCompletion(input: NativeSubagentCompletion): Promise<
     | {
         parentRunId: string;
@@ -81,6 +96,7 @@ export interface ManagedContextEngine extends ContextEngine {
     >[0] & {
       /** Exact native run that requested this child, carried by the native tool context. */
       parentRunId: string;
+      childExtraSystemPrompt?: string;
       persistSessionBinding(value: Record<string, string>): Promise<void>;
     },
   ): Promise<{ rollback(): Promise<void> }>;
