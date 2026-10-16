@@ -3,7 +3,7 @@
   "files": {
     "dist/agent-core-BxgCPa8O.js": {
       "original": "0c9bcca812ac44e9cd79a8df3ce627c55cd569182a4e9f0f6623d54483f149fa",
-      "patched": "8671e5ff76909ce3ffd95a28fa26f76795341a65fa671624a458c65db19f4ccd"
+      "patched": "7b62c4c7f92f99fab6cf3f73862a0d8cc36064155269030a412b3b983e256caa"
     },
     "dist/agent-exec-DQrJo6Wo.js": {
       "original": "233e7376ce3481a5905fa1083d0077cdade601164303c122d07fbbb8810ac669",
@@ -11,7 +11,7 @@
     },
     "dist/builtin-openclaw-zQV8Wwjr.js": {
       "original": "62599de51a360163f8020d3f2c9ffbf7481a2424b850363d77308a99056a5303",
-      "patched": "90168fe85cf60666cd441e3a97e32d645ffa6c208cf0ee72f3a829ea0bdde61e"
+      "patched": "eed3e3a1729c9c4d59bb33e747dc27d0213fee31b94824c0a59645a7c35e68db"
     },
     "dist/context-engine-turn-attempt-BPzr5IBp.js": {
       "original": "4cc537188596b09ee72b9d1cff7f027e4eebc836ee43859a414b15eaac36d0fc",

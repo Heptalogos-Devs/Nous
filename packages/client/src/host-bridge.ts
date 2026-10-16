@@ -9,6 +9,7 @@ export const HOST_BRIDGE_PATHS = Object.freeze({
   admitted: "/nous/v1/admitted",
   handoff: "/nous/v1/handoff",
   feedback: "/nous/v1/feedback",
+  toolExecution: "/nous/v1/tool-execution",
 });
 const canonicalJson = z.record(z.string(), z.json());
 export const nativeIdentitySchema = z
@@ -48,6 +49,7 @@ export const hostPrepareResponseSchema = z
     version: z.literal(1),
     contactRequestId: z.uuid(),
     workContextId: z.uuid(),
+    allowedToolNames: z.array(z.string().min(1).max(512)).max(1024),
     usage: canonicalJson,
     contacts: z.array(
       z
@@ -71,6 +73,30 @@ export const hostAdmittedRequestSchema = z
 export const hostAcknowledgementSchema = z
   .object({ version: z.literal(1), accepted: z.literal(true) })
   .strict();
+export const hostToolExecutionRequestSchema = z
+  .object({
+    ...contactIdentity,
+    toolName: z.string().min(1).max(512),
+    toolCallId: z.string().min(1).max(2048),
+    phase: z.enum(["prepare", "execute"]),
+  })
+  .strict();
+export const hostToolExecutionResponseSchema = z
+  .object({
+    version: z.literal(1),
+    contactRequestId: z.uuid(),
+    toolName: z.string().min(1).max(512),
+    toolCallId: z.string().min(1).max(2048),
+    allowed: z.literal(true),
+    usage: canonicalJson,
+  })
+  .strict();
+export type HostToolExecutionRequest = z.infer<
+  typeof hostToolExecutionRequestSchema
+>;
+export type HostToolExecutionResponse = z.infer<
+  typeof hostToolExecutionResponseSchema
+>;
 export const hostHandoffRequestSchema = z
   .object({
     version: z.literal(1),
@@ -147,6 +173,8 @@ function httpSchema(schema: z.ZodType) {
   return generated;
 }
 export const HOST_BRIDGE_JSON_SCHEMAS = {
+  toolExecutionRequest: httpSchema(hostToolExecutionRequestSchema),
+  toolExecutionResponse: httpSchema(hostToolExecutionResponseSchema),
   prepareRequest: httpSchema(hostPrepareRequestSchema),
   prepareResponse: httpSchema(hostPrepareResponseSchema),
   admittedRequest: httpSchema(hostAdmittedRequestSchema),

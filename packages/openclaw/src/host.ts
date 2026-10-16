@@ -19,6 +19,8 @@ import {
   hostFeedbackRequestSchema,
   hostHandoffRequestSchema,
   hostAdmittedRequestSchema,
+  hostToolExecutionRequestSchema,
+  hostToolExecutionResponseSchema,
   type HostPrepareRequest,
 } from "@nous-wave/client/host-bridge";
 import { z } from "zod";
@@ -114,6 +116,25 @@ export class HostBridge {
       observation: decodeHostObservation(contact.observation, request),
     }));
     return { response, usage, contacts };
+  }
+  async toolExecution(
+    request: Parameters<typeof hostToolExecutionRequestSchema.parse>[0],
+    signal: AbortSignal,
+  ) {
+    const input = hostToolExecutionRequestSchema.parse(request);
+    const response = await this.call(
+      "toolExecution",
+      input,
+      hostToolExecutionResponseSchema,
+      signal,
+    );
+    if (
+      response.contactRequestId !== input.contactRequestId ||
+      response.toolName !== input.toolName ||
+      response.toolCallId !== input.toolCallId
+    )
+      throw new Error("Host tool execution identity mismatch");
+    return response;
   }
   async feedback(
     request: Parameters<typeof hostFeedbackRequestSchema.parse>[0],

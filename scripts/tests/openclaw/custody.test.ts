@@ -87,6 +87,12 @@ test("controlled native custody survives SQLite and gates real delivery producer
     assert(result.includes('"nativeSqliteStableIntent":"PASS"'));
     assert(result.includes('"nativeMessageSkipQueueProducer":"PASS"'));
     assert(result.includes('"qqTraffic":0'));
+    const tools = execFileSync(
+      process.execPath,
+      [join(repositoryRoot, "scripts/tests/openclaw/tool-scope.ts"), native],
+      { cwd: repositoryRoot, env, encoding: "utf8", windowsHide: true },
+    );
+    assert(tools.includes('"nativeToolExecutionGuard":"PASS"'));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

@@ -29,6 +29,7 @@ import type {
 } from "./contract.js";
 import { cognitionRenderer } from "./render.js";
 import { HostBridge, hostBridgeConfiguration, occurrenceJson } from "./host.js";
+import { hostedReadonlyTools } from "./readonly-tools.js";
 import { HostedLifecycle } from "./hosted.js";
 import {
   loadTranscriptEventsSync,
@@ -67,14 +68,22 @@ function register(api: OpenClawPluginApi): void {
     description:
       "Stable Nous Subject/Session binding; no cognitive content or cursor is persisted here.",
   });
+  if (config.hostBridge)
+    api.registerTool(() => hostedReadonlyTools(), {
+      names: ["nous_query", "nous_read"],
+    });
   api.registerContextEngine(namespace, () => {
     const workers = new Map<
       string,
       Promise<ReturnType<typeof createManagedBinding>>
     >();
     const hosted = bridge
-      ? new HostedLifecycle(bridge, config.subjectId, connect, (message) =>
-          api.logger.error(message),
+      ? new HostedLifecycle(
+          bridge,
+          config.subjectId,
+          connect,
+          (message) => api.logger.error(message),
+          config.consumerId,
         )
       : undefined;
     const flushNativeHistory = async (
@@ -466,9 +475,19 @@ function register(api: OpenClawPluginApi): void {
           },
         };
       },
+      async authorizeToolExecution(input, application, execution) {
+        input.signal.throwIfAborted();
+        if (input.boundaryVersion !== 4)
+          throw new Error(
+            "Required native tool execution boundary is unavailable",
+          );
+        if (hosted)
+          return hosted.authorizeToolExecution(input, application, execution);
+        return { run: async (implementation) => await implementation() };
+      },
       async prepareModelInput(input) {
         if (
-          input.boundaryVersion !== 3 ||
+          input.boundaryVersion !== 4 ||
           typeof input.historyGeneration !== "string" ||
           !input.historyGeneration ||
           typeof input.historyIsFresh !== "boolean" ||
@@ -545,6 +564,14 @@ function register(api: OpenClawPluginApi): void {
             if (receipt) standaloneReceipts.push(receipt);
           }
         }
+        const modelContext = permission
+          ? {
+              ...input.context,
+              tools: input.context.tools?.filter((tool) =>
+                permission.response.allowedToolNames.includes(tool.name),
+              ),
+            }
+          : input.context;
         const reservedOutput = input.reservedOutputTokens;
         const contextWindow = input.contextTokenBudget;
         if (!contextWindow)
@@ -552,7 +579,7 @@ function register(api: OpenClawPluginApi): void {
             "Managed invocation requires the selected model's context window",
           );
         const available =
-          contextWindow - reservedOutput - input.measureContext(input.context);
+          contextWindow - reservedOutput - input.measureContext(modelContext);
         const budget = Math.min(config.cognitionTokenCap, available);
         const usage =
           permission?.usage ??
@@ -569,7 +596,7 @@ function register(api: OpenClawPluginApi): void {
           signal: input.signal,
         });
         const { input: context, applied } = binding.apply(
-          input.context,
+          modelContext,
           prepared,
           {
             render(base, segments, invocationUsage) {

@@ -12,6 +12,7 @@ import {
   HOST_COGNITION_USAGE_CONTEXT_KEY,
   decodeCognitionUsage,
   encodeProjection,
+  encodeCognitionUsage,
   withHostObservationScope,
   hostPrepareRequestSchema,
   hostContactIdentitySchema,
@@ -27,7 +28,13 @@ import {
   occurrenceJson,
   type HostedPermission,
 } from "./host.js";
-import type { ManagedModelInput, ManagedModelApplication } from "./contract.js";
+import { runHostedTool } from "./readonly-tools.js";
+import type {
+  ManagedToolExecution,
+  ManagedToolExecutionGuard,
+  ManagedModelInput,
+  ManagedModelApplication,
+} from "./contract.js";
 const markerSchema = z
   .object({
     identity: hostPrepareRequestSchema,
@@ -54,6 +61,7 @@ export class HostedLifecycle {
     private readonly subjectId: string,
     private readonly client: () => Promise<NousClient>,
     private readonly log: (message: string) => void,
+    private readonly consumerRef: string,
   ) {}
   private key(input: ManagedModelInput) {
     return `${input.sessionId}:${input.runId}`;
@@ -97,6 +105,50 @@ export class HostedLifecycle {
     };
     this.current.set(this.key(input), permission);
     return permission;
+  }
+  async authorizeToolExecution(
+    input: ManagedModelInput,
+    application: ManagedModelApplication,
+    execution: ManagedToolExecution,
+  ): Promise<ManagedToolExecutionGuard> {
+    const permission = this.current.get(this.key(input));
+    if (
+      !permission ||
+      permission.identity.invocationId !== application.invocationId ||
+      !permission.response.allowedToolNames.includes(execution.toolName)
+    )
+      throw new Error("No current Host contact permits the actual native tool");
+    const response = await this.bridge.toolExecution(
+      {
+        ...hostContactIdentitySchema.strip().parse(permission.identity),
+        ...execution,
+      },
+      input.signal,
+    );
+    const usage = decodeCognitionUsage(response.usage);
+    if (
+      JSON.stringify(encodeCognitionUsage(usage)) !==
+      JSON.stringify(encodeCognitionUsage(permission.usage))
+    )
+      throw new Error(
+        "Host tool usage changed from the actual admitted contact",
+      );
+    input.signal.throwIfAborted();
+    return {
+      run: (implementation) =>
+        runHostedTool(
+          {
+            identity: permission.identity,
+            execution,
+            usage,
+            workContextId: permission.response.workContextId,
+            client: this.client,
+            signal: input.signal,
+            consumerRef: this.consumerRef,
+          },
+          implementation,
+        ),
+    };
   }
   async admitted(
     permission: HostedPermission & { identity: HostPrepareRequest },
