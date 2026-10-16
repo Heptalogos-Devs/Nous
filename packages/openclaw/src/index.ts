@@ -562,7 +562,7 @@ function register(api: OpenClawPluginApi): void {
       },
       async authorizeToolExecution(input, application, execution) {
         input.signal.throwIfAborted();
-        if (input.boundaryVersion !== 4)
+        if (input.boundaryVersion !== 5)
           throw new Error(
             "Required native tool execution boundary is unavailable",
           );
@@ -572,7 +572,7 @@ function register(api: OpenClawPluginApi): void {
       },
       async prepareModelInput(input) {
         if (
-          input.boundaryVersion !== 4 ||
+          input.boundaryVersion !== 5 ||
           typeof input.historyGeneration !== "string" ||
           !input.historyGeneration ||
           typeof input.historyIsFresh !== "boolean" ||

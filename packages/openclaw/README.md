@@ -103,19 +103,23 @@ RESET 替换临时 slice，APPEND 仅接受相同 track/epoch 的连续前缀。
 }
 ```
 
-origin 只接受配置的 IPv4/IPv6 loopback HTTP origin，拒绝 URL 凭据、路径与重定向。credentialFile 为绝对、owner-only 私密文件，内容是一行 Bearer token；只有插件 Node 端读取，不进入公开 schema 模块、prompt 或日志。每次请求实际等待 Host；拒绝、离线、取消及缺少可信上下文都会阻止 provider。未配置 Host 的独立安装使用同一插件和 v4 原生入口。 子 Agent handoff 的 `parentRunId` 必须由原生工具上下文的当前 run 传入，并参与请求 identity；不能按 Session 查找或猜测父 run。缺失该控制时在创建子 Nous Session 前拒绝。
+origin 只接受配置的 IPv5/IPv6 loopback HTTP origin，拒绝 URL 凭据、路径与重定向。credentialFile 为绝对、owner-only 私密文件，内容是一行 Bearer token；只有插件 Node 端读取，不进入公开 schema 模块、prompt 或日志。每次请求实际等待 Host；拒绝、离线、取消及缺少可信上下文都会阻止 provider。未配置 Host 的独立安装使用同一插件和 v5 原生入口。 子 Agent handoff 的 `parentRunId` 必须由原生工具上下文的当前 run 传入，并参与请求 identity；不能按 Session 查找或猜测父 run。缺失该控制时在创建子 Nous Session 前拒绝。
 
-公开 wire 的唯一 owner 是官方 Client `@nous-wave/client/host-bridge`，导出 `HOST_BRIDGE_PATHS`、Zod schemas、相应 TS 类型和 `HOST_BRIDGE_JSON_SCHEMAS`，该入口不依赖 Node。Host 直接使用这些合同生成 OpenAPI/校验请求，不复制另一组认知 DTO。五个 POST 路径为 `/nous/v1/prepare`、`admitted`、`handoff`、`feedback`、`tool-execution`。
+公开 wire 的唯一 owner 是官方 Client `@nous-wave/client/host-bridge`，导出 `HOST_BRIDGE_PATHS`、Zod schemas、相应 TS 类型和 `HOST_BRIDGE_JSON_SCHEMAS`，该入口不依赖 Node。Host 直接使用这些合同生成 OpenAPI/校验请求，不复制另一组认知 DTO。POST 路径为 `/nous/v1/prepare`、`admitted`、`handoff`、`completion`、`result-release`、`feedback`、`tool-execution`。
 
-prepare 携带真实 native Session key/ID、run/agent/history generation、父 key、Nous Session/Subject、invocation、稳定 contact request ID 与原始 prompt 的 SHA256，不转储原 prompt。Host 先持久受限 NativeRun/Activity，再按已知 run/digest/session/scope 许可。返回当前 `workContextId`、canonical `CognitionUsage` Protobuf JSON、`contacts[{contactRef,observation}]` 与 Activity/actor scope。插件严格 `fromJson` 并核对 Subject/Session、原生 agentInstanceId、稳定 observation requestId 和实际 observedAt；Host audience/sourceRead 原样进入正式 prepare。每次调用都重新设置当前 WorkContext；静态配置不能覆盖 Host 的活动。
+prepare 携带真实 native Session key/ID、run/agent/history generation、父 key、Nous Session/Subject、invocation、稳定 contact request ID 与原始 prompt 的 SHA256，不转储原 prompt。Host 先持久受限 NativeRun/Activity，再按已知 run/digest/session/scope 许可。返回受信 `roleScope`、必填 `tokenBudget{inputTokens,outputTokens}`、`allowedToolNames`、当前 `workContextId`、canonical `CognitionUsage` Protobuf JSON、`contacts[{contactRef,observation}]` 与 Activity/actor scope。插件严格 `fromJson` 并核对 Subject/Session、原生 agentInstanceId、稳定 observation requestId 和实际 observedAt；Host audience/sourceRead 原样进入正式 prepare。每次调用都重新设置当前 WorkContext；静态配置不能覆盖 Host 的活动。
 
 Hosted user 接触只使用 Host 的结构化 ObservationInput，不再将工程 prompt/QQ 上下文包另记成 `object:openclaw` 根。Host 保留实际作者、会话、MessageFact provenance、事件 occurred 与现实 observed；重放既有 contact 使用首次实际接触时间。admitted 回调使用同一 contactRequestId，回传实际 Projection 与 occurrence receipts。子 Agent 在正式 isolated handoff 中等待 Host 保存受限继承，拒绝时关闭已开的 Nous child Session；不借此授予维护或 QQ 发送权限。
 
+`execution_only` 的工具/assistant 输出保留在 Host RoleRun；pending 返回 retainedOnly 时插件不调用 RecordObservation。Host 显式 bounded release 后形成新的主体接触和 activity_result 机会，不自动启动父回复或发布。以下观察回流仅用于 `subject_experience` 与实际 Agency 结果；完整用途/视角合同见[所属 Spec](../../docs/specs/active/cognitive-runtime/openclaw.md)。
+
 工具/assistant 实际结果通过反馈合同回流：Host 先持久 `stage=pending`，返回第一次保存的 canonical ObservationInput，其 context 保存公开 `HOST_ACTIVITY_CONTEXT_KEY`（`activity_ref`）、`HOST_CONTACT_CONTEXT_KEY`（`contact_request_id`）与 `HOST_COGNITION_USAGE_CONTEXT_KEY`（`cognition_usage`，canonical encoded usage），关联每个来源的原 Activity/实际 scope；Host 用 `withHostObservationScope` 一次构造并持久，重放不换成新 scope；插件提交 Nous 后以 `stage=committed` 回传真实 receipt。Host 负责 pending 补交，复用公开 `/managed` 的 `outcomeObservation` 构造函数及稳定 ID。实际 model_output 不代表渠道发送。
 
-v4 在原生 `message_end` 写入前同步附上非秘密 contact identity、首次现实 observedAt 与实际 outcome/projection 标记；原生先保存真实结果，再尝试回流。回写失败不把已发生动作变成重新执行/重新发送。下一全新 user turn 与 compact 前通过正式 SDK 读取完整 SQLite transcript，按原 contact/scope 补交带标记的结果，失败则拒绝后续模型/compact。原生 reset 为保留历史的 boundary；不清掉唯一副本。插件只有临时 cursor/已确认集合，不另建数据库、队列或重试模型循环。
+v5 在原生 `message_end` 写入前同步附上非秘密 contact identity、首次现实 observedAt 与实际 outcome/projection 标记；原生先保存真实结果，再尝试回流。回写失败不把已发生动作变成重新执行/重新发送。下一全新 user turn 与 compact 前通过正式 SDK 读取完整 SQLite transcript，按原 contact/scope 补交带标记的结果，失败则拒绝后续模型/compact。原生 reset 为保留历史的 boundary；不清掉唯一副本。插件只有临时 cursor/已确认集合，不另建数据库、队列或重试模型循环。
 
-准备安装会统一升级到 boundaryVersion **4**；旧 native 入口明确拒绝，需重新运行正式 prepare。自动测试使用真实 loopback Host 与 mock Nous 公共操作检查上述许可/来源/恢复边界；离线 native fixture 另验证真实 SQLite 保留 contact 标记及 reset 历史。真实 Host、Activity 与 QQ 全流程仍由产品集成验证。
+v5 在实际 provider stream 强制应用 `providerControls.maxOutputTokens`，保留更小的原生 profile 上限；原生完整 system/tools/history/media/Nous slice 使用既有估算统一核对角色 input cap。实际 cap 与模型 metadata 随原生事实保存。
+
+准备安装会统一升级到 boundaryVersion **5**；旧 native 入口明确拒绝，需重新运行正式 prepare。自动测试使用真实 loopback Host 与 mock Nous 公共操作检查上述许可/来源/恢复边界；离线 native fixture 另验证真实 SQLite 保留 contact 标记及 reset 历史。真实 Host、Activity 与 QQ 全流程仍由产品集成验证。
 
 ## 宿主控制的渠道派发
 
@@ -184,7 +188,7 @@ node --env-file=/absolute/path/operator.env node_modules/tsx/dist/cli.mjs script
 
 ## Hosted 工具执行与可信读取
 
-Host prepare 必须返回当前 Activity 允许的实际 `allowedToolNames`。插件只将原生工具列表与该集合的交集交给模型；这不取代执行点检查。v4 在真实 `prepareToolCallExecution` 的 internal preparer 前、最终 implementation 前分别强制等待 `/nous/v1/tool-execution`。请求绑定实际 native run/contact/invocation、resolved tool name 和 toolCallId，phase 由原生代码填写；拒绝、离线、取消、缺失必需入口都不调用实现。它不依赖可吞异常的 `before_tool_call` hook。Standalone 没有 Host 时继续使用原 OpenClaw 配置权限。
+Host prepare 必须返回当前 Activity 允许的实际 `allowedToolNames`。插件只将原生工具列表与该集合的交集交给模型；这不取代执行点检查。v5 在真实 `prepareToolCallExecution` 的 internal preparer 前、最终 implementation 前分别强制等待 `/nous/v1/tool-execution`。请求绑定实际 native run/contact/invocation、resolved tool name 和 toolCallId，phase 由原生代码填写；拒绝、离线、取消、缺失必需入口都不调用实现。它不依赖可吞异常的 `before_tool_call` hook。Standalone 没有 Host 时继续使用原 OpenClaw 配置权限。
 
 Hosted 正式只读工具 `nous_query` 和 `nous_read` 复用 Client `/managed` 的 bounded read helpers 与公共 Query/ReadSources。Subject、Session、WorkContext 和 SourceRead 只从最终执行 guard 的私有 AsyncLocalStorage 获取；普通参数只有 NousQL 或 exact references，不能传入 contact、usage、grant 或管理操作。返回正文前，实际返回 refs 必须在该 NoUS Session 成功 `ReportUse.presented` 并通过历史检查；原认知撤回、purge 等继续使后续模型输入拒绝，不把工具结果的新 Observation 当作原依赖的替代。空结果不制造来源。
 

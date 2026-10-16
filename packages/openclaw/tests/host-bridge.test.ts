@@ -455,7 +455,7 @@ async function fixture(hosted = true) {
   plugin.register(api as unknown as OpenClawPluginApi);
   const input = (runId = "native-run"): ManagedModelInput =>
     ({
-      boundaryVersion: 4,
+      boundaryVersion: 5,
       historyIsFresh: true,
       historyGeneration: "native-session",
       sessionId: "native-session",
@@ -826,7 +826,7 @@ test("bridge refuses external origins, nonprivate credentials, and offline Host"
   }
 });
 
-test("v4 Host tools filter model visibility and readonly execution uses only the current private native scope with presented dependencies", async () => {
+test("v5 Host tools filter model visibility and readonly execution uses only the current private native scope with presented dependencies", async () => {
   const f = await fixture();
   mocks.history = [];
   try {

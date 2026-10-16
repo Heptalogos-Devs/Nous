@@ -262,7 +262,7 @@ index 2b36e9a..3932f9c 100644
  		runTimeoutOverrideMs: params.runTimeoutOverrideMs,
  		runId: params.runId,
 diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.js
-index 63c12b4..c0a4ceb 100644
+index 63c12b4..021f35a 100644
 --- a/dist/builtin-openclaw-zQV8Wwjr.js
 +++ b/dist/builtin-openclaw-zQV8Wwjr.js
 @@ -238,6 +238,8 @@ import { a as extractAssistantThinking, c as extractThinkingFromTaggedStream, d
@@ -305,7 +305,7 @@ index 63c12b4..c0a4ceb 100644
 +		let capturedApplication;
 +		activeSession.agent.managedCognition = {
 +			prepare: async (model, context, signal, budget) => {
-+				capturedInput = { boundaryVersion: 4, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
++				capturedInput = { boundaryVersion: 5, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
 +                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", model, context, signal: signal ?? input.runAbortController.signal,
 +					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: Math.min(budget.reservedOutputTokens, resolveMaxTokensParam(sessionRuntime.transport.effectiveExtraParams ?? {}) ?? budget.reservedOutputTokens),
 +					audience: { visibility: attempt.sessionKey?.includes(":subagent:") ? "internal" : attempt.chatType === "direct" ? "direct" : attempt.chatType === "group" ? "group" : attempt.chatType === "channel" ? "public" : "internal", channel: attempt.messageChannel ?? attempt.messageProvider, senderId: attempt.senderId, destination: attempt.currentChannelId },
