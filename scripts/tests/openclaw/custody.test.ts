@@ -87,6 +87,7 @@ test("controlled native custody survives SQLite and gates real delivery producer
     );
     assert(result.includes('"nativeSqliteStableIntent":"PASS"'));
     assert(result.includes('"nativeMessageSkipQueueProducer":"PASS"'));
+    assert(result.includes('"nativeAgentRpcFinalProducer":"PASS"'));
     assert(result.includes('"qqTraffic":0'));
     const tools = execFileSync(
       process.execPath,

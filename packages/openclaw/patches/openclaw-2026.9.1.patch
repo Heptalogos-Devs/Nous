@@ -652,6 +652,51 @@ index d9dcef9..6b3535c 100644
  		if (!item.isError && !item.isReasoning && (params.assistantMessageIndex !== void 0 || params.assistantTranscriptOwned === true)) setReplyPayloadMetadata(payload, {
  			...params.assistantMessageIndex !== void 0 ? { assistantMessageIndex: params.assistantMessageIndex } : {},
  			...item.media?.length ? { assistantTranscriptMediaUrls: [...item.media] } : {},
+diff --git a/dist/payloads-Ch7RD6Ym.js b/dist/payloads-Ch7RD6Ym.js
+index 3a91d77..1b3668d 100644
+--- a/dist/payloads-Ch7RD6Ym.js
++++ b/dist/payloads-Ch7RD6Ym.js
+@@ -1,3 +1,4 @@
++import { i as copyReplyPayloadMetadata } from "./reply-payload-DahKk-7n.js";
+ import { ut as stripLeadingInboundMetadata } from "./openclaw-state-db-Bh3Bq87y.js";
+ import { d as normalizeLegacyInteractiveReply, f as normalizeMessagePresentation, g as renderMessagePresentationChartFallbackText, i as hasReplyChannelData, n as hasLegacyInteractiveReplyBlocks, o as hasReplyPayloadContent, r as hasMessagePresentationBlocks, y as renderMessagePresentationTableFallbackText } from "./payload-DYE7bQ2k.js";
+ import { T as formatLocationText } from "./reply-payload-y5EgUJuZ.js";
+@@ -89,7 +90,7 @@ function createOutboundPayloadPlanEntry(payload, context = {}) {
+ 	const parsedText = strippedParsed.text ?? "";
+ 	const suppressedText = strippedParsed.isSilent || isSuppressedRelayStatusText(parsedText);
+ 	const resolvedMediaUrl = mergedMedia.length > 1 ? void 0 : explicitMediaUrl;
+-	const normalizedPayload = {
++	const normalizedPayload = copyReplyPayloadMetadata(payload, {
+ 		...payload,
+ 		text: formatBtwTextForExternalDelivery({
+ 			...payload,
+@@ -101,7 +102,7 @@ function createOutboundPayloadPlanEntry(payload, context = {}) {
+ 		replyToTag: payload.replyToTag || parsed.replyToTag,
+ 		replyToCurrent: payload.replyToCurrent || parsed.replyToCurrent,
+ 		audioAsVoice: Boolean(payload.audioAsVoice || parsed.audioAsVoice)
+-	};
++	});
+ 	if (!(suppressedText ? hasReplyPayloadContent(normalizedPayload) : isRenderablePayload(normalizedPayload))) return null;
+ 	const hasChannelData = hasReplyChannelData(normalizedPayload.channelData);
+ 	return {
+@@ -143,7 +144,7 @@ function projectOutboundPayloadPlanForOutbound(plan) {
+ 			hasChannelData: entry.hasChannelData,
+ 			extraContent: payload.location != null
+ 		})) continue;
+-		normalizedPayloads.push({
++		normalizedPayloads.push(copyReplyPayloadMetadata(payload, {
+ 			text,
+ 			mediaUrls: entry.parts.mediaUrls,
+ 			audioAsVoice: payload.audioAsVoice === true ? true : void 0,
+@@ -153,7 +154,7 @@ function projectOutboundPayloadPlanForOutbound(plan) {
+ 			...entry.hasInteractive ? { interactive: payload.interactive } : {},
+ 			...entry.hasChannelData ? { channelData: payload.channelData } : {},
+ 			...payload.location ? { location: payload.location } : {}
+-		});
++		}));
+ 	}
+ 	return normalizedPayloads;
+ }
 diff --git a/dist/plugin-entry-C-sjzaBe.d.ts b/dist/plugin-entry-C-sjzaBe.d.ts
 index ffb23d9..efd267c 100644
 --- a/dist/plugin-entry-C-sjzaBe.d.ts

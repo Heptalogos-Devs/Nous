@@ -116,6 +116,10 @@
     "dist/delivery.runtime-CAsclR-9.js": {
       "original": "87623e02f9f3d0750562589b366942db7f677bdab228f90d389accb74b1b5845",
       "patched": "4d7f86641e2fd6e617eb0641e0412f25247ad78bc74ae2925716af27950be864"
+    },
+    "dist/payloads-Ch7RD6Ym.js": {
+      "original": "a570a6431794810da8f44ed67fb45cd8ae5a0c1d3db198b77bfcefae775bc804",
+      "patched": "96d7d15c0db06503458b9367f14cfa53b9cdf19902bf15400807299ec335514b"
     }
   },
   "dependencyOverrides": {

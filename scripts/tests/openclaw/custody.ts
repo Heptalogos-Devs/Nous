@@ -599,6 +599,90 @@ assert.deepEqual(
   "recovered identical payload receipt identities must remain sparse original indices",
 );
 
+// Agent RPC final output must traverse the actual payload builder, transforms,
+// durable sender, SQLite intent and Host custody, not just message-tool delivery.
+const nativePayloadBuilder = await nativeModule<{
+  t(input: Record<string, unknown>): Record<string, unknown>[];
+}>("payloads-B7_zRmw4.js");
+const nativeAgentDelivery = await nativeModule<{
+  deliverAgentCommandResult(input: Record<string, unknown>): Promise<unknown>;
+}>("delivery.runtime-CAsclR-9.js");
+const appliedAssistant = {
+  role: "assistant",
+  content: [{ type: "text", text: "paid final fixture" }],
+  stopReason: "stop",
+  provider: "fixture",
+  model: "fixture",
+  timestamp: Date.now(),
+  openclawDelivery: { textPhaseRequiresTerminal: true },
+  nousHostBridge: {
+    outcome: "completed",
+    identity: {
+      native: {
+        runId: "trusted-native-run",
+        sessionKey: "trusted-native-session",
+      },
+      invocationId: "trusted-native-run:nous:1",
+    },
+  },
+};
+const finalPayloads = nativePayloadBuilder.t({
+  assistantTexts: ["paid final fixture"],
+  currentAssistant: appliedAssistant,
+  lastAssistant: appliedAssistant,
+  runId: "trusted-native-run",
+  config: {},
+});
+assert.equal(finalPayloads.length, 1);
+const finalParams = {
+  cfg: {},
+  deps: {},
+  runtime: { log() {}, error() {} },
+  opts: {
+    deliver: true,
+    channel: "qq-fixture",
+    accountId: "fixture-account",
+    to: "allowed-peer",
+    runId: "trusted-native-run",
+    sessionKey: "trusted-native-session",
+  },
+  outboundSession: { key: "trusted-native-session", agentId: "host-fixture" },
+  result: { meta: {} },
+  payloads: finalPayloads,
+};
+const beforeFinal = producerSends;
+const finalResult = await nativeScope.d(registry, () =>
+  nativeAgentDelivery.deliverAgentCommandResult(finalParams),
+);
+assert.equal(
+  (finalResult as { deliverySucceeded?: boolean }).deliverySucceeded,
+  true,
+);
+assert.equal(producerSends, beforeFinal + 1);
+assert.equal(authorizedSources.at(-1), 0);
+assert.equal(receiptSources.at(-1), 0);
+await assert.rejects(
+  nativeScope.d(registry, () =>
+    nativeAgentDelivery.deliverAgentCommandResult(finalParams),
+  ),
+  /already queued/,
+);
+assert.equal(
+  producerSends,
+  beforeFinal + 1,
+  "same paid invocation cannot send twice",
+);
+await assert.rejects(
+  nativeScope.d(registry, () =>
+    nativeAgentDelivery.deliverAgentCommandResult({
+      ...finalParams,
+      payloads: [{ text: "unattributed final" }],
+    }),
+  ),
+  /stable producer intent/,
+);
+assert.equal(producerSends, beforeFinal + 1);
+
 console.log(
   JSON.stringify({
     custody: "PASS",
@@ -608,6 +692,7 @@ console.log(
     nativeContactHistoryRetention: "PASS",
     nativeSqliteStableIntent: "PASS",
     nativeMessageSkipQueueProducer: "PASS",
+    nativeAgentRpcFinalProducer: "PASS",
     feedbackFailurePreservesSend: "PASS",
     rejectedBeforeProtocol: 4,
     qqTraffic: 0,
