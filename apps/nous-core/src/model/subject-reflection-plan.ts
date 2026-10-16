@@ -141,8 +141,8 @@ export async function prepareExplicitSelfPlan(
     ),
     dependencies: [...p.basis.values()].flatMap(basisDependencies),
     input: JSON.stringify({
+      ...(JSON.parse(p.input) as Record<string, JsonValue>),
       semanticClock: semanticNow,
-      actualInput: JSON.parse(p.input) as JsonValue,
     }),
     maxActions: 16,
     degradation: p.degradation.map((d) => ({ code: d.code, detail: d.detail })),

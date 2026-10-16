@@ -107,6 +107,8 @@ epistemic_class="observed"
 description="核对项目事实时适用，闲聊不强制工具调用。"
 purposes=["professional_execution"]
 [facet.valid_time]
+time_domain_ref="time:real"
+[facet.valid_time.extent]
 [[facet.basis]]
 [facet.basis.evidence]
 occurrence_id="${occurrenceId}"

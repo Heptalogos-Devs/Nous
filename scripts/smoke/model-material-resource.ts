@@ -3,6 +3,7 @@
 
 import { connectNousInstance } from "@nous-wave/client/node";
 import { NousError } from "@nous-wave/client";
+import { encodeProjection } from "@nous-wave/client/host-bridge";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { writeFile, appendFile, rm, mkdir } from "node:fs/promises";
@@ -86,10 +87,13 @@ const provider = createServer((request, response) => {
       stewardCalls++;
       const input = body.messages.find((message) => message.role === "user");
       assert(input);
-      const segments = JSON.parse(input.content) as {
-        id: string;
-        text: string;
-      }[];
+      const { semanticClock, sources: segments } = JSON.parse(
+        input.content,
+      ) as {
+        semanticClock: { timeDomainRef: string };
+        sources: { id: string; text: string }[];
+      };
+      assert(semanticClock.timeDomainRef);
       assert(
         segments.some((segment) =>
           segment.text.includes("Foreground Steward continuity marker"),
@@ -985,7 +989,7 @@ routes = ["memory_formation"]
     ),
   );
   assert(
-    !JSON.stringify(mixed.segments).includes(missingArtifact),
+    !JSON.stringify(encodeProjection(mixed)).includes(missingArtifact),
     "ungranted nonexistent or private refs are omitted before materialization",
   );
   const managementMixed = await restarted.cognition.buildProjection({

@@ -252,6 +252,16 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
         .advance_by(subject_a, chrono::Duration::days(8))
         .unwrap();
     let later = rt.cognition.recorded_now();
+    assert!(
+        nous_runtime::linked_query_feedback(&rt.store, subject_a, &a, later)
+            .await
+            .unwrap()
+            .iter()
+            .any(|entry| entry.query_id == result.bound.query_id),
+        "world acceleration must not expire a real feedback replay window"
+    );
+    sqlx::query("UPDATE query_feedback_records SET created_at=created_at-interval '8 days',expires_at=expires_at-interval '8 days' WHERE subject_id=$1 AND query_id=$2")
+        .bind(subject_a.0).bind(result.bound.query_id).execute(rt.store.pool()).await.unwrap();
     assert!(matches!(
         rt.cognition
             .use_feedback(feedback(subject_a, a.clone(), result.bound.query_id, later))
