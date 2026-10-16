@@ -179,6 +179,10 @@ try {
   });
   const usage = {
     agentInstanceId: "self-worker",
+    sourceRead: {
+      subjectId,
+      sourceRefs: [{ kind: "occurrence", value: observation.occurrenceId }],
+    },
     purpose: "deliberation",
     intent: "继续当前工作并保持自称",
     audience: { conversationRef: "conversation:self", visibility: "internal" },
@@ -189,6 +193,13 @@ try {
     consumerId: "consumer:smoke:cognitive-runtime-episode",
     usage,
   };
+  const ungranted = await c.cognition.buildManagedContext({
+    projection: { ...managedInput, usage: { ...usage, sourceRead: undefined } },
+  });
+  assert(
+    !ungranted.projection?.segments.some((s) => s.text.includes("青砚")),
+    "Self identity still needs actual source permission",
+  );
   const automatic = await c.cognition.buildManagedContext({
     projection: managedInput,
   });
@@ -244,7 +255,16 @@ try {
       subjectId: seeded.subjectId,
       sessionId: selfOnlySession.sessionId,
       consumerId: "consumer:self-only",
-      usage: { ...usage, agentInstanceId: "self-only" },
+      usage: {
+        ...usage,
+        agentInstanceId: "self-only",
+        sourceRead: {
+          subjectId: seeded.subjectId,
+          sourceRefs: [
+            { kind: "cognitive_seed_version", value: seed.seedVersionId },
+          ],
+        },
+      },
     },
   });
   assert(
