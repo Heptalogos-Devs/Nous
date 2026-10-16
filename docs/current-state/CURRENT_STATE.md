@@ -7,7 +7,7 @@
 - Memory-only Subject：Subject capability、Memory/CognitiveSchema/Tag/AssociationEvidence Authority、不可变 revision、provenance、幂等和 lifecycle。
 - Material：Artifact、ObservationOccurrence、SourceRegion、DerivedRepresentation DAG、结构化 payload、DerivedRegion 与可追踪派生。
 - Runtime：Session、ResidentSet、UseEvent、WorkContext durable checkpoint 和跨 Session continuity；Runtime 同事务捕获 Session Experience、持久化分段 cursor/draft 和 MaintenanceNeed；Memory owner 提供 Episode/Journal revision、history、provenance 与 lifecycle。
-- 纵向认知：自动 interaction Episode、模型局部 N-to-M partition、有 formation basis 的 Subject Journal 和有界 host-granted Memory/Schema consolidation；CognitiveClock 支持内部确定性时间注入。
+- 纵向认知：自动 interaction Episode、模型局部 N-to-M partition、有 formation basis 的 Subject Journal 和有界 host-granted Memory/Schema consolidation；CognitiveClock 支持内部确定性时间注入，并提供[认证世界时钟](../specs/active/cognitive-runtime/clock.md)及持久化 domain stamp；既有五轴 owner 仍限现实域。
 - Query/Serving：QueryExpr、exact read、lexical/dense/runtime lanes、固定 fusion、可选 model rerank、final Authority revalidation 和可重建 generation。
 - Authority mutation：Persistence envelope 统一 owner/operation locks、receipt replay、transaction 与合并 projection invalidation；领域 owner 保持独立数据模型和 mutation/lifecycle 验证。
 - Core 与官方 Client/CLI：ModelRole/RolePolicy/ExecutionProfile/ModelProfile/Gateway、Prompt identity、media derivation、宿主显式供给的 External Resource adapter、trace、流式材料上传与完整下载；Memory/Schema/Episode/Journal 管理、Seed adoption、Resource registry、projection 与 managed context 均可从 CLI/MCP 操作。

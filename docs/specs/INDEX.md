@@ -9,6 +9,7 @@
 - [Runtime 与 UseEvent](active/memory-reference-profile/02-runtime-use.md)
 - [Query 与 Serving](active/memory-reference-profile/03-query-serving.md)
 - [纵向认知与维护](active/cognitive-runtime/longitudinal-cognition.md)
+- [Subject 生活世界时钟](active/cognitive-runtime/clock.md)
 - [WorkContext](active/cognitive-runtime/work-context.md)
 - [Active Cognition](active/cognitive-runtime/active-cognition.md)
 - [Managed OpenClaw](active/cognitive-runtime/openclaw.md)

@@ -15,6 +15,14 @@
         "scripts/tests/openclaw/custody.ts!"
       ]
     },
+    "packages/client": {
+      "entry": [
+        "src/{index,node,managed,errors}.ts!",
+        "src/policy/{consumer,execution}.ts!",
+        "tests/**/*.test.ts",
+        "tests/clock-transport.ts!"
+      ]
+    },
     "packages/openclaw": {
       "entry": ["src/index.ts!", "bin/{prepare,install}.mjs!"],
       "project": ["src/**/*.ts!", "bin/*.mjs!"],

@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct NousRuntime {
+    pub clocks: nous_runtime::SubjectClockService,
     pub configuration: ConfigurationService,
     pub store: AuthorityStore,
     pub subjects: SubjectCoreService,
@@ -74,6 +75,7 @@ impl NousRuntime {
         let system_snapshot = configuration.active_system_snapshot()?;
         let process_capabilities = process_capabilities(&system_snapshot)?;
         let resident_limit = system_snapshot.get(nous_runtime::RESIDENT_LIMIT_KEY)?;
+        let clocks = nous_runtime::SubjectClockService::open(store.clone(), clock.clone()).await?;
         let objects = ObjectStore::open(&options.object_root).await?;
         let subjects = SubjectCoreService::with_clock(
             store.clone(),
@@ -143,6 +145,7 @@ impl NousRuntime {
             configuration.clone(),
         )?;
         Ok(Self {
+            clocks,
             configuration,
             store,
             subjects,

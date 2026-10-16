@@ -1,9 +1,15 @@
+import { CognitiveClockService } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
 import { toJson, type DescService } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { NousError } from "./errors.js";
+export {
+  projectWorldDeadline,
+  compareDomainStamps,
+  type ClockDeadline,
+} from "./clock.js";
 export { NousError, DomainErrorCode, ErrorRecovery } from "./errors.js";
 import {
   executionOpportunitySchema,
@@ -63,6 +69,7 @@ import { ModelService } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js
 
 /** Client namespaces use the canonical service descriptors. */
 export type ServiceDescriptors = {
+  readonly clocks: typeof CognitiveClockService;
   readonly subjects: typeof SubjectService;
   readonly self: typeof SelfService;
   readonly social: typeof SocialService;
@@ -79,6 +86,7 @@ export type ServiceDescriptors = {
   readonly system: typeof SystemService;
 };
 export const serviceDescriptors: ServiceDescriptors = {
+  clocks: CognitiveClockService,
   subjects: SubjectService,
   self: SelfService,
   social: SocialService,

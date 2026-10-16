@@ -1,3 +1,4 @@
+import { CognitiveClockService } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -48,6 +49,7 @@ export class KernelClient {
   readonly concepts;
   readonly memory;
   readonly subjects;
+  readonly clocks;
   readonly self;
   readonly social;
   readonly material;
@@ -74,6 +76,7 @@ export class KernelClient {
     this.hostRuntime = createClient(KernelConfigurationService, transport);
     this.configuration = createClient(ConfigurationService, transport);
     this.material = createClient(MaterialService, transport);
+    this.clocks = createClient(CognitiveClockService, transport);
     this.subjects = createClient(SubjectService, transport);
     this.self = createClient(SelfService, transport);
     this.social = createClient(SocialService, transport);

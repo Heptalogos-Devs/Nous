@@ -91,6 +91,11 @@ export const commandInventory = {
   },
   commands: [
     {
+      command: "clock read|configure|pause|advance|resume",
+      purpose:
+        "Authenticated Subject world clock; configure/advance/resume take --request-file JSON. Not a model tool.",
+    },
+    {
       command:
         "social list|select|pair|neighborhood|resolve|adopt|get|revision|history|revise|evidence|suppress|restore|withdraw|reaccept|purge",
       parameters: [
