@@ -177,13 +177,14 @@ export async function prepareReflectionPlan(
         Math.floor(Number(batch.sourceMaxBytes) / batch.sources.length),
       ),
       options,
-      true,
+      "reflection",
     );
     const source = prepared.source as {
       context?: Record<string, JsonValue>;
       actor?: string;
       conversation?: string;
       partial?: boolean;
+      contentAvailable?: boolean;
     };
     const rawUsage = source.context?.cognition_usage;
     const usage =
@@ -254,6 +255,11 @@ export async function prepareReflectionPlan(
       degradation.push({
         code: "reflection_source_partial",
         detail: `source:${index} is a bounded partial view, never the whole source`,
+      });
+    if (source.contentAvailable === false)
+      degradation.push({
+        code: "reflection_source_content_unavailable",
+        detail: `source:${index} supplies actual contact metadata only; its binary contents have no readable textual representation and are not evidence of any described content`,
       });
   }
   if (authorized.size > 1024)

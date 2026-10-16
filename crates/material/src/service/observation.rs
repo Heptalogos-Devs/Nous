@@ -293,7 +293,10 @@ impl MaterialService {
                 "application/json",
             ),
             ObservationMaterial::ArtifactRef { artifact_id } => {
-                return self.artifact(subject, *artifact_id).await.map(Some);
+                let row = sqlx::query("SELECT artifact_id,subject_id,content_hash,byte_length,media_type,created_at,metadata FROM artifacts WHERE subject_id=$1 AND artifact_id=$2")
+                    .bind(subject.0).bind(artifact_id.0).fetch_optional(&mut **tx).await.map_err(db)?
+                    .ok_or_else(|| Error::NotFound("artifact not found".into()))?;
+                return decode_artifact(row).map(Some);
             }
             ObservationMaterial::ExternalObjectRef { .. }
             | ObservationMaterial::ResourceAvailability { .. } => return Ok(None),

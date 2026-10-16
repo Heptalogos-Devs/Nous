@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { appendFile } from "node:fs/promises";
+import { appendFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { create, toJson, clone } from "@bufbuild/protobuf";
 import {
@@ -19,7 +19,14 @@ type Input = {
   actualSources: {
     key: string;
     scopeKey: string;
-    source: { context: unknown; partial?: boolean };
+    source: {
+      context: unknown;
+      partial?: boolean;
+      contentAvailable?: boolean;
+      contentOmission?: string;
+      evidenceText?: string;
+      mediaType?: string;
+    };
   }[];
   currentSelf: { key: string; record: unknown }[];
   currentSocial: { key: string; record: unknown }[];
@@ -482,6 +489,69 @@ try {
   await grant();
   assert.ok(input?.actualSources.some((s) => s.source.partial));
   assert.equal(calls, 5);
+  // A real non-text artifact must not prevent a subsequent readable contact from
+  // reaching the shared workflow. No binary bytes may become invented evidence text.
+  const binaryPath = join(home, "unread-archive.zip");
+  await writeFile(
+    binaryPath,
+    Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe]),
+  );
+  const binary = await c.artifacts.uploadFile(subjectId, binaryPath, {
+    mediaType: "application/zip",
+  });
+  await c.runtime.recordObservation({
+    subjectId,
+    sessionId: session.sessionId,
+    requestId: crypto.randomUUID(),
+    sourceClass: "message",
+    actorEntityRef: alice,
+    conversationRef: "conversation:reflection-team",
+    context: { cognition_usage: usage() },
+    material: { case: "artifactId", value: binary.artifactId },
+    admit: false,
+  });
+  await observe("Alice supplied a file; its contents have not been read.");
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  const mixed = await grant();
+  assert.equal(
+    calls,
+    6,
+    JSON.stringify(mixed, (_k, v: unknown) =>
+      typeof v === "bigint" ? v.toString() : v,
+    ),
+  );
+  assert.ok(
+    mixed.results.some(
+      (r) => r.kind === "subject_reflection" && r.status === "kept",
+    ),
+  );
+  const metadata = input?.actualSources.find(
+    (s) => s.source.mediaType === "application/zip",
+  );
+  assert.equal(metadata?.source.contentAvailable, false);
+  assert.equal(
+    metadata?.source.contentOmission,
+    "textual_representation_unavailable",
+  );
+  assert.equal(metadata?.source.evidenceText, undefined);
+  assert.ok(
+    input?.actualSources.some((s) =>
+      s.source.evidenceText?.includes("contents have not been read"),
+    ),
+  );
+  const inspectedMixed = await c.reflection.inspect({
+    subjectId,
+    maxPayloadBytes: 8388608,
+  });
+  const mixedOutcome = JSON.parse(inspectedMixed.recent[0]!.outcomeJson!) as {
+    proposal: { plan: { degradation: { code: string }[] } };
+  };
+  assert.ok(
+    mixedOutcome.proposal.plan.degradation.some(
+      (d) => d.code === "reflection_source_content_unavailable",
+    ),
+  );
+  assert.equal(inspectedMixed.pending.length, 0);
   const cli = (await runCli([
     "--run-root",
     join(home, "run"),
@@ -507,7 +577,7 @@ try {
   const changed = await grant();
   assert.equal(
     calls,
-    5,
+    6,
     "Unavailable source metadata cannot manufacture new external evidence or a model call",
   );
   assert.ok(
