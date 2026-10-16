@@ -1301,6 +1301,8 @@ pub struct ProjectionRequest {
     pub social_requirement: ::prost::alloc::string::String,
     #[prost(string, tag="16")]
     pub motivation_requirement: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="17")]
+    pub current_materials: ::prost::alloc::vec::Vec<EvidenceRef>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ContextSegment {
@@ -1561,6 +1563,8 @@ pub struct ReadSourcesRequest {
     pub max_text_bytes: u32,
     #[prost(string, optional, tag="5")]
     pub work_context_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="6")]
+    pub material_sources: ::prost::alloc::vec::Vec<EvidenceRef>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReadSourcesResponse {

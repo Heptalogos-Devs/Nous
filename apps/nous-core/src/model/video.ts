@@ -23,10 +23,12 @@ export async function sampleVideo(
   secretNames: readonly string[],
   includeAudio: boolean,
   signal?: AbortSignal,
+  mediaType?: string,
 ) {
+  const animatedGif = mediaType === "image/gif";
   if (bytes.byteLength > policy.max_source_bytes)
     throw new Error("Video source exceeds configured byte bound");
-  const sampling = await videoSampling(policy, secretNames, signal);
+  const sampling = await videoSampling(policy, secretNames, signal, mediaType);
   const { run, version } = sampling;
   await mkdir(tempRoot, { recursive: true });
   const root = await mkdtemp(join(tempRoot, "nous-video-"));
@@ -41,7 +43,7 @@ export async function sampleVideo(
       "-protocol_whitelist",
       "file,pipe",
       "-format_whitelist",
-      "mov,matroska,ogg,avi,mpeg,mpegts",
+      animatedGif ? "gif" : "mov,matroska,ogg,avi,mpeg,mpegts",
     ];
     const metadata = await run("metadata", [
       ...inputArgs,
@@ -176,6 +178,13 @@ export async function sampleVideo(
         source_duration_seconds: duration,
         sampled_duration_seconds: bounded,
         truncated: duration > bounded,
+        ...(animatedGif
+          ? {
+              source_media_type: "image/gif",
+              frame_coverage: "sampled",
+              animated_timeline: true,
+            }
+          : {}),
       },
       preprocessingDigest: sampling.preprocessingDigest,
     };
@@ -189,6 +198,7 @@ async function videoSampling(
   policy: Policy,
   secretNames: readonly string[],
   signal?: AbortSignal,
+  mediaType?: string,
 ) {
   const executable = policy.ffmpeg_executable;
   if (!executable)
@@ -232,14 +242,17 @@ async function videoSampling(
   return {
     run,
     version,
-    preprocessingDigest: videoSamplingIdentity(policy),
+    preprocessingDigest: videoSamplingIdentity(policy, mediaType),
   };
 }
 
 /** Cache identity describes requested sampling; runtime facts are recorded with produced results. */
-export function videoSamplingIdentity(policy: Policy) {
+export function videoSamplingIdentity(policy: Policy, mediaType?: string) {
   return canonicalDigest({
     videoFrameInputIdentity,
+    ...(mediaType === "image/gif"
+      ? { source_media_type: mediaType, animated_sampling: "gif-timeline-v1" }
+      : {}),
     max_frames: policy.max_frames,
     max_frame_bytes: policy.max_frame_bytes,
     max_audio_bytes: policy.max_audio_bytes,

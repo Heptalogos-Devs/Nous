@@ -146,6 +146,18 @@ impl ContextResolver for NousRuntime {
         Ok(result)
     }
 
+    async fn current_material_sources(
+        &self,
+        subject: SubjectId,
+        sources: &[nous_core::EvidenceRef],
+        max_bytes: usize,
+        read: &nous_core::SourceReadView,
+    ) -> Result<Vec<Result<nous_runtime::ContextSource>>> {
+        self.material
+            .current_material_sources(subject, sources, max_bytes, read)
+            .await
+    }
+
     async fn query_descriptors(
         &self,
         query: &CognitiveQuery,

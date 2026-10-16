@@ -20,8 +20,9 @@ export function readOnlySources(
   options?: Parameters<NousClient["cognition"]["readSources"]>[1],
 ) {
   if (
-    !request.references?.length ||
-    request.references.length > 128 ||
+    !(request.references?.length || request.materialSources?.length) ||
+    (request.references?.length ?? 0) + (request.materialSources?.length ?? 0) >
+      128 ||
     (request.maxTextBytes ?? 0) > 1048576
   )
     throw new Error("Source read requires1..128 exact refs and<=1MiB text");

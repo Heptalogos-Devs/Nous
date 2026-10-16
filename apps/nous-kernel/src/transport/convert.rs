@@ -83,6 +83,15 @@ pub fn temporal_proto(value: &TemporalExtent) -> p::TemporalExtent {
     }
 }
 
+pub fn material_source(value: p::EvidenceRef) -> Result<EvidenceRef> {
+    match basis(p::RevisionBasis {
+        basis: Some(p::revision_basis::Basis::Evidence(value)),
+    })? {
+        RevisionBasis::Evidence(value) => Ok(value),
+        _ => unreachable!("evidence wrapper"),
+    }
+}
+
 pub fn basis(value: p::RevisionBasis) -> Result<RevisionBasis> {
     match value
         .basis

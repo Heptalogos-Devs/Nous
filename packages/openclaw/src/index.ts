@@ -29,6 +29,10 @@ import type {
 } from "./contract.js";
 import { cognitionRenderer } from "./render.js";
 import { HostBridge, hostBridgeConfiguration, occurrenceJson } from "./host.js";
+import {
+  materialInputConfiguration,
+  prepareCurrentMaterials,
+} from "./material.js";
 import { hostedReadonlyTools } from "./readonly-tools.js";
 import { HostedLifecycle } from "./hosted.js";
 import {
@@ -54,6 +58,7 @@ const configuration = z
     hostBridge: hostBridgeConfiguration.optional(),
     sourceRead: standaloneSourceConfiguration.optional(),
     cognitionTokenCap: z.number().int().min(512).default(4096),
+    materialInputs: materialInputConfiguration,
   })
   .strict();
 
@@ -552,6 +557,18 @@ function register(api: OpenClawPluginApi): void {
               decodeAcceptedObservation(entry.receipt),
             ),
           );
+        const currentMaterials = permission
+          ? await prepareCurrentMaterials(
+              await connect(),
+              permission,
+              occurrences.map((item) => ({
+                ...item,
+                receipt: decodeAcceptedObservation(item.receipt),
+              })),
+              config.materialInputs,
+              input.signal,
+            )
+          : { sources: [], textBytes: 0, omissions: [] };
         const currentTurn = input.context.messages.findLastIndex(
           (message) => message.role === "user",
         );
@@ -564,7 +581,7 @@ function register(api: OpenClawPluginApi): void {
             if (receipt) standaloneReceipts.push(receipt);
           }
         }
-        const modelContext = permission
+        let modelContext = permission
           ? {
               ...input.context,
               tools: input.context.tools?.filter((tool) =>
@@ -572,6 +589,17 @@ function register(api: OpenClawPluginApi): void {
               ),
             }
           : input.context;
+        if (currentMaterials.omissions.length)
+          modelContext = {
+            ...modelContext,
+            systemPrompt: [
+              modelContext.systemPrompt,
+              "Actual selected media not interpreted for this input (do not infer unseen content): " +
+                JSON.stringify(currentMaterials.omissions),
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          };
         const reservedOutput = input.reservedOutputTokens;
         const contextWindow = input.contextTokenBudget;
         if (!contextWindow)
@@ -580,7 +608,10 @@ function register(api: OpenClawPluginApi): void {
           );
         const available =
           contextWindow - reservedOutput - input.measureContext(modelContext);
-        const budget = Math.min(config.cognitionTokenCap, available);
+        const budget = Math.min(
+          config.cognitionTokenCap + currentMaterials.textBytes,
+          available,
+        );
         const usage =
           permission?.usage ??
           withAcceptedContactRoots(
@@ -593,6 +624,7 @@ function register(api: OpenClawPluginApi): void {
           workContextId:
             permission?.response.workContextId ?? config.workContextId,
           cognitionTokenBudget: budget,
+          currentMaterials: currentMaterials.sources,
           signal: input.signal,
         });
         const { input: context, applied } = binding.apply(

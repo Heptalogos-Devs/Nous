@@ -56,28 +56,96 @@ impl MaterialService {
         max_bytes: usize,
         source_read: Option<&SourceReadView>,
     ) -> Result<Vec<Result<nous_runtime::ContextSource>>> {
+        self.context_sources_with_paths(subject, references, max_bytes, source_read, None)
+            .await
+    }
+
+    /// Current actual Occurrence/locator paths are selections, never additional grants.
+    pub async fn current_material_sources(
+        &self,
+        subject: SubjectId,
+        paths: &[EvidenceRef],
+        max_bytes: usize,
+        source_read: &SourceReadView,
+    ) -> Result<Vec<Result<nous_runtime::ContextSource>>> {
+        if paths.len() > 128 || source_read.subject != subject {
+            return Err(Error::Invalid(
+                "current material source envelope is invalid".into(),
+            ));
+        }
+        let references = paths
+            .iter()
+            .map(EvidenceRef::cognitive_ref)
+            .collect::<Vec<_>>();
+        self.context_sources_with_paths(
+            subject,
+            &references,
+            max_bytes,
+            Some(source_read),
+            Some(paths),
+        )
+        .await
+    }
+
+    async fn context_sources_with_paths(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        max_bytes: usize,
+        source_read: Option<&SourceReadView>,
+        paths: Option<&[EvidenceRef]>,
+    ) -> Result<Vec<Result<nous_runtime::ContextSource>>> {
         self.store.require_subject(subject).await?;
         let mut tx = self.store.read_view().await?;
         let mut admitted = Vec::new();
-        for reference in references {
-            if source_read.is_none()
-                || AuthorityStore::source_read_allowed_in(
+        let mut allowed = Vec::new();
+        for (index, reference) in references.iter().enumerate() {
+            let permitted = if let Some(paths) = paths {
+                let read = source_read.expect("paired reads require scope");
+                let path = &paths[index];
+                let (kind, value) = reference_parts(reference);
+                AuthorityStore::source_read_allowed_in(
                     &mut tx,
-                    source_read.expect("checked read"),
-                    reference,
+                    read,
+                    &CognitiveRef::Occurrence(path.occurrence_id),
                 )
                 .await?
-            {
+                    && sqlx::query_scalar::<_, bool>(
+                        "SELECT material_source_read_allowed($1,$2,$3,$4,$5,$6)",
+                    )
+                    .bind(subject.0)
+                    .bind(kind)
+                    .bind(value)
+                    .bind(&read.origin_conversation_refs)
+                    .bind(serde_json::json!(&read.explicit_refs))
+                    .bind(path.occurrence_id.0)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(db)?
+            } else if let Some(read) = source_read {
+                AuthorityStore::source_read_allowed_in(&mut tx, read, reference).await?
+            } else {
+                true
+            };
+            allowed.push(permitted);
+            if permitted {
                 admitted.push(reference.clone());
             }
         }
         let mut inputs = self
             .read_inputs_in(&mut tx, subject, &admitted, None, max_bytes > 0)
             .await?;
+        let metadata = if paths.is_some() {
+            perception_metadata_in(&mut tx, subject, &admitted).await?
+        } else {
+            std::collections::HashMap::new()
+        };
         tx.commit().await.map_err(db)?;
         let mut results = Vec::with_capacity(references.len());
         for (index, reference) in references.iter().enumerate() {
-            let input = if references[index + 1..].contains(reference) {
+            let input = if !allowed[index] {
+                None
+            } else if references[index + 1..].contains(reference) {
                 inputs.get(reference).cloned()
             } else {
                 inputs.remove(reference)
@@ -103,7 +171,7 @@ impl MaterialService {
                         "complete Material semantic unit exceeds projection budget".into(),
                     ));
                 }
-                let text = if max_bytes > 0
+                let mut text = if max_bytes > 0
                     && matches!(
                         media_modality(&media_type),
                         Modality::Text | Modality::Structured
@@ -127,7 +195,7 @@ impl MaterialService {
                 } else {
                     None
                 };
-                let evidence: Vec<_> = provenance
+                let mut evidence: Vec<_> = provenance
                     .into_iter()
                     .map(|reference| EvidenceHandle {
                         epistemic_relation: None,
@@ -135,6 +203,20 @@ impl MaterialService {
                         basis_role: "source".into(),
                     })
                     .collect();
+                if let Some(paths)=paths {
+                    if let Some(body)=text.as_mut() {
+                        let provenance=serde_json::json!({"actual_occurrence":paths[index].occurrence_id.0,"material_reference":reference.to_string(),"current_access":"representation","quality":metadata.get(reference)});
+                        *body=format!("Current actual material perception {}\n{}",provenance,body);
+                        if body.len()>max_bytes {return Err(Error::Unavailable("complete current material perception exceeds context budget".into()));}
+                    }
+                }
+                if let Some(paths) = paths {
+                    evidence.push(EvidenceHandle {
+                        reference: CognitiveRef::Occurrence(paths[index].occurrence_id),
+                        basis_role: "actual_occurrence".into(),
+                        epistemic_relation: None,
+                    });
+                }
                 Ok(nous_runtime::ContextSource {
                     usage: "task_evidence",
                     required: false,
@@ -599,4 +681,42 @@ fn validated_text_stream(
 
 fn is_text_media(media: &str) -> bool {
     media.starts_with("text/") || media.contains("json") || media.contains("xml")
+}
+
+async fn perception_metadata_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    subject: SubjectId,
+    references: &[CognitiveRef],
+) -> Result<std::collections::HashMap<CognitiveRef, serde_json::Value>> {
+    let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
+    let rows=sqlx::query("WITH refs AS (SELECT * FROM unnest($2::text[],$3::text[]) q(kind,value)) SELECT q.kind,q.value,d.quality FROM refs q LEFT JOIN derived_regions g ON q.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id::text=q.value JOIN derived_representations d ON d.subject_id=$1 AND ((q.kind='derived_representation' AND d.derived_representation_id::text=q.value) OR d.derived_representation_id=g.derived_representation_id)").bind(subject.0).bind(kinds).bind(values).fetch_all(&mut **tx).await.map_err(db)?;
+    let keys = [
+        "input_access",
+        "source_media_type",
+        "source_duration_seconds",
+        "sampled_duration_seconds",
+        "requested_timestamps",
+        "sampled_timestamps",
+        "frame_coverage",
+        "truncated",
+        "video_degradation",
+        "sampling_policy",
+        "animated_timeline",
+    ];
+    rows.into_iter()
+        .map(|row| {
+            let reference = parse_reference(
+                &row.try_get::<String, _>("kind").map_err(db)?,
+                &row.try_get::<String, _>("value").map_err(db)?,
+            )?;
+            let quality: serde_json::Value = row.try_get("quality").map_err(db)?;
+            let mut visible = serde_json::Map::new();
+            for key in keys {
+                if let Some(value) = quality.get(key) {
+                    visible.insert(key.into(), value.clone());
+                }
+            }
+            Ok((reference, serde_json::Value::Object(visible)))
+        })
+        .collect()
 }

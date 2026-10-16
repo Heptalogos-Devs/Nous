@@ -171,6 +171,11 @@ impl KernelService {
                         .map(id)
                         .transpose()?,
                     consumer_id: input.consumer_id,
+                    current_materials: input
+                        .current_materials
+                        .into_iter()
+                        .map(convert::material_source)
+                        .collect::<nous_core::Result<_>>()?,
                     situation_refs: input
                         .situation_refs
                         .into_iter()

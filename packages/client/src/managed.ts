@@ -5,6 +5,7 @@ import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
   ManagedContextRequestSchema,
+  EvidenceRefSchema,
   ObservationInputSchema,
   type CognitionUsage,
   type ContextCursor,
@@ -43,6 +44,7 @@ export interface ManagedBinding {
     usage: CognitionUsage;
     workContextId?: string;
     cognitionTokenBudget: number;
+    currentMaterials?: readonly MessageInitShape<typeof EvidenceRefSchema>[];
     signal: AbortSignal;
   }): Promise<ManagedContextResponse>;
   apply<T>(
@@ -88,6 +90,7 @@ export function createManagedBinding(options: {
       usage: CognitionUsage;
       workContextId?: string;
       cognitionTokenBudget: number;
+      currentMaterials?: readonly MessageInitShape<typeof EvidenceRefSchema>[];
       signal: AbortSignal;
     }): Promise<ManagedContextResponse> {
       assertOpen();
@@ -111,6 +114,7 @@ export function createManagedBinding(options: {
               consumerId: options.consumerId,
               activeWorkContextId: input.workContextId,
               usage: input.usage,
+              currentMaterials: [...(input.currentMaterials ?? [])],
               // UTF-8 byte count bounds text tokens conservatively. The host
               // measures the complete rendered input, including attribution.
               maxTextBytes: input.cognitionTokenBudget - 256,
