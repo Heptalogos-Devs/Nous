@@ -451,3 +451,159 @@ async fn selector_metadata_authorization(
         "denied selectors must not consume candidate budget"
     );
 }
+
+async fn work_context_fixture(
+    runtime: &nous_kernel::NousRuntime,
+    subject: SubjectId,
+) -> (OccurrenceId, nous_runtime::WorkContextView) {
+    runtime
+        .subjects
+        .provision_capabilities(
+            subject,
+            OperationId::new(),
+            nous_configuration::SubjectCapabilities {
+                memory: true,
+                self_cognition: false,
+                social_cognition: false,
+                motivation: true,
+            },
+        )
+        .await
+        .unwrap();
+    let source = observation(runtime, subject, "Track this actual WorkContext lifecycle")
+        .await
+        .occurrence
+        .occurrence_id;
+    let context = runtime
+        .cognition
+        .create_work_context(nous_runtime::CreateWorkContextInput {
+            operation_id: OperationId::new(),
+            subject,
+            purpose: "Verify actual task lifecycle".into(),
+            unresolved_questions: vec![],
+            constraints: serde_json::json!({}),
+            resume_conditions: vec![],
+            budget_summary: serde_json::json!({}),
+            cognition_anchors: vec![],
+            context_text: String::new(),
+            entity_anchors: vec![],
+            tag_anchors: vec![],
+        })
+        .await
+        .unwrap();
+    (source, context)
+}
+
+#[tokio::test]
+async fn work_context_conditions_read_actual_runtime_lifecycle() {
+    let (root, url, _pg) = database().await;
+    let runtime = open_complete_runtime(&url, &root).await;
+    let subject = test_support::query::subject(&runtime).await;
+    let (source, mut context) = work_context_fixture(&runtime, subject).await;
+    let reference = CognitiveRef::WorkContext(WorkContextId(context.work_context_id));
+    assert!(
+        Criterion::OwnerState {
+            version: 1,
+            reference: reference.clone(),
+            state: "active".into()
+        }
+        .validate(8, 64)
+        .is_err()
+    );
+    let reader = OfficialCriterionReader {
+        material: runtime.material.clone(),
+        social: runtime.social_cognition.clone(),
+    };
+    let owner = runtime.require_motivation().unwrap();
+    for state in ["open", "paused", "open", "ended"] {
+        match (state, context.state) {
+            ("paused", _) => {
+                context = runtime
+                    .cognition
+                    .pause_work_context(
+                        subject,
+                        context.work_context_id,
+                        context.revision,
+                        OperationId::new(),
+                    )
+                    .await
+                    .unwrap()
+            }
+            ("open", nous_runtime::WorkContextState::Paused) => {
+                context = runtime
+                    .cognition
+                    .resume_work_context(
+                        subject,
+                        context.work_context_id,
+                        context.revision,
+                        OperationId::new(),
+                    )
+                    .await
+                    .unwrap()
+            }
+            ("ended", _) => {
+                context = runtime
+                    .cognition
+                    .end_work_context(
+                        subject,
+                        context.work_context_id,
+                        context.revision,
+                        OperationId::new(),
+                    )
+                    .await
+                    .unwrap()
+            }
+            _ => {}
+        }
+        assert_eq!(serde_json::to_value(context.state).unwrap(), state);
+        let from = Utc::now();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        let desired = owner
+            .adopt(AdoptMotivation {
+                subject,
+                operation_id: OperationId::new(),
+                content: MotivationContent::DesiredCondition(matter(
+                    &format!("work-context-{state}-{}", context.revision),
+                    source,
+                    Some(condition(
+                        Criterion::OwnerState {
+                            version: 1,
+                            reference: reference.clone(),
+                            state: state.into(),
+                        },
+                        TemporalForm::Maintain,
+                        from,
+                        Utc::now(),
+                    )),
+                )),
+                reason: "Read authoritative Runtime state without a model or fabricated event"
+                    .into(),
+            })
+            .await
+            .unwrap();
+        let evaluated = owner
+            .evaluate(
+                EvaluateCondition {
+                    subject,
+                    operation_id: OperationId::new(),
+                    condition_revision: desired.reference(),
+                    scope: MotivationScope::default(),
+                    source_read: SourceReadScope {
+                        subject_id: Some(subject),
+                        source_refs: vec![CognitiveRef::Occurrence(source), reference.clone()],
+                        origin_conversation_refs: vec![],
+                    },
+                    evidence_refs: vec![],
+                },
+                &reader,
+            )
+            .await
+            .unwrap();
+        assert_eq!(evaluated.verdict, ConditionVerdict::Satisfied, "{state}");
+        assert!(evaluated.final_conclusion);
+        assert_eq!(evaluated.coverage, "complete");
+        assert_eq!(evaluated.leaves[0].evaluator, "owner_state/v1");
+        assert_eq!(evaluated.leaves[0].method, "deterministic");
+        assert!(evaluated.leaves[0].producer.is_none());
+    }
+}

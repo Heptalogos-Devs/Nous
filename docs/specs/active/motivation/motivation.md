@@ -17,7 +17,7 @@ Canonical `MotivationService` 与官方 `client.motivation` 提供 adopt/revise/
 表达式只含版本 1 的 eventWitness、ownerState、measurement、relation、semantic，以及 ALL/ANY/NOT。`motivation.criterion_max_depth` 默认 8，`motivation.criterion_max_leaves` 默认 64；修改配置只改变后续采用/修订的工程预算，不删除已经保存的内容。未知版本或任意 SQL、脚本、URL evaluator 被拒绝。
 
 - eventWitness 读取实际 Material Observation 的规范事件事实，匹配事件类型、可选目标/活动和时间域。生成或模拟文本不是已发生外部效果的见证。
-- ownerState 读取固定 owner 的正式状态历史。exact revision 固定被引用对象与来源，状态命题读取该 owner 的对象生命周期；它不宣称旧修订仍是当前 head。完整历史只从该修订实际登记与实际首条状态快照均已出现后成立，不能补造迁移前的覆盖。当前支持认知对象的采用/完整性/抑制状态，以及 Runtime WorkContext 状态。
+- ownerState 读取固定 owner 的正式状态历史。exact revision 固定被引用对象与来源，状态命题读取该 owner 的对象生命周期；它不宣称旧修订仍是当前 head。完整历史只从该修订实际登记与实际首条状态快照均已出现后成立，不能补造迁移前的覆盖。当前支持认知对象的采用/完整性/抑制状态，以及 Runtime WorkContext 的 `open/paused/ended` 状态；WorkContext 不使用 `active`，其他 owner 的状态仍按各自合同验证。
 - measurement 保留名称、单位、数值、非负误差和域时间；单位不匹配不做隐含换算，误差区间横跨阈值时未知。
 - relation 引用本 Subject 的精确 SocialRelation，核对类型、degree 与该修订的明确有效时间；未指定有效时间不被解释为无限有效。
 - semantic 使用固定评价问题和真实材料 key 目录，沿现有 `subject_reflection` 模型绑定运行 `motivation_criterion` operation。输出只含逐项真值、理由和材料 key，没有 coverage 字段。模型不能生成新引用、evaluator 或来源许可。
