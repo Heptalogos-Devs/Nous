@@ -26,7 +26,7 @@ v4 的 Host 工具列表先过滤模型可见工具，真实 internal preparer �
 
 ## 同步与预算
 
-prepare 复用 BuildManagedContext；apply 成功后才推进本 binding 的 cursor。RESET 替换全部 slice；APPEND 仅接受相同 track/epoch 和连续 revision。受众、用途、执行者、WorkContext 或内容变化会改变 scope/RESET。并行 worker 分开保存临时状态。
+prepare 复用 BuildManagedContext；apply 成功后才推进本 binding 的 cursor。RESET 替换全部 slice；APPEND 仅接受相同 track/epoch 和连续 revision。受众、用途、执行者、WorkContext 或内容变化会改变 scope/RESET。并行 worker 分开保存临时状态。`ManagedBinding.appliedProjection(applied)` 从本 binding 的真实 apply 返回完整官方 Projection；APPEND 的既有前缀与 EpistemicView 不会在 Host admitted 回执中丢失，Host 可据此构造表达 brief，不从模型自报认识重建认知。
 
 Host 按所选模型的上下文窗口、输出预留、原生完整输入估计剩余预算，再取 cognition cap 的较小值。当前 token 计量是 OpenClaw native estimate；Nous 文本字节上限用于有余量的输入控制，不声称精确 tokenizer。renderer 核验最终输入，超预算停止调用。
 
@@ -46,7 +46,7 @@ execution_only 的实际模型/工具输出与失败结果只留在所属 RoleRu
 
 子 Agent terminal completion 只核对不可变父绑定、保存 exact terminal 结果并提供 activity_result 机会；恢复同一付费结果不重跑 worker。不得把 completion 自动注册为 main/final-send continuation，也不得将 worker 全部结果直接提升个人知识。正式释放后进入主体审议、独立 subject.render、narrative.review、NarrativeCommit，再交唯一发送 owner。renderer 输出只是候选，无法自行发送。
 
-发送前的 admit 使用现有 ReportUse 与 `model_input=true`：来源仍可用、Session 及父链历史安全，才返回 `model_input_checked=true`。没有认知来源的输入仍做 Session 检查；旧 Core 没有确认时停止发送。该操作登记真实待发送输入中的 exact refs，不为每个片段创建另一层持久 receipt。结果在 report 中以实际 outcome Observation 记录；失败和取消不冒充执行成功。
+发送前的 admit 使用现有 ReportUse 与 `model_input=true`：来源仍可用、Session 及父链历史安全，才返回 `model_input_checked=true`。没有认知来源的输入仍做 Session 检查；旧 Core 没有确认时停止发送。该操作登记真实待发送输入中的 exact refs，不为每个片段创建另一层持久 receipt。subject_experience 结果在 report 中以实际 outcome Observation 记录；execution_only 结果交所属 RoleRun，不写观察。失败和取消不冒充执行成功。
 
 Runtime Session 保存 parent_session_id、history_invalidated 与已进入模型历史的认知域。purge 在删除 UseEvent 前将受影响 Session 及子会话历史失效；suppression/withdrawal 使用同一边界。发送前同时检查父链，覆盖子会话创建与清除并发时的可见性。普通正文修订仍使用当前认知 RESET，保留旧历史，不作为清除操作。
 

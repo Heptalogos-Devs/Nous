@@ -53,6 +53,8 @@ export interface ManagedBinding {
     response: ManagedContextResponse,
     renderer: ContextRenderer<T>,
   ): { input: T; applied: AppliedCognition };
+  /** Exact full Projection used by apply, including APPEND's retained prefix. */
+  appliedProjection(applied: AppliedCognition): Projection;
   admit(
     result: Pick<
       ActualInvocationOutcome,
@@ -206,6 +208,15 @@ export function createManagedBinding(options: {
       cursor = structuredClone(nextCursor);
       pending = undefined;
       return { input, applied };
+    },
+    appliedProjection(applied) {
+      assertOpen();
+      const projection = applications.get(applied);
+      if (!projection)
+        throw new Error(
+          "Projection requires an actual application from this binding",
+        );
+      return structuredClone(projection);
     },
     async admit(
       result: Pick<

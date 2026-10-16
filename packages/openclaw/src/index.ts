@@ -812,7 +812,7 @@ function register(api: OpenClawPluginApi): void {
         if (hosted && permission)
           await hosted.admitted(
             permission,
-            prepared.projection!,
+            binding.appliedProjection(applied),
             occurrences,
             input.signal,
           );

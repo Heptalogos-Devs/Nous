@@ -138,14 +138,28 @@ test("APPEND follows the applied cursor; RESET removes the old slice while host 
       },
     }),
   );
+  const appended = current.binding.apply(
+    history,
+    await current.prepare(),
+    renderer,
+  );
+  expect(appended.input.slice(2)).toEqual([
+    "Old conditional understanding",
+    "Actual tool result understanding",
+  ]);
   expect(
     current.binding
-      .apply(history, await current.prepare(), renderer)
-      .input.slice(2),
+      .appliedProjection(appended.applied)
+      .segments.map((s) => s.text),
   ).toEqual([
     "Old conditional understanding",
     "Actual tool result understanding",
   ]);
+  const clone = current.binding.appliedProjection(appended.applied);
+  clone.segments.length = 0;
+  expect(
+    current.binding.appliedProjection(appended.applied).segments,
+  ).toHaveLength(2);
   current.replace(
     create(ManagedContextResponseSchema, {
       ...current.response(),
