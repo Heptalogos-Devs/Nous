@@ -102,3 +102,13 @@ export interface ManagedContextEngine extends ContextEngine {
     message?: Context["messages"][number],
   ): Promise<void>;
 }
+
+/** The pinned runtime patch supplies this export; source checks also run before
+ * preparation, against the pristine upstream package declarations. */
+declare module "openclaw/plugin-sdk/core" {
+  function retryNousSubagentCompletion(params: {
+    childRunId: string;
+    childSessionKey: string;
+    expectedEndedAt: number;
+  }): Promise<{ accepted: true; childRunId: string }>;
+}

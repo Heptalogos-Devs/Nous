@@ -18,6 +18,7 @@ import {
   hostHandoffRequestSchema,
   HOST_BRIDGE_PATHS,
   type HostPrepareRequest,
+  type HostRoleScope,
   withHostObservationScope,
   encodeCognitionUsage,
   decodeObservationInput,
@@ -49,6 +50,7 @@ vi.mock("@nous-wave/client/node", () => ({
 vi.mock("openclaw/plugin-sdk/core", () => ({
   definePluginEntry: (entry: unknown) => entry,
   buildJsonPluginConfigSchema: (schema: unknown) => schema,
+  retryNousSubagentCompletion: vi.fn(),
   delegateCompactionToRuntime: (input: unknown) => {
     mocks.delegated(input);
     return { ok: true, compacted: true };
@@ -80,6 +82,7 @@ async function fixture(hosted = true) {
     toolReject: false,
     allowedToolNames: ["nous_query", "nous_read", "actual_read"],
     workContextId: firstWork,
+    tokenBudget: { inputTokens: 8192, outputTokens: 128 },
   };
   const prepares: HostPrepareRequest[] = [];
   const handoffs: unknown[] = [];
@@ -127,9 +130,22 @@ async function fixture(hosted = true) {
           return;
         }
         permissions.set(request.contactRequestId, state.workContextId);
+        const roleScope: HostRoleScope = request.native.parentSessionKey
+          ? {
+              role: "subject.execution",
+              purpose: "professional_execution",
+              view: "worker",
+              contactNature: "execution_only",
+            }
+          : {
+              role: "subject.deliberation",
+              purpose: "subject_deliberation",
+              view: "subject",
+              contactNature: "subject_experience",
+            };
         const actualUsage = create(CognitionUsageSchema, {
           agentInstanceId: `${request.native.sessionId}:${request.native.runId}`,
-          purpose: request.native.parentSessionKey ? "worker" : "deliberation",
+          ...roleScope,
           intent: "Trusted current Activity",
           sourceRead: {
             subjectId,
@@ -192,26 +208,11 @@ async function fixture(hosted = true) {
             contactRequestId: request.contactRequestId,
             workContextId: state.workContextId,
             allowedToolNames: state.allowedToolNames,
-            usage: toJson(
-              CognitionUsageSchema,
-              create(CognitionUsageSchema, {
-                agentInstanceId: `${request.native.sessionId}:${request.native.runId}`,
-                purpose: request.native.parentSessionKey
-                  ? "worker"
-                  : "deliberation",
-                intent: "Trusted current Activity",
-                sourceRead: {
-                  subjectId,
-                  sourceRefs: [
-                    { kind: "occurrence", value: "registered-root" },
-                  ],
-                },
-                audience: {
-                  conversationRef: "conversation:qq:room",
-                  visibility: "group",
-                },
-              }),
-            ),
+            roleScope,
+            tokenBudget: state.tokenBudget,
+            allowedHistoryUserKeys:
+              request.historyUsers?.map((user) => user.key) ?? [],
+            usage: toJson(CognitionUsageSchema, actualUsage),
             contacts,
             scope: {
               activityRef: state.workContextId,
@@ -280,6 +281,9 @@ async function fixture(hosted = true) {
               version: 1,
               stage: "pending",
               accepted: true,
+              retainedOnly:
+                usages.get(request.contactRequestId)?.contactNature ===
+                "execution_only",
               observation: pending.get(id),
             }),
           );
@@ -412,7 +416,9 @@ async function fixture(hosted = true) {
     { sessionId: string; pluginExtensions?: Record<string, unknown> }
   >();
   entries.set("native:main", { sessionId: "native-session" });
-  entries.set("native:child", { sessionId: "native-child" });
+  entries.set("agent:child-worker:subagent:child", {
+    sessionId: "native-child",
+  });
   let engine: ManagedContextEngine;
   let engineFactory: () => ManagedContextEngine;
   const logger = { info: vi.fn(), error: vi.fn() };
@@ -425,6 +431,7 @@ async function fixture(hosted = true) {
     },
     config: {},
     logger,
+    registerGatewayMethod: vi.fn(),
     session: { state: { registerSessionExtension: vi.fn() } },
     runtime: {
       agent: {
@@ -456,12 +463,13 @@ async function fixture(hosted = true) {
       agentId: "main",
       runId,
       prompt: "trusted raw prompt",
-      model: {},
+      model: { maxTokens: 2048, contextWindow: 8192 },
       context: {
         messages: [
           {
             role: "user",
-            content: "host envelope should not become a generic Observation",
+            content: "trusted raw prompt",
+            idempotencyKey: `${runId}:user`,
             timestamp: Date.now(),
           },
         ],
@@ -693,7 +701,7 @@ test("subagent handoff requires Host admission and closes rejected child; standa
     const params = {
       parentRunId: "native-run",
       parentSessionKey: "native:main",
-      childSessionKey: "native:child",
+      childSessionKey: "agent:child-worker:subagent:child",
       contextMode: "isolated" as const,
       persistSessionBinding: vi.fn(async () => {}),
     };
@@ -710,7 +718,7 @@ test("subagent handoff requires Host admission and closes rejected child; standa
     f.state.handoffReject = false;
     params.persistSessionBinding = vi.fn(
       async (value?: Record<string, string>) => {
-        f.entries.get("native:child")!.pluginExtensions = {
+        f.entries.get("agent:child-worker:subagent:child")!.pluginExtensions = {
           "nous-cognition": { "nous-cognition": value },
         };
       },
@@ -719,15 +727,25 @@ test("subagent handoff requires Host admission and closes rejected child; standa
     const child = {
       ...f.input("child-run"),
       sessionId: "native-child",
-      sessionKey: "native:child",
+      sessionKey: "agent:child-worker:subagent:child",
       historyGeneration: "native-child",
       agentId: "child-worker",
       parentSessionKey: "native:main",
     };
-    await f.engine.prepareModelInput(child);
+    const childApplication = await f.engine.prepareModelInput(child);
+    const observedBefore = f.stored.size;
+    await f.engine.reportModelOutcome(child, childApplication, "completed", {
+      role: "assistant",
+      content: [{ type: "text", text: "PRIVATE EXECUTION RESULT" }],
+      timestamp: Date.now(),
+    } as Context["messages"][number]);
+    expect(f.stored.size).toBe(observedBefore);
+    expect(JSON.stringify([...f.pending.values()])).toContain(
+      "PRIVATE EXECUTION RESULT",
+    );
     expect(f.prepares.at(-1)?.native.parentSessionKey).toBe("native:main");
     expect(f.build.mock.calls.at(-1)?.[0].projection.usage).toMatchObject({
-      purpose: "worker",
+      purpose: "professional_execution",
       agentInstanceId: "native-child:child-run",
     });
     expect(f.handoffs).toHaveLength(2);
@@ -875,6 +893,29 @@ test("v4 Host tools filter model visibility and readonly execution uses only the
     await expect(
       guard.run(() => tool.execute("native-call", args)),
     ).rejects.toThrow("ReportUse unavailable");
+  } finally {
+    await f.close();
+  }
+});
+
+test("the actual hosted input applies output caps and rejects a complete managed system input that exceeds the trusted input limit", async () => {
+  const f = await fixture();
+  mocks.history = [];
+  try {
+    f.state.tokenBudget = { inputTokens: 8192, outputTokens: 7 };
+    expect(
+      (await f.engine.prepareModelInput(f.input())).providerControls
+        .maxOutputTokens,
+    ).toBe(7);
+    const prior = f.build.mock.calls.length;
+    f.state.tokenBudget = { inputTokens: 700, outputTokens: 7 };
+    const input = f.input("bounded-complete-input");
+    input.measureContext = (context) =>
+      context.systemPrompt === "native" ? 100 : 900;
+    await expect(f.engine.prepareModelInput(input)).rejects.toThrow(
+      "trusted native/Host budget",
+    );
+    expect(f.build.mock.calls.length).toBe(prior + 1);
   } finally {
     await f.close();
   }

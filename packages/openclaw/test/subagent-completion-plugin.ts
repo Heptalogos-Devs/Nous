@@ -114,6 +114,17 @@ const engine: ManagedContextEngine = {
   async afterTurn() {},
   async dispose() {},
 };
+type ChannelRegistration = Parameters<OpenClawPluginApi["registerChannel"]>[0];
+type BaseChannel = Extract<ChannelRegistration, { plugin: unknown }>["plugin"];
+/** Exact fixture subset of the controlled native channel contract. */
+type FixtureChannel = Omit<BaseChannel, "message"> & {
+  message: NonNullable<BaseChannel["message"]> & {
+    deliveryCustody: {
+      adopt(params: { runId?: string }): Promise<{ reference: string }>;
+      authorize(params: { runId?: string }): Promise<void>;
+    };
+  };
+};
 export default {
   id: "nous-cognition",
   name: "Native completion fixture",
@@ -165,65 +176,64 @@ export default {
       },
       { scope: "operator.admin" },
     );
-    api.registerChannel({
-      plugin: {
+    const channel: FixtureChannel = {
+      id: "completion-fixture",
+      meta: {
         id: "completion-fixture",
-        meta: {
-          id: "completion-fixture",
-          label: "Completion fixture",
-          selectionLabel: "Fixture",
-          docsPath: "/fixture",
-          blurb: "No QQ traffic",
+        label: "Completion fixture",
+        selectionLabel: "Fixture",
+        docsPath: "/fixture",
+        blurb: "No QQ traffic",
+      },
+      capabilities: { chatTypes: ["direct", "group"], blockStreaming: false },
+      config: {
+        listAccountIds: () => ["fixture-account"],
+        defaultAccountId: () => "fixture-account",
+        resolveAccount: () => ({
+          accountId: "fixture-account",
+          enabled: true,
+          configured: true,
+        }),
+        isEnabled: () => true,
+        isConfigured: () => true,
+      },
+      outbound: {
+        deliveryMode: "direct",
+        textChunkLimit: 4096,
+        resolveTarget: ({ to }) =>
+          to
+            ? { ok: true, to }
+            : { ok: false, error: new Error("Missing fixture target") },
+      },
+      message: {
+        durableFinal: {
+          capabilities: { text: true },
+          automaticUnknownSendReconciliation: false,
         },
-        capabilities: { chatTypes: ["direct", "group"], blockStreaming: false },
-        config: {
-          listAccountIds: () => ["fixture-account"],
-          defaultAccountId: () => "fixture-account",
-          resolveAccount: () => ({
-            accountId: "fixture-account",
-            enabled: true,
-            configured: true,
-          }),
-          isEnabled: () => true,
-          isConfigured: () => true,
-        },
-        outbound: {
-          deliveryMode: "direct",
-          textChunkLimit: 4096,
-          resolveTarget: ({ to }) =>
-            to
-              ? { ok: true, to }
-              : { ok: false, error: new Error("Missing fixture target") },
-        },
-        message: {
-          durableFinal: {
-            capabilities: { text: true },
-            automaticUnknownSendReconciliation: false,
+        deliveryCustody: {
+          async adopt(p) {
+            if (!p.runId || !admitted.has(p.runId))
+              throw Error("Producer not Host admitted");
+            log("custody", {
+              runId: p.runId,
+            });
+            return { reference: "fixture-behavior:" + p.runId };
           },
-          deliveryCustody: {
-            async adopt(p) {
-              if (!p.runId || !admitted.has(p.runId))
-                throw Error("Producer not Host admitted");
-              log("custody", {
-                runId: p.runId,
-              });
-              return { reference: "fixture-behavior:" + p.runId };
-            },
-            async authorize(p) {
-              if (!p.runId || !admitted.has(p.runId))
-                throw Error("Producer not admitted");
-            },
+          async authorize(p) {
+            if (!p.runId || !admitted.has(p.runId))
+              throw Error("Producer not admitted");
           },
-          send: {
-            async text(p) {
-              log("sent", { text: p.text, sourceIndex: p.sourceIndex });
-              throw Error(
-                "Terminal result custody must never reach the native sender",
-              );
-            },
+        },
+        send: {
+          async text(p: { text: string; sourceIndex?: number }) {
+            log("sent", { text: p.text, sourceIndex: p.sourceIndex });
+            throw Error(
+              "Terminal result custody must never reach the native sender",
+            );
           },
         },
       },
-    });
+    };
+    api.registerChannel({ plugin: channel });
   },
 };
