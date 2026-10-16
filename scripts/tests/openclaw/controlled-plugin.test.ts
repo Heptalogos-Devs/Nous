@@ -51,7 +51,14 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
     );
     const run = (path: string, args: string[] = []) =>
       execFileSync(process.execPath, [path, ...args], {
-        env,
+        env:
+          path === installer
+            ? {
+                ...env,
+                npm_command: "exec",
+                npm_config_allow_scripts: "@fixture/exec-only-policy",
+              }
+            : env,
         encoding: "utf8",
         windowsHide: true,
         stdio: "pipe",
