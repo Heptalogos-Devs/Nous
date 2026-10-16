@@ -14,7 +14,7 @@ pub const REFLECTION_CANDIDATE_BYTES: ConfigKey<u64> =
     ConfigKey::new("reflection.candidate_max_bytes");
 pub const REFLECTION_ACTIONS: ConfigKey<u64> = ConfigKey::new("reflection.max_actions");
 pub fn register_reflection_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()> {
-    registry.register(REFLECTION_DOMAINS,"cognitive-runtime","Explicit Host opt-in domains for shared reflection; Motivation is unsupported.",Vec::<String>::new(),ConfigExposure::Standard,ConfigScopePolicy::SubjectOverrideAllowed,ConfigApplyMode::Live,ConfigSemanticEffect::AuthorityFormation,|v|{if v.len()<=3&&v.iter().all(|d|["memory","self","social"].contains(&d.as_str()))&&v.iter().collect::<std::collections::HashSet<_>>().len()==v.len(){Ok(())}else{Err(Error::Invalid("reflection domains must be unique implemented memory/self/social owners; Motivation is unsupported".into()))}})?;
+    registry.register(REFLECTION_DOMAINS,"cognitive-runtime","Explicit Host opt-in domains for shared reflection; Motivation uses its own implemented owner.",Vec::<String>::new(),ConfigExposure::Standard,ConfigScopePolicy::SubjectOverrideAllowed,ConfigApplyMode::Live,ConfigSemanticEffect::AuthorityFormation,|v|{if v.len()<=4&&v.iter().all(|d|["memory","self","social","motivation"].contains(&d.as_str()))&&v.iter().collect::<std::collections::HashSet<_>>().len()==v.len(){Ok(())}else{Err(Error::Invalid("reflection domains must be unique implemented memory/self/social/motivation owners".into()))}})?;
     for (key, description, default, max) in [
         (
             REFLECTION_DEBOUNCE,
@@ -114,13 +114,14 @@ impl CognitiveRuntimeService {
     ) -> Result<Vec<String>> {
         let config = self.configuration.snapshot_for_subject(subject)?;
         let domains = config.get(REFLECTION_DOMAINS)?;
-        let row=sqlx::query("SELECT memory,self_cognition,social_cognition FROM subject_capabilities WHERE subject_id=$1").bind(subject.0).fetch_one(&mut **tx).await.map_err(db)?;
+        let row=sqlx::query("SELECT memory,self_cognition,social_cognition,motivation FROM subject_capabilities WHERE subject_id=$1").bind(subject.0).fetch_one(&mut **tx).await.map_err(db)?;
         Ok(domains
             .into_iter()
             .filter(|d| match d.as_str() {
                 "memory" => row.get("memory"),
                 "self" => row.get("self_cognition"),
                 "social" => row.get("social_cognition"),
+                "motivation" => row.get("motivation"),
                 _ => false,
             })
             .collect())

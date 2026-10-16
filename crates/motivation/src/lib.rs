@@ -1,7 +1,9 @@
 //! Motivation owns wishes, concerns and desired conditions, never Pursuit or effects.
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
+mod configuration;
 mod context;
+pub use configuration::*;
 mod contract;
 mod criterion_reader;
 mod evaluator;
@@ -11,9 +13,11 @@ mod mutations;
 mod query;
 mod read;
 mod selection;
+mod semantic;
 pub use criterion_reader::*;
 pub use evaluator::*;
 pub use selection::*;
+pub use semantic::*;
 
 mod trace;
 use chrono::{DateTime, Utc};
@@ -66,7 +70,7 @@ impl MotivationService {
             Some(true) => Ok(()),
             Some(false) => Err(DomainError::new(
                 DomainErrorCode::CapabilityUnavailable,
-                "Subject Self capability is disabled",
+                "Subject Motivation capability is disabled",
             )
             .with_context("capability", "motivation")
             .into()),
@@ -159,6 +163,13 @@ impl MotivationService {
         content: &MotivationContent,
     ) -> Result<()> {
         content.validate()?;
+        if let Some(condition) = &content.matter().condition {
+            let cfg = self.runtime.configuration.snapshot_for_subject(subject)?;
+            condition
+                .expression
+                .validate(cfg.get(CRITERION_DEPTH)?, cfg.get(CRITERION_LEAVES)?)?;
+        }
+
         self.validate_basis(tx, subject, content.basis()).await?;
         let references = content
             .matter()

@@ -95,6 +95,7 @@ pub struct ProjectionRequest {
     pub memory: RequirementStrength,
     pub self_cognition: RequirementStrength,
     pub social_cognition: RequirementStrength,
+    pub motivation: RequirementStrength,
     pub runtime: RequirementStrength,
     pub resource: RequirementStrength,
 }
@@ -314,6 +315,7 @@ impl CognitiveRuntimeService {
         }
         let automatic = if input.self_cognition != RequirementStrength::Forbidden
             || input.social_cognition != RequirementStrength::Forbidden
+            || input.motivation != RequirementStrength::Forbidden
         {
             if let Some(scope) = &input.scope {
                 resolver
@@ -369,14 +371,21 @@ impl CognitiveRuntimeService {
             .collect::<HashMap<_, _>>();
         references.splice(
             0..0,
-            automatic_refs
-                .into_iter()
-                .map(|r| (r, "current_self", "checkpoint", true)),
+            automatic_refs.into_iter().map(|r| {
+                let role = match r.domain() {
+                    CognitiveDomain::SelfCognition => "current_self",
+                    CognitiveDomain::SocialCognition => "current_social",
+                    CognitiveDomain::Motivation => "current_motivation",
+                    _ => "current_cognition",
+                };
+                (r, role, "checkpoint", true)
+            }),
         );
         let requirement = |reference: &CognitiveRef| match reference.domain() {
             CognitiveDomain::Memory => input.memory,
             CognitiveDomain::SelfCognition => input.self_cognition,
             CognitiveDomain::SocialCognition => input.social_cognition,
+            CognitiveDomain::Motivation => input.motivation,
             CognitiveDomain::Resource => input.resource,
             _ => input.runtime,
         };

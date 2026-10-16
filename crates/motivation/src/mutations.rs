@@ -40,12 +40,14 @@ impl MotivationService {
         self.insert_revision(
             mutation.tx(),
             &input,
-            object,
-            revision,
-            None,
-            1,
-            now,
-            formed_stamp,
+            RevisionWrite {
+                object,
+                revision,
+                parent: None,
+                number: 1,
+                now,
+                formed_stamp,
+            },
         )
         .await?;
         let record = self
@@ -59,21 +61,7 @@ impl MotivationService {
                 input.content.label(),
             )
             .await?;
-        mutation.invalidate(ProjectionInvalidation::all()).await?;
-        mutation
-            .publish_workflow_results(
-                "motivation",
-                &[record.object_reference(), record.reference()],
-            )
-            .await?;
-        mutation
-            .commit(
-                input.content.family(),
-                Some(&object.to_string()),
-                Some(revision),
-                Some(1),
-            )
-            .await?;
+        self.commit_revision(mutation, &record).await?;
         Ok(record)
     }
     pub async fn revise(&self, mut input: ReviseMotivation) -> Result<MotivationRecord> {
@@ -157,12 +145,14 @@ impl MotivationService {
         self.insert_revision(
             mutation.tx(),
             &adopt,
-            input.object_id,
-            revision,
-            Some(current.revision_id),
-            current.revision_no + 1,
-            now,
-            formed_stamp,
+            RevisionWrite {
+                object: input.object_id,
+                revision,
+                parent: Some(current.revision_id),
+                number: current.revision_no + 1,
+                now,
+                formed_stamp,
+            },
         )
         .await?;
         AuthorityStore::invalidate_scoped_cognition_dependents_in(
@@ -184,21 +174,7 @@ impl MotivationService {
                 adopt.content.label(),
             )
             .await?;
-        mutation.invalidate(ProjectionInvalidation::all()).await?;
-        mutation
-            .publish_workflow_results(
-                "motivation",
-                &[record.object_reference(), record.reference()],
-            )
-            .await?;
-        mutation
-            .commit(
-                adopt.content.family(),
-                Some(&input.object_id.to_string()),
-                Some(revision),
-                Some(record.object_epoch),
-            )
-            .await?;
+        self.commit_revision(mutation, &record).await?;
         Ok(record)
     }
     pub async fn add_evidence(
@@ -288,13 +264,16 @@ impl MotivationService {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         input: &AdoptMotivation,
-        object: Uuid,
-        revision: Uuid,
-        parent: Option<Uuid>,
-        number: i32,
-        now: DateTime<Utc>,
-        formed_stamp: nous_runtime::DomainStamp,
+        write: RevisionWrite,
     ) -> Result<()> {
+        let RevisionWrite {
+            object,
+            revision,
+            parent,
+            number,
+            now,
+            formed_stamp,
+        } = write;
         let producer = input.content.producer();
         if let Some(p) = producer {
             if !matches!(p.operation, CapabilityOperation::SubjectReflectionText) {
@@ -313,22 +292,19 @@ impl MotivationService {
         .await?
         .unwrap_or(now);
         sqlx::query("INSERT INTO motivation_revisions(revision_id,object_id,subject_id,revision_no,parent_revision_id,content,reason,formed_at,recorded_at,formed_stamp) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(revision).bind(object).bind(input.subject.0).bind(number).bind(parent).bind(serde_json::to_value(&input.content).map_err(json_error)?).bind(&input.reason).bind(formed).bind(now).bind(serde_json::to_value(formed_stamp).map_err(json_error)?).execute(&mut **tx).await.map_err(db)?;
+        for link in &input.content.matter().links {
+            self.track_reference(tx, revision, &link.target_revision)
+                .await?;
+        }
         for reference in input
             .content
             .matter()
-            .links
+            .condition
             .iter()
-            .map(|l| l.target_revision.clone())
-            .chain(
-                input
-                    .content
-                    .matter()
-                    .condition
-                    .iter()
-                    .flat_map(|c| criterion_references(&c.expression)),
-            )
+            .flat_map(|c| criterion_references(&c.expression))
         {
-            self.track_reference(tx, revision, &reference).await?;
+            let (kind, value) = reference_parts(&reference);
+            sqlx::query("INSERT INTO motivation_criterion_refs(revision_id,ref_kind,ref_value) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind(revision).bind(kind).bind(value).execute(&mut **tx).await.map_err(db)?;
         }
         self.track_basis(tx, revision, input.content.basis())
             .await?;
@@ -407,4 +383,37 @@ fn normalize(content: &mut MotivationContent) -> Result<()> {
         .map(AuthorityStore::canonical_producer)
         .transpose()?;
     Ok(())
+}
+
+struct RevisionWrite {
+    object: Uuid,
+    revision: Uuid,
+    parent: Option<Uuid>,
+    number: i32,
+    now: DateTime<Utc>,
+    formed_stamp: nous_runtime::DomainStamp,
+}
+impl MotivationService {
+    async fn commit_revision(
+        &self,
+        mut mutation: MutationEnvelope<'_>,
+        record: &MotivationRecord,
+    ) -> Result<()> {
+        mutation.invalidate(ProjectionInvalidation::all()).await?;
+        mutation
+            .publish_workflow_results(
+                "motivation",
+                &[record.object_reference(), record.reference()],
+            )
+            .await?;
+        mutation
+            .commit(
+                record.content.family(),
+                Some(&record.object_id.to_string()),
+                Some(record.revision_id),
+                Some(record.object_epoch),
+            )
+            .await?;
+        Ok(())
+    }
 }

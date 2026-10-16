@@ -55,6 +55,12 @@ export async function motivationCommands(
       "REFERENCE_TYPE_MISMATCH",
       "Motivation command requires a MotivationRelation or LanguageConvention reference",
     );
+  if (action === "evaluations")
+    return client.motivation.listEvaluations({
+      subjectId,
+      conditionRevision: reference,
+      page: page(env),
+    });
   if (action === "revision") {
     if (!revision)
       throw new CliError(

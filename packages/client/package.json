@@ -11,7 +11,8 @@
     "./errors": "./src/errors.ts",
     "./consumer-policy": "./src/policy/consumer.ts",
     "./execution-policy": "./src/policy/execution.ts",
-    "./host-bridge": "./src/host-bridge.ts"
+    "./host-bridge": "./src/host-bridge.ts",
+    "./motivation": "./src/motivation.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0",

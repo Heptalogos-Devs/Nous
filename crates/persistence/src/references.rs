@@ -52,44 +52,24 @@ impl AuthorityStore {
     where
         E: Executor<'e, Database = Postgres>,
     {
-        if reference.domain() == CognitiveDomain::Motivation {
+        if let Some((table, capability)) = scoped_owner(reference) {
             let exact = reference.is_cognition_revision();
             let family = reference
                 .kind()
                 .strip_suffix("_revision")
                 .unwrap_or(reference.kind());
-            let row=sqlx::query("SELECT r.revision_id,o.object_epoch FROM motivation_objects o JOIN motivation_revisions r ON r.object_id=o.object_id JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.motivation AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2 AND r.revision_id=o.current_revision_id))")
-                .bind(subject.0).bind(reference.uuid()).bind(family).bind(exact).fetch_optional(executor).await.map_err(db)?.ok_or_else(||Error::NotFound("Self exact target is unavailable".into()))?;
-            let revision: Uuid = row.try_get("revision_id").map_err(db)?;
-            return Ok((
-                parse_reference(&format!("{family}_revision"), &revision.to_string())?,
-                Some(row.try_get("object_epoch").map_err(db)?),
-                !exact,
-            ));
-        }
-        if reference.domain() == CognitiveDomain::SocialCognition {
-            let exact = reference.is_cognition_revision();
-            let family = reference
-                .kind()
-                .strip_suffix("_revision")
-                .unwrap_or(reference.kind());
-            let row=sqlx::query("SELECT r.revision_id,o.object_epoch FROM social_objects o JOIN social_revisions r ON r.object_id=o.object_id JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.social_cognition AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2 AND r.revision_id=o.current_revision_id))")
-                .bind(subject.0).bind(reference.uuid()).bind(family).bind(exact).fetch_optional(executor).await.map_err(db)?.ok_or_else(||Error::NotFound("Self exact target is unavailable".into()))?;
-            let revision: Uuid = row.try_get("revision_id").map_err(db)?;
-            return Ok((
-                parse_reference(&format!("{family}_revision"), &revision.to_string())?,
-                Some(row.try_get("object_epoch").map_err(db)?),
-                !exact,
-            ));
-        }
-        if reference.domain() == CognitiveDomain::SelfCognition {
-            let exact = reference.is_cognition_revision();
-            let family = reference
-                .kind()
-                .strip_suffix("_revision")
-                .unwrap_or(reference.kind());
-            let row=sqlx::query("SELECT r.revision_id,o.object_epoch FROM self_objects o JOIN self_revisions r ON r.object_id=o.object_id JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.self_cognition AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2 AND r.revision_id=o.current_revision_id))")
-                .bind(subject.0).bind(reference.uuid()).bind(family).bind(exact).fetch_optional(executor).await.map_err(db)?.ok_or_else(||Error::NotFound("Self exact target is unavailable".into()))?;
+            let statement = format!(
+                "SELECT r.revision_id,o.object_epoch FROM {table}_objects o JOIN {table}_revisions r ON r.object_id=o.object_id JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.{capability} AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2 AND r.revision_id=o.current_revision_id))"
+            );
+            let row = sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
+                .bind(subject.0)
+                .bind(reference.uuid())
+                .bind(family)
+                .bind(exact)
+                .fetch_optional(executor)
+                .await
+                .map_err(db)?
+                .ok_or_else(|| Error::NotFound("Scoped cognition target is unavailable".into()))?;
             let revision: Uuid = row.try_get("revision_id").map_err(db)?;
             return Ok((
                 parse_reference(&format!("{family}_revision"), &revision.to_string())?,
@@ -224,29 +204,22 @@ impl AuthorityStore {
     where
         E: Executor<'e, Database = Postgres>,
     {
-        if reference.domain() == CognitiveDomain::Motivation {
+        if let Some((table, capability)) = scoped_owner(reference) {
             let family = reference
                 .kind()
                 .strip_suffix("_revision")
                 .unwrap_or(reference.kind());
-            return sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM motivation_objects o JOIN motivation_revisions r USING(object_id) JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.motivation AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2)))")
-                .bind(subject.0).bind(reference.uuid()).bind(family).bind(reference.is_cognition_revision()).fetch_one(executor).await.map_err(db);
-        }
-        if reference.domain() == CognitiveDomain::SocialCognition {
-            let family = reference
-                .kind()
-                .strip_suffix("_revision")
-                .unwrap_or(reference.kind());
-            return sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social_objects o JOIN social_revisions r USING(object_id) JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.social_cognition AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2)))")
-                .bind(subject.0).bind(reference.uuid()).bind(family).bind(reference.is_cognition_revision()).fetch_one(executor).await.map_err(db);
-        }
-        if reference.domain() == CognitiveDomain::SelfCognition {
-            let family = reference
-                .kind()
-                .strip_suffix("_revision")
-                .unwrap_or(reference.kind());
-            return sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM self_objects o JOIN self_revisions r USING(object_id) JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.self_cognition AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2)))")
-                .bind(subject.0).bind(reference.uuid()).bind(family).bind(reference.is_cognition_revision()).fetch_one(executor).await.map_err(db);
+            let statement = format!(
+                "SELECT EXISTS(SELECT 1 FROM {table}_objects o JOIN {table}_revisions r USING(object_id) JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.{capability} AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2)))"
+            );
+            return sqlx::query_scalar(sqlx::AssertSqlSafe(statement.as_str()))
+                .bind(subject.0)
+                .bind(reference.uuid())
+                .bind(family)
+                .bind(reference.is_cognition_revision())
+                .fetch_one(executor)
+                .await
+                .map_err(db);
         }
         let valid = match reference {
             CognitiveRef::Desire(_) | CognitiveRef::DesireRevision(_) | CognitiveRef::Concern(_) | CognitiveRef::ConcernRevision(_) | CognitiveRef::DesiredCondition(_) | CognitiveRef::DesiredConditionRevision(_) => unreachable!("Motivation handled above"),
@@ -510,5 +483,15 @@ impl AuthorityStore {
             .await
             .map_err(db)?
             .unwrap_or(false))
+    }
+}
+
+/// Identifier strings come only from this fixed owner catalog, never a request.
+fn scoped_owner(reference: &CognitiveRef) -> Option<(&'static str, &'static str)> {
+    match reference.domain() {
+        CognitiveDomain::SelfCognition => Some(("self", "self_cognition")),
+        CognitiveDomain::SocialCognition => Some(("social", "social_cognition")),
+        CognitiveDomain::Motivation => Some(("motivation", "motivation")),
+        _ => None,
     }
 }

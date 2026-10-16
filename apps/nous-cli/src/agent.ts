@@ -104,6 +104,14 @@ export const commandInventory = {
     },
     {
       command:
+        "motivation list|select|adopt|get|revision|history|revise|evidence|suppress|restore|withdraw|reaccept|purge|evaluate|evaluation|evaluations",
+      parameters: [
+        "Typed Desire/Concern/DesiredCondition exact references; mutations and evaluate require authenticated management",
+        "--request-file uses canonical MotivationContent/EvaluateConditionRequest",
+      ],
+    },
+    {
+      command:
         "social list|select|pair|neighborhood|resolve|adopt|get|revision|history|revise|evidence|suppress|restore|withdraw|reaccept|purge",
       parameters: [
         "[typed SocialRelation/LanguageConvention object or exact revision reference]",

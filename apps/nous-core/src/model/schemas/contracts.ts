@@ -1,3 +1,4 @@
+import { motivationCriterionSchema } from "./motivation-criterion.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -96,8 +97,20 @@ export function structuredContractForRole(role: ModelRole) {
     >
   )[role];
 }
-export function providerContractForRole(role: ModelRole) {
-  const descriptor = structuredContractForRole(role);
+export function providerContractForRole(
+  role: ModelRole,
+  operation?: "motivation_criterion",
+) {
+  if (operation && role !== "subject_reflection")
+    throw new Error("Motivation criterion uses the subject_reflection binding");
+  const descriptor =
+    operation === "motivation_criterion"
+      ? contract(
+          "motivation.criterion.v1",
+          "motivation_criterion",
+          motivationCriterionSchema,
+        )
+      : structuredContractForRole(role);
   return descriptor
     ? { ...descriptor, ...structuredOutputContract(descriptor.owner) }
     : undefined;

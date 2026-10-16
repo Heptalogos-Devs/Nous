@@ -325,6 +325,7 @@ export async function runCli(
         "purge",
         "evaluate",
         "evaluation",
+        "evaluations",
       ]),
       social: family("social", socialCommands, [
         "list",

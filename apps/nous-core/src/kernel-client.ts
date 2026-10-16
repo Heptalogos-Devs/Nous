@@ -1,3 +1,4 @@
+import { KernelMotivationService } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/motivation_pb.js";
 import { MotivationService } from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
 import { CognitiveClockService } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
 // Copyright 2026 Aravine Zhu
@@ -54,6 +55,7 @@ export class KernelClient {
   readonly self;
   readonly social;
   readonly motivation;
+  readonly motivationWorkflow;
   readonly material;
   readonly artifacts;
   readonly health;
@@ -82,6 +84,7 @@ export class KernelClient {
     this.subjects = createClient(SubjectService, transport);
     this.self = createClient(SelfService, transport);
     this.social = createClient(SocialService, transport);
+    this.motivationWorkflow = createClient(KernelMotivationService, transport);
     this.motivation = createClient(MotivationService, transport);
     this.memory = createClient(MemoryService, transport);
     this.concepts = createClient(ConceptService, transport);

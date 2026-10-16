@@ -78,3 +78,42 @@ RETURNS TABLE(kind text,value text) LANGUAGE sql STABLE AS $$
  AND ((p_kind=o.family||'_revision' AND r.revision_id::text=p_ref)
  OR (p_kind=o.family AND o.object_id::text=p_ref AND r.revision_id=o.current_revision_id))
 $$;
+
+-- Runtime state coverage starts with actual migration-time snapshots, never before them.
+CREATE TRIGGER work_context_state_history AFTER INSERT OR UPDATE ON work_contexts FOR EACH ROW
+ EXECUTE FUNCTION capture_authority_object_state('work_context','work_context_id');
+INSERT INTO authority_object_states(subject_id,object_kind,object_ref,state,recorded_at)
+ SELECT subject_id,'work_context',work_context_id::text,to_jsonb(w),clock_timestamp() FROM work_contexts w;
+
+-- A condition's read selectors are not beliefs supporting its semantic validity.
+CREATE TABLE motivation_criterion_refs (
+ revision_id uuid NOT NULL REFERENCES motivation_revisions(revision_id) ON DELETE CASCADE,
+ ref_kind text NOT NULL,ref_value text NOT NULL,
+ PRIMARY KEY(revision_id,ref_kind,ref_value)
+);
+-- Fixed shared-closure adapter. 0011 supplies the single basis/locator traversal;
+-- PL/pgSQL resolves that function only when this adapter is called after migration.
+CREATE FUNCTION motivation_source_read_edges_with_mode(p_subject uuid,p_kind text,p_ref text,p_metadata_only boolean)
+RETURNS TABLE(kind text,value text,metadata_edge boolean) LANGUAGE plpgsql STABLE AS $$
+DECLARE selected uuid;
+BEGIN
+ SELECT r.revision_id INTO selected FROM motivation_objects o JOIN motivation_revisions r USING(object_id)
+ JOIN subject_capabilities c ON c.subject_id=o.subject_id
+ WHERE o.subject_id=p_subject AND c.motivation
+ AND (p_metadata_only OR (o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'))
+ AND ((p_kind=o.family||'_revision' AND r.revision_id::text=p_ref)
+ OR (p_kind=o.family AND o.object_id::text=p_ref AND r.revision_id=o.current_revision_id));
+ IF selected IS NULL THEN RETURN; END IF;
+ RETURN QUERY
+ SELECT edges.kind,edges.value,false FROM motivation_revisions r
+ CROSS JOIN LATERAL jsonb_array_elements(r.content#>'{value,basis}') b
+ CROSS JOIN LATERAL basis_source_read_edges(b) edges WHERE r.revision_id=selected
+ UNION ALL
+ SELECT edges.kind,edges.value,false FROM motivation_evidence e
+ CROSS JOIN LATERAL basis_source_read_edges(e.basis) edges WHERE e.revision_id=selected
+ UNION ALL
+ SELECT l->'target_revision'->>'kind',l->'target_revision'->>'id',false FROM motivation_revisions r
+ CROSS JOIN LATERAL jsonb_array_elements(r.content#>'{value,links}') l WHERE r.revision_id=selected
+ UNION ALL
+ SELECT selectors.ref_kind,selectors.ref_value,true FROM motivation_criterion_refs selectors WHERE selectors.revision_id=selected;
+END $$;

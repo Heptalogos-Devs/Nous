@@ -32,6 +32,22 @@ impl MotivationService {
             ..Default::default()
         };
         sources.add_basis(record.content.basis());
+        sources.references.extend(
+            record
+                .content
+                .matter()
+                .links
+                .iter()
+                .map(|l| l.target_revision.clone()),
+        );
+        sources.references.extend(
+            record
+                .content
+                .matter()
+                .condition
+                .iter()
+                .flat_map(|c| criterion_references(&c.expression)),
+        );
         sources.add_basis(record.evidence.iter().map(|evidence| &evidence.basis));
         let producer = record.content.producer();
         if let Some(producer) = producer {

@@ -872,5 +872,43 @@ pub struct QueryActivationResponse {
     #[prost(string, tag="2")]
     pub model_input: ::prost::alloc::string::String,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CriterionMaterial {
+    #[prost(string, tag="1")]
+    pub key: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
+    #[prost(string, tag="3")]
+    pub text: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="4")]
+    pub source_occurrence: ::core::option::Option<super::super::v1alpha1::Occurrence>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SemanticCriterionInput {
+    #[prost(string, tag="1")]
+    pub key: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub question: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="3")]
+    pub materials: ::prost::alloc::vec::Vec<CriterionMaterial>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConditionEvaluationPlan {
+    #[prost(string, tag="1")]
+    pub request_digest: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="2")]
+    pub leaves: ::prost::alloc::vec::Vec<SemanticCriterionInput>,
+    #[prost(message, optional, tag="3")]
+    pub evaluated: ::core::option::Option<super::super::v1alpha1::DomainStamp>,
+    #[prost(message, repeated, tag="4")]
+    pub dependencies: ::prost::alloc::vec::Vec<super::super::v1alpha1::CognitiveRef>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ApplyConditionEvaluationRequest {
+    #[prost(message, optional, tag="1")]
+    pub request: ::core::option::Option<super::super::v1alpha1::EvaluateConditionRequest>,
+    #[prost(message, optional, tag="2")]
+    pub identity: ::core::option::Option<OperationIdentity>,
+}
 include!("nous.wave.kernel.v1alpha1.tonic.rs");
 // @@protoc_insertion_point(module)

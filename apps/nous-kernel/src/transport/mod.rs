@@ -39,6 +39,7 @@ mod material;
 mod memory;
 mod model;
 mod motivation;
+mod motivation_workflow;
 mod query;
 mod schema;
 mod self_cognition;
@@ -184,6 +185,11 @@ impl KernelService {
                     } else {
                         requirement(&input.self_requirement)?
                     },
+                    motivation: if input.motivation_requirement.is_empty() {
+                        nous_core::RequirementStrength::Optional
+                    } else {
+                        requirement(&input.motivation_requirement)?
+                    },
                     social_cognition: if input.social_requirement.is_empty() {
                         nous_core::RequirementStrength::Optional
                     } else {
@@ -220,6 +226,7 @@ fn projection_proto(
                     nous_core::CognitiveDomain::Memory => "memory",
                     nous_core::CognitiveDomain::SelfCognition => "self",
                     nous_core::CognitiveDomain::SocialCognition => "social",
+                    nous_core::CognitiveDomain::Motivation => "motivation",
                     nous_core::CognitiveDomain::Resource => "resource",
                     _ => "runtime",
                 }

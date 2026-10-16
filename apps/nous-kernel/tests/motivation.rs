@@ -5,7 +5,7 @@ use chrono::{Duration, Utc};
 use nous_core::*;
 use nous_motivation::*;
 use nous_runtime::{DomainStamp, DomainTemporalExtent};
-use test_support::{database, observation, open_runtime};
+use test_support::{database, observation};
 fn basis(id: OccurrenceId) -> RevisionBasis {
     RevisionBasis::Evidence(EvidenceRef {
         occurrence_id: id,
@@ -49,10 +49,22 @@ fn condition(
         hold_seconds: None,
     }
 }
+async fn open_complete_runtime(url: &str, root: &tempfile::TempDir) -> nous_kernel::NousRuntime {
+    let output=tokio::process::Command::new("node").args(["--import","tsx","--input-type=module","-e","import {configurationBundle} from './apps/nous-core/src/configuration/catalog.ts';process.stdout.write(JSON.stringify(configurationBundle({})));" ]).current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).output().await.unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bundle: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let mut options = test_support::runtime_options(url, root, false, false, false);
+    options.configuration=nous_kernel::configuration_catalog(serde_json::from_value(bundle["core_descriptors"].clone()).unwrap()).unwrap().deployment(&serde_json::json!({"capabilities":{"process":{"memory":true},"subject_defaults":{"memory":true}},"serving":{"lexical":{"enabled":false},"dense":{"enabled":false},"topology":{"enabled":false}}})).unwrap();
+    nous_kernel::NousRuntime::open(options).await.unwrap()
+}
 #[tokio::test]
 async fn actual_owner_evaluation_lifecycle_and_restart() {
     let (root, url, _pg) = database().await;
-    let runtime = open_runtime(&url, &root).await;
+    let runtime = open_complete_runtime(&url, &root).await;
     let subject = test_support::query::subject(&runtime).await;
     runtime
         .subjects
@@ -107,7 +119,7 @@ async fn actual_owner_evaluation_lifecycle_and_restart() {
         })
         .await
         .unwrap();
-    let event=runtime.material.record_observation(nous_material::ObservationInput{subject,session:None,occurrence:nous_material::OccurrenceDescriptor{source_class:SourceClass::Tool,external_object_ref:None,occurred_time:TemporalExtent::Instant{at:Utc::now()},observed_at:Some(Utc::now()),conversation_ref:None,actor_entity_ref:None,context:serde_json::json!({"criterion_fact":CriterionFact::Event{version:1,event_type:"study_completed".into(),target:Some("topic:one".into()),activity:None,at:DomainStamp{time_domain_ref:"time:real".into(),at:Utc::now(),recorded_at:Utc::now()}}})},material:nous_material::ObservationMaterial::InlineText{text:"actual successful tool result".into(),media_type:"text/plain".into()},runtime:Default::default(),entities:vec![]}).await.unwrap().occurrence.occurrence_id;
+    let event=runtime.material.record_observation(nous_material::ObservationInput{subject,session:None,occurrence:nous_material::OccurrenceDescriptor{source_class:SourceClass::Tool,external_object_ref:None,occurred_time:TemporalExtent::Instant{at:Utc::now()},observed_at:Some(Utc::now()),conversation_ref:None,actor_entity_ref:None,context:serde_json::json!({"criterion_fact":CriterionFact::Event{version:1,event_type:"study_completed".into(),target:Some("topic:one".into()),activity:None,at:DomainStamp{time_domain_ref:"time:real".into(),at:Utc::now(),recorded_at:Utc::now()}}.to_canonical_json()})},material:nous_material::ObservationMaterial::InlineText{text:"actual successful tool result".into(),media_type:"text/plain".into()},runtime:Default::default(),entities:vec![]}).await.unwrap().occurrence.occurrence_id;
     let reader = OfficialCriterionReader {
         material: runtime.material.clone(),
         social: runtime.social_cognition.clone(),
@@ -245,9 +257,60 @@ async fn actual_owner_evaluation_lifecycle_and_restart() {
         .await
         .unwrap();
     assert_eq!(withdrawn.acceptance_state, "withdrawn");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let router = nous_kernel::transport::router(runtime.clone(), "motivation-fixture".into()).await;
+    let server = tokio::spawn(
+        router.serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+    );
+    let transport = tokio::process::Command::new("node")
+        .args([
+            "--import",
+            "tsx",
+            "packages/client/tests/motivation-transport.ts",
+            &endpoint,
+            &subject.0.to_string(),
+            &desired.revision_id.to_string(),
+            &o.0.to_string(),
+            &event.0.to_string(),
+        ])
+        .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        transport.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&transport.stdout),
+        String::from_utf8_lossy(&transport.stderr)
+    );
+    for phase in ["save", "resume"] {
+        let output = tokio::process::Command::new("node")
+            .args([
+                "--import",
+                "tsx",
+                "packages/client/tests/motivation-semantic-transport.ts",
+                phase,
+                &endpoint,
+                &subject.0.to_string(),
+                &o.0.to_string(),
+                root.path().join("semantic-state.json").to_str().unwrap(),
+            ])
+            .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    server.abort();
     let saved_id = result.evaluation_id;
     drop(runtime);
-    let restored = open_runtime(&url, &root).await;
+    let restored = open_complete_runtime(&url, &root).await;
     assert_eq!(
         restored
             .require_motivation()

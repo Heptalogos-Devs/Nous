@@ -11,6 +11,7 @@
 | `configuration` | Typed registry, snapshots, overrides and configuration receipts                                     | `crates/configuration/src/lib.rs` | persistence, core                                           | Changing configuration resolution                     |
 | `subject`       | Subject identity, capability and Cognitive Seed adoption                                            | `crates/subject/src/lib.rs`       | material, persistence, configuration, runtime, object-store | Changing Subject lifecycle or seed source             |
 | `material`      | Artifact/Observation/DerivedRepresentation, selected text and source lineage                        | `crates/material/src/lib.rs`      | persistence, runtime, object-store                          | Changing evidence admission or materialization        |
+| `motivation` | Desire/Concern/DesiredCondition、来源与时态条件评价 | `crates/motivation/src/lib.rs` | material, runtime, persistence, social | 修改动机 Authority、criterion 与评价时 |
 | `self`          | SelfFacet/NarrativeThread 的采用、精确修订、scope、来源和生命周期 | `crates/self/src/lib.rs` | material, runtime, persistence, object-store | 修改 Self Authority 与投影输入时 |
 | `memory`        | Memory, CognitiveSchema, Episode, Journal, Tag, AssociationEvidence and Authority/query operations  | `crates/memory/src/lib.rs`        | material, persistence, runtime                              | Changing cognitive Authority, Episode or Memory query |
 | `runtime`       | Session, ResidentSet, WorkContext, UseEvent, QueryPlan, lane contract and fixed fusion              | `crates/runtime/src/lib.rs`       | persistence, configuration, core                            | Changing Runtime or query semantics                   |
@@ -36,3 +37,5 @@ Rust 私有算法 unit tests 可以使用同模块内的 `#[cfg(test)]`；独立
 
 - [Proquint 地址编码](persistence/src/proquint.rs)
 - [Rust 实现](README.md)
+
+- [Motivation owner](motivation/README.md)

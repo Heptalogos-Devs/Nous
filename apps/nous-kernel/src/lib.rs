@@ -478,6 +478,18 @@ impl NousRuntime {
                     .is_none()
                     .then(|| "disabled in composition".into()),
             },
+            CapabilityStatus {
+                capability_id: "motivation".into(),
+                status: if self.motivation.is_some() {
+                    Readiness::Ready
+                } else {
+                    Readiness::Unavailable
+                },
+                reason: self
+                    .motivation
+                    .is_none()
+                    .then(|| "disabled in composition".into()),
+            },
         ];
         RuntimeStatus {
             ready: self.store.check().await.is_ok(),
@@ -494,6 +506,7 @@ pub fn configuration_catalog(
     nous_configuration::register_configuration(&mut registry)?;
     nous_runtime::register_configuration(&mut registry)?;
     nous_memory::register_configuration(&mut registry)?;
+    nous_motivation::register_configuration(&mut registry)?;
     nous_material::register_configuration(&mut registry)?;
     nous_retrieval::register_configuration(&mut registry)?;
     nous_retrieval::register_wave_configuration(&mut registry)?;

@@ -59,3 +59,5 @@ Concept maintenance 的 model suggestion list 由 Core 逐项调用 canonical Ta
 Subject 的认证生活世界时钟使用 `client.clocks.readClock/configureClock/pauseClock/advanceClock/resumeClock`；`projectWorldDeadline` 与 `compareDomainStamps` 从 Client 主入口导出。映射、管理权限、checkpoint 与当前五轴接入边界见[时钟合同](../../docs/specs/active/cognitive-runtime/clock.md)。
 
 `@nous-wave/client/host-bridge` 是 Node-free Host Life 接线合同，导出四个 `/nous/v1/*` 路径、请求/响应 Zod schemas、TS 类型和 JSON Schema。公开 encode/decode CognitionUsage、ObservationInput、AcceptedObservation、Projection codec 与 `timestampFromDate`，Host 不需要引用 bundled Protocol 私有路径。认知 usage/observations 仍使用 canonical Protobuf JSON，不维护第二份认知 DTO。`/managed` 的 `outcomeObservation` 为实际 invocation outcome 构造稳定 requestId 与 ObservationInput，Host 可以先保存 pending 再幂等提交；显式 observedAt 应复用首次实际接触时间。详细配置、来源与反馈恢复合同见[正式 OpenClaw 包说明](../openclaw/README.md#host-life-与结构化接触)。
+
+Motivation 的正式操作位于 `client.motivation`。`@nous-wave/client/motivation` 的 `criterionFactContext` 使用 canonical CriterionFact 为真实 Observation 构造事件/测量 context；它不登记事实、不授予来源权限或执行行为。完整语义见 [Motivation Spec](../../docs/specs/active/motivation/motivation.md)。

@@ -1,3 +1,7 @@
+import {
+  MotivationRecordSchema,
+  MotivationScopeSchema,
+} from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
@@ -44,6 +48,8 @@ export type ReflectionPlan = {
   currentSelf: [string, JsonValue][];
   currentSocial: [string, JsonValue][];
   currentMemory: [string, JsonValue][];
+  currentMotivation: [string, JsonValue][];
+  timeDomainRef: string;
   entities: [string, string][];
   scopes: [string, { self: JsonValue; social: JsonValue }][];
   sourceKeys: string[];
@@ -110,6 +116,8 @@ export async function prepareExplicitSelfPlan(
     ]),
     currentSocial: [],
     currentMemory: [],
+    currentMotivation: [],
+    timeDomainRef: "time:real",
     entities: [],
     scopes: [
       [
@@ -369,6 +377,65 @@ export async function prepareReflectionPlan(
             "Authorized scoped Social candidates exceed bounded complete read; unselected matters may exist",
         });
     }
+  const motivationCurrent: ReflectionPlan["currentMotivation"] = [];
+  let motivationBytes = Number(batch.candidateMaxBytes);
+  if (batch.domains.includes("motivation"))
+    for (const [, s] of scopes) {
+      if (
+        motivationCurrent.length >= Number(batch.candidateLimit) ||
+        motivationBytes <= 0
+      ) {
+        degradation.push({
+          code: "reflection_motivation_candidates_omitted",
+          detail:
+            "Additional actual scopes exceed this opportunity's candidate budget",
+        });
+        break;
+      }
+      const selected = await kernel.motivation.select(
+        {
+          subjectId,
+          scope: fromJson(MotivationScopeSchema, s.social),
+          sourceRead: { subjectId, sourceRefs: [...authorized.values()] },
+          maxItems: Number(batch.candidateLimit) - motivationCurrent.length,
+          maxBytes: motivationBytes,
+        },
+        options,
+      );
+      for (const record of selected.items) {
+        if (
+          motivationCurrent.some(
+            ([, v]) =>
+              (v as { reference?: { value?: string } }).reference?.value ===
+              record.reference?.value,
+          )
+        )
+          continue;
+        const json = toJson(MotivationRecordSchema, record);
+        motivationBytes -= Buffer.byteLength(JSON.stringify(json));
+        const key = `motivation:${motivationCurrent.length}`;
+        motivationCurrent.push([key, json]);
+        if (record.reference)
+          basis.set(
+            key,
+            create(RevisionBasisSchema, {
+              basis: {
+                case: "cognitionDependency",
+                value: {
+                  targetRevision: record.reference,
+                  basisRole: "interpretation",
+                },
+              },
+            }),
+          );
+      }
+      if (selected.omitted)
+        degradation.push({
+          code: "reflection_motivation_candidates_omitted",
+          detail:
+            "Authorized scoped Motivation candidates exceed bounded complete read; unselected matters may exist",
+        });
+    }
   const memoryCurrent: ReflectionPlan["currentMemory"] = [];
   if (batch.domains.includes("memory")) {
     const current = await kernel.maintenance.reflectionMemoryCandidates(
@@ -416,6 +483,10 @@ export async function prepareReflectionPlan(
     ]),
     currentSocial: socialCurrent,
     currentMemory: memoryCurrent,
+    currentMotivation: motivationCurrent,
+    timeDomainRef: batch.domains.includes("motivation")
+      ? (await kernel.clocks.readClock({ subjectId }, options)).timeDomainRef
+      : "time:real",
     entities: [...entities],
     scopes,
     sourceKeys: [...basis.keys()].filter((k) => k.startsWith("source:")),
@@ -440,7 +511,7 @@ export async function prepareReflectionPlan(
       externalEvidence: false,
     })),
     enabledDomains: plan.domains,
-    unsupportedDomains: ["motivation"],
+    actualTimeDomain: plan.timeDomainRef,
     sourceRead: {
       subjectId,
       sourceRefs: [...authorized.values()].map((r) =>
@@ -460,6 +531,10 @@ export async function prepareReflectionPlan(
     basisCatalog: plan.basis.map(([key, value]) => ({ key, basis: value })),
     currentSelf: plan.currentSelf.map(([key, record]) => ({ key, record })),
     currentSocial: plan.currentSocial.map(([key, record]) => ({ key, record })),
+    currentMotivation: plan.currentMotivation.map(([key, record]) => ({
+      key,
+      record,
+    })),
     currentMemory: plan.currentMemory.map(([key, record]) => ({ key, record })),
     candidateScope: {
       completeSubjectSnapshot: false,

@@ -20,6 +20,7 @@ async fn subject_with_basis(runtime: &NousRuntime) -> (SubjectId, RevisionBasis)
                 memory: false,
                 self_cognition: true,
                 social_cognition: false,
+                motivation: false,
             }),
             cognitive_seed: Some(nous_subject::CognitiveSeedInput {
                 text: "schema_version = 1".into(),

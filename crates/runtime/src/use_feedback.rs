@@ -214,6 +214,7 @@ impl CognitiveRuntimeService {
                     CognitiveDomain::Memory => "memory",
                     CognitiveDomain::SelfCognition => "self",
                     CognitiveDomain::SocialCognition => "social",
+                    CognitiveDomain::Motivation => "motivation",
                     _ => unreachable!("validated cognition revision"),
                 })
                 .collect::<HashSet<_>>()
@@ -353,6 +354,16 @@ async fn validate_use_target_in(
     subject: SubjectId,
     reference: &CognitiveRef,
 ) -> Result<()> {
+    if reference.domain() == CognitiveDomain::Motivation {
+        let family = reference
+            .kind()
+            .strip_suffix("_revision")
+            .ok_or_else(|| Error::Invalid("UseEvent needs an exact Self revision".into()))?;
+        let exists:Option<bool>=sqlx::query_scalar("SELECT true FROM motivation_revisions r JOIN motivation_objects o USING(object_id) WHERE r.subject_id=$1 AND r.revision_id=$2 AND o.family=$3 FOR SHARE OF o").bind(subject.0).bind(reference.uuid()).bind(family).fetch_optional(&mut **tx).await.map_err(db)?;
+        return exists
+            .map(|_| ())
+            .ok_or_else(|| Error::NotFound("Self UseEvent revision is outside Subject".into()));
+    }
     if reference.domain() == CognitiveDomain::SocialCognition {
         let family = reference
             .kind()

@@ -3,7 +3,7 @@
 use super::*;
 use nous_core::*;
 use nous_motivation::*;
-fn scope(v: p::MotivationScope) -> Result<MotivationScope> {
+pub(super) fn scope(v: p::MotivationScope) -> Result<MotivationScope> {
     Ok(MotivationScope {
         description: v.description,
         entities: v
@@ -123,6 +123,36 @@ impl p::motivation_service_server::MotivationService for KernelService {
                     .evaluate(input, &reader)
                     .await?,
             ))
+        })
+        .await
+    }
+    async fn list_evaluations(
+        &self,
+        r: Request<p::ConditionEvaluationListRequest>,
+    ) -> std::result::Result<Response<p::ConditionEvaluationListResponse>, Status> {
+        rpc_reply(async {
+            let v = r.into_inner();
+            let subject = SubjectId(id(&v.subject_id)?);
+            let reference = motivation_ref(v.condition_revision, true)?;
+            let scope = format!("motivation-evaluations:{}:{}", subject.0, reference);
+            let (limit, after) = page(v.page, &scope)?;
+            let (items, more) = self
+                .0
+                .require_motivation()?
+                .evaluations(subject, reference, after, limit as usize)
+                .await?;
+            let next = if more {
+                items
+                    .last()
+                    .map(|v| next_token(&scope, v.evaluation_id))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            Ok(p::ConditionEvaluationListResponse {
+                items: items.into_iter().map(evaluation_proto).collect(),
+                next_page_token: next,
+            })
         })
         .await
     }
@@ -415,7 +445,7 @@ fn selection_proto(v: MotivationSelection) -> p::MotivationSelectionResponse {
     }
 }
 
-fn read_scope(v: Option<p::SourceReadScope>) -> Result<SourceReadScope> {
+pub(super) fn read_scope(v: Option<p::SourceReadScope>) -> Result<SourceReadScope> {
     let v = required(v, "source_read")?;
     Ok(SourceReadScope {
         subject_id: Some(SubjectId(id(&v.subject_id)?)),
@@ -426,7 +456,7 @@ fn read_scope(v: Option<p::SourceReadScope>) -> Result<SourceReadScope> {
             .collect::<Result<_>>()?,
     })
 }
-fn stamp_proto(v: nous_runtime::DomainStamp) -> p::DomainStamp {
+pub(super) fn stamp_proto(v: nous_runtime::DomainStamp) -> p::DomainStamp {
     p::DomainStamp {
         time_domain_ref: v.time_domain_ref,
         at: Some(timestamp(v.at)),
@@ -627,7 +657,7 @@ fn criterion_proto(v: Criterion) -> p::CriterionExpression {
         }),
     }
 }
-fn evaluation_proto(v: ConditionEvaluation) -> p::ConditionEvaluation {
+pub(super) fn evaluation_proto(v: ConditionEvaluation) -> p::ConditionEvaluation {
     p::ConditionEvaluation {
         evaluation_id: v.evaluation_id.to_string(),
         condition_revision: Some(to_ref(v.condition_revision)),
@@ -645,6 +675,7 @@ fn evaluation_proto(v: ConditionEvaluation) -> p::ConditionEvaluation {
                 evaluator: l.evaluator,
                 complete: l.complete,
                 method: l.method,
+                producer: l.producer.map(super::evidence::producer),
                 samples: l
                     .samples
                     .into_iter()

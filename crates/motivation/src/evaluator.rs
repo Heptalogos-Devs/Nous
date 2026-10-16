@@ -39,6 +39,7 @@ pub struct CriterionRead {
     pub samples: Vec<CriterionSample>,
     pub complete: bool,
     pub method: String,
+    pub producer: Option<ProducerSignature>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConditionEvaluation {
@@ -129,23 +130,7 @@ impl MotivationService {
                 && r.iter()
                     .all(|x| allowed.iter().any(|a| a.root_key == x.root_key))
         }) {
-            let result = ConditionEvaluation {
-                evaluation_id: Uuid::now_v7(),
-                condition_revision: input.condition_revision.clone(),
-                applicable: None,
-                verdict: ConditionVerdict::Unknown,
-                final_conclusion: false,
-                evaluated_interval: DomainTemporalExtent {
-                    time_domain_ref: stamp.time_domain_ref.clone(),
-                    extent: TemporalExtent::Unknown,
-                },
-                coverage: "gap".into(),
-                evaluator_identity: "nous.criterion/v1".into(),
-                inputs: vec![],
-                leaves: vec![],
-                evaluated: stamp.clone(),
-                explanation: "Authorized evidence is insufficient".into(),
-            };
+            let result = empty_evaluation(input.condition_revision.clone(), stamp.clone(), None);
             save_evaluation(mutation.tx(), &input, &digest, &result).await?;
             mutation
                 .commit(
@@ -165,40 +150,54 @@ impl MotivationService {
                 true,
             )
             .await?;
+        let result = self
+            .evaluate_record(mutation.tx(), &input, &record, &stamp, reader, &allowed)
+            .await?;
+        save_evaluation(mutation.tx(), &input, &digest, &result).await?;
+        mutation
+            .commit(
+                "condition_evaluation",
+                Some(&result.evaluation_id.to_string()),
+                Some(record.revision_id),
+                None,
+            )
+            .await?;
+        Ok(result)
+    }
+    async fn evaluate_record(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        input: &EvaluateCondition,
+        record: &MotivationRecord,
+        stamp: &DomainStamp,
+        reader: &dyn CriterionReader,
+        allowed: &BTreeSet<EvidenceRoot>,
+    ) -> Result<ConditionEvaluation> {
         let condition = record
             .content
             .matter()
             .condition
             .as_ref()
             .ok_or_else(|| Error::Invalid("not DesiredCondition".into()))?;
-        let mut result = ConditionEvaluation {
-            evaluation_id: Uuid::now_v7(),
-            condition_revision: input.condition_revision.clone(),
-            applicable: Some(true),
-            verdict: ConditionVerdict::Unknown,
-            final_conclusion: false,
-            evaluated_interval: condition.window.clone(),
-            coverage: "limited".into(),
-            evaluator_identity: "nous.criterion/v1".into(),
-            inputs: input.evidence_refs.clone(),
-            leaves: vec![],
-            evaluated: stamp.clone(),
-            explanation: String::new(),
-        };
+        let mut result = empty_evaluation(
+            input.condition_revision.clone(),
+            stamp.clone(),
+            Some(condition.window.clone()),
+        );
+        result.applicable = Some(true);
+        result.coverage = "limited".into();
         let requested = std::iter::once(input.condition_revision.clone())
             .chain(input.evidence_refs.iter().cloned())
             .chain(criterion_refs(&condition.expression))
             .collect::<Vec<_>>();
-        let roots = self
-            .roots
-            .roots_in(mutation.tx(), input.subject, &requested)
-            .await;
+        let roots = self.roots.roots_in(tx, input.subject, &requested).await;
         // Authorization failure never exposes whether a hidden fact or object exists.
         let authorized = roots.is_ok_and(|r| {
             !r.is_empty()
                 && r.iter()
                     .all(|x| allowed.iter().any(|a| a.root_key == x.root_key))
         });
+        result.inputs = requested.clone();
         let scoped = scope_matches(record.content.scope(), &input.scope);
         if !authorized || !record.is_current_available() {
             result.applicable = None;
@@ -216,7 +215,6 @@ impl MotivationService {
                 result.applicable = Some(false);
                 result.explanation = "Condition window has not started".into()
             } else {
-                let closed = end.is_some_and(|e| e <= stamp.at);
                 let until = end.map_or(stamp.at, |e| e.min(stamp.at));
                 result.evaluated_interval.extent = TemporalExtent::Interval {
                     start,
@@ -227,7 +225,7 @@ impl MotivationService {
                     result.leaves.push(
                         reader
                             .read_in(
-                                mutation.tx(),
+                                tx,
                                 input.subject,
                                 leaf,
                                 &result.evaluated_interval,
@@ -236,86 +234,38 @@ impl MotivationService {
                             .await?,
                     )
                 }
-                let mut points = BTreeSet::new();
-                if let Some(s) = start {
-                    points.insert(s);
-                }
-                for r in &result.leaves {
-                    for s in &r.samples {
-                        if start.is_none_or(|lo| s.at >= lo) && s.at <= until {
-                            points.insert(s.at);
-                        }
-                    }
-                }
-                let values = points
-                    .iter()
-                    .map(|at| {
-                        let mut i = 0;
-                        truth_at(&condition.expression, &result.leaves, *at, &mut i)
-                    })
-                    .collect::<Vec<_>>();
-                let complete = start.is_some()
-                    && result.leaves.iter().all(|r| r.complete)
-                    && !values.is_empty();
-                result.coverage = if complete { "complete" } else { "limited" }.into();
-                let any_true = values.contains(&Truth::True);
-                let any_false = values.contains(&Truth::False);
-                let all_true = !values.is_empty() && values.iter().all(|x| *x == Truth::True);
-                let all_false = !values.is_empty() && values.iter().all(|x| *x == Truth::False);
-                let satisfied = match condition.temporal_form {
-                    TemporalForm::Achieve => any_true,
-                    TemporalForm::Maintain => closed && complete && all_true,
-                    TemporalForm::Avoid => closed && complete && all_false,
-                    TemporalForm::Cease => {
-                        // Cessation requires positive applicability before a later negative witness.
-                        values.first() == Some(&Truth::True)
-                            && values.iter().enumerate().any(|(i, t)| {
-                                i > 0
-                                    && *t == Truth::False
-                                    && condition.hold_seconds.is_none_or(|hold| {
-                                        let at = *points.iter().nth(i).expect("aligned");
-                                        complete
-                                            && until.signed_duration_since(at).num_seconds()
-                                                >= hold as i64
-                                            && values[i..].iter().all(|x| *x == Truth::False)
-                                    })
-                            })
-                    }
-                };
-                let violated = match condition.temporal_form {
-                    TemporalForm::Maintain => any_false,
-                    TemporalForm::Avoid => any_true,
-                    TemporalForm::Achieve => closed && complete && all_false,
-                    TemporalForm::Cease => {
-                        closed && complete && values.first() == Some(&Truth::True) && all_true
-                    }
-                };
-                result.verdict = if satisfied {
-                    ConditionVerdict::Satisfied
-                } else if violated {
-                    ConditionVerdict::Violated
-                } else {
-                    ConditionVerdict::Unknown
-                };
-                result.final_conclusion = satisfied || violated;
-                result.explanation = if result.final_conclusion {
-                    "Evidence establishes this temporal condition"
-                } else {
-                    "Evidence establishes only a bounded prefix; coverage or truth remains unknown"
-                }
-                .into();
+                fold_temporal(condition, stamp, &mut result);
             }
         }
-        save_evaluation(mutation.tx(), &input, &digest, &result).await?;
-        mutation
-            .commit(
-                "condition_evaluation",
-                Some(&result.evaluation_id.to_string()),
-                Some(record.revision_id),
-                None,
-            )
-            .await?;
         Ok(result)
+    }
+    pub async fn evaluations(
+        &self,
+        subject: SubjectId,
+        condition: CognitiveRef,
+        after: Option<Uuid>,
+        limit: usize,
+    ) -> Result<(Vec<ConditionEvaluation>, bool)> {
+        self.require_enabled(subject).await?;
+        if !matches!(condition, CognitiveRef::DesiredConditionRevision(_))
+            || limit == 0
+            || limit > 100
+        {
+            return Err(Error::Invalid(
+                "Evaluation history requires an exact condition and bounded page".into(),
+            ));
+        }
+        let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT document FROM motivation_evaluations WHERE subject_id=$1 AND condition_revision_id=$2 AND ($3::uuid IS NULL OR evaluation_id>$3) ORDER BY evaluation_id LIMIT $4").bind(subject.0).bind(condition.uuid()).bind(after).bind((limit+1) as i64).fetch_all(self.store.pool()).await.map_err(db)?;
+        let more = rows.len() > limit;
+        Ok((
+            rows.into_iter()
+                .take(limit)
+                .map(|v| {
+                    serde_json::from_value(v).map_err(|e| Error::Infrastructure(e.to_string()))
+                })
+                .collect::<Result<Vec<_>>>()?,
+            more,
+        ))
     }
     pub async fn evaluation(&self, subject: SubjectId, id: Uuid) -> Result<ConditionEvaluation> {
         self.require_enabled(subject).await?;
@@ -421,6 +371,9 @@ async fn save_evaluation(
     digest: &str,
     result: &ConditionEvaluation,
 ) -> Result<()> {
+    for producer in result.leaves.iter().filter_map(|l| l.producer.as_ref()) {
+        AuthorityStore::register_producer_in(tx, producer).await?;
+    }
     sqlx::query("INSERT INTO motivation_evaluations(evaluation_id,subject_id,condition_revision_id,operation_id,request_digest,document,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(result.evaluation_id).bind(input.subject.0).bind(input.condition_revision.uuid()).bind(input.operation_id.0).bind(digest).bind(serde_json::to_value(result).map_err(|e|Error::Internal(e.to_string()))?).bind(result.evaluated.recorded_at).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
@@ -435,5 +388,108 @@ fn criterion_refs(c: &Criterion) -> Vec<CognitiveRef> {
         }
         Criterion::Not { item } => criterion_refs(item),
         _ => vec![],
+    }
+}
+
+fn fold_temporal(
+    condition: &DesiredCondition,
+    stamp: &DomainStamp,
+    result: &mut ConditionEvaluation,
+) {
+    let (start, end) = extent_bounds(&condition.window.extent);
+    let until = end.map_or(stamp.at, |e| e.min(stamp.at));
+    let closed = end.is_some_and(|e| e <= stamp.at);
+    let mut points = BTreeSet::new();
+    if let Some(s) = start {
+        points.insert(s);
+    }
+    for r in &result.leaves {
+        for s in &r.samples {
+            if start.is_none_or(|lo| s.at >= lo)
+                && (s.at < until
+                    || matches!(condition.window.extent, TemporalExtent::Instant{at} if at==s.at))
+            {
+                points.insert(s.at);
+            }
+        }
+    }
+    let values = points
+        .iter()
+        .map(|at| {
+            let mut i = 0;
+            truth_at(&condition.expression, &result.leaves, *at, &mut i)
+        })
+        .collect::<Vec<_>>();
+    let complete =
+        start.is_some() && result.leaves.iter().all(|r| r.complete) && !values.is_empty();
+    result.coverage = if complete { "complete" } else { "limited" }.into();
+    let any_true = values.contains(&Truth::True);
+    let any_false = values.contains(&Truth::False);
+    let all_true = !values.is_empty() && values.iter().all(|x| *x == Truth::True);
+    let all_false = !values.is_empty() && values.iter().all(|x| *x == Truth::False);
+    let satisfied = match condition.temporal_form {
+        TemporalForm::Achieve => any_true,
+        TemporalForm::Maintain => closed && complete && all_true,
+        TemporalForm::Avoid => closed && complete && all_false,
+        TemporalForm::Cease => {
+            // Cessation requires positive applicability before a later negative witness.
+            values.first() == Some(&Truth::True)
+                && values.iter().enumerate().any(|(i, t)| {
+                    i > 0
+                        && *t == Truth::False
+                        && condition.hold_seconds.is_none_or(|hold| {
+                            let at = *points.iter().nth(i).expect("aligned");
+                            complete
+                                && until.signed_duration_since(at).num_seconds() >= hold as i64
+                                && values[i..].iter().all(|x| *x == Truth::False)
+                        })
+                })
+        }
+    };
+    let violated = match condition.temporal_form {
+        TemporalForm::Maintain => any_false,
+        TemporalForm::Avoid => any_true,
+        TemporalForm::Achieve => closed && complete && all_false,
+        TemporalForm::Cease => {
+            closed && complete && values.first() == Some(&Truth::True) && all_true
+        }
+    };
+    result.verdict = if satisfied {
+        ConditionVerdict::Satisfied
+    } else if violated {
+        ConditionVerdict::Violated
+    } else {
+        ConditionVerdict::Unknown
+    };
+    result.final_conclusion = satisfied || violated;
+    result.explanation = if result.final_conclusion {
+        "Evidence establishes this temporal condition"
+    } else {
+        "Evidence establishes only a bounded prefix; coverage or truth remains unknown"
+    }
+    .into();
+}
+
+fn empty_evaluation(
+    reference: CognitiveRef,
+    stamp: DomainStamp,
+    interval: Option<DomainTemporalExtent>,
+) -> ConditionEvaluation {
+    ConditionEvaluation {
+        evaluation_id: Uuid::now_v7(),
+        condition_revision: reference,
+        applicable: None,
+        verdict: ConditionVerdict::Unknown,
+        final_conclusion: false,
+        evaluated_interval: interval.unwrap_or_else(|| DomainTemporalExtent {
+            time_domain_ref: stamp.time_domain_ref.clone(),
+            extent: TemporalExtent::Unknown,
+        }),
+        coverage: "gap".into(),
+        evaluator_identity: "nous.criterion/v1".into(),
+        inputs: vec![],
+        leaves: vec![],
+        evaluated: stamp,
+        explanation: "Authorized evidence is insufficient".into(),
     }
 }

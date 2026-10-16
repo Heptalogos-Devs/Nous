@@ -130,7 +130,7 @@ impl MotivationService {
                 .await?;
             if !record.is_current_available() {
                 return Err(Error::Unavailable(
-                    "Current Self lifecycle denies historical transmission".into(),
+                    "Current Motivation lifecycle denies historical transmission".into(),
                 ));
             }
             record.current_revision_id = state.head.uuid().expect("Motivation UUID");

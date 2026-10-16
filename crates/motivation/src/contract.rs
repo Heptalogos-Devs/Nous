@@ -85,13 +85,12 @@ impl Criterion {
             let valid = match c {
                 Criterion::All { items } | Criterion::Any { items } => {
                     if items.is_empty() {
-                        false
-                    } else {
-                        for i in items {
-                            visit(i, d + 1, max, n)?;
-                        }
-                        true
+                        return Err(Error::Invalid("empty criterion composition".into()));
                     }
+                    for i in items {
+                        visit(i, d + 1, max, n)?;
+                    }
+                    true
                 }
                 Criterion::Not { item } => {
                     visit(item, d + 1, max, n)?;
@@ -112,16 +111,18 @@ impl Criterion {
                 } => {
                     *n += 1;
                     *version == 1
-                        && reference.is_cognition_revision()
-                        && [
-                            "accepted",
-                            "withdrawn",
-                            "valid",
-                            "revalidation_required",
-                            "normal",
-                            "suppressed",
-                        ]
-                        .contains(&state.as_str())
+                        && ((matches!(reference, CognitiveRef::WorkContext(_))
+                            && ["active", "paused", "ended"].contains(&state.as_str()))
+                            || reference.is_cognition_revision()
+                                && [
+                                    "accepted",
+                                    "withdrawn",
+                                    "valid",
+                                    "revalidation_required",
+                                    "normal",
+                                    "suppressed",
+                                ]
+                                .contains(&state.as_str()))
                 }
                 Criterion::Measurement {
                     version,
@@ -276,6 +277,13 @@ impl MotivationContent {
                 "invalid Motivation matter/scope/basis".into(),
             ));
         }
+        for field in [&m.scope.channel, &m.scope.conversation, &m.scope.domain] {
+            if field.as_ref().is_some_and(|v| !bounded(v, 1024)) {
+                return Err(Error::Invalid(
+                    "Motivation structural scope must be bounded".into(),
+                ));
+            }
+        }
         for link in &m.links {
             if ![
                 "refines",
@@ -297,7 +305,7 @@ impl MotivationContent {
                 .condition
                 .as_ref()
                 .ok_or_else(|| Error::Invalid("DesiredCondition requires a criterion".into()))?;
-            c.expression.validate(8, 64)?;
+            c.expression.validate(32, 1024)?;
             c.window.extent.validate()?;
             if !bounded(&c.window.time_domain_ref, 1024) || !bounded(&c.coverage_requirement, 8192)
             {

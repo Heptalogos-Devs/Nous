@@ -32,7 +32,7 @@ message MotivationSelectionRequest {string subject_id=1 [(reference_kind)="subje
 message MotivationSelectionResponse {repeated MotivationRecord items=1;optional string next=2;bool omitted=3;}
 message EvaluateConditionRequest {string subject_id=1 [(reference_kind)="subject"];string operation_id=2;CognitiveRef condition_revision=3;MotivationScope scope=4;SourceReadScope source_read=5;repeated CognitiveRef evidence_refs=6;}
 message CriterionSample {google.protobuf.Timestamp at=1;string truth=2;repeated CognitiveRef evidence=3;}
-message CriterionRead {string evaluator=1;repeated CriterionSample samples=2;bool complete=3;string method=4;}
+message CriterionRead {string evaluator=1;repeated CriterionSample samples=2;bool complete=3;string method=4;ProducerSignature producer=5;}
 message ConditionEvaluation {string evaluation_id=1;CognitiveRef condition_revision=2;optional bool applicable=3;string verdict=4;bool final_conclusion=5;DomainTemporalExtent evaluated_interval=6;string coverage=7;string evaluator_identity=8;repeated CognitiveRef inputs=9;repeated CriterionRead leaves=10;DomainStamp evaluated=11;string explanation=12;}
 service MotivationService {
  rpc Adopt(AdoptMotivationRequest) returns(MotivationRecord) {option idempotency_level=IDEMPOTENT;}
@@ -47,4 +47,11 @@ service MotivationService {
  rpc Purge(MotivationMutationRequest) returns(google.protobuf.Empty) {option idempotency_level=IDEMPOTENT;}
  rpc Evaluate(EvaluateConditionRequest) returns(ConditionEvaluation) {option idempotency_level=IDEMPOTENT;}
  rpc GetEvaluation(ObjectRequest) returns(ConditionEvaluation);
+ rpc ListEvaluations(ConditionEvaluationListRequest) returns(ConditionEvaluationListResponse);
 }
+// Actual source facts, carried in ObservationInput.context. They grant no read scope.
+message CriterionEventFact {uint32 version=1;string event_type=2;optional string target=3;optional string activity=4;DomainStamp at=5;}
+message CriterionMeasurementFact {uint32 version=1;string name=2;string unit=3;double value=4;double error=5;DomainStamp at=6;}
+message CriterionFact {oneof fact {CriterionEventFact event=1;CriterionMeasurementFact measurement=2;}}
+message ConditionEvaluationListRequest {string subject_id=1 [(reference_kind)="subject"];CognitiveRef condition_revision=2;Page page=3;}
+message ConditionEvaluationListResponse {repeated ConditionEvaluation items=1;string next_page_token=2;}

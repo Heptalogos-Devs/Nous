@@ -1299,6 +1299,8 @@ pub struct ProjectionRequest {
     pub self_requirement: ::prost::alloc::string::String,
     #[prost(string, tag="15")]
     pub social_requirement: ::prost::alloc::string::String,
+    #[prost(string, tag="16")]
+    pub motivation_requirement: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ContextSegment {
@@ -3615,6 +3617,8 @@ pub struct CriterionRead {
     pub complete: bool,
     #[prost(string, tag="4")]
     pub method: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="5")]
+    pub producer: ::core::option::Option<ProducerSignature>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConditionEvaluation {
@@ -3642,6 +3646,66 @@ pub struct ConditionEvaluation {
     pub evaluated: ::core::option::Option<DomainStamp>,
     #[prost(string, tag="12")]
     pub explanation: ::prost::alloc::string::String,
+}
+/// Actual source facts, carried in ObservationInput.context. They grant no read scope.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CriterionEventFact {
+    #[prost(uint32, tag="1")]
+    pub version: u32,
+    #[prost(string, tag="2")]
+    pub event_type: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="3")]
+    pub target: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="4")]
+    pub activity: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="5")]
+    pub at: ::core::option::Option<DomainStamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CriterionMeasurementFact {
+    #[prost(uint32, tag="1")]
+    pub version: u32,
+    #[prost(string, tag="2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub unit: ::prost::alloc::string::String,
+    #[prost(double, tag="4")]
+    pub value: f64,
+    #[prost(double, tag="5")]
+    pub error: f64,
+    #[prost(message, optional, tag="6")]
+    pub at: ::core::option::Option<DomainStamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CriterionFact {
+    #[prost(oneof="criterion_fact::Fact", tags="1, 2")]
+    pub fact: ::core::option::Option<criterion_fact::Fact>,
+}
+/// Nested message and enum types in `CriterionFact`.
+pub mod criterion_fact {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Fact {
+        #[prost(message, tag="1")]
+        Event(super::CriterionEventFact),
+        #[prost(message, tag="2")]
+        Measurement(super::CriterionMeasurementFact),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConditionEvaluationListRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub condition_revision: ::core::option::Option<CognitiveRef>,
+    #[prost(message, optional, tag="3")]
+    pub page: ::core::option::Option<Page>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConditionEvaluationListResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<ConditionEvaluation>,
+    #[prost(string, tag="2")]
+    pub next_page_token: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SocialScope {
@@ -4059,7 +4123,7 @@ pub struct ReflectionActionOutcome {
     pub references: ::prost::alloc::vec::Vec<CognitiveRef>,
     #[prost(string, optional, tag="8")]
     pub problem_code: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(oneof="reflection_action_outcome::OwnerResult", tags="9, 10, 11")]
+    #[prost(oneof="reflection_action_outcome::OwnerResult", tags="9, 10, 11, 12")]
     pub owner_result: ::core::option::Option<reflection_action_outcome::OwnerResult>,
 }
 /// Nested message and enum types in `ReflectionActionOutcome`.
@@ -4072,6 +4136,8 @@ pub mod reflection_action_outcome {
         SocialRecord(super::SocialRecord),
         #[prost(message, tag="11")]
         MemoryRecord(super::Memory),
+        #[prost(message, tag="12")]
+        MotivationRecord(super::MotivationRecord),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]

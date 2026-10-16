@@ -21,7 +21,10 @@
         "src/{index,node,managed,errors}.ts!",
         "src/policy/{consumer,execution}.ts!",
         "tests/**/*.test.ts",
-        "tests/clock-transport.ts!"
+        "tests/clock-transport.ts!",
+        "src/motivation.ts!",
+        "tests/motivation-transport.ts!",
+        "tests/motivation-semantic-transport.ts!"
       ]
     },
     "packages/openclaw": {
