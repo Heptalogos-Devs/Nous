@@ -295,7 +295,7 @@ if (phase === "resume") {
       },
       admit: false,
     });
-    await new Promise((resolve)=>setTimeout(resolve,1100));
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     const grant = create(MaintenanceGrantRequestSchema, {
       subjectId: rs,
       maxOperations: 32,

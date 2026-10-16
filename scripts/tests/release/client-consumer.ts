@@ -16,6 +16,11 @@ import {
 } from "@nous-wave/client";
 import { connectNousInstance } from "@nous-wave/client/node";
 import {
+  criterionFactContext,
+  decodeCriterionFact,
+} from "@nous-wave/client/motivation";
+export const motivationFacts = { criterionFactContext, decodeCriterionFact };
+import {
   createManagedBinding,
   eventIdentity,
   type CognitionUsage,

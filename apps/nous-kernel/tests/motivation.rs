@@ -62,6 +62,10 @@ async fn open_complete_runtime(url: &str, root: &tempfile::TempDir) -> nous_kern
     nous_kernel::NousRuntime::open(options).await.unwrap()
 }
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One real PostgreSQL scenario keeps owner, public transport and restart assertions on the same actual state"
+)]
 async fn actual_owner_evaluation_lifecycle_and_restart() {
     let (root, url, _pg) = database().await;
     let runtime = open_complete_runtime(&url, &root).await;
