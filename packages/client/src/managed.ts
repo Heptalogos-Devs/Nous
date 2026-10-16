@@ -257,29 +257,11 @@ export function createManagedBinding(options: {
       if (!admissions.get(result.applied)?.has(result.invocationId))
         throw new Error("Outcome requires an admitted native model input");
       await client.runtime.recordObservation(
-        {
+        await outcomeObservation({
           subjectId: options.subjectId,
           sessionId: options.sessionId,
-          requestId: await eventIdentity(`${result.invocationId}:outcome`),
-          sourceClass: "host_event",
-          material: {
-            case: "inlineText",
-            value: {
-              mediaType: "application/json",
-              text: JSON.stringify({
-                invocation_id: result.invocationId,
-                projection_id: projection.projectionId,
-                outcome: result.outcome,
-              }),
-            },
-          },
-          admit: false,
-          context: {
-            invocation_id: result.invocationId,
-            projection_id: projection.projectionId,
-            outcome: result.outcome,
-          },
-        },
+          result,
+        }),
         request,
       );
       for (const observation of result.observations ?? []) {
@@ -320,4 +302,43 @@ export async function eventIdentity(key: string): Promise<string> {
     .map((value) => value.toString(16).padStart(2, "0"))
     .join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Canonical, replayable actual model outcome; Hosts can persist before submission. */
+export async function outcomeObservation(input: {
+  subjectId: string;
+  sessionId: string;
+  result: ActualInvocationOutcome;
+  observedAt?: Date;
+}): Promise<MessageInitShape<typeof ObservationInputSchema>> {
+  const { result } = input;
+  return {
+    subjectId: input.subjectId,
+    sessionId: input.sessionId,
+    requestId: await eventIdentity(`${result.invocationId}:outcome`),
+    sourceClass: "host_event",
+    observedAt: input.observedAt
+      ? timestampFromDate(input.observedAt)
+      : undefined,
+    occurredTime: {
+      value: { case: "instant", value: timestampFromDate(result.occurredAt) },
+    },
+    material: {
+      case: "inlineText",
+      value: {
+        mediaType: "application/json",
+        text: JSON.stringify({
+          invocation_id: result.invocationId,
+          projection_id: result.applied.projectionId,
+          outcome: result.outcome,
+        }),
+      },
+    },
+    admit: false,
+    context: {
+      invocation_id: result.invocationId,
+      projection_id: result.applied.projectionId,
+      outcome: result.outcome,
+    },
+  };
 }

@@ -10,7 +10,8 @@
     "./managed": "./src/managed.ts",
     "./errors": "./src/errors.ts",
     "./consumer-policy": "./src/policy/consumer.ts",
-    "./execution-policy": "./src/policy/execution.ts"
+    "./execution-policy": "./src/policy/execution.ts",
+    "./host-bridge": "./src/host-bridge.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0",

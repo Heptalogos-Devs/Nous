@@ -36,6 +36,39 @@ import {
   type ExecutionOpportunityPolicy,
 } from "@nous-wave/client/execution-policy";
 
+import {
+  HOST_BRIDGE_PATHS,
+  withHostObservationScope,
+  encodeCognitionUsage,
+  decodeCognitionUsage,
+  encodeObservationInput,
+  decodeObservationInput,
+  encodeAcceptedObservation,
+  decodeAcceptedObservation,
+  encodeProjection,
+  decodeProjection,
+  timestampFromDate,
+  HOST_BRIDGE_JSON_SCHEMAS,
+  hostPrepareRequestSchema,
+  type HostPrepareRequest,
+} from "@nous-wave/client/host-bridge";
+export const hostCodecs = {
+  withHostObservationScope,
+  encodeCognitionUsage,
+  decodeCognitionUsage,
+  encodeObservationInput,
+  decodeObservationInput,
+  encodeAcceptedObservation,
+  decodeAcceptedObservation,
+  encodeProjection,
+  decodeProjection,
+  timestampFromDate,
+};
+export const hostPaths = HOST_BRIDGE_PATHS;
+export const hostSchemas = HOST_BRIDGE_JSON_SCHEMAS;
+export const parseHostRequest = (input: unknown): HostPrepareRequest =>
+  hostPrepareRequestSchema.parse(input);
+
 export const connect = (runRoot: string) => connectNousInstance({ runRoot });
 export const binding = (client: NousClient) =>
   createManagedBinding({

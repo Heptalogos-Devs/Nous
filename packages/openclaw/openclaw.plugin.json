@@ -8,14 +8,41 @@
     "additionalProperties": false,
     "required": ["runRoot", "subjectId", "consumerId"],
     "properties": {
-      "runRoot": { "type": "string", "minLength": 1 },
-      "subjectId": { "type": "string", "format": "uuid" },
-      "consumerId": { "type": "string", "minLength": 1 },
-      "workContextId": { "type": "string", "format": "uuid" },
+      "runRoot": {
+        "type": "string",
+        "minLength": 1
+      },
+      "subjectId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "consumerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "workContextId": {
+        "type": "string",
+        "format": "uuid"
+      },
       "cognitionTokenCap": {
         "type": "integer",
         "minimum": 512,
         "default": 4096
+      },
+      "hostBridge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["origin", "credentialFile"],
+        "properties": {
+          "origin": {
+            "type": "string",
+            "format": "uri"
+          },
+          "credentialFile": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     }
   }
