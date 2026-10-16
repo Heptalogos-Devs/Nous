@@ -890,12 +890,35 @@ routes = ["memory_formation"]
       agentInstanceId: "smoke:model-material-resource",
       purpose: "deliberation",
       intent: "Continue the foreground material and resource task.",
+      sourceRead: {
+        subjectId,
+        sourceRefs: [
+          { kind: "work_context", value: foreground.workContext.workContextId },
+          {
+            kind: "derived_representation",
+            value: structured.representationId,
+          },
+          { kind: "occurrence", value: occurrenceId },
+        ],
+      },
       audience: {
         conversationRef: `conversation:smoke:${sessionId}`,
         visibility: "internal",
       },
     },
   };
+  const withoutGrant = await restarted.cognition.buildManagedContext({
+    projection: {
+      ...managedProjection,
+      usage: { ...managedProjection.usage, sourceRead: undefined },
+    },
+  });
+  assert.equal(stewardCalls, 0, "active WorkContext is not a source grant");
+  assert(
+    !withoutGrant.projection?.segments.some((s) =>
+      s.text.includes("Foreground Steward continuity marker"),
+    ),
+  );
   const managed = await restarted.cognition.buildManagedContext({
     projection: managedProjection,
   });
@@ -962,11 +985,24 @@ routes = ["memory_formation"]
     ),
   );
   assert(
-    mixed.degradation.some(
+    !JSON.stringify(mixed.segments).includes(missingArtifact),
+    "ungranted nonexistent or private refs are omitted before materialization",
+  );
+  const managementMixed = await restarted.cognition.buildProjection({
+    ...projection,
+    maxItems: 32,
+    situationRefs: [
+      { kind: "occurrence", value: occurrenceId },
+      { kind: "artifact", value: missingArtifact },
+    ],
+  });
+  assert(
+    managementMixed.degradation.some(
       (problem) =>
         problem.code === "projection_source_unavailable" &&
         problem.detail?.includes(missingArtifact),
     ),
+    "authenticated management retains missing-source diagnostics",
   );
   await restarted.runtime.closeSession({ subjectId, id: sessionId });
   await assert.rejects(
