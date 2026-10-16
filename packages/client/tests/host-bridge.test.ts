@@ -22,12 +22,28 @@ test("public codecs preserve canonical scope and reject unknown cognition fields
       agentInstanceId: "native:run",
       purpose: "deliberation",
       intent: "Read actual shared sources",
+      sourceRead: {
+        subjectId: "subject:fixture",
+        sourceRefs: [{ kind: "occurrence", value: "actual-source" }],
+      },
+      socialDomain: "technical-study",
       audience: {
+        groupEntityRef: "entity:qq:authorized-group",
+        channelRef: "channel:qq",
         visibility: "group",
         conversationRef: "conversation:qq:group",
       },
     }),
   );
+  expect(usage.sourceRead).toMatchObject({
+    subjectId: "subject:fixture",
+    sourceRefs: [{ kind: "occurrence", value: "actual-source" }],
+  });
+  expect(usage.audience).toMatchObject({
+    groupEntityRef: "entity:qq:authorized-group",
+    channelRef: "channel:qq",
+  });
+  expect(usage.socialDomain).toBe("technical-study");
   expect(() => decodeCognitionUsage({ inventedAuthority: true })).toThrow();
   const observation = withHostObservationScope(
     {
