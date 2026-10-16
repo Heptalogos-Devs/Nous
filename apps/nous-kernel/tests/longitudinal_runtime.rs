@@ -320,7 +320,12 @@ async fn assert_owner_timestamp_replay(
         .await
         .unwrap();
     assert_eq!(memory.revision.formed_at, at);
-    assert_eq!(memory.revision.recorded_at, at);
+    assert!(
+        (memory.revision.recorded_at - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
     clock.advance_by(subject, Duration::days(1)).unwrap();
     rt.require_memory()
         .unwrap()
@@ -359,7 +364,7 @@ async fn assert_owner_timestamp_replay(
         memory.revision.memory_revision_id
     );
     assert_eq!(replay.revision.formed_at, at);
-    assert_eq!(replay.revision.recorded_at, at);
+    assert_eq!(replay.revision.recorded_at, memory.revision.recorded_at);
     assert_schema_clock(rt, clock, subject, occurrence).await;
 }
 
