@@ -96,7 +96,7 @@ const proxy = createServer((request, response) => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: String(request.headers.authorization ?? ""),
+        authorization: request.headers.authorization ?? "",
       },
       body,
       signal: AbortSignal.timeout(180000),

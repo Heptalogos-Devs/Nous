@@ -214,3 +214,58 @@ impl MemoryService {
         Ok((result, omitted))
     }
 }
+
+impl MemoryService {
+    /// Resolve lineage from formal dependency/evidence metadata before any narrative is read.
+    pub async fn source_references_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+    ) -> Result<Vec<CognitiveRef>> {
+        let id = reference
+            .uuid()
+            .ok_or_else(|| Error::Invalid("exact Memory reference required".into()))?;
+        let statement = match reference {
+            CognitiveRef::MemoryRevision(_) => {
+                "SELECT 'occurrence'::text, e.occurrence_id::text FROM memory_revision_evidence e JOIN memory_revisions r USING(memory_revision_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 UNION SELECT CASE WHEN source_region_id IS NOT NULL THEN 'source_region' WHEN derived_representation_id IS NOT NULL THEN 'derived_representation' ELSE 'derived_region' END,COALESCE(source_region_id,derived_representation_id,derived_region_id)::text FROM memory_revision_evidence e JOIN memory_revisions r USING(memory_revision_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2 AND num_nonnulls(source_region_id,derived_representation_id,derived_region_id)>0 UNION SELECT d.target_ref_kind,d.target_ref FROM memory_revision_dependencies d JOIN memory_revisions r USING(memory_revision_id) WHERE r.subject_id=$1 AND r.memory_revision_id=$2"
+            }
+            CognitiveRef::CognitiveSchemaRevision(_) => {
+                "SELECT CASE WHEN e.basis_kind='evidence' THEN 'occurrence' ELSE e.basis_kind END,CASE WHEN e.basis_kind='evidence' THEN e.occurrence_id::text ELSE e.basis_ref END FROM cognitive_schema_evidence_links e WHERE e.subject_id=$1 AND e.schema_revision_id=$2 AND e.revoked_at IS NULL UNION SELECT CASE WHEN source_region_id IS NOT NULL THEN 'source_region' WHEN derived_representation_id IS NOT NULL THEN 'derived_representation' ELSE 'derived_region' END,COALESCE(source_region_id,derived_representation_id,derived_region_id)::text FROM cognitive_schema_evidence_links e WHERE e.subject_id=$1 AND e.schema_revision_id=$2 AND e.revoked_at IS NULL AND num_nonnulls(source_region_id,derived_representation_id,derived_region_id)>0"
+            }
+            CognitiveRef::EpisodeRevision(_) => {
+                "SELECT m.ref_kind,m.ref_value FROM episode_revision_members m JOIN episode_revisions r USING(episode_revision_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 UNION SELECT CASE WHEN b.basis_kind='evidence' THEN 'occurrence' ELSE b.basis_kind END,CASE WHEN b.basis_kind='evidence' THEN b.occurrence_id::text ELSE b.basis_ref END FROM episode_revision_basis b JOIN episode_revisions r USING(episode_revision_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 UNION SELECT CASE WHEN source_region_id IS NOT NULL THEN 'source_region' WHEN derived_representation_id IS NOT NULL THEN 'derived_representation' ELSE 'derived_region' END,COALESCE(source_region_id,derived_representation_id,derived_region_id)::text FROM episode_revision_basis b JOIN episode_revisions r USING(episode_revision_id) WHERE r.subject_id=$1 AND r.episode_revision_id=$2 AND num_nonnulls(source_region_id,derived_representation_id,derived_region_id)>0"
+            }
+            CognitiveRef::JournalRevision(_) => {
+                "SELECT s.ref_kind,s.ref_value FROM journal_revision_sources s JOIN journal_revisions r USING(journal_revision_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2"
+            }
+            _ => {
+                return Err(Error::Invalid(
+                    "Memory source metadata requires exact owned revision".into(),
+                ));
+            }
+        };
+        let rows: Vec<(String, String)> = sqlx::query_as(statement)
+            .bind(subject.0)
+            .bind(id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(db)?;
+        let mut refs = rows
+            .into_iter()
+            .map(|(k, v)| parse_reference(&k, &v))
+            .collect::<Result<Vec<_>>>()?;
+        if matches!(reference, CognitiveRef::JournalRevision(_)) {
+            let bases:Vec<serde_json::Value>=sqlx::query_scalar("SELECT p.basis FROM journal_point_basis p JOIN journal_revisions r USING(journal_revision_id) WHERE r.subject_id=$1 AND r.journal_revision_id=$2").bind(subject.0).bind(id).fetch_all(&mut **tx).await.map_err(db)?;
+            for value in bases {
+                let basis: RevisionBasis = serde_json::from_value(value)
+                    .map_err(|_| Error::Unavailable("invalid Journal source metadata".into()))?;
+                refs.push(basis.evidence_handle().reference);
+                if let RevisionBasis::Evidence(e) = basis {
+                    refs.push(CognitiveRef::Occurrence(e.occurrence_id));
+                }
+            }
+        }
+        Ok(refs)
+    }
+}
