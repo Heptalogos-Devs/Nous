@@ -20,6 +20,15 @@ pub trait CognitiveClock: Send + Sync {
             recorded_at: Utc::now(),
         })
     }
+    /// Physical wake-up derived from this clock mapping; None means paused or unmapped.
+    fn real_deadline(
+        &self,
+        _subject: SubjectId,
+        domain: &str,
+        at: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        (domain == "time:real").then_some(at)
+    }
     async fn capture_in(
         &self,
         _tx: &mut nous_persistence::AuthorityTransaction<'_>,

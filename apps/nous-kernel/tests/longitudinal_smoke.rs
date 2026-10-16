@@ -157,6 +157,12 @@ async fn run_smoke() {
                 clock
                     .advance_by(subject, Duration::seconds(seconds))
                     .unwrap();
+                server
+                    .runtime
+                    .cognition
+                    .clock_changed(subject)
+                    .await
+                    .unwrap();
                 serde_json::json!({"advanced":true})
             }
             Control::Prioritize {

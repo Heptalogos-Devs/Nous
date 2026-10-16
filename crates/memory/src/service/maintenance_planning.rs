@@ -228,6 +228,10 @@ impl MemoryService {
         Ok(result)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one bounded Journal planner preserves current source heads, same-domain scope and semantic settling before model work"
+    )]
     pub async fn plan_journal_review(
         &self,
         subject: SubjectId,
@@ -235,7 +239,7 @@ impl MemoryService {
         scope: &str,
     ) -> Result<MaintenanceScope> {
         let config = self.configuration.snapshot_for_subject(subject)?;
-        let now = self.cognition.recorded_now();
+        let frame = self.cognition.read_clock(subject).await?;
         let max_count = config.get(super::longitudinal_policy::JOURNAL_MAX_EPISODES)? as i64;
         let span = chrono::Duration::seconds(
             config.get(super::longitudinal_policy::JOURNAL_MAX_SPAN)? as i64,
@@ -302,8 +306,15 @@ impl MemoryService {
             } else {
                 scope_domain = Some(episode.revision.experience_time_domain_ref.clone());
             }
-            if episode.revision.recorded_at + delay > now {
-                result.next_due = Some(episode.revision.recorded_at + delay);
+            let committed: serde_json::Value = sqlx::query_scalar("SELECT semantic_stamp FROM authority_object_states WHERE subject_id=$1 AND object_kind='episode' AND object_ref=$2 AND state->>'current_revision_id'=$3 ORDER BY event_id LIMIT 1")
+                .bind(subject.0).bind(episode.object.episode_id.0.to_string()).bind(episode.revision.episode_revision_id.0.to_string()).fetch_one(self.store.pool()).await.map_err(db)?;
+            let committed: nous_core::DomainStamp = serde_json::from_value(committed)
+                .map_err(|error| Error::Infrastructure(error.to_string()))?;
+            let (settled, wake) = self
+                .cognition
+                .semantic_settlement(subject, &committed, delay, &frame)?;
+            if !settled {
+                result.next_due = Some(wake);
                 if result.journal.is_some() {
                     result.status = "deferred".into();
                     result.problem = Some("journal_sources_settling".into());

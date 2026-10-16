@@ -44,6 +44,7 @@ impl CognitiveRuntimeService {
         self.require_subject(subject).await?;
         let policy =
             EpisodePolicy::from_snapshot(&self.configuration.snapshot_for_subject(subject)?)?;
+        let semantic = self.read_clock(subject).await?;
         let now = self.recorded_now();
         let mut tx = self.store.begin().await?;
         sqlx::query("INSERT INTO segmentation_cursors(subject_id,track_key,updated_at) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
@@ -108,7 +109,16 @@ impl CognitiveRuntimeService {
             }
             last_seq = seq;
         }
-        let (next_draft, mut next_due) = close_if_due(&mut tx, draft, &policy, now, close).await?;
+        let (next_draft, mut next_due) = close_if_due(
+            &mut tx,
+            draft,
+            &policy,
+            now,
+            &semantic,
+            close,
+            self.clock.as_ref(),
+        )
+        .await?;
         draft = next_draft;
         let backlog: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM experience_items WHERE subject_id=$1 AND recorded_seq>$2)",
@@ -242,14 +252,30 @@ async fn close_if_due(
     mut draft: Option<Uuid>,
     policy: &EpisodePolicy,
     now: DateTime<Utc>,
+    semantic: &DomainStamp,
     close: bool,
+    clock: &dyn CognitiveClock,
 ) -> Result<(Option<Uuid>, Option<DateTime<Utc>>)> {
     let mut next_due = None;
     if let Some(id) = draft {
-        let row = sqlx::query("SELECT d.observed_end,w.state AS work_context_state FROM episode_drafts d JOIN experience_items e ON e.subject_id=d.subject_id AND e.recorded_seq=d.last_recorded_seq LEFT JOIN work_contexts w ON w.work_context_id=e.active_work_context_id WHERE d.draft_id=$1")
+        let row = sqlx::query("SELECT e.subject_id,d.observed_end,o.observed_stamp,w.state AS work_context_state FROM episode_drafts d JOIN experience_items e ON e.subject_id=d.subject_id AND e.recorded_seq=d.last_recorded_seq JOIN observation_occurrences o ON o.occurrence_id=e.occurrence_id AND o.subject_id=e.subject_id LEFT JOIN work_contexts w ON w.work_context_id=e.active_work_context_id WHERE d.draft_id=$1")
                 .bind(id).fetch_one(&mut **tx).await.map_err(db)?;
         let end: DateTime<Utc> = row.try_get("observed_end").map_err(db)?;
-        let due = end
+        let stamp: DomainStamp = serde_json::from_value(row.get("observed_stamp"))
+            .map_err(|e| Error::Infrastructure(e.to_string()))?;
+        let contact = if stamp.time_domain_ref == "time:real" {
+            end
+        } else {
+            stamp.at
+        };
+        let current = if stamp.time_domain_ref == "time:real" {
+            Some(now)
+        } else if stamp.time_domain_ref == semantic.time_domain_ref {
+            Some(semantic.at)
+        } else {
+            None
+        };
+        let due = contact
             .checked_add_signed(policy.hard_idle)
             .ok_or_else(|| Error::Invalid("Episode due time overflow".into()))?;
         let ended = row
@@ -257,7 +283,7 @@ async fn close_if_due(
             .map_err(db)?
             .as_deref()
             == Some("ended");
-        if close || ended || now >= due {
+        if close || ended || current.is_some_and(|at| at >= due) {
             close_draft(
                 tx,
                 id,
@@ -273,7 +299,13 @@ async fn close_if_due(
             .await?;
             draft = None;
         } else {
-            next_due = Some(due);
+            next_due = clock
+                .real_deadline(
+                    SubjectId(row.get("subject_id")),
+                    &stamp.time_domain_ref,
+                    due,
+                )
+                .or_else(|| now.checked_add_signed(policy.hard_idle));
         }
     }
     Ok((draft, next_due))

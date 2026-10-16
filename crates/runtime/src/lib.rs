@@ -182,6 +182,77 @@ impl CognitiveRuntimeService {
         Ok(stamp)
     }
 
+    /// Mapping only chooses a real scheduler wake-up. It does not make a
+    /// semantic deadline true or alter network leases/backoff.
+    pub fn semantic_deadline(
+        &self,
+        subject: SubjectId,
+        domain: &str,
+        at: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        self.clock.real_deadline(subject, domain, at)
+    }
+
+    /// Cognitive settling uses a same-domain semantic coordinate. The returned
+    /// UTC time is merely a wake-up; paused/unmapped time never becomes settled
+    /// because a real polling interval elapsed.
+    pub fn semantic_settlement(
+        &self,
+        subject: SubjectId,
+        source: &DomainStamp,
+        delay: chrono::Duration,
+        frame: &DomainStamp,
+    ) -> Result<(bool, DateTime<Utc>)> {
+        let due = source
+            .at
+            .checked_add_signed(delay)
+            .ok_or_else(|| Error::Invalid("semantic settling timestamp overflow".into()))?;
+        let current = if source.time_domain_ref == "time:real" {
+            Some(frame.recorded_at)
+        } else if source.time_domain_ref == frame.time_domain_ref {
+            Some(frame.at)
+        } else {
+            None
+        };
+        let settled = current.is_some_and(|at| at >= due);
+        let wake = self
+            .semantic_deadline(subject, &source.time_domain_ref, due)
+            .unwrap_or_else(|| frame.recorded_at + delay.max(chrono::Duration::seconds(1)));
+        Ok((settled, wake))
+    }
+
+    /// Explicit clock control makes existing cognitive obligations eligible for
+    /// reevaluation. It does not grant execution/model budget or clear retries.
+    pub async fn clock_changed(&self, subject: SubjectId) -> Result<()> {
+        self.require_subject(subject).await?;
+        let now = self.recorded_now();
+        let mut tx = self.store.begin().await?;
+        sqlx::query("UPDATE maintenance_needs SET due_at=LEAST(due_at,$2),updated_at=$2 WHERE subject_id=$1 AND state='pending' AND kind IN ('episode_segment','episode_resegment','journal_review','journal_revalidate','memory_consolidate')")
+            .bind(subject.0).bind(now).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
+        let seq: i64 = sqlx::query_scalar("SELECT authority_seq FROM subjects WHERE subject_id=$1")
+            .bind(subject.0)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(nous_persistence::database_error)?;
+        self.enqueue_maintenance_in(
+            &mut tx,
+            &MaintenanceRequest {
+                subject,
+                kind: "episode_segment".into(),
+                scope_kind: "track".into(),
+                scope_ref: "interaction".into(),
+                trigger_authority_seq: seq,
+                due_at: now,
+                priority: 50,
+            },
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(nous_persistence::database_error)?;
+        Ok(())
+    }
+
     pub async fn require_subject(&self, subject: SubjectId) -> Result<()> {
         self.store.require_subject(subject).await
     }

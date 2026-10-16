@@ -338,6 +338,32 @@ impl CognitiveClock for SubjectClockService {
     ) -> Result<DomainStamp> {
         SubjectClockService::capture_in(self, tx, subject).await
     }
+    fn real_deadline(
+        &self,
+        subject: SubjectId,
+        domain: &str,
+        at: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        if domain == REAL_TIME_DOMAIN {
+            return Some(at);
+        }
+        let current = self.snapshot(subject);
+        if domain != current.time_domain_ref {
+            return None;
+        }
+        let now = Utc::now();
+        if at <= current.world_now {
+            return Some(now);
+        }
+        if current.rate == 0.0 {
+            return None;
+        }
+        let micros = (at - current.world_now).num_microseconds()? as f64 / current.rate;
+        if !micros.is_finite() || micros > i64::MAX as f64 {
+            return None;
+        }
+        now.checked_add_signed(Duration::microseconds(micros.ceil() as i64))
+    }
     fn now(&self, subject: SubjectId) -> DateTime<Utc> {
         self.snapshot(subject).world_now
     }

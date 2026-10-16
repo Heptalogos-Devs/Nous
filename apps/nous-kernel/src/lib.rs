@@ -509,3 +509,16 @@ pub fn configuration_catalog(
     }
     registry.finish()
 }
+
+impl NousRuntime {
+    pub async fn change_clock(
+        &self,
+        subject: SubjectId,
+        operation: nous_core::OperationId,
+        change: nous_runtime::ClockChange,
+    ) -> Result<nous_runtime::ClockSnapshot> {
+        let snapshot = self.clocks.change(subject, operation, change).await?;
+        self.cognition.clock_changed(subject).await?;
+        Ok(snapshot)
+    }
+}

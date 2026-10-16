@@ -556,3 +556,90 @@ async fn owner_state_window_uses_committed_world_coordinates_and_real_recording(
         .bind(subject.0).fetch_one(runtime.store.pool()).await.unwrap();
     assert!((recorded - Utc::now()).num_seconds().abs() < 2);
 }
+
+#[tokio::test]
+async fn paused_world_idle_waits_for_semantic_advance_and_wakes_on_real_scheduler_time() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = test_support::query::subject(&runtime).await;
+    let world = runtime
+        .change_clock(
+            subject,
+            OperationId::new(),
+            ClockChange::Configure {
+                time_domain_ref: "time:course".into(),
+                rate: 0.0,
+                world_time: Some(Utc::now() + Duration::days(7)),
+            },
+        )
+        .await
+        .unwrap();
+    let session = runtime
+        .cognition
+        .open_session(subject, None, serde_json::json!({}))
+        .await
+        .unwrap();
+    let mut input = test_support::longitudinal::observation(subject, Some(session.session_id));
+    input.occurrence.observed_at = None;
+    let source = runtime.material.record_observation(input).await.unwrap();
+    assert_eq!(
+        source.occurrence.observed_stamp.time_domain_ref,
+        "time:course"
+    );
+    assert!(
+        (source.occurrence.observed_at - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
+    let first = runtime
+        .cognition
+        .segment_experience(subject, "interaction", 128, false)
+        .await
+        .unwrap();
+    assert!(first.ready.is_empty());
+    let wake = first.next_due.unwrap();
+    assert!(
+        wake < world.world_now,
+        "a scheduler deadline is real UTC, not a seven-day world coordinate"
+    );
+    let pending_before: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT due_at FROM maintenance_needs WHERE subject_id=$1 AND kind='episode_segment' AND state='pending'")
+        .bind(subject.0).fetch_one(runtime.store.pool()).await.unwrap();
+    let seconds = runtime
+        .configuration
+        .snapshot_for_subject(subject)
+        .unwrap()
+        .get(nous_configuration::ConfigKey::<u64>::new(
+            "episode.hard_idle_seconds",
+        ))
+        .unwrap();
+    runtime
+        .change_clock(
+            subject,
+            OperationId::new(),
+            ClockChange::Advance {
+                seconds: seconds as f64 + 1.0,
+            },
+        )
+        .await
+        .unwrap();
+    let pending_after: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT due_at FROM maintenance_needs WHERE subject_id=$1 AND kind='episode_segment' AND state='pending'")
+        .bind(subject.0).fetch_one(runtime.store.pool()).await.unwrap();
+    assert!(pending_after <= pending_before);
+    let matured = runtime
+        .cognition
+        .segment_experience(subject, "interaction", 128, false)
+        .await
+        .unwrap();
+    assert_eq!(matured.ready.len(), 1);
+    assert_eq!(
+        matured.ready[0].boundary_reason.as_deref(),
+        Some("hard_idle")
+    );
+    assert!(
+        (matured.ready[0].observed_end - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
+}

@@ -552,11 +552,13 @@ async function scenario(endpoint: string, token: string) {
     for (const constraints of [
       {
         formed: {
+          timeDomainRef: schema.formedAt.timeDomainRef,
           predicate: { case: "point" as const, value: schema.formedAt.at },
         },
       },
       {
         valid: {
+          timeDomainRef: "time:real",
           predicate: {
             case: "point" as const,
             value: fromJson(TimestampSchema, "2026-10-03T00:00:00Z"),
