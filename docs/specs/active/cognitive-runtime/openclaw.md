@@ -10,7 +10,7 @@ Subject 是独立持久个体，创建可省略 Seed；没有 Seed 不生成个�
 
 ## 实际调用
 
-每次原生模型提交在 convertToLlm 后、provider stream 前运行 managed binding。首轮、工具后续、重试、压缩后的下一轮、原生子 Agent 和完成回告均经过该入口。必需模式不允许 context-engine registry、logical-turn、assemble 或其他 harness 失败后退回 legacy。安装器将修正入口应用到哈希固定的 OpenClaw 2026.9.1；漂移/部分补丁拒绝安装。
+每次原生模型提交在 convertToLlm 后、provider stream 前运行 managed binding。首轮、工具后续、重试、压缩后的下一轮和原生子 Agent 均经过该入口；terminal completion 仅保存结果，显式释放后产生的新主体调用仍经过同一入口。必需模式不允许 context-engine registry、logical-turn、assemble 或其他 harness 失败后退回 legacy。安装器将修正入口应用到哈希固定的 OpenClaw 2026.9.1；漂移/部分补丁拒绝安装。
 
 `CognitionUsage` 从实际执行者、用途、当前意图、参与者与受众形成。它进入已有 Query binding 和 ContextCompiler track；不授予管理权限。adapter 从原生可信 chatType/channel/sender/destination 获取来源，未解析的人物保留 unresolved；不自行分配 Entity。身份、principal、Subject 与受众不从模型工具参数取得。
 
@@ -41,6 +41,8 @@ OpenClaw 继续拥有工具执行、渠道、Computer use、skills、子 Agent �
 正式 Host bridge 每次许可返回受信 role/purpose/view/contactNature。角色覆盖 world.planner、subject.deliberation、subject.execution、subject.render、narrative.review、subject.reflection 与 system.maintenance；技术 Agent ID 不等于产品角色。Host 从已采用行为和真实 native binding 取得用途，模型参数不能选择视角或提升权限。subject deliberation/render 使用必需主体投影；world author、worker 与 review 使用各自受限资料，隐藏世界内容在候选检索前排除。切换用途需要独立干净 Session/binding，不把旧 worker transcript 带入主体历史。
 
 execution_only 的实际模型/工具输出与失败结果只留在所属 RoleRun/native transcript，Host pending 返回 retainedOnly 后官方插件不调用 RecordObservation，不进入主体 Episode、反思或统一检索。主体实际接触由显式有界 release 创建新的 subject_experience contact，引用原运行和被释放的精确结果；释放范围以外的内部推理和工具资料不导入。standalone Nous/OpenClaw 仍保留明确的主体体验路径，真实 user/model/tool 接触可形成 Observation；无 Host 时不发明世界权限或来源。模型输出始终标为 generated/model_output，不证明实际外发。
+
+同一 native history generation 不得跨产品 role/view 复用；Host 拒绝已经装载另一 roleScope 的历史，要求新 Session 或正式 reset。原生 converter 为 compaction/branch summary 添加受信元数据；普通无许可 user/steering 不能冒充压缩摘要，未获许可的调用及其工具/模型因果链不进入 provider。
 
 子 Agent terminal completion 只核对不可变父绑定、保存 exact terminal 结果并提供 activity_result 机会；恢复同一付费结果不重跑 worker。不得把 completion 自动注册为 main/final-send continuation，也不得将 worker 全部结果直接提升个人知识。正式释放后进入主体审议、独立 subject.render、narrative.review、NarrativeCommit，再交唯一发送 owner。renderer 输出只是候选，无法自行发送。
 
