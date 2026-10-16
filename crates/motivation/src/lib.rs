@@ -14,6 +14,7 @@ mod query;
 mod read;
 mod selection;
 mod semantic;
+mod source_read;
 pub use criterion_reader::*;
 pub use evaluator::*;
 pub use selection::*;
@@ -246,6 +247,22 @@ pub fn criterion_references(c: &Criterion) -> Vec<CognitiveRef> {
             items.iter().flat_map(criterion_references).collect()
         }
         Criterion::Not { item } => criterion_references(item),
+        _ => vec![],
+    }
+}
+
+/// Only owner-state selectors read lifecycle metadata; relation/semantic leaves read content.
+pub(crate) fn criterion_accesses(c: &Criterion) -> Vec<(CognitiveRef, bool)> {
+    match c {
+        Criterion::OwnerState { reference, .. } => vec![(reference.clone(), true)],
+        Criterion::Relation { reference, .. } => vec![(reference.clone(), false)],
+        Criterion::Semantic { material_refs, .. } => {
+            material_refs.iter().cloned().map(|r| (r, false)).collect()
+        }
+        Criterion::All { items } | Criterion::Any { items } => {
+            items.iter().flat_map(criterion_accesses).collect()
+        }
+        Criterion::Not { item } => criterion_accesses(item),
         _ => vec![],
     }
 }

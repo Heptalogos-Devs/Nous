@@ -296,15 +296,15 @@ impl MotivationService {
             self.track_reference(tx, revision, &link.target_revision)
                 .await?;
         }
-        for reference in input
+        for (reference, metadata_only) in input
             .content
             .matter()
             .condition
             .iter()
-            .flat_map(|c| criterion_references(&c.expression))
+            .flat_map(|c| criterion_accesses(&c.expression))
         {
             let (kind, value) = reference_parts(&reference);
-            sqlx::query("INSERT INTO motivation_criterion_refs(revision_id,ref_kind,ref_value) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind(revision).bind(kind).bind(value).execute(&mut **tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO motivation_criterion_refs(revision_id,ref_kind,ref_value,metadata_only) VALUES($1,$2,$3,$4) ON CONFLICT(revision_id,ref_kind,ref_value) DO UPDATE SET metadata_only=motivation_criterion_refs.metadata_only AND EXCLUDED.metadata_only").bind(revision).bind(kind).bind(value).bind(metadata_only).execute(&mut **tx).await.map_err(db)?;
         }
         self.track_basis(tx, revision, input.content.basis())
             .await?;

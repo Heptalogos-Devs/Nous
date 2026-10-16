@@ -88,7 +88,7 @@ INSERT INTO authority_object_states(subject_id,object_kind,object_ref,state,reco
 -- A condition's read selectors are not beliefs supporting its semantic validity.
 CREATE TABLE motivation_criterion_refs (
  revision_id uuid NOT NULL REFERENCES motivation_revisions(revision_id) ON DELETE CASCADE,
- ref_kind text NOT NULL,ref_value text NOT NULL,
+ ref_kind text NOT NULL,ref_value text NOT NULL,metadata_only boolean NOT NULL,
  PRIMARY KEY(revision_id,ref_kind,ref_value)
 );
 -- Fixed shared-closure adapter. 0011 supplies the single basis/locator traversal;
@@ -115,5 +115,5 @@ BEGIN
  SELECT l->'target_revision'->>'kind',l->'target_revision'->>'id',false FROM motivation_revisions r
  CROSS JOIN LATERAL jsonb_array_elements(r.content#>'{value,links}') l WHERE r.revision_id=selected
  UNION ALL
- SELECT selectors.ref_kind,selectors.ref_value,true FROM motivation_criterion_refs selectors WHERE selectors.revision_id=selected;
+ SELECT selectors.ref_kind,selectors.ref_value,selectors.metadata_only FROM motivation_criterion_refs selectors WHERE selectors.revision_id=selected;
 END $$;

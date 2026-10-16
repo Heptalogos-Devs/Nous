@@ -37,23 +37,15 @@ impl MotivationService {
         let mut tx = self.store.read_view().await?;
         let allowed = self
             .roots
-            .roots_in(&mut tx, input.subject, &input.source_read.source_refs)
+            .read_scope_in(&mut tx, input.subject, &input.source_read)
             .await?;
-        let permitted = |roots: &std::collections::BTreeSet<EvidenceRoot>| {
-            !roots.is_empty()
-                && roots
-                    .iter()
-                    .all(|r| allowed.iter().any(|a| a.root_key == r.root_key))
-        };
         if !self
-            .roots
-            .roots_in(
+            .references_allowed_in(
                 &mut tx,
-                input.subject,
-                std::slice::from_ref(&input.condition_revision),
+                &allowed,
+                &[(input.condition_revision.clone(), false)],
             )
-            .await
-            .is_ok_and(|r| permitted(&r))
+            .await?
         {
             return Ok(result);
         }
@@ -83,12 +75,13 @@ impl MotivationService {
             .into_iter()
             .chain(input.evidence_refs.clone())
             .collect::<Vec<_>>();
-        if !required.is_empty()
-            && !self
-                .roots
-                .roots_in(&mut tx, input.subject, &required)
-                .await
-                .is_ok_and(|r| permitted(&r))
+        let accesses = criterion_accesses(&condition.expression)
+            .into_iter()
+            .chain(input.evidence_refs.iter().cloned().map(|r| (r, false)))
+            .collect::<Vec<_>>();
+        if !self
+            .references_allowed_in(&mut tx, &allowed, &accesses)
+            .await?
         {
             return Ok(result);
         }

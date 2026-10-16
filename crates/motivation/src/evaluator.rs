@@ -115,21 +115,16 @@ impl MotivationService {
         let stamp = self.clocks.capture_in(mutation.tx(), input.subject).await?;
         let allowed = self
             .roots
-            .roots_in(mutation.tx(), input.subject, &input.source_read.source_refs)
+            .read_scope_in(mutation.tx(), input.subject, &input.source_read)
             .await?;
-        let condition_roots = self
-            .roots
-            .roots_in(
+        if !self
+            .references_allowed_in(
                 mutation.tx(),
-                input.subject,
-                std::slice::from_ref(&input.condition_revision),
+                &allowed,
+                &[(input.condition_revision.clone(), false)],
             )
-            .await;
-        if !condition_roots.is_ok_and(|r| {
-            !r.is_empty()
-                && r.iter()
-                    .all(|x| allowed.iter().any(|a| a.root_key == x.root_key))
-        }) {
+            .await?
+        {
             let result = empty_evaluation(input.condition_revision.clone(), stamp.clone(), None);
             save_evaluation(mutation.tx(), &input, &digest, &result).await?;
             mutation
@@ -171,7 +166,7 @@ impl MotivationService {
         record: &MotivationRecord,
         stamp: &DomainStamp,
         reader: &dyn CriterionReader,
-        allowed: &BTreeSet<EvidenceRoot>,
+        allowed: &SourceReadView,
     ) -> Result<ConditionEvaluation> {
         let condition = record
             .content
@@ -190,13 +185,14 @@ impl MotivationService {
             .chain(input.evidence_refs.iter().cloned())
             .chain(criterion_refs(&condition.expression))
             .collect::<Vec<_>>();
-        let roots = self.roots.roots_in(tx, input.subject, &requested).await;
-        // Authorization failure never exposes whether a hidden fact or object exists.
-        let authorized = roots.is_ok_and(|r| {
-            !r.is_empty()
-                && r.iter()
-                    .all(|x| allowed.iter().any(|a| a.root_key == x.root_key))
-        });
+        let accesses = input
+            .evidence_refs
+            .iter()
+            .cloned()
+            .map(|r| (r, false))
+            .chain(criterion_accesses(&condition.expression))
+            .collect::<Vec<_>>();
+        let authorized = self.references_allowed_in(tx, allowed, &accesses).await?;
         result.inputs = requested.clone();
         let scoped = scope_matches(record.content.scope(), &input.scope);
         if !authorized || !record.is_current_available() {

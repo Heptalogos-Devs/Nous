@@ -98,6 +98,21 @@ impl k::kernel_motivation_service_server::KernelMotivationService for KernelServ
                 .prepare_semantic(&input)
                 .await?;
             let configuration = self.0.configuration.snapshot_for_subject(input.subject)?;
+            let read = self
+                .0
+                .source_read_view(input.subject, &input.source_read)
+                .await?;
+            let scope = nous_runtime::InvocationScope {
+                source_read: input.source_read.clone(),
+                group: input.scope.group.clone(),
+                channel: input.scope.channel.clone(),
+                domain: input.scope.domain.clone(),
+                entities: input.scope.entities.clone(),
+                work_context: input.scope.work_context,
+                conversation: input.scope.conversation.clone().unwrap_or_default(),
+                purpose: "condition_evaluation".into(),
+                ..Default::default()
+            };
             let mut leaves = vec![];
             let mut used = 0;
             for leaf in plan.leaves {
@@ -115,6 +130,8 @@ impl k::kernel_motivation_service_server::KernelMotivationService for KernelServ
                         1024 * 1024,
                         self.0.cognition.now(input.subject),
                         &configuration,
+                        Some(&read),
+                        Some(&scope),
                     )
                     .await?;
                 let mut materials = vec![];

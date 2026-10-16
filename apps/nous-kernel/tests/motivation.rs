@@ -134,6 +134,7 @@ async fn actual_owner_evaluation_lifecycle_and_restart() {
         condition_revision: desired.reference(),
         scope: MotivationScope::default(),
         source_read: SourceReadScope {
+            origin_conversation_refs: vec![],
             subject_id: Some(subject),
             source_refs: vec![CognitiveRef::Occurrence(o), CognitiveRef::Occurrence(event)],
         },
@@ -261,6 +262,7 @@ async fn actual_owner_evaluation_lifecycle_and_restart() {
         .await
         .unwrap();
     assert_eq!(withdrawn.acceptance_state, "withdrawn");
+    selector_metadata_authorization(&runtime, &eval, &wish, &reader).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let router = nous_kernel::transport::router(runtime.clone(), "motivation-fixture".into()).await;
@@ -324,5 +326,128 @@ async fn actual_owner_evaluation_lifecycle_and_restart() {
             .unwrap()
             .verdict,
         ConditionVerdict::Satisfied
+    );
+}
+
+async fn selector_metadata_authorization(
+    runtime: &nous_kernel::NousRuntime,
+    base: &EvaluateCondition,
+    wish: &MotivationRecord,
+    reader: &OfficialCriterionReader,
+) {
+    let owner = runtime.require_motivation().unwrap();
+    let source = base.source_read.source_refs[0].clone();
+    let CognitiveRef::Occurrence(origin) = source else {
+        panic!("fixture occurrence")
+    };
+    let ended = owner
+        .adopt(AdoptMotivation {
+            subject: base.subject,
+            operation_id: OperationId::new(),
+            content: MotivationContent::DesiredCondition(matter(
+                "actual withdrawn state",
+                origin,
+                Some(condition(
+                    Criterion::OwnerState {
+                        version: 1,
+                        reference: wish.reference(),
+                        state: "accepted".into(),
+                    },
+                    TemporalForm::Cease,
+                    wish.recorded_at,
+                    Utc::now(),
+                )),
+            )),
+            reason: "actual owner transition".into(),
+        })
+        .await
+        .unwrap();
+    let result = owner
+        .evaluate(
+            EvaluateCondition {
+                operation_id: OperationId::new(),
+                condition_revision: ended.reference(),
+                evidence_refs: vec![],
+                ..base.clone()
+            },
+            reader,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.verdict,
+        ConditionVerdict::Satisfied,
+        "metadata may read withdrawn target state without transmitting its body"
+    );
+    let hidden = observation(runtime, base.subject, "private selector source")
+        .await
+        .occurrence
+        .occurrence_id;
+    let private = owner
+        .adopt(AdoptMotivation {
+            subject: base.subject,
+            operation_id: OperationId::new(),
+            content: MotivationContent::Desire(matter("private selector", hidden, None)),
+            reason: "private actual source".into(),
+        })
+        .await
+        .unwrap();
+    let condition = owner
+        .adopt(AdoptMotivation {
+            subject: base.subject,
+            operation_id: OperationId::new(),
+            content: MotivationContent::DesiredCondition(matter(
+                "public basis private selector",
+                origin,
+                Some(condition(
+                    Criterion::OwnerState {
+                        version: 1,
+                        reference: private.reference(),
+                        state: "accepted".into(),
+                    },
+                    TemporalForm::Achieve,
+                    wish.recorded_at,
+                    Utc::now(),
+                )),
+            )),
+            reason: "scope test".into(),
+        })
+        .await
+        .unwrap();
+    let result = owner
+        .evaluate(
+            EvaluateCondition {
+                operation_id: OperationId::new(),
+                condition_revision: condition.reference(),
+                evidence_refs: vec![],
+                ..base.clone()
+            },
+            reader,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.verdict, ConditionVerdict::Unknown);
+    assert!(result.leaves.is_empty());
+    let scope = MotivationScope::default();
+    let selected = owner
+        .select(
+            base.subject,
+            MotivationSelectionRequest {
+                scope: &scope,
+                source_read: &base.source_read,
+                max_items: 1,
+                max_bytes: 1024 * 1024,
+                after: Some(ended.revision_id),
+                at: None,
+                as_of: None,
+                history: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!selected.records.iter().any(|r| r.revision_id==condition.revision_id||r.revision_id==private.revision_id));
+    assert!(
+        !selected.omitted,
+        "denied selectors must not consume candidate budget"
     );
 }

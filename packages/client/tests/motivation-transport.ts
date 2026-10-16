@@ -109,10 +109,9 @@ try {
     { ...client } as Awaited<ReturnType<typeof connectNousInstance>>,
     false,
   );
-  assert.equal(
-    (await native.motivation.getRevision({ subjectId, id: conditionId }))
-      .reference?.value,
-    conditionId,
+  assert.throws(
+    () => native.motivation.getRevision({ subjectId, id: conditionId }),
+    /does not grant/,
   );
   for (const name of [
     "adopt",
@@ -141,7 +140,16 @@ try {
     },
     sourceRead,
   };
-  const query = await client.cognition.query({
+  const scoped = mcpConnection(
+    { ...client } as Awaited<ReturnType<typeof connectNousInstance>>,
+    false,
+    usage,
+  );
+  assert.throws(
+    () => native.cognition.query({ subjectId, usage }),
+    /trusted startup source scope/,
+  );
+  const query = await scoped.cognition.query({
     subjectId,
     usage,
     expression: {
