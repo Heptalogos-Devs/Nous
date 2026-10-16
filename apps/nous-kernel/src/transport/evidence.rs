@@ -135,6 +135,8 @@ pub(super) fn source_region(value: nous_material::SourceRegion) -> p::SourceRegi
 
 pub(super) fn derived_region(value: nous_material::DerivedRegion) -> p::DerivedRegion {
     p::DerivedRegion {
+        formed_at: value.formed_stamp.as_ref().map(domain_stamp_proto),
+        recorded_at: Some(timestamp(value.created_at)),
         derived_region_id: value.derived_region_id.0.to_string(),
         subject_id: value.subject_id.0.to_string(),
         representation_id: value.derived_representation_id.0.to_string(),

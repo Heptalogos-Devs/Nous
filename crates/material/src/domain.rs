@@ -178,6 +178,7 @@ pub struct DerivedRegion {
     pub coordinate_hash: String,
     pub parent_derived_region_id: Option<DerivedRegionId>,
     pub created_at: DateTime<Utc>,
+    pub formed_stamp: Option<nous_core::DomainStamp>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -788,7 +788,7 @@ async fn perception_metadata_in(
 ) -> Result<std::collections::HashMap<CognitiveRef, serde_json::Value>> {
     let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
     let rows=sqlx::query(r#"WITH refs AS (SELECT * FROM unnest($2::text[],$3::text[]) q(kind,value))
-SELECT q.kind,q.value,d.quality,d.formed_stamp,COALESCE(g.created_at,d.created_at) created_at FROM refs q LEFT JOIN derived_regions g ON q.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id::text=q.value JOIN derived_representations d ON d.subject_id=$1 AND ((q.kind='derived_representation' AND d.derived_representation_id::text=q.value) OR d.derived_representation_id=g.derived_representation_id)
+SELECT q.kind,q.value,d.quality,CASE WHEN q.kind='derived_region' THEN g.formed_stamp ELSE d.formed_stamp END formed_stamp,COALESCE(g.created_at,d.created_at) created_at FROM refs q LEFT JOIN derived_regions g ON q.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id::text=q.value JOIN derived_representations d ON d.subject_id=$1 AND ((q.kind='derived_representation' AND d.derived_representation_id::text=q.value) OR d.derived_representation_id=g.derived_representation_id)
 UNION ALL SELECT q.kind,q.value,'{}'::jsonb,NULL::jsonb,o.created_at FROM refs q JOIN observation_occurrences o ON q.kind='occurrence' AND o.subject_id=$1 AND o.occurrence_id::text=q.value
 UNION ALL SELECT q.kind,q.value,'{}'::jsonb,NULL::jsonb,a.created_at FROM refs q JOIN artifacts a ON q.kind='artifact' AND a.subject_id=$1 AND a.artifact_id::text=q.value
 UNION ALL SELECT q.kind,q.value,'{}'::jsonb,NULL::jsonb,r.created_at FROM refs q JOIN source_regions r ON q.kind='source_region' AND r.subject_id=$1 AND r.source_region_id::text=q.value

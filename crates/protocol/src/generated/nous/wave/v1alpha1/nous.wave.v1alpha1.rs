@@ -2813,6 +2813,10 @@ pub struct DerivedRegion {
     pub coordinate_hash: ::prost::alloc::string::String,
     #[prost(string, optional, tag="7")]
     pub parent_derived_region_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="8")]
+    pub formed_at: ::core::option::Option<DomainStamp>,
+    #[prost(message, optional, tag="9")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ComponentStatus {

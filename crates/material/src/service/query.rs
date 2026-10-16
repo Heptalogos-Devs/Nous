@@ -201,14 +201,17 @@ impl nous_runtime::CognitiveContributor for MaterialService {
                     .projection
                     .domain_names()
                     .contains(&"evidence"))
-            || [c.occurred, c.observed, c.recorded]
+            || [c.occurred, c.observed, c.recorded, c.formed]
                 .iter()
                 .all(Option::is_none)
         {
             return Ok(Vec::new());
         }
+        if c.formed.is_some() && c.valid.is_none() {
+            return Ok(vec![self.formed_temporal_lane(bound, plan).await?]);
+        }
         let mut output = LaneOutput::empty(EvidenceFamily::Temporal, LaneStatus::Ready);
-        if c.valid.is_some() || c.formed.is_some() {
+        if c.valid.is_some() {
             return Ok(vec![output]);
         }
         let mut sql = sqlx::QueryBuilder::<sqlx::Postgres>::new(
@@ -355,7 +358,7 @@ records AS (
  UNION ALL
  SELECT r.kind,r.value,d.created_at,d.formed_stamp,'text/plain',d.payload_text FROM requested r JOIN derived_representations d ON r.kind='derived_representation' AND d.derived_representation_id::text=r.value AND d.subject_id=$1
  UNION ALL
- SELECT r.kind,r.value,g.created_at,d.formed_stamp,'text/plain',NULL::text FROM requested r JOIN derived_regions g ON r.kind='derived_region' AND g.derived_region_id::text=r.value AND g.subject_id=$1 JOIN derived_representations d ON d.derived_representation_id=g.derived_representation_id AND d.subject_id=$1
+ SELECT r.kind,r.value,g.created_at,g.formed_stamp,'text/plain',NULL::text FROM requested r JOIN derived_regions g ON r.kind='derived_region' AND g.derived_region_id::text=r.value AND g.subject_id=$1 JOIN derived_representations d ON d.derived_representation_id=g.derived_representation_id AND d.subject_id=$1
 )
 SELECT * FROM records
 "#).bind(subject.0).bind(kinds).bind(values)
@@ -422,3 +425,82 @@ SELECT * FROM records
 #[cfg(test)]
 #[path = "../../tests/unit/query.rs"]
 mod tests;
+
+impl MaterialService {
+    async fn formed_temporal_lane(
+        &self,
+        bound: &nous_runtime::BoundQuery,
+        plan: &nous_runtime::QueryPlan,
+    ) -> Result<nous_runtime::LaneOutput> {
+        use nous_runtime::{LaneCandidate, LaneOutput, LaneStatus};
+        let q = &bound.source_query;
+        let c = &q.expression.constraints;
+        let predicate = |axis| {
+            q.temporal_predicate(axis)
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|e| Error::Invalid(e.to_string()))
+        };
+        let scope = q.source_read.as_ref();
+        let historical = bound.historical_authority.as_deref().map(|view| {
+            view.material_documents
+                .iter()
+                .map(|r| {
+                    let (kind, value) = reference_parts(r);
+                    format!("{kind}:{value}")
+                })
+                .collect::<Vec<_>>()
+        });
+        let limit = plan.lane_budget(EvidenceFamily::Temporal);
+        let rows = sqlx::query(r#"
+WITH candidates AS (
+ SELECT 'derived_representation' kind,derived_representation_id id,derived_representation_id representation_id,formed_stamp,created_at recorded_at FROM derived_representations WHERE subject_id=$1
+ UNION ALL SELECT 'derived_region',derived_region_id,derived_representation_id,formed_stamp,created_at FROM derived_regions WHERE subject_id=$1
+)
+SELECT c.kind,c.id FROM candidates c
+WHERE ($14::text[] IS NULL OR c.kind||':'||c.id::text=ANY($14))
+ AND (NOT $8 OR source_read_allowed($1,c.kind,c.id::text,$9,$10,$11,$12))
+ AND domain_temporal_matches(jsonb_build_object('kind','instant','at',c.formed_stamp->'at'),c.formed_stamp->>'time_domain_ref',$2)
+ AND ($3::jsonb IS NULL OR domain_temporal_matches(jsonb_build_object('kind','instant','at',c.recorded_at),'time:real',$3))
+ AND (($4::jsonb IS NULL AND $5::jsonb IS NULL AND cardinality($6::text[])=0 AND cardinality($7::text[])=0)
+ OR EXISTS(SELECT 1 FROM representation_source_regions($1,c.representation_id) lineage
+ JOIN source_regions region ON region.subject_id=$1 AND region.source_region_id=lineage.source_region_id
+ JOIN observation_occurrences o ON o.subject_id=$1 AND o.artifact_id=region.artifact_id
+ WHERE (NOT $8 OR source_read_allowed($1,'occurrence',o.occurrence_id::text,$9,$10,$11,$12))
+ AND (cardinality($6::text[])=0 OR o.source_class=ANY($6)) AND o.source_class<>ALL($7)
+ AND ($4::jsonb IS NULL OR domain_temporal_matches(jsonb_build_object('kind',o.occurred_time_kind,'at',o.occurred_time_start,'start',o.occurred_time_start,'end',o.occurred_time_end),o.occurred_time_domain_ref,$4))
+ AND ($5::jsonb IS NULL OR domain_temporal_matches(jsonb_build_object('kind','instant','at',CASE WHEN $5->>'time_domain_ref'='time:real' THEN to_jsonb(o.observed_at) ELSE o.observed_stamp->'at' END),CASE WHEN $5->>'time_domain_ref'='time:real' THEN 'time:real' ELSE o.observed_stamp->>'time_domain_ref' END,$5))))
+ORDER BY c.recorded_at DESC,c.kind,c.id LIMIT $13
+"#).bind(q.subject.0).bind(predicate(TimeAxis::Formed)?).bind(predicate(TimeAxis::Recorded)?).bind(predicate(TimeAxis::Occurred)?).bind(predicate(TimeAxis::Observed)?)
+.bind(c.source_classes_include.iter().map(|v|v.as_str().to_owned()).collect::<Vec<_>>()).bind(c.source_classes_exclude.iter().map(|v|v.as_str().to_owned()).collect::<Vec<_>>())
+.bind(scope.is_some()).bind(scope.map(|r|r.root_keys.clone()).unwrap_or_default()).bind(scope.map(|r|r.work_contexts.clone()).unwrap_or_default()).bind(scope.map(|r|r.origin_conversation_refs.clone()).unwrap_or_default()).bind(scope.map(|r|serde_json::json!(r.explicit_refs)).unwrap_or_else(||serde_json::json!([])))
+.bind((limit+1) as i64).bind(historical).fetch_all(self.store.pool()).await.map_err(database_error)?;
+        let mut output = LaneOutput::empty(
+            EvidenceFamily::Temporal,
+            if rows.len() > limit {
+                LaneStatus::Truncated
+            } else {
+                LaneStatus::Ready
+            },
+        );
+        output.candidates = rows
+            .into_iter()
+            .take(limit)
+            .enumerate()
+            .map(|(index, row)| {
+                let id: Uuid = row.get("id");
+                LaneCandidate {
+                    reference: if row.get::<String, _>("kind") == "derived_region" {
+                        CognitiveRef::DerivedRegion(DerivedRegionId(id))
+                    } else {
+                        CognitiveRef::DerivedRepresentation(DerivedRepresentationId(id))
+                    },
+                    rank: (index + 1) as u32,
+                    variants: vec![],
+                    provider_metadata: serde_json::Value::Null,
+                }
+            })
+            .collect();
+        Ok(output)
+    }
+}

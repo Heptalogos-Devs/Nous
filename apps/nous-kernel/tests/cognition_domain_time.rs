@@ -385,8 +385,23 @@ async fn migration_upgrades_only_known_canonical_metadata_and_preserves_result_i
     .unwrap();
     let at = "2026-10-15T12:00:00Z";
     let recorded = "2026-10-15T12:00:01Z";
+    let occurrence = OccurrenceId::new();
+    let foreign = OccurrenceId::new();
+    let other_subject = SubjectId::new();
+    sqlx::query(
+        "INSERT INTO subjects(subject_id,metadata,created_at) VALUES($1,'{}',clock_timestamp())",
+    )
+    .bind(other_subject.0)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (owner, id) in [(subject, occurrence), (other_subject, foreign)] {
+        sqlx::query("INSERT INTO observation_occurrences(occurrence_id,subject_id,source_class,occurred_time_kind,occurred_time_start,observed_at,created_at,observed_stamp) VALUES($1,$2,'message','instant',$3::timestamptz,$4::timestamptz,$4::timestamptz,$5)")
+            .bind(id.0).bind(owner.0).bind(at).bind(recorded).bind(serde_json::json!({"time_domain_ref":"time:real","at":recorded,"recorded_at":recorded})).execute(&pool).await.unwrap();
+    }
+    let memory_record = serde_json::json!({"formedAt":at,"recordedAt":recorded,"basis":[{"evidence":{"occurrenceId":occurrence.0.to_string()}},{"evidence":{"occurrenceId":foreign.0.to_string()}}],"temporalEvidence":{"occurred":[{"instant":"2001-01-01T00:00:00Z"}],"observedAt":"2002-01-01T00:00:00Z"}});
     let record = serde_json::json!({"formedAt":at,"recordedAt":recorded,"revisionId":"an-opaque-fixture-ref", "content":{"facet":{"validTime":{"instant":at}}}});
-    let proposal = serde_json::json!({"payload":{"formedAt":at,"plan":{"currentSelf":[["S1",record]],"currentSocial":[],"currentMemory":[],"currentMotivation":[]},"output":{"verbatim":"Do not rewrite formedAt or any raw source","validTime":{"kind":"instant","at":at}}}});
+    let proposal = serde_json::json!({"payload":{"formedAt":at,"plan":{"currentSelf":[["S1",record]],"currentSocial":[],"currentMemory":[["M1",memory_record]],"currentMotivation":[]},"output":{"verbatim":"Do not rewrite formedAt or any raw source","validTime":{"kind":"instant","at":at}}}});
     let outcome = serde_json::json!({"payload":{"result":{"actions":[{"selfRecord":record}]},"proposal":proposal["payload"]}});
     sqlx::query("INSERT INTO model_results(subject_id,owner,operation_key,semantic_digest,context,proposal,outcome,created_at,updated_at) VALUES($1,'subject_reflection','fixture','unchanged-digest',$2,$3,$4,$5::timestamptz,$5::timestamptz)")
         .bind(subject.0).bind(serde_json::json!({"dependencies":[],"cognitive_formed_at":at,"maintenance_trigger":null})).bind(&proposal).bind(&outcome).bind(recorded).execute(&pool).await.unwrap();
@@ -404,6 +419,32 @@ async fn migration_upgrades_only_known_canonical_metadata_and_preserves_result_i
     .await
     .unwrap();
     assert_eq!(digest, "unchanged-digest");
+    let upgraded_sources =
+        actual_proposal["payload"]["plan"]["currentMemory"][0][1]["temporalEvidence"]["sources"]
+            .as_array()
+            .unwrap();
+    assert_eq!(
+        upgraded_sources.len(),
+        1,
+        "only this Subject's actual declared contact can rebuild paired axes"
+    );
+    assert_eq!(
+        upgraded_sources[0]["occurrenceId"],
+        occurrence.0.to_string()
+    );
+    assert_eq!(
+        upgraded_sources[0]["occurred"]["timeDomainRef"],
+        "time:real"
+    );
+    assert_eq!(
+        upgraded_sources[0]["occurred"]["extent"]["instant"]
+            .as_str()
+            .unwrap()
+            .parse::<chrono::DateTime<Utc>>()
+            .unwrap(),
+        at.parse::<chrono::DateTime<Utc>>().unwrap()
+    );
+
     assert_eq!(
         actual_proposal["payload"]["plan"]["currentSelf"][0][1]["content"]["facet"]["validTime"]["timeDomainRef"],
         "time:real"
@@ -605,6 +646,9 @@ async fn paused_world_idle_waits_for_semantic_advance_and_wakes_on_real_schedule
     );
     let pending_before: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT due_at FROM maintenance_needs WHERE subject_id=$1 AND kind='episode_segment' AND state='pending'")
         .bind(subject.0).fetch_one(runtime.store.pool()).await.unwrap();
+    let retry_until = chrono::SubsecRound::trunc_subsecs(Utc::now() + Duration::hours(1), 6);
+    sqlx::query("UPDATE maintenance_needs SET retry_count=2,retry_not_before=$2 WHERE subject_id=$1 AND kind='episode_segment' AND state='pending'")
+        .bind(subject.0).bind(retry_until).execute(runtime.store.pool()).await.unwrap();
     let seconds = runtime
         .configuration
         .snapshot_for_subject(subject)
@@ -626,6 +670,10 @@ async fn paused_world_idle_waits_for_semantic_advance_and_wakes_on_real_schedule
     let pending_after: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT due_at FROM maintenance_needs WHERE subject_id=$1 AND kind='episode_segment' AND state='pending'")
         .bind(subject.0).fetch_one(runtime.store.pool()).await.unwrap();
     assert!(pending_after <= pending_before);
+    let retry: (i32,chrono::DateTime<Utc>) = sqlx::query_as("SELECT retry_count,retry_not_before FROM maintenance_needs WHERE subject_id=$1 AND kind='episode_segment' AND state='pending'")
+        .bind(subject.0).fetch_one(runtime.store.pool()).await.unwrap();
+    assert_eq!(retry, (2, retry_until));
+
     let matured = runtime
         .cognition
         .segment_experience(subject, "interaction", 128, false)

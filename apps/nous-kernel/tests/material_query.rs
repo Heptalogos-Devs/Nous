@@ -407,4 +407,55 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
     assert!(recovered.created_at >= original_stamp.recorded_at);
     assert!((recovered.created_at - Utc::now()).num_seconds().abs() < 2);
     assert!(changed.world_now > recovered.created_at + Duration::hours(23));
+    let segments = runtime
+        .material
+        .segment_description(subject, recovered.derived_representation_id)
+        .await
+        .unwrap();
+    let region = &segments[0].region;
+    let region_stamp = region.formed_stamp.as_ref().unwrap();
+    assert_eq!(region_stamp.time_domain_ref, changed.time_domain_ref);
+    assert!(region_stamp.at >= changed.world_now);
+    assert_ne!(region_stamp.time_domain_ref, original_stamp.time_domain_ref);
+    assert!((region.created_at - Utc::now()).num_seconds().abs() < 2);
+    let mut region_query = query(subject);
+    region_query.projection.domains = vec![nous_core::ResultDomain::Evidence];
+    region_query.expression.targets = vec![QueryTarget::Exact {
+        reference: CognitiveRef::DerivedRegion(region.derived_region_id),
+    }];
+    region_query.expression.constraints.formed = Some(TimePredicate::Range {
+        start: Some(changed.world_now),
+        end: None,
+    });
+    region_query.expression.constraints.time_domains.formed = Some(changed.time_domain_ref.clone());
+    let found = runtime
+        .execute_query(region_query.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(found.result.results.len(), 1);
+    assert_eq!(
+        found.result.results[0].freshness.formed_at.as_ref(),
+        Some(region_stamp)
+    );
+    let mut formed_only = region_query.clone();
+    formed_only.expression.targets.clear();
+    let lane = runtime.execute_query(formed_only, None).await.unwrap();
+    assert!(
+        lane.result
+            .results
+            .iter()
+            .any(|hit| hit.reference == CognitiveRef::DerivedRegion(region.derived_region_id))
+    );
+    region_query.expression.targets = vec![QueryTarget::Exact {
+        reference: CognitiveRef::DerivedRepresentation(recovered.derived_representation_id),
+    }];
+    assert!(
+        runtime
+            .execute_query(region_query, None)
+            .await
+            .unwrap()
+            .result
+            .results
+            .is_empty()
+    );
 }

@@ -227,26 +227,15 @@ impl CognitiveRuntimeService {
         self.require_subject(subject).await?;
         let now = self.recorded_now();
         let mut tx = self.store.begin().await?;
-        sqlx::query("UPDATE maintenance_needs SET due_at=LEAST(due_at,$2),updated_at=$2 WHERE subject_id=$1 AND state='pending' AND kind IN ('episode_segment','episode_resegment','journal_review','journal_revalidate','memory_consolidate')")
+        sqlx::query("UPDATE maintenance_needs SET due_at=LEAST(due_at,$2),updated_at=$2,trigger_revision=trigger_revision+1 WHERE subject_id=$1 AND state='pending' AND kind IN ('episode_segment','episode_resegment','journal_review','journal_revalidate','memory_consolidate')")
             .bind(subject.0).bind(now).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
         let seq: i64 = sqlx::query_scalar("SELECT authority_seq FROM subjects WHERE subject_id=$1")
             .bind(subject.0)
             .fetch_one(&mut *tx)
             .await
             .map_err(nous_persistence::database_error)?;
-        self.enqueue_maintenance_in(
-            &mut tx,
-            &MaintenanceRequest {
-                subject,
-                kind: "episode_segment".into(),
-                scope_kind: "track".into(),
-                scope_ref: "interaction".into(),
-                trigger_authority_seq: seq,
-                due_at: now,
-                priority: 50,
-            },
-        )
-        .await?;
+        sqlx::query("INSERT INTO maintenance_needs(need_id,subject_id,kind,scope_kind,scope_ref,trigger_authority_seq,due_at,priority,state,created_at,updated_at) VALUES($1,$2,'episode_segment','track','interaction',$3,$4,50,'pending',$4,$4) ON CONFLICT(subject_id,kind,scope_kind,scope_ref) WHERE state IN ('pending','blocked') DO NOTHING")
+            .bind(Uuid::now_v7()).bind(subject.0).bind(seq).bind(now).execute(&mut *tx).await.map_err(nous_persistence::database_error)?;
         tx.commit()
             .await
             .map_err(nous_persistence::database_error)?;
