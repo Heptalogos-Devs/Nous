@@ -64,6 +64,10 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
         stdio: "pipe",
       });
     const install = (...args: string[]) => run(installer, [runtime, ...args]);
+    const hostedProbe = join(
+      repositoryRoot,
+      "scripts/tests/openclaw/hosted-loader-probe.ts",
+    );
     const npmCli = join(
       dirname(process.execPath),
       "node_modules/npm/bin/npm-cli.js",
@@ -140,6 +144,7 @@ test.skipIf(process.env.NOUS_TEST_NATIVE_INSTALLER !== "1")(
       );
       const artifact = await makeArtifact("first");
       install();
+      run(hostedProbe, [runtime]);
       const staleLock = join(runtime, ".nous-install-lock");
       await mkdir(staleLock);
       await writeFile(
