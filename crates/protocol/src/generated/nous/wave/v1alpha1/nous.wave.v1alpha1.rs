@@ -1466,7 +1466,7 @@ pub struct EpisodeRevision {
     #[prost(string, optional, tag="8")]
     pub parent_episode_revision_id: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="9")]
-    pub experience_time: ::core::option::Option<TemporalExtent>,
+    pub experience_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(string, tag="10")]
     pub boundary_explanation: ::prost::alloc::string::String,
     #[prost(message, optional, tag="11")]
@@ -1512,7 +1512,7 @@ pub struct EpisodeContent {
     #[prost(string, optional, tag="2")]
     pub parent_episode_revision_id: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="3")]
-    pub experience_time: ::core::option::Option<TemporalExtent>,
+    pub experience_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(string, tag="4")]
     pub boundary_explanation: ::prost::alloc::string::String,
     #[prost(string, optional, tag="5")]
@@ -2168,7 +2168,7 @@ pub struct JournalRevision {
     #[prost(string, optional, tag="7")]
     pub title: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="8")]
-    pub temporal_scope: ::core::option::Option<TemporalExtent>,
+    pub temporal_scope: ::core::option::Option<DomainTemporalExtent>,
     #[prost(string, tag="9")]
     pub narrative: ::prost::alloc::string::String,
     #[prost(message, optional, tag="10")]

@@ -67,7 +67,7 @@ impl SocialService {
                 formed_at: Some(DomainStamp {
                     time_domain_ref: record.formed_time_domain_ref.clone(),
                     at: record.formed_at,
-                    recorded_at: record.recorded_at,
+                    recorded_at: record.formed_recorded_at,
                 }),
                 recorded_at: Some(record.recorded_at),
             }),

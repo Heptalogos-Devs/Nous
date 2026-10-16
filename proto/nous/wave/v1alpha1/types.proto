@@ -316,7 +316,7 @@ message EpisodeRevision {
   optional string revision_intent = 6;
   optional string title = 7;
   optional string parent_episode_revision_id = 8 [(reference_kind) = "episode_revision"];
-  TemporalExtent experience_time = 9;
+  DomainTemporalExtent experience_time = 9;
   string boundary_explanation = 10;
   DomainStamp formed_at = 11;
   google.protobuf.Timestamp recorded_at = 12;
@@ -340,7 +340,7 @@ message Episode {
 message EpisodeContent {
   optional string title = 1;
   optional string parent_episode_revision_id = 2 [(reference_kind) = "episode_revision"];
-  TemporalExtent experience_time = 3;
+  DomainTemporalExtent experience_time = 3;
   string boundary_explanation = 4;
   optional string producer_signature_id = 5;
   repeated EpisodeMember members = 6;

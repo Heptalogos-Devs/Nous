@@ -81,6 +81,7 @@ async fn oversized_repair_and_journal_scopes_block_until_real_triggers() {
             content: nous_memory::EpisodeContent {
                 title: Some("Updated source".into()),
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: episode.revision.experience_time_domain_ref.clone(),
                 experience_time: episode.revision.experience_time.clone(),
                 boundary_explanation: episode.revision.boundary_explanation.clone(),
                 producer_signature_id: None,

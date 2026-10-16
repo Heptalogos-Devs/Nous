@@ -87,6 +87,10 @@ impl MaterialService {
         .await
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one read view binds source permission, actual occurrence, metadata and exact context input"
+    )]
     async fn context_sources_with_paths(
         &self,
         subject: SubjectId,
@@ -141,7 +145,7 @@ impl MaterialService {
             .enumerate()
             .filter(|(index, _)| allowed[*index])
             .filter_map(|(index, reference)| {
-                paths.map(|paths| paths[index].occurrence_id).or_else(|| {
+                paths.map(|paths| paths[index].occurrence_id).or({
                     if let CognitiveRef::Occurrence(id) = reference {
                         Some(*id)
                     } else {
@@ -167,7 +171,7 @@ impl MaterialService {
             };
             let occurrence = paths
                 .map(|paths| paths[index].occurrence_id)
-                .or_else(|| {
+                .or({
                     if let CognitiveRef::Occurrence(id) = reference {
                         Some(*id)
                     } else {

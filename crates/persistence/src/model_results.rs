@@ -127,8 +127,8 @@ impl AuthorityStore {
         owner: &str,
         key: &str,
     ) -> Result<Option<nous_core::DomainStamp>> {
-        let value: Option<Option<Json<ModelResultContext>>> = sqlx::query_scalar("SELECT context FROM model_results WHERE subject_id=$1 AND (owner=$2 OR owner='subject_reflection') AND (operation_key=$3 OR $3::uuid=ANY(mutation_operations))")
-            .bind(subject.0).bind(owner).bind(key).fetch_optional(&mut **tx).await.map_err(db)?;
+        let value: Option<Option<Json<ModelResultContext>>> = sqlx::query_scalar("SELECT context FROM model_results WHERE subject_id=$1 AND (owner=$2 OR owner='subject_reflection') AND (operation_key=$3 OR $4::uuid=ANY(mutation_operations))")
+            .bind(subject.0).bind(owner).bind(key).bind(Uuid::parse_str(key).ok()).fetch_optional(&mut **tx).await.map_err(db)?;
         Ok(value
             .flatten()
             .and_then(|context| context.0.cognitive_formed_at))

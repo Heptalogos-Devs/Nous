@@ -180,7 +180,7 @@ pub(super) fn schema_view(value: SchemaView) -> p::CognitiveSchema {
         formed_at: Some(formation_proto(
             &revision.formed_time_domain_ref,
             revision.formed_at,
-            revision.recorded_at,
+            revision.formed_recorded_at,
         )),
         recorded_at: Some(timestamp(revision.recorded_at)),
         formation_kind: enum_name(revision.formation_kind),

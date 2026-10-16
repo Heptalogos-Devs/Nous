@@ -359,4 +359,52 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
             .results
             .is_empty()
     );
+    // A real persisted result can be adopted after the semantic world advances.
+    // Its original full formation stamp survives, while this authority write is UTC now.
+    let identity = test_support::model_operation_identity(
+        subject,
+        "material",
+        "non-uuid-material-operation",
+        "saved-material-result",
+    );
+    let original_stamp = runtime.cognition.read_clock(subject).await.unwrap();
+    runtime
+        .store
+        .save_model_operation(
+            &identity,
+            Some(&nous_core::ModelResultContext {
+                cognitive_formed_at: Some(original_stamp.clone()),
+                ..Default::default()
+            }),
+            Some(&test_support::result_payload(
+                serde_json::json!({"text":"saved"}),
+            )),
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    let changed = runtime
+        .clocks
+        .change(
+            subject,
+            nous_core::OperationId::new(),
+            nous_runtime::ClockChange::Advance { seconds: 86_400.0 },
+        )
+        .await
+        .unwrap();
+    assert_ne!(changed.time_domain_ref, "time:real");
+    let mut recovered = derived.clone();
+    recovered.derived_representation_id = nous_core::DerivedRepresentationId::new();
+    recovered.strategy = "saved-result-adoption".into();
+    let recovered = runtime
+        .material
+        .persist_derived_representation(recovered, Some(&identity))
+        .await
+        .unwrap();
+    assert_eq!(recovered.formed_stamp.as_ref(), Some(&original_stamp));
+    assert!(recovered.created_at >= original_stamp.recorded_at);
+    assert!((recovered.created_at - Utc::now()).num_seconds().abs() < 2);
+    assert!(changed.world_now > recovered.created_at + Duration::hours(23));
 }

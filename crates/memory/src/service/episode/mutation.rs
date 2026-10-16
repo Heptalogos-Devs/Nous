@@ -57,6 +57,7 @@ impl MemoryService {
             &input.track_key,
             input.content.parent_episode_revision_id,
             &input.content.experience_time,
+            &input.content.experience_time_domain_ref,
             None,
         )
         .await?;
@@ -246,6 +247,7 @@ impl MemoryService {
             &row.try_get::<String, _>("track_key").map_err(db)?,
             parent,
             &input.content.experience_time,
+            &input.content.experience_time_domain_ref,
             Some(input.episode_id.0),
         )
         .await?;

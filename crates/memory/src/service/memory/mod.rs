@@ -71,6 +71,7 @@ pub(super) fn decode_memory_row(
         )?,
         formed_at: row.try_get("formed_at").map_err(db)?,
         formed_time_domain_ref: row.try_get("formed_time_domain_ref").map_err(db)?,
+        formed_recorded_at: row.try_get("formed_recorded_at").map_err(db)?,
         recorded_at: row.try_get("recorded_at").map_err(db)?,
     };
     Ok((object, revision))

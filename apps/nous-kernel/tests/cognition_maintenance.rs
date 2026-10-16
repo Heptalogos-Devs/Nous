@@ -320,6 +320,7 @@ async fn manual_episode_sources(
             content: nous_memory::EpisodeContent {
                 title: Some("Manual evidence".into()),
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: "time:real".into(),
                 experience_time: TemporalExtent::Unknown,
                 boundary_explanation: "Unbound observation.".into(),
                 producer_signature_id: None,
@@ -347,6 +348,7 @@ async fn manual_episode_sources(
             content: nous_memory::EpisodeContent {
                 title: Some("Cognitive continuation".into()),
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: "time:real".into(),
                 experience_time: TemporalExtent::Unknown,
                 boundary_explanation: "Memory member.".into(),
                 producer_signature_id: None,
@@ -475,6 +477,7 @@ async fn manual_episode_planning_and_complete_journal_revalidation() {
             content: nous_memory::EpisodeContent {
                 title: Some("Revised continuation".into()),
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: second.revision.experience_time_domain_ref.clone(),
                 experience_time: second.revision.experience_time.clone(),
                 boundary_explanation: second.revision.boundary_explanation.clone(),
                 producer_signature_id: None,

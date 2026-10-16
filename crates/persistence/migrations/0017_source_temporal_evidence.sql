@@ -38,7 +38,7 @@ BEGIN
  IF jsonb_typeof(v->'formedAt')='string' THEN
   v=jsonb_set(v,'{formedAt}',jsonb_build_object('timeDomainRef','time:real','at',v->'formedAt','recordedAt',COALESCE(v->'recordedAt',to_jsonb(recorded))));
  END IF;
- FOREACH key IN ARRAY ARRAY['validTime','occurredTime'] LOOP
+ FOREACH key IN ARRAY ARRAY['validTime','occurredTime','experienceTime','temporalScope'] LOOP
   value=v->key;
   IF jsonb_typeof(value)='object' AND NOT (value ? 'timeDomainRef' OR value ? 'extent') THEN
    v=jsonb_set(v,ARRAY[key],jsonb_build_object('timeDomainRef','time:real','extent',value));

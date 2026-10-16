@@ -22,7 +22,7 @@ message JournalRevision {
   optional string parent_revision_id = 5 [(reference_kind) = "journal_revision"];
   optional string revision_intent = 6;
   optional string title = 7;
-  TemporalExtent temporal_scope = 8;
+  DomainTemporalExtent temporal_scope = 8;
   string narrative = 9;
   DomainStamp formed_at = 10;
   google.protobuf.Timestamp recorded_at = 11;

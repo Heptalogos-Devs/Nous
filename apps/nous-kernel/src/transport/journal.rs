@@ -14,12 +14,15 @@ pub(super) fn journal_revision_proto(value: nous_memory::JournalView) -> p::Jour
         parent_revision_id: revision.parent_revision_id.map(|id| id.0.to_string()),
         revision_intent: revision.revision_intent,
         title: revision.title,
-        temporal_scope: Some(temporal_proto(&revision.temporal_scope)),
+        temporal_scope: Some(domain_temporal_proto(
+            &revision.temporal_scope_domain_ref,
+            &revision.temporal_scope,
+        )),
         narrative: revision.narrative,
         formed_at: Some(formation_proto(
             &revision.formed_time_domain_ref,
             revision.formed_at,
-            revision.recorded_at,
+            revision.formed_recorded_at,
         )),
         recorded_at: Some(timestamp(revision.recorded_at)),
         producer_signature_id: revision.producer_signature_id.map(|id| id.to_string()),

@@ -63,7 +63,7 @@ pub(super) fn to_hit(
             formed_at: Some(DomainStamp {
                 time_domain_ref: candidate.view.revision.formed_time_domain_ref.clone(),
                 at: candidate.view.revision.formed_at,
-                recorded_at: candidate.view.revision.recorded_at,
+                recorded_at: candidate.view.revision.formed_recorded_at,
             }),
             recorded_at: Some(candidate.view.revision.recorded_at),
         },
@@ -119,7 +119,7 @@ pub(super) fn temporal_match(query: &CognitiveQuery, view: &MemoryView) -> bool 
         p.matches_stamp(&DomainStamp {
             time_domain_ref: view.revision.formed_time_domain_ref.clone(),
             at: view.revision.formed_at,
-            recorded_at: view.revision.recorded_at,
+            recorded_at: view.revision.formed_recorded_at,
         }) == Some(true)
     }) && query
         .expression

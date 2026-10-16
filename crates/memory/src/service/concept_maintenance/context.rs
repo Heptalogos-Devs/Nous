@@ -128,7 +128,7 @@ impl MemoryService {
                         text,
                         basis,
                         Vec::new(),
-                        serde_json::json!({"experienceTime":episode.revision.experience_time}),
+                        serde_json::json!({"experienceTime":nous_core::DomainTemporalExtent {time_domain_ref:episode.revision.experience_time_domain_ref,extent:episode.revision.experience_time}}),
                     )
                 }
                 CognitiveRef::JournalRevision(id) => {
@@ -152,7 +152,7 @@ impl MemoryService {
                             .take(16)
                             .collect(),
                         Vec::new(),
-                        serde_json::json!({"temporalScope":journal.revision.temporal_scope}),
+                        serde_json::json!({"temporalScope":nous_core::DomainTemporalExtent {time_domain_ref:journal.revision.temporal_scope_domain_ref,extent:journal.revision.temporal_scope}}),
                     )
                 }
                 _ => {

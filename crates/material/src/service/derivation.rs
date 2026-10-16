@@ -34,6 +34,10 @@ impl MaterialService {
             .map_err(db)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one atomic derivation transaction preserves saved formation, current recording and idempotent publication"
+    )]
     pub async fn persist_derived_representation(
         &self,
         mut representation: DerivedRepresentation,
@@ -50,10 +54,22 @@ impl MaterialService {
         representation.producer = AuthorityStore::canonical_producer(&representation.producer)?;
         let (input_digest, key) = derivation_identity(&representation)?;
         let mut tx = self.store.begin().await?;
-        let formed_stamp = self
+        let captured_stamp = self
             .cognition
             .capture_semantic_in(&mut tx, representation.subject_id)
             .await?;
+        let formed_stamp = if let Some(identity) = operation {
+            AuthorityStore::model_result_cognitive_stamp_in(
+                &mut tx,
+                representation.subject_id,
+                "material",
+                &identity.operation_key,
+            )
+            .await?
+            .unwrap_or_else(|| captured_stamp.clone())
+        } else {
+            captured_stamp.clone()
+        };
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
             .bind(&key)
             .execute(&mut *tx)
@@ -105,7 +121,7 @@ impl MaterialService {
             tx.commit().await.map_err(db)?;
             return Ok(representation);
         }
-        representation.created_at = formed_stamp.recorded_at;
+        representation.created_at = captured_stamp.recorded_at;
         representation.formed_stamp = Some(formed_stamp);
         let producer_id =
             AuthorityStore::register_producer_in(&mut tx, &representation.producer).await?;

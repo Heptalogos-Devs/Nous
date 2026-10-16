@@ -533,6 +533,7 @@ async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[Co
             content: nous_memory::EpisodeContent {
                 title: Some("Recorded approval sequence".into()),
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: "time:real".into(),
                 experience_time: TemporalExtent::Unknown,
                 boundary_explanation: "Both exact members recorded in order".into(),
                 producer_signature_id: None,

@@ -177,6 +177,10 @@ impl nous_runtime::CognitiveContributor for MaterialService {
                 | CognitiveRef::DerivedRegion(_)
         )
     }
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one temporal lane applies domain, joint source predicates and permission before its candidate bound"
+    )]
     async fn direct_lanes(
         &self,
         bound: &nous_runtime::BoundQuery,

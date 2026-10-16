@@ -63,6 +63,7 @@ async fn drafts_commit_replay_and_ack_reclaim_runtime_rows() {
         content: nous_memory::EpisodeContent {
             title: None,
             parent_episode_revision_id: None,
+            experience_time_domain_ref: "time:real".into(),
             experience_time: TemporalExtent::Interval {
                 start: Some(draft.observed_start),
                 end: Some(draft.observed_end),

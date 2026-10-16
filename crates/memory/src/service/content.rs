@@ -105,6 +105,10 @@ impl MemoryService {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one authorized read view materializes bounded owner text with its exact source and time metadata"
+    )]
     pub(super) async fn content_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -135,7 +139,7 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) WITH ORDINALITY r
 SELECT q.ordinal,'memory_revision' kind,r.memory_revision_id id,o.memory_id object_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,
  CASE WHEN $4>0 THEN r.title END title,CASE WHEN $4>0 THEN left(r.representation_text,$4) ELSE '' END text,NULL::text scope,NULL::text boundary,
- octet_length(r.representation_text)<=$4 complete,r.formed_at,r.formed_time_domain_ref,r.recorded_at,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end
+ octet_length(r.representation_text)<=$4 complete,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end
  FROM requested q JOIN memory_objects o ON o.subject_id=$1
  JOIN memory_revisions r ON r.memory_id=o.memory_id
  WHERE (q.kind='memory_revision' AND r.memory_revision_id::text=q.value)
@@ -144,7 +148,7 @@ UNION ALL
 SELECT q.ordinal,'cognitive_schema_revision',r.schema_revision_id,o.schema_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
  CASE WHEN $4>0 THEN left(r.structural_claim,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.applicability_description,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.boundary_definition,$4) ELSE '' END,
- octet_length(r.structural_claim)+octet_length(r.applicability_description)+octet_length(r.boundary_definition)+2<=$4,r.formed_at,r.formed_time_domain_ref,r.recorded_at,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end
+ octet_length(r.structural_claim)+octet_length(r.applicability_description)+octet_length(r.boundary_definition)+2<=$4,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end
  FROM requested q JOIN cognitive_schemas o ON o.subject_id=$1
  JOIN cognitive_schema_revisions r ON r.schema_id=o.schema_id
  WHERE (q.kind='cognitive_schema_revision' AND r.schema_revision_id::text=q.value)
@@ -152,21 +156,21 @@ SELECT q.ordinal,'cognitive_schema_revision',r.schema_revision_id,o.schema_id,
 UNION ALL
 SELECT q.ordinal,'episode_revision',r.episode_revision_id,o.episode_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
- CASE WHEN $4>0 THEN left(r.boundary_explanation,$4) ELSE '' END,NULL,NULL,octet_length(r.boundary_explanation)<=$4,r.formed_at,r.formed_time_domain_ref,r.recorded_at,'time:real','unknown',NULL,NULL
+ CASE WHEN $4>0 THEN left(r.boundary_explanation,$4) ELSE '' END,NULL,NULL,octet_length(r.boundary_explanation)<=$4,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at,'time:real','unknown',NULL,NULL
  FROM requested q JOIN episode_objects o ON o.subject_id=$1 JOIN episode_revisions r ON r.episode_id=o.episode_id
  WHERE (q.kind='episode_revision' AND r.episode_revision_id::text=q.value)
     OR (q.kind='episode' AND o.episode_id::text=q.value AND r.episode_revision_id=o.current_revision_id)
 UNION ALL
 SELECT q.ordinal,'journal_revision',r.journal_revision_id,o.journal_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
- CASE WHEN $4>0 THEN left(r.narrative,$4) ELSE '' END,NULL,NULL,octet_length(r.narrative)<=$4,r.formed_at,r.formed_time_domain_ref,r.recorded_at,'time:real','unknown',NULL,NULL
+ CASE WHEN $4>0 THEN left(r.narrative,$4) ELSE '' END,NULL,NULL,octet_length(r.narrative)<=$4,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at,'time:real','unknown',NULL,NULL
  FROM requested q JOIN journal_objects o ON o.subject_id=$1 JOIN journal_revisions r ON r.journal_id=o.journal_id
  WHERE (q.kind='journal_revision' AND r.journal_revision_id::text=q.value)
     OR (q.kind='journal' AND o.journal_id::text=q.value AND r.journal_revision_id=o.current_revision_id)
 UNION ALL
 SELECT q.ordinal,'tag',t.tag_id,r.tag_revision_id,'accepted','valid','normal',
  CASE WHEN $4>0 THEN r.label END,CASE WHEN $4>0 THEN COALESCE(r.description,'') ELSE '' END,
- CASE WHEN $4>0 THEN r.kind_hint END,NULL,octet_length(r.label)+octet_length(COALESCE(r.description,''))+octet_length(COALESCE(r.kind_hint,''))+32<=$4,NULL,NULL,NULL,NULL,NULL,NULL,NULL
+ CASE WHEN $4>0 THEN r.kind_hint END,NULL,octet_length(r.label)+octet_length(COALESCE(r.description,''))+octet_length(COALESCE(r.kind_hint,''))+32<=$4,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
  FROM requested q JOIN tags t ON q.kind='tag' AND t.tag_id=canonical_tag($1,CASE WHEN q.kind='tag' THEN q.value::uuid END)
  JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status='active'
 "#).bind(subject.0).bind(kinds).bind(values).bind(i32::try_from(max_bytes).map_err(|_| Error::Invalid("content bound exceeded".into()))?)
@@ -218,7 +222,7 @@ SELECT q.ordinal,'tag',t.tag_id,r.tag_revision_id,'accepted','valid','normal',
                         formed_at: Some(DomainStamp {
                             time_domain_ref: row.get("formed_time_domain_ref"),
                             at: row.get("formed_at"),
-                            recorded_at: row.get("recorded_at"),
+                            recorded_at: row.get("formed_recorded_at"),
                         }),
                         recorded_at: Some(row.get("recorded_at")),
                     },

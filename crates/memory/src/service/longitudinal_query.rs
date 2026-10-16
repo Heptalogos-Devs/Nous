@@ -50,11 +50,11 @@ pub(super) async fn materialize_longitudinal(
     for (kind, query) in [
         (
             "episode",
-            "SELECT o.episode_id AS object_id,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.episode_revision_id AS revision_id,r.title,r.boundary_explanation AS text,r.experience_time_kind AS time_kind,r.experience_time_start AS time_start,r.experience_time_end AS time_end,r.formed_at,r.formed_time_domain_ref,r.recorded_at FROM episode_objects o JOIN episode_revisions r USING(episode_id) WHERE o.subject_id=$1 AND ((o.episode_id=ANY($2::uuid[]) AND r.episode_revision_id=o.current_revision_id) OR r.episode_revision_id=ANY($3::uuid[]))",
+            "SELECT o.episode_id AS object_id,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.episode_revision_id AS revision_id,r.title,r.boundary_explanation AS text,r.experience_time_kind AS time_kind,r.experience_time_start AS time_start,r.experience_time_end AS time_end,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at FROM episode_objects o JOIN episode_revisions r USING(episode_id) WHERE o.subject_id=$1 AND ((o.episode_id=ANY($2::uuid[]) AND r.episode_revision_id=o.current_revision_id) OR r.episode_revision_id=ANY($3::uuid[]))",
         ),
         (
             "journal",
-            "SELECT o.journal_id AS object_id,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.journal_revision_id AS revision_id,r.title,r.narrative AS text,r.temporal_scope_kind AS time_kind,r.temporal_scope_start AS time_start,r.temporal_scope_end AS time_end,r.formed_at,r.formed_time_domain_ref,r.recorded_at FROM journal_objects o JOIN journal_revisions r USING(journal_id) WHERE o.subject_id=$1 AND ((o.journal_id=ANY($2::uuid[]) AND r.journal_revision_id=o.current_revision_id) OR r.journal_revision_id=ANY($3::uuid[]))",
+            "SELECT o.journal_id AS object_id,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.journal_revision_id AS revision_id,r.title,r.narrative AS text,r.temporal_scope_kind AS time_kind,r.temporal_scope_start AS time_start,r.temporal_scope_end AS time_end,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at FROM journal_objects o JOIN journal_revisions r USING(journal_id) WHERE o.subject_id=$1 AND ((o.journal_id=ANY($2::uuid[]) AND r.journal_revision_id=o.current_revision_id) OR r.journal_revision_id=ANY($3::uuid[]))",
         ),
     ] {
         let object_ids = objects.remove(kind).unwrap_or_default();
@@ -247,7 +247,7 @@ fn longitudinal_hit(
             formed_at: Some(DomainStamp {
                 time_domain_ref: row.get("formed_time_domain_ref"),
                 at: row.get("formed_at"),
-                recorded_at: row.get("recorded_at"),
+                recorded_at: row.get("formed_recorded_at"),
             }),
             recorded_at: Some(row.get("recorded_at")),
         },
@@ -287,7 +287,7 @@ fn longitudinal_filter(
             p.matches_stamp(&DomainStamp {
                 time_domain_ref: row.get("formed_time_domain_ref"),
                 at: row.get("formed_at"),
-                recorded_at: row.get("recorded_at"),
+                recorded_at: row.get("formed_recorded_at"),
             }) == Some(true)
         })
         && constraints

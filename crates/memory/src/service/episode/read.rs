@@ -48,7 +48,7 @@ impl MemoryService {
         objects: &[Uuid],
     ) -> Result<std::collections::HashMap<Uuid, EpisodeView>> {
         use std::collections::HashMap;
-        let rows = sqlx::query("SELECT o.episode_id,o.subject_id,o.track_key,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.created_at,r.episode_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end,r.boundary_explanation,r.formed_at,r.formed_time_domain_ref,r.recorded_at,r.producer_signature_id FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND (r.episode_revision_id=ANY($2) OR (o.episode_id=ANY($3) AND r.episode_revision_id=o.current_revision_id))").bind(subject.0).bind(revisions).bind(objects).fetch_all(&mut **tx).await.map_err(db)?;
+        let rows = sqlx::query("SELECT o.episode_id,o.subject_id,o.track_key,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,o.created_at,r.episode_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.parent_episode_revision_id,r.experience_time_domain_ref,r.experience_time_kind,r.experience_time_start,r.experience_time_end,r.boundary_explanation,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at,r.producer_signature_id FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND (r.episode_revision_id=ANY($2) OR (o.episode_id=ANY($3) AND r.episode_revision_id=o.current_revision_id))").bind(subject.0).bind(revisions).bind(objects).fetch_all(&mut **tx).await.map_err(db)?;
         let selected = rows
             .iter()
             .map(|row| row.try_get::<Uuid, _>("episode_revision_id").map_err(db))
@@ -107,6 +107,9 @@ impl MemoryService {
                             .try_get::<Option<Uuid>, _>("parent_episode_revision_id")
                             .map_err(db)?
                             .map(EpisodeRevisionId),
+                        experience_time_domain_ref: row
+                            .try_get("experience_time_domain_ref")
+                            .map_err(db)?,
                         experience_time: temporal_from_columns(
                             row.try_get("experience_time_kind").map_err(db)?,
                             row.try_get("experience_time_start").map_err(db)?,
@@ -117,6 +120,7 @@ impl MemoryService {
                         formed_time_domain_ref: row
                             .try_get("formed_time_domain_ref")
                             .map_err(db)?,
+                        formed_recorded_at: row.try_get("formed_recorded_at").map_err(db)?,
                         recorded_at: row.try_get("recorded_at").map_err(db)?,
                         producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
                     },

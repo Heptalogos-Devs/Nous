@@ -5,6 +5,10 @@ use super::*;
 use nous_persistence::{TimeColumns, push_time_predicate};
 use sqlx::{Postgres, QueryBuilder};
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one historical candidate SQL applies authorization and correlated domain predicates before its bound"
+)]
 pub(super) async fn select(
     service: &MemoryService,
     bound: &BoundQuery,

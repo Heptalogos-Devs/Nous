@@ -169,7 +169,7 @@ pub(super) fn record(v: SocialRecord) -> p::SocialRecord {
         formed_at: Some(formation_proto(
             &v.formed_time_domain_ref,
             v.formed_at,
-            v.recorded_at,
+            v.formed_recorded_at,
         )),
         recorded_at: Some(timestamp(v.recorded_at)),
         evidence: v

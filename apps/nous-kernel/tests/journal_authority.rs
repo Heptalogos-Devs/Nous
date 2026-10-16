@@ -382,6 +382,7 @@ async fn create_journal_dependents(
             content: nous_memory::EpisodeContent {
                 title: None,
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: "time:real".into(),
                 experience_time: TemporalExtent::Unknown,
                 boundary_explanation: "Supported cognitive continuation.".into(),
                 producer_signature_id: None,
@@ -490,4 +491,94 @@ async fn assert_journal_purge(
     assert_invalidated_dependents(rt, subject, dependencies).await;
     assert_eq!(rt.store.authority_seq(subject).await.unwrap(), before + 1);
     assert_invalidated_dependents(rt, subject, &fresh_dependencies).await;
+}
+
+#[tokio::test]
+async fn journal_scope_keeps_world_domain_and_mixed_unmapped_spans_unknown() {
+    use nous_core::{BasisRole, CognitionDependency, CognitiveRef, OperationId, RevisionBasis};
+    use nous_memory::{
+        EpisodeContent, EpisodeInput, EpisodeMemberInput, JournalInput, JournalPoint,
+        JournalPointRole,
+    };
+    let (root, url, _postgres) = database().await;
+    let clock = Arc::new(ManualCognitiveClock::new(Utc::now().trunc_subsecs(6)));
+    let rt = runtime_with_clock_serving(&url, &root, clock.clone(), false).await;
+    let subject = create_subject(&rt).await;
+    let memory = rt.require_memory().unwrap();
+    let real = journal_source_episode(&rt, &clock, subject).await;
+    let world = memory
+        .create_episode(EpisodeInput {
+            operation_id: OperationId::new(),
+            subject,
+            track_key: "world-course".into(),
+            content: EpisodeContent {
+                title: Some("World-specific source organization".into()),
+                parent_episode_revision_id: None,
+                experience_time_domain_ref: "time:course".into(),
+                experience_time: real.revision.experience_time.clone(),
+                boundary_explanation: "An explicit interpretation in a named world".into(),
+                producer_signature_id: None,
+                members: real
+                    .members
+                    .iter()
+                    .map(|m| EpisodeMemberInput {
+                        reference: m.reference.clone(),
+                        role: m.role.clone(),
+                    })
+                    .collect(),
+                basis: real.basis.clone(),
+            },
+        })
+        .await
+        .unwrap();
+    let input = |episodes: &[&EpisodeView]| JournalInput {
+        operation_id: OperationId::new(),
+        subject,
+        expected_authority_seq: 0,
+        target: None,
+        sources: episodes
+            .iter()
+            .map(|e| EpisodePartitionSource {
+                revision: e.revision.episode_revision_id,
+                expected_epoch: e.object.object_epoch,
+            })
+            .collect(),
+        title: None,
+        narrative: "A supported narrative preserving source domains".into(),
+        points: vec![JournalPoint {
+            role: JournalPointRole::Summary,
+            text: "Source interpretations are distinct".into(),
+            basis: episodes
+                .iter()
+                .map(|e| {
+                    RevisionBasis::CognitionDependency(CognitionDependency {
+                        target_revision: CognitiveRef::EpisodeRevision(
+                            e.revision.episode_revision_id,
+                        ),
+                        basis_role: BasisRole::Direct,
+                        epistemic_relation: None,
+                    })
+                })
+                .collect(),
+        }],
+        producer: None,
+    };
+    let mut one = input(&[&world]);
+    one.expected_authority_seq = rt.store.authority_seq(subject).await.unwrap();
+    let one = memory.commit_journal(one).await.unwrap();
+    assert_eq!(one.revision.temporal_scope_domain_ref, "time:course");
+    assert_eq!(one.revision.temporal_scope, world.revision.experience_time);
+    let mut mixed = input(&[&real, &world]);
+    mixed.expected_authority_seq = rt.store.authority_seq(subject).await.unwrap();
+    let mixed = memory.commit_journal(mixed).await.unwrap();
+    assert!(matches!(
+        mixed.revision.temporal_scope,
+        TemporalExtent::Unknown
+    ));
+    assert!(
+        (mixed.revision.recorded_at - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
 }

@@ -178,6 +178,7 @@ impl MemoryService {
                 &track,
                 parent.map(EpisodeRevisionId),
                 &payload.experience_time,
+                &payload.experience_time_domain_ref,
                 one_to_one.then_some(episode.0),
             )
             .await?;
@@ -461,6 +462,7 @@ fn partition_payload(
     let payload = EpisodeContent {
         title: segment.title.clone(),
         parent_episode_revision_id: parent.map(EpisodeRevisionId),
+        experience_time_domain_ref: "time:real".into(),
         experience_time,
         boundary_explanation: segment.boundary_explanation.clone(),
         producer_signature_id: None,

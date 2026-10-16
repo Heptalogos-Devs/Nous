@@ -127,6 +127,7 @@ pub struct MemoryRevision {
     pub valid_time_domain_ref: String,
     pub formed_at: DateTime<Utc>,
     pub formed_time_domain_ref: String,
+    pub formed_recorded_at: DateTime<Utc>,
     pub recorded_at: DateTime<Utc>,
 }
 
@@ -404,6 +405,7 @@ pub struct CognitiveSchemaRevision {
     pub formation_kind: SchemaFormationKind,
     pub formed_at: DateTime<Utc>,
     pub formed_time_domain_ref: String,
+    pub formed_recorded_at: DateTime<Utc>,
     pub recorded_at: DateTime<Utc>,
     pub producer_signature_id: Option<Uuid>,
 }

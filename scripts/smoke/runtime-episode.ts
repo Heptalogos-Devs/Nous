@@ -27,6 +27,7 @@ import {
   SubjectCapabilitiesSchema,
   OpenSessionRequestSchema,
   TemporalExtentSchema,
+  DomainTemporalExtentSchema,
   UpdateWorkContextRequestSchema,
   WorkContextMutationRequestSchema,
   WorkContextClearScope,
@@ -506,7 +507,9 @@ async function main() {
         trackKey: "interaction",
         content: {
           boundaryExplanation: "one bounded interaction",
-          experienceTime: create(TemporalExtentSchema, {}),
+          experienceTime: create(DomainTemporalExtentSchema, {
+            timeDomainRef: "time:real",
+          }),
 
           members: [
             create(EpisodeMemberSchema, {
@@ -534,7 +537,9 @@ async function main() {
       intent: "resegment",
       content: {
         boundaryExplanation: "resegmented interaction",
-        experienceTime: create(TemporalExtentSchema, {}),
+        experienceTime: create(DomainTemporalExtentSchema, {
+          timeDomainRef: "time:real",
+        }),
 
         members: [
           create(EpisodeMemberSchema, {

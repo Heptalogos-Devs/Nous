@@ -270,6 +270,10 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
         .unwrap();
     assert_eq!(recovered.revision.formed_at, stamp.at);
     assert_eq!(
+        recovered.revision.formed_recorded_at,
+        chrono::SubsecRound::trunc_subsecs(stamp.recorded_at, 6)
+    );
+    assert_eq!(
         recovered.revision.formed_time_domain_ref,
         stamp.time_domain_ref
     );

@@ -42,7 +42,7 @@ pub(super) fn view(input: MemoryView) -> p::Memory {
         formed_at: Some(formation_proto(
             &revision.formed_time_domain_ref,
             revision.formed_at,
-            revision.recorded_at,
+            revision.formed_recorded_at,
         )),
         recorded_at: Some(timestamp(revision.recorded_at)),
         formation_mode: enum_name(revision.formation_mode),
