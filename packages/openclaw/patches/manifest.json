@@ -3,7 +3,7 @@
   "files": {
     "dist/agent-core-BxgCPa8O.js": {
       "original": "0c9bcca812ac44e9cd79a8df3ce627c55cd569182a4e9f0f6623d54483f149fa",
-      "patched": "81d3186bc2f7796cf854e9f8c96fcc4a5af9f09d89ec64029084f0d844073cfa"
+      "patched": "8671e5ff76909ce3ffd95a28fa26f76795341a65fa671624a458c65db19f4ccd"
     },
     "dist/agent-exec-DQrJo6Wo.js": {
       "original": "233e7376ce3481a5905fa1083d0077cdade601164303c122d07fbbb8810ac669",
@@ -11,7 +11,7 @@
     },
     "dist/builtin-openclaw-zQV8Wwjr.js": {
       "original": "62599de51a360163f8020d3f2c9ffbf7481a2424b850363d77308a99056a5303",
-      "patched": "e7b08ce2420bb209f6a1273bceddcc6ab369ef8ba90e144d70359b433ec92726"
+      "patched": "90168fe85cf60666cd441e3a97e32d645ffa6c208cf0ee72f3a829ea0bdde61e"
     },
     "dist/context-engine-turn-attempt-BPzr5IBp.js": {
       "original": "4cc537188596b09ee72b9d1cff7f027e4eebc836ee43859a414b15eaac36d0fc",
@@ -19,7 +19,7 @@
     },
     "dist/deliver-B6F55ipQ.js": {
       "original": "c7623c250bb5388829d3e385d4d830876209a252d45b132cee73eaa3b16de16d",
-      "patched": "4d19892621162ddf0d296a47697fda6be4155b6ec6b4b3a8dcc8556be9ce4420"
+      "patched": "65f9ec6584588ba81642ddbca36d3c5c83263c1894d943db77795471cc993d62"
     },
     "dist/deliver-contracts-BrA0Kn8c.d.ts": {
       "original": "06541fe79ae5fc6b0faa5cbd11843c7099512628f537dd1fa3eefe5de6f385ff",
@@ -27,7 +27,7 @@
     },
     "dist/deliver-prepare-7gjKTwQN.js": {
       "original": "4f6301f820330523f209f06dcefd687036946368738d8273b5c33f9f2e702758",
-      "patched": "f6c244a069b9a88fb55091823085ac0110f8cdf1ea5f81deb40cafbd9cb8e7a7"
+      "patched": "cb7fd1ae7954285772c3f4d8ac3ca73b776b5b9cf5ff55f081ad38bf42c8fd42"
     },
     "dist/delivery-queue-migration-BZ8aX6BT.js": {
       "original": "909524a0ca8a870538a043f9e90ce78bea1d204160263df1684ba00cc2ca99c6",
@@ -47,19 +47,19 @@
     },
     "dist/install-security-scan.types-C51Ik81l.d.ts": {
       "original": "941889a8270ec1c2d5b1c0737454fd3f75ec3665d1fba4e243adc36bdec7eaec",
-      "patched": "128662057b4d2df0f03e6d76fa256f1215a17e5d09a7f114af687cc38340f044"
+      "patched": "55e56a45af887a8c80454da786e814271e2629389450caf75a9f910543b191ce"
     },
     "dist/install-security-scan.types-CimJAuMq.d.ts": {
       "original": "dab5f30048a1ff82b8dc1672a89b59bb66bd79709a784b22d6df877aad1c7770",
-      "patched": "2efdc2bfd643a6356e3c76e02d1a02f5158a6345c3e0794e872adc25625c1b76"
+      "patched": "16a55dbbf75766875217a56fc82ffed198b618c5a987a68a3f3af37b8266b246"
     },
     "dist/plugin-entry-C-sjzaBe.d.ts": {
       "original": "5b0d61e56bbef81c0b2d00efc18527905a86ae31661f6f5345bbc97ff048844e",
-      "patched": "8036cc8536b6596a985ee2e7fb5527e21fc138adff690f954fdb2816bfbb76cc"
+      "patched": "2e89b4a3383604c9fe7b0c5bbcfa5ebc31c6d0b000f5e677feedee237a0cde4f"
     },
     "dist/plugin-entry-r6eDtEsn.d.ts": {
       "original": "7504ecd3a396e90bdd2c5021e42c79eb4e5f5b6a43855bbd4f560c35c6660949",
-      "patched": "52b9314bbb79d7aecb22f9048ad1f1390d047f78353120269ab68e1272e4dc37"
+      "patched": "50712d2c0c18b552b2c13a44ef8541da0503a1d22ef92ec54e87b3d29555bca5"
     },
     "dist/plugin-sdk/channel-message.d.ts": {
       "original": "4d14ec25989aee109c09757d53db9c781c77576d7323d85bfeef8f34b69d7866",
@@ -75,7 +75,7 @@
     },
     "dist/runtime-api-DDF9iz51.d.ts": {
       "original": "56b584b45458dd0ce1c5d593d92bad569e2aa3526be97588c3ec7f51d1dc6cc9",
-      "patched": "b6a1a9d0bd7b737d198674678c7221da40eeafa1e3ceda9ef6c8daee3678a4af"
+      "patched": "cba9103e35d563add39e1f1e22817c6ae8c2840f1480f4cffe756519ee9adaf4"
     },
     "dist/runtime-plugins-CWkOjN1D.js": {
       "original": "e7353bc15138284b23a343949c78cbcfc17bcdb6a469951f176ed50ebeedcbff",
@@ -91,7 +91,7 @@
     },
     "dist/types-BzYyevxm.d.ts": {
       "original": "172177f5b571c0f7a29da23b95dea65cf67fa33047ade377c0f070f87f124a7a",
-      "patched": "c35ad2d55ea47c5c9a61ca27370053612bd49bc9f32792783444acd0a89e833f"
+      "patched": "e089a8cfb132e118b01adb4266321f0dec4afed7f9ade46aa77e67b720209dbe"
     }
   },
   "dependencyOverrides": {

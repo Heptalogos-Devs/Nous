@@ -20,6 +20,12 @@ import type {
   ManagedModelApplication,
 } from "./contract.js";
 import { cognitionRenderer } from "./render.js";
+import { HostBridge, hostBridgeConfiguration, occurrenceJson } from "./host.js";
+import { HostedLifecycle } from "./hosted.js";
+import {
+  loadTranscriptEventsSync,
+  resolveStorePath,
+} from "openclaw/plugin-sdk/session-store-runtime";
 
 const namespace = "nous-cognition";
 const sessionBinding = z
@@ -36,6 +42,7 @@ const configuration = z
     subjectId: z.uuid(),
     consumerId: z.string().min(1),
     workContextId: z.uuid().optional(),
+    hostBridge: hostBridgeConfiguration.optional(),
     cognitionTokenCap: z.number().int().min(512).default(4096),
   })
   .strict();
@@ -43,6 +50,9 @@ const configuration = z
 function register(api: OpenClawPluginApi): void {
   const config = configuration.parse(api.pluginConfig);
   const connect = () => connectNousInstance({ runRoot: config.runRoot });
+  const bridge = config.hostBridge
+    ? new HostBridge(config.hostBridge)
+    : undefined;
   api.session.state.registerSessionExtension({
     namespace,
     description:
@@ -53,6 +63,37 @@ function register(api: OpenClawPluginApi): void {
       string,
       Promise<ReturnType<typeof createManagedBinding>>
     >();
+    const hosted = bridge
+      ? new HostedLifecycle(bridge, config.subjectId, connect, (message) =>
+          api.logger.error(message),
+        )
+      : undefined;
+    const flushNativeHistory = async (
+      sessionId: string,
+      sessionKey: string,
+      agentId?: string,
+      signal?: AbortSignal,
+    ) => {
+      if (!hosted) return;
+      const events = loadTranscriptEventsSync({
+        sessionId,
+        sessionKey,
+        agentId,
+        storePath: resolveStorePath(api.config.session?.store, { agentId }),
+      });
+      await hosted.flush(
+        events.flatMap((value) =>
+          value &&
+          typeof value === "object" &&
+          "type" in value &&
+          value.type === "message" &&
+          "message" in value
+            ? [value.message]
+            : [],
+        ),
+        signal,
+      );
+    };
     let invocation = 0;
     const observedEvents = new Set<string>();
     const worker = (input: ManagedModelInput) => {
@@ -130,7 +171,7 @@ function register(api: OpenClawPluginApi): void {
                 "Native Nous Session binding was not durably written",
               );
           }
-          if (config.workContextId) {
+          if (!hosted && config.workContextId) {
             const session = await connected.runtime.getSession(
               { subjectId: config.subjectId, id: sessionId },
               { signal: input.signal },
@@ -165,6 +206,7 @@ function register(api: OpenClawPluginApi): void {
       input: ManagedModelInput,
       message: Context["messages"][number],
     ) => {
+      if (hosted) return hosted.observe(input, message);
       const connected = await connect();
       const binding = await worker(input);
       const content =
@@ -265,6 +307,12 @@ function register(api: OpenClawPluginApi): void {
         };
       },
       async compact(params) {
+        await flushNativeHistory(
+          params.sessionId,
+          params.sessionKey,
+          params.agentId,
+          params.abortSignal,
+        );
         const entry = api.runtime.agent.session.getSessionEntry({
           sessionKey: params.sessionKey,
           agentId: params.agentId,
@@ -298,6 +346,9 @@ function register(api: OpenClawPluginApi): void {
             "Required native compaction history check was not enforced",
           );
         return delegateCompactionToRuntime(params);
+      },
+      captureNativeEvent(input, message, application, outcome) {
+        hosted?.capture(input, message, application, outcome);
       },
       recordNativeEvent: observe,
       async prepareSubagentSpawn(params) {
@@ -333,12 +384,35 @@ function register(api: OpenClawPluginApi): void {
           subjectId: config.subjectId,
           parentSessionId: parsed.data.nousSessionId,
         });
-        await params.persistSessionBinding({
-          subjectId: config.subjectId,
-          nativeSessionId: child.sessionId,
-          nativeHistoryGeneration: child.sessionId,
-          nousSessionId: session.sessionId,
-        });
+        try {
+          if (bridge)
+            await bridge.handoff({
+              version: 1,
+              requestId: await eventIdentity(
+                `${params.parentSessionKey}:${params.childSessionKey}:${child.sessionId}:handoff`,
+              ),
+              subjectId: config.subjectId,
+              parentSessionKey: params.parentSessionKey,
+              parentSessionId: parsed.data.nativeSessionId,
+              parentNousSessionId: parsed.data.nousSessionId,
+              childSessionKey: params.childSessionKey,
+              childSessionId: child.sessionId,
+              childNousSessionId: session.sessionId,
+              contextMode: "isolated",
+            });
+          await params.persistSessionBinding({
+            subjectId: config.subjectId,
+            nativeSessionId: child.sessionId,
+            nativeHistoryGeneration: child.sessionId,
+            nousSessionId: session.sessionId,
+          });
+        } catch (error) {
+          await connected.runtime.closeSession({
+            subjectId: config.subjectId,
+            id: session.sessionId,
+          });
+          throw error;
+        }
         return {
           rollback: async () => {
             await connected.runtime.closeSession({
@@ -350,7 +424,7 @@ function register(api: OpenClawPluginApi): void {
       },
       async prepareModelInput(input) {
         if (
-          input.boundaryVersion !== 2 ||
+          input.boundaryVersion !== 3 ||
           typeof input.historyGeneration !== "string" ||
           !input.historyGeneration ||
           typeof input.historyIsFresh !== "boolean" ||
@@ -361,13 +435,59 @@ function register(api: OpenClawPluginApi): void {
           );
         input.signal.throwIfAborted();
         const binding = await worker(input);
+        const invocationId = `${input.runId}:nous:${++invocation}`;
+        if (hosted)
+          await flushNativeHistory(
+            input.sessionId,
+            input.sessionKey!,
+            input.agentId,
+            input.signal,
+          );
+        const permission = await hosted?.prepare(
+          input,
+          binding.sessionId,
+          invocationId,
+        );
+        const occurrences: {
+          contactRef: string;
+          receipt: ReturnType<typeof occurrenceJson>;
+        }[] = [];
+        if (permission) {
+          const connected = await connect();
+          const session = await connected.runtime.getSession(
+            { subjectId: config.subjectId, id: binding.sessionId },
+            { signal: input.signal },
+          );
+          if (session.activeWorkContextId !== permission.response.workContextId)
+            await connected.runtime.setActiveWorkContext(
+              {
+                subjectId: config.subjectId,
+                sessionId: binding.sessionId,
+                workContextId: permission.response.workContextId,
+                expectedRuntimeRevision: session.runtimeRevision,
+                operationId: await eventIdentity(
+                  `${permission.identity.contactRequestId}:work-context:${session.runtimeRevision}`,
+                ),
+              },
+              { signal: input.signal },
+            );
+          for (const contact of permission.contacts)
+            occurrences.push({
+              contactRef: contact.contactRef,
+              receipt: occurrenceJson(
+                await connected.runtime.recordObservation(contact.observation, {
+                  signal: input.signal,
+                }),
+              ),
+            });
+        }
         const currentTurn = input.context.messages.findLastIndex(
           (message) => message.role === "user",
         );
         for (const message of input.context.messages.slice(
           Math.max(0, currentTurn),
         )) {
-          await observe(input, message);
+          if (!hosted) await observe(input, message);
         }
         const reservedOutput = input.reservedOutputTokens;
         const contextWindow = input.contextTokenBudget;
@@ -378,22 +498,25 @@ function register(api: OpenClawPluginApi): void {
         const available =
           contextWindow - reservedOutput - input.measureContext(input.context);
         const budget = Math.min(config.cognitionTokenCap, available);
-        const usage = create(CognitionUsageSchema, {
-          agentInstanceId: `${input.sessionId}:${input.runId}`,
-          purpose: input.sessionKey?.includes(":subagent:")
-            ? "worker"
-            : "deliberation",
-          intent:
-            input.prompt.trim() ||
-            "Continue the current work using the actual tool results.",
-          audience: {
-            conversationRef: input.sessionKey ?? input.sessionId,
-            visibility: input.audience.visibility,
-          },
-        });
+        const usage =
+          permission?.usage ??
+          create(CognitionUsageSchema, {
+            agentInstanceId: `${input.sessionId}:${input.runId}`,
+            purpose: input.sessionKey?.includes(":subagent:")
+              ? "worker"
+              : "deliberation",
+            intent:
+              input.prompt.trim() ||
+              "Continue the current work using the actual tool results.",
+            audience: {
+              conversationRef: input.sessionKey ?? input.sessionId,
+              visibility: input.audience.visibility,
+            },
+          });
         const prepared = await binding.prepare({
           usage,
-          workContextId: config.workContextId,
+          workContextId:
+            permission?.response.workContextId ?? config.workContextId,
           cognitionTokenBudget: budget,
           signal: input.signal,
         });
@@ -421,7 +544,7 @@ function register(api: OpenClawPluginApi): void {
         const application: ManagedModelApplication = {
           context,
           applied,
-          invocationId: `${input.runId}:nous:${++invocation}`,
+          invocationId,
         };
         await binding.admit(
           {
@@ -431,12 +554,21 @@ function register(api: OpenClawPluginApi): void {
           },
           { signal: input.signal },
         );
+        if (hosted && permission)
+          await hosted.admitted(
+            permission,
+            prepared.projection!,
+            occurrences,
+            input.signal,
+          );
+        input.signal.throwIfAborted();
         api.logger.info(
           `Nous applied invocation=${application.invocationId} kind=${prepared.kind} projection=${applied.projectionId} sources=${applied.sourceRefs.length} budgetEstimate=openclaw_native`,
         );
         return application;
       },
       async reportModelOutcome(input, application, outcome, message) {
+        if (hosted) return hosted.report(input, application, outcome, message);
         await (
           await worker(input)
         ).report(

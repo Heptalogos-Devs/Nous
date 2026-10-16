@@ -160,6 +160,7 @@ const raw = {
   ],
 };
 const params = {
+  getSourceIndex: () => 0,
   channel: "qq",
   to: "1101497265",
   accountId: "bot",
@@ -240,6 +241,28 @@ const duplicate = await queue.r(
   stateDir,
 );
 assert.equal(duplicate.created, false);
+const sparseBatch = {
+  ...adopted,
+  sourcePayloadCount: 8,
+  entries: [
+    { status: "accepted", sourceIndex: 2, payload: { text: "identical" } },
+    { status: "accepted", sourceIndex: 7, payload: { text: "identical" } },
+  ],
+};
+const sparseQueued = await queue.r(
+  { ...params, preparedBatch: fixture.project(sparseBatch) },
+  "sparse-source-identity",
+  stateDir,
+);
+const sparseLoaded = await queue.p(sparseQueued.id, stateDir);
+assert(sparseLoaded);
+assert.deepEqual(
+  (sparseLoaded.preparedBatch.entries as { sourceIndex: number }[]).map(
+    (entry) => entry.sourceIndex,
+  ),
+  [2, 7],
+  "SQLite recovery must retain original sparse payload indices, never renumber by body or array position",
+);
 const loaded = await queue.p(queued.id, stateDir);
 assert(loaded);
 const replayed = loaded.preparedBatch;
@@ -320,10 +343,107 @@ const nativeScope = await nativeModule<{
 const nativeDelivery = await nativeModule<{
   n(input: Record<string, unknown>): Promise<unknown[]>;
 }>("deliver-B6F55ipQ.js");
+// The native transcript, not a plugin queue, retains Host contact identity and
+// actual results across reload and reset boundaries.
+const nativeSessions = await nativeModule<{
+  t: {
+    open(target: Record<string, string>): {
+      appendMessage(message: unknown): string;
+      appendResetBoundary(reason: string): string;
+      flushPendingPersistence(): void;
+    };
+  };
+}>("session-manager-CNTG_BAJ.js");
+const nativeTranscript = await nativeModule<{
+  loadTranscriptEventsSync(target: Record<string, string>): unknown[];
+}>("plugin-sdk/session-store-runtime.js");
+const nativeTarget = {
+  agentId: "host-fixture",
+  sessionId: "host-feedback-history",
+  sessionKey: "agent:host-fixture:main",
+  storePath: join(stateDir, "sessions.json"),
+};
+const nativeSession = nativeSessions.t.open(nativeTarget);
+const preservedContact = {
+  contactRequestId: "native-contact",
+  observedAt: new Date().toISOString(),
+};
+nativeSession.appendMessage({
+  role: "toolResult",
+  toolCallId: "already-executed",
+  toolName: "write",
+  content: [{ type: "text", text: "actual result" }],
+  isError: false,
+  timestamp: Date.now(),
+  nousHostBridge: preservedContact,
+});
+const nativeAgentSource = await readFile(
+  join(native, "dist/agent-core-BxgCPa8O.js"),
+  "utf8",
+);
+const emitActualTool = vm.runInNewContext(`
+  const copyInternalToolResultState=(_source,message)=>message;
+  const withToolResultContentSource=(message)=>message;
+  ${section(nativeAgentSource, "async function emitToolResultMessage(", "function readTurnTaintMetadata(")}
+  emitToolResultMessage;
+`) as (
+  finalized: unknown,
+  emit: (event: {
+    type: string;
+    message: Record<string, unknown>;
+  }) => Promise<void>,
+  managed: unknown,
+) => Promise<unknown>;
+let persistedBeforeFeedback = false;
+await emitActualTool(
+  {
+    toolCall: { id: "strict-native-tool", name: "write" },
+    isError: false,
+    result: {
+      content: [{ type: "text", text: "already performed" }],
+      isError: false,
+    },
+  },
+  async (event) => {
+    if (event.type === "message_end") {
+      assert.deepEqual(event.message.nousHostBridge, preservedContact);
+      nativeSession.appendMessage(event.message);
+      persistedBeforeFeedback = true;
+    }
+  },
+  {
+    captureEvent(actualMessage: Record<string, unknown>) {
+      actualMessage.nousHostBridge = preservedContact;
+    },
+    async observe() {
+      assert(
+        persistedBeforeFeedback,
+        "real tool result must reach native SQLite before network feedback",
+      );
+    },
+  },
+);
+nativeSession.appendResetBoundary("reset");
+nativeSession.flushPendingPersistence();
+const retained = nativeTranscript.loadTranscriptEventsSync(nativeTarget) as {
+  type?: string;
+  message?: { nousHostBridge?: unknown };
+}[];
+assert(
+  retained.some(
+    (event) =>
+      event.type === "message" &&
+      JSON.stringify(event.message?.nousHostBridge) ===
+        JSON.stringify(preservedContact),
+  ),
+  "SQLite reset must retain the only copy of an unacknowledged actual result",
+);
 const registry = nativeRegistry.t();
 let producerAdoptions = 0;
 let producerAuthorizations = 0;
 let producerSends = 0;
+const authorizedSources: (number | undefined)[] = [];
+const receiptSources: (number | undefined)[] = [];
 registry.channels.push({
   plugin: {
     id: "qq-fixture",
@@ -341,16 +461,19 @@ registry.channels.push({
           to: string;
           deliveryQueueId?: string;
           custody: { reference: string };
+          payload: { sourceIndex?: number };
         }) {
           producerAuthorizations++;
+          authorizedSources.push(input.payload.sourceIndex);
           assert(input.deliveryQueueId);
           assert.equal(input.custody.reference, "host:full-behavior");
           if (input.to === "1072706649") throw new Error("receive-only");
         },
       },
       send: {
-        async text() {
+        async text(ctx: { sourceIndex?: number }) {
           producerSends++;
+          receiptSources.push(ctx.sourceIndex);
           return {
             messageId: "fixture-platform-id",
             receipt: {
@@ -412,8 +535,8 @@ const productionBatch = await nativeScope.d(registry, () =>
   nativeDelivery.n({
     ...producer,
     payloads: [
-      { text: "first approved part" },
-      { text: "second approved part" },
+      { text: "identical approved payload" },
+      { text: "identical approved payload" },
     ],
     mirror: { idempotencyKey: "native-message-batch" },
   }),
@@ -426,11 +549,63 @@ assert.equal(
   "observer rejection plus every physical part is authorized",
 );
 
+assert.deepEqual(
+  authorizedSources.slice(-2),
+  [0, 1],
+  "identical bodies retain distinct source payload authorization identity",
+);
+assert.deepEqual(
+  receiptSources.slice(-2),
+  [0, 1],
+  "actual Channel send receives the same original source index for receipts",
+);
+await assert.rejects(
+  nativeScope.d(registry, () =>
+    nativeDelivery.n({
+      ...producer,
+      payloads: [
+        { text: "identical approved payload" },
+        { text: "identical approved payload" },
+      ],
+      mirror: { idempotencyKey: "native-message-batch" },
+    }),
+  ),
+  /already queued/,
+);
+assert.equal(
+  producerSends,
+  3,
+  "completed identical-payload batch must not resend on retry",
+);
+
+let restoredSourceIndex = 2;
+const restoredSparseHandler = fixture.handler({
+  ...params,
+  preparedBatch: sparseLoaded!.preparedBatch,
+  getSourceIndex: () => restoredSourceIndex,
+});
+await restoredSparseHandler.sendText("identical");
+restoredSourceIndex = 7;
+await restoredSparseHandler.sendText("identical");
+assert.deepEqual(
+  checks
+    .slice(-2)
+    .map((check) => (check.payload as { sourceIndex: number }).sourceIndex),
+  [2, 7],
+);
+assert.deepEqual(
+  sends.slice(-2).map((send) => (send as { sourceIndex: number }).sourceIndex),
+  [2, 7],
+  "recovered identical payload receipt identities must remain sparse original indices",
+);
+
 console.log(
   JSON.stringify({
     custody: "PASS",
     adoptions,
-    authorizedSends: 4,
+    authorizedSends: sends.length - 1,
+    nativePayloadSourceIdentity: "PASS",
+    nativeContactHistoryRetention: "PASS",
     nativeSqliteStableIntent: "PASS",
     nativeMessageSkipQueueProducer: "PASS",
     feedbackFailurePreservesSend: "PASS",

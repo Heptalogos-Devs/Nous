@@ -50,16 +50,22 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	async function finalizeAssistantMessage() {
  		const finalMessage = withAssistantTurnTaint(ensureToolTurnIdentity(removeNonExecutableToolCalls(await response.result())), turnTainted);
  		if (addedPartial) context.messages[context.messages.length - 1] = finalMessage;
-@@ -488,6 +506,8 @@
+@@ -484,10 +502,14 @@
+ 				message: { ...finalMessage }
+ 			});
+ 		}
++		const actualOutcome = finalMessage.stopReason === "aborted" ? "cancelled" : finalMessage.stopReason === "error" ? "failed" : "completed";
++		managed?.captureEvent?.(finalMessage, application, actualOutcome);
+ 		await emit({
  			type: "message_end",
  			message: finalMessage
  		});
 +		outcomeReported = true;
-+		if (application) await managed.report(application, finalMessage.stopReason === "aborted" ? "cancelled" : finalMessage.stopReason === "error" ? "failed" : "completed", finalMessage);
++		if (application) await managed.report(application, actualOutcome, finalMessage);
  		return finalMessage;
  	}
  }
-@@ -615,7 +635,7 @@
+@@ -615,7 +637,7 @@
  			}
  			if (launched) await Promise.all(launched.started.map(async ({ index, entry, outcome }) => settle(index, entry, await outcome)));
  			for (const finalized of ordered) if (finalized) {
@@ -68,7 +74,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  				finalizedCalls.push(finalized);
  			}
  		} finally {
-@@ -633,7 +653,7 @@
+@@ -633,7 +655,7 @@
  		const toolCall = toolCalls[cursor];
  		if (!toolCall) continue;
  		const finalized = await completeUnstartedToolCall(batch, toolCall, { reason: skippedReason });
@@ -77,7 +83,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -1108,7 +1128,7 @@
+@@ -1108,7 +1130,7 @@
  			...hideFromChannelProgress ? { hideFromChannelProgress: true } : {}
  		}, validation?.kind === "prepared" ? validation.args : toolCall.arguments);
  		await emitToolExecutionEnd(finalized, batch.emit);
@@ -86,7 +92,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -1162,7 +1182,7 @@
+@@ -1162,7 +1184,7 @@
  		...finalized.hideFromChannelProgress === true ? { hideFromChannelProgress: true } : {}
  	});
  }
@@ -95,7 +101,12 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	const message = copyInternalToolResultState(finalized.result, withToolResultContentSource({
  		role: "toolResult",
  		toolCallId: finalized.toolCall.id,
-@@ -1180,6 +1200,7 @@
+@@ -1176,10 +1198,12 @@
+ 		type: "message_start",
+ 		message
+ 	});
++	managed?.captureEvent?.(message);
+ 	await emit({
  		type: "message_end",
  		message
  	});
@@ -103,7 +114,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	return message;
  }
  function readTurnTaintMetadata(message) {
-@@ -1531,6 +1552,7 @@
+@@ -1531,6 +1555,7 @@
  			} : void 0,
  			convertToLlm: this.convertToLlm,
  			transformContext: this.transformContext,
@@ -144,7 +155,7 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
  import { a as appendModelIdentitySystemPrompt, c as buildProjectMemoryWriteInstruction, i as buildConfiguredAgentSystemPrompt, l as prepareProjectMemoryBootstrap, o as buildModelIdentityPromptLine, s as resolveAgentPromptSurfaceForSessionKey } from "./system-prompt-params-B645JcX8.js";
  import { o as resolveUserTimezone, r as formatDateStamp } from "./date-time-C7YbYLih.js";
  import { n as prepareWatchedSessionsPrompt } from "./watched-sessions-prompt-C9QfwkEy.js";
-@@ -14248,6 +14250,25 @@
+@@ -14248,6 +14250,26 @@
  		state.terminal = mergeAgentRunAttemptTerminal(state.terminal, incoming);
  	};
  	const idleTimeoutTriggerRef = {};
@@ -156,13 +167,14 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
 +		let capturedInput;
 +		activeSession.agent.managedCognition = {
 +			prepare: (model, context, signal, budget) => {
-+				capturedInput = { boundaryVersion: 2, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
++				capturedInput = { boundaryVersion: 3, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
 +                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", model, context, signal: signal ?? input.runAbortController.signal,
 +					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: budget.reservedOutputTokens,
 +					audience: { visibility: attempt.sessionKey?.includes(":subagent:") ? "internal" : attempt.chatType === "direct" ? "direct" : attempt.chatType === "group" ? "group" : attempt.chatType === "channel" ? "public" : "internal", channel: attempt.messageChannel ?? attempt.messageProvider, senderId: attempt.senderId, destination: attempt.currentChannelId },
 +					measureContext: (value) => estimateNousInputTokensNative({ messages: value.messages, systemPrompt: value.systemPrompt, prompt: "" }) + estimateNousRenderedTokensNative({ systemPrompt: JSON.stringify(value.tools ?? []), prompt: "" }) };
 +				return engine.prepareModelInput(capturedInput);
 +			},
++			captureEvent: (message, application, outcome) => engine.captureNativeEvent?.(capturedInput, message, application, outcome),
 +			report: (application, outcome, message) => engine.reportModelOutcome(capturedInput, application, outcome, message),
 +			observe: (message) => engine.recordNativeEvent(capturedInput, message)
 +		};
@@ -205,17 +217,18 @@ diff --git a/dist/deliver-B6F55ipQ.js b/dist/deliver-B6F55ipQ.js
  import { C as normalizeOutboundReplyFacts, x as createReplyToDeliveryPolicy } from "./reply-payload-y5EgUJuZ.js";
  import { l as resolveOutboundPayloadMirrorText } from "./payloads-Ch7RD6Ym.js";
  import { a as runOutboundDeliveryCommitHooks, c as deliveryKindForPayload, d as maybePinDeliveredMessage, f as normalizeEmptyPayloadForDelivery, h as stripInternalRuntimeScaffoldingFromPayload, l as hasDeliveryResultIdentity, m as resolveOutboundMediaAccessForSend, o as buildPayloadSummary, s as collectPayloadMediaSources, u as maybeNotifyAfterDeliveredPayload } from "./delivery-queue-reconciliation-DMcA7z0l.js";
-@@ -363,6 +363,9 @@
+@@ -363,6 +363,10 @@
  	let activeSourceIndex;
  	const resolveMediaAccess = (mediaSources) => resolveOutboundMediaAccessForSend(params, channel, mediaSources);
  	const createHandler = (mediaSources) => createChannelHandler({
++		getSourceIndex: () => activeSourceIndex,
 +		preparedBatch,
 +		abortSignal,
 +		session: params.session,
  		cfg,
  		agentId: params.session?.agentId,
  		channel,
-@@ -790,7 +793,7 @@
+@@ -790,7 +794,7 @@
  	};
  	const wrappedParams = {
  		...params,
@@ -224,7 +237,7 @@ diff --git a/dist/deliver-B6F55ipQ.js b/dist/deliver-B6F55ipQ.js
  		requiredUnknownSendReconciliation: exactReconciliationRequired,
  		onPlatformSendStart: async (route, sourceIndex) => {
  			params.abortSignal?.throwIfAborted();
-@@ -1144,6 +1147,7 @@
+@@ -1144,6 +1148,7 @@
  	return await runOutboundDeliveryInternal(params);
  }
  async function runOutboundDeliveryInternal(input) {
@@ -253,7 +266,7 @@ diff --git a/dist/deliver-contracts-BrA0Kn8c.d.ts b/dist/deliver-contracts-BrA0K
 diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
 --- a/dist/deliver-prepare-7gjKTwQN.js
 +++ b/dist/deliver-prepare-7gjKTwQN.js
-@@ -372,6 +372,55 @@
+@@ -372,6 +372,57 @@
  	const { plugin } = await loadBootstrappedChannelPlugin(params);
  	return { extractMarkdownImages: plugin?.outbound?.extractMarkdownImages === true ? true : void 0 };
  }
@@ -289,6 +302,8 @@ diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
 +	const custody = params.message?.deliveryCustody;
 +	if (!custody) return;
 +	const batch = params.preparedBatch;
++	const sourceIndex = params.getSourceIndex?.();
++	if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || !batch?.entries?.some((entry) => entry.status === "accepted" && entry.sourceIndex === sourceIndex)) throw new PlatformMessageNotDispatchedError("Required original delivery payload identity is unavailable", { retryable: false });
 +	if (!params.deliveryQueueId || !batch?.deliveryCustody?.reference) throw new PlatformMessageNotDispatchedError("Required Host delivery custody is unavailable", { retryable: false });
 +	try {
 +		await custody.authorize(structuredClone({
@@ -298,7 +313,7 @@ diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
 +		phase: "dispatch", custody: batch.deliveryCustody, preparedBatch: batch,
 +		runId: batch.runId, executionIdentityToken: batch.executionIdentityToken,
 +		session: params.session,
-+		payload: { kind: route.kind ?? (route.mediaUrl ? "media" : "text"), text: route.text, mediaUrl: route.mediaUrl, payload: route.payload,
++		payload: { sourceIndex, kind: route.kind ?? (route.mediaUrl ? "media" : "text"), text: route.text, mediaUrl: route.mediaUrl, payload: route.payload,
 +			deliveryPartIndex: route.deliveryPartIndex, deliveryPartCount: route.deliveryPartCount }
 +		}));
 +	} catch (error) {
@@ -309,7 +324,7 @@ diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
  async function createChannelHandler(params) {
  	const { plugin, pluginRegistry } = await loadBootstrappedChannelPlugin(params);
  	const handler = withPluginRuntimeRegistryScope(pluginRegistry, () => createPluginHandler({
-@@ -501,6 +550,8 @@
+@@ -501,6 +552,8 @@
  	const dispatchToAdapter = async (route, send) => {
  		await params.onPlatformSendStart?.(route);
  		await params.onDirectAdapterHandoff?.();
@@ -318,16 +333,17 @@ diff --git a/dist/deliver-prepare-7gjKTwQN.js b/dist/deliver-prepare-7gjKTwQN.js
  		params.assertDirectAdapterHandoff?.();
  		return await send();
  	};
-@@ -731,6 +782,8 @@
+@@ -731,6 +784,9 @@
  	gatewayClientScopes: params.gatewayClientScopes,
  	conversationReadOrigin: params.conversationReadOrigin,
  	deliveryQueueId: params.deliveryQueueId,
 +	deliveryCustody: params.preparedBatch?.deliveryCustody,
++	get sourceIndex() { return params.getSourceIndex?.(); },
 +	signal: params.message?.deliveryCustody ? params.abortSignal : void 0,
  	preparedMessageId: params.preparedMessageId,
  	assertDirectAdapterHandoff: params.assertDirectAdapterHandoff,
  	onPlatformSendDispatch: params.onPlatformSendDispatch,
-@@ -915,14 +968,14 @@
+@@ -915,14 +971,14 @@
  			preparedMediaCount: buildPayloadSummary(compactPayload).mediaUrls.length
  		});
  	}
@@ -411,15 +427,17 @@ diff --git a/dist/host-hook-cleanup-BQvPj1LG.js b/dist/host-hook-cleanup-BQvPj1L
 diff --git a/dist/install-security-scan.types-C51Ik81l.d.ts b/dist/install-security-scan.types-C51Ik81l.d.ts
 --- a/dist/install-security-scan.types-C51Ik81l.d.ts
 +++ b/dist/install-security-scan.types-C51Ik81l.d.ts
-@@ -7990,6 +7990,7 @@
+@@ -7990,6 +7990,9 @@
    gatewayClientScopes?: readonly string[];
    /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
    deliveryQueueId?: string;
 +  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
++  /** Stable original payload identity for authorization and protocol receipts. */
++  sourceIndex?: number;
    /** @internal Stable platform-send index within one durable payload. */
    deliveryPartIndex?: number;
    /** @internal Exact platform-send count within one durable payload. */
-@@ -8166,6 +8167,7 @@
+@@ -8166,6 +8169,7 @@
  /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
  type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
    id?: string;
@@ -430,15 +448,17 @@ diff --git a/dist/install-security-scan.types-C51Ik81l.d.ts b/dist/install-secur
 diff --git a/dist/install-security-scan.types-CimJAuMq.d.ts b/dist/install-security-scan.types-CimJAuMq.d.ts
 --- a/dist/install-security-scan.types-CimJAuMq.d.ts
 +++ b/dist/install-security-scan.types-CimJAuMq.d.ts
-@@ -14002,6 +14002,7 @@
+@@ -14002,6 +14002,9 @@
    gatewayClientScopes?: readonly string[];
    /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
    deliveryQueueId?: string;
 +  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
++  /** Stable original payload identity for authorization and protocol receipts. */
++  sourceIndex?: number;
    /** @internal Stable platform-send index within one durable payload. */
    deliveryPartIndex?: number;
    /** @internal Exact platform-send count within one durable payload. */
-@@ -14178,6 +14179,7 @@
+@@ -14178,6 +14181,7 @@
  /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
  type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
    id?: string;
@@ -449,15 +469,17 @@ diff --git a/dist/install-security-scan.types-CimJAuMq.d.ts b/dist/install-secur
 diff --git a/dist/plugin-entry-C-sjzaBe.d.ts b/dist/plugin-entry-C-sjzaBe.d.ts
 --- a/dist/plugin-entry-C-sjzaBe.d.ts
 +++ b/dist/plugin-entry-C-sjzaBe.d.ts
-@@ -5042,6 +5042,7 @@
+@@ -5042,6 +5042,9 @@
    gatewayClientScopes?: readonly string[];
    /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
    deliveryQueueId?: string;
 +  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
++  /** Stable original payload identity for authorization and protocol receipts. */
++  sourceIndex?: number;
    /** @internal Stable platform-send index within one durable payload. */
    deliveryPartIndex?: number;
    /** @internal Exact platform-send count within one durable payload. */
-@@ -5218,6 +5219,7 @@
+@@ -5218,6 +5221,7 @@
  /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
  type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
    id?: string;
@@ -468,15 +490,17 @@ diff --git a/dist/plugin-entry-C-sjzaBe.d.ts b/dist/plugin-entry-C-sjzaBe.d.ts
 diff --git a/dist/plugin-entry-r6eDtEsn.d.ts b/dist/plugin-entry-r6eDtEsn.d.ts
 --- a/dist/plugin-entry-r6eDtEsn.d.ts
 +++ b/dist/plugin-entry-r6eDtEsn.d.ts
-@@ -14449,6 +14449,7 @@
+@@ -14449,6 +14449,9 @@
    gatewayClientScopes?: readonly string[];
    /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
    deliveryQueueId?: string;
 +  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
++  /** Stable original payload identity for authorization and protocol receipts. */
++  sourceIndex?: number;
    /** @internal Stable platform-send index within one durable payload. */
    deliveryPartIndex?: number;
    /** @internal Exact platform-send count within one durable payload. */
-@@ -14625,6 +14626,7 @@
+@@ -14625,6 +14628,7 @@
  /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
  type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
    id?: string;
@@ -560,15 +584,17 @@ diff --git a/dist/registry-BdPa2vko.js b/dist/registry-BdPa2vko.js
 diff --git a/dist/runtime-api-DDF9iz51.d.ts b/dist/runtime-api-DDF9iz51.d.ts
 --- a/dist/runtime-api-DDF9iz51.d.ts
 +++ b/dist/runtime-api-DDF9iz51.d.ts
-@@ -11892,6 +11892,7 @@
+@@ -11892,6 +11892,9 @@
    gatewayClientScopes?: readonly string[];
    /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
    deliveryQueueId?: string;
 +  deliveryCustody?: import("./types-BzYyevxm.js").ChannelDeliveryCustodyReference;
++  /** Stable original payload identity for authorization and protocol receipts. */
++  sourceIndex?: number;
    /** @internal Stable platform-send index within one durable payload. */
    deliveryPartIndex?: number;
    /** @internal Exact platform-send count within one durable payload. */
-@@ -12068,6 +12069,7 @@
+@@ -12068,6 +12071,7 @@
  /** Full message adapter shape composed from send, durable-final, live, and receive facets. */
  type ChannelMessageAdapterShape<TConfig = OpenClawConfig, TSendResult extends ChannelMessageSendResult = ChannelMessageSendResult> = {
    id?: string;
@@ -695,15 +721,17 @@ diff --git a/dist/types-BzYyevxm.d.ts b/dist/types-BzYyevxm.d.ts
  import { r as OpenClawConfig } from "./types.openclaw-DQK9GQyv.js";
  import { C as ReplyToMode } from "./types.base-D2CyC728.js";
  import "./types-B6GeWkdz.js";
-@@ -168,6 +170,7 @@
+@@ -168,6 +170,9 @@
    gatewayClientScopes?: readonly string[];
    /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
    deliveryQueueId?: string;
 +  deliveryCustody?: ChannelDeliveryCustodyReference;
++  /** Stable original prepared payload source index, preserved across queue recovery. */
++  sourceIndex?: number;
    /** @internal Stable platform-send index within one durable payload. */
    deliveryPartIndex?: number;
    /** @internal Exact platform-send count within one durable payload. */
-@@ -341,9 +344,37 @@
+@@ -341,9 +346,37 @@
    defaultAckPolicy?: ChannelMessageReceiveAckPolicy;
    supportedAckPolicies?: readonly ChannelMessageReceiveAckPolicy[];
  };
@@ -730,7 +758,7 @@ diff --git a/dist/types-BzYyevxm.d.ts b/dist/types-BzYyevxm.d.ts
 +    deliveryQueueId?: string;
 +    replyToId?: string | null;
 +    custody: ChannelDeliveryCustodyReference;
-+    payload: { kind: string; text?: string; mediaUrl?: string; payload?: unknown; deliveryPartIndex?: number; deliveryPartCount?: number };
++    payload: { sourceIndex: number; kind: string; text?: string; mediaUrl?: string; payload?: unknown; deliveryPartIndex?: number; deliveryPartCount?: number };
 +  }): Promise<void>;
 +};
  /** Full message adapter shape composed from send, durable-final, live, and receive facets. */

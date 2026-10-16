@@ -16,6 +16,12 @@ Subject 是独立持久个体，创建可省略 Seed；没有 Seed 不生成个�
 
 Host 保有历史、工具 schema、输出预留和 provider controls。renderer 只在干净的调用输入上应用一个 Nous slice，固定指引说明认知、证据和归属的使用方式；authority 不转换为管理/工具权限。slice 不持久写入 transcript。原生 system prompt 不再加载 SOUL/IDENTITY/USER/MEMORY/BOOTSTRAP 为第二份当前认知。
 
+## Host Life 与实际接触
+
+可选 Host bridge 使用官方 Client `/host-bridge` 的单一公开 wire 合同。操作者配置的 loopback origin 与私密 credentialFile 决定 Host，不从模型参数获得。v3 严格 provider 边界在每次调用前等待 Host 核验已持久 NativeRun/Activity、原生身份、prompt digest 与受限来源；缺少许可则终止。Host canonical usage 与结构化 contacts 分别进入 CognitionUsage/ObservationInput 的正式 fromJson，不另造认知对象。动态 WorkContext 替代静态绑定；Hosted user 消息不再从工程 prompt 重复生成泛化 Observation。
+
+工具/模型结果先由原生 transcript 持久非秘密 contact identity 与真实事件，再执行 Host pending → Nous receipt → Host committed。Host 保存 pending 与补交，插件不拥有第二个 durable queue。下一新 turn 和 compact 前读取正式完整 transcript 严格补交旧 contact；保留原 Activity、作者、来源和现实接触时间，不能用新 Activity 重新归属旧结果。原生 reset 保留原 transcript boundary；回写失败不是重复执行或发送的依据。子 Agent 在正式 isolated handoff 中接受同一 Host 的受限继承，不获得维护或渠道发送权限。公开路径、字段、配置、自动验证和实际集成边界统一见[包说明](../../../../packages/openclaw/README.md#host-life-与结构化接触)。
+
 ## 同步与预算
 
 prepare 复用 BuildManagedContext；apply 成功后才推进本 binding 的 cursor。RESET 替换全部 slice；APPEND 仅接受相同 track/epoch 和连续 revision。受众、用途、执行者、WorkContext 或内容变化会改变 scope/RESET。并行 worker 分开保存临时状态。

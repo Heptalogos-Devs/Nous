@@ -79,6 +79,28 @@ RESET 替换临时 slice，APPEND 仅接受相同 track/epoch 的连续前缀。
 
 当前采用认知时不加载可写 SOUL/IDENTITY/USER/MEMORY 作为第二份状态。Self 使用同一正式贡献与输入路径，插件不会合成个人经历。Self 通过正式领域操作形成、反思与修订；普通对话不直接修改持久状态。框架无关 API 见 [`@nous-wave/client/managed`](https://github.com/Heptalogos-Devs/Nous-Wave/blob/master/packages/client/src/managed.ts)，产品合同见 [Managed OpenClaw](https://github.com/Heptalogos-Devs/Nous-Wave/blob/master/docs/specs/active/cognitive-runtime/openclaw.md)。
 
+## Host Life 与结构化接触
+
+同一正式插件可选配置 `hostBridge`，不需要 Host 复制插件。配置由操作者提供：
+
+```json
+{"hostBridge":{"origin":"http://127.0.0.1:19090","credentialFile":"/absolute/private/host-bridge.token"}}
+```
+
+origin 只接受配置的 IPv4/IPv6 loopback HTTP origin，拒绝 URL 凭据、路径与重定向。credentialFile 为绝对、owner-only 私密文件，内容是一行 Bearer token；只有插件 Node 端读取，不进入公开 schema 模块、prompt 或日志。每次请求实际等待 Host；拒绝、离线、取消及缺少可信上下文都会阻止 provider。未配置 Host 的独立安装使用同一插件和 v3 原生入口。
+
+公开 wire 的唯一 owner 是官方 Client `@nous-wave/client/host-bridge`，导出 `HOST_BRIDGE_PATHS`、Zod schemas、相应 TS 类型和 `HOST_BRIDGE_JSON_SCHEMAS`，该入口不依赖 Node。Host 直接使用这些合同生成 OpenAPI/校验请求，不复制另一组认知 DTO。四个 POST 路径为 `/nous/v1/prepare`、`admitted`、`handoff`、`feedback`。
+
+prepare 携带真实 native Session key/ID、run/agent/history generation、父 key、Nous Session/Subject、invocation、稳定 contact request ID 与原始 prompt 的 SHA256，不转储原 prompt。Host 先持久受限 NativeRun/Activity，再按已知 run/digest/session/scope 许可。返回当前 `workContextId`、canonical `CognitionUsage` Protobuf JSON、`contacts[{contactRef,observation}]` 与 Activity/actor scope。插件严格 `fromJson` 并核对 Subject/Session、原生 agentInstanceId、稳定 observation requestId 和实际 observedAt；Host audience/sourceRead 原样进入正式 prepare。每次调用都重新设置当前 WorkContext；静态配置不能覆盖 Host 的活动。
+
+Hosted user 接触只使用 Host 的结构化 ObservationInput，不再将工程 prompt/QQ 上下文包另记成 `object:openclaw` 根。Host 保留实际作者、会话、MessageFact provenance、事件 occurred 与现实 observed；重放既有 contact 使用首次实际接触时间。admitted 回调使用同一 contactRequestId，回传实际 Projection 与 occurrence receipts。子 Agent 在正式 isolated handoff 中等待 Host 保存受限继承，拒绝时关闭已开的 Nous child Session；不借此授予维护或 QQ 发送权限。
+
+工具/assistant 实际结果通过反馈合同回流：Host 先持久 `stage=pending`，返回第一次保存的 canonical ObservationInput，其 context 保存公开 `HOST_ACTIVITY_CONTEXT_KEY`（`activity_ref`）、`HOST_CONTACT_CONTEXT_KEY`（`contact_request_id`）与 `HOST_COGNITION_USAGE_CONTEXT_KEY`（`cognition_usage`，canonical encoded usage），关联每个来源的原 Activity/实际 scope；Host 用 `withHostObservationScope` 一次构造并持久，重放不换成新 scope；插件提交 Nous 后以 `stage=committed` 回传真实 receipt。Host 负责 pending 补交，复用公开 `/managed` 的 `outcomeObservation` 构造函数及稳定 ID。实际 model_output 不代表渠道发送。
+
+v3 在原生 `message_end` 写入前同步附上非秘密 contact identity、首次现实 observedAt 与实际 outcome/projection 标记；原生先保存真实结果，再尝试回流。回写失败不把已发生动作变成重新执行/重新发送。下一全新 user turn 与 compact 前通过正式 SDK 读取完整 SQLite transcript，按原 contact/scope 补交带标记的结果，失败则拒绝后续模型/compact。原生 reset 为保留历史的 boundary；不清掉唯一副本。插件只有临时 cursor/已确认集合，不另建数据库、队列或重试模型循环。
+
+准备安装会统一升级到 boundaryVersion **3**；旧 native 入口明确拒绝，需重新运行正式 prepare。自动测试使用真实 loopback Host 与 mock Nous 公共操作检查上述许可/来源/恢复边界；离线 native fixture 另验证真实 SQLite 保留 contact 标记及 reset 历史。真实 Host、Activity 与 QQ 全流程仍由产品集成验证。
+
 ## 宿主控制的渠道派发
 
 受控渠道在 `ChannelPlugin.message.deliveryCustody` 实现必需的 `adopt` 与
@@ -96,8 +118,8 @@ completion retention 防止已结清 intent 重复发送；不能在 queue 写�
 旧队列迁移不得重新取得采纳，恢复只使用原 reference。
 
 每个 text/media/payload 及原生分段的 adapter handoff 前，原生等待 `authorize`，
-传入 reference、已保存 batch、实际本段正文/媒体、回复目标和原生 queue 身份；拒绝会
-阻止协议调用。宿主每次核验当前取消/停止、受众、载荷、来源范围和会话发送权限；
+传入 reference、已保存 batch、实际本段正文/媒体、原始 `sourceIndex`、回复目标和原生 queue 身份；拒绝会
+阻止协议调用。实际 Channel send context 暴露同一 `sourceIndex`，用于关联授权与回执；prepared batch 的原始索引经 SQLite 恢复保持不变，相同正文不被合并或按正文猜测。宿主每次核验当前取消/停止、受众、载荷、来源范围和会话发送权限；
 observe-only 会话由宿主及第一方 Channel 拒绝外发，通用层不硬编码平台账号。
 Channel 内的媒体子发送、编辑/撤回及自定义 actions 也必须复用同一宿主授权执行器，
 不能注册原始协议工具或直发旁路。原生未知发送、completion 与回执语义保持不变，
