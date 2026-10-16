@@ -27,14 +27,18 @@ export function invocationBudget(
     );
   return {
     outputTokens,
+    inputTokens,
     available(context: ManagedModelInput["context"]) {
       return inputTokens - input.measureContext(context);
     },
     assertFits(context: ManagedModelInput["context"]) {
       const tokens = input.measureContext(context);
       if (tokens > inputTokens || tokens + outputTokens > contextTokens)
-        throw new Error(
-          "Complete model input exceeds the trusted native/Host budget",
+        throw Object.assign(
+          new Error(
+            "Complete model input exceeds the trusted native/Host budget",
+          ),
+          { code: "NOUS_INPUT_WINDOW_EXCEEDED" },
         );
     },
   };

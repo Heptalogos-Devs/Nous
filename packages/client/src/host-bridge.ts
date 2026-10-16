@@ -12,6 +12,7 @@ export const HOST_BRIDGE_PATHS = Object.freeze({
   feedback: "/nous/v1/feedback",
   toolExecution: "/nous/v1/tool-execution",
   completion: "/nous/v1/completion",
+  runTerminal: "/gateway/v1/cognition/run-terminal",
   releaseResult: "/nous/v1/result-release",
 });
 const canonicalJson = z.record(z.string(), z.json());
@@ -34,6 +35,7 @@ const contactIdentity = {
   invocationId: z.string().min(1),
 };
 export const hostContactIdentitySchema = z.object(contactIdentity).strict();
+export type HostContactIdentity = z.infer<typeof hostContactIdentitySchema>;
 export const hostPrepareRequestSchema = z
   .object({
     ...contactIdentity,
@@ -225,6 +227,30 @@ export type HostCompletionRequest = z.infer<typeof hostCompletionRequestSchema>;
 export type HostCompletionResponse = z.infer<
   typeof hostCompletionResponseSchema
 >;
+/** Exact admitted contact terminal; native outer settlement owns this marker. */
+export const hostRunTerminalRequestSchema = z
+  .object({
+    ...contactIdentity,
+    outcome: z.enum(["completed", "failed", "cancelled"]),
+    endedAt: z.iso.datetime(),
+  })
+  .strict();
+export const hostRunTerminalResponseSchema = z
+  .object({
+    version: z.literal(1),
+    accepted: z.literal(true),
+    runId: z.string().min(1),
+    activityRef: z.string().min(1),
+    resultRetained: z.literal(true),
+    ready: z.literal(true),
+  })
+  .strict();
+export type HostRunTerminalRequest = z.infer<
+  typeof hostRunTerminalRequestSchema
+>;
+export type HostRunTerminalResponse = z.infer<
+  typeof hostRunTerminalResponseSchema
+>;
 /** Trusted Host release selector; it cannot supply replacement result text. */
 export const hostResultReleaseRequestSchema = z
   .object({
@@ -324,6 +350,8 @@ function httpSchema(schema: z.ZodType) {
 export const HOST_BRIDGE_JSON_SCHEMAS = {
   resultReleaseRequest: httpSchema(hostResultReleaseRequestSchema),
   resultReleaseResponse: httpSchema(hostResultReleaseResponseSchema),
+  runTerminalRequest: httpSchema(hostRunTerminalRequestSchema),
+  runTerminalResponse: httpSchema(hostRunTerminalResponseSchema),
   completionRequest: httpSchema(hostCompletionRequestSchema),
   completionResponse: httpSchema(hostCompletionResponseSchema),
   toolExecutionRequest: httpSchema(hostToolExecutionRequestSchema),

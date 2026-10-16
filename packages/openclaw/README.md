@@ -105,7 +105,7 @@ RESET 替换临时 slice，APPEND 仅接受相同 track/epoch 的连续前缀。
 
 origin 只接受配置的 IPv5/IPv6 loopback HTTP origin，拒绝 URL 凭据、路径与重定向。credentialFile 为绝对、owner-only 私密文件，内容是一行 Bearer token；只有插件 Node 端读取，不进入公开 schema 模块、prompt 或日志。每次请求实际等待 Host；拒绝、离线、取消及缺少可信上下文都会阻止 provider。未配置 Host 的独立安装使用同一插件和 v5 原生入口。 子 Agent handoff 的 `parentRunId` 必须由原生工具上下文的当前 run 传入，并参与请求 identity；不能按 Session 查找或猜测父 run。缺失该控制时在创建子 Nous Session 前拒绝。
 
-公开 wire 的唯一 owner 是官方 Client `@nous-wave/client/host-bridge`，导出 `HOST_BRIDGE_PATHS`、Zod schemas、相应 TS 类型和 `HOST_BRIDGE_JSON_SCHEMAS`，该入口不依赖 Node。Host 直接使用这些合同生成 OpenAPI/校验请求，不复制另一组认知 DTO。POST 路径为 `/nous/v1/prepare`、`admitted`、`handoff`、`completion`、`result-release`、`feedback`、`tool-execution`。
+公开 wire 的唯一 owner 是官方 Client `@nous-wave/client/host-bridge`，导出 `HOST_BRIDGE_PATHS`、Zod schemas、相应 TS 类型和 `HOST_BRIDGE_JSON_SCHEMAS`，该入口不依赖 Node。Host 直接使用这些合同生成 OpenAPI/校验请求，不复制另一组认知 DTO。POST 路径为 `/nous/v1/prepare`、`admitted`、`handoff`、`completion`、`result-release`、`feedback`、`tool-execution`。 整次原生 RoleRun 终态使用 `/gateway/v1/cognition/run-terminal`，请求仅含已 admitted 的 contact identity、实际 outcome 和首次 endedAt；Host 回执只标记结果已保留且 ready，不 release 或 announce。
 
 prepare 携带真实 native Session key/ID、run/agent/history generation、父 key、Nous Session/Subject、invocation、稳定 contact request ID 与原始 prompt 的 SHA256，不转储原 prompt。Host 先持久受限 NativeRun/Activity，再按已知 run/digest/session/scope 许可。返回受信 `roleScope`、必填 `tokenBudget{inputTokens,outputTokens}`、`allowedToolNames`、当前 `workContextId`、canonical `CognitionUsage` Protobuf JSON、`contacts[{contactRef,observation}]` 与 Activity/actor scope。插件严格 `fromJson` 并核对 Subject/Session、原生 agentInstanceId、稳定 observation requestId 和实际 observedAt；Host audience/sourceRead 原样进入正式 prepare。每次调用都重新设置当前 WorkContext；静态配置不能覆盖 Host 的活动。
 
@@ -116,6 +116,10 @@ Hosted user 接触只使用 Host 的结构化 ObservationInput，不再将工程
 工具/assistant 实际结果通过反馈合同回流：Host 先持久 `stage=pending`，返回第一次保存的 canonical ObservationInput，其 context 保存公开 `HOST_ACTIVITY_CONTEXT_KEY`（`activity_ref`）、`HOST_CONTACT_CONTEXT_KEY`（`contact_request_id`）与 `HOST_COGNITION_USAGE_CONTEXT_KEY`（`cognition_usage`，canonical encoded usage），关联每个来源的原 Activity/实际 scope；Host 用 `withHostObservationScope` 一次构造并持久，重放不换成新 scope；插件提交 Nous 后以 `stage=committed` 回传真实 receipt。Host 负责 pending 补交，复用公开 `/managed` 的 `outcomeObservation` 构造函数及稳定 ID。实际 model_output 不代表渠道发送。
 
 v5 在原生 `message_end` 写入前同步附上非秘密 contact identity、首次现实 observedAt 与实际 outcome/projection 标记；原生先保存真实结果，再尝试回流。回写失败不把已发生动作变成重新执行/重新发送。下一全新 user turn 与 compact 前通过正式 SDK 读取完整 SQLite transcript，按原 contact/scope 补交带标记的结果，失败则拒绝后续模型/compact。原生 reset 为保留历史的 boundary；不清掉唯一副本。插件只有临时 cursor/已确认集合，不另建数据库、队列或重试模型循环。
+
+固定前缀压缩由同一原生 Session compactor 执行。完整回合后的软阈值为有效输入预算的70%，目标约50%；保留明确的原生 keepRecentTokens/禁用设置与更小角色预算。后台生成不占发布事务，manual/overflow加入同一作业，硬超窗只允许一次必要压缩后重新核对完整输入。发布在原生 SQLite 短事务中核验历史代际、原前缀、summary/reset边界与角色许可，只替换捕获前缀，保留同时追加的尾部和完整工具对。
+
+摘要元数据保留原 caller 的 nativeRunId、key 与 prompt digest。后续 prepare 将这些原身份交回 Host，按 allowedHistoryUserKeys、role/view/world/audience 和 ReportUse 历史屏障重新核验；本次 SourceRead 候选根的变化不等于撤销已授权历史。旧摘要缺少可核验范围时保留原文，但不推定跨角色授权。当前 Nous/World/时钟片段每次重建，不进入永久摘要。
 
 v5 在实际 provider stream 强制应用 `providerControls.maxOutputTokens`，保留更小的原生 profile 上限；原生完整 system/tools/history/media/Nous slice 使用既有估算统一核对角色 input cap。实际 cap 与模型 metadata 随原生事实保存。
 

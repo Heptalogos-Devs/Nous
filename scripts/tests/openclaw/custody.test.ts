@@ -110,6 +110,15 @@ test("controlled native custody survives SQLite and gates real delivery producer
     assert(result.includes('"nativeMessageSkipQueueProducer":"PASS"'));
     assert(result.includes('"nativeAgentRpcFinalProducer":"PASS"'));
     assert(result.includes('"qqTraffic":0'));
+    const prefix = execFileSync(
+      process.execPath,
+      [
+        join(repositoryRoot, "scripts/tests/openclaw/prefix-compaction.ts"),
+        native,
+      ],
+      { cwd: repositoryRoot, env, encoding: "utf8", windowsHide: true },
+    );
+    assert(prefix.includes('"nativeSqlitePrefixCas":"PASS"'));
     const tools = execFileSync(
       process.execPath,
       [join(repositoryRoot, "scripts/tests/openclaw/tool-scope.ts"), native],

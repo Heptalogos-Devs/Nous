@@ -1,9 +1,9 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { toJson, fromJson } from "@bufbuild/protobuf";
+import { toJson, fromJson, type JsonObject } from "@bufbuild/protobuf";
 import { invocationBudget } from "./budget.js";
-import { scopeCallerHistory } from "./hosted-history.js";
+import { scopeCallerHistory, allowsCompactionScope } from "./hosted-history.js";
 import {
   standaloneSourceConfiguration,
   standaloneUsage,
@@ -13,6 +13,8 @@ import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { connectNousInstance } from "@nous-wave/client/node";
 import {
   withAcceptedContactRoots,
+  hostContactIdentitySchema,
+  hostRunTerminalRequestSchema,
   decodeAcceptedObservation,
 } from "@nous-wave/client/host-bridge";
 import { createManagedBinding, eventIdentity } from "@nous-wave/client/managed";
@@ -54,6 +56,7 @@ const sessionBinding = z
     nativeSessionId: z.string().min(1),
     nativeHistoryGeneration: z.string().min(1),
     nousSessionId: z.uuid(),
+    compactionScope: z.string().optional(),
     parentNativeRunId: z.string().min(1).optional(),
     parentNativeSessionKey: z.string().min(1).optional(),
   })
@@ -157,6 +160,15 @@ function register(api: OpenClawPluginApi): void {
         signal,
       );
     };
+    const compactionInputs = new Map<
+      string,
+      {
+        inputBudget: number;
+        outputTokens: number;
+        fixedTokens: number;
+        measure(messages: Context["messages"]): number;
+      }
+    >();
     let invocation = 0;
     const observedEvents = new Map<
       string,
@@ -396,13 +408,39 @@ function register(api: OpenClawPluginApi): void {
           estimatedTokens: 0,
         };
       },
+      async afterTurn(params) {
+        if (api.config.agents?.defaults?.compaction?.enabled === false) return;
+        const budget = compactionInputs.get(params.sessionId);
+        if (
+          !params.sessionKey ||
+          !budget ||
+          budget.measure(params.messages as Context["messages"]) <
+            budget.inputBudget * 0.7
+        )
+          return;
+        await engine.compact({
+          sessionId: params.sessionId,
+          sessionKey: params.sessionKey,
+          sessionTarget: params.sessionTarget,
+          tokenBudget: params.tokenBudget,
+          force: false,
+          compactionTarget: "budget",
+          runtimeContext: {
+            ...params.runtimeContext,
+            nousBackgroundPrefix: true,
+          },
+          runtimeSettings: params.runtimeSettings,
+        });
+      },
       async compact(params) {
-        await flushNativeHistory(
-          params.sessionId,
-          params.sessionKey,
-          params.agentId,
-          params.abortSignal,
-        );
+        const background = params.runtimeContext?.nousBackgroundPrefix === true;
+        if (!background)
+          await flushNativeHistory(
+            params.sessionId,
+            params.sessionKey,
+            params.agentId,
+            params.abortSignal,
+          );
         const entry = api.runtime.agent.session.getSessionEntry({
           sessionKey: params.sessionKey,
           agentId: params.agentId,
@@ -419,23 +457,103 @@ function register(api: OpenClawPluginApi): void {
           throw new Error(
             "Native compaction has no current durable Nous binding",
           );
-        const checked = await (
-          await connect()
-        ).runtime.reportUse(
-          {
+        const assertPublish = async () => {
+          await flushNativeHistory(
+            params.sessionId,
+            params.sessionKey,
+            params.agentId,
+          );
+          const checked = await (
+            await connect()
+          ).runtime.reportUse({
             subjectId: config.subjectId,
             sessionId: parsed.data.nousSessionId,
             consumerRef: config.consumerId,
             modelInput: true,
             events: [],
-          },
-          { signal: params.abortSignal },
-        );
-        if (!checked.modelInputChecked)
-          throw new Error(
-            "Required native compaction history check was not enforced",
+          });
+          if (!checked.modelInputChecked)
+            throw new Error(
+              "Required native compaction history check was not enforced",
+            );
+        };
+        if (!background) await assertPublish();
+        const budget = compactionInputs.get(params.sessionId);
+        const capturedBudget = parsed.data.compactionScope
+          ? (JSON.parse(parsed.data.compactionScope) as { model?: unknown[] })
+              .model
+          : undefined;
+        const inputBudget = budget?.inputBudget ?? capturedBudget?.[3];
+        const outputTokens = budget?.outputTokens ?? capturedBudget?.[4];
+        if (
+          typeof inputBudget !== "number" ||
+          typeof outputTokens !== "number" ||
+          !Number.isSafeInteger(inputBudget) ||
+          !Number.isSafeInteger(outputTokens) ||
+          inputBudget <= 0 ||
+          outputTokens <= 0
+        )
+          throw Error(
+            "Native compaction requires an actual prepared role budget",
           );
-        return delegateCompactionToRuntime(params);
+        return delegateCompactionToRuntime({
+          ...params,
+          runtimeContext: {
+            ...params.runtimeContext,
+            nousPrefixPolicy: {
+              background,
+              scope: parsed.data.compactionScope,
+              inputBudget,
+              outputTokens,
+              fixedTokens: budget?.fixedTokens ?? 0,
+              filterHistory: (messages: Context["messages"]) => {
+                const scope = parsed.data.compactionScope
+                  ? (JSON.parse(parsed.data.compactionScope) as {
+                      history?: string[];
+                    })
+                  : undefined;
+                return hosted
+                  ? scopeCallerHistory(
+                      { messages },
+                      scope?.history ?? [],
+                      (summary) =>
+                        allowsCompactionScope(
+                          summary,
+                          scope,
+                          scope?.history ?? [],
+                        ),
+                    ).messages
+                  : messages;
+              },
+              allowsSummary: (scope: unknown) => {
+                if (!hosted) return true;
+                const current = parsed.data.compactionScope
+                  ? (JSON.parse(parsed.data.compactionScope) as {
+                      history?: string[];
+                    })
+                  : undefined;
+                return allowsCompactionScope(
+                  scope,
+                  current,
+                  current?.history ?? [],
+                );
+              },
+              assertPublish,
+            },
+          },
+        });
+      },
+      async runTerminal(request) {
+        if (!bridge) return undefined;
+        const terminal = hostRunTerminalRequestSchema.parse(request);
+        if (terminal.subjectId !== config.subjectId)
+          throw Error("Native terminal belongs to a foreign Subject");
+        await flushNativeHistory(
+          terminal.native.sessionId,
+          terminal.native.sessionKey,
+          terminal.native.agentId,
+        );
+        return bridge.runTerminal(terminal);
       },
       captureNativeEvent(input, message, application, outcome) {
         hosted?.capture(input, message, application, outcome);
@@ -735,6 +853,7 @@ function register(api: OpenClawPluginApi): void {
               ...scopeCallerHistory(
                 input.context,
                 permission.response.allowedHistoryUserKeys,
+                permission.usage,
               ),
               tools: input.context.tools?.filter((tool) =>
                 permission.response.allowedToolNames.includes(tool.name),
@@ -768,6 +887,66 @@ function register(api: OpenClawPluginApi): void {
             config.subjectId,
             standaloneReceipts,
           );
+        if (input.sessionKey) {
+          const entry = api.runtime.agent.session.getSessionEntry({
+            sessionKey: input.sessionKey,
+            agentId: input.agentId,
+            readConsistency: "latest",
+          });
+          const saved = sessionBinding.parse(
+            entry?.pluginExtensions?.[namespace]?.[namespace],
+          );
+          const scope = JSON.stringify({
+            role: usage.role,
+            purpose: usage.purpose,
+            view: usage.view,
+            contactNature: usage.contactNature,
+            worldId: usage.worldId,
+            timeDomain: usage.worldTime?.timeDomainRef,
+            cognitionAudience: (
+              toJson(CognitionUsageSchema, usage) as JsonObject
+            ).audience,
+            sourceRead: (toJson(CognitionUsageSchema, usage) as JsonObject)
+              .sourceRead,
+            audience: input.audience,
+            model: [
+              input.model.provider,
+              input.model.id,
+              input.contextTokenBudget,
+              providerBudget.inputTokens,
+              providerBudget.outputTokens,
+            ],
+            history: permission?.response.allowedHistoryUserKeys,
+            historyUsers: permission?.identity.historyUsers,
+            tools: permission?.response.allowedToolNames,
+          });
+          if (saved.compactionScope !== scope)
+            await input.persistSessionBinding({
+              ...saved,
+              compactionScope: scope,
+            });
+        }
+        compactionInputs.set(input.sessionId, {
+          inputBudget: providerBudget.inputTokens,
+          outputTokens: providerBudget.outputTokens,
+          fixedTokens: input.measureContext({ ...modelContext, messages: [] }),
+          measure: (messages) =>
+            input.measureContext({
+              ...modelContext,
+              messages: permission
+                ? scopeCallerHistory(
+                    { ...modelContext, messages },
+                    permission.response.allowedHistoryUserKeys,
+                    permission.usage,
+                  ).messages
+                : messages,
+            }),
+        });
+        if (available <= 256)
+          throw Object.assign(
+            new Error("Complete input requires native prefix compaction"),
+            { code: "NOUS_INPUT_WINDOW_EXCEEDED" },
+          );
         const prepared = await binding.prepare({
           usage,
           workContextId:
@@ -780,12 +959,13 @@ function register(api: OpenClawPluginApi): void {
           modelContext,
           prepared,
           {
-            render(base, segments, invocationUsage, clock) {
+            render(base, segments, invocationUsage, clock, epistemicView) {
               const rendered = cognitionRenderer.render(
                 base,
                 segments,
                 invocationUsage,
                 clock,
+                epistemicView,
               );
               providerBudget.assertFits(rendered);
               return rendered;
@@ -813,6 +993,32 @@ function register(api: OpenClawPluginApi): void {
             occurrences,
             input.signal,
           );
+        compactionInputs.set(input.sessionId, {
+          inputBudget: providerBudget.inputTokens,
+          outputTokens: providerBudget.outputTokens,
+          fixedTokens: input.measureContext({ ...context, messages: [] }),
+          measure: (messages) =>
+            input.measureContext({
+              ...context,
+              messages: permission
+                ? scopeCallerHistory(
+                    { ...context, messages },
+                    permission.response.allowedHistoryUserKeys,
+                    permission.usage,
+                  ).messages
+                : messages,
+            }),
+        });
+        if (hosted && permission) {
+          if (!input.persistAdmittedContact)
+            throw Error(
+              "Required native admitted-contact custody is unavailable",
+            );
+          await input.persistAdmittedContact(
+            hostContactIdentitySchema.strip().parse(permission.identity),
+            permission.response.roleScope,
+          );
+        }
         input.signal.throwIfAborted();
         api.logger.info(
           `Nous applied invocation=${application.invocationId} kind=${prepared.kind} projection=${applied.projectionId} sources=${applied.sourceRefs.length} budgetEstimate=openclaw_native`,

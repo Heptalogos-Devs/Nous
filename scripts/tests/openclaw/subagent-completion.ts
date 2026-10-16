@@ -324,6 +324,8 @@ try {
           JSON.parse(s) as {
             event: string;
             continuation?: unknown;
+            native?: { runId: string; sessionKey: string };
+            outcome?: string;
             parentRunId?: string;
             childRunId: string;
             childSessionKey: string;
@@ -348,6 +350,25 @@ try {
     (e) => e.event === "terminal" && !e.continuation,
   )!;
   assert.equal(terminal.parentRunId, parentRunId);
+  await until(async () =>
+    (await events()).some(
+      (e) =>
+        e.event === "runTerminal" &&
+        (e.native as { runId?: string } | undefined)?.runId ===
+          terminal.childRunId,
+    ),
+  );
+  const directTerminal = (await events()).find(
+    (e) =>
+      e.event === "runTerminal" &&
+      (e.native as { runId?: string } | undefined)?.runId ===
+        terminal.childRunId,
+  )!;
+  assert.equal(directTerminal.outcome, "completed");
+  assert.equal(
+    (directTerminal.native as { sessionKey: string }).sessionKey,
+    terminal.childSessionKey,
+  );
   const childCalls = turns.get("worker");
   assert.equal(childCalls, 2);
   await sdk.callGatewayFromCli("fixture.releaseCompletion", opts, {

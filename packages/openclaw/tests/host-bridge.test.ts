@@ -11,6 +11,9 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
   hostPrepareRequestSchema,
+  hostRunTerminalRequestSchema,
+  type HostRunTerminalRequest,
+  type HostContactIdentity,
   hostToolExecutionRequestSchema,
   hostAdmittedRequestSchema,
   decodeProjection,
@@ -85,6 +88,8 @@ async function fixture(hosted = true) {
     tokenBudget: { inputTokens: 8192, outputTokens: 128 },
   };
   const prepares: HostPrepareRequest[] = [];
+  const terminals: HostRunTerminalRequest[] = [];
+  const admittedContacts: unknown[] = [];
   const handoffs: unknown[] = [];
   const admittedChildren = new Set<string>();
   const pending = new Map<string, Record<string, unknown>>();
@@ -106,6 +111,21 @@ async function fixture(hosted = true) {
       for await (const chunk of req) raw += String(chunk);
       const body: unknown = JSON.parse(raw);
       res.setHeader("content-type", "application/json");
+      if (req.url === HOST_BRIDGE_PATHS.runTerminal) {
+        const request = hostRunTerminalRequestSchema.parse(body);
+        terminals.push(request);
+        res.end(
+          JSON.stringify({
+            version: 1,
+            accepted: true,
+            runId: request.native.runId,
+            activityRef: firstWork,
+            resultRetained: true,
+            ready: true,
+          }),
+        );
+        return;
+      }
       if (req.url === HOST_BRIDGE_PATHS.prepare) {
         const request = hostPrepareRequestSchema.parse(body);
         prepares.push(request);
@@ -395,6 +415,12 @@ async function fixture(hosted = true) {
             at: timestampFromDate(new Date(0)),
             recordedAt: timestampFromDate(new Date(0)),
           },
+          epistemicView: {
+            complete: true,
+            coverage: [
+              { code: "bounded-coverage", detail: "formal projection view" },
+            ],
+          },
           segments: [],
         },
       } as never),
@@ -488,6 +514,12 @@ async function fixture(hosted = true) {
       reservedOutputTokens: 512,
       measureContext: () => 100,
       audience: { visibility: "internal" },
+      persistAdmittedContact: async (
+        identity: HostContactIdentity,
+        roleScope: HostRoleScope,
+      ) => {
+        admittedContacts.push({ identity, roleScope });
+      },
       persistSessionBinding: async (value: Record<string, string>) => {
         entries.get("native:main")!.pluginExtensions = {
           "nous-cognition": { "nous-cognition": value },
@@ -506,6 +538,8 @@ async function fixture(hosted = true) {
     stopHost,
     state,
     prepares,
+    terminals,
+    admittedContacts,
     handoffs,
     pending,
     stored,
@@ -934,6 +968,74 @@ test("the actual hosted input applies output caps and rejects a complete managed
       "trusted native/Host budget",
     );
     expect(f.build.mock.calls.length).toBe(prior + 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("actual SDK input renders EpistemicView and native whole-run terminal carries only the admitted identity", async () => {
+  const f = await fixture();
+  mocks.history = [];
+  try {
+    const input = f.input();
+    const application = await f.engine.prepareModelInput(input);
+    expect(application.context.systemPrompt).toContain(
+      '"epistemicView":{"complete":true,"coverage":[{"code":"bounded-coverage","detail":"formal projection view"}]}',
+    );
+    expect(f.admittedContacts).toHaveLength(1);
+    const { identity } = f.admittedContacts[0] as {
+      identity: HostPrepareRequest;
+    };
+    const terminal = {
+      ...identity,
+      outcome: "completed" as const,
+      endedAt: new Date().toISOString(),
+    };
+    expect(
+      hostRunTerminalRequestSchema.safeParse({
+        ...terminal,
+        text: "model replacement",
+      }).success,
+    ).toBe(false);
+    const receipt = await f.engine.runTerminal(terminal);
+    expect(receipt).toMatchObject({
+      accepted: true,
+      runId: input.runId,
+      resultRetained: true,
+      ready: true,
+    });
+    expect(f.terminals).toEqual([terminal]);
+    expect(f.runtime.recordObservation.mock.calls).toHaveLength(2);
+  } finally {
+    await f.close();
+  }
+});
+
+test("natural completed turn requests background native compaction without waiting for model work", async () => {
+  const f = await fixture();
+  mocks.history = [];
+  mocks.delegated.mockClear();
+  try {
+    const input = f.input();
+    input.measureContext = () => 6000;
+    await f.engine.prepareModelInput(input);
+    await f.engine.afterTurn!({
+      sessionId: input.sessionId,
+      sessionKey: input.sessionKey,
+      sessionFile: input.sessionKey!,
+      messages: input.context.messages,
+      prePromptMessageCount: 0,
+    });
+    expect(mocks.delegated).toHaveBeenCalledOnce();
+    expect(mocks.delegated.mock.calls[0]?.[0]).toMatchObject({
+      runtimeContext: {
+        nousPrefixPolicy: {
+          background: true,
+          inputBudget: 8064,
+          outputTokens: 128,
+        },
+      },
+    });
   } finally {
     await f.close();
   }
