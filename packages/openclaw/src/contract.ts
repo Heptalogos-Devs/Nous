@@ -47,6 +47,8 @@ export interface ManagedContextEngine extends ContextEngine {
     params: Parameters<
       NonNullable<ContextEngine["prepareSubagentSpawn"]>
     >[0] & {
+      /** Exact native run that requested this child, carried by the native tool context. */
+      parentRunId: string;
       persistSessionBinding(value: Record<string, string>): Promise<void>;
     },
   ): Promise<{ rollback(): Promise<void> }>;

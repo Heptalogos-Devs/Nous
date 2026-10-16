@@ -76,6 +76,7 @@ export const hostHandoffRequestSchema = z
     version: z.literal(1),
     requestId: z.uuid(),
     subjectId: z.uuid(),
+    parentRunId: z.string().min(1),
     parentSessionKey: z.string().min(1),
     parentSessionId: z.string().min(1),
     parentNousSessionId: z.uuid(),

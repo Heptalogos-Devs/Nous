@@ -98,7 +98,7 @@ RESET 替换临时 slice，APPEND 仅接受相同 track/epoch 的连续前缀。
 {"hostBridge":{"origin":"http://127.0.0.1:19090","credentialFile":"/absolute/private/host-bridge.token"}}
 ```
 
-origin 只接受配置的 IPv4/IPv6 loopback HTTP origin，拒绝 URL 凭据、路径与重定向。credentialFile 为绝对、owner-only 私密文件，内容是一行 Bearer token；只有插件 Node 端读取，不进入公开 schema 模块、prompt 或日志。每次请求实际等待 Host；拒绝、离线、取消及缺少可信上下文都会阻止 provider。未配置 Host 的独立安装使用同一插件和 v3 原生入口。
+origin 只接受配置的 IPv4/IPv6 loopback HTTP origin，拒绝 URL 凭据、路径与重定向。credentialFile 为绝对、owner-only 私密文件，内容是一行 Bearer token；只有插件 Node 端读取，不进入公开 schema 模块、prompt 或日志。每次请求实际等待 Host；拒绝、离线、取消及缺少可信上下文都会阻止 provider。未配置 Host 的独立安装使用同一插件和 v3 原生入口。 子 Agent handoff 的 `parentRunId` 必须由原生工具上下文的当前 run 传入，并参与请求 identity；不能按 Session 查找或猜测父 run。缺失该控制时在创建子 Nous Session 前拒绝。
 
 公开 wire 的唯一 owner 是官方 Client `@nous-wave/client/host-bridge`，导出 `HOST_BRIDGE_PATHS`、Zod schemas、相应 TS 类型和 `HOST_BRIDGE_JSON_SCHEMAS`，该入口不依赖 Node。Host 直接使用这些合同生成 OpenAPI/校验请求，不复制另一组认知 DTO。四个 POST 路径为 `/nous/v1/prepare`、`admitted`、`handoff`、`feedback`。
 
