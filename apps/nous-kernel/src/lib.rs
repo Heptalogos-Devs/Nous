@@ -78,17 +78,13 @@ impl NousRuntime {
         let resident_limit = system_snapshot.get(nous_runtime::RESIDENT_LIMIT_KEY)?;
         let clocks = nous_runtime::SubjectClockService::open(store.clone(), clock.clone()).await?;
         let objects = ObjectStore::open(&options.object_root).await?;
-        let subjects = SubjectCoreService::with_clock(
-            store.clone(),
-            objects.clone(),
-            configuration.clone(),
-            clock.clone(),
-        );
+        let subjects =
+            SubjectCoreService::new(store.clone(), objects.clone(), configuration.clone());
         let cognition = CognitiveRuntimeService::with_clock(
             store.clone(),
             resident_limit,
             configuration.clone(),
-            clock,
+            Arc::new(clocks.clone()),
         )?;
         let material = MaterialService::new(
             store.clone(),
@@ -302,19 +298,21 @@ impl NousRuntime {
             )
             .into());
         }
-        if query.temporal_frame.clock_now == chrono::DateTime::<chrono::Utc>::UNIX_EPOCH {
-            query.temporal_frame.clock_now = self.cognition.now(query.subject);
-        }
-        let historical = query.temporal_frame.authority_view != AuthorityView::Current
+        self.cognition.capture_query_clock(&mut query).await?;
+        let historical = query.temporal_frame.knowledge_at_world_time.is_some()
+            || query.temporal_frame.authority_view != AuthorityView::Current
             || query.temporal_frame.revision_view != RevisionView::Current;
         let view = if historical {
             let at = match query.temporal_frame.authority_view {
                 AuthorityView::AsOf(at) => at,
-                AuthorityView::Current => query.temporal_frame.clock_now,
+                AuthorityView::Current => query.temporal_frame.authority_now,
             };
-            let view = self
+            let mut view = self
                 .historical_authority_view(query.subject, at, query.temporal_frame.revision_view)
                 .await?;
+            if let Some(cut) = &query.temporal_frame.knowledge_at_world_time {
+                self.store.project_world_knowledge(&mut view, cut).await?;
+            }
             Some(Arc::new(view))
         } else {
             None
@@ -514,4 +512,30 @@ pub fn configuration_catalog(
         registry.import(descriptor)?;
     }
     registry.finish()
+}
+
+impl NousRuntime {
+    pub async fn change_clock(
+        &self,
+        subject: SubjectId,
+        operation: nous_core::OperationId,
+        change: nous_runtime::ClockChange,
+    ) -> Result<nous_runtime::ClockSnapshot> {
+        self.change_clock_if_revision(subject, operation, change, None)
+            .await
+    }
+    pub async fn change_clock_if_revision(
+        &self,
+        subject: SubjectId,
+        operation: nous_core::OperationId,
+        change: nous_runtime::ClockChange,
+        expected_revision: Option<i64>,
+    ) -> Result<nous_runtime::ClockSnapshot> {
+        let snapshot = self
+            .clocks
+            .change_if_revision(subject, operation, change, expected_revision)
+            .await?;
+        self.cognition.clock_changed(subject).await?;
+        Ok(snapshot)
+    }
 }

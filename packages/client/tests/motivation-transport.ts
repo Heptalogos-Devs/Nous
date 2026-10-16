@@ -1,4 +1,4 @@
-import { DomainTemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
+import { DomainTemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { criterionFactContext } from "../src/motivation.js";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
@@ -132,7 +132,7 @@ try {
   const sourceRead = input.sourceRead;
   const usage = {
     agentInstanceId: "fixture:main",
-    purpose: "deliberation",
+    purpose: "subject_deliberation",
     intent: "bounded study condition",
     audience: {
       conversationRef: "conversation:fixture",
@@ -509,9 +509,14 @@ try {
           scope: { description: "Learning together" },
           statement: "A bounded actual collaboration",
           validTime: {
-            value: {
-              case: "interval",
-              value: { start: timestampFromDate(new Date(Date.now() - 60000)) },
+            timeDomainRef: "time:real",
+            extent: {
+              value: {
+                case: "interval",
+                value: {
+                  start: timestampFromDate(new Date(Date.now() - 60000)),
+                },
+              },
             },
           },
           judgment: {

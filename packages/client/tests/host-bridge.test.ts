@@ -21,7 +21,7 @@ test("public codecs preserve canonical scope and reject unknown cognition fields
   const usage = decodeCognitionUsage(
     encodeCognitionUsage({
       agentInstanceId: "native:run",
-      purpose: "deliberation",
+      purpose: "subject_deliberation",
       intent: "Read actual shared sources",
       sourceRead: {
         subjectId: "subject:fixture",

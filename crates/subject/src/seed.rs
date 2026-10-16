@@ -184,7 +184,7 @@ impl SubjectCoreService {
                 operation_id,
                 kind,
                 digest: &digest,
-                now: self.clock.now(subject),
+                now: chrono::Utc::now(),
             },
         )
         .await?;

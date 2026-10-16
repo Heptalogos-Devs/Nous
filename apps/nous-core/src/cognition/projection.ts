@@ -2,17 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Code, ConnectError } from "@connectrpc/connect";
-import { create } from "@bufbuild/protobuf";
+import { create, toJson } from "@bufbuild/protobuf";
 import {
   DegradationSchema,
   ContextSegmentSchema,
   ProjectionSchema,
+  DomainStampSchema,
+  DomainTemporalEvidenceSchema,
   type Projection,
   type ContextSegment as Segment,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { ConsumerPolicy } from "../domain.js";
 import { ModelRuntime } from "../model/runtime.js";
 import { canonicalDigest } from "../digest.js";
+import { epistemicView } from "./epistemic.js";
 
 function family(
   segment: Segment,
@@ -87,13 +90,19 @@ export class ProjectionPlanner {
           await this.models.invocations.generate(
             "projection_steward",
             {
-              content: JSON.stringify(
-                optional.map((s) => ({
+              content: JSON.stringify({
+                semanticClock: batch.semanticClock
+                  ? toJson(DomainStampSchema, batch.semanticClock)
+                  : undefined,
+                sources: optional.map((s) => ({
                   id: s.segmentId,
                   role: s.semanticRole,
                   text: s.text,
+                  temporal: s.temporal
+                    ? toJson(DomainTemporalEvidenceSchema, s.temporal)
+                    : undefined,
                 })),
-              ),
+              }),
             },
             { signal },
           )
@@ -111,7 +120,13 @@ export class ProjectionPlanner {
             throw new Error("A Steward summary requires selected sources");
           const revision = canonicalDigest([
             this.models.invocations.identity("projection_steward"),
-            refined.map(({ segmentId: _contributionId, ...source }) => source),
+            refined.map((source) => {
+              const { segmentId: _id, ...content } = toJson(
+                ContextSegmentSchema,
+                source,
+              ) as Record<string, unknown>;
+              return content;
+            }),
             output.summary,
           ]);
           refined = [
@@ -124,6 +139,19 @@ export class ProjectionPlanner {
               authority: "interpretation",
               stability: "EPOCH_STABLE",
               sourceRevision: revision,
+              temporal: {
+                temporalEvidence: {
+                  sources: [
+                    ...new Map(
+                      refined
+                        .flatMap(
+                          (s) => s.temporal?.temporalEvidence?.sources ?? [],
+                        )
+                        .map((s) => [s.occurrenceId, s]),
+                    ).values(),
+                  ],
+                },
+              },
               usage: "task_evidence",
               domain: "runtime",
             }),
@@ -171,15 +199,30 @@ export class ProjectionPlanner {
       // Contribution IDs identify one source read; projected IDs identify the
       // actual selected content, evidence and revision delivered to a consumer.
       const { segmentId: _contributionId, ...content } = segment;
-      return { ...content, segmentId: canonicalDigest([1, content]) };
+      return {
+        ...content,
+        segmentId: canonicalDigest([
+          1,
+          toJson(
+            ContextSegmentSchema,
+            create(ContextSegmentSchema, { ...content, segmentId: "" }),
+          ),
+        ]),
+      };
     });
     // Required owners must be available, but an empty relevant view is valid:
     // a new Subject has no adopted cognition to invent. Kernel checks owner
     // availability; mandatory identity/guidance units above must still fit.
-    const projectionId = canonicalDigest([policy.revision, segments]);
+    const projectionId = canonicalDigest([
+      policy.revision,
+      segments.map((segment) =>
+        toJson(ContextSegmentSchema, create(ContextSegmentSchema, segment)),
+      ),
+    ]);
     return create(ProjectionSchema, {
       ...batch,
       projectionId,
+      epistemicView: epistemicView(segments, degradation),
       segments,
       degradation,
     });

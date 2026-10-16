@@ -91,7 +91,7 @@ impl SocialService {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let rows=sqlx::query("SELECT o.*,r.revision_id,r.revision_no,r.parent_revision_id,r.content,r.reason,r.formed_at,r.recorded_at FROM social_objects o JOIN social_revisions r ON r.object_id=o.object_id WHERE o.subject_id=$1 AND (($3 AND r.revision_id=ANY($2::uuid[])) OR (NOT $3 AND o.object_id=ANY($2::uuid[]) AND r.revision_id=o.current_revision_id))").bind(subject.0).bind(ids).bind(exact).fetch_all(&mut **tx).await.map_err(db)?;
+        let rows=sqlx::query("SELECT o.*,r.revision_id,r.revision_no,r.parent_revision_id,r.content,r.reason,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at FROM social_objects o JOIN social_revisions r ON r.object_id=o.object_id WHERE o.subject_id=$1 AND (($3 AND r.revision_id=ANY($2::uuid[])) OR (NOT $3 AND o.object_id=ANY($2::uuid[]) AND r.revision_id=o.current_revision_id))").bind(subject.0).bind(ids).bind(exact).fetch_all(&mut **tx).await.map_err(db)?;
         let revisions = rows
             .iter()
             .map(|r| r.try_get("revision_id").map_err(db))
@@ -128,6 +128,8 @@ impl SocialService {
                 suppression_state: row.try_get("suppression_state").map_err(db)?,
                 created_at: row.try_get("created_at").map_err(db)?,
                 formed_at: row.try_get("formed_at").map_err(db)?,
+                formed_time_domain_ref: row.try_get("formed_time_domain_ref").map_err(db)?,
+                formed_recorded_at: row.try_get("formed_recorded_at").map_err(db)?,
                 recorded_at: row.try_get("recorded_at").map_err(db)?,
                 evidence: evidence.remove(&revision_id).unwrap_or_default(),
             };

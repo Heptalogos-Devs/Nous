@@ -16,7 +16,7 @@ impl MemoryService {
     }
 
     pub async fn form_memory(&self, mut input: ExplicitMemoryInput) -> Result<MemoryView> {
-        let started_at = self.cognition.now(input.subject);
+        let started_at = self.cognition.recorded_now();
         self.normalize_memory_content(&mut input.content)?;
         input.validate()?;
 
@@ -107,7 +107,7 @@ impl MemoryService {
     ) -> Result<(MemoryId, MemoryRevisionId)> {
         let memory_id = MemoryId::new();
         let revision_id = MemoryRevisionId::new();
-        let now = self.cognition.now(input.subject);
+        let now = self.cognition.recorded_now();
         self.validate_basis_in_tx(tx, input.subject, &input.content.basis)
             .await?;
         sqlx::query("INSERT INTO memory_objects(memory_id,subject_id,cognitive_role,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,accessibility_mode,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal','auto',$5)")
@@ -161,8 +161,8 @@ impl MemoryService {
             None
         };
         let (valid_kind, valid_start, valid_end) = temporal_columns(&content.valid_time);
-        sqlx::query("INSERT INTO memory_revisions(memory_revision_id,memory_id,subject_id,revision_no,parent_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)")
-            .bind(revision_id.0).bind(memory_id.0).bind(subject.0).bind(revision_no).bind(parent.map(|id| id.0)).bind(revision_intent.map(|value| value.as_str())).bind(content.formation_mode.as_str()).bind(content.grounding_occurrence_id.map(|id| id.0)).bind(&content.semantic_role).bind(&content.title).bind(&content.representation_text).bind(format!("{:?}",content.epistemic_class).to_lowercase()).bind(valid_kind).bind(valid_start).bind(valid_end).bind(formed_at).bind(recorded_at).bind(producer_id).execute(&mut **tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO memory_revisions(memory_revision_id,memory_id,subject_id,revision_no,parent_revision_id,revision_intent,formation_mode,grounding_occurrence_id,semantic_role,title,representation_text,epistemic_class,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at,producer_signature_id,valid_time_domain_ref) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)")
+            .bind(revision_id.0).bind(memory_id.0).bind(subject.0).bind(revision_no).bind(parent.map(|id| id.0)).bind(revision_intent.map(|value| value.as_str())).bind(content.formation_mode.as_str()).bind(content.grounding_occurrence_id.map(|id| id.0)).bind(&content.semantic_role).bind(&content.title).bind(&content.representation_text).bind(format!("{:?}",content.epistemic_class).to_lowercase()).bind(valid_kind).bind(valid_start).bind(valid_end).bind(formed_at).bind(recorded_at).bind(producer_id).bind(&content.valid_time_domain_ref).execute(&mut **tx).await.map_err(db)?;
         for (index, basis) in content.basis.iter().enumerate() {
             self.insert_basis_in_tx(tx, revision_id, index as i32, basis)
                 .await?;
@@ -250,7 +250,7 @@ impl MemoryService {
     }
 
     pub async fn revise_memory(&self, mut input: ReviseMemoryInput) -> Result<MemoryView> {
-        let started_at = self.cognition.now(input.subject);
+        let started_at = self.cognition.recorded_now();
         if input.operation_id.0.is_nil() {
             return Err(Error::Invalid("operation_id is required".into()));
         }
@@ -390,7 +390,7 @@ impl MemoryService {
             Some(input.intent),
             revision_no,
             formed_at,
-            self.cognition.now(input.subject),
+            self.cognition.recorded_now(),
         )
         .await?;
         sqlx::query("UPDATE memory_objects SET current_revision_id=$3,object_epoch=object_epoch+1,integrity_state='valid' WHERE subject_id=$1 AND memory_id=$2").bind(input.subject.0).bind(input.memory_id.0).bind(revision_id.0).execute(&mut **tx).await.map_err(db)?;
@@ -428,7 +428,7 @@ impl MemoryService {
             }
             MutationStart::Active(mutation) => mutation,
         };
-        sqlx::query("INSERT INTO memory_revision_relations(from_revision_id,to_revision_id,relation,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING").bind(from.0).bind(to.0).bind(relation.as_str()).bind(self.cognition.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?;
+        sqlx::query("INSERT INTO memory_revision_relations(from_revision_id,to_revision_id,relation,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING").bind(from.0).bind(to.0).bind(relation.as_str()).bind(self.cognition.recorded_now()).execute(&mut **mutation.tx()).await.map_err(db)?;
         mutation
             .invalidate(ProjectionInvalidation::topology())
             .await?;

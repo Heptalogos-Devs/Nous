@@ -3,9 +3,16 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { create, type Message } from "@bufbuild/protobuf";
 import {
+  create,
+  toJson,
+  type JsonObject,
+  type Message,
+} from "@bufbuild/protobuf";
+import {
+  CognitionUsageSchema,
   ContextCursorSchema,
+  ContextSegmentSchema,
   type ContextCursor as Cursor,
   type Projection,
   type ContextSegment as Segment,
@@ -45,12 +52,19 @@ export class ContextCompiler {
     projection: Projection,
     known?: Cursor,
   ): ContextPatch {
+    const usage = key.usage
+      ? (toJson(CognitionUsageSchema, key.usage) as JsonObject)
+      : undefined;
+    // The current clock point is refreshed metadata, not a new invocation scope.
+    // Preserve its domain alongside the full role, world and source authority.
+    if (usage) delete usage.worldTime;
     const trackId = digest([
       key.subjectId,
       key.sessionId,
       key.workContextId ?? "",
       key.consumerId,
-      key.usage ?? null,
+      usage ?? null,
+      key.usage?.worldTime?.timeDomainRef ?? "",
     ]);
     const previous = this.tracks.get(trackId);
     const synchronized =
@@ -64,7 +78,8 @@ export class ContextCompiler {
       previous.segments.length <= projection.segments.length &&
       previous.segments.every(
         (segment, index) =>
-          digest(segment) === digest(projection.segments[index]),
+          digest(toJson(ContextSegmentSchema, segment)) ===
+          digest(toJson(ContextSegmentSchema, projection.segments[index]!)),
       );
     if (!appendable) {
       const cursor = create(ContextCursorSchema, {

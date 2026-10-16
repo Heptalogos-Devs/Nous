@@ -40,8 +40,7 @@ impl p::cognitive_clock_service_server::CognitiveClockService for KernelService 
         rpc_reply(async {
             let input = request.into_inner();
             self.0
-                .clocks
-                .change(
+                .change_clock(
                     SubjectId(id(&input.subject_id)?),
                     OperationId(id(&input.operation_id)?),
                     ClockChange::Configure {
@@ -62,11 +61,11 @@ impl p::cognitive_clock_service_server::CognitiveClockService for KernelService 
         rpc_reply(async {
             let input = request.into_inner();
             self.0
-                .clocks
-                .change(
+                .change_clock_if_revision(
                     SubjectId(id(&input.subject_id)?),
                     OperationId(id(&input.operation_id)?),
                     ClockChange::Pause,
+                    input.expected_revision,
                 )
                 .await
                 .map(clock)
@@ -80,8 +79,7 @@ impl p::cognitive_clock_service_server::CognitiveClockService for KernelService 
         rpc_reply(async {
             let input = request.into_inner();
             self.0
-                .clocks
-                .change(
+                .change_clock(
                     SubjectId(id(&input.subject_id)?),
                     OperationId(id(&input.operation_id)?),
                     ClockChange::Advance {
@@ -100,11 +98,11 @@ impl p::cognitive_clock_service_server::CognitiveClockService for KernelService 
         rpc_reply(async {
             let input = request.into_inner();
             self.0
-                .clocks
-                .change(
+                .change_clock_if_revision(
                     SubjectId(id(&input.subject_id)?),
                     OperationId(id(&input.operation_id)?),
                     ClockChange::Resume { rate: input.rate },
+                    input.expected_revision,
                 )
                 .await
                 .map(clock)

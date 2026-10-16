@@ -1,0 +1,262 @@
+{
+  "request": {
+    "artifactId": "01a143bd-4c23-74c2-a90e-083e4e567097",
+    "identity": {
+      "operationKey": "64be3c9d-760f-4cd7-8950-42e50a4d8217",
+      "owner": "material",
+      "semanticDigest": "known-result-before-domain-upgrade",
+      "subjectId": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+    },
+    "occurrenceIds": [
+      "01a143bd-4c26-7f42-b12b-73a2bf661579",
+      "01a143bd-4c35-7903-a044-de1070bc7e96"
+    ],
+    "proposal": "{\"inputIds\":[\"01a143bd-4c26-7f42-b12b-73a2bf661579\",\"01a143bd-4c35-7903-a044-de1070bc7e96\"],\"rawOutput\":\"Original retained result; do not rewrite {\\\"formedAt\\\":\\\"old\\\"}\"}",
+    "requests": [
+      {
+        "context": {
+          "fixture": "actual old producer"
+        },
+        "inlineText": {
+          "mediaType": "text/plain",
+          "text": "Legacy actual inline content"
+        },
+        "observedAt": "2026-10-16T08:04:01.688Z",
+        "occurredTime": {
+          "instant": "2026-10-16T08:04:01.688Z"
+        },
+        "requestId": "4bd8cad7-b4d6-4f90-beb4-f1d6505ed3fc",
+        "sourceClass": "file",
+        "subjectId": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      },
+      {
+        "artifactId": "01a143bd-4c23-74c2-a90e-083e4e567097",
+        "context": {
+          "fixture": "actual old producer"
+        },
+        "observedAt": "2026-10-16T08:04:01.688Z",
+        "occurredTime": {
+          "instant": "2026-10-16T08:04:01.688Z"
+        },
+        "requestId": "737ae31c-d895-4502-b90b-b0dfda31d2d7",
+        "sourceClass": "file",
+        "subjectId": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      }
+    ],
+    "subjectId": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+  },
+  "source": "actual official 5bea000e kernel / SDK; isolated PG max_connections=1",
+  "tables": {
+    "artifacts": [
+      {
+        "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+        "byte_length": 28,
+        "content_hash": "421b54450a9537bdf71f77d1f59c93bbb8a209146949c1781b9276f325d985f5",
+        "created_at": "2026-10-16T08:04:01.697876+00:00",
+        "media_type": "text/plain",
+        "metadata": {},
+        "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      }
+    ],
+    "model_results": [
+      {
+        "context": {
+          "cognitive_formed_at": "2026-10-16T08:04:01.688Z",
+          "dependencies": [],
+          "maintenance_trigger": null
+        },
+        "created_at": "2026-10-16T08:04:01.72572+00:00",
+        "dependencies": [],
+        "execution_telemetry": null,
+        "maintenance_need_id": null,
+        "maintenance_trigger_revision": null,
+        "mutation_operations": [],
+        "operation_key": "64be3c9d-760f-4cd7-8950-42e50a4d8217",
+        "outcome": null,
+        "owner": "material",
+        "proposal": {
+          "dependencies": [],
+          "payload": {
+            "inputIds": [
+              "01a143bd-4c26-7f42-b12b-73a2bf661579",
+              "01a143bd-4c35-7903-a044-de1070bc7e96"
+            ],
+            "rawOutput": "Original retained result; do not rewrite {\"formedAt\":\"old\"}"
+          },
+          "purged": false
+        },
+        "semantic_digest": "known-result-before-domain-upgrade",
+        "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4",
+        "updated_at": "2026-10-16T08:04:01.72572+00:00"
+      }
+    ],
+    "observation_occurrences": [
+      {
+        "actor_entity_ref": null,
+        "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+        "context": {
+          "fixture": "actual old producer"
+        },
+        "conversation_ref": null,
+        "created_at": "2026-10-16T08:04:01.697876+00:00",
+        "external_object_ref": null,
+        "observed_at": "2026-10-16T08:04:01.688+00:00",
+        "occurred_time_end": null,
+        "occurred_time_kind": "instant",
+        "occurred_time_start": "2026-10-16T08:04:01.688+00:00",
+        "occurrence_id": "01a143bd-4c26-7f42-b12b-73a2bf661579",
+        "source_class": "file",
+        "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      },
+      {
+        "actor_entity_ref": null,
+        "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+        "context": {
+          "fixture": "actual old producer"
+        },
+        "conversation_ref": null,
+        "created_at": "2026-10-16T08:04:01.717141+00:00",
+        "external_object_ref": null,
+        "observed_at": "2026-10-16T08:04:01.688+00:00",
+        "occurred_time_end": null,
+        "occurred_time_kind": "instant",
+        "occurred_time_start": "2026-10-16T08:04:01.688+00:00",
+        "occurrence_id": "01a143bd-4c35-7903-a044-de1070bc7e96",
+        "source_class": "file",
+        "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      }
+    ],
+    "observation_request_bindings": [
+      {
+        "accepted": {
+          "artifact": {
+            "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+            "byte_length": 28,
+            "content_hash": "421b54450a9537bdf71f77d1f59c93bbb8a209146949c1781b9276f325d985f5",
+            "created_at": "2026-10-16T08:04:01.697876Z",
+            "media_type": "text/plain",
+            "metadata": {},
+            "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+          },
+          "memory_revisions": [],
+          "mention_ids": [],
+          "occurrence": {
+            "actor_entity_ref": null,
+            "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+            "context": {
+              "fixture": "actual old producer"
+            },
+            "conversation_ref": null,
+            "created_at": "2026-10-16T08:04:01.697876726Z",
+            "external_object_ref": null,
+            "observed_at": "2026-10-16T08:04:01.688Z",
+            "occurred_time": {
+              "at": "2026-10-16T08:04:01.688Z",
+              "kind": "instant"
+            },
+            "occurrence_id": "01a143bd-4c26-7f42-b12b-73a2bf661579",
+            "source_class": "file",
+            "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+          },
+          "resident": false,
+          "source_region": {
+            "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+            "coordinate": {},
+            "coordinate_hash": "6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279",
+            "coordinate_kind": "whole_artifact",
+            "created_at": "2026-10-16T08:04:01.697876726Z",
+            "parent_source_region_id": null,
+            "source_region_id": "01a143bd-4c27-70f1-81a5-7bb1c7cdfa8e",
+            "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+          }
+        },
+        "created_at": "2026-10-16T08:04:01.69589+00:00",
+        "occurrence_id": "01a143bd-4c26-7f42-b12b-73a2bf661579",
+        "request_digest": "37816e8024b2f1ff000b61fcd9d0c2a11d63f2017c19bbda28df721e9a8d2e81",
+        "request_id": "4bd8cad7-b4d6-4f90-beb4-f1d6505ed3fc",
+        "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      },
+      {
+        "accepted": {
+          "artifact": {
+            "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+            "byte_length": 28,
+            "content_hash": "421b54450a9537bdf71f77d1f59c93bbb8a209146949c1781b9276f325d985f5",
+            "created_at": "2026-10-16T08:04:01.697876Z",
+            "media_type": "text/plain",
+            "metadata": {},
+            "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+          },
+          "memory_revisions": [],
+          "mention_ids": [],
+          "occurrence": {
+            "actor_entity_ref": null,
+            "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+            "context": {
+              "fixture": "actual old producer"
+            },
+            "conversation_ref": null,
+            "created_at": "2026-10-16T08:04:01.717141026Z",
+            "external_object_ref": null,
+            "observed_at": "2026-10-16T08:04:01.688Z",
+            "occurred_time": {
+              "at": "2026-10-16T08:04:01.688Z",
+              "kind": "instant"
+            },
+            "occurrence_id": "01a143bd-4c35-7903-a044-de1070bc7e96",
+            "source_class": "file",
+            "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+          },
+          "resident": false,
+          "source_region": {
+            "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+            "coordinate": {},
+            "coordinate_hash": "6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279",
+            "coordinate_kind": "whole_artifact",
+            "created_at": "2026-10-16T08:04:01.697876Z",
+            "parent_source_region_id": null,
+            "source_region_id": "01a143bd-4c27-70f1-81a5-7bb1c7cdfa8e",
+            "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+          }
+        },
+        "created_at": "2026-10-16T08:04:01.716764+00:00",
+        "occurrence_id": "01a143bd-4c35-7903-a044-de1070bc7e96",
+        "request_digest": "2af065f14f0f01440d1954d7398dda46f3ee7e9072e78bd613f492850c6aca60",
+        "request_id": "737ae31c-d895-4502-b90b-b0dfda31d2d7",
+        "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      }
+    ],
+    "source_regions": [
+      {
+        "artifact_id": "01a143bd-4c23-74c2-a90e-083e4e567097",
+        "coordinate": {},
+        "coordinate_hash": "6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279",
+        "coordinate_kind": "whole_artifact",
+        "created_at": "2026-10-16T08:04:01.697876+00:00",
+        "parent_source_region_id": null,
+        "source_region_id": "01a143bd-4c27-70f1-81a5-7bb1c7cdfa8e",
+        "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      }
+    ],
+    "subject_capabilities": [
+      {
+        "memory": false,
+        "motivation": false,
+        "self_cognition": false,
+        "social_cognition": false,
+        "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      }
+    ],
+    "subjects": [
+      {
+        "authority_seq": 2,
+        "created_at": "2026-10-16T08:04:01.675509+00:00",
+        "metadata": {
+          "fixture": "legacy-domain-time"
+        },
+        "status": "active",
+        "subject_id": "fb01ccf9-879a-41d2-a5cc-a6e8faf692c4"
+      }
+    ]
+  }
+}

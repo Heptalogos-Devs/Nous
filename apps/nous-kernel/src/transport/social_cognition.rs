@@ -72,7 +72,8 @@ fn content(v: p::SocialContent) -> Result<SocialContent> {
             judgment: judgment(v.judgment)?,
             coordination_expectations: v.coordination_expectations,
             basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-            valid_time: temporal(v.valid_time)?,
+            valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+            valid_time: domain_temporal(v.valid_time)?.extent,
             producer: v.producer.map(from_producer).transpose()?,
         }),
         p::social_content::Content::Convention(v) => {
@@ -86,7 +87,8 @@ fn content(v: p::SocialContent) -> Result<SocialContent> {
                 pragmatic_use: v.pragmatic_use,
                 judgment: judgment(v.judgment)?,
                 basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-                valid_time: temporal(v.valid_time)?,
+                valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+                valid_time: domain_temporal(v.valid_time)?.extent,
                 producer: v.producer.map(from_producer).transpose()?,
             })
         }
@@ -114,7 +116,10 @@ fn content_proto(v: SocialContent) -> p::SocialContent {
                     judgment: Some(judgment_proto(v.judgment)),
                     coordination_expectations: v.coordination_expectations,
                     basis: v.basis.into_iter().map(basis_proto).collect(),
-                    valid_time: Some(temporal_proto(&v.valid_time)),
+                    valid_time: Some(domain_temporal_proto(
+                        &v.valid_time_domain_ref,
+                        &v.valid_time,
+                    )),
                     producer: v.producer.map(super::evidence::producer),
                 })
             }
@@ -129,7 +134,10 @@ fn content_proto(v: SocialContent) -> p::SocialContent {
                     pragmatic_use: v.pragmatic_use,
                     judgment: Some(judgment_proto(v.judgment)),
                     basis: v.basis.into_iter().map(basis_proto).collect(),
-                    valid_time: Some(temporal_proto(&v.valid_time)),
+                    valid_time: Some(domain_temporal_proto(
+                        &v.valid_time_domain_ref,
+                        &v.valid_time,
+                    )),
                     producer: v.producer.map(super::evidence::producer),
                 })
             }
@@ -158,7 +166,11 @@ pub(super) fn record(v: SocialRecord) -> p::SocialRecord {
         integrity_state: v.integrity_state,
         suppression_state: v.suppression_state,
         created_at: Some(timestamp(v.created_at)),
-        formed_at: Some(timestamp(v.formed_at)),
+        formed_at: Some(formation_proto(
+            &v.formed_time_domain_ref,
+            v.formed_at,
+            v.formed_recorded_at,
+        )),
         recorded_at: Some(timestamp(v.recorded_at)),
         evidence: v
             .evidence
@@ -491,7 +503,7 @@ struct Selection {
     after: Option<uuid::Uuid>,
     expression: Option<String>,
     endpoint: Option<EntityRef>,
-    at: Option<chrono::DateTime<chrono::Utc>>,
+    at: Option<nous_core::DomainStamp>,
     as_of: Option<chrono::DateTime<chrono::Utc>>,
     history: bool,
 }
@@ -520,7 +532,7 @@ impl Selection {
             after: v.after.map(|v| id(&v)).transpose()?,
             expression: v.expression,
             endpoint: v.endpoint.map(EntityRef::new).transpose()?,
-            at: time(v.at)?,
+            at: v.at.map(domain_stamp).transpose()?,
             as_of: time(v.as_of)?,
             history: v.history,
         })
@@ -535,7 +547,8 @@ impl Selection {
             expression: self.expression.as_deref(),
             endpoint: self.endpoint.as_ref(),
             counterpart: None,
-            at: self.at,
+            at: self.at.clone(),
+            valid_predicates: None,
             as_of: self.as_of,
             history: self.history,
         }
@@ -610,6 +623,7 @@ impl KernelService {
                 .map(WorkContextId),
         };
         let modifiers = query.expression.as_ref().and_then(|e| e.modifiers.as_ref());
+        let valid_predicates = super::query::selection_valid_predicates(query.expression.as_ref())?;
         let selected = self
             .0
             .require_social()?
@@ -624,9 +638,13 @@ impl KernelService {
                     expression: None,
                     endpoint: None,
                     counterpart: None,
-                    at: time(modifiers.and_then(|m| m.clock_now))?,
-                    as_of: time(modifiers.and_then(|m| m.as_of))?,
+                    at: modifiers
+                        .and_then(|m| m.clock_now.clone())
+                        .map(domain_stamp)
+                        .transpose()?,
+                    as_of: time(modifiers.and_then(|m| m.as_recorded_at))?,
                     history: modifiers.is_some_and(|m| m.history),
+                    valid_predicates: valid_predicates.as_deref(),
                 },
             )
             .await?;

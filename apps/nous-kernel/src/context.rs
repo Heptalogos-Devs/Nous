@@ -32,6 +32,7 @@ impl ContextResolver for NousRuntime {
             self.automatic_self_context(
                 subject,
                 nous_runtime::AutomaticContextRequest {
+                    clock: input.clock,
                     scope: input.scope,
                     work_context: input.work_context,
                     materialize: input.materialize,
@@ -71,7 +72,8 @@ impl ContextResolver for NousRuntime {
                         expression: None,
                         endpoint: None,
                         counterpart: None,
-                        at: None,
+                        at: Some(input.clock.clone()),
+                        valid_predicates: None,
                         as_of: None,
                         history: false,
                     },
@@ -115,7 +117,7 @@ impl ContextResolver for NousRuntime {
                 }
                 let mut source =
                     nous_social::SocialService::record_context(&record, input.materialize);
-                source.usage = if input.scope.purpose == "expression" {
+                source.usage = if input.scope.purpose == "subject_rendering" {
                     "audience_language_guidance"
                 } else {
                     "social_understanding"
@@ -185,7 +187,7 @@ impl ContextResolver for NousRuntime {
                         })
                         .collect::<Vec<_>>(),
                     query.effort,
-                    query.temporal_frame.clock_now,
+                    query.temporal_frame.authority_now,
                     configuration,
                     historical,
                     query.source_read.as_ref(),
@@ -427,7 +429,8 @@ impl NousRuntime {
                         max_items: 2048,
                         max_bytes: 4 * 1024 * 1024,
                         after: None,
-                        at: None,
+                        at: Some(input.clock.clone()),
+                        valid_predicates: None,
                         as_of: None,
                         history: false,
                     },

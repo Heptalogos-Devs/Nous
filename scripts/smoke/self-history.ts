@@ -44,7 +44,7 @@ try {
             epistemicClass: "narrative",
             stance: "adopted",
             scope: { description: "general" },
-            validTime: {},
+            validTime: { timeDomainRef: "time:real", extent: {} },
             basis: [
               {
                 basis: {
@@ -84,7 +84,7 @@ try {
             { kind: "cognitive_seed_version", value: seed.seedVersionId },
           ],
         },
-        purpose: "deliberation",
+        purpose: "subject_deliberation",
         intent: "Continue actual task",
         audience: {
           conversationRef: "history-contract",
@@ -279,8 +279,11 @@ try {
           statement: "Worker designation: PRIVATE_SELF_HISTORY_MARKER_青砚",
           stance: "adopted",
           epistemicClass: "narrative",
-          scope: { description: "worker task only", purposes: ["worker"] },
-          validTime: {},
+          scope: {
+            description: "worker task only",
+            purposes: ["professional_execution"],
+          },
+          validTime: { timeDomainRef: "time:real", extent: {} },
           basis: [
             {
               basis: {

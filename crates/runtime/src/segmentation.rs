@@ -15,6 +15,7 @@ pub struct EpisodeDraft {
     pub track_key: String,
     pub first_recorded_seq: i64,
     pub last_recorded_seq: i64,
+    pub experience_time_domain_ref: String,
     pub observed_start: DateTime<Utc>,
     pub observed_end: DateTime<Utc>,
     pub boundary_reason: Option<String>,
@@ -44,7 +45,8 @@ impl CognitiveRuntimeService {
         self.require_subject(subject).await?;
         let policy =
             EpisodePolicy::from_snapshot(&self.configuration.snapshot_for_subject(subject)?)?;
-        let now = self.now(subject);
+        let semantic = self.read_clock(subject).await?;
+        let now = self.recorded_now();
         let mut tx = self.store.begin().await?;
         sqlx::query("INSERT INTO segmentation_cursors(subject_id,track_key,updated_at) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
             .bind(subject.0).bind(track).bind(now).execute(&mut *tx).await.map_err(db)?;
@@ -56,35 +58,39 @@ impl CognitiveRuntimeService {
             .bind(subject.0).bind(last_seq).bind(i64::from(limit)).fetch_all(&mut *tx).await.map_err(db)?;
         for item in &items {
             let seq: i64 = item.try_get("recorded_seq").map_err(db)?;
-            let at: DateTime<Utc> = item.try_get("observed_at").map_err(db)?;
+            let at: DateTime<Utc> = item.try_get("experience_at").map_err(db)?;
+            let domain: String = item.try_get("experience_time_domain_ref").map_err(db)?;
             let late;
             if let Some(id) = draft {
                 let previous = sqlx::query("SELECT d.observed_start,d.observed_end,e.*,w.state AS work_context_state,(SELECT count(*) FROM episode_draft_members WHERE draft_id=d.draft_id) AS member_count FROM episode_drafts d JOIN experience_items e ON e.subject_id=d.subject_id AND e.recorded_seq=d.last_recorded_seq LEFT JOIN work_contexts w ON w.work_context_id=e.active_work_context_id WHERE d.draft_id=$1")
                     .bind(id).fetch_one(&mut *tx).await.map_err(db)?;
                 let start: DateTime<Utc> = previous.try_get("observed_start").map_err(db)?;
                 let end: DateTime<Utc> = previous.try_get("observed_end").map_err(db)?;
-                late = at < start;
+                let same_domain = previous.get::<String, _>("experience_time_domain_ref") == domain;
+                late = same_domain && at < start;
                 let ended = previous
                     .try_get::<Option<String>, _>("work_context_state")
                     .map_err(db)?
                     .as_deref()
                     == Some("ended");
-                let reason = policy
-                    .boundary(&context(&previous)?, &context(item)?, end, at, ended)
-                    .or_else(|| {
-                        (previous.get::<i64, _>("member_count") >= 256).then_some("member_budget")
-                    });
+                let reason = if !same_domain {
+                    Some("time_domain_change")
+                } else {
+                    policy.boundary(&context(&previous)?, &context(item)?, end, at, ended)
+                };
+                let reason = reason
+                    .or((previous.get::<i64, _>("member_count") >= 256).then_some("member_budget"));
                 if !late && let Some(reason) = reason {
                     close_draft(&mut tx, id, reason, now).await?;
                     draft = None;
                 }
-                if at < end {
+                if same_domain && at < end {
                     self.late_experience_need(&mut tx, subject, track, seq, now)
                         .await?;
                 }
             } else {
-                let prior_end: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT max(end_at) FROM (SELECT observed_end AS end_at FROM episode_drafts WHERE subject_id=$1 AND track_key=$2 AND state='ready' UNION ALL SELECT COALESCE(r.experience_time_end,r.experience_time_start) FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted') prior")
-                    .bind(subject.0).bind(track).fetch_one(&mut *tx).await.map_err(db)?;
+                let prior_end: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT max(end_at) FROM (SELECT observed_end AS end_at FROM episode_drafts WHERE subject_id=$1 AND track_key=$2 AND state='ready' AND experience_time_domain_ref=$3 UNION ALL SELECT COALESCE(r.experience_time_end,r.experience_time_start) FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND r.experience_time_domain_ref=$3) prior")
+                    .bind(subject.0).bind(track).bind(&domain).fetch_one(&mut *tx).await.map_err(db)?;
                 late = prior_end.is_some_and(|end| at <= end);
             }
             if late {
@@ -95,8 +101,8 @@ impl CognitiveRuntimeService {
                     Some(id) => id,
                     None => {
                         let id = Uuid::now_v7();
-                        sqlx::query("INSERT INTO episode_drafts(draft_id,subject_id,track_key,state,first_recorded_seq,last_recorded_seq,observed_start,observed_end,created_at,updated_at) VALUES($1,$2,$3,'open',$4,$4,$5,$5,$6,$6)")
-                            .bind(id).bind(subject.0).bind(track).bind(seq).bind(at).bind(now).execute(&mut *tx).await.map_err(db)?;
+                        sqlx::query("INSERT INTO episode_drafts(draft_id,subject_id,track_key,state,first_recorded_seq,last_recorded_seq,observed_start,observed_end,created_at,updated_at,experience_time_domain_ref) VALUES($1,$2,$3,'open',$4,$4,$5,$5,$6,$6,$7)")
+                            .bind(id).bind(subject.0).bind(track).bind(seq).bind(at).bind(now).bind(&domain).execute(&mut *tx).await.map_err(db)?;
                         draft = Some(id);
                         id
                     }
@@ -104,11 +110,20 @@ impl CognitiveRuntimeService {
                 sqlx::query("INSERT INTO episode_draft_members(draft_id,recorded_seq,occurrence_id) VALUES($1,$2,$3)")
                     .bind(id).bind(seq).bind(item.get::<Uuid,_>("occurrence_id")).execute(&mut *tx).await.map_err(db)?;
                 sqlx::query("UPDATE episode_drafts SET last_recorded_seq=$2,observed_end=GREATEST(observed_end,$3),updated_at=$4 WHERE draft_id=$1")
-                    .bind(id).bind(seq).bind(at).bind(now).execute(&mut *tx).await.map_err(db)?;
+                    .bind(id).bind(seq).bind(at).bind(now).bind(&domain).execute(&mut *tx).await.map_err(db)?;
             }
             last_seq = seq;
         }
-        let (next_draft, mut next_due) = close_if_due(&mut tx, draft, &policy, now, close).await?;
+        let (next_draft, mut next_due) = close_if_due(
+            &mut tx,
+            draft,
+            &policy,
+            now,
+            &semantic,
+            close,
+            self.clock.as_ref(),
+        )
+        .await?;
         draft = next_draft;
         let backlog: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM experience_items WHERE subject_id=$1 AND recorded_seq>$2)",
@@ -213,7 +228,7 @@ async fn ready_drafts(
     subject: SubjectId,
     track: &str,
 ) -> Result<Vec<EpisodeDraft>> {
-    let rows = sqlx::query("SELECT d.*,array_agg(m.occurrence_id ORDER BY e.observed_at,m.recorded_seq) AS members FROM episode_drafts d JOIN episode_draft_members m USING(draft_id) JOIN experience_items e ON e.subject_id=d.subject_id AND e.recorded_seq=m.recorded_seq WHERE d.subject_id=$1 AND d.track_key=$2 AND d.state='ready' GROUP BY d.draft_id ORDER BY d.first_recorded_seq LIMIT 128")
+    let rows = sqlx::query("SELECT d.*,array_agg(m.occurrence_id ORDER BY e.experience_at,m.recorded_seq) AS members FROM episode_drafts d JOIN episode_draft_members m USING(draft_id) JOIN experience_items e ON e.subject_id=d.subject_id AND e.recorded_seq=m.recorded_seq WHERE d.subject_id=$1 AND d.track_key=$2 AND d.state='ready' GROUP BY d.draft_id ORDER BY d.first_recorded_seq LIMIT 128")
         .bind(subject.0).bind(track).fetch_all(&mut **tx).await.map_err(db)?;
     rows.into_iter()
         .map(|row| {
@@ -223,6 +238,9 @@ async fn ready_drafts(
                 track_key: track.into(),
                 first_recorded_seq: row.try_get("first_recorded_seq").map_err(db)?,
                 last_recorded_seq: row.try_get("last_recorded_seq").map_err(db)?,
+                experience_time_domain_ref: row
+                    .try_get("experience_time_domain_ref")
+                    .map_err(db)?,
                 observed_start: row.try_get("observed_start").map_err(db)?,
                 observed_end: row.try_get("observed_end").map_err(db)?,
                 boundary_reason: row.try_get("boundary_reason").map_err(db)?,
@@ -242,14 +260,26 @@ async fn close_if_due(
     mut draft: Option<Uuid>,
     policy: &EpisodePolicy,
     now: DateTime<Utc>,
+    semantic: &DomainStamp,
     close: bool,
+    clock: &dyn CognitiveClock,
 ) -> Result<(Option<Uuid>, Option<DateTime<Utc>>)> {
     let mut next_due = None;
     if let Some(id) = draft {
-        let row = sqlx::query("SELECT d.observed_end,w.state AS work_context_state FROM episode_drafts d JOIN experience_items e ON e.subject_id=d.subject_id AND e.recorded_seq=d.last_recorded_seq LEFT JOIN work_contexts w ON w.work_context_id=e.active_work_context_id WHERE d.draft_id=$1")
+        let row = sqlx::query("SELECT e.subject_id,d.observed_end,o.observed_stamp,w.state AS work_context_state FROM episode_drafts d JOIN experience_items e ON e.subject_id=d.subject_id AND e.recorded_seq=d.last_recorded_seq JOIN observation_occurrences o ON o.occurrence_id=e.occurrence_id AND o.subject_id=e.subject_id LEFT JOIN work_contexts w ON w.work_context_id=e.active_work_context_id WHERE d.draft_id=$1")
                 .bind(id).fetch_one(&mut **tx).await.map_err(db)?;
         let end: DateTime<Utc> = row.try_get("observed_end").map_err(db)?;
-        let due = end
+        let stamp: DomainStamp = serde_json::from_value(row.get("observed_stamp"))
+            .map_err(|e| Error::Infrastructure(e.to_string()))?;
+        let contact = end;
+        let current = if stamp.time_domain_ref == "time:real" {
+            Some(now)
+        } else if stamp.time_domain_ref == semantic.time_domain_ref {
+            Some(semantic.at)
+        } else {
+            None
+        };
+        let due = contact
             .checked_add_signed(policy.hard_idle)
             .ok_or_else(|| Error::Invalid("Episode due time overflow".into()))?;
         let ended = row
@@ -257,7 +287,7 @@ async fn close_if_due(
             .map_err(db)?
             .as_deref()
             == Some("ended");
-        if close || ended || now >= due {
+        if close || ended || current.is_some_and(|at| at >= due) {
             close_draft(
                 tx,
                 id,
@@ -273,7 +303,13 @@ async fn close_if_due(
             .await?;
             draft = None;
         } else {
-            next_due = Some(due);
+            next_due = clock
+                .real_deadline(
+                    SubjectId(row.get("subject_id")),
+                    &stamp.time_domain_ref,
+                    due,
+                )
+                .or_else(|| now.checked_add_signed(policy.hard_idle));
         }
     }
     Ok((draft, next_due))

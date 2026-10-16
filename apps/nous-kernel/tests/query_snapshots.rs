@@ -100,6 +100,7 @@ async fn rerank_revalidates_original_candidates_after_revise_suppress_and_purge(
             intent: nous_memory::RevisionIntent::Correct,
 
             content: nous_memory::MemoryContent {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 formation_mode: FormationMode::Grounded,
                 grounding_occurrence_id: Some(source.occurrence.occurrence_id),
@@ -339,6 +340,7 @@ async fn exact_mutable_binding_is_fenced_and_explicit_history_is_readable() {
         intent: nous_memory::RevisionIntent::Correct,
 
         content: nous_memory::MemoryContent {
+            valid_time_domain_ref: "time:real".into(),
             producer: None,
             formation_mode: FormationMode::Grounded,
             grounding_occurrence_id: Some(observation.occurrence.occurrence_id),

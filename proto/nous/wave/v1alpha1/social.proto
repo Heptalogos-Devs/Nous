@@ -29,7 +29,7 @@ message SocialRelationContent {
  SocialJudgment judgment = 8;
  repeated string coordination_expectations = 9;
  repeated RevisionBasis basis = 10;
- TemporalExtent valid_time = 11;
+ DomainTemporalExtent valid_time = 11;
  ProducerSignature producer = 12;
  optional string role = 13;
 }
@@ -43,7 +43,7 @@ message LanguageConventionContent {
  string pragmatic_use = 7;
  SocialJudgment judgment = 8;
  repeated RevisionBasis basis = 9;
- TemporalExtent valid_time = 10;
+ DomainTemporalExtent valid_time = 10;
  ProducerSignature producer = 11;
 }
 message SocialContent { oneof content { SocialRelationContent relation = 1; LanguageConventionContent convention = 2; } }
@@ -62,7 +62,7 @@ message SocialRecord {
   string integrity_state = 11;
   string suppression_state = 12;
   google.protobuf.Timestamp created_at = 13;
-  google.protobuf.Timestamp formed_at = 14;
+  DomainStamp formed_at = 14;
   google.protobuf.Timestamp recorded_at = 15;
   repeated SocialEvidence evidence = 16;
 }
@@ -83,7 +83,7 @@ message SocialSelectionRequest {
  optional string after = 6;
  optional string expression = 7;
  optional string endpoint = 8 [(reference_kind) = "entity"];
- google.protobuf.Timestamp at = 9;
+ DomainStamp at = 9;
  google.protobuf.Timestamp as_of = 10;
  bool history = 11;
 }

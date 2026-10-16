@@ -1,10 +1,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { timestampDate } from "@bufbuild/protobuf/wkt";
-import type {
-  DomainStamp,
-  SubjectClock,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
+import type { SubjectClock } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
+import type { DomainStamp } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 export type ClockDeadline =
   { kind: "due"; at: Date } | { kind: "paused" } | { kind: "unmapped" };
 /** Reproject a world due time after read/configure/pause/resume. No timer or model work starts here. */

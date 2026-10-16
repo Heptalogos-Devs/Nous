@@ -10,17 +10,13 @@ struct JournalRevisionWrite {
     revision: JournalRevisionId,
     parent: Option<JournalRevisionId>,
     revision_no: i32,
-    source_extent: TemporalExtent,
+    source_extent: nous_core::DomainTemporalExtent,
     formed: DateTime<Utc>,
     recorded: DateTime<Utc>,
     producer: Option<Uuid>,
 }
 
 impl MemoryService {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Journal commit owns one atomic Authority transaction"
-    )]
     pub async fn commit_journal(&self, mut input: JournalInput) -> Result<JournalView> {
         input.producer = input
             .producer
@@ -36,7 +32,7 @@ impl MemoryService {
             .transpose()?;
         validate_journal(&input)?;
         self.store.require_subject(input.subject).await?;
-        let started = self.cognition.now(input.subject);
+        let started = self.cognition.recorded_now();
         let digest = operation_digest("journal_commit", input.subject, &input)?;
         let mut mutation = match self
             .start_mutation(input.subject, input.operation_id, "journal_commit", &digest)
@@ -74,7 +70,7 @@ impl MemoryService {
         let formed = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
             .await?;
-        let recorded = self.cognition.now(input.subject);
+        let recorded = self.cognition.recorded_now();
         let producer = match &input.producer {
             Some(producer) => {
                 Some(AuthorityStore::register_producer_in(mutation.tx(), producer).await?)
@@ -118,14 +114,8 @@ impl MemoryService {
         }
         self.wake_journal_revalidation_in(mutation.tx(), input.subject, journal, sequence)
             .await?;
-        self.schedule_journal_consolidation_in(
-            mutation.tx(),
-            input.subject,
-            revision,
-            sequence,
-            recorded,
-        )
-        .await?;
+        self.schedule_journal_consolidation_in(mutation.tx(), input.subject, revision, sequence)
+            .await?;
 
         mutation
             .publish_workflow_results(
@@ -166,9 +156,9 @@ impl MemoryService {
             sqlx::query("INSERT INTO journal_objects(journal_id,subject_id,current_revision_id,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,'accepted','valid','normal',$4)")
                 .bind(journal.0).bind(input.subject.0).bind(revision.0).bind(recorded).execute(&mut **tx).await.map_err(db)?;
         }
-        let (kind, start, end) = temporal_columns(&source_extent);
-        sqlx::query("INSERT INTO journal_revisions(journal_revision_id,journal_id,subject_id,revision_no,parent_revision_id,revision_intent,title,temporal_scope_kind,temporal_scope_start,temporal_scope_end,narrative,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
-            .bind(revision.0).bind(journal.0).bind(input.subject.0).bind(revision_no).bind(parent.map(|id|id.0)).bind(input.target.as_ref().map(|target|&target.intent)).bind(&input.title).bind(kind).bind(start).bind(end).bind(&input.narrative).bind(formed).bind(recorded).bind(producer).execute(&mut **tx).await.map_err(db)?;
+        let (kind, start, end) = temporal_columns(&source_extent.extent);
+        sqlx::query("INSERT INTO journal_revisions(journal_revision_id,journal_id,subject_id,revision_no,parent_revision_id,revision_intent,title,temporal_scope_kind,temporal_scope_start,temporal_scope_end,narrative,formed_at,recorded_at,producer_signature_id,temporal_scope_domain_ref) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)")
+            .bind(revision.0).bind(journal.0).bind(input.subject.0).bind(revision_no).bind(parent.map(|id|id.0)).bind(input.target.as_ref().map(|target|&target.intent)).bind(&input.title).bind(kind).bind(start).bind(end).bind(&input.narrative).bind(formed).bind(recorded).bind(producer).bind(&source_extent.time_domain_ref).execute(&mut **tx).await.map_err(db)?;
         insert_journal_points(tx, revision, &input.points).await?;
         self.store
             .ensure_identity_addresses_in(
@@ -195,8 +185,19 @@ impl MemoryService {
         subject: SubjectId,
         revision: JournalRevisionId,
         sequence: i64,
-        recorded: DateTime<Utc>,
     ) -> Result<()> {
+        let frame = self.cognition.capture_semantic_in(tx, subject).await?;
+        let (_, due_at) = self.cognition.semantic_settlement(
+            subject,
+            &frame,
+            chrono::Duration::seconds(
+                self.configuration
+                    .snapshot_for_subject(subject)?
+                    .get(super::super::longitudinal_policy::CONSOLIDATION_DELAY)?
+                    as i64,
+            ),
+            &frame,
+        )?;
         self.cognition
             .enqueue_maintenance_in(
                 tx,
@@ -206,13 +207,7 @@ impl MemoryService {
                     scope_kind: "journal_revision".into(),
                     scope_ref: revision.0.to_string(),
                     trigger_authority_seq: sequence,
-                    due_at: recorded
-                        + chrono::Duration::seconds(
-                            self.configuration
-                                .snapshot_for_subject(subject)?
-                                .get(super::super::longitudinal_policy::CONSOLIDATION_DELAY)?
-                                as i64,
-                        ),
+                    due_at,
                     priority: 40,
                 },
             )
@@ -325,13 +320,13 @@ async fn validate_journal_scope_in(
 async fn validate_sources_in(
     tx: &mut Transaction<'_, Postgres>,
     input: &JournalInput,
-) -> Result<TemporalExtent> {
+) -> Result<nous_core::DomainTemporalExtent> {
     let ids: Vec<Uuid> = input
         .sources
         .iter()
         .map(|source| source.revision.0)
         .collect();
-    let rows = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR SHARE OF o")
+    let rows = sqlx::query("SELECT o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.episode_revision_id,r.experience_time_domain_ref,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_id=o.episode_id WHERE o.subject_id=$1 AND r.episode_revision_id=ANY($2::uuid[]) ORDER BY o.episode_id FOR SHARE OF o")
         .bind(input.subject.0).bind(&ids).fetch_all(&mut **tx).await.map_err(db)?;
     if rows.len() != ids.len() {
         return Err(nous_core::DomainError::new(
@@ -342,6 +337,8 @@ async fn validate_sources_in(
     }
     validate_source_catalog_in(tx, input, &ids).await?;
     let mut extents = Vec::with_capacity(rows.len());
+    let mut domain: Option<String> = None;
+    let mut same_domain = true;
     for row in rows {
         let revision: Uuid = row.get("episode_revision_id");
         let expected = input
@@ -361,13 +358,27 @@ async fn validate_sources_in(
             )
             .into());
         }
+        let source_domain: String = row.get("experience_time_domain_ref");
+        if let Some(expected_domain) = &domain {
+            same_domain &= expected_domain == &source_domain;
+        } else {
+            domain = Some(source_domain);
+        }
         extents.push(temporal_from_columns(
             row.try_get("experience_time_kind").map_err(db)?,
             row.try_get("experience_time_start").map_err(db)?,
             row.try_get("experience_time_end").map_err(db)?,
         )?);
     }
-    Ok(aggregate_extent(&extents))
+    Ok(if same_domain {
+        nous_core::DomainTemporalExtent {
+            time_domain_ref: domain.unwrap_or_else(nous_core::real_time_domain),
+            extent: aggregate_extent(&extents),
+        }
+    } else {
+        // No mapping exists between source worlds; their aggregate span is unknown.
+        nous_core::DomainTemporalExtent::default()
+    })
 }
 
 async fn validate_source_catalog_in(

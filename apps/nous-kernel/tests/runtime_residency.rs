@@ -32,6 +32,10 @@ async fn admit(
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one admission journey checks transaction, observation identity and runtime batch replay together"
+)]
 async fn observation_admission_is_a_single_idempotent_runtime_batch() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
@@ -47,10 +51,13 @@ async fn observation_admission_is_a_single_idempotent_runtime_batch() {
         subject,
         session: Some(session.session_id),
         occurrence: OccurrenceDescriptor {
+            occurred_time_domain_ref: "time:real".into(),
             source_class: nous_core::SourceClass::Message,
+            world_realized: None,
             external_object_ref: None,
             occurred_time: nous_core::TemporalExtent::Unknown,
             observed_at: Some(Utc::now()),
+            observed_stamp: None,
             conversation_ref: None,
             actor_entity_ref: None,
             context: serde_json::json!({}),
@@ -311,7 +318,7 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
             event_id: nous_core::UseEventId::new(),
             reference: CognitiveRef::MemoryRevision(memory.revision.memory_revision_id),
             use_kind: nous_runtime::UseKind::Referenced,
-            occurred_at: runtime.cognition.now(subject),
+            occurred_at: runtime.cognition.recorded_now(),
             context: serde_json::json!({}),
         });
     }
@@ -397,7 +404,7 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
             subject,
             &[(reference.clone(), false), (reference.clone(), true)],
             &policy,
-            runtime.cognition.now(subject) + Duration::days(36_500),
+            runtime.cognition.recorded_now() + Duration::days(36_500),
             8,
             None,
         )
@@ -424,7 +431,7 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
             subject,
             &[(reference.clone(), false)],
             &permissive_policy,
-            runtime.cognition.now(subject) + Duration::days(36_500),
+            runtime.cognition.recorded_now() + Duration::days(36_500),
             256,
             None,
         )

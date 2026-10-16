@@ -13,6 +13,11 @@ fn content(input: p::SelfContent) -> Result<SelfContent> {
             let scope = required(v.scope, "Self scope")?;
             SelfContent::SelfFacet(SelfFacetContent {
                 kind: v.kind,
+                domain_knowledge: v
+                    .domain_knowledge
+                    .map(domain_knowledge)
+                    .transpose()?
+                    .map(Box::new),
                 statement: v.statement,
                 epistemic_class: enum_value(&v.epistemic_class)?,
                 scope: SelfScope {
@@ -41,7 +46,8 @@ fn content(input: p::SelfContent) -> Result<SelfContent> {
                     })
                     .collect::<Result<_>>()?,
                 basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-                valid_time: temporal(v.valid_time)?,
+                valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+                valid_time: domain_temporal(v.valid_time)?.extent,
                 producer: v.producer.map(from_producer).transpose()?,
             })
         }
@@ -55,7 +61,8 @@ fn content(input: p::SelfContent) -> Result<SelfContent> {
                 .map(from_ref)
                 .collect::<Result<_>>()?,
             basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-            valid_time: temporal(v.valid_time)?,
+            valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+            valid_time: domain_temporal(v.valid_time)?.extent,
             producer: v.producer.map(from_producer).transpose()?,
         }),
     })
@@ -64,6 +71,9 @@ fn content_proto(value: SelfContent) -> p::SelfContent {
     let content = match value {
         SelfContent::SelfFacet(v) => p::self_content::Content::Facet(p::SelfFacetContent {
             kind: v.kind,
+            domain_knowledge: v
+                .domain_knowledge
+                .map(|value| domain_knowledge_proto(*value)),
             statement: v.statement,
             epistemic_class: v.epistemic_class.as_str().into(),
             scope: Some(p::SelfScope {
@@ -88,7 +98,10 @@ fn content_proto(value: SelfContent) -> p::SelfContent {
                 })
                 .collect(),
             basis: v.basis.into_iter().map(basis_proto).collect(),
-            valid_time: Some(temporal_proto(&v.valid_time)),
+            valid_time: Some(domain_temporal_proto(
+                &v.valid_time_domain_ref,
+                &v.valid_time,
+            )),
             producer: v.producer.map(super::evidence::producer),
         }),
         SelfContent::NarrativeThread(v) => {
@@ -98,7 +111,10 @@ fn content_proto(value: SelfContent) -> p::SelfContent {
                 epistemic_class: v.epistemic_class.as_str().into(),
                 source_refs: v.source_refs.into_iter().map(to_ref).collect(),
                 basis: v.basis.into_iter().map(basis_proto).collect(),
-                valid_time: Some(temporal_proto(&v.valid_time)),
+                valid_time: Some(domain_temporal_proto(
+                    &v.valid_time_domain_ref,
+                    &v.valid_time,
+                )),
                 producer: v.producer.map(super::evidence::producer),
             })
         }
@@ -122,7 +138,11 @@ pub(super) fn record(v: SelfRecord) -> p::SelfRecord {
         integrity_state: v.integrity_state,
         suppression_state: v.suppression_state,
         created_at: Some(timestamp(v.created_at)),
-        formed_at: Some(timestamp(v.formed_at)),
+        formed_at: Some(formation_proto(
+            &v.formed_time_domain_ref,
+            v.formed_at,
+            v.formed_recorded_at,
+        )),
         recorded_at: Some(timestamp(v.recorded_at)),
         evidence: v
             .evidence
@@ -211,6 +231,7 @@ impl p::self_service_server::SelfService for KernelService {
                 .select(
                     SubjectId(id(&r.subject_id)?),
                     nous_self::SelfSelectionRequest {
+                        clock: None,
                         source_read: source_read.as_ref(),
                         scope: &scope,
                         targets: &targets,

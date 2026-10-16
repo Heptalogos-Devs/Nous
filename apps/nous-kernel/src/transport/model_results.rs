@@ -36,7 +36,7 @@ impl k::kernel_model_results_service_server::KernelModelResultsService for Kerne
         let result: Result<_> = async {
             let identity = envelope::identity(required(input.identity, "operation identity")?)?;
             let mut context = input.context.map(envelope::context).transpose()?;
-            if identity.owner == "memory" && input.proposal.is_some() {
+            if input.proposal.is_some() {
                 context.get_or_insert_with(Default::default);
             }
             if let Some(context) = &mut context {
@@ -57,9 +57,9 @@ impl k::kernel_model_results_service_server::KernelModelResultsService for Kerne
                         ));
                     }
                 }
-                if identity.owner == "memory" && input.proposal.is_some() {
-                    id(&identity.operation_key)?;
-                    context.cognitive_formed_at = Some(self.0.cognition.now(identity.subject));
+                if input.proposal.is_some() && context.cognitive_formed_at.is_none() {
+                    context.cognitive_formed_at =
+                        Some(self.0.cognition.read_clock(identity.subject).await?);
                 }
             }
             let proposal = input.proposal.map(envelope::payload).transpose()?;

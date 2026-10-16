@@ -89,7 +89,7 @@ try {
               conversationRef: "conversation:public",
             },
             basis: [basis(occurrenceId)],
-            validTime: {},
+            validTime: { timeDomainRef: "time:real", extent: {} },
           },
         },
       },
@@ -114,7 +114,7 @@ try {
         formationMode: "grounded",
         groundingOccurrenceId: occurrenceId,
         basis: [basis(occurrenceId)],
-        validTime: {},
+        validTime: { timeDomainRef: "time:real", extent: {} },
       },
     });
   const publicMemory = await form(
@@ -146,7 +146,7 @@ try {
               explanation: "Actual attributed source only",
             },
             basis: [basis(occurrenceId)],
-            validTime: {},
+            validTime: { timeDomainRef: "time:real", extent: {} },
           },
         },
       },
@@ -161,7 +161,7 @@ try {
     );
   const usage = create(CognitionUsageSchema, {
     agentInstanceId: "source-read-contract",
-    purpose: "deliberation",
+    purpose: "subject_deliberation",
     intent: "deployment evidence",
     participants: [{ entityRef: "entity:scope:alice", role: "speaker" }],
     audience: { conversationRef: "conversation:public", visibility: "group" },
@@ -348,7 +348,7 @@ try {
         references: [publicSelf.reference!, privateSelf.reference!],
         usage: create(CognitionUsageSchema, {
           agentInstanceId: "model-attempt",
-          purpose: "deliberation",
+          purpose: "subject_deliberation",
           intent: "cannot grant",
           sourceRead: {
             subjectId,

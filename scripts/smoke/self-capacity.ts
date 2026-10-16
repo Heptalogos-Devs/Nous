@@ -59,7 +59,8 @@ export async function populateSelfCapacity(
               description: "Only the synthetic horticulture fixture",
               conversationRef:
                 index >= 96 && index < 108 ? "capacity:unrelated" : undefined,
-              purposes: index >= 84 && index < 96 ? ["worker"] : [],
+              purposes:
+                index >= 84 && index < 96 ? ["professional_execution"] : [],
               workContextId:
                 index >= 108 && index < 120
                   ? work.workContext!.workContextId
@@ -69,12 +70,15 @@ export async function populateSelfCapacity(
             validTime:
               index === 120
                 ? {
-                    value: {
-                      case: "interval",
-                      value: { end: { seconds: 946684800n, nanos: 0 } },
+                    timeDomainRef: "time:real",
+                    extent: {
+                      value: {
+                        case: "interval",
+                        value: { end: { seconds: 946684800n, nanos: 0 } },
+                      },
                     },
                   }
-                : {},
+                : { timeDomainRef: "time:real", extent: {} },
           },
         },
       }),

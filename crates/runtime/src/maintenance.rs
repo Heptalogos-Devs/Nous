@@ -98,7 +98,7 @@ impl CognitiveRuntimeService {
         .bind(request.trigger_authority_seq)
         .bind(request.due_at)
         .bind(request.priority)
-        .bind(self.now(request.subject))
+        .bind(self.recorded_now())
         .fetch_one(&mut **tx)
         .await
         .map_err(db)
@@ -143,7 +143,7 @@ impl CognitiveRuntimeService {
             ));
         }
         let mut tx = self.store.begin().await?;
-        let now = self.now(subject);
+        let now = self.recorded_now();
         let blocked_digest = self.maintenance_block_digest(subject)?;
         sqlx::query("UPDATE maintenance_needs SET state='pending',trigger_revision=trigger_revision+1,blocked_config_digest=NULL,retry_not_before=NULL,retry_count=0 WHERE subject_id=$1 AND state='blocked' AND (blocked_config_digest IS DISTINCT FROM $2 OR (last_problem_code IN ('maintenance_retry_exhausted','capability_unavailable') AND $3::text IS NOT NULL AND model_execution_digest IS DISTINCT FROM $3))")
             .bind(subject.0).bind(blocked_digest).bind(model_execution_digest).execute(&mut *tx).await.map_err(db)?;
@@ -209,7 +209,7 @@ impl CognitiveRuntimeService {
         sqlx::query("UPDATE maintenance_needs SET state=$5,due_at=$6,last_problem_code=$7,updated_at=$8,retry_count=CASE WHEN $9::double precision IS NULL THEN 0 ELSE retry_count+1 END,retry_not_before=CASE WHEN $9::double precision IS NULL THEN NULL ELSE clock_timestamp()+make_interval(secs=>$9) END,terminal_at=CASE WHEN $5 IN ('satisfied','obsolete') THEN clock_timestamp() ELSE NULL END,blocked_config_digest=CASE WHEN $5='blocked' THEN $10 ELSE NULL END WHERE subject_id=$1 AND need_id=$2 AND state='pending' AND trigger_authority_seq=$3 AND trigger_revision=$4")
             .bind(selected.subject_id.0).bind(selected.need_id)
             .bind(selected.trigger_authority_seq).bind(selected.trigger_revision as i64)
-            .bind(state).bind(due).bind(problem).bind(self.now(selected.subject_id))
+            .bind(state).bind(due).bind(problem).bind(self.recorded_now())
             .bind(retry_delay).bind(self.maintenance_block_digest(selected.subject_id)?)
             .execute(&mut *tx).await.map_err(db)?;
         // Only maintenance-bound completed workflows lose their runtime purpose after ack.

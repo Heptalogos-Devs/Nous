@@ -10,7 +10,11 @@
 mod trace;
 pub use trace::CognitionTraceSources;
 mod time;
-pub use time::{TemporalExtent, TimeInterval, TimePredicate};
+pub use time::{
+    DomainStamp, DomainTemporalExtent, DomainTimePredicate, SourceTemporalEvidence,
+    TemporalEvidence, TemporalExtent, TimeInterval, TimePredicate, is_real_time_domain,
+    real_time_domain,
+};
 mod model_results;
 pub use model_results::{
     AttemptStatus, ExecutionAttempt, ExecutionTelemetry, ExecutionUsage, MaintenanceTrigger,
@@ -188,6 +192,7 @@ pub enum SourceClass {
     Web,
     HostEvent,
     Simulation,
+    WorldRealized,
     Generated,
     Import,
     Other(String),
@@ -202,6 +207,7 @@ impl SourceClass {
             Self::Web => "web",
             Self::HostEvent => "host_event",
             Self::Simulation => "simulation",
+            Self::WorldRealized => "world_realized",
             Self::Generated => "generated",
             Self::Import => "import",
             Self::Other(value) => value,
@@ -218,6 +224,7 @@ impl From<String> for SourceClass {
             "web" => Self::Web,
             "host_event" => Self::HostEvent,
             "simulation" => Self::Simulation,
+            "world_realized" => Self::WorldRealized,
             "generated" => Self::Generated,
             "import" => Self::Import,
             _ => Self::Other(value),
@@ -354,11 +361,9 @@ impl EmbeddingSpaceSignature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FreshnessDescriptor {
-    #[serde(default)]
-    pub occurred: Vec<TemporalExtent>,
-    pub observed_at: Option<DateTime<Utc>>,
-    pub valid_time: TemporalExtent,
-    pub formed_at: Option<DateTime<Utc>>,
+    pub temporal_evidence: TemporalEvidence,
+    pub valid_time: DomainTemporalExtent,
+    pub formed_at: Option<DomainStamp>,
     pub recorded_at: Option<DateTime<Utc>>,
 }
 
@@ -424,3 +429,6 @@ pub struct QueryDescriptor {
     pub reference: CognitiveRef,
     pub text: String,
 }
+
+mod epistemic;
+pub use epistemic::DomainKnowledge;

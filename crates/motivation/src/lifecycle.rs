@@ -136,7 +136,7 @@ impl MotivationService {
                 &revisions,
             )
             .await?;
-        sqlx::query("UPDATE lexical_bindings SET tombstoned_at=COALESCE(tombstoned_at,$3) WHERE object_kind=ANY($1::text[]) AND canonical_ref=ANY($2::text[])").bind(vec![record.content.family().to_string(),record.reference().kind().to_string()]).bind(&refs).bind(self.runtime.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?;
+        sqlx::query("UPDATE lexical_bindings SET tombstoned_at=COALESCE(tombstoned_at,$3) WHERE object_kind=ANY($1::text[]) AND canonical_ref=ANY($2::text[])").bind(vec![record.content.family().to_string(),record.reference().kind().to_string()]).bind(&refs).bind(self.runtime.recorded_now()).execute(&mut **mutation.tx()).await.map_err(db)?;
         sqlx::query("UPDATE lexical_visibility v SET display_name='',aliases='{}' FROM lexical_bindings b WHERE v.lexical_ref=b.lexical_ref AND v.subject_id=$1 AND b.object_kind=ANY($2::text[]) AND b.canonical_ref=ANY($3::text[])").bind(subject.0).bind(vec![record.content.family().to_string(),record.reference().kind().to_string()]).bind(&refs).execute(&mut **mutation.tx()).await.map_err(db)?;
         sqlx::query("DELETE FROM motivation_objects WHERE subject_id=$1 AND object_id=$2")
             .bind(subject.0)

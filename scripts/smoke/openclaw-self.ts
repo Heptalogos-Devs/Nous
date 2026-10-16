@@ -180,7 +180,8 @@ try {
     existing.items.some(
       (record) =>
         record.content?.content.case === "facet" &&
-        record.content.content.value.validTime?.value.case === "instant",
+        record.content.content.value.validTime?.extent?.value.case ===
+          "instant",
     ) ||
     !existing.items.some(
       (record) =>

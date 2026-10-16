@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { fromJson } from "@bufbuild/protobuf";
-import { TimestampSchema } from "@bufbuild/protobuf/wkt";
+import { DomainStampSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { parse } from "../../src/nousql/parser.js";
 import { compileNousQL } from "../../src/nousql/compiler.js";
 import { nousqlHelp } from "../../../nous-cli/src/nousql-help.js";
@@ -31,7 +31,11 @@ it("keeps all Agent manual and structured help queries executable", async () => 
         lexicalRef:
           locator.kind === "lexical" ? locator.value : "tag:kavaj-logiv-bufog",
       }),
-      fromJson(TimestampSchema, "2026-10-07T00:00:00Z"),
+      fromJson(DomainStampSchema, {
+        timeDomainRef: "time:real",
+        at: "2026-10-07T00:00:00Z",
+        recordedAt: "2026-10-07T00:00:00Z",
+      }),
     );
     expect(compiled.expression, example).toBeDefined();
   }

@@ -208,6 +208,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                 .material
                 .persist_derived_representation(
                     nous_material::DerivedRepresentation {
+                        formed_stamp: None,
                         derived_representation_id: nous_core::DerivedRepresentationId::new(),
                         subject_id: subject,
                         inputs,
@@ -219,7 +220,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                         payload_json: input.structured_payload.map(|value| object(Some(value))),
                         payload_artifact_id: None,
                         quality: object(input.quality),
-                        created_at: self.0.cognition.now(subject),
+                        created_at: self.0.cognition.recorded_now(),
                         supersedes: input
                             .supersedes
                             .as_deref()

@@ -45,7 +45,11 @@ async fn experience_capture_cursor_idle_and_reopen_are_stable() {
         accepted.occurrence.occurrence_id,
         replay.occurrence.occurrence_id
     );
-    assert_eq!(replay.occurrence.observed_at, start);
+    assert_eq!(
+        replay.occurrence.observed_at,
+        accepted.occurrence.observed_at
+    );
+    assert_eq!(replay.occurrence.observed_stamp.at, start);
     rt.material
         .record_observation(observation(subject, None))
         .await
@@ -148,6 +152,21 @@ async fn maintenance_selection_preserves_new_triggers_during_work() {
             .is_empty()
     );
     clock.advance_by(subject, Duration::hours(1)).unwrap();
+    assert!(
+        rt.cognition
+            .select_maintenance(subject, &kinds, 1, None, None)
+            .await
+            .unwrap()
+            .is_empty(),
+        "semantic advance does not mature an explicit real scheduler deadline"
+    );
+    rt.cognition
+        .enqueue_maintenance(MaintenanceRequest {
+            due_at: rt.cognition.recorded_now(),
+            ..request.clone()
+        })
+        .await
+        .unwrap();
     let selected = rt
         .cognition
         .select_maintenance(subject, &kinds, 1, None, None)
@@ -301,7 +320,12 @@ async fn assert_owner_timestamp_replay(
         .await
         .unwrap();
     assert_eq!(memory.revision.formed_at, at);
-    assert_eq!(memory.revision.recorded_at, at);
+    assert!(
+        (memory.revision.recorded_at - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
     clock.advance_by(subject, Duration::days(1)).unwrap();
     rt.require_memory()
         .unwrap()
@@ -313,6 +337,7 @@ async fn assert_owner_timestamp_replay(
             intent: nous_memory::RevisionIntent::Correct,
 
             content: nous_memory::MemoryContent {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 formation_mode: input.content.formation_mode,
                 grounding_occurrence_id: input.content.grounding_occurrence_id,
@@ -339,7 +364,7 @@ async fn assert_owner_timestamp_replay(
         memory.revision.memory_revision_id
     );
     assert_eq!(replay.revision.formed_at, at);
-    assert_eq!(replay.revision.recorded_at, at);
+    assert_eq!(replay.revision.recorded_at, memory.revision.recorded_at);
     assert_schema_clock(rt, clock, subject, occurrence).await;
 }
 
@@ -357,6 +382,7 @@ async fn assert_schema_clock(
             title: None,
             structural_claim: "Owner-assigned cognitive formation time".into(),
             applicability_scope: nous_memory::SchemaScope {
+                valid_time_domain_ref: "time:real".into(),
                 description: "Timestamp owner contract".into(),
                 aboutness: vec![],
                 tags: vec![],
@@ -382,7 +408,12 @@ async fn assert_schema_clock(
         .await
         .unwrap();
     assert_eq!(schema.revision.formed_at, clock.now(subject));
-    assert_eq!(schema.revision.recorded_at, clock.now(subject));
+    assert!(
+        (schema.revision.recorded_at - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
     let at = clock.now(subject);
     clock.advance_by(subject, Duration::days(1)).unwrap();
     let replay_schema = rt
@@ -419,5 +450,10 @@ async fn assert_schema_clock(
         .await
         .unwrap();
     assert_eq!(revised_schema.revision.formed_at, clock.now(subject));
-    assert_eq!(revised_schema.revision.recorded_at, clock.now(subject));
+    assert!(
+        (revised_schema.revision.recorded_at - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
 }

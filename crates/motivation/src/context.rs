@@ -63,6 +63,17 @@ impl MotivationService {
             }
         });
         nous_runtime::ContextSource {
+            epistemic_class: None,
+            domain_knowledge: None,
+            temporal: Some(FreshnessDescriptor {
+                temporal_evidence: TemporalEvidence::default(),
+                valid_time: DomainTemporalExtent {
+                    time_domain_ref: record.content.matter().valid_time_domain_ref.clone(),
+                    extent: record.content.valid_time().clone(),
+                },
+                formed_at: Some(record.formed_stamp.clone()),
+                recorded_at: Some(record.recorded_at),
+            }),
             reference: record.reference(),
             source_revision: Some(record.revision_id.to_string()),
             text,

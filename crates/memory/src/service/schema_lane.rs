@@ -47,7 +47,7 @@ pub(crate) async fn schema_direct_lane(
         return Ok(output);
     }
     let rows = sqlx::query(
-        "SELECT s.schema_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND ((s.schema_id=ANY($2::uuid[]) AND r.schema_revision_id=s.current_revision_id) OR r.schema_revision_id=ANY($3::uuid[])) AND ($4::text[] IS NULL OR source_read_allowed($1,'cognitive_schema_revision',r.schema_revision_id::text,$4,$5,$6,$7)) ORDER BY (r.schema_revision_id=ANY($3::uuid[])) DESC,r.schema_revision_id LIMIT $8",
+        "SELECT s.schema_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.aboutness,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND ((s.schema_id=ANY($2::uuid[]) AND r.schema_revision_id=s.current_revision_id) OR r.schema_revision_id=ANY($3::uuid[])) AND ($4::text[] IS NULL OR source_read_allowed($1,'cognitive_schema_revision',r.schema_revision_id::text,$4,$5,$6,$7)) ORDER BY (r.schema_revision_id=ANY($3::uuid[])) DESC,r.schema_revision_id LIMIT $8",
     )
     .bind(query.subject.0)
     .bind(schema_ids.iter().copied().collect::<Vec<_>>())
@@ -81,6 +81,7 @@ pub(crate) async fn schema_direct_lane(
         "cognitive_schema",
         &revision_keys,
         bound.historical_authority.as_deref(),
+        bound.source_query.source_read.as_ref(),
     )
     .await?;
     let mut revision_ids = Vec::new();
@@ -204,7 +205,7 @@ pub(crate) async fn materialize_schema_revisions(
     if revision_ids.is_empty() {
         return Ok((Vec::new(), BTreeMap::new()));
     }
-    let rows = sqlx::query("SELECT s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND r.schema_revision_id=ANY($2::uuid[])")
+    let rows = sqlx::query("SELECT s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND r.schema_revision_id=ANY($2::uuid[])")
         .bind(bound.source_query.subject.0)
         .bind(&revision_ids)
         .fetch_all(&mut *tx)
@@ -216,6 +217,7 @@ pub(crate) async fn materialize_schema_revisions(
         "cognitive_schema",
         &revision_ids,
         bound.historical_authority.as_deref(),
+        bound.source_query.source_read.as_ref(),
     )
     .await?;
     let mut drops = BTreeMap::new();
@@ -284,46 +286,62 @@ pub(crate) async fn materialize_schema_revisions(
             continue;
         }
         let freshness = FreshnessDescriptor {
-            occurred: source_times.occurred,
-            observed_at: source_times.observed_at,
-            valid_time: temporal_from_columns(
-                row.try_get("valid_time_kind")
+            temporal_evidence: source_times.temporal,
+            valid_time: DomainTemporalExtent {
+                time_domain_ref: row
+                    .try_get("valid_time_domain_ref")
                     .map_err(nous_persistence::database_error)?,
-                row.try_get("valid_time_start")
+                extent: temporal_from_columns(
+                    row.try_get("valid_time_kind")
+                        .map_err(nous_persistence::database_error)?,
+                    row.try_get("valid_time_start")
+                        .map_err(nous_persistence::database_error)?,
+                    row.try_get("valid_time_end")
+                        .map_err(nous_persistence::database_error)?,
+                )?,
+            },
+            formed_at: Some(DomainStamp {
+                time_domain_ref: row
+                    .try_get("formed_time_domain_ref")
                     .map_err(nous_persistence::database_error)?,
-                row.try_get("valid_time_end")
+                at: row
+                    .try_get("formed_at")
                     .map_err(nous_persistence::database_error)?,
-            )?,
-            formed_at: Some(
-                row.try_get("formed_at")
+                recorded_at: row
+                    .try_get("formed_recorded_at")
                     .map_err(nous_persistence::database_error)?,
-            ),
+            }),
             recorded_at: Some(
                 row.try_get("recorded_at")
                     .map_err(nous_persistence::database_error)?,
             ),
         };
         let constraints = &bound.source_query.expression.constraints;
-        if !constraints.occurred.is_none_or(|interval| {
-            freshness
-                .occurred
-                .iter()
-                .any(|time| interval.matches_extent(time))
-        }) || !constraints.observed.is_none_or(|interval| {
-            freshness
-                .observed_at
-                .is_some_and(|at| interval.contains(at))
-        }) || !constraints
-            .valid
-            .is_none_or(|interval| interval.matches_extent(&freshness.valid_time))
+        if !freshness.temporal_evidence.matches(
+            bound
+                .source_query
+                .temporal_predicate(TimeAxis::Occurred)
+                .as_ref(),
+            bound
+                .source_query
+                .temporal_predicate(TimeAxis::Observed)
+                .as_ref(),
+        ) || !bound
+            .source_query
+            .temporal_predicate(TimeAxis::Valid)
+            .is_none_or(|p| p.matches_extent(&freshness.valid_time) == Some(true))
+            || !bound
+                .source_query
+                .temporal_predicate(TimeAxis::Formed)
+                .is_none_or(|p| {
+                    freshness
+                        .formed_at
+                        .as_ref()
+                        .is_some_and(|stamp| p.matches_stamp(stamp) == Some(true))
+                })
             || !constraints
-                .formed
-                .is_none_or(|interval| freshness.formed_at.is_some_and(|at| interval.contains(at)))
-            || !constraints.recorded.is_none_or(|interval| {
-                freshness
-                    .recorded_at
-                    .is_some_and(|at| interval.contains(at))
-            })
+                .recorded
+                .is_none_or(|p| freshness.recorded_at.is_some_and(|at| p.contains(at)))
         {
             *drops.entry("temporal_ineligible".into()).or_default() += 1;
             continue;

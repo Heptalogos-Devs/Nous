@@ -87,6 +87,10 @@ impl MaterialService {
         .await
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one read view binds source permission, actual occurrence, metadata and exact context input"
+    )]
     async fn context_sources_with_paths(
         &self,
         subject: SubjectId,
@@ -135,11 +139,26 @@ impl MaterialService {
         let mut inputs = self
             .read_inputs_in(&mut tx, subject, &admitted, None, max_bytes > 0)
             .await?;
-        let metadata = if paths.is_some() {
-            perception_metadata_in(&mut tx, subject, &admitted).await?
-        } else {
-            std::collections::HashMap::new()
-        };
+        let metadata = perception_metadata_in(&mut tx, subject, &admitted).await?;
+        let occurrence_ids = references
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| allowed[*index])
+            .filter_map(|(index, reference)| {
+                paths.map(|paths| paths[index].occurrence_id).or({
+                    if let CognitiveRef::Occurrence(id) = reference {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let occurrences = self
+            .occurrences_in(&mut tx, subject, &occurrence_ids, None)
+            .await?;
         tx.commit().await.map_err(db)?;
         let mut results = Vec::with_capacity(references.len());
         for (index, reference) in references.iter().enumerate() {
@@ -150,6 +169,52 @@ impl MaterialService {
             } else {
                 inputs.remove(reference)
             };
+            let occurrence = paths
+                .map(|paths| paths[index].occurrence_id)
+                .or({
+                    if let CognitiveRef::Occurrence(id) = reference {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+                .and_then(|id| occurrences.get(&id));
+            let temporal = if allowed[index] {
+                let data = metadata.get(reference);
+                let formed_at = data
+                    .and_then(|data| data.get("formed_stamp"))
+                    .filter(|value| !value.is_null())
+                    .map(|value| serde_json::from_value(value.clone()))
+                    .transpose()
+                    .map_err(|e| Error::Infrastructure(e.to_string()))?;
+                let recorded_at = data
+                    .and_then(|data| data.get("recorded_at"))
+                    .map(|value| serde_json::from_value(value.clone()))
+                    .transpose()
+                    .map_err(|e| Error::Infrastructure(e.to_string()))?;
+                Some(FreshnessDescriptor {
+                    temporal_evidence: TemporalEvidence {
+                        sources: occurrence
+                            .into_iter()
+                            .map(|o| SourceTemporalEvidence {
+                                occurrence_id: o.occurrence_id,
+                                occurred: DomainTemporalExtent {
+                                    time_domain_ref: o.occurred_time_domain_ref.clone(),
+                                    extent: o.occurred_time.clone(),
+                                },
+                                observed: o.observed_stamp.clone(),
+                                observed_at: o.observed_at,
+                                recorded_at: o.created_at,
+                            })
+                            .collect(),
+                    },
+                    valid_time: DomainTemporalExtent::default(),
+                    formed_at,
+                    recorded_at,
+                })
+            } else {
+                None
+            };
             let result = self
                 .context_source_from_input(
                     input,
@@ -157,6 +222,7 @@ impl MaterialService {
                     max_bytes,
                     paths.map(|p| &p[index]),
                     metadata.get(reference),
+                    temporal,
                 )
                 .await;
             results.push(result);
@@ -171,6 +237,7 @@ impl MaterialService {
         max_bytes: usize,
         path: Option<&EvidenceRef>,
         metadata: Option<&serde_json::Value>,
+        temporal: Option<FreshnessDescriptor>,
     ) -> Result<nous_runtime::ContextSource> {
         let mut payload = input
             .ok_or_else(|| Error::Unavailable("material metadata is unavailable".into()))?
@@ -227,7 +294,14 @@ impl MaterialService {
         if let Some(path) = path
             && let Some(body) = text.as_mut()
         {
-            let provenance = serde_json::json!({"actual_occurrence":path.occurrence_id.0,"material_reference":reference.to_string(),"current_access":"representation","quality":metadata});
+            let quality = metadata.cloned().map(|mut value| {
+                if let Some(fields) = value.as_object_mut() {
+                    fields.remove("formed_stamp");
+                    fields.remove("recorded_at");
+                }
+                value
+            });
+            let provenance = serde_json::json!({"actual_occurrence":path.occurrence_id.0,"material_reference":reference.to_string(),"current_access":"representation","quality":quality});
             *body = format!(
                 "Current actual material perception {}\n{}",
                 provenance, body
@@ -246,6 +320,9 @@ impl MaterialService {
             });
         }
         Ok(nous_runtime::ContextSource {
+            epistemic_class: None,
+            domain_knowledge: None,
+            temporal,
             usage: "task_evidence",
             required: false,
             reference: reference.clone(),
@@ -712,7 +789,12 @@ async fn perception_metadata_in(
     references: &[CognitiveRef],
 ) -> Result<std::collections::HashMap<CognitiveRef, serde_json::Value>> {
     let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
-    let rows=sqlx::query("WITH refs AS (SELECT * FROM unnest($2::text[],$3::text[]) q(kind,value)) SELECT q.kind,q.value,d.quality FROM refs q LEFT JOIN derived_regions g ON q.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id::text=q.value JOIN derived_representations d ON d.subject_id=$1 AND ((q.kind='derived_representation' AND d.derived_representation_id::text=q.value) OR d.derived_representation_id=g.derived_representation_id)").bind(subject.0).bind(kinds).bind(values).fetch_all(&mut **tx).await.map_err(db)?;
+    let rows=sqlx::query(r#"WITH refs AS (SELECT * FROM unnest($2::text[],$3::text[]) q(kind,value))
+SELECT q.kind,q.value,d.quality,CASE WHEN q.kind='derived_region' THEN g.formed_stamp ELSE d.formed_stamp END formed_stamp,COALESCE(g.created_at,d.created_at) created_at FROM refs q LEFT JOIN derived_regions g ON q.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id::text=q.value JOIN derived_representations d ON d.subject_id=$1 AND ((q.kind='derived_representation' AND d.derived_representation_id::text=q.value) OR d.derived_representation_id=g.derived_representation_id)
+UNION ALL SELECT q.kind,q.value,'{}'::jsonb,NULL::jsonb,o.created_at FROM refs q JOIN observation_occurrences o ON q.kind='occurrence' AND o.subject_id=$1 AND o.occurrence_id::text=q.value
+UNION ALL SELECT q.kind,q.value,'{}'::jsonb,NULL::jsonb,a.created_at FROM refs q JOIN artifacts a ON q.kind='artifact' AND a.subject_id=$1 AND a.artifact_id::text=q.value
+UNION ALL SELECT q.kind,q.value,'{}'::jsonb,NULL::jsonb,r.created_at FROM refs q JOIN source_regions r ON q.kind='source_region' AND r.subject_id=$1 AND r.source_region_id::text=q.value
+"#).bind(subject.0).bind(kinds).bind(values).fetch_all(&mut **tx).await.map_err(db)?;
     let keys = [
         "input_access",
         "source_media_type",
@@ -736,6 +818,17 @@ async fn perception_metadata_in(
             )?;
             let quality: serde_json::Value = row.try_get("quality").map_err(db)?;
             let mut visible = serde_json::Map::new();
+            visible.insert(
+                "formed_stamp".into(),
+                row.try_get::<Option<serde_json::Value>, _>("formed_stamp")
+                    .map_err(db)?
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            visible.insert(
+                "recorded_at".into(),
+                serde_json::to_value(row.try_get::<DateTime<Utc>, _>("created_at").map_err(db)?)
+                    .map_err(|e| Error::Infrastructure(e.to_string()))?,
+            );
             for key in keys {
                 if let Some(value) = quality.get(key) {
                     visible.insert(key.into(), value.clone());

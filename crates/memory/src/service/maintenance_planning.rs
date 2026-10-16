@@ -114,6 +114,39 @@ impl MemoryService {
             }
             _ => return Err(Error::Invalid("invalid consolidation source kind".into())),
         }
+        let (family, object, revision) = if let Some(journal) = &result.journal {
+            (
+                "journal",
+                journal.object.journal_id.0,
+                journal.revision.journal_revision_id.0,
+            )
+        } else {
+            let episode = &result.episodes[0];
+            (
+                "episode",
+                episode.object.episode_id.0,
+                episode.revision.episode_revision_id.0,
+            )
+        };
+        let committed: serde_json::Value = sqlx::query_scalar("SELECT semantic_stamp FROM authority_object_states WHERE subject_id=$1 AND object_kind=$2 AND object_ref=$3 AND state->>'current_revision_id'=$4 ORDER BY event_id LIMIT 1")
+            .bind(subject.0).bind(family).bind(object.to_string()).bind(revision.to_string())
+            .fetch_one(self.store.pool()).await.map_err(db)?;
+        let committed: nous_core::DomainStamp = serde_json::from_value(committed)
+            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        let frame = self.cognition.read_clock(subject).await?;
+        let delay = chrono::Duration::seconds(
+            self.configuration
+                .snapshot_for_subject(subject)?
+                .get(super::longitudinal_policy::CONSOLIDATION_DELAY)? as i64,
+        );
+        let (settled, wake) = self
+            .cognition
+            .semantic_settlement(subject, &committed, delay, &frame)?;
+        if !settled {
+            result.status = "deferred".into();
+            result.next_due = Some(wake);
+            return Ok(result);
+        }
         result.occurrences = scope_occurrences(&result.episodes)?;
         Ok(result)
     }
@@ -128,7 +161,7 @@ impl MemoryService {
         let max_neighbors = config.get(nous_runtime::EPISODE_MAX_NEIGHBORS)? as i64;
         let neighbor_span =
             chrono::Duration::seconds(config.get(nous_runtime::EPISODE_NEIGHBOR_SPAN)? as i64);
-        let (track, anchor, late, parent) = if scope_kind == "episode_revision" {
+        let (track, anchor, late, parent, domain) = if scope_kind == "episode_revision" {
             let revision = EpisodeRevisionId(
                 scope
                     .parse()
@@ -147,18 +180,20 @@ impl MemoryService {
                 extent_start(&source.revision.experience_time),
                 None,
                 source.revision.parent_episode_revision_id.map(|id| id.0),
+                source.revision.experience_time_domain_ref.clone(),
             )
         } else if scope_kind == "track" {
-            let late = sqlx::query("SELECT e.occurrence_id,e.observed_at FROM runtime_available_experience($1,$2) e WHERE NOT EXISTS(SELECT 1 FROM episode_revision_members m JOIN episode_objects o ON o.current_revision_id=m.episode_revision_id WHERE o.subject_id=$1 AND o.track_key=$3 AND o.acceptance_state='accepted' AND m.ref_kind='occurrence' AND m.ref_value=e.occurrence_id::text) ORDER BY e.recorded_seq LIMIT 1")
+            let late = sqlx::query("SELECT e.occurrence_id,(o.observed_stamp->>'at')::timestamptz experience_at,o.observed_stamp->>'time_domain_ref' experience_domain FROM runtime_available_experience($1,$2) e JOIN observation_occurrences o ON o.subject_id=$1 AND o.occurrence_id=e.occurrence_id WHERE NOT EXISTS(SELECT 1 FROM episode_revision_members m JOIN episode_objects o ON o.current_revision_id=m.episode_revision_id WHERE o.subject_id=$1 AND o.track_key=$3 AND o.acceptance_state='accepted' AND m.ref_kind='occurrence' AND m.ref_value=e.occurrence_id::text) ORDER BY e.recorded_seq LIMIT 1")
                 .bind(subject.0).bind(trigger).bind(scope).fetch_optional(self.store.pool()).await.map_err(db)?;
             let Some(late) = late else {
                 return Ok(MaintenanceScope::empty("obsolete"));
             };
             (
                 scope.to_owned(),
-                Some(late.get::<DateTime<Utc>, _>("observed_at")),
+                Some(late.get::<DateTime<Utc>, _>("experience_at")),
                 Some(OccurrenceId(late.get("occurrence_id"))),
                 None,
+                late.get::<String, _>("experience_domain"),
             )
         } else {
             return Err(Error::Invalid("invalid Episode review scope kind".into()));
@@ -168,8 +203,8 @@ impl MemoryService {
         };
         // The local partition contains overlapping Episodes and the immediate
         // neighbors on either side. Age relative to today's clock is irrelevant.
-        let ids: Vec<Uuid> = sqlx::query_scalar("WITH eligible AS (SELECT o.current_revision_id AS id,r.experience_time_start AS start_at,COALESCE(r.experience_time_end,r.experience_time_start) AS end_at FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND r.parent_episode_revision_id IS NOT DISTINCT FROM $3::uuid), neighborhood AS (SELECT id FROM eligible WHERE start_at<=$4 AND end_at>=$4 UNION SELECT id FROM (SELECT id FROM eligible WHERE end_at<$4 ORDER BY end_at DESC,id LIMIT 1) preceding UNION SELECT id FROM (SELECT id FROM eligible WHERE start_at>$4 ORDER BY start_at,id LIMIT 1) following) SELECT id FROM neighborhood LIMIT $5")
-            .bind(subject.0).bind(&track).bind(parent).bind(anchor).bind(max_neighbors+1).fetch_all(self.store.pool()).await.map_err(db)?;
+        let ids: Vec<Uuid> = sqlx::query_scalar("WITH eligible AS (SELECT o.current_revision_id AS id,r.experience_time_start AS start_at,COALESCE(r.experience_time_end,r.experience_time_start) AS end_at FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND r.parent_episode_revision_id IS NOT DISTINCT FROM $3::uuid AND r.experience_time_domain_ref=$6), neighborhood AS (SELECT id FROM eligible WHERE start_at<=$4 AND end_at>=$4 UNION SELECT id FROM (SELECT id FROM eligible WHERE end_at<$4 ORDER BY end_at DESC,id LIMIT 1) preceding UNION SELECT id FROM (SELECT id FROM eligible WHERE start_at>$4 ORDER BY start_at,id LIMIT 1) following) SELECT id FROM neighborhood LIMIT $5")
+            .bind(subject.0).bind(&track).bind(parent).bind(anchor).bind(max_neighbors+1).bind(&domain).fetch_all(self.store.pool()).await.map_err(db)?;
         if ids.len() as i64 > max_neighbors {
             let mut result = MaintenanceScope::empty("blocked");
             result.problem = Some("historical_repair_scope_exceeded".into());
@@ -226,6 +261,10 @@ impl MemoryService {
         Ok(result)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one bounded Journal planner preserves current source heads, same-domain scope and semantic settling before model work"
+    )]
     pub async fn plan_journal_review(
         &self,
         subject: SubjectId,
@@ -233,7 +272,7 @@ impl MemoryService {
         scope: &str,
     ) -> Result<MaintenanceScope> {
         let config = self.configuration.snapshot_for_subject(subject)?;
-        let now = self.cognition.now(subject);
+        let frame = self.cognition.read_clock(subject).await?;
         let max_count = config.get(super::longitudinal_policy::JOURNAL_MAX_EPISODES)? as i64;
         let span = chrono::Duration::seconds(
             config.get(super::longitudinal_policy::JOURNAL_MAX_SPAN)? as i64,
@@ -283,6 +322,7 @@ impl MemoryService {
             result.problem = Some("journal_scope_bound_exceeded".into());
             return Ok(result);
         }
+        let mut scope_domain: Option<String> = None;
         let mut scope_start: Option<DateTime<Utc>> = None;
         let mut scope_end: Option<DateTime<Utc>> = None;
         let mut episodes = self.episode_views(subject, &ids).await?;
@@ -290,8 +330,24 @@ impl MemoryService {
             let episode = episodes
                 .remove(&id)
                 .ok_or_else(|| Error::NotFound("Episode revision not found".into()))?;
-            if episode.revision.recorded_at + delay > now {
-                result.next_due = Some(episode.revision.recorded_at + delay);
+            if let Some(domain) = &scope_domain {
+                if domain != &episode.revision.experience_time_domain_ref {
+                    result.status = "blocked".into();
+                    result.problem = Some("journal_scope_unmapped_time_domains".into());
+                    return Ok(result);
+                }
+            } else {
+                scope_domain = Some(episode.revision.experience_time_domain_ref.clone());
+            }
+            let committed: serde_json::Value = sqlx::query_scalar("SELECT semantic_stamp FROM authority_object_states WHERE subject_id=$1 AND object_kind='episode' AND object_ref=$2 AND state->>'current_revision_id'=$3 ORDER BY event_id LIMIT 1")
+                .bind(subject.0).bind(episode.object.episode_id.0.to_string()).bind(episode.revision.episode_revision_id.0.to_string()).fetch_one(self.store.pool()).await.map_err(db)?;
+            let committed: nous_core::DomainStamp = serde_json::from_value(committed)
+                .map_err(|error| Error::Infrastructure(error.to_string()))?;
+            let (settled, wake) = self
+                .cognition
+                .semantic_settlement(subject, &committed, delay, &frame)?;
+            if !settled {
+                result.next_due = Some(wake);
                 if result.journal.is_some() {
                     result.status = "deferred".into();
                     result.problem = Some("journal_sources_settling".into());
@@ -443,7 +499,8 @@ impl MemoryService {
             .await?;
         sources.sort_by_key(|(occurrence, _)| {
             (
-                occurrence.observed_at,
+                occurrence.observed_stamp.time_domain_ref.clone(),
+                occurrence.observed_stamp.at,
                 experience
                     .get(&occurrence.occurrence_id)
                     .and_then(|item| item.recorded_seq)

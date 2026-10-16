@@ -13,6 +13,7 @@ pub struct ExperienceInput {
     pub occurrence: OccurrenceId,
     pub session: SessionId,
     pub observed_at: DateTime<Utc>,
+    pub observed_stamp: DomainStamp,
     pub source_class: String,
     pub conversation_ref: Option<String>,
     pub actor_entity_ref: Option<String>,
@@ -34,7 +35,7 @@ impl CognitiveRuntimeService {
         .map_err(db)?
         .ok_or_else(|| crate::sessions::stale_session(input.session))?;
         sqlx::query(
-            "INSERT INTO experience_items(subject_id,recorded_seq,occurrence_id,session_id,observed_at,source_class,conversation_ref,actor_entity_ref,active_work_context_id,active_work_context_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+            "INSERT INTO experience_items(subject_id,recorded_seq,occurrence_id,session_id,observed_at,source_class,conversation_ref,actor_entity_ref,active_work_context_id,active_work_context_revision,experience_at,experience_time_domain_ref) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
         )
         .bind(input.subject.0)
         .bind(input.recorded_seq)
@@ -46,6 +47,8 @@ impl CognitiveRuntimeService {
         .bind(input.actor_entity_ref)
         .bind(row.try_get::<Option<Uuid>, _>("active_work_context_id").map_err(db)?)
         .bind(row.try_get::<Option<i64>, _>("work_context_revision").map_err(db)?)
+        .bind(input.observed_stamp.at)
+        .bind(&input.observed_stamp.time_domain_ref)
         .execute(&mut **tx)
         .await
         .map_err(db)?;
@@ -57,7 +60,7 @@ impl CognitiveRuntimeService {
                 scope_kind: "track".into(),
                 scope_ref: "interaction".into(),
                 trigger_authority_seq: input.recorded_seq,
-                due_at: self.now(input.subject),
+                due_at: self.recorded_now(),
                 priority: 50,
             },
         )

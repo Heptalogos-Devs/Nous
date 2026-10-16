@@ -9,7 +9,7 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { SubjectRequestSchema, TemporalExtent } from "./types_pb.js";
+import type { DomainStamp, SubjectRequestSchema } from "./types_pb.js";
 import { file_nous_wave_v1alpha1_types } from "./types_pb.js";
 import { file_nous_wave_v1alpha1_presentation } from "./presentation_pb.js";
 import type { Message } from "@bufbuild/protobuf";
@@ -18,104 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file nous/wave/v1alpha1/clock.proto.
  */
 export const file_nous_wave_v1alpha1_clock: GenFile = /*@__PURE__*/
-  fileDesc("Ch5ub3VzL3dhdmUvdjFhbHBoYTEvY2xvY2sucHJvdG8SEm5vdXMud2F2ZS52MWFscGhhMSJ/CgtEb21haW5TdGFtcBIXCg90aW1lX2RvbWFpbl9yZWYYASABKAkSJgoCYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC3JlY29yZGVkX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJjChREb21haW5UZW1wb3JhbEV4dGVudBIXCg90aW1lX2RvbWFpbl9yZWYYASABKAkSMgoGZXh0ZW50GAIgASgLMiIubm91cy53YXZlLnYxYWxwaGExLlRlbXBvcmFsRXh0ZW50ItgCChZEb21haW5UZW1wb3JhbEV2aWRlbmNlEjoKCG9jY3VycmVkGAEgASgLMigubm91cy53YXZlLnYxYWxwaGExLkRvbWFpblRlbXBvcmFsRXh0ZW50EjEKCG9ic2VydmVkGAIgASgLMh8ubm91cy53YXZlLnYxYWxwaGExLkRvbWFpblN0YW1wEjcKBXZhbGlkGAMgASgLMigubm91cy53YXZlLnYxYWxwaGExLkRvbWFpblRlbXBvcmFsRXh0ZW50Ei8KBmZvcm1lZBgEIAEoCzIfLm5vdXMud2F2ZS52MWFscGhhMS5Eb21haW5TdGFtcBIvCgtyZWNvcmRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASNAoQb2JzZXJ2ZWRfcmVhbF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAi+QEKDFN1YmplY3RDbG9jaxIfCgpzdWJqZWN0X2lkGAEgASgJQgvK8xgHc3ViamVjdBIXCg90aW1lX2RvbWFpbl9yZWYYAiABKAkSMAoMd29ybGRfYW5jaG9yGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtyZWFsX2FuY2hvchgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEcmF0ZRgFIAEoARIsCgNub3cYBiABKAsyHy5ub3VzLndhdmUudjFhbHBoYTEuRG9tYWluU3RhbXASEAoIcmV2aXNpb24YByABKAMiTQoUQ2xvY2tNdXRhdGlvblJlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSFAoMb3BlcmF0aW9uX2lkGAIgASgJIqUBChVDb25maWd1cmVDbG9ja1JlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSFAoMb3BlcmF0aW9uX2lkGAIgASgJEhcKD3RpbWVfZG9tYWluX3JlZhgDIAEoCRIMCgRyYXRlGAQgASgBEi4KCndvcmxkX3RpbWUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIl0KE0FkdmFuY2VDbG9ja1JlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSFAoMb3BlcmF0aW9uX2lkGAIgASgJEg8KB3NlY29uZHMYAyABKAEiWQoSUmVzdW1lQ2xvY2tSZXF1ZXN0Eh8KCnN1YmplY3RfaWQYASABKAlCC8rzGAdzdWJqZWN0EhQKDG9wZXJhdGlvbl9pZBgCIAEoCRIMCgRyYXRlGAMgASgBMusDChVDb2duaXRpdmVDbG9ja1NlcnZpY2USUQoJUmVhZENsb2NrEiIubm91cy53YXZlLnYxYWxwaGExLlN1YmplY3RSZXF1ZXN0GiAubm91cy53YXZlLnYxYWxwaGExLlN1YmplY3RDbG9jaxJiCg5Db25maWd1cmVDbG9jaxIpLm5vdXMud2F2ZS52MWFscGhhMS5Db25maWd1cmVDbG9ja1JlcXVlc3QaIC5ub3VzLndhdmUudjFhbHBoYTEuU3ViamVjdENsb2NrIgOQAgISXQoKUGF1c2VDbG9jaxIoLm5vdXMud2F2ZS52MWFscGhhMS5DbG9ja011dGF0aW9uUmVxdWVzdBogLm5vdXMud2F2ZS52MWFscGhhMS5TdWJqZWN0Q2xvY2siA5ACAhJeCgxBZHZhbmNlQ2xvY2sSJy5ub3VzLndhdmUudjFhbHBoYTEuQWR2YW5jZUNsb2NrUmVxdWVzdBogLm5vdXMud2F2ZS52MWFscGhhMS5TdWJqZWN0Q2xvY2siA5ACAhJcCgtSZXN1bWVDbG9jaxImLm5vdXMud2F2ZS52MWFscGhhMS5SZXN1bWVDbG9ja1JlcXVlc3QaIC5ub3VzLndhdmUudjFhbHBoYTEuU3ViamVjdENsb2NrIgOQAgJiBnByb3RvMw", [file_google_protobuf_timestamp, file_nous_wave_v1alpha1_types, file_nous_wave_v1alpha1_presentation]);
-
-/**
- * @generated from message nous.wave.v1alpha1.DomainStamp
- */
-export type DomainStamp = Message<"nous.wave.v1alpha1.DomainStamp"> & {
-  /**
-   * @generated from field: string time_domain_ref = 1;
-   */
-  timeDomainRef: string;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp at = 2;
-   */
-  at?: Timestamp | undefined;
-
-  /**
-   * Real UTC recording time, never virtual.
-   *
-   * @generated from field: google.protobuf.Timestamp recorded_at = 3;
-   */
-  recordedAt?: Timestamp | undefined;
-};
-
-/**
- * Describes the message nous.wave.v1alpha1.DomainStamp.
- * Use `create(DomainStampSchema)` to create a new message.
- */
-export const DomainStampSchema: GenMessage<DomainStamp> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_clock, 0);
-
-/**
- * @generated from message nous.wave.v1alpha1.DomainTemporalExtent
- */
-export type DomainTemporalExtent = Message<"nous.wave.v1alpha1.DomainTemporalExtent"> & {
-  /**
-   * @generated from field: string time_domain_ref = 1;
-   */
-  timeDomainRef: string;
-
-  /**
-   * @generated from field: nous.wave.v1alpha1.TemporalExtent extent = 2;
-   */
-  extent?: TemporalExtent | undefined;
-};
-
-/**
- * Describes the message nous.wave.v1alpha1.DomainTemporalExtent.
- * Use `create(DomainTemporalExtentSchema)` to create a new message.
- */
-export const DomainTemporalExtentSchema: GenMessage<DomainTemporalExtent> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_clock, 1);
-
-/**
- * Host event semantics keep independent axes. Absent axes remain unknown.
- *
- * @generated from message nous.wave.v1alpha1.DomainTemporalEvidence
- */
-export type DomainTemporalEvidence = Message<"nous.wave.v1alpha1.DomainTemporalEvidence"> & {
-  /**
-   * @generated from field: nous.wave.v1alpha1.DomainTemporalExtent occurred = 1;
-   */
-  occurred?: DomainTemporalExtent | undefined;
-
-  /**
-   * @generated from field: nous.wave.v1alpha1.DomainStamp observed = 2;
-   */
-  observed?: DomainStamp | undefined;
-
-  /**
-   * @generated from field: nous.wave.v1alpha1.DomainTemporalExtent valid = 3;
-   */
-  valid?: DomainTemporalExtent | undefined;
-
-  /**
-   * @generated from field: nous.wave.v1alpha1.DomainStamp formed = 4;
-   */
-  formed?: DomainStamp | undefined;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp recorded_at = 5;
-   */
-  recordedAt?: Timestamp | undefined;
-
-  /**
-   * Actual real-world acquisition, distinct from recording.
-   *
-   * @generated from field: google.protobuf.Timestamp observed_real_at = 6;
-   */
-  observedRealAt?: Timestamp | undefined;
-};
-
-/**
- * Describes the message nous.wave.v1alpha1.DomainTemporalEvidence.
- * Use `create(DomainTemporalEvidenceSchema)` to create a new message.
- */
-export const DomainTemporalEvidenceSchema: GenMessage<DomainTemporalEvidence> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_clock, 2);
+  fileDesc("Ch5ub3VzL3dhdmUvdjFhbHBoYTEvY2xvY2sucHJvdG8SEm5vdXMud2F2ZS52MWFscGhhMSL5AQoMU3ViamVjdENsb2NrEh8KCnN1YmplY3RfaWQYASABKAlCC8rzGAdzdWJqZWN0EhcKD3RpbWVfZG9tYWluX3JlZhgCIAEoCRIwCgx3b3JsZF9hbmNob3IYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC3JlYWxfYW5jaG9yGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRyYXRlGAUgASgBEiwKA25vdxgGIAEoCzIfLm5vdXMud2F2ZS52MWFscGhhMS5Eb21haW5TdGFtcBIQCghyZXZpc2lvbhgHIAEoAyKDAQoUQ2xvY2tNdXRhdGlvblJlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSFAoMb3BlcmF0aW9uX2lkGAIgASgJEh4KEWV4cGVjdGVkX3JldmlzaW9uGAMgASgDSACIAQFCFAoSX2V4cGVjdGVkX3JldmlzaW9uIqUBChVDb25maWd1cmVDbG9ja1JlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSFAoMb3BlcmF0aW9uX2lkGAIgASgJEhcKD3RpbWVfZG9tYWluX3JlZhgDIAEoCRIMCgRyYXRlGAQgASgBEi4KCndvcmxkX3RpbWUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIl0KE0FkdmFuY2VDbG9ja1JlcXVlc3QSHwoKc3ViamVjdF9pZBgBIAEoCUILyvMYB3N1YmplY3QSFAoMb3BlcmF0aW9uX2lkGAIgASgJEg8KB3NlY29uZHMYAyABKAEijwEKElJlc3VtZUNsb2NrUmVxdWVzdBIfCgpzdWJqZWN0X2lkGAEgASgJQgvK8xgHc3ViamVjdBIUCgxvcGVyYXRpb25faWQYAiABKAkSDAoEcmF0ZRgDIAEoARIeChFleHBlY3RlZF9yZXZpc2lvbhgEIAEoA0gAiAEBQhQKEl9leHBlY3RlZF9yZXZpc2lvbjLrAwoVQ29nbml0aXZlQ2xvY2tTZXJ2aWNlElEKCVJlYWRDbG9jaxIiLm5vdXMud2F2ZS52MWFscGhhMS5TdWJqZWN0UmVxdWVzdBogLm5vdXMud2F2ZS52MWFscGhhMS5TdWJqZWN0Q2xvY2sSYgoOQ29uZmlndXJlQ2xvY2sSKS5ub3VzLndhdmUudjFhbHBoYTEuQ29uZmlndXJlQ2xvY2tSZXF1ZXN0GiAubm91cy53YXZlLnYxYWxwaGExLlN1YmplY3RDbG9jayIDkAICEl0KClBhdXNlQ2xvY2sSKC5ub3VzLndhdmUudjFhbHBoYTEuQ2xvY2tNdXRhdGlvblJlcXVlc3QaIC5ub3VzLndhdmUudjFhbHBoYTEuU3ViamVjdENsb2NrIgOQAgISXgoMQWR2YW5jZUNsb2NrEicubm91cy53YXZlLnYxYWxwaGExLkFkdmFuY2VDbG9ja1JlcXVlc3QaIC5ub3VzLndhdmUudjFhbHBoYTEuU3ViamVjdENsb2NrIgOQAgISXAoLUmVzdW1lQ2xvY2sSJi5ub3VzLndhdmUudjFhbHBoYTEuUmVzdW1lQ2xvY2tSZXF1ZXN0GiAubm91cy53YXZlLnYxYWxwaGExLlN1YmplY3RDbG9jayIDkAICYgZwcm90bzM", [file_google_protobuf_timestamp, file_nous_wave_v1alpha1_types, file_nous_wave_v1alpha1_presentation]);
 
 /**
  * @generated from message nous.wave.v1alpha1.SubjectClock
@@ -162,7 +65,7 @@ export type SubjectClock = Message<"nous.wave.v1alpha1.SubjectClock"> & {
  * Use `create(SubjectClockSchema)` to create a new message.
  */
 export const SubjectClockSchema: GenMessage<SubjectClock> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_clock, 3);
+  messageDesc(file_nous_wave_v1alpha1_clock, 0);
 
 /**
  * @generated from message nous.wave.v1alpha1.ClockMutationRequest
@@ -177,6 +80,11 @@ export type ClockMutationRequest = Message<"nous.wave.v1alpha1.ClockMutationRequ
    * @generated from field: string operation_id = 2;
    */
   operationId: string;
+
+  /**
+   * @generated from field: optional int64 expected_revision = 3;
+   */
+  expectedRevision?: bigint | undefined;
 };
 
 /**
@@ -184,7 +92,7 @@ export type ClockMutationRequest = Message<"nous.wave.v1alpha1.ClockMutationRequ
  * Use `create(ClockMutationRequestSchema)` to create a new message.
  */
 export const ClockMutationRequestSchema: GenMessage<ClockMutationRequest> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_clock, 4);
+  messageDesc(file_nous_wave_v1alpha1_clock, 1);
 
 /**
  * @generated from message nous.wave.v1alpha1.ConfigureClockRequest
@@ -221,7 +129,7 @@ export type ConfigureClockRequest = Message<"nous.wave.v1alpha1.ConfigureClockRe
  * Use `create(ConfigureClockRequestSchema)` to create a new message.
  */
 export const ConfigureClockRequestSchema: GenMessage<ConfigureClockRequest> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_clock, 5);
+  messageDesc(file_nous_wave_v1alpha1_clock, 2);
 
 /**
  * @generated from message nous.wave.v1alpha1.AdvanceClockRequest
@@ -248,7 +156,7 @@ export type AdvanceClockRequest = Message<"nous.wave.v1alpha1.AdvanceClockReques
  * Use `create(AdvanceClockRequestSchema)` to create a new message.
  */
 export const AdvanceClockRequestSchema: GenMessage<AdvanceClockRequest> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_clock, 6);
+  messageDesc(file_nous_wave_v1alpha1_clock, 3);
 
 /**
  * @generated from message nous.wave.v1alpha1.ResumeClockRequest
@@ -268,6 +176,11 @@ export type ResumeClockRequest = Message<"nous.wave.v1alpha1.ResumeClockRequest"
    * @generated from field: double rate = 3;
    */
   rate: number;
+
+  /**
+   * @generated from field: optional int64 expected_revision = 4;
+   */
+  expectedRevision?: bigint | undefined;
 };
 
 /**
@@ -275,7 +188,7 @@ export type ResumeClockRequest = Message<"nous.wave.v1alpha1.ResumeClockRequest"
  * Use `create(ResumeClockRequestSchema)` to create a new message.
  */
 export const ResumeClockRequestSchema: GenMessage<ResumeClockRequest> = /*@__PURE__*/
-  messageDesc(file_nous_wave_v1alpha1_clock, 7);
+  messageDesc(file_nous_wave_v1alpha1_clock, 4);
 
 /**
  * Authenticated management only. This service is not exposed as a native model tool.

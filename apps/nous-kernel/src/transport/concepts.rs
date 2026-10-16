@@ -198,6 +198,7 @@ impl KernelService {
                         .map(id)
                         .transpose()?,
                     valid_time: nous_core::TemporalExtent::Unknown,
+                    valid_time_domain_ref: "time:real".into(),
                 },
                 subject,
             )

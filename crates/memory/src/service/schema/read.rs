@@ -116,7 +116,7 @@ impl MemoryService {
         ids: &[Uuid],
         objects: &[Uuid],
     ) -> Result<std::collections::HashMap<Uuid, SchemaView>> {
-        let rows = sqlx::query("SELECT s.schema_id,s.subject_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.created_at,r.schema_revision_id,r.schema_id AS revision_schema_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.structural_claim,r.applicability_description,r.aboutness,r.tags,r.boundary_definition,r.formation_kind,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.producer_signature_id FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND (r.schema_revision_id=ANY($2::uuid[]) OR (s.schema_id=ANY($3) AND r.schema_revision_id=s.current_revision_id))")
+        let rows = sqlx::query("SELECT s.schema_id,s.subject_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,s.created_at,r.schema_revision_id,r.schema_id AS revision_schema_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.structural_claim,r.applicability_description,r.aboutness,r.tags,r.boundary_definition,r.formation_kind,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at,r.producer_signature_id FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND (r.schema_revision_id=ANY($2::uuid[]) OR (s.schema_id=ANY($3) AND r.schema_revision_id=s.current_revision_id))")
             .bind(subject.0).bind(ids).bind(objects).fetch_all(&mut **tx).await.map_err(db)?;
         let selected = rows
             .iter()
@@ -167,6 +167,7 @@ fn decode_schema_view(
         title: row.try_get("title").map_err(db)?,
         structural_claim: row.try_get("structural_claim").map_err(db)?,
         applicability_scope: SchemaScope {
+            valid_time_domain_ref: row.try_get("valid_time_domain_ref").map_err(db)?,
             description: row.try_get("applicability_description").map_err(db)?,
             aboutness: row
                 .try_get::<Vec<String>, _>("aboutness")
@@ -192,6 +193,8 @@ fn decode_schema_view(
             "schema formation kind",
         )?,
         formed_at: row.try_get("formed_at").map_err(db)?,
+        formed_time_domain_ref: row.try_get("formed_time_domain_ref").map_err(db)?,
+        formed_recorded_at: row.try_get("formed_recorded_at").map_err(db)?,
         recorded_at: row.try_get("recorded_at").map_err(db)?,
         producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
     };

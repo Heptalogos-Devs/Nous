@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use nous_runtime::DomainTemporalExtent;
+use nous_core::DomainTemporalExtent;
 use serde::{Deserialize, Serialize};
 /// Formal typed facts live on actual Material observations. Text is not parsed
 /// into deterministic truth; generated/simulated sources never witness effects.
@@ -13,7 +13,7 @@ pub enum CriterionFact {
         event_type: String,
         target: Option<String>,
         activity: Option<String>,
-        at: nous_runtime::DomainStamp,
+        at: nous_core::DomainStamp,
     },
     Measurement {
         version: u32,
@@ -23,7 +23,7 @@ pub enum CriterionFact {
         value: f64,
         #[serde(default)]
         error: f64,
-        at: nous_runtime::DomainStamp,
+        at: nous_core::DomainStamp,
     },
 }
 #[derive(Clone)]
@@ -62,7 +62,7 @@ impl CriterionReader for OfficialCriterionReader {
                     .await?
             }
             Criterion::Relation { .. } => {
-                self.read_relation(subject, criterion, interval, read)
+                self.read_relation(tx, subject, criterion, interval, read)
                     .await?
             }
             Criterion::EventWitness { .. } | Criterion::Measurement { .. } => {
@@ -82,7 +82,7 @@ impl CriterionReader for OfficialCriterionReader {
 
 impl CriterionFact {
     pub fn to_canonical_json(&self) -> serde_json::Value {
-        let stamp = |at: &nous_runtime::DomainStamp| serde_json::json!({"timeDomainRef":at.time_domain_ref,"at":at.at,"recordedAt":at.recorded_at});
+        let stamp = |at: &nous_core::DomainStamp| serde_json::json!({"timeDomainRef":at.time_domain_ref,"at":at.at,"recordedAt":at.recorded_at});
         match self {
             Self::Event {
                 version,
@@ -151,15 +151,19 @@ impl OfficialCriterionReader {
         let (start, end) = extent_bounds(&interval.extent);
         let end = end.ok_or_else(|| Error::Invalid("evaluation needs bounded prefix".into()))?;
 
-        if interval.time_domain_ref != "time:real" {
-            return Ok(read);
-        }
-        let values =
-            match AuthorityStore::cognition_state_history_in(tx, subject, reference, end).await {
-                Ok(v) => v,
-                Err(Error::NotFound(_) | Error::Unavailable(_)) => return Ok(read),
-                Err(e) => return Err(e),
-            };
+        let values = match AuthorityStore::cognition_state_history_in(
+            tx,
+            subject,
+            reference,
+            end,
+            &interval.time_domain_ref,
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(Error::NotFound(_) | Error::Unavailable(_)) => return Ok(read),
+            Err(e) => return Err(e),
+        };
         read.complete = start.is_some_and(|s| values.first().is_some_and(|(at, _)| *at <= s));
         for (at, value) in values {
             let field = if matches!(reference, CognitiveRef::WorkContext(_)) {
@@ -189,6 +193,7 @@ impl OfficialCriterionReader {
     }
     async fn read_relation(
         &self,
+        tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
         criterion: &Criterion,
         interval: &DomainTemporalExtent,
@@ -203,9 +208,6 @@ impl OfficialCriterionReader {
         else {
             unreachable!()
         };
-        if interval.time_domain_ref != "time:real" {
-            return Ok(read);
-        }
         let Some(owner) = &self.social else {
             return Ok(read);
         };
@@ -222,7 +224,27 @@ impl OfficialCriterionReader {
         } else {
             end - chrono::Duration::microseconds(1)
         };
-        if !(TimePredicate::Point { at }).matches_extent(&v.valid_time) || r.recorded_at > at {
+        if v.valid_time_domain_ref != interval.time_domain_ref
+            || !(TimePredicate::Point { at }).matches_extent(&v.valid_time)
+        {
+            return Ok(read);
+        }
+        let history = match AuthorityStore::cognition_state_history_in(
+            tx,
+            subject,
+            reference,
+            at,
+            &interval.time_domain_ref,
+        )
+        .await
+        {
+            Ok(history) => history,
+            Err(Error::NotFound(_) | Error::Unavailable(_)) => return Ok(read),
+            Err(error) => return Err(error),
+        };
+        if !history.iter().any(|(_, state)| {
+            state["current_revision_id"].as_str() == Some(r.revision_id.to_string().as_str())
+        }) {
             return Ok(read);
         }
         let kind =
@@ -278,6 +300,11 @@ impl OfficialCriterionReader {
                 o.source_class,
                 SourceClass::Generated | SourceClass::Simulation
             ) {
+                continue;
+            }
+            if o.source_class == SourceClass::WorldRealized
+                && o.occurred_time_domain_ref != interval.time_domain_ref
+            {
                 continue;
             }
             let Some(raw) = o.context.get("criterion_fact") else {

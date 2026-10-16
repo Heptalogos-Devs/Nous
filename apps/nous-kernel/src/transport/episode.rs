@@ -31,9 +31,16 @@ pub(super) fn revision(
         revision_intent: value.revision_intent,
         title: value.title,
         parent_episode_revision_id: value.parent_episode_revision_id.map(|v| v.0.to_string()),
-        experience_time: Some(temporal_proto(&value.experience_time)),
+        experience_time: Some(domain_temporal_proto(
+            &value.experience_time_domain_ref,
+            &value.experience_time,
+        )),
         boundary_explanation: value.boundary_explanation,
-        formed_at: Some(timestamp(value.formed_at)),
+        formed_at: Some(formation_proto(
+            &value.formed_time_domain_ref,
+            value.formed_at,
+            value.formed_recorded_at,
+        )),
         recorded_at: Some(timestamp(value.recorded_at)),
         producer_signature_id: value.producer_signature_id.map(|v| v.to_string()),
         members: members
@@ -92,7 +99,9 @@ fn episode_content(content: p::EpisodeContent) -> Result<nous_memory::EpisodeCon
     Ok(nous_memory::EpisodeContent {
         title: content.title,
         parent_episode_revision_id: parsed_parent(content.parent_episode_revision_id)?,
-        experience_time: temporal(content.experience_time)?,
+        experience_time_domain_ref: required(content.experience_time.clone(), "experience_time")?
+            .time_domain_ref,
+        experience_time: domain_temporal(content.experience_time)?.extent,
         boundary_explanation: content.boundary_explanation,
         producer_signature_id: content
             .producer_signature_id

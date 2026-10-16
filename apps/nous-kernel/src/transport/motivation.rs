@@ -54,9 +54,8 @@ pub(super) fn record(v: MotivationRecord) -> p::MotivationRecord {
         integrity_state: v.integrity_state,
         suppression_state: v.suppression_state,
         created_at: Some(timestamp(v.created_at)),
-        formed_at: Some(timestamp(v.formed_at)),
+        formed_at: Some(stamp_proto(v.formed_stamp)),
         recorded_at: Some(timestamp(v.recorded_at)),
-        formed_stamp: Some(stamp_proto(v.formed_stamp)),
         evidence: v
             .evidence
             .into_iter()
@@ -393,7 +392,7 @@ struct Selection {
     max_items: usize,
     max_bytes: usize,
     after: Option<uuid::Uuid>,
-    at: Option<chrono::DateTime<chrono::Utc>>,
+    at: Option<nous_core::DomainStamp>,
     as_of: Option<chrono::DateTime<chrono::Utc>>,
     history: bool,
 }
@@ -420,7 +419,7 @@ impl Selection {
             max_items: v.max_items as usize,
             max_bytes: v.max_bytes as usize,
             after: v.after.map(|v| id(&v)).transpose()?,
-            at: time(v.at)?,
+            at: v.at.map(domain_stamp).transpose()?,
             as_of: time(v.as_of)?,
             history: v.history,
         })
@@ -432,7 +431,8 @@ impl Selection {
             max_items: self.max_items,
             max_bytes: self.max_bytes,
             after: self.after,
-            at: self.at,
+            at: self.at.clone(),
+            valid_predicates: None,
             as_of: self.as_of,
             history: self.history,
         }
@@ -458,14 +458,14 @@ pub(super) fn read_scope(v: Option<p::SourceReadScope>) -> Result<SourceReadScop
             .collect::<Result<_>>()?,
     })
 }
-pub(super) fn stamp_proto(v: nous_runtime::DomainStamp) -> p::DomainStamp {
+pub(super) fn stamp_proto(v: nous_core::DomainStamp) -> p::DomainStamp {
     p::DomainStamp {
         time_domain_ref: v.time_domain_ref,
         at: Some(timestamp(v.at)),
         recorded_at: Some(timestamp(v.recorded_at)),
     }
 }
-fn extent_proto(v: nous_runtime::DomainTemporalExtent) -> p::DomainTemporalExtent {
+fn extent_proto(v: nous_core::DomainTemporalExtent) -> p::DomainTemporalExtent {
     p::DomainTemporalExtent {
         time_domain_ref: v.time_domain_ref,
         extent: Some(temporal_proto(&v.extent)),
@@ -477,7 +477,8 @@ fn content(v: p::MotivationContent) -> Result<MotivationContent> {
         statement: v.statement,
         scope: scope(required(v.scope, "scope")?)?,
         basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-        valid_time: temporal(v.valid_time)?,
+        valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+        valid_time: domain_temporal(v.valid_time)?.extent,
         producer: v.producer.map(from_producer).transpose()?,
         links: v
             .links
@@ -496,7 +497,7 @@ fn content(v: p::MotivationContent) -> Result<MotivationContent> {
                 Ok::<_, Error>(DesiredCondition {
                     expression: criterion(required(c.expression, "expression")?)?,
                     temporal_form: enum_value(&c.temporal_form)?,
-                    window: nous_runtime::DomainTemporalExtent {
+                    window: nous_core::DomainTemporalExtent {
                         time_domain_ref: w.time_domain_ref,
                         extent: temporal(w.extent)?,
                     },
@@ -526,7 +527,10 @@ fn content_proto(v: MotivationContent) -> p::MotivationContent {
         statement: m.statement,
         scope: Some(scope_proto(m.scope)),
         basis: m.basis.into_iter().map(basis_proto).collect(),
-        valid_time: Some(temporal_proto(&m.valid_time)),
+        valid_time: Some(domain_temporal_proto(
+            &m.valid_time_domain_ref,
+            &m.valid_time,
+        )),
         producer: m.producer.map(super::evidence::producer),
         links: m
             .links
@@ -755,6 +759,7 @@ impl KernelService {
                 .map(WorkContextId),
         };
         let modifiers = query.expression.as_ref().and_then(|e| e.modifiers.as_ref());
+        let valid_predicates = super::query::selection_valid_predicates(query.expression.as_ref())?;
         let selected = self
             .0
             .require_motivation()?
@@ -766,9 +771,13 @@ impl KernelService {
                     max_items: 2048,
                     max_bytes: 4 * 1024 * 1024,
                     after: None,
-                    at: time(modifiers.and_then(|m| m.clock_now))?,
-                    as_of: time(modifiers.and_then(|m| m.as_of))?,
+                    at: modifiers
+                        .and_then(|m| m.clock_now.clone())
+                        .map(domain_stamp)
+                        .transpose()?,
+                    as_of: time(modifiers.and_then(|m| m.as_recorded_at))?,
                     history: modifiers.is_some_and(|m| m.history),
+                    valid_predicates: valid_predicates.as_deref(),
                 },
             )
             .await?;

@@ -110,7 +110,8 @@ fn schema_content(value: p::CognitiveSchemaContent) -> Result<SchemaContent> {
                 .into_iter()
                 .map(|value| Ok(TagId(id(&value)?)))
                 .collect::<Result<_>>()?,
-            valid_time: temporal(scope.valid_time)?,
+            valid_time_domain_ref: domain_temporal(scope.valid_time.clone())?.time_domain_ref,
+            valid_time: domain_temporal(scope.valid_time)?.extent,
         },
         boundary_definition: value.boundary_definition,
         formation_kind,
@@ -158,7 +159,10 @@ pub(super) fn schema_view(value: SchemaView) -> p::CognitiveSchema {
                 .iter()
                 .map(|value| value.0.to_string())
                 .collect(),
-            valid_time: Some(temporal_proto(&revision.applicability_scope.valid_time)),
+            valid_time: Some(domain_temporal_proto(
+                &revision.applicability_scope.valid_time_domain_ref,
+                &revision.applicability_scope.valid_time,
+            )),
         }),
         boundary_definition: revision.boundary_definition.clone(),
         evidence_links: value
@@ -173,7 +177,11 @@ pub(super) fn schema_view(value: SchemaView) -> p::CognitiveSchema {
                 revoked_at: link.revoked_at.map(timestamp),
             })
             .collect(),
-        formed_at: Some(timestamp(revision.formed_at)),
+        formed_at: Some(formation_proto(
+            &revision.formed_time_domain_ref,
+            revision.formed_at,
+            revision.formed_recorded_at,
+        )),
         recorded_at: Some(timestamp(revision.recorded_at)),
         formation_kind: enum_name(revision.formation_kind),
         producer_signature_id: revision.producer_signature_id.map(|id| id.to_string()),

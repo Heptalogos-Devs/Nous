@@ -45,6 +45,7 @@ impl MemoryService {
                 now,
                 CognitiveEffort::Normal,
                 max_bytes,
+                source_read,
             )
             .await?;
         let exact = contents
@@ -53,6 +54,22 @@ impl MemoryService {
             .filter(|c| !matches!(c.reference, CognitiveRef::Tag(_)))
             .map(|c| c.reference.clone())
             .collect::<Vec<_>>();
+        let epistemic_ids = contents
+            .iter()
+            .filter_map(|content| content.as_ref().ok())
+            .filter_map(|content| {
+                if let CognitiveRef::MemoryRevision(id) = content.reference {
+                    Some(id.0)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let epistemic_classes = sqlx::query("SELECT memory_revision_id,epistemic_class FROM memory_revisions WHERE subject_id=$1 AND memory_revision_id=ANY($2::uuid[])")
+            .bind(subject.0).bind(&epistemic_ids).fetch_all(&mut *tx).await.map_err(db)?.into_iter().map(|row| {
+                let class:EpistemicClass = serde_json::from_value(serde_json::Value::String(row.get("epistemic_class"))).map_err(|error| Error::Infrastructure(error.to_string()))?;
+                Ok((row.get::<Uuid,_>("memory_revision_id"), class))
+            }).collect::<Result<std::collections::HashMap<_,_>>>()?;
         let mut supports = self
             .exact_supports_in(&mut tx, subject, &exact, None)
             .await?;
@@ -136,6 +153,9 @@ impl MemoryService {
                         return Err(complete_unit_error());
                     }
                     Ok(ContextSource {
+                        epistemic_class: epistemic_classes.get(&content.revision).copied(),
+                        domain_knowledge: None,
+                        temporal: content.temporal,
                         usage: "task_evidence",
                         required: false,
                         reference: content.reference,

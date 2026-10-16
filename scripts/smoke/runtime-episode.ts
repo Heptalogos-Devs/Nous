@@ -27,6 +27,7 @@ import {
   SubjectCapabilitiesSchema,
   OpenSessionRequestSchema,
   TemporalExtentSchema,
+  DomainTemporalExtentSchema,
   UpdateWorkContextRequestSchema,
   WorkContextMutationRequestSchema,
   WorkContextClearScope,
@@ -118,7 +119,10 @@ async function main() {
           semanticRole: "fact",
           text: "runtime continuity",
           basis: [evidence(observed.occurrenceId)],
-          validTime: create(TemporalExtentSchema, {}),
+          validTime: {
+            timeDomainRef: "time:real",
+            extent: create(TemporalExtentSchema, {}),
+          },
 
           epistemicClass: "observed",
         }),
@@ -503,7 +507,9 @@ async function main() {
         trackKey: "interaction",
         content: {
           boundaryExplanation: "one bounded interaction",
-          experienceTime: create(TemporalExtentSchema, {}),
+          experienceTime: create(DomainTemporalExtentSchema, {
+            timeDomainRef: "time:real",
+          }),
 
           members: [
             create(EpisodeMemberSchema, {
@@ -531,7 +537,9 @@ async function main() {
       intent: "resegment",
       content: {
         boundaryExplanation: "resegmented interaction",
-        experienceTime: create(TemporalExtentSchema, {}),
+        experienceTime: create(DomainTemporalExtentSchema, {
+          timeDomainRef: "time:real",
+        }),
 
         members: [
           create(EpisodeMemberSchema, {

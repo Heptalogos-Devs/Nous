@@ -90,6 +90,7 @@ impl CognitiveRuntimeService {
                 MutationStart::Active(mutation) => mutation,
             };
         let tx = mutation.tx();
+        self.capture_semantic_in(tx, subject).await?;
         let row = sqlx::query(
             "SELECT state,revision FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR UPDATE",
         )
@@ -145,19 +146,19 @@ impl CognitiveRuntimeService {
             )
             .bind(subject.0)
             .bind(work_context_id)
-            .bind(self.now(subject))
+            .bind(self.recorded_now())
             .execute(&mut **tx)
             .await
             .map_err(db)?;
         }
-        let ended_at = (next == "ended").then(|| self.now(subject));
+        let ended_at = (next == "ended").then(|| self.recorded_now());
         sqlx::query(
             "UPDATE work_contexts SET state=$3,revision=revision+1,updated_at=$4,ended_at=$5 WHERE subject_id=$1 AND work_context_id=$2",
         )
         .bind(subject.0)
         .bind(work_context_id)
         .bind(next)
-        .bind(self.now(subject))
+        .bind(self.recorded_now())
         .bind(ended_at)
         .execute(&mut **tx)
         .await
@@ -208,6 +209,7 @@ impl CognitiveRuntimeService {
             MutationStart::Active(mutation) => mutation,
         };
         let tx = mutation.tx();
+        self.capture_semantic_in(tx, subject).await?;
         if let Some(work_context_id) = work_context_id {
             let context = sqlx::query(
                 "SELECT subject_id,state FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR SHARE",
@@ -254,7 +256,7 @@ impl CognitiveRuntimeService {
         .bind(subject.0)
         .bind(session.0)
         .bind(work_context_id)
-        .bind(self.now(subject))
+        .bind(self.recorded_now())
         .execute(&mut **tx)
         .await
         .map_err(db)?;
@@ -290,7 +292,7 @@ impl CognitiveRuntimeService {
                         scope_kind: "track".into(),
                         scope_ref: "interaction".into(),
                         trigger_authority_seq: sequence,
-                        due_at: self.now(subject),
+                        due_at: self.recorded_now(),
                         priority: 60,
                     },
                 )

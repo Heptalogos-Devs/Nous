@@ -39,7 +39,7 @@ impl MaterialService {
         let revision: i32 = sqlx::query_scalar("SELECT COALESCE(max(revision_no),0)+1 FROM entity_binding_revisions WHERE mention_id=$1")
             .bind(mention).fetch_one(&mut *tx).await.map_err(db)?;
         sqlx::query("INSERT INTO entity_binding_revisions(binding_revision_id,mention_id,revision_no,entity_ref,binding_state,host_resolution_ref,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
-            .bind(Uuid::now_v7()).bind(mention).bind(revision).bind(entity.map(|e|e.as_str().to_owned())).bind(state).bind(host_resolution_ref).bind(reason).bind(self.cognition.now(subject)).execute(&mut *tx).await.map_err(db)?;
+            .bind(Uuid::now_v7()).bind(mention).bind(revision).bind(entity.map(|e|e.as_str().to_owned())).bind(state).bind(host_resolution_ref).bind(reason).bind(self.cognition.recorded_now()).execute(&mut *tx).await.map_err(db)?;
         AuthorityStore::invalidate_in(&mut tx, subject, ProjectionInvalidation::text()).await?;
         tx.commit().await.map_err(db)?;
         Ok(())

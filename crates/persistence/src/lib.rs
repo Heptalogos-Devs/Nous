@@ -19,6 +19,7 @@ mod historical;
 pub use historical::*;
 mod producer;
 mod projection;
+mod purpose_migration;
 pub use projection::concept::{ConceptProjectionInput, ConceptProjectionTag};
 mod query_time;
 pub use query_time::{TimeColumns, push_time_predicate};
@@ -86,7 +87,8 @@ impl AuthorityStore {
         sqlx::migrate!("./migrations")
             .run(&self.pool)
             .await
-            .map_err(|error| Error::Infrastructure(error.to_string()))
+            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        self.finish_purpose_migration().await
     }
 
     pub async fn check(&self) -> Result<()> {

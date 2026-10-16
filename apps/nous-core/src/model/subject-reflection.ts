@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
-import { TimestampSchema } from "@bufbuild/protobuf/wkt";
+import { DomainStampSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { z } from "zod";
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
@@ -53,6 +53,7 @@ export type SavedReflectionProposal = {
   plan: ReflectionPlan;
   workId: string;
   output: SubjectReflectionProposal;
+  preparation: SubjectReflectionProposal;
   producer: JsonValue;
   formedAt?: JsonValue;
 };
@@ -274,7 +275,7 @@ export async function executeSubjectInterpretation(
                     ? "self_reflection_text"
                     : "subject_reflection_text",
               );
-              const now = await kernel.queryWorkflow.getCognitiveTime(
+              const clock = await kernel.clocks.readClock(
                 { subjectId: input.subjectId },
                 calls,
               );
@@ -283,12 +284,13 @@ export async function executeSubjectInterpretation(
                   plan,
                   workId: input.operationId,
                   output,
+                  preparation: output,
                   producer: toJson(ProducerSignatureSchema, producer),
-                  formedAt: toJson(TimestampSchema, now),
+                  formedAt: toJson(DomainStampSchema, clock.now!),
                 },
                 context: {
                   dependencies: plan.dependencies,
-                  cognitiveFormedAt: now,
+                  cognitiveFormedAt: clock.now,
                   maintenanceTrigger: input.selected
                     ? {
                         needId: input.selected.needId,
@@ -317,9 +319,10 @@ export async function executeSubjectInterpretation(
             try {
               compiled = compileReflectionActions(
                 proposal.plan,
-                proposal.output,
+                proposal.preparation,
                 fromJson(ProducerSignatureSchema, proposal.producer),
                 input.operationId,
+                proposal.output,
               );
             } catch (error) {
               if (
@@ -487,16 +490,17 @@ export async function repairSubjectReflection(
           const wanted = new Set(request.resolutions.map((r) => r.actionId));
           const actions = compileReflectionActions(
             proposal.plan,
-            proposal.output,
+            proposal.preparation,
             fromJson(ProducerSignatureSchema, proposal.producer),
             proposal.workId ?? request.operationId,
+            proposal.output,
           ).filter((a) => wanted.has(a.id));
           return {
             proposal: { actions, paid: proposal },
             context: {
               dependencies: proposal.plan.dependencies,
               cognitiveFormedAt: proposal.formedAt
-                ? fromJson(TimestampSchema, proposal.formedAt)
+                ? fromJson(DomainStampSchema, proposal.formedAt)
                 : undefined,
             },
             dependencies: proposal.plan.dependencies,

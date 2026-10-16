@@ -14,6 +14,18 @@ Query 在 candidate generation 前绑定 Subject、exact object/revision、Curre
 
 普通 current recall 只投影 effective heads。TemporalFrame 在整树根固定 captured Subject CognitiveClock、AuthorityView(current/as_of) 与 RevisionView(current/history)。`$history` 可召回 eligible prior revisions；`$asof` 使用截点 Owner header/head、Tag meaning/canonicalization、relations 与 Material selection。五轴条件继续过滤返回对象。Current exact object 绑定 revision+epoch，漂移拒绝重绑；historical exact 使用 frozen past head/epoch，同时执行当前权限与 purge fence。
 
+## 事件、角色见闻与数据库截面
+
+Query 使用同一正式带域时间模型，区分事件发生范围、角色世界见闻截止点 `knowledgeAtWorldTime`、现实记录截点 `asRecordedAt` 及当前/历史认知解释。指定世界见闻点不隐式设置现实数据库 as-of；指定现实截点不把它解释为世界坐标。五轴条件继续是对应事实的谓词，不能用 formed/observed 数字范围冒充完整知情视图。未知或未映射的跨域比较不命中正约束，返回相应未知/不适用信息。
+
+世界见闻只读取正式释放给该 Subject/角色的可见接触。晚实现且兼容既定历史的虚拟见闻可出现在其故事时点的查询；若同时指定早于实际入库的现实截点，则不可见。真实 QQ/网页/工具的实际 observed/recorded 不允许按这一规则回填。查询“现在如何理解过去”可采用当前合法解释并保留其形成/记录时间；它不把后来判断伪装成过去数据库已知。
+
+用途、角色、世界视角与 EpistemicView 从已认证运行绑定取得，普通 Query 参数不授予权限。SourceRead 与可见/可知切面在索引候选、向量、rerank、摘要及正文预算前应用，继续由原 owner 与同一 request-scoped 视图校验；不新建一份时间/世界授权索引。隐藏导演内容和 execution_only 运行结果不是 Subject 召回语料，不能依赖末端过滤补救。
+
+Projection 保留本次正式语义钟、适用的时间范围、实际接触来源及现实记录时间；时间敏感当前状态失效后重新选择，不作为永久 transcript 当前事实。世界、角色知识和普通 cognition 通过现有官方 Query/Projection/managed 接线组合，不在 Host 复制逐域检索。
+
+正式 QueryModifiers 使用 knowledgeAtWorldTime（DomainStamp）与 asRecordedAt（真实 UTC）分别选择角色故事见闻和数据库记录历史，可同时指定。前者按同域 formed 选择旧 cognition revision、按角色 world observed 选择晚实现 Material，并使用该切面的历史 Serving corpus；未知映射不匹配。后者继续通过真实 Authority cutoff 排除晚入库内容。首个 WorldLife 消费者与受信角色视角由配套 Host/SDK 贯通，不能以隔离查询证明持续世界已部署。
+
 ## Result projection
 
 根 ResultProjection 为非空去重集合。默认 Memory、Schema、Episode、Journal；Evidence/Resource 显式选择。`$return(cognition|domains)` 只在根定义，整树与 exact target 共享。候选 budget 前按 projection 过滤，不从子 scope 重新建立返回域。旧 domain-only target/directives 已删除，无 compatibility aliases。

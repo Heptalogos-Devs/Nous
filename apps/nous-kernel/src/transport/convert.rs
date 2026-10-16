@@ -308,3 +308,113 @@ pub fn page_cursor(page: Option<p::Page>, scope: &str) -> Result<(i64, Option<St
 pub fn next_token(scope: &str, id: impl std::fmt::Display) -> String {
     format!("{}.{}", blake3::hash(scope.as_bytes()).to_hex(), id)
 }
+
+pub fn domain_temporal(
+    value: Option<p::DomainTemporalExtent>,
+) -> Result<nous_core::DomainTemporalExtent> {
+    let Some(value) = value else {
+        return Ok(nous_core::DomainTemporalExtent::default());
+    };
+    let result = nous_core::DomainTemporalExtent {
+        time_domain_ref: value.time_domain_ref,
+        extent: temporal(value.extent)?,
+    };
+    result.validate()?;
+    Ok(result)
+}
+pub fn domain_temporal_proto(domain: &str, value: &TemporalExtent) -> p::DomainTemporalExtent {
+    p::DomainTemporalExtent {
+        time_domain_ref: domain.into(),
+        extent: Some(temporal_proto(value)),
+    }
+}
+pub fn domain_stamp_proto(value: &nous_core::DomainStamp) -> p::DomainStamp {
+    p::DomainStamp {
+        time_domain_ref: value.time_domain_ref.clone(),
+        at: Some(timestamp(value.at)),
+        recorded_at: Some(timestamp(value.recorded_at)),
+    }
+}
+
+pub fn domain_stamp(value: p::DomainStamp) -> Result<nous_core::DomainStamp> {
+    if value.time_domain_ref.trim().is_empty() || value.time_domain_ref.len() > 256 {
+        return Err(Error::Invalid("invalid time domain".into()));
+    }
+    Ok(nous_core::DomainStamp {
+        time_domain_ref: value.time_domain_ref,
+        at: required(time(value.at)?, "semantic at")?,
+        recorded_at: required(time(value.recorded_at)?, "real recorded_at")?,
+    })
+}
+
+pub fn formation_proto(
+    domain: &str,
+    at: DateTime<Utc>,
+    recorded_at: DateTime<Utc>,
+) -> p::DomainStamp {
+    p::DomainStamp {
+        time_domain_ref: domain.into(),
+        at: Some(timestamp(at)),
+        recorded_at: Some(timestamp(recorded_at)),
+    }
+}
+
+pub fn temporal_evidence_proto(value: &nous_core::TemporalEvidence) -> p::TemporalEvidence {
+    p::TemporalEvidence {
+        sources: value
+            .sources
+            .iter()
+            .map(|source| p::SourceTemporalEvidence {
+                occurrence_id: source.occurrence_id.0.to_string(),
+                occurred: Some(domain_temporal_proto(
+                    &source.occurred.time_domain_ref,
+                    &source.occurred.extent,
+                )),
+                observed: Some(domain_stamp_proto(&source.observed)),
+                observed_at: Some(timestamp(source.observed_at)),
+                recorded_at: Some(timestamp(source.recorded_at)),
+            })
+            .collect(),
+    }
+}
+
+pub fn temporal_metadata_proto(
+    value: &nous_core::FreshnessDescriptor,
+) -> p::DomainTemporalEvidence {
+    p::DomainTemporalEvidence {
+        temporal_evidence: Some(temporal_evidence_proto(&value.temporal_evidence)),
+        valid: Some(domain_temporal_proto(
+            &value.valid_time.time_domain_ref,
+            &value.valid_time.extent,
+        )),
+        formed: value.formed_at.as_ref().map(domain_stamp_proto),
+        recorded_at: value.recorded_at.map(timestamp),
+    }
+}
+
+pub fn domain_knowledge(value: p::DomainKnowledge) -> Result<nous_core::DomainKnowledge> {
+    let knowledge = nous_core::DomainKnowledge {
+        domain_ref: value.domain_ref,
+        familiarity: value.familiarity,
+        can_do: value.can_do,
+        limitations: value.limitations,
+        experience_kinds: value.experience_kinds,
+        interest_refs: value
+            .interest_refs
+            .into_iter()
+            .map(from_ref)
+            .collect::<Result<_>>()?,
+    };
+    knowledge.validate()?;
+    Ok(knowledge)
+}
+pub fn domain_knowledge_proto(value: nous_core::DomainKnowledge) -> p::DomainKnowledge {
+    p::DomainKnowledge {
+        domain_ref: value.domain_ref,
+        familiarity: value.familiarity,
+        can_do: value.can_do,
+        limitations: value.limitations,
+        experience_kinds: value.experience_kinds,
+        interest_refs: value.interest_refs.into_iter().map(to_ref).collect(),
+    }
+}

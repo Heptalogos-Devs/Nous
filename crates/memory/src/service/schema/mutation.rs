@@ -48,7 +48,7 @@ impl MemoryService {
                 mutation.tx(),
                 &input,
                 producer,
-                self.cognition.now(input.subject),
+                self.cognition.recorded_now(),
             )
             .await?;
         let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
@@ -132,7 +132,7 @@ impl MemoryService {
                 ));
             }
         };
-        sqlx::query("INSERT INTO cognitive_schema_evidence_links(link_id,subject_id,schema_revision_id,role,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,created_at,epistemic_relation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(id.0).bind(subject.0).bind(revision.0).bind(input.role.as_str()).bind(kind).bind(value).bind(basis_role).bind(occurrence).bind(source_region).bind(derived_representation).bind(derived_region).bind(self.cognition.now(subject)).bind(epistemic_relation_text(epistemic_relation)).execute(&mut **tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO cognitive_schema_evidence_links(link_id,subject_id,schema_revision_id,role,basis_kind,basis_ref,basis_role,occurrence_id,source_region_id,derived_representation_id,derived_region_id,created_at,epistemic_relation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(id.0).bind(subject.0).bind(revision.0).bind(input.role.as_str()).bind(kind).bind(value).bind(basis_role).bind(occurrence).bind(source_region).bind(derived_representation).bind(derived_region).bind(self.cognition.recorded_now()).bind(epistemic_relation_text(epistemic_relation)).execute(&mut **tx).await.map_err(db)?;
         Ok(())
     }
 
@@ -324,6 +324,10 @@ impl MemoryService {
         } else {
             None
         };
+        let formed = self
+            .cognition
+            .formation_stamp_in(mutation.tx(), input.subject, "memory", input.operation_id)
+            .await?;
         self.write_schema_revision_in(
             mutation.tx(),
             input.subject,
@@ -334,8 +338,8 @@ impl MemoryService {
                 parent: Some(parent),
                 intent: Some(input.intent),
                 number: revision_no,
-                formed_at: self.cognition.now(input.subject),
-                recorded_at: self.cognition.now(input.subject),
+                formed_at: formed.at,
+                recorded_at: self.cognition.recorded_now(),
                 producer,
             },
         )

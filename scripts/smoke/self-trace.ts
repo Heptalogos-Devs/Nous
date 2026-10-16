@@ -64,7 +64,7 @@ export async function selfTraceSmoke(
       formationMode: "grounded",
       groundingOccurrenceId: observation.occurrenceId,
       basis: [evidence],
-      validTime: {},
+      validTime: { timeDomainRef: "time:real", extent: {} },
     },
   });
   const preference = await client.self.adopt({
@@ -80,7 +80,7 @@ export async function selfTraceSmoke(
           epistemicClass: "observed",
           stance: "tentative",
           scope: { description: "事实核验" },
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
           basis: [
             {
               basis: {
@@ -113,7 +113,7 @@ export async function selfTraceSmoke(
           epistemicClass: "derived",
           sourceRefs: [modelRecord.reference!, preference.reference!],
           basis: [evidence],
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
         },
       },
     },
@@ -181,7 +181,7 @@ export async function selfTraceSmoke(
           epistemicClass: "narrative",
           stance: "adopted",
           scope: { description: "general" },
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
           basis: [
             {
               basis: {

@@ -72,7 +72,10 @@ async fn configure_and_advance(
     assert_real_observation(runtime, subject).await;
     let real = Utc::now();
     assert!(
-        (runtime.cognition.now(subject) - real).num_seconds().abs() < 2,
+        (runtime.cognition.recorded_now() - real)
+            .num_seconds()
+            .abs()
+            < 2,
         "legacy owners remain explicitly real-domain"
     );
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -289,7 +292,7 @@ async fn clock_process_resume_worker() {
             .fetch_one(store.pool())
             .await
             .unwrap();
-    let stamp: nous_runtime::DomainStamp = serde_json::from_value(saved).unwrap();
+    let stamp: nous_core::DomainStamp = serde_json::from_value(saved).unwrap();
     let clock = SubjectClockService::open(store.clone(), Arc::new(SystemCognitiveClock))
         .await
         .unwrap();
@@ -315,4 +318,260 @@ async fn clock_process_resume_worker() {
     .execute(store.pool())
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn one_owner_transaction_keeps_one_stamp_while_clock_control_waits() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let selected = subject(&runtime).await;
+    let other = subject(&runtime).await;
+    runtime
+        .clocks
+        .change(selected, OperationId::new(), ClockChange::Pause)
+        .await
+        .unwrap();
+    let cognition = nous_runtime::CognitiveRuntimeService::with_clock(
+        runtime.store.clone(),
+        64,
+        runtime.configuration.clone(),
+        Arc::new(runtime.clocks.clone()),
+    )
+    .unwrap();
+    let mut tx = runtime.store.begin().await.unwrap();
+    let first = cognition
+        .capture_semantic_in(&mut tx, selected)
+        .await
+        .unwrap();
+    let clock = runtime.clocks.clone();
+    let control = tokio::spawn(async move {
+        clock
+            .change(
+                selected,
+                OperationId::new(),
+                ClockChange::Advance { seconds: 86400.0 },
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted)",
+            )
+            .fetch_one(runtime.store.pool())
+            .await
+            .unwrap();
+            if waiting {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("clock control must actually wait on this owner transaction");
+    let second = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        cognition.capture_semantic_in(&mut tx, selected),
+    )
+    .await
+    .expect("repeat capture must not wait on the control mutex")
+    .unwrap();
+    assert_eq!(first.at, second.at);
+    assert_eq!(first.recorded_at, second.recorded_at);
+    assert!(cognition.capture_semantic_in(&mut tx, other).await.is_err());
+    assert!((first.recorded_at - Utc::now()).num_seconds().abs() < 3);
+    tx.commit().await.unwrap();
+    let advanced = control.await.unwrap().unwrap();
+    assert!(advanced.world_now >= first.at + Duration::days(1));
+    assert!(
+        (advanced.recorded_at - Utc::now()).num_seconds().abs() < 3,
+        "one world day is not a physical elapsed day"
+    );
+}
+
+#[tokio::test]
+async fn material_keeps_real_contact_and_world_stamp_across_restart_and_replay() {
+    use nous_core::{SourceClass, TemporalExtent};
+    use nous_material::{
+        ObservationInput, ObservationMaterial, OccurrenceDescriptor, RuntimeDirective,
+    };
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = subject(&runtime).await;
+    let configured = configure_and_advance(&runtime, subject).await;
+    runtime
+        .clocks
+        .change(subject, OperationId::new(), ClockChange::Pause)
+        .await
+        .unwrap();
+    let world = runtime.clocks.read(subject).await.unwrap();
+    let input = ObservationInput {
+        subject,
+        session: None,
+        occurrence: OccurrenceDescriptor {
+            source_class: SourceClass::Message,
+            world_realized: None,
+            external_object_ref: None,
+            occurred_time: TemporalExtent::Instant { at: Utc::now() },
+            occurred_time_domain_ref: "time:real".into(),
+            observed_at: None,
+            observed_stamp: None,
+            conversation_ref: None,
+            actor_entity_ref: None,
+            context: serde_json::json!({}),
+        },
+        material: ObservationMaterial::InlineText {
+            text: "actual contact while world clock is paused".into(),
+            media_type: "text/plain".into(),
+        },
+        entities: vec![],
+        runtime: RuntimeDirective {
+            admit: false,
+            hold_until: None,
+        },
+    };
+    // Default-real has the original semantic identity representation; adding the
+    // domain to the public wire must not invalidate already-bound real requests.
+    let serialized = serde_json::to_value(&input).unwrap();
+    assert!(
+        serialized["occurrence"]
+            .get("occurred_time_domain_ref")
+            .is_none()
+    );
+    let request = uuid::Uuid::now_v7();
+    let accepted = runtime
+        .material
+        .record_observation_once(input.clone(), Some(request))
+        .await
+        .unwrap();
+    let actual = &accepted.occurrence;
+    assert_eq!(actual.observed_stamp.time_domain_ref, "time:course");
+    assert_eq!(actual.observed_stamp.at, world.world_now);
+    assert!(actual.observed_stamp.at >= configured.world_now);
+    assert!((actual.observed_at - Utc::now()).num_seconds().abs() < 2);
+    assert!((actual.created_at - Utc::now()).num_seconds().abs() < 2);
+    assert_eq!(actual.observed_stamp.recorded_at, actual.created_at);
+    let reopened = open_runtime(&url, &root).await;
+    let replay = reopened
+        .material
+        .record_observation_once(input.clone(), Some(request))
+        .await
+        .unwrap();
+    assert_eq!(replay.occurrence.occurrence_id, actual.occurrence_id);
+    assert_eq!(replay.occurrence.observed_stamp.at, world.world_now);
+    let observed_real = chrono::SubsecRound::trunc_subsecs(Utc::now(), 6);
+    reopened
+        .clocks
+        .change(
+            subject,
+            OperationId::new(),
+            ClockChange::Advance { seconds: 60.0 },
+        )
+        .await
+        .unwrap();
+    let mut delayed = input.clone();
+    delayed.occurrence.observed_at = Some(observed_real);
+    let delayed = reopened
+        .material
+        .record_observation_once(delayed, Some(uuid::Uuid::now_v7()))
+        .await
+        .unwrap();
+    assert_eq!(delayed.occurrence.observed_at, observed_real);
+    assert_eq!(
+        delayed.occurrence.observed_stamp.time_domain_ref,
+        "time:real"
+    );
+    assert_eq!(delayed.occurrence.observed_stamp.at, observed_real);
+    assert!(
+        (delayed.occurrence.observed_stamp.recorded_at - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
+    let mut other_world = input;
+    other_world.occurrence.occurred_time_domain_ref = "time:other".into();
+    assert!(
+        reopened
+            .material
+            .record_observation_once(other_world.clone(), Some(request))
+            .await
+            .is_err()
+    );
+    let other = reopened
+        .material
+        .record_observation_once(other_world, Some(uuid::Uuid::now_v7()))
+        .await
+        .unwrap();
+    // The old mathematical-only source interface cannot turn another world's
+    // coincident numeric timestamp into a physical QQ event time.
+    let (kind, domain):(String,String) = sqlx::query_as("SELECT occurred_time_kind,occurred_time_domain_ref FROM material_occurrence_facts($1,NULL,NULL) WHERE occurrence_id=$2")
+        .bind(subject.0).bind(other.occurrence.occurrence_id.0).fetch_one(reopened.store.pool()).await.unwrap();
+    assert_eq!(kind, "instant");
+    assert_eq!(domain, "time:other");
+}
+
+#[tokio::test]
+async fn lifecycle_cas_checks_durable_revision_before_mutation_and_replay_is_read_only() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = subject(&runtime).await;
+    let initial = runtime.clocks.read(subject).await.unwrap();
+    // Separate in-memory services cannot satisfy this with a local read guard.
+    let first = SubjectClockService::open(runtime.store.clone(), Arc::new(SystemCognitiveClock))
+        .await
+        .unwrap();
+    let second = SubjectClockService::open(runtime.store.clone(), Arc::new(SystemCognitiveClock))
+        .await
+        .unwrap();
+    let a = OperationId::new();
+    let b = OperationId::new();
+    let (left, right) = tokio::join!(
+        first.change_if_revision(subject, a, ClockChange::Pause, Some(initial.revision)),
+        second.change_if_revision(subject, b, ClockChange::Pause, Some(initial.revision))
+    );
+    assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+    let (winner, operation, saved) = match (left, right) {
+        (Ok(value), Err(nous_core::Error::Conflict(_))) => (&first, a, value),
+        (Err(nous_core::Error::Conflict(_)), Ok(value)) => (&second, b, value),
+        _ => panic!("exactly one durable CAS must succeed"),
+    };
+    let operator = winner
+        .change(
+            subject,
+            OperationId::new(),
+            ClockChange::Resume { rate: 9.0 },
+        )
+        .await
+        .unwrap();
+    let replay = winner
+        .change_if_revision(
+            subject,
+            operation,
+            ClockChange::Pause,
+            Some(initial.revision),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.revision, saved.revision);
+    assert_eq!(replay.world_now, saved.world_now);
+    let current = winner.read(subject).await.unwrap();
+    assert_eq!(current.revision, operator.revision);
+    assert_eq!(current.rate, 9.0);
+    let stored: i64 = sqlx::query_scalar("SELECT revision FROM subject_clocks WHERE subject_id=$1")
+        .bind(subject.0)
+        .fetch_one(runtime.store.pool())
+        .await
+        .unwrap();
+    assert_eq!(stored, operator.revision);
+    let unconditioned_digest: String = sqlx::query_scalar("SELECT request_digest FROM mutation_receipts WHERE subject_id=$1 AND operation_kind='clock.change' AND result_epoch=$2").bind(subject.0).bind(operator.revision).fetch_one(runtime.store.pool()).await.unwrap();
+    assert_eq!(
+        unconditioned_digest,
+        nous_core::canonical_request_digest(
+            "clock.change",
+            subject,
+            &ClockChange::Resume { rate: 9.0 }
+        )
+        .unwrap()
+    );
+    runtime.store.close().await;
 }

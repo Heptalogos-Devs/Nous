@@ -25,6 +25,11 @@ pub struct EpisodeMemberInput {
 pub struct EpisodeContent {
     pub title: Option<String>,
     pub parent_episode_revision_id: Option<EpisodeRevisionId>,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub experience_time_domain_ref: String,
     pub experience_time: TemporalExtent,
     pub boundary_explanation: String,
     pub producer_signature_id: Option<Uuid>,
@@ -73,9 +78,16 @@ pub struct EpisodeRevision {
     pub revision_intent: Option<String>,
     pub title: Option<String>,
     pub parent_episode_revision_id: Option<EpisodeRevisionId>,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub experience_time_domain_ref: String,
     pub experience_time: TemporalExtent,
     pub boundary_explanation: String,
     pub formed_at: DateTime<Utc>,
+    pub formed_time_domain_ref: String,
+    pub formed_recorded_at: DateTime<Utc>,
     pub recorded_at: DateTime<Utc>,
     pub producer_signature_id: Option<Uuid>,
 }
@@ -116,7 +128,11 @@ impl EpisodeContent {
         if self.title.as_ref().is_some_and(|value| value.len() > 8192) {
             return Err(Error::Invalid("Episode title is out of bounds".into()));
         }
-        self.experience_time.validate()?;
+        nous_core::DomainTemporalExtent {
+            time_domain_ref: self.experience_time_domain_ref.clone(),
+            extent: self.experience_time.clone(),
+        }
+        .validate()?;
         if self.boundary_explanation.trim().is_empty() || self.boundary_explanation.len() > 16384 {
             return Err(Error::Invalid(
                 "Episode boundary explanation is out of bounds".into(),
@@ -180,6 +196,7 @@ async fn validate_parent_and_overlap(
     track: &str,
     parent: Option<EpisodeRevisionId>,
     time: &TemporalExtent,
+    domain: &str,
     exclude: Option<Uuid>,
 ) -> Result<()> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
@@ -193,19 +210,21 @@ async fn validate_parent_and_overlap(
         .await
         .map_err(db)?;
     if let Some(parent) = parent {
-        let parent_time = sqlx::query("SELECT experience_time_kind,experience_time_start,experience_time_end FROM episode_revisions WHERE episode_revision_id=$1 AND subject_id=$2").bind(parent.0).bind(subject.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::Invalid("Episode parent is outside Subject".into()))?;
+        let parent_time = sqlx::query("SELECT experience_time_domain_ref,experience_time_kind,experience_time_start,experience_time_end FROM episode_revisions WHERE episode_revision_id=$1 AND subject_id=$2").bind(parent.0).bind(subject.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| Error::Invalid("Episode parent is outside Subject".into()))?;
         let parent_extent = temporal_from_columns(
             parent_time.try_get("experience_time_kind").map_err(db)?,
             parent_time.try_get("experience_time_start").map_err(db)?,
             parent_time.try_get("experience_time_end").map_err(db)?,
         )?;
-        if !contains_extent(&parent_extent, time) {
+        if parent_time.get::<String, _>("experience_time_domain_ref") != domain
+            || !contains_extent(&parent_extent, time)
+        {
             return Err(Error::Invalid(
                 "Episode child lies outside parent experience span".into(),
             ));
         }
     }
-    let rows = sqlx::query("SELECT r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND r.parent_episode_revision_id IS NOT DISTINCT FROM $3 AND ($4::uuid IS NULL OR o.episode_id<>$4)").bind(subject.0).bind(track).bind(parent.map(|value| value.0)).bind(exclude).fetch_all(&mut **tx).await.map_err(db)?;
+    let rows = sqlx::query("SELECT r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.track_key=$2 AND o.acceptance_state='accepted' AND r.parent_episode_revision_id IS NOT DISTINCT FROM $3 AND ($4::uuid IS NULL OR o.episode_id<>$4) AND r.experience_time_domain_ref=$5").bind(subject.0).bind(track).bind(parent.map(|value| value.0)).bind(exclude).bind(domain).fetch_all(&mut **tx).await.map_err(db)?;
     for row in rows {
         let sibling = temporal_from_columns(
             row.try_get("experience_time_kind").map_err(db)?,
@@ -226,7 +245,7 @@ pub(in crate::service) async fn validate_episode_reaccept_in(
     subject: SubjectId,
     episode: EpisodeId,
 ) -> Result<()> {
-    let row = sqlx::query("SELECT o.track_key,r.parent_episode_revision_id,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.episode_id=$2")
+    let row = sqlx::query("SELECT o.track_key,r.parent_episode_revision_id,r.experience_time_domain_ref,r.experience_time_kind,r.experience_time_start,r.experience_time_end FROM episode_objects o JOIN episode_revisions r ON r.episode_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND o.episode_id=$2")
         .bind(subject.0).bind(episode.0).fetch_one(&mut **tx).await.map_err(db)?;
     let time = temporal_from_columns(
         row.try_get("experience_time_kind").map_err(db)?,
@@ -241,6 +260,7 @@ pub(in crate::service) async fn validate_episode_reaccept_in(
             .map_err(db)?
             .map(EpisodeRevisionId),
         &time,
+        &row.get::<String, _>("experience_time_domain_ref"),
         Some(episode.0),
     )
     .await
@@ -307,8 +327,8 @@ async fn insert_episode_revision(
         recorded_at,
     } = write;
     let (kind, start, end) = temporal_columns(&content.experience_time);
-    sqlx::query("INSERT INTO episode_revisions(episode_revision_id,episode_id,subject_id,revision_no,parent_revision_id,revision_intent,title,parent_episode_revision_id,experience_time_kind,experience_time_start,experience_time_end,boundary_explanation,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)")
-        .bind(revision.0).bind(episode.0).bind(subject.0).bind(revision_no).bind(parent_revision.map(|value| value.0)).bind(intent).bind(&content.title).bind(content.parent_episode_revision_id.map(|value| value.0)).bind(kind).bind(start).bind(end).bind(&content.boundary_explanation).bind(formed_at).bind(recorded_at).bind(content.producer_signature_id).execute(&mut **tx).await.map_err(db)?;
+    sqlx::query("INSERT INTO episode_revisions(episode_revision_id,episode_id,subject_id,revision_no,parent_revision_id,revision_intent,title,parent_episode_revision_id,experience_time_kind,experience_time_start,experience_time_end,boundary_explanation,formed_at,recorded_at,producer_signature_id,experience_time_domain_ref) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
+        .bind(revision.0).bind(episode.0).bind(subject.0).bind(revision_no).bind(parent_revision.map(|value| value.0)).bind(intent).bind(&content.title).bind(content.parent_episode_revision_id.map(|value| value.0)).bind(kind).bind(start).bind(end).bind(&content.boundary_explanation).bind(formed_at).bind(recorded_at).bind(content.producer_signature_id).bind(&content.experience_time_domain_ref).execute(&mut **tx).await.map_err(db)?;
     for (ordinal, member) in content.members.iter().enumerate() {
         let (kind, value) = reference_parts(&member.reference);
         sqlx::query("INSERT INTO episode_revision_members(episode_revision_id,ordinal,ref_kind,ref_value,role) VALUES($1,$2,$3,$4,$5)").bind(revision.0).bind(ordinal as i32).bind(kind).bind(value).bind(&member.role).execute(&mut **tx).await.map_err(db)?;

@@ -272,6 +272,7 @@ async fn assert_partition_revision(
     let mut content = nous_memory::EpisodeContent {
         title: Some("exact source organization".into()),
         parent_episode_revision_id: None,
+        experience_time_domain_ref: revised[0].revision.experience_time_domain_ref.clone(),
         experience_time: revised[0].revision.experience_time.clone(),
         boundary_explanation: "source identity is preserved".into(),
         producer_signature_id: None,
@@ -353,7 +354,13 @@ async fn late_experience_uses_chronology_and_repairs_old_local_partitions() {
     let clock = Arc::new(ManualCognitiveClock::new(historical + Duration::days(730)));
     let rt = runtime_with_clock(&url, &root, clock.clone()).await;
     let subject = create_subject(&rt).await;
-    assert_eq!(
+    assert!(
+        (rt.subjects.subject(subject).await.unwrap().created_at - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
+    assert_ne!(
         rt.subjects.subject(subject).await.unwrap().created_at,
         clock.now(subject)
     );

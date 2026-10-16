@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create, fromJson, type DescMessage } from "@bufbuild/protobuf";
-import { ValueSchema } from "@bufbuild/protobuf/wkt";
+import { ValueSchema, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import type { Transport } from "@connectrpc/connect";
 import { expect, test } from "vitest";
 import {
@@ -26,13 +26,18 @@ function fixture(
     kind: "RESET",
     cursor: { trackId: "track", epochId: "epoch", revision: 1 },
     projection: {
+      semanticClock: {
+        timeDomainRef: "time:real",
+        at: timestampFromDate(new Date(0)),
+        recordedAt: timestampFromDate(new Date(0)),
+      },
       subjectId: "subject",
       sessionId: "session",
       consumerId: "consumer",
       projectionId: "p",
       usage: create(CognitionUsageSchema, {
         agentInstanceId: "worker",
-        purpose: "deliberation",
+        purpose: "subject_deliberation",
         intent: "Continue reading",
         audience: { conversationRef: "conversation", visibility: "internal" },
       }),

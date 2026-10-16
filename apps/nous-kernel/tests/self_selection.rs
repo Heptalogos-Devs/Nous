@@ -42,8 +42,13 @@ async fn subject_with_basis(runtime: &NousRuntime) -> (SubjectId, RevisionBasis)
     )
 }
 
-fn request(scope: &InvocationScope, max_items: usize) -> AutomaticContextRequest<'_> {
+fn request<'a>(
+    scope: &'a InvocationScope,
+    max_items: usize,
+    clock: &'a DomainStamp,
+) -> AutomaticContextRequest<'a> {
     AutomaticContextRequest {
+        clock,
         scope,
         max_items,
         work_context: None,
@@ -63,6 +68,7 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
             .await
             .unwrap();
     let (subject, basis) = subject_with_basis(&runtime).await;
+    let now = runtime.cognition.read_clock(subject).await.unwrap().at;
     let service = runtime.require_self().unwrap();
     let later = now + TimeDelta::nanoseconds(100);
     let times = [
@@ -76,6 +82,7 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
             start: None,
             end: Some(later),
         },
+        TemporalExtent::Instant { at: now },
     ];
     let mut records = Vec::new();
     for (index, valid_time) in times.into_iter().enumerate() {
@@ -86,7 +93,13 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
                     operation_id: OperationId::new(),
                     reason: "Exact applicability boundary regression".into(),
                     content: SelfContent::SelfFacet(SelfFacetContent {
+                        valid_time_domain_ref: if index == 4 {
+                            "time:unmapped".into()
+                        } else {
+                            format!("time:manual:{}", subject.0)
+                        },
                         kind: if index < 2 { "identity" } else { "preference" }.into(),
+                        domain_knowledge: None,
                         statement: format!("Exact temporal case {index}"),
                         epistemic_class: EpistemicClass::Narrative,
                         scope: SelfScope {
@@ -106,7 +119,7 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
     }
     let scope = InvocationScope {
         intent: "current applicability".into(),
-        purpose: "expression".into(),
+        purpose: "subject_rendering".into(),
         conversation: "test".into(),
         entities: vec![],
         ..Default::default()
@@ -122,14 +135,15 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
     )
     .await
     .unwrap();
+    let captured_clock = runtime.cognition.read_clock(subject).await.unwrap();
     let one = service
-        .automatic_context(subject, request(&scope, 1), &read)
+        .automatic_context(subject, request(&scope, 1, &captured_clock), &read)
         .await
         .unwrap();
     assert_eq!(one.sources.len(), 1);
     assert_eq!(one.sources[0].reference, records[0].reference());
     let all = service
-        .automatic_context(subject, request(&scope, 8), &read)
+        .automatic_context(subject, request(&scope, 8, &captured_clock), &read)
         .await
         .unwrap();
     let selected = all

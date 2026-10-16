@@ -23,26 +23,18 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
             .map(Response::new)
             .map_err(status)
     }
-    async fn get_cognitive_time(
-        &self,
-        request: Request<p::SubjectRequest>,
-    ) -> std::result::Result<Response<prost_types::Timestamp>, Status> {
-        let result: nous_core::Result<_> = async {
-            let subject = SubjectId(id(&request.into_inner().subject_id)?);
-            self.0.store.require_subject(subject).await?;
-            Ok(timestamp(self.0.cognition.now(subject)))
-        }
-        .await;
-        result.map(Response::new).map_err(status)
-    }
     async fn prepare_query(
         &self,
         request: Request<k::PrepareQueryRequest>,
     ) -> std::result::Result<Response<p::PreparedQueryResponse>, Status> {
         let input = request.into_inner();
         let result: Result<_> = async {
-            let query = required(input.query, "query")?;
+            let mut query = required(input.query, "query")?;
             let subject = SubjectId(id(&query.subject_id)?);
+            let expression = query.expression.get_or_insert_with(||p::QueryExpr { operation: "atom".into(), ..Default::default() });
+            let modifiers = expression.modifiers.get_or_insert_default();
+            if modifiers.clock_now.is_none() { modifiers.clock_now=Some(domain_stamp_proto(&self.0.cognition.read_clock(subject).await?)); }
+
             let snapshot = self.0.configuration.snapshot_for_subject(subject)?;
             let limit = snapshot.get(nous_runtime::DEFAULT_RESULT_LIMIT)?;
             let (mut social_refs,mut social_omitted)=self.authorized_query_social_refs(&query).await?;
@@ -270,7 +262,7 @@ impl KernelService {
                 subject,
                 &refs,
                 limit,
-                self.0.cognition.now(subject),
+                self.0.cognition.recorded_now(),
                 &configuration,
                 Some(&read),
                 Some(&scope),
@@ -300,6 +292,11 @@ impl KernelService {
             }
             bytes += text.len();
             items.push(p::ContextSegment {
+                epistemic_class: source.epistemic_class.map(|class| class.as_str().into()),
+                domain_knowledge: source
+                    .domain_knowledge
+                    .map(|knowledge| domain_knowledge_proto(*knowledge)),
+                temporal: source.temporal.as_ref().map(temporal_metadata_proto),
                 segment_id: uuid::Uuid::now_v7().to_string(),
                 text,
                 semantic_role: "requested_source".into(),

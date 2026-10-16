@@ -101,9 +101,10 @@ impl MemoryService {
                 &refs.iter().map(|r| (r.clone(), true)).collect::<Vec<_>>(),
                 &resolve_accessibility_policy(&snapshot)?,
                 None,
-                self.cognition.now(subject),
+                self.cognition.recorded_now(),
                 CognitiveEffort::Maximum,
                 2048,
+                None,
             )
             .await?;
         let direct_basis = refs

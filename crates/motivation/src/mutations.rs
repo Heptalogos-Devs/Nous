@@ -30,12 +30,15 @@ impl MotivationService {
             }
             MutationStart::Active(m) => m,
         };
-        let formed_stamp = self.clocks.capture_in(mutation.tx(), input.subject).await?;
+        let formed_stamp = self
+            .runtime
+            .capture_semantic_in(mutation.tx(), input.subject)
+            .await?;
         self.validate_content(mutation.tx(), input.subject, &input.content)
             .await?;
         let object = Uuid::now_v7();
         let revision = Uuid::now_v7();
-        let now = self.runtime.now(input.subject);
+        let now = self.runtime.recorded_now();
         sqlx::query("INSERT INTO motivation_objects(object_id,subject_id,family,current_revision_id,created_at,identity_key) VALUES($1,$2,$3,$4,$5,$6)").bind(object).bind(input.subject.0).bind(input.content.family()).bind(revision).bind(now).bind(canonical_request_digest("motivation.identity",input.subject,&input.content.identity())?).execute(&mut **mutation.tx()).await.map_err(db)?;
         self.insert_revision(
             mutation.tx(),
@@ -118,7 +121,10 @@ impl MotivationService {
                 "Different motivation matter requires a distinct object".into(),
             ));
         }
-        let formed_stamp = self.clocks.capture_in(mutation.tx(), input.subject).await?;
+        let formed_stamp = self
+            .runtime
+            .capture_semantic_in(mutation.tx(), input.subject)
+            .await?;
         self.validate_content(mutation.tx(), input.subject, &input.content)
             .await?;
         if serde_json::to_value(&current.content).map_err(json_error)?
@@ -135,7 +141,7 @@ impl MotivationService {
             return Ok(current);
         }
         let revision = Uuid::now_v7();
-        let now = self.runtime.now(input.subject);
+        let now = self.runtime.recorded_now();
         let adopt = AdoptMotivation {
             subject: input.subject,
             operation_id: input.operation_id,
@@ -232,7 +238,7 @@ impl MotivationService {
         }
         self.track_basis(mutation.tx(), revision, std::slice::from_ref(&basis))
             .await?;
-        let count=sqlx::query("INSERT INTO motivation_evidence(revision_id,role,basis_key,basis,recorded_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(revision).bind(role).bind(basis.canonical_key()).bind(serde_json::to_value(basis).map_err(json_error)?).bind(self.runtime.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?.rows_affected();
+        let count=sqlx::query("INSERT INTO motivation_evidence(revision_id,role,basis_key,basis,recorded_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(revision).bind(role).bind(basis.canonical_key()).bind(serde_json::to_value(basis).map_err(json_error)?).bind(self.runtime.recorded_now()).execute(&mut **mutation.tx()).await.map_err(db)?.rows_affected();
         if count > 0 {
             sqlx::query(
                 "UPDATE motivation_objects SET object_epoch=object_epoch+1 WHERE object_id=$1",
@@ -283,15 +289,15 @@ impl MotivationService {
             }
             AuthorityStore::register_producer_in(tx, p).await?;
         }
-        let formed = AuthorityStore::model_result_cognitive_time_in(
+        let formed = AuthorityStore::model_result_cognitive_stamp_in(
             tx,
             input.subject,
             "motivation",
             &input.operation_id.0.to_string(),
         )
         .await?
-        .unwrap_or(now);
-        sqlx::query("INSERT INTO motivation_revisions(revision_id,object_id,subject_id,revision_no,parent_revision_id,content,reason,formed_at,recorded_at,formed_stamp) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(revision).bind(object).bind(input.subject.0).bind(number).bind(parent).bind(serde_json::to_value(&input.content).map_err(json_error)?).bind(&input.reason).bind(formed).bind(now).bind(serde_json::to_value(formed_stamp).map_err(json_error)?).execute(&mut **tx).await.map_err(db)?;
+        .unwrap_or(formed_stamp);
+        sqlx::query("INSERT INTO motivation_revisions(revision_id,object_id,subject_id,revision_no,parent_revision_id,content,reason,formed_at,recorded_at,formed_stamp) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(revision).bind(object).bind(input.subject.0).bind(number).bind(parent).bind(serde_json::to_value(&input.content).map_err(json_error)?).bind(&input.reason).bind(formed.at).bind(now).bind(serde_json::to_value(formed).map_err(json_error)?).execute(&mut **tx).await.map_err(db)?;
         for link in &input.content.matter().links {
             self.track_reference(tx, revision, &link.target_revision)
                 .await?;
@@ -391,7 +397,7 @@ struct RevisionWrite {
     parent: Option<Uuid>,
     number: i32,
     now: DateTime<Utc>,
-    formed_stamp: nous_runtime::DomainStamp,
+    formed_stamp: nous_core::DomainStamp,
 }
 impl MotivationService {
     async fn commit_revision(

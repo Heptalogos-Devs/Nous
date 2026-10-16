@@ -50,11 +50,11 @@ pub(super) async fn materialize_longitudinal(
     for (kind, query) in [
         (
             "episode",
-            "SELECT o.episode_id AS object_id,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.episode_revision_id AS revision_id,r.title,r.boundary_explanation AS text,r.experience_time_kind AS time_kind,r.experience_time_start AS time_start,r.experience_time_end AS time_end,r.formed_at,r.recorded_at FROM episode_objects o JOIN episode_revisions r USING(episode_id) WHERE o.subject_id=$1 AND ((o.episode_id=ANY($2::uuid[]) AND r.episode_revision_id=o.current_revision_id) OR r.episode_revision_id=ANY($3::uuid[]))",
+            "SELECT o.episode_id AS object_id,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.episode_revision_id AS revision_id,r.title,r.boundary_explanation AS text,r.experience_time_kind AS time_kind,r.experience_time_start AS time_start,r.experience_time_end AS time_end,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at FROM episode_objects o JOIN episode_revisions r USING(episode_id) WHERE o.subject_id=$1 AND ((o.episode_id=ANY($2::uuid[]) AND r.episode_revision_id=o.current_revision_id) OR r.episode_revision_id=ANY($3::uuid[]))",
         ),
         (
             "journal",
-            "SELECT o.journal_id AS object_id,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.journal_revision_id AS revision_id,r.title,r.narrative AS text,r.temporal_scope_kind AS time_kind,r.temporal_scope_start AS time_start,r.temporal_scope_end AS time_end,r.formed_at,r.recorded_at FROM journal_objects o JOIN journal_revisions r USING(journal_id) WHERE o.subject_id=$1 AND ((o.journal_id=ANY($2::uuid[]) AND r.journal_revision_id=o.current_revision_id) OR r.journal_revision_id=ANY($3::uuid[]))",
+            "SELECT o.journal_id AS object_id,o.current_revision_id,o.object_epoch,o.acceptance_state,o.integrity_state,o.suppression_state,r.journal_revision_id AS revision_id,r.title,r.narrative AS text,r.temporal_scope_kind AS time_kind,r.temporal_scope_start AS time_start,r.temporal_scope_end AS time_end,r.formed_at,r.formed_time_domain_ref,r.formed_recorded_at,r.recorded_at FROM journal_objects o JOIN journal_revisions r USING(journal_id) WHERE o.subject_id=$1 AND ((o.journal_id=ANY($2::uuid[]) AND r.journal_revision_id=o.current_revision_id) OR r.journal_revision_id=ANY($3::uuid[]))",
         ),
     ] {
         let object_ids = objects.remove(kind).unwrap_or_default();
@@ -117,6 +117,7 @@ pub(super) async fn materialize_longitudinal(
             kind,
             &ids,
             bound.historical_authority.as_deref(),
+            bound.source_query.source_read.as_ref(),
         )
         .await?;
         for (row, exact, epoch) in rows {
@@ -241,13 +242,13 @@ fn longitudinal_hit(
         representation: Some(text),
         authority: AuthorityClass::SubjectCognition,
         freshness: FreshnessDescriptor {
-            occurred: metadata.occurred,
-            observed_at: metadata.observed_at.or_else(|| {
-                row.get::<Option<chrono::DateTime<Utc>>, _>("time_end")
-                    .or_else(|| row.get("time_start"))
+            temporal_evidence: metadata.temporal,
+            valid_time: DomainTemporalExtent::default(),
+            formed_at: Some(DomainStamp {
+                time_domain_ref: row.get("formed_time_domain_ref"),
+                at: row.get("formed_at"),
+                recorded_at: row.get("formed_recorded_at"),
             }),
-            valid_time: TemporalExtent::Unknown,
-            formed_at: Some(row.get("formed_at")),
             recorded_at: Some(row.get("recorded_at")),
         },
         entity_refs: metadata.entities,
@@ -260,7 +261,7 @@ fn longitudinal_hit(
 fn longitudinal_filter(
     query: &CognitiveQuery,
     row: &sqlx::postgres::PgRow,
-    time: &TemporalExtent,
+    _time: &TemporalExtent,
     kind: &str,
     metadata: &LongitudinalMetadata,
 ) -> bool {
@@ -278,21 +279,20 @@ fn longitudinal_filter(
             EpistemicClass::Derived
         }),
     }) && constraints.valid.is_none()
-        && constraints.occurred.is_none_or(|interval| {
-            metadata
-                .occurred
-                .iter()
-                .any(|extent| interval.matches_extent(extent))
+        && metadata.temporal.matches(
+            query.temporal_predicate(TimeAxis::Occurred).as_ref(),
+            query.temporal_predicate(TimeAxis::Observed).as_ref(),
+        )
+        && query.temporal_predicate(TimeAxis::Formed).is_none_or(|p| {
+            p.matches_stamp(&DomainStamp {
+                time_domain_ref: row.get("formed_time_domain_ref"),
+                at: row.get("formed_at"),
+                recorded_at: row.get("formed_recorded_at"),
+            }) == Some(true)
         })
         && constraints
-            .observed
-            .is_none_or(|interval| interval.matches_extent(time))
-        && constraints
-            .formed
-            .is_none_or(|interval| interval.contains(row.get("formed_at")))
-        && constraints
             .recorded
-            .is_none_or(|interval| interval.contains(row.get("recorded_at")))
+            .is_none_or(|p| p.contains(row.get("recorded_at")))
 }
 async fn longitudinal_evidence(
     service: &MemoryService,
@@ -412,8 +412,7 @@ fn append_rendering(output: &mut String, text: &str, maximum: usize) {
 pub(super) struct LongitudinalMetadata {
     entities: Vec<EntityRef>,
     pub(super) source_classes: Vec<SourceClass>,
-    pub(super) occurred: Vec<TemporalExtent>,
-    pub(super) observed_at: Option<chrono::DateTime<Utc>>,
+    pub(super) temporal: TemporalEvidence,
 }
 
 pub(super) async fn longitudinal_metadata(
@@ -422,17 +421,25 @@ pub(super) async fn longitudinal_metadata(
     kind: &str,
     ids: &[Uuid],
     view: Option<&HistoricalAuthoritySnapshot>,
+    read: Option<&SourceReadView>,
 ) -> Result<BTreeMap<Uuid, LongitudinalMetadata>> {
     let roots = ids
         .iter()
         .map(|id| parse_reference(&format!("{kind}_revision"), &id.to_string()))
         .collect::<Result<Vec<_>>>()?;
     let mut sql = sqlx::QueryBuilder::new("");
-    super::source_facts::push_source_facts(&mut sql, subject, &roots, view)?;
+    super::source_facts::push_source_facts(&mut sql, subject, &roots, view, read)?;
     sql.push("SELECT * FROM source_occurrences ORDER BY root,occurrence_id");
     let rows = sql.build().fetch_all(&mut **tx).await.map_err(db)?;
     let mut result = BTreeMap::<Uuid, LongitudinalMetadata>::new();
     for row in rows {
+        if view.is_some_and(|view| {
+            !view.material_contains(&CognitiveRef::Occurrence(OccurrenceId(
+                row.get("occurrence_id"),
+            )))
+        }) {
+            continue;
+        }
         let value = result.entry(row.get("root")).or_default();
         let source = SourceClass::from(row.get::<String, _>("source_class"));
         if !value.source_classes.contains(&source) {
@@ -446,20 +453,21 @@ pub(super) async fn longitudinal_metadata(
                 value.entities.push(entity);
             }
         }
-        let occurred = temporal_from_columns(
-            row.get("occurred_time_kind"),
-            row.get("occurred_time_start"),
-            row.get("occurred_time_end"),
-        )?;
-        if !value.occurred.contains(&occurred) {
-            value.occurred.push(occurred);
-        }
-        let observed = row.get::<chrono::DateTime<Utc>, _>("observed_at");
-        value.observed_at = Some(
-            value
-                .observed_at
-                .map_or(observed, |current| current.max(observed)),
-        );
+        value.temporal.sources.push(SourceTemporalEvidence {
+            occurrence_id: OccurrenceId(row.get("occurrence_id")),
+            occurred: DomainTemporalExtent {
+                time_domain_ref: row.get("occurred_time_domain_ref"),
+                extent: temporal_from_columns(
+                    row.get("occurred_time_kind"),
+                    row.get("occurred_time_start"),
+                    row.get("occurred_time_end"),
+                )?,
+            },
+            observed: serde_json::from_value(row.get("observed_stamp"))
+                .map_err(|e| Error::Infrastructure(e.to_string()))?,
+            observed_at: row.get("observed_at"),
+            recorded_at: row.get("source_recorded_at"),
+        });
     }
     Ok(result)
 }

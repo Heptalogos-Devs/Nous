@@ -3,7 +3,8 @@ import {
   ReviseMotivationRequestSchema,
   AddMotivationEvidenceRequestSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
-import { chosenBasis, temporal } from "./reflection-catalog.js";
+import { chosenBasis } from "./reflection-catalog.js";
+import { domainTemporal } from "./temporal.js";
 import { compileMotivationAction } from "./motivation.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
@@ -71,16 +72,25 @@ export function compileReflectionActions(
   output: SubjectReflectionProposal,
   producer: ProducerSignature,
   operation: string,
+  identityOutput: SubjectReflectionProposal = output,
 ): CompiledReflectionAction[] {
+  if (identityOutput.actions.length !== output.actions.length)
+    invalid("Prepared reflection actions must preserve paid action identities");
   if (output.actions.length > plan.maxActions)
     invalid("Reflection proposal exceeds captured action budget");
   const touched = new Set<string>(),
     ids = new Set<string>();
-  return output.actions.map((typed) => {
+  return output.actions.map((typed, index) => {
+    const identity = identityOutput.actions[index]!;
+    if (
+      identity.domain !== typed.domain ||
+      identity.proposal.action !== typed.proposal.action
+    )
+      invalid("Prepared reflection cannot change paid action kind or domain");
     if (!plan.domains.includes(typed.domain))
       invalid("Reflection proposal targets a domain not explicitly enabled");
     const action = typed.proposal,
-      id = reflectionActionId(operation, typed);
+      id = reflectionActionId(operation, identity);
     if (ids.has(id)) invalid("Duplicate reflection action identity");
     ids.add(id);
     const base = {
@@ -190,7 +200,7 @@ export function compileReflectionActions(
           estimateMethod: c.judgment.estimateMethod ?? undefined,
         },
         basis: chosenBasis(plan, c.basisKeys, targetKey ?? undefined),
-        validTime: temporal(c.validTime),
+        validTime: domainTemporal(c.validTime),
         producer,
       };
       const content = create(SocialContentSchema, {
@@ -292,7 +302,7 @@ export function compileReflectionActions(
           invalid("Memory entity key is outside actual Host catalog"),
       ),
       epistemicClass: proposal.content.epistemicClass,
-      validTime: temporal(proposal.content.validTime),
+      validTime: domainTemporal(proposal.content.validTime),
     };
     return {
       ...base,

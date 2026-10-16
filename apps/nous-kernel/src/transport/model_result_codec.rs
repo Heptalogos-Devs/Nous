@@ -50,7 +50,7 @@ pub(super) fn context(value: k::ModelResultContext) -> Result<nous_core::ModelRe
             .into_iter()
             .map(from_ref)
             .collect::<Result<_>>()?,
-        cognitive_formed_at: time(value.cognitive_formed_at)?,
+        cognitive_formed_at: value.cognitive_formed_at.map(domain_stamp).transpose()?,
         maintenance_trigger: value
             .maintenance_trigger
             .map(|claim| -> Result<nous_core::MaintenanceTrigger> {
@@ -66,7 +66,7 @@ pub(super) fn context(value: k::ModelResultContext) -> Result<nous_core::ModelRe
 pub(super) fn context_proto(value: nous_core::ModelResultContext) -> k::ModelResultContext {
     k::ModelResultContext {
         dependencies: value.dependencies.into_iter().map(to_ref).collect(),
-        cognitive_formed_at: value.cognitive_formed_at.map(timestamp),
+        cognitive_formed_at: value.cognitive_formed_at.as_ref().map(domain_stamp_proto),
         maintenance_trigger: value
             .maintenance_trigger
             .map(|claim| k::MaintenanceTrigger {

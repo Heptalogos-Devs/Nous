@@ -43,6 +43,7 @@ async fn self_dependent_revision_is_invalid_and_preserves_current_memory() {
             intent: nous_memory::RevisionIntent::Correct,
 
             content: nous_memory::MemoryContent {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 formation_mode: FormationMode::Grounded,
                 grounding_occurrence_id: Some(source.occurrence.occurrence_id),
@@ -111,6 +112,7 @@ async fn schema_lifecycle_fences_queries_and_purge_cannot_replay_content() {
                 structural_claim:
                     "Continue an open task after explicitly selecting its durable context".into(),
                 applicability_scope: SchemaScope {
+                    valid_time_domain_ref: "time:real".into(),
                     description: "Open development tasks".into(),
                     aboutness: vec![],
                     tags: vec![],
@@ -250,6 +252,7 @@ async fn synthesized_schema_requires_independent_known_roots() {
         }),
     };
     let base = || SchemaScope {
+        valid_time_domain_ref: "time:real".into(),
         description: "cognitive retrieval schema".into(),
         aboutness: Vec::new(),
         tags: Vec::new(),
@@ -338,6 +341,7 @@ async fn memory_revision_identity_guard_rejects_disjoint_aboutness() {
             intent: nous_memory::RevisionIntent::Correct,
 
             content: nous_memory::MemoryContent {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 formation_mode: revision.content.formation_mode,
                 grounding_occurrence_id: revision.content.grounding_occurrence_id,
@@ -388,6 +392,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
         .unwrap()
         .create_association(
             nous_memory::CreateAssociationRequest {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 operation_id: OperationId::new(),
                 from: CognitiveRef::Memory(memory.object.memory_id),
@@ -434,6 +439,7 @@ async fn association_requires_exact_cognition_and_valid_basis_class() {
         .unwrap()
         .create_association(
             nous_memory::CreateAssociationRequest {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 operation_id: OperationId::new(),
                 from: CognitiveRef::MemoryRevision(memory.revision.memory_revision_id),

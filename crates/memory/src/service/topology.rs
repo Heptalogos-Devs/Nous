@@ -165,11 +165,11 @@ impl MemoryService {
         input: &CreateAssociationRequest,
     ) -> Result<AssociationEvidenceId> {
         let id = AssociationEvidenceId::new();
-        let now = self.cognition.now(subject);
+        let now = self.cognition.recorded_now();
         let (valid_kind, valid_start, valid_end) = temporal_columns(&input.valid_time);
         let (from_kind, from_ref) = reference_parts(&input.from);
         let (to_kind, to_ref) = reference_parts(&input.to);
-        sqlx::query("INSERT INTO association_evidence(association_evidence_id,subject_id,from_ref_kind,from_ref,to_ref_kind,to_ref,relation_kind,polarity,basis_class,valid_time_kind,valid_time_start,valid_time_end,producer_signature_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)").bind(id.0).bind(subject.0).bind(from_kind).bind(from_ref).bind(to_kind).bind(to_ref).bind(&input.relation_kind).bind(input.polarity.as_str()).bind(input.basis_class.as_str()).bind(valid_kind).bind(valid_start).bind(valid_end).bind(input.producer_signature_id).bind(now).execute(&mut **tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO association_evidence(association_evidence_id,subject_id,from_ref_kind,from_ref,to_ref_kind,to_ref,relation_kind,polarity,basis_class,valid_time_kind,valid_time_start,valid_time_end,producer_signature_id,created_at,valid_time_domain_ref) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)").bind(id.0).bind(subject.0).bind(from_kind).bind(from_ref).bind(to_kind).bind(to_ref).bind(&input.relation_kind).bind(input.polarity.as_str()).bind(input.basis_class.as_str()).bind(valid_kind).bind(valid_start).bind(valid_end).bind(input.producer_signature_id).bind(now).bind(&input.valid_time_domain_ref).execute(&mut **tx).await.map_err(db)?;
         for basis in &input.basis {
             let (
                 kind,
@@ -500,7 +500,7 @@ impl MemoryService {
         let changed = sqlx::query("UPDATE association_evidence SET revoked_at=COALESCE(revoked_at,$3) WHERE subject_id=$1 AND association_evidence_id=$2")
             .bind(subject.0)
             .bind(association.0)
-            .bind(self.cognition.now(subject))
+            .bind(self.cognition.recorded_now())
             .execute(&mut **mutation.tx())
             .await
             .map_err(db)?;
@@ -620,7 +620,11 @@ fn validate_association_input(input: &CreateAssociationRequest) -> Result<()> {
     if !(1..=16).contains(&input.basis.len()) {
         return Err(Error::Invalid("association needs 1..16 basis".into()));
     }
-    input.valid_time.validate()?;
+    nous_core::DomainTemporalExtent {
+        time_domain_ref: input.valid_time_domain_ref.clone(),
+        extent: input.valid_time.clone(),
+    }
+    .validate()?;
     validate_association_endpoint(&input.from)?;
     validate_association_endpoint(&input.to)?;
     if input.from == input.to {
@@ -723,6 +727,7 @@ fn decode_association(
     basis: Vec<AssociationBasis>,
 ) -> Result<AssociationEvidence> {
     Ok(AssociationEvidence {
+        valid_time_domain_ref: row.try_get("valid_time_domain_ref").map_err(db)?,
         association_evidence_id: AssociationEvidenceId(
             row.try_get("association_evidence_id").map_err(db)?,
         ),

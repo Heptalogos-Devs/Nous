@@ -86,7 +86,7 @@ try {
               "Observed bounded task outcome; this does not establish global intimacy.",
           },
           basis: [evidence(occurrenceId)],
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
         },
       },
     });
@@ -168,7 +168,7 @@ try {
       ],
       modifiers: {
         projection: { domains: ["social_relation"] },
-        asOf: forward.recordedAt,
+        asRecordedAt: forward.recordedAt,
         materialize: true,
       },
     },
@@ -216,7 +216,7 @@ try {
             "Alice explained the usage; no claim of universal shared understanding.",
         },
         basis: [evidence(a.occurrenceId)],
-        validTime: {},
+        validTime: { timeDomainRef: "time:real", extent: {} },
       },
     },
   });
@@ -267,7 +267,7 @@ try {
   );
   const usage = {
     agentInstanceId: "social-owner-smoke",
-    purpose: "expression",
+    purpose: "subject_rendering",
     intent: "deployment 灯塔",
     participants: [
       { entityRef: actor, role: "speaker" },
@@ -544,7 +544,7 @@ try {
           scope: { description: "deployment" },
           stance: "tentative",
           basis: [evidence(a.occurrenceId)],
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
         },
       },
     },

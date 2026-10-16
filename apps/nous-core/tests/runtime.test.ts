@@ -13,6 +13,8 @@ import { ResourceRegistry } from "../src/resources/registry.js";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
   CognitiveRefSchema,
+  CognitionUsageSchema,
+  DomainStampSchema,
   ContextSegmentSchema,
   EvidenceSchema,
   ProjectionRequestSchema,
@@ -95,6 +97,77 @@ describe("managed context synchronization", () => {
     ).toBe("RESET");
   });
 });
+it("canonicalizes world usage and keeps clock ticks in the same managed track", () => {
+  const compiler = new ContextCompiler(256);
+  const usage = create(CognitionUsageSchema, {
+    agentInstanceId: "world-subject",
+    role: "subject.deliberation",
+    purpose: "subject_deliberation",
+    view: "subject",
+    contactNature: "subject_experience",
+    worldId: "world:school",
+    intent: "Continue actual experience",
+    worldTime: {
+      timeDomainRef: "time:school",
+      at: { seconds: 100n },
+      recordedAt: { seconds: 200n },
+    },
+    sourceRead: {
+      subjectId: "s",
+      sourceRefs: [{ kind: "occurrence", value: "visible" }],
+    },
+  });
+  const key = {
+    subjectId: "s",
+    sessionId: "session",
+    consumerId: "test",
+    usage,
+  };
+  const original = projection(segment("a"));
+  original.usage = usage;
+  const initial = compiler.compile(key, "1", original);
+  const tick = create(CognitionUsageSchema, {
+    ...usage,
+    worldTime: create(DomainStampSchema, {
+      timeDomainRef: "time:school",
+      at: { seconds: 101n },
+      recordedAt: { seconds: 201n },
+    }),
+  });
+  const current = { ...original, usage: tick };
+  const next = compiler.compile(
+    { ...key, usage: tick },
+    "1",
+    current,
+    initial.cursor,
+  );
+  expect(next.kind).toBe("APPEND");
+  expect(next.cursor).toEqual(initial.cursor);
+  expect(next.projection.usage?.worldTime?.at?.seconds).toBe(101n);
+  expect(usage.worldTime?.at?.seconds).toBe(100n);
+  for (const changed of [
+    { ...tick, worldId: "world:other" },
+    { ...tick, worldTime: { ...tick.worldTime!, timeDomainRef: "time:other" } },
+    {
+      ...tick,
+      role: "subject.execution",
+      purpose: "professional_execution",
+      view: "worker",
+      contactNature: "execution_only",
+    },
+    { ...tick, sourceRead: { ...tick.sourceRead!, sourceRefs: [] } },
+  ]) {
+    const reset = compiler.compile(
+      { ...key, usage: create(CognitionUsageSchema, changed) },
+      "1",
+      current,
+      next.cursor,
+    );
+    expect(reset.kind).toBe("RESET");
+    expect(reset.cursor.trackId).not.toBe(initial.cursor.trackId);
+  }
+});
+
 describe("projection authority boundaries", () => {
   it("keeps projected segment identity stable across fresh contribution IDs and resets on evidence drift", async () => {
     let batch = projection();

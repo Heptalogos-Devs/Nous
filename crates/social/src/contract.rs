@@ -60,6 +60,11 @@ pub struct RelationContent {
     pub coordination_expectations: Vec<String>,
     pub basis: Vec<RevisionBasis>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub producer: Option<ProducerSignature>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +81,11 @@ pub struct ConventionContent {
     pub judgment: SocialJudgment,
     pub basis: Vec<RevisionBasis>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub producer: Option<ProducerSignature>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +105,12 @@ impl SocialContent {
         match self {
             Self::SocialRelation(v) => &v.basis,
             Self::LanguageConvention(v) => &v.basis,
+        }
+    }
+    pub fn valid_time_domain_ref(&self) -> &str {
+        match self {
+            Self::SocialRelation(value) => &value.valid_time_domain_ref,
+            Self::LanguageConvention(value) => &value.valid_time_domain_ref,
         }
     }
     pub fn valid_time(&self) -> &TemporalExtent {
@@ -178,7 +194,11 @@ impl SocialContent {
     pub fn validate(&self) -> Result<()> {
         let bounded = |s: &str, n: usize| !s.trim().is_empty() && s.len() <= n;
         validate_exact_basis(self.basis())?;
-        self.valid_time().validate()?;
+        nous_core::DomainTemporalExtent {
+            time_domain_ref: self.valid_time_domain_ref().into(),
+            extent: self.valid_time().clone(),
+        }
+        .validate()?;
         let scope = self.scope();
         let j = self.judgment();
         if self.basis().is_empty()
@@ -295,6 +315,8 @@ pub struct SocialRecord {
     pub reason: String,
     pub content: SocialContent,
     pub formed_at: DateTime<Utc>,
+    pub formed_time_domain_ref: String,
+    pub formed_recorded_at: DateTime<Utc>,
     pub recorded_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub evidence: Vec<SocialEvidence>,

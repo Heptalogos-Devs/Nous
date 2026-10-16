@@ -56,7 +56,7 @@ Concept maintenance 的 model suggestion list 由 Core 逐项调用 canonical Ta
 
 配置读取使用 `configuration.getConfiguration({ paths, ... })`，descriptor 使用 `getConfigDescriptor({ path })`；override 使用 canonical `setSystemOverride/setSubjectOverride`，value 在调用者的 JSON 输入边界通过 `fromJson(ValueSchema, value)` 编码。字段保持 generated request 形状。普通 RPC 与模型 deadline 使用一个方法 decorator 保留 typed NousError、显式 CallOptions 和取消；传入的 Transport 不要求重建。
 
-Subject 的认证生活世界时钟使用 `client.clocks.readClock/configureClock/pauseClock/advanceClock/resumeClock`；`projectWorldDeadline` 与 `compareDomainStamps` 从 Client 主入口导出。映射、管理权限、checkpoint 与当前五轴接入边界见[时钟合同](../../docs/specs/active/cognitive-runtime/clock.md)。
+Subject 的认证生活世界时钟使用 `client.clocks.readClock/configureClock/pauseClock/advanceClock/resumeClock`；`projectWorldDeadline` 与 `compareDomainStamps` 从 Client 主入口导出。ObservationInput 的 occurredTime、各 owner 的 validTime 及 Episode/Journal 跨度使用 DomainTemporalExtent；formedAt 与 Query clockNow 使用 DomainStamp。Projection.semanticClock 和 ContextSegment.temporal 进入正式模型上下文，现实 observedAt/recordedAt 保持 UTC。跨域没有隐式比较。映射、管理权限、checkpoint 与五轴合同见[时钟合同](../../docs/specs/active/cognitive-runtime/clock.md)。
 
 `@nous-wave/client/host-bridge` 是 Node-free Host Life 接线合同，导出四个 `/nous/v1/*` 路径、请求/响应 Zod schemas、TS 类型和 JSON Schema。公开 encode/decode CognitionUsage、ObservationInput、AcceptedObservation、Projection codec 与 `timestampFromDate`，Host 不需要引用 bundled Protocol 私有路径。认知 usage/observations 仍使用 canonical Protobuf JSON，不维护第二份认知 DTO。`/managed` 的 `outcomeObservation` 为实际 invocation outcome 构造稳定 requestId 与 ObservationInput，Host 可以先保存 pending 再幂等提交；显式 observedAt 应复用首次实际接触时间。详细配置、来源与反馈恢复合同见[正式 OpenClaw 包说明](../openclaw/README.md#host-life-与结构化接触)。
 

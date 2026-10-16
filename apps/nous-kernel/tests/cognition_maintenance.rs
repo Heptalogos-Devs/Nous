@@ -68,6 +68,7 @@ async fn typed_cognition_actions_preserve_prior_commits_and_exact_schema_replay(
         )),
     ];
     clock.advance_by(subject, Duration::days(1)).unwrap();
+    rt.cognition.clock_changed(subject).await.unwrap();
     assert_consolidation_context(&rt, subject, &results).await;
     let revised_input = nous_memory::ReviseSchemaInput {
         operation_id: OperationId::new(),
@@ -140,7 +141,7 @@ async fn assert_consolidation_context(
                 event_id: nous_core::UseEventId::new(),
                 reference: results[0].clone().unwrap(),
                 use_kind,
-                occurred_at: rt.cognition.now(subject),
+                occurred_at: rt.cognition.recorded_now(),
                 context: serde_json::json!({}),
             })
             .collect(),
@@ -320,6 +321,7 @@ async fn manual_episode_sources(
             content: nous_memory::EpisodeContent {
                 title: Some("Manual evidence".into()),
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: "time:real".into(),
                 experience_time: TemporalExtent::Unknown,
                 boundary_explanation: "Unbound observation.".into(),
                 producer_signature_id: None,
@@ -347,6 +349,7 @@ async fn manual_episode_sources(
             content: nous_memory::EpisodeContent {
                 title: Some("Cognitive continuation".into()),
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: "time:real".into(),
                 experience_time: TemporalExtent::Unknown,
                 boundary_explanation: "Memory member.".into(),
                 producer_signature_id: None,
@@ -377,6 +380,7 @@ async fn assert_manual_consolidation_plans(
         kernel as k, kernel::kernel_maintenance_service_server::KernelMaintenanceService,
     };
     clock.advance_by(subject, Duration::seconds(300)).unwrap();
+    rt.cognition.clock_changed(subject).await.unwrap();
     let service = nous_kernel::transport::KernelService(rt.clone());
     let selection = service
         .select_maintenance(tonic::Request::new(k::SelectMaintenanceRequest {
@@ -454,6 +458,17 @@ async fn manual_episode_planning_and_complete_journal_revalidation() {
         })
         .await
         .unwrap();
+    let unsettled = memory
+        .plan_consolidation_scope(
+            subject,
+            "journal_revision",
+            &journal.revision.journal_revision_id.0.to_string(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unsettled.status, "deferred");
+    clock.advance_by(subject, Duration::seconds(300)).unwrap();
+    rt.cognition.clock_changed(subject).await.unwrap();
     let consolidation = memory
         .plan_consolidation_scope(
             subject,
@@ -475,6 +490,7 @@ async fn manual_episode_planning_and_complete_journal_revalidation() {
             content: nous_memory::EpisodeContent {
                 title: Some("Revised continuation".into()),
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: second.revision.experience_time_domain_ref.clone(),
                 experience_time: second.revision.experience_time.clone(),
                 boundary_explanation: second.revision.boundary_explanation.clone(),
                 producer_signature_id: None,

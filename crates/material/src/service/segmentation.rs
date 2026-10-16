@@ -57,6 +57,7 @@ impl MaterialService {
             let slice = &text[start..end];
             let coordinate = serde_json::json!({"algorithm":"description-utf8-lines-v1","config_digest":config_digest,"ordinal":ordinal,"utf8_start":start,"utf8_end":end,"digest":blake3::hash(slice.as_bytes()).to_hex().to_string()});
             let region = DerivedRegion {
+                formed_stamp: None,
                 derived_region_id: DerivedRegionId::new(),
                 subject_id: subject,
                 derived_representation_id: representation,
@@ -66,7 +67,7 @@ impl MaterialService {
                     .to_string(),
                 coordinate,
                 parent_derived_region_id: None,
-                created_at: self.cognition.now(subject),
+                created_at: self.cognition.recorded_now(),
             };
             segments.push(DescriptionSegment {
                 key: format!("D{:03}", ordinal + 1),

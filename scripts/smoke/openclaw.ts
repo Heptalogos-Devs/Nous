@@ -126,7 +126,7 @@ async function forward(incoming: IncomingMessage, outgoing: ServerResponse) {
       slice: system.includes("Nous cognition"),
       v1: system.includes("GUIDANCE_V1"),
       v2: system.includes("GUIDANCE_V2"),
-      worker: system.includes('"purpose":"worker"'),
+      worker: system.includes('"purpose":"professional_execution"'),
       tool: JSON.stringify(input.messages).includes(
         "OPENCLAW_REAL_TOOL_RESULT",
       ),
@@ -438,7 +438,7 @@ try {
       semanticRole: "fact",
       text: "Cognition is shared; each worker owns its cursor.",
       epistemicClass: "observed",
-      validTime: {},
+      validTime: { timeDomainRef: "time:real", extent: {} },
       basis: [
         {
           basis: {
@@ -598,7 +598,7 @@ try {
             description: "This test conversation only",
             conversationRef: "agent:main:main",
           },
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
           basis: [
             {
               basis: {

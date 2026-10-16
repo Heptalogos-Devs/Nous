@@ -277,7 +277,7 @@ if (phase === "resume") {
       context: {
         cognition_usage: encodeCognitionUsage({
           agentInstanceId: "reflection:actual",
-          purpose: "deliberation",
+          purpose: "subject_deliberation",
           intent: "Actual bounded learning interest",
           audience: {
             conversationRef: "conversation:actual-interest",

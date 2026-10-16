@@ -18,6 +18,18 @@ Memory (crates/memory) owns Memory/CognitiveSchema/Episode/Journal/Tag/Associati
 
 长期 cognition 是 Subject 的认知与演化，可能出错、主观或被后续修订；来源验证不证明客观真值。RevisionBasis 的 EvidenceRef/CognitionDependency/SeedBasisRef 表达“如何形成”，basis_role 只有 direct/interpretation/contextual。EpistemicRelation 独立表达 supports、contradicts、corroborates、weakens、corrects、counterexample、inferred_from；明确 negative judgment 不投影为 positive cognition_basis adjacency。Schema evidence 的 support/counterexample/boundary_case 是真实判断，保持独立。相同 provenance roots 去重，语义断言、Source/Subject/时间归属、ownership、lifecycle、self-dependency 与 cycle 检查保持领域职责。
 
+## 世界经历、认识与支持范围
+
+WorldLife 的已实现事件是相应世界认知的合法来源；世界 authoring 草稿、初始设定、假设、梦、已发送说法与实际角色见闻分别保留。认证 Host 释放的 world_realized 可支持虚拟生活经验、自我事项、世界内关系/惯例及条件评价；不能因其生成方式属于 simulated/generated 而整体拒绝，也不能由此推出真实 QQ 接纳、真实人物确认或现实群体共识。
+
+真假性质、来源独立性与 Subject 确信程度正交。多个虚拟人物不自动成为独立根，同次生成或共同转述保留其真实共源谱系。EvidenceRef/RevisionBasis 继续引用实际接触和规范 provenance；不能只给正文加世界标签而绕过领域支持、同 Subject、视角、cycle 或生命周期校验。
+
+Episode/Journal/NarrativeThread 是 Subject 对已接触来源的组织与认识，不反向覆写 Host 的世界事件或对外 Claim。纠正追加世界/认知各自的版本和精确关联，原表达作为曾说过的事实保留。迟到的合法虚拟见闻可触发同域局部组织修复；真实消息不被批量迁成过去的世界生活。
+
+发生、世界见闻、形成与现实记录按[时间合同](../cognitive-runtime/clock.md)保存；“当时数据库已有”始终受现实记录截点限制。角色当前知识/经验投影、权限和世界可见范围在候选读取前处理。后台专家结果须经实际 handoff 释放后形成新的 Subject 接触，不直接成为个人专业经历或认知支持。
+
+现有 Memory/Schema/Episode/Journal owner、幂等与付费成果继续沿用；受信世界来源和知识视角扩展随首个消费者完成，不创建第二套认知对象、人物库或资格索引。
+
 ## Memory object/revision
 
 - Memory object 有稳定 identity；revision 内容 immutable；head、object epoch、lifecycle 和主体 authority sequence 分离。
@@ -30,7 +42,7 @@ Memory (crates/memory) owns Memory/CognitiveSchema/Episode/Journal/Tag/Associati
 
 ## CognitiveSchema、Tag 与 AssociationEvidence
 
-- CognitiveSchema 属于 Memory owner，具有独立 object/revision、applicability、support、counterexample/boundary evidence 和 lifecycle。create/revise/split/merge 使用 `CognitiveSchemaContent` 输入；formed/recorded time 由 owner 的 CognitiveClock 分配。同一 content 的 evidence_links 是唯一 evidence 输入位置，create 请求根层不重复定义它。create/revise/split/merge 共用内容与 formation 校验、revision writer，并保存规范化的 consolidation ProducerSignature；split/merge 自己持有 source locks、lineage、epoch fences 与单次原子提交。revision 接受新的 exact evidence links 与明确 copy links，保持 formation kind 和 aboutness continuity。Receipt replay 返回原 exact SchemaRevision，不因为后续 head 变化重绑。
+- CognitiveSchema 属于 Memory owner，具有独立 object/revision、applicability、support、counterexample/boundary evidence 和 lifecycle。create/revise/split/merge 使用 `CognitiveSchemaContent` 输入；formed 由 owner 捕获正式域时钟及现实形成次序，recorded 始终由现实 UTC 提交分配。同一 content 的 evidence_links 是唯一 evidence 输入位置，create 请求根层不重复定义它。create/revise/split/merge 共用内容与 formation 校验、revision writer，并保存规范化的 consolidation ProducerSignature；split/merge 自己持有 source locks、lineage、epoch fences 与单次原子提交。revision 接受新的 exact evidence links 与明确 copy links，保持 formation kind 和 aboutness continuity。Receipt replay 返回原 exact SchemaRevision，不因为后续 head 变化重绑。
 - `explicit_import` 至少有一条有效 evidence；`synthesized` 需要至少两个 normalized inputs、至少两个 known independent provenance roots 和无 cycle；UnknownDependency 不增加独立 root。
 - synthesized Memory 与 CognitiveSchema 共用同一 provenance root traversal；同一 Artifact 的派生表示、同源重述、部分共享根和未知依赖均不能凑成两个独立根。
 - 增补/撤回 Schema evidence 改变 object epoch 和 projection invalidation，不伪造 content revision。

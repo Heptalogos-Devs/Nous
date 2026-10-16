@@ -285,6 +285,7 @@ async fn concept_lineage_preserves_history_and_canonicalizes_current_query_and_s
     let association = owner
         .create_association(
             CreateAssociationRequest {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 operation_id: OperationId::new(),
                 from: CognitiveRef::MemoryRevision(revisions[0]),

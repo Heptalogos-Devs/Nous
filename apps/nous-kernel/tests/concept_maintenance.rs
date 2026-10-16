@@ -179,6 +179,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         owner
             .create_association(
                 CreateAssociationRequest {
+                    valid_time_domain_ref: "time:real".into(),
                     producer: Some(association_producer.clone()),
                     operation_id: OperationId::new(),
                     from: reference.clone(),
@@ -205,6 +206,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
     owner
         .create_association(
             CreateAssociationRequest {
+                valid_time_domain_ref: "time:real".into(),
                 producer: Some(producer()),
                 operation_id: OperationId::new(),
                 from: revisions[0].clone(),
@@ -276,7 +278,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             subject,
             &reverse,
             CognitiveEffort::Maximum,
-            rt.cognition.now(subject),
+            rt.cognition.recorded_now(),
             &snapshot,
             None,
             None,
@@ -347,7 +349,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             event_id: UseEventId::new(),
             reference: revisions[0].clone(),
             use_kind: nous_runtime::UseKind::ActedOn,
-            occurred_at: rt.cognition.now(subject),
+            occurred_at: rt.cognition.recorded_now(),
             context: serde_json::json!({}),
         })
         .collect();
@@ -402,7 +404,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
                 event_id: UseEventId::new(),
                 reference: revisions[0].clone(),
                 use_kind,
-                occurred_at: rt.cognition.now(subject),
+                occurred_at: rt.cognition.recorded_now(),
                 context: serde_json::json!({}),
             })
             .collect(),
@@ -494,7 +496,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
                 .map(|r| (r.clone(), true))
                 .collect::<Vec<_>>(),
             CognitiveEffort::Maximum,
-            rt.cognition.now(subject),
+            rt.cognition.recorded_now(),
             &snapshot,
             None,
             None,
@@ -531,6 +533,7 @@ async fn episode_relations(rt: &NousRuntime, subject: SubjectId, revisions: &[Co
             content: nous_memory::EpisodeContent {
                 title: Some("Recorded approval sequence".into()),
                 parent_episode_revision_id: None,
+                experience_time_domain_ref: "time:real".into(),
                 experience_time: TemporalExtent::Unknown,
                 boundary_explanation: "Both exact members recorded in order".into(),
                 producer_signature_id: None,

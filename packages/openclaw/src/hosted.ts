@@ -282,9 +282,12 @@ export class HostedLifecycle {
       conversationRef: marker.identity.native.sessionKey,
       observedAt: timestampFromDate(new Date(marker.observedAt)),
       occurredTime: {
-        value: {
-          case: "instant",
-          value: timestampFromDate(new Date(message.timestamp)),
+        timeDomainRef: "time:real",
+        extent: {
+          value: {
+            case: "instant",
+            value: timestampFromDate(new Date(message.timestamp)),
+          },
         },
       },
       material: {

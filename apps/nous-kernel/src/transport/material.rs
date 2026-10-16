@@ -170,12 +170,36 @@ impl KernelService {
                         .collect::<Result<_>>()?,
                     occurrence: OccurrenceDescriptor {
                         source_class: input.source_class.into(),
+                        world_realized: input
+                            .world_realized
+                            .map(|source| -> Result<_> {
+                                Ok(nous_material::WorldRealizedSource {
+                                    world_id: source.world_id,
+                                    event_id: source.event_id,
+                                    event_revision: source.event_revision,
+                                    producer_ref: source.producer_ref,
+                                    generation_method: source.generation_method,
+                                    realized_at: required(
+                                        time(source.realized_at)?,
+                                        "realized_at",
+                                    )?,
+                                    world_observed: domain_stamp(required(
+                                        source.world_observed,
+                                        "world_observed",
+                                    )?)?,
+                                    shared_origin_refs: source.shared_origin_refs,
+                                })
+                            })
+                            .transpose()?,
                         external_object_ref: input
                             .external_object_ref
                             .map(ObjectRef::new)
                             .transpose()?,
-                        occurred_time: temporal(input.occurred_time)?,
+                        occurred_time_domain_ref: domain_temporal(input.occurred_time.clone())?
+                            .time_domain_ref,
+                        occurred_time: domain_temporal(input.occurred_time)?.extent,
                         observed_at: time(input.observed_at)?,
+                        observed_stamp: input.observed_stamp.map(domain_stamp).transpose()?,
                         conversation_ref: input.conversation_ref,
                         actor_entity_ref: input.actor_entity_ref.map(EntityRef::new).transpose()?,
                         context: object(input.context),

@@ -12,48 +12,30 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Default)]
 struct EvidenceTimes {
-    pub sources: Vec<(TemporalExtent, DateTime<Utc>, DateTime<Utc>)>,
-    pub formed_at: Option<DateTime<Utc>>,
+    pub temporal: TemporalEvidence,
+    pub formed_at: Option<DomainStamp>,
     source_classes: Vec<SourceClass>,
 }
 impl EvidenceTimes {
-    pub fn matches(&self, constraints: &QueryConstraints) -> bool {
-        if constraints.valid.is_some() {
-            return false;
-        } // Evidence has no world-valid claim.
-        if constraints
-            .formed
-            .is_some_and(|interval| self.formed_at.is_none_or(|at| !interval.contains(at)))
-        {
-            return false;
-        }
-        let filtered = constraints.occurred.is_some()
-            || constraints.observed.is_some()
-            || constraints.recorded.is_some();
-        !filtered
-            || self.sources.iter().any(|(occurred, observed, recorded)| {
-                constraints
-                    .occurred
-                    .is_none_or(|interval| interval.matches_extent(occurred))
-                    && constraints
-                        .observed
-                        .is_none_or(|interval| interval.contains(*observed))
-                    && constraints
-                        .recorded
-                        .is_none_or(|interval| interval.contains(*recorded))
+    pub fn matches(&self, query: &CognitiveQuery) -> bool {
+        let constraints = &query.expression.constraints;
+        constraints.valid.is_none()
+            && query.temporal_predicate(TimeAxis::Formed).is_none_or(|p| {
+                self.formed_at
+                    .as_ref()
+                    .is_some_and(|stamp| p.matches_stamp(stamp) == Some(true))
             })
+            && self.temporal.matches(
+                query.temporal_predicate(TimeAxis::Occurred).as_ref(),
+                query.temporal_predicate(TimeAxis::Observed).as_ref(),
+            )
     }
     pub fn freshness(&self) -> FreshnessDescriptor {
         FreshnessDescriptor {
-            occurred: self
-                .sources
-                .iter()
-                .map(|(time, _, _)| time.clone())
-                .collect(),
-            observed_at: self.sources.iter().map(|(_, at, _)| *at).max(),
-            recorded_at: self.sources.iter().map(|(_, _, at)| *at).max(),
-            formed_at: self.formed_at,
-            valid_time: TemporalExtent::Unknown,
+            temporal_evidence: self.temporal.clone(),
+            valid_time: DomainTemporalExtent::default(),
+            formed_at: self.formed_at.clone(),
+            recorded_at: None,
         }
     }
 }
@@ -63,6 +45,7 @@ impl MaterialService {
         subject: SubjectId,
         refs: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
+        source_read: Option<&SourceReadView>,
     ) -> Result<HashMap<CognitiveRef, EvidenceTimes>> {
         if refs.len() > 256 {
             return Err(Error::Invalid("reference time envelope exceeded".into()));
@@ -79,17 +62,24 @@ impl MaterialService {
         let rows = sqlx::query(r#"
 WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) AS r(kind,value)),
 origins AS (
- SELECT r.kind,r.value,o.occurrence_id,NULL::timestamptz formed_at,o.created_at recorded_at FROM requested r JOIN observation_occurrences o ON r.kind='occurrence' AND o.occurrence_id::text=r.value AND o.subject_id=$1
+ SELECT r.kind,r.value,o.occurrence_id FROM requested r JOIN observation_occurrences o ON r.kind='occurrence' AND o.occurrence_id::text=r.value AND o.subject_id=$1
  UNION ALL
- SELECT r.kind,r.value,o.occurrence_id,NULL::timestamptz,s.created_at FROM requested r JOIN source_regions s ON r.kind='source_region' AND s.source_region_id::text=r.value AND s.subject_id=$1 JOIN observation_occurrences o ON o.artifact_id=s.artifact_id AND o.subject_id=$1
+ SELECT r.kind,r.value,o.occurrence_id FROM requested r JOIN source_regions s ON r.kind='source_region' AND s.source_region_id::text=r.value AND s.subject_id=$1 JOIN observation_occurrences o ON o.artifact_id=s.artifact_id AND o.subject_id=$1
  UNION ALL
- SELECT r.kind,r.value,o.occurrence_id,d.created_at,COALESCE(g.created_at,d.created_at) FROM requested r JOIN derived_representations d ON d.subject_id=$1 AND (r.kind='derived_representation' AND d.derived_representation_id::text=r.value OR r.kind='derived_region' AND EXISTS(SELECT 1 FROM derived_regions g WHERE g.subject_id=$1 AND g.derived_region_id::text=r.value AND g.derived_representation_id=d.derived_representation_id))
+ SELECT r.kind,r.value,o.occurrence_id FROM requested r JOIN derived_representations d ON d.subject_id=$1 AND (r.kind='derived_representation' AND d.derived_representation_id::text=r.value OR r.kind='derived_region' AND EXISTS(SELECT 1 FROM derived_regions g WHERE g.subject_id=$1 AND g.derived_region_id::text=r.value AND g.derived_representation_id=d.derived_representation_id))
  LEFT JOIN derived_regions g ON r.kind='derived_region' AND g.subject_id=$1 AND g.derived_region_id::text=r.value
  JOIN LATERAL representation_source_regions($1,d.derived_representation_id) roots ON true JOIN source_regions s USING(source_region_id) JOIN observation_occurrences o ON o.artifact_id=s.artifact_id AND o.subject_id=$1
 )
-SELECT DISTINCT p.kind,p.value,p.formed_at,o.occurrence_id,o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at,p.recorded_at,o.source_class FROM origins p JOIN observation_occurrences o USING(occurrence_id) WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4)
-"#).bind(subject.0).bind(&kinds).bind(&values).bind(view.map(|v|v.as_of)).fetch_all(self.store.pool()).await.map_err(database_error)?;
+SELECT DISTINCT p.kind,p.value,o.occurrence_id,o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.occurred_time_domain_ref,o.observed_at,o.observed_stamp,o.created_at recorded_at,o.source_class FROM origins p JOIN observation_occurrences o USING(occurrence_id) WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4) AND ($5 OR source_read_allowed($1,'occurrence',o.occurrence_id::text,$6,$7,$8,$9))
+"#).bind(subject.0).bind(&kinds).bind(&values).bind(view.map(|v|v.as_of)).bind(source_read.is_none()).bind(source_read.map(|v|v.root_keys.clone()).unwrap_or_default()).bind(source_read.map(|v|v.work_contexts.clone()).unwrap_or_default()).bind(source_read.map(|v|v.origin_conversation_refs.clone()).unwrap_or_default()).bind(source_read.map(|v|serde_json::json!(&v.explicit_refs)).unwrap_or_else(||serde_json::json!([]))).fetch_all(self.store.pool()).await.map_err(database_error)?;
         for row in rows {
+            if view.is_some_and(|view| {
+                !view.material_contains(&CognitiveRef::Occurrence(OccurrenceId(
+                    row.get("occurrence_id"),
+                )))
+            }) {
+                continue;
+            }
             let reference = parse_reference(
                 &row.get::<String, _>("kind"),
                 &row.get::<String, _>("value"),
@@ -109,10 +99,17 @@ SELECT DISTINCT p.kind,p.value,p.formed_at,o.occurrence_id,o.occurred_time_kind,
             let times = result
                 .get_mut(&reference)
                 .ok_or_else(|| Error::Infrastructure("unexpected reference time row".into()))?;
-            times
-                .sources
-                .push((occurred, row.get("observed_at"), row.get("recorded_at")));
-            times.formed_at = row.get("formed_at");
+            times.temporal.sources.push(SourceTemporalEvidence {
+                occurrence_id: OccurrenceId(row.get("occurrence_id")),
+                occurred: DomainTemporalExtent {
+                    time_domain_ref: row.get("occurred_time_domain_ref"),
+                    extent: occurred,
+                },
+                observed: serde_json::from_value(row.get("observed_stamp"))
+                    .map_err(|e| Error::Infrastructure(e.to_string()))?,
+                observed_at: row.get("observed_at"),
+                recorded_at: row.get("recorded_at"),
+            });
             times
                 .source_classes
                 .push(SourceClass::from(row.get::<String, _>("source_class")));
@@ -145,9 +142,8 @@ fn material_hit(
         representation: None,
         authority,
         freshness: FreshnessDescriptor {
-            occurred: Vec::new(),
-            observed_at: None,
-            valid_time: TemporalExtent::Unknown,
+            temporal_evidence: TemporalEvidence::default(),
+            valid_time: DomainTemporalExtent::default(),
             formed_at: None,
             recorded_at: None,
         },
@@ -188,6 +184,10 @@ impl nous_runtime::CognitiveContributor for MaterialService {
                 | CognitiveRef::DerivedRegion(_)
         )
     }
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one temporal lane applies domain, joint source predicates and permission before its candidate bound"
+    )]
     async fn direct_lanes(
         &self,
         bound: &nous_runtime::BoundQuery,
@@ -208,14 +208,17 @@ impl nous_runtime::CognitiveContributor for MaterialService {
                     .projection
                     .domain_names()
                     .contains(&"evidence"))
-            || [c.occurred, c.observed, c.recorded]
+            || [c.occurred, c.observed, c.recorded, c.formed]
                 .iter()
                 .all(Option::is_none)
         {
             return Ok(Vec::new());
         }
+        if c.formed.is_some() && c.valid.is_none() {
+            return Ok(vec![self.formed_temporal_lane(bound, plan).await?]);
+        }
         let mut output = LaneOutput::empty(EvidenceFamily::Temporal, LaneStatus::Ready);
-        if c.valid.is_some() || c.formed.is_some() {
+        if c.valid.is_some() {
             return Ok(vec![output]);
         }
         let mut sql = sqlx::QueryBuilder::<sqlx::Postgres>::new(
@@ -235,6 +238,12 @@ impl nous_runtime::CognitiveContributor for MaterialService {
         }
         use nous_persistence::{TimeColumns, push_time_predicate};
         if let Some(predicate) = c.occurred {
+            sql.push(" AND occurred_time_domain_ref=").push_bind(
+                bound
+                    .source_query
+                    .time_domain(TimeAxis::Occurred)
+                    .to_owned(),
+            );
             push_time_predicate(
                 &mut sql,
                 TimeColumns::Extent {
@@ -245,7 +254,22 @@ impl nous_runtime::CognitiveContributor for MaterialService {
                 predicate,
             )?;
         }
-        for (column, predicate) in [("observed_at", c.observed), ("created_at", c.recorded)] {
+        let observed_column = if bound.source_query.time_domain(TimeAxis::Observed) == "time:real" {
+            "observed_at"
+        } else {
+            "(observed_stamp->>'at')::timestamptz"
+        };
+        if c.observed.is_some() && bound.source_query.time_domain(TimeAxis::Observed) != "time:real"
+        {
+            sql.push(" AND observed_stamp->>'time_domain_ref'=")
+                .push_bind(
+                    bound
+                        .source_query
+                        .time_domain(TimeAxis::Observed)
+                        .to_owned(),
+                );
+        }
+        for (column, predicate) in [(observed_column, c.observed), ("created_at", c.recorded)] {
             if let Some(predicate) = predicate {
                 push_time_predicate(&mut sql, TimeColumns::Instant(column), predicate)?;
             }
@@ -322,21 +346,26 @@ impl nous_runtime::CognitiveContributor for MaterialService {
             .collect();
         let references = visible.as_slice();
         let mut times = self
-            .evidence_times_in_view(subject, references, bound.historical_authority.as_deref())
+            .evidence_times_in_view(
+                subject,
+                references,
+                bound.historical_authority.as_deref(),
+                query.source_read.as_ref(),
+            )
             .await?;
         let (kinds, values): (Vec<_>, Vec<_>) = references.iter().map(reference_parts).unzip();
         let rows = sqlx::query(r#"
 WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) AS r(kind,value) WHERE $4::boolean OR source_read_allowed($1,r.kind,r.value,$5,$6,$7,$8)),
 records AS (
- SELECT r.kind,r.value,a.created_at recorded_at,NULL::timestamptz formed_at,a.media_type,NULL::text payload_text FROM requested r JOIN artifacts a ON r.kind='artifact' AND a.artifact_id::text=r.value AND a.subject_id=$1
+ SELECT r.kind,r.value,a.created_at recorded_at,NULL::jsonb formed_at,a.media_type,NULL::text payload_text FROM requested r JOIN artifacts a ON r.kind='artifact' AND a.artifact_id::text=r.value AND a.subject_id=$1
  UNION ALL
- SELECT r.kind,r.value,o.created_at,NULL::timestamptz,COALESCE(a.media_type,'application/octet-stream'),NULL::text FROM requested r JOIN observation_occurrences o ON r.kind='occurrence' AND o.occurrence_id::text=r.value AND o.subject_id=$1 LEFT JOIN artifacts a ON a.artifact_id=o.artifact_id AND a.subject_id=$1
+ SELECT r.kind,r.value,o.created_at,NULL::jsonb,COALESCE(a.media_type,'application/octet-stream'),NULL::text FROM requested r JOIN observation_occurrences o ON r.kind='occurrence' AND o.occurrence_id::text=r.value AND o.subject_id=$1 LEFT JOIN artifacts a ON a.artifact_id=o.artifact_id AND a.subject_id=$1
  UNION ALL
- SELECT r.kind,r.value,s.created_at,NULL::timestamptz,a.media_type,NULL::text FROM requested r JOIN source_regions s ON r.kind='source_region' AND s.source_region_id::text=r.value AND s.subject_id=$1 JOIN artifacts a ON a.artifact_id=s.artifact_id AND a.subject_id=$1
+ SELECT r.kind,r.value,s.created_at,NULL::jsonb,a.media_type,NULL::text FROM requested r JOIN source_regions s ON r.kind='source_region' AND s.source_region_id::text=r.value AND s.subject_id=$1 JOIN artifacts a ON a.artifact_id=s.artifact_id AND a.subject_id=$1
  UNION ALL
- SELECT r.kind,r.value,d.created_at,d.created_at,'text/plain',d.payload_text FROM requested r JOIN derived_representations d ON r.kind='derived_representation' AND d.derived_representation_id::text=r.value AND d.subject_id=$1
+ SELECT r.kind,r.value,d.created_at,d.formed_stamp,'text/plain',d.payload_text FROM requested r JOIN derived_representations d ON r.kind='derived_representation' AND d.derived_representation_id::text=r.value AND d.subject_id=$1
  UNION ALL
- SELECT r.kind,r.value,g.created_at,d.created_at,'text/plain',NULL::text FROM requested r JOIN derived_regions g ON r.kind='derived_region' AND g.derived_region_id::text=r.value AND g.subject_id=$1 JOIN derived_representations d ON d.derived_representation_id=g.derived_representation_id AND d.subject_id=$1
+ SELECT r.kind,r.value,g.created_at,g.formed_stamp,'text/plain',NULL::text FROM requested r JOIN derived_regions g ON r.kind='derived_region' AND g.derived_region_id::text=r.value AND g.subject_id=$1 JOIN derived_representations d ON d.derived_representation_id=g.derived_representation_id AND d.subject_id=$1
 )
 SELECT * FROM records
 "#).bind(subject.0).bind(kinds).bind(values)
@@ -357,10 +386,12 @@ SELECT * FROM records
                 .get_mut(&reference)
                 .ok_or_else(|| Error::Infrastructure("unexpected Material query record".into()))?;
             let recorded_at: DateTime<Utc> = row.get("recorded_at");
-            metadata.formed_at = row.get("formed_at");
+            metadata.formed_at = row
+                .get::<Option<serde_json::Value>, _>("formed_at")
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| Error::Infrastructure(e.to_string()))?;
             let c = &query.expression.constraints;
-            let mut source_constraints = c.clone();
-            source_constraints.recorded = None;
             let mut hit = material_hit(reference, EvidenceFamily::Exact, query);
             let media: String = row.get("media_type");
             let modality = media_modality(&media);
@@ -372,7 +403,7 @@ SELECT * FROM records
                 cognitive_role: None,
                 formation_mode: None,
                 epistemic_class: None,
-            }) || !metadata.matches(&source_constraints)
+            }) || !metadata.matches(query)
                 || c.recorded
                     .is_some_and(|predicate| !predicate.contains(recorded_at))
             {
@@ -401,3 +432,83 @@ SELECT * FROM records
 #[cfg(test)]
 #[path = "../../tests/unit/query.rs"]
 mod tests;
+
+impl MaterialService {
+    async fn formed_temporal_lane(
+        &self,
+        bound: &nous_runtime::BoundQuery,
+        plan: &nous_runtime::QueryPlan,
+    ) -> Result<nous_runtime::LaneOutput> {
+        use nous_runtime::{LaneCandidate, LaneOutput, LaneStatus};
+        let q = &bound.source_query;
+        let c = &q.expression.constraints;
+        let predicate = |axis| {
+            q.temporal_predicate(axis)
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|e| Error::Invalid(e.to_string()))
+        };
+        let scope = q.source_read.as_ref();
+        let historical = bound.historical_authority.as_deref().map(|view| {
+            view.material_documents
+                .iter()
+                .map(|r| {
+                    let (kind, value) = reference_parts(r);
+                    format!("{kind}:{value}")
+                })
+                .collect::<Vec<_>>()
+        });
+        let limit = plan.lane_budget(EvidenceFamily::Temporal);
+        let rows = sqlx::query(r#"
+WITH candidates AS (
+ SELECT 'derived_representation' kind,derived_representation_id id,derived_representation_id representation_id,formed_stamp,created_at recorded_at FROM derived_representations WHERE subject_id=$1
+ UNION ALL SELECT 'derived_region',derived_region_id,derived_representation_id,formed_stamp,created_at FROM derived_regions WHERE subject_id=$1
+)
+SELECT c.kind,c.id FROM candidates c
+WHERE ($14::text[] IS NULL OR c.kind||':'||c.id::text=ANY($14))
+ AND (NOT $8 OR source_read_allowed($1,c.kind,c.id::text,$9,$10,$11,$12))
+ AND domain_temporal_matches(jsonb_build_object('kind','instant','at',c.formed_stamp->'at'),c.formed_stamp->>'time_domain_ref',$2)
+ AND ($3::jsonb IS NULL OR domain_temporal_matches(jsonb_build_object('kind','instant','at',c.recorded_at),'time:real',$3))
+ AND (($4::jsonb IS NULL AND $5::jsonb IS NULL AND cardinality($6::text[])=0 AND cardinality($7::text[])=0)
+ OR EXISTS(SELECT 1 FROM representation_source_regions($1,c.representation_id) lineage
+ JOIN source_regions region ON region.subject_id=$1 AND region.source_region_id=lineage.source_region_id
+ JOIN observation_occurrences o ON o.subject_id=$1 AND o.artifact_id=region.artifact_id
+ WHERE (NOT $8 OR source_read_allowed($1,'occurrence',o.occurrence_id::text,$9,$10,$11,$12))
+ AND ($15::uuid[] IS NULL OR o.occurrence_id=ANY($15))
+ AND (cardinality($6::text[])=0 OR o.source_class=ANY($6)) AND o.source_class<>ALL($7)
+ AND ($4::jsonb IS NULL OR domain_temporal_matches(jsonb_build_object('kind',o.occurred_time_kind,'at',o.occurred_time_start,'start',o.occurred_time_start,'end',o.occurred_time_end),o.occurred_time_domain_ref,$4))
+ AND ($5::jsonb IS NULL OR domain_temporal_matches(jsonb_build_object('kind','instant','at',CASE WHEN $5->>'time_domain_ref'='time:real' THEN to_jsonb(o.observed_at) ELSE o.observed_stamp->'at' END),CASE WHEN $5->>'time_domain_ref'='time:real' THEN 'time:real' ELSE o.observed_stamp->>'time_domain_ref' END,$5))))
+ORDER BY c.recorded_at DESC,c.kind,c.id LIMIT $13
+"#).bind(q.subject.0).bind(predicate(TimeAxis::Formed)?).bind(predicate(TimeAxis::Recorded)?).bind(predicate(TimeAxis::Occurred)?).bind(predicate(TimeAxis::Observed)?)
+.bind(c.source_classes_include.iter().map(|v|v.as_str().to_owned()).collect::<Vec<_>>()).bind(c.source_classes_exclude.iter().map(|v|v.as_str().to_owned()).collect::<Vec<_>>())
+.bind(scope.is_some()).bind(scope.map(|r|r.root_keys.clone()).unwrap_or_default()).bind(scope.map(|r|r.work_contexts.clone()).unwrap_or_default()).bind(scope.map(|r|r.origin_conversation_refs.clone()).unwrap_or_default()).bind(scope.map(|r|serde_json::json!(r.explicit_refs)).unwrap_or_else(||serde_json::json!([])))
+.bind((limit+1) as i64).bind(historical).bind(bound.historical_authority.as_deref().map(|view|view.material_visibility.iter().filter_map(|r|if let CognitiveRef::Occurrence(id)=r{Some(id.0)}else{None}).collect::<Vec<_>>())).fetch_all(self.store.pool()).await.map_err(database_error)?;
+        let mut output = LaneOutput::empty(
+            EvidenceFamily::Temporal,
+            if rows.len() > limit {
+                LaneStatus::Truncated
+            } else {
+                LaneStatus::Ready
+            },
+        );
+        output.candidates = rows
+            .into_iter()
+            .take(limit)
+            .enumerate()
+            .map(|(index, row)| {
+                let id: Uuid = row.get("id");
+                LaneCandidate {
+                    reference: if row.get::<String, _>("kind") == "derived_region" {
+                        CognitiveRef::DerivedRegion(DerivedRegionId(id))
+                    } else {
+                        CognitiveRef::DerivedRepresentation(DerivedRepresentationId(id))
+                    },
+                    rank: (index + 1) as u32,
+                    variants: vec![],
+                    provider_metadata: serde_json::Value::Null,
+                }
+            })
+            .collect();
+        Ok(output)
+    }
+}

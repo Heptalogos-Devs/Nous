@@ -103,8 +103,11 @@ impl KernelService {
                         last_used_at: Some(timestamp(value.last_used_at)),
                     })
                     .collect(),
-                valid_time: Some(temporal_proto(&hit.freshness.valid_time)),
-                formed_at: hit.freshness.formed_at.map(timestamp),
+                valid_time: Some(domain_temporal_proto(
+                    &hit.freshness.valid_time.time_domain_ref,
+                    &hit.freshness.valid_time.extent,
+                )),
+                formed_at: hit.freshness.formed_at.as_ref().map(domain_stamp_proto),
                 recorded_at: hit.freshness.recorded_at.map(timestamp),
             });
         }

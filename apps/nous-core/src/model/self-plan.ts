@@ -1,11 +1,13 @@
+import { domainTemporal } from "./temporal.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { create, toJson } from "@bufbuild/protobuf";
-import { TimestampSchema, timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { TimestampSchema } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   RevisionBasisSchema,
-  TemporalExtentSchema,
+  DomainTemporalExtentSchema,
+  DomainStampSchema,
   type CognitiveRef,
   CognitiveRefSchema,
   type ProducerSignature,
@@ -163,7 +165,13 @@ export async function prepareInterpretationSource(
       context: occurrence.context,
       partial: material.partial,
       occurredTime: occurrence.occurredTime
-        ? toJson(TemporalExtentSchema, occurrence.occurredTime)
+        ? toJson(DomainTemporalExtentSchema, occurrence.occurredTime)
+        : undefined,
+      observedStamp: occurrence.observedStamp
+        ? toJson(DomainStampSchema, occurrence.observedStamp)
+        : undefined,
+      recordedAt: occurrence.recordedAt
+        ? toJson(TimestampSchema, occurrence.recordedAt)
         : undefined,
       observedAt: occurrence.observedAt
         ? toJson(TimestampSchema, occurrence.observedAt)
@@ -333,33 +341,14 @@ export function proposedSelfContent(
   targetKey?: string,
 ) {
   const basis = selectedSelfBasis(plan, content.basisKeys, targetKey);
-  const temporal = content.validTime;
-  const validTime = create(TemporalExtentSchema, {
-    value:
-      temporal.kind === "unknown"
-        ? undefined
-        : temporal.kind === "instant"
-          ? { case: "instant", value: timestampFromDate(new Date(temporal.at)) }
-          : {
-              case: "interval",
-              value: {
-                start:
-                  temporal.start === null
-                    ? undefined
-                    : timestampFromDate(new Date(temporal.start)),
-                end:
-                  temporal.end === null
-                    ? undefined
-                    : timestampFromDate(new Date(temporal.end)),
-              },
-            },
-  });
+  const validTime = domainTemporal(content.validTime);
   if (content.family === "self_facet")
     return create(SelfContentSchema, {
       content: {
         case: "facet",
         value: {
           kind: content.kind,
+          domainKnowledge: content.domainKnowledge ?? undefined,
           statement: content.statement,
           stance: content.stance,
           epistemicClass: content.epistemicClass,

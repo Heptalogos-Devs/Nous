@@ -23,6 +23,8 @@ pub struct SelfException {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelfFacetContent {
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_knowledge: Option<Box<DomainKnowledge>>,
     pub statement: String,
     pub epistemic_class: EpistemicClass,
     pub scope: SelfScope,
@@ -31,6 +33,11 @@ pub struct SelfFacetContent {
     pub exceptions: Vec<SelfException>,
     pub basis: Vec<RevisionBasis>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub producer: Option<ProducerSignature>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +48,11 @@ pub struct NarrativeContent {
     pub source_refs: Vec<CognitiveRef>,
     pub basis: Vec<RevisionBasis>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub producer: Option<ProducerSignature>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +72,12 @@ impl SelfContent {
         match self {
             Self::SelfFacet(v) => &v.basis,
             Self::NarrativeThread(v) => &v.basis,
+        }
+    }
+    pub fn valid_time_domain_ref(&self) -> &str {
+        match self {
+            Self::SelfFacet(value) => &value.valid_time_domain_ref,
+            Self::NarrativeThread(value) => &value.valid_time_domain_ref,
         }
     }
     pub fn valid_time(&self) -> &TemporalExtent {
@@ -89,6 +107,19 @@ impl SelfContent {
                 v.interpretation
             ),
         };
+        let body = if let Self::SelfFacet(facet) = self {
+            facet
+                .domain_knowledge
+                .as_ref()
+                .map_or(body.clone(), |knowledge| {
+                    format!(
+                        "{body}\nDomain knowledge: {}",
+                        serde_json::to_string(knowledge).expect("typed domain knowledge")
+                    )
+                })
+        } else {
+            body
+        };
         format!(
             "{body}\nValidity: {}",
             serde_json::to_string(self.valid_time()).expect("Temporal primitives are serializable")
@@ -106,13 +137,18 @@ impl SelfContent {
             return Err(Error::Invalid("Self basis exceeds source bound".into()));
         }
         validate_exact_basis(self.basis())?;
-        self.valid_time().validate()?;
+        nous_core::DomainTemporalExtent {
+            time_domain_ref: self.valid_time_domain_ref().into(),
+            extent: self.valid_time().clone(),
+        }
+        .validate()?;
         match self {
             Self::SelfFacet(v) => {
                 if ![
                     "identity",
                     "role",
                     "capability_belief",
+                    "domain_knowledge",
                     "limitation",
                     "tendency",
                     "value",
@@ -125,10 +161,18 @@ impl SelfContent {
                     || !bounded(&v.scope.description, 8192)
                     || v.exceptions.len() > 32
                     || v.scope.purposes.iter().any(|p| {
-                        !["deliberation", "expression", "reflection", "worker"]
-                            .contains(&p.as_str())
+                        ![
+                            "reflection",
+                            "world_authoring",
+                            "subject_deliberation",
+                            "professional_execution",
+                            "subject_rendering",
+                            "narrative_review",
+                            "maintenance",
+                        ]
+                        .contains(&p.as_str())
                     })
-                    || v.scope.purposes.len() > 4
+                    || v.scope.purposes.len() > 7
                     || v.scope
                         .conversation
                         .as_ref()
@@ -136,6 +180,14 @@ impl SelfContent {
                     || v.scope.entities.len() > 64
                 {
                     return Err(Error::Invalid("invalid Self facet content or scope".into()));
+                }
+                if (v.kind == "domain_knowledge") != v.domain_knowledge.is_some() {
+                    return Err(Error::Invalid(
+                        "domain_knowledge facet requires its typed knowledge content".into(),
+                    ));
+                }
+                if let Some(knowledge) = &v.domain_knowledge {
+                    knowledge.validate()?;
                 }
                 for exception in &v.exceptions {
                     if !bounded(&exception.statement, 8192) {
@@ -182,6 +234,8 @@ pub struct SelfRecord {
     pub reason: String,
     pub content: SelfContent,
     pub formed_at: DateTime<Utc>,
+    pub formed_time_domain_ref: String,
+    pub formed_recorded_at: DateTime<Utc>,
     pub recorded_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub evidence: Vec<SelfEvidence>,
@@ -231,6 +285,7 @@ pub struct ReviseSelf {
 
 /// A bounded owner read, distinct from complete management pagination.
 pub struct SelfSelectionRequest<'a> {
+    pub clock: Option<&'a DomainStamp>,
     pub source_read: Option<&'a SourceReadView>,
     pub scope: &'a SelfScope,
     pub targets: &'a [CognitiveRef],

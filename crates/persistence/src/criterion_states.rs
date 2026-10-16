@@ -20,6 +20,7 @@ impl AuthorityStore {
         subject: SubjectId,
         reference: &CognitiveRef,
         through: DateTime<Utc>,
+        domain: &str,
     ) -> Result<Vec<(DateTime<Utc>, serde_json::Value)>> {
         let capability = match reference.domain() {
             CognitiveDomain::Memory => "memory",
@@ -71,14 +72,27 @@ impl AuthorityStore {
         } else {
             "recorded_at"
         };
+        let introduced_world = match reference {
+            CognitiveRef::WorkContext(_) => "(SELECT (first.semantic_stamp->>'at')::timestamptz FROM authority_object_states first WHERE first.subject_id=r.subject_id AND first.object_kind=$3 AND first.object_ref=r.work_context_id::text ORDER BY first.event_id LIMIT 1)".to_owned(),
+            r if r.domain() == CognitiveDomain::Motivation => "r.formed_at".to_owned(),
+            _ => "r.formed_at".to_owned(),
+        };
+        let introduced_domain = match reference {
+            CognitiveRef::WorkContext(_) => {
+                "(SELECT first.semantic_stamp->>'time_domain_ref' FROM authority_object_states first WHERE first.subject_id=r.subject_id AND first.object_kind=$3 AND first.object_ref=r.work_context_id::text ORDER BY first.event_id LIMIT 1)"
+            }
+            r if r.domain() == CognitiveDomain::Motivation => "r.formed_stamp->>'time_domain_ref'",
+            _ => "r.formed_time_domain_ref",
+        };
         let text = format!(
-            "SELECT GREATEST(h.recorded_at,r.{introduced}) AS recorded_at,h.state FROM {table} r JOIN authority_object_states h ON h.subject_id=r.subject_id AND h.object_ref=r.{col}::text AND h.object_kind=$3 WHERE r.subject_id=$1 AND r.{revision_col}=$2 AND h.recorded_at<=$4 AND r.{introduced}<=$4 ORDER BY h.recorded_at,h.event_id LIMIT 4097"
+            "SELECT CASE WHEN $5='time:real' THEN GREATEST(h.recorded_at,r.{introduced}) ELSE GREATEST((h.semantic_stamp->>'at')::timestamptz,{introduced_world}) END AS recorded_at,h.state FROM {table} r JOIN authority_object_states h ON h.subject_id=r.subject_id AND h.object_ref=r.{col}::text AND h.object_kind=$3 WHERE r.subject_id=$1 AND r.{revision_col}=$2 AND r.{introduced}<=clock_timestamp() AND (($5='time:real' AND h.recorded_at<=$4 AND r.{introduced}<=$4) OR ($5<>'time:real' AND {introduced_domain}=$5 AND h.semantic_stamp->>'time_domain_ref'=$5 AND (h.semantic_stamp->>'at')::timestamptz<=$4 AND {introduced_world}<=$4 AND NOT EXISTS(SELECT 1 FROM authority_object_states gap WHERE gap.subject_id=h.subject_id AND gap.object_kind=h.object_kind AND gap.object_ref=h.object_ref AND gap.event_id>h.event_id AND gap.semantic_stamp->>'time_domain_ref'<>$5))) ORDER BY h.recorded_at,h.event_id LIMIT 4097"
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(text.as_str()))
             .bind(subject.0)
             .bind(reference.uuid())
             .bind(kind)
             .bind(through)
+            .bind(domain)
             .fetch_all(&mut **tx)
             .await
             .map_err(database_error)?;

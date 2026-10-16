@@ -4,16 +4,44 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::{DateTime, Duration, Utc};
-use nous_core::{Error, Result, SubjectId};
+use nous_core::{DomainStamp, Error, Result, SubjectId};
 use std::{collections::HashMap, sync::Mutex};
 
+#[async_trait::async_trait]
 pub trait CognitiveClock: Send + Sync {
     fn now(&self, subject: SubjectId) -> DateTime<Utc>;
+    fn time_domain_ref(&self, _subject: SubjectId) -> String {
+        "time:real".into()
+    }
+    async fn read_stamp(&self, subject: SubjectId) -> Result<DomainStamp> {
+        Ok(DomainStamp {
+            time_domain_ref: self.time_domain_ref(subject),
+            at: self.now(subject),
+            recorded_at: Utc::now(),
+        })
+    }
+    /// Physical wake-up derived from this clock mapping; None means paused or unmapped.
+    fn real_deadline(
+        &self,
+        _subject: SubjectId,
+        domain: &str,
+        at: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        (domain == "time:real").then_some(at)
+    }
+    async fn capture_in(
+        &self,
+        _tx: &mut nous_persistence::AuthorityTransaction<'_>,
+        subject: SubjectId,
+    ) -> Result<DomainStamp> {
+        self.read_stamp(subject).await
+    }
 }
 
 #[derive(Default)]
 pub struct SystemCognitiveClock;
 
+#[async_trait::async_trait]
 impl CognitiveClock for SystemCognitiveClock {
     fn now(&self, _subject: SubjectId) -> DateTime<Utc> {
         Utc::now()
@@ -67,7 +95,11 @@ impl ManualCognitiveClock {
     }
 }
 
+#[async_trait::async_trait]
 impl CognitiveClock for ManualCognitiveClock {
+    fn time_domain_ref(&self, subject: SubjectId) -> String {
+        format!("time:manual:{}", subject.0)
+    }
     fn now(&self, subject: SubjectId) -> DateTime<Utc> {
         self.subjects
             .lock()

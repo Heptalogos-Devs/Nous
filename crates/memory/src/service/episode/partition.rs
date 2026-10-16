@@ -47,7 +47,7 @@ impl MemoryService {
             })
             .transpose()?;
         validate_partition(&input)?;
-        let started = self.cognition.now(input.subject);
+        let started = self.cognition.recorded_now();
         let digest = operation_digest("episode_partition", input.subject, &input)?;
         let mut mutation = match self
             .start_mutation(
@@ -88,7 +88,7 @@ impl MemoryService {
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
             .await?;
-        let recorded_at = self.cognition.now(input.subject);
+        let recorded_at = self.cognition.recorded_now();
         let one_to_one = input.sources.len() == 1 && input.segments.len() == 1;
         if one_to_one && unchanged_partition(mutation.tx(), &input, first).await? {
             let outputs = vec![input.sources[0].revision];
@@ -155,7 +155,7 @@ impl MemoryService {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         input: &EpisodePartitionInput,
         first: &sqlx::postgres::PgRow,
-        occurrences: &[DateTime<Utc>],
+        occurrences: &[DomainStamp],
         formed_at: DateTime<Utc>,
         recorded_at: DateTime<Utc>,
         producer_id: Option<Uuid>,
@@ -178,6 +178,7 @@ impl MemoryService {
                 &track,
                 parent.map(EpisodeRevisionId),
                 &payload.experience_time,
+                &payload.experience_time_domain_ref,
                 one_to_one.then_some(episode.0),
             )
             .await?;
@@ -394,10 +395,14 @@ async fn validate_partition_occurrences(
     service: &MemoryService,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     input: &EpisodePartitionInput,
-) -> Result<Vec<DateTime<Utc>>> {
-    let times = service
+) -> Result<Vec<DomainStamp>> {
+    service
         .material
         .lock_occurrences_in(tx, input.subject, &input.ordered_occurrences)
+        .await?;
+    let times = service
+        .material
+        .occurrences_in(tx, input.subject, &input.ordered_occurrences, None)
         .await?;
     let ordered = service
         .cognition
@@ -418,7 +423,7 @@ async fn validate_partition_occurrences(
         .map(|id| {
             times
                 .get(&id)
-                .copied()
+                .map(|source| source.observed_stamp.clone())
                 .ok_or_else(|| Error::Internal("partition member time missing".into()))
         })
         .collect()
@@ -428,17 +433,27 @@ fn partition_payload(
     input: &EpisodePartitionInput,
     segment: &EpisodePartitionSegment,
     parent: Option<Uuid>,
-    occurrences: &[DateTime<Utc>],
+    occurrences: &[DomainStamp],
 ) -> Result<EpisodeContent> {
     let occurrence_members: Vec<OccurrenceId> = segment
         .member_indices
         .iter()
         .map(|index| input.ordered_occurrences[*index])
         .collect();
+    let domain = &occurrences[segment.member_indices[0]].time_domain_ref;
+    if segment
+        .member_indices
+        .iter()
+        .any(|index| occurrences[*index].time_domain_ref != *domain)
+    {
+        return Err(Error::Invalid(
+            "Episode segment crosses unmapped time domains".into(),
+        ));
+    }
     let times: Vec<DateTime<Utc>> = segment
         .member_indices
         .iter()
-        .map(|index| occurrences[*index])
+        .map(|index| occurrences[*index].at)
         .collect();
     let start = times
         .iter()
@@ -461,6 +476,7 @@ fn partition_payload(
     let payload = EpisodeContent {
         title: segment.title.clone(),
         parent_episode_revision_id: parent.map(EpisodeRevisionId),
+        experience_time_domain_ref: domain.clone(),
         experience_time,
         boundary_explanation: segment.boundary_explanation.clone(),
         producer_signature_id: None,

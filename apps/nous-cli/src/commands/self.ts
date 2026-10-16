@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { toJson } from "@bufbuild/protobuf";
-import { TemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { DomainTemporalExtentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import {
   SelfScopeSchema,
   SelfContentSchema,
@@ -42,7 +42,7 @@ function soul(records: SelfRecord[]) {
             ];
       return [
         ...body,
-        `有效时间：${value.validTime ? JSON.stringify(toJson(TemporalExtentSchema, value.validTime)) : "unknown"}`,
+        `有效时间：${value.validTime ? JSON.stringify(toJson(DomainTemporalExtentSchema, value.validTime)) : "unknown"}`,
         `精确修订：${record.reference!.kind}:${record.reference!.value}`,
       ].join("\n\n");
     })

@@ -3,10 +3,8 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { expect, test } from "vitest";
-import {
-  DomainStampSchema,
-  SubjectClockSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
+import { SubjectClockSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
+import { DomainStampSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { compareDomainStamps, projectWorldDeadline } from "../src/index.js";
 
 test("world due projection changes with rate and pause, and never infers a cross-world mapping", () => {

@@ -128,6 +128,9 @@ impl MemoryService {
                 supports.get_mut(&id).expect("selected Journal").basis.push(serde_json::from_value(row.try_get("basis").map_err(db)?).map_err(|e| Error::Infrastructure(e.to_string()))?);
             }
         }
+        if let Some(view) = view {
+            filter_supports(&mut supports, view);
+        }
         Ok(supports)
     }
 
@@ -189,5 +192,20 @@ pub(super) fn basis_from_row(row: &sqlx::postgres::PgRow) -> Result<RevisionBasi
             basis_role: role,
             epistemic_relation: relation,
         }))
+    }
+}
+
+fn filter_supports(
+    supports: &mut HashMap<CognitiveRef, CognitionSupport>,
+    view: &HistoricalAuthoritySnapshot,
+) {
+    for support in supports.values_mut() {
+        support.basis.retain(|basis| match basis {
+            RevisionBasis::Evidence(source) => {
+                view.material_contains(&CognitiveRef::Occurrence(source.occurrence_id))
+            }
+            RevisionBasis::CognitionDependency(source) => view.contains(&source.target_revision),
+            RevisionBasis::Seed(_) => false,
+        });
     }
 }

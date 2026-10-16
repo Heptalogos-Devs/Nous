@@ -95,7 +95,7 @@ impl MemoryService {
                     scope_kind: kind,
                     scope_ref: value,
                     trigger_authority_seq: sequence,
-                    due_at: self.cognition.now(subject),
+                    due_at: self.cognition.recorded_now(),
                     priority: 20,
                 },
             )

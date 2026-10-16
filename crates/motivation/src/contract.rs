@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use chrono::{DateTime, Utc};
 use nous_core::*;
-use nous_runtime::{DomainStamp, DomainTemporalExtent};
+use nous_core::{DomainStamp, DomainTemporalExtent};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -195,6 +195,11 @@ pub struct MotivationMatter {
     pub scope: MotivationScope,
     pub basis: Vec<RevisionBasis>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub producer: Option<ProducerSignature>,
     #[serde(default)]
     pub links: Vec<MotivationLink>,
@@ -264,7 +269,11 @@ impl MotivationContent {
     pub fn validate(&self) -> Result<()> {
         let m = self.matter();
         validate_exact_basis(&m.basis)?;
-        m.valid_time.validate()?;
+        nous_core::DomainTemporalExtent {
+            time_domain_ref: m.valid_time_domain_ref.clone(),
+            extent: m.valid_time.clone(),
+        }
+        .validate()?;
         if !bounded(&m.matter_key, 1024)
             || !bounded(&m.statement, 65536)
             || !bounded(&m.scope.description, 8192)

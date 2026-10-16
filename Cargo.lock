@@ -2217,7 +2217,6 @@ dependencies = [
  "nous-material",
  "nous-object-store",
  "nous-persistence",
- "nous-runtime",
  "serde",
  "serde_json",
  "sqlx",

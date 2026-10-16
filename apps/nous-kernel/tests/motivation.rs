@@ -3,8 +3,8 @@
 mod test_support;
 use chrono::{Duration, Utc};
 use nous_core::*;
+use nous_core::{DomainStamp, DomainTemporalExtent};
 use nous_motivation::*;
-use nous_runtime::{DomainStamp, DomainTemporalExtent};
 use test_support::{database, observation};
 fn basis(id: OccurrenceId) -> RevisionBasis {
     RevisionBasis::Evidence(EvidenceRef {
@@ -16,6 +16,7 @@ fn basis(id: OccurrenceId) -> RevisionBasis {
 }
 fn matter(key: &str, id: OccurrenceId, condition: Option<DesiredCondition>) -> MotivationMatter {
     MotivationMatter {
+        valid_time_domain_ref: "time:real".into(),
         matter_key: key.into(),
         statement: format!("Subject wishes {key}"),
         scope: MotivationScope {
@@ -123,7 +124,7 @@ async fn actual_owner_evaluation_lifecycle_and_restart() {
         })
         .await
         .unwrap();
-    let event=runtime.material.record_observation(nous_material::ObservationInput{subject,session:None,occurrence:nous_material::OccurrenceDescriptor{source_class:SourceClass::Tool,external_object_ref:None,occurred_time:TemporalExtent::Instant{at:Utc::now()},observed_at:Some(Utc::now()),conversation_ref:None,actor_entity_ref:None,context:serde_json::json!({"criterion_fact":CriterionFact::Event{version:1,event_type:"study_completed".into(),target:Some("topic:one".into()),activity:None,at:DomainStamp{time_domain_ref:"time:real".into(),at:Utc::now(),recorded_at:Utc::now()}}.to_canonical_json()})},material:nous_material::ObservationMaterial::InlineText{text:"actual successful tool result".into(),media_type:"text/plain".into()},runtime:Default::default(),entities:vec![]}).await.unwrap().occurrence.occurrence_id;
+    let event=runtime.material.record_observation(nous_material::ObservationInput{subject,session:None,occurrence:nous_material::OccurrenceDescriptor{observed_stamp:None,world_realized:None,occurred_time_domain_ref:"time:real".into(),source_class:SourceClass::Tool,external_object_ref:None,occurred_time:TemporalExtent::Instant{at:Utc::now()},observed_at:Some(Utc::now()),conversation_ref:None,actor_entity_ref:None,context:serde_json::json!({"criterion_fact":CriterionFact::Event{version:1,event_type:"study_completed".into(),target:Some("topic:one".into()),activity:None,at:DomainStamp{time_domain_ref:"time:real".into(),at:Utc::now(),recorded_at:Utc::now()}}.to_canonical_json()})},material:nous_material::ObservationMaterial::InlineText{text:"actual successful tool result".into(),media_type:"text/plain".into()},runtime:Default::default(),entities:vec![]}).await.unwrap().occurrence.occurrence_id;
     let reader = OfficialCriterionReader {
         material: runtime.material.clone(),
         social: runtime.social_cognition.clone(),
@@ -439,6 +440,7 @@ async fn selector_metadata_authorization(
                 max_bytes: 1024 * 1024,
                 after: Some(ended.revision_id),
                 at: None,
+                valid_predicates: None,
                 as_of: None,
                 history: false,
             },

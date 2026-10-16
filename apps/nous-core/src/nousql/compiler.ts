@@ -11,6 +11,7 @@ import {
   CueSchema,
   type QueryExpr,
   type QueryModifiers,
+  type DomainStamp,
   type Cue,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { Ref } from "../domain.js";
@@ -42,8 +43,10 @@ function invalid(message: string): never {
 export async function compileNousQL(
   source: string,
   resolve: IdentityResolver,
-  now: Timestamp,
+  clock: DomainStamp,
 ) {
+  if (!clock.at || !clock.recordedAt || !clock.timeDomainRef)
+    invalid("Query requires a captured semantic clock");
   const syntax = parse(source);
   const sourceCanonical = canonical(syntax);
   const temporalExpressions = syntax.directives
@@ -101,8 +104,10 @@ export async function compileNousQL(
   async function lower(): Promise<QueryExpr> {
     const modifiers = create(QueryModifiersSchema, { constraints: {} });
     for (const directive of syntax.directives)
-      applyDirective(modifiers, directive, now);
-    authorityTime = modifiers.asOf ?? (modifiers.history ? now : undefined);
+      applyDirective(modifiers, directive, clock);
+    authorityTime =
+      modifiers.asRecordedAt ??
+      (modifiers.history ? clock.recordedAt : undefined);
     for (const preference of syntax.preferences) {
       if (preference.operand.kind === "key") {
         if (
@@ -139,11 +144,12 @@ export async function compileNousQL(
   }
   const expression = await lower();
   expression.modifiers ??= create(QueryModifiersSchema);
-  expression.modifiers.clockNow = now;
+  expression.modifiers.clockNow = clock;
   expression.modifiers.temporalExpressions = temporalExpressions;
   return { expression, sourceCanonical, boundCanonical: canonical(syntax) };
 }
-function applyDirective(m: QueryModifiers, d: Directive, now: Timestamp) {
+function applyDirective(m: QueryModifiers, d: Directive, clock: DomainStamp) {
+  const now = clock.at!;
   const c = (m.constraints ??= create(QueryConstraintsSchema));
   const strings = () => {
     if (
@@ -199,9 +205,9 @@ function applyDirective(m: QueryModifiers, d: Directive, now: Timestamp) {
         Object.keys(d.named).length === 1 &&
         d.named.ago !== undefined
       )
-        point = subtractDuration(now, d.named.ago);
+        point = subtractDuration(clock.recordedAt!, d.named.ago);
       else invalid("Use $asof(timestamp) or $asof(ago=duration)");
-      m.asOf = point;
+      m.asRecordedAt = point;
       d.positional = [timestampText(point)];
       d.named = {};
       break;
@@ -299,7 +305,7 @@ function applyDirective(m: QueryModifiers, d: Directive, now: Timestamp) {
         invalid(
           "Time axis must be occurred, observed, valid, formed or recorded",
         );
-      const keys = Object.keys(d.named);
+      const keys = Object.keys(d.named).filter((k) => k !== "domain");
       if (
         !keys.length ||
         keys.some((k) => !["within", "from", "to", "at"].includes(k))
@@ -307,15 +313,24 @@ function applyDirective(m: QueryModifiers, d: Directive, now: Timestamp) {
         invalid("Invalid time arguments");
       const key = axis as
         "occurred" | "observed" | "valid" | "formed" | "recorded";
+      const domain =
+        d.named.domain ??
+        (key === "recorded" ? "time:real" : clock.timeDomainRef);
+      if (key === "recorded" && domain !== "time:real")
+        invalid("recorded time requires time:real");
+      if (typeof domain !== "string" || !domain.trim() || domain.length > 256)
+        invalid("Invalid time domain");
+      const referenceNow = key === "recorded" ? clock.recordedAt! : now;
       if (d.named.at !== undefined) {
         if (keys.length !== 1)
           invalid("at cannot be combined with other time arguments");
         const point = timestamp(d.named.at);
         c[key] = {
           $typeName: "nous.wave.v1alpha1.TimePredicate",
+          timeDomainRef: domain,
           predicate: { case: "point", value: point },
         };
-        d.named = { at: timestampText(point) };
+        d.named = { at: timestampText(point), domain };
         break;
       }
       let start: Timestamp | undefined;
@@ -323,8 +338,8 @@ function applyDirective(m: QueryModifiers, d: Directive, now: Timestamp) {
       if (d.named.within !== undefined) {
         if (keys.length !== 1)
           invalid("within cannot be combined with other time arguments");
-        end = now;
-        start = subtractDuration(now, d.named.within);
+        end = referenceNow;
+        start = subtractDuration(referenceNow, d.named.within);
       } else {
         start =
           d.named.from === undefined ? undefined : timestamp(d.named.from);
@@ -339,12 +354,14 @@ function applyDirective(m: QueryModifiers, d: Directive, now: Timestamp) {
         invalid("Time range requires start < end");
       c[key] = {
         $typeName: "nous.wave.v1alpha1.TimePredicate",
+        timeDomainRef: domain,
         predicate: {
           case: "range",
           value: { $typeName: "nous.wave.v1alpha1.TimeInterval", start, end },
         },
       };
       d.named = {
+        domain,
         ...(start ? { from: timestampText(start) } : {}),
         ...(end ? { to: timestampText(end) } : {}),
       };

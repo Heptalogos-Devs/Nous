@@ -209,9 +209,14 @@ pub(super) fn compile_query(
             None => ResultProjection::default(),
         },
         temporal_frame: TemporalFrame {
-            clock_now: time(modifiers.clock_now)?
-                .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH),
-            authority_view: time(modifiers.as_of)?
+            clock_now: modifiers.clock_now.map(domain_stamp).transpose()?,
+            knowledge_at_world_time: modifiers
+                .knowledge_at_world_time
+                .map(domain_stamp)
+                .transpose()?
+                .map(Box::new),
+            authority_now: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+            authority_view: time(modifiers.as_recorded_at)?
                 .map_or(AuthorityView::Current, AuthorityView::AsOf),
             original_expressions: modifiers.temporal_expressions.clone(),
             revision_view: if modifiers.history {
@@ -295,9 +300,10 @@ fn compile_expression(
             || !modifiers.exploration.is_empty()
             || modifiers.materialize
             || modifiers.projection.is_some()
-            || modifiers.as_of.is_some()
+            || modifiers.as_recorded_at.is_some()
             || modifiers.history
             || modifiers.clock_now.is_some()
+            || modifiers.knowledge_at_world_time.is_some()
             || !modifiers.temporal_expressions.is_empty())
     {
         return Err(Error::Invalid("execution controls are root-only".into()));
@@ -412,7 +418,19 @@ fn predicate(value: Option<p::TimePredicate>) -> Result<Option<TimePredicate>> {
 }
 
 fn constraints_from_proto(value: p::QueryConstraints) -> Result<QueryConstraints> {
+    let time_domains = TimeAxisDomains {
+        occurred: predicate_domain(&value.occurred)?,
+        observed: predicate_domain(&value.observed)?,
+        valid: predicate_domain(&value.valid)?,
+        formed: predicate_domain(&value.formed)?,
+    };
+    if predicate_domain(&value.recorded)?.is_some_and(|domain| domain != "time:real") {
+        return Err(Error::Invalid(
+            "recorded predicates require time:real".into(),
+        ));
+    }
     Ok(QueryConstraints {
+        time_domains,
         current_authority: CurrentAuthorityNeed::None,
         source_classes_include: value
             .source_classes_include
@@ -479,14 +497,7 @@ fn hit(value: CognitiveHit, rank: usize) -> p::Hit {
         semantic_role: value.semantic_role,
         cognitive_role: value.cognitive_role,
         formation_mode: value.formation_mode,
-        formed_at: value
-            .freshness
-            .formed_at
-            .map(|v| timestamp(v).seconds.to_string()),
-        recorded_at: value
-            .freshness
-            .recorded_at
-            .map(|v| timestamp(v).seconds.to_string()),
+        temporal: Some(temporal_metadata_proto(&value.freshness)),
         score: Some(p::HitScore {
             baseline: value.match_evidence.base_rank_score,
             preference: value.match_evidence.preference_score,
@@ -525,4 +536,96 @@ fn enum_or_default<T: serde::de::DeserializeOwned + Default>(input: &str) -> Res
     } else {
         enum_value(input)
     }
+}
+
+fn predicate_domain(value: &Option<p::TimePredicate>) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.time_domain_ref.is_empty() {
+        return Ok(None);
+    }
+    if value.time_domain_ref.trim().is_empty()
+        || value.time_domain_ref.len() > 256
+        || value.predicate.is_none()
+    {
+        return Err(Error::Invalid("invalid predicate time domain".into()));
+    }
+    Ok(Some(value.time_domain_ref.clone()))
+}
+
+/// Candidate selection may broaden a boolean branch, but cannot discard a
+/// historical valid range by applying today's standing-valid point first.
+pub(super) fn selection_valid_predicates(
+    expression: Option<&p::QueryExpr>,
+) -> Result<Option<Vec<nous_core::DomainTimePredicate>>> {
+    fn walk(
+        expr: &p::QueryExpr,
+        inherited: Option<nous_core::DomainTimePredicate>,
+        domain: &str,
+        found: &mut bool,
+        unrestricted: &mut bool,
+        result: &mut Vec<nous_core::DomainTimePredicate>,
+        depth: usize,
+    ) -> Result<()> {
+        if depth > 16 {
+            return Err(Error::Invalid("query nesting exceeds 16".into()));
+        }
+        let modifiers = expr.modifiers.as_ref();
+        let domain = modifiers
+            .and_then(|m| m.clock_now.as_ref())
+            .map_or(domain, |s| s.time_domain_ref.as_str());
+        let local = modifiers
+            .and_then(|m| m.constraints.as_ref())
+            .and_then(|c| c.valid.clone());
+        *found |= local.is_some();
+        let selected = if let Some(value) = local {
+            Some(nous_core::DomainTimePredicate {
+                time_domain_ref: predicate_domain(&Some(value.clone()))?
+                    .unwrap_or_else(|| domain.to_owned()),
+                predicate: predicate(Some(value))?.expect("supplied predicate"),
+            })
+        } else {
+            inherited
+        };
+        if expr.operation == "not" {
+            *unrestricted = true;
+        }
+        if expr.children.is_empty() {
+            if let Some(value) = selected {
+                result.push(value);
+            } else {
+                *unrestricted = true;
+            }
+        } else {
+            for child in &expr.children {
+                walk(
+                    child,
+                    selected.clone(),
+                    domain,
+                    found,
+                    unrestricted,
+                    result,
+                    depth + 1,
+                )?;
+            }
+        }
+        Ok(())
+    }
+    let Some(expression) = expression else {
+        return Ok(None);
+    };
+    let mut found = false;
+    let mut unrestricted = false;
+    let mut predicates = Vec::new();
+    walk(
+        expression,
+        None,
+        "time:real",
+        &mut found,
+        &mut unrestricted,
+        &mut predicates,
+        0,
+    )?;
+    Ok(found.then(|| if unrestricted { Vec::new() } else { predicates }))
 }

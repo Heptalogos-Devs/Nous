@@ -1,3 +1,4 @@
+import { DomainStampSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { expect, it } from "vitest";
@@ -5,7 +6,11 @@ import { fromJson, toJson } from "@bufbuild/protobuf";
 import { TimestampSchema, type Timestamp } from "@bufbuild/protobuf/wkt";
 import { canonical, parse } from "../../src/nousql/parser.js";
 import { compileNousQL } from "../../src/nousql/compiler.js";
-const now = fromJson(TimestampSchema, "2026-09-17T00:00:00Z");
+const now = fromJson(DomainStampSchema, {
+  timeDomainRef: "time:real",
+  at: "2026-09-17T00:00:00Z",
+  recordedAt: "2026-09-17T00:00:00Z",
+});
 const resolve = async (kind: string, locator: { value: string }) => ({
   canonical: { kind, value: `entity:${locator.value}` },
   lexicalRef:
@@ -85,7 +90,7 @@ it("keeps independent time axes and explicit soft time preferences", async () =>
     result.expression.modifiers?.constraints?.observed?.predicate;
   expect(observed?.case).toBe("range");
   expect(observed?.case === "range" && observed.value.end?.seconds).toBe(
-    now.seconds,
+    now.at!.seconds,
   );
   expect(result.expression.modifiers?.constraints?.occurred).toBeUndefined();
   expect(result.expression.modifiers?.preferences.map((p) => p.key)).toEqual([

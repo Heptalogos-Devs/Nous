@@ -168,7 +168,7 @@ impl CognitiveRuntimeService {
                 scope_kind: "subject".into(),
                 scope_ref: "observed_experience".into(),
                 trigger_authority_seq: recorded_seq,
-                due_at: self.now(subject) + chrono::Duration::seconds(delay as i64),
+                due_at: self.recorded_now() + chrono::Duration::seconds(delay as i64),
                 priority: 40,
             },
         )
@@ -278,7 +278,7 @@ impl CognitiveRuntimeService {
         }
         let mut tx = self.store.begin().await?;
         let advance = matches!(status, "applied" | "kept" | "partial" | "failed");
-        sqlx::query("INSERT INTO subject_reflection_progress(subject_id,last_recorded_seq,last_operation_key,last_status,last_problem_code,updated_at) VALUES($1,CASE WHEN $2 THEN $3 ELSE 0 END,$4,$5,$6,$7) ON CONFLICT(subject_id) DO UPDATE SET last_recorded_seq=CASE WHEN $2 THEN GREATEST(subject_reflection_progress.last_recorded_seq,$3) ELSE subject_reflection_progress.last_recorded_seq END,last_operation_key=$4,last_status=$5,last_problem_code=$6,updated_at=$7").bind(selected.subject_id.0).bind(advance).bind(through).bind(operation_key).bind(status).bind(problem).bind(self.now(selected.subject_id)).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO subject_reflection_progress(subject_id,last_recorded_seq,last_operation_key,last_status,last_problem_code,updated_at) VALUES($1,CASE WHEN $2 THEN $3 ELSE 0 END,$4,$5,$6,$7) ON CONFLICT(subject_id) DO UPDATE SET last_recorded_seq=CASE WHEN $2 THEN GREATEST(subject_reflection_progress.last_recorded_seq,$3) ELSE subject_reflection_progress.last_recorded_seq END,last_operation_key=$4,last_status=$5,last_problem_code=$6,updated_at=$7").bind(selected.subject_id.0).bind(advance).bind(through).bind(operation_key).bind(status).bind(problem).bind(self.recorded_now()).execute(&mut *tx).await.map_err(db)?;
         if advance {
             sqlx::query("UPDATE subject_reflection_progress SET last_change_id=GREATEST(last_change_id,$2) WHERE subject_id=$1").bind(selected.subject_id.0).bind(through_change).execute(&mut *tx).await.map_err(db)?;
         }
@@ -317,7 +317,7 @@ impl CognitiveRuntimeService {
             .map_err(db)?;
         let mut changed = false;
         for reference in references {
-            changed|=sqlx::query("INSERT INTO subject_reflection_source_changes(subject_id,reference,reason,authority_sequence,recorded_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(subject.0).bind(serde_json::to_value(reference).map_err(|e|Error::Infrastructure(e.to_string()))?).bind(reason).bind(sequence).bind(self.now(subject)).execute(&mut **tx).await.map_err(db)?.rows_affected()>0;
+            changed|=sqlx::query("INSERT INTO subject_reflection_source_changes(subject_id,reference,reason,authority_sequence,recorded_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(subject.0).bind(serde_json::to_value(reference).map_err(|e|Error::Infrastructure(e.to_string()))?).bind(reason).bind(sequence).bind(self.recorded_now()).execute(&mut **tx).await.map_err(db)?.rows_affected()>0;
         }
         if changed {
             self.trigger_reflection_in(tx, subject, sequence).await?;

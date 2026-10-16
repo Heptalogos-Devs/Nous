@@ -58,6 +58,50 @@ fn constraints(parent: &QueryConstraints, child: &QueryConstraints) -> Option<Qu
             result.entity_requirements.push(value.clone());
         }
     }
+    if parent.occurred.is_some()
+        && child.occurred.is_some()
+        && parent.time_domains.occurred != child.time_domains.occurred
+    {
+        return None;
+    }
+    result.time_domains.occurred = child
+        .time_domains
+        .occurred
+        .clone()
+        .or_else(|| parent.time_domains.occurred.clone());
+    if parent.observed.is_some()
+        && child.observed.is_some()
+        && parent.time_domains.observed != child.time_domains.observed
+    {
+        return None;
+    }
+    result.time_domains.observed = child
+        .time_domains
+        .observed
+        .clone()
+        .or_else(|| parent.time_domains.observed.clone());
+    if parent.valid.is_some()
+        && child.valid.is_some()
+        && parent.time_domains.valid != child.time_domains.valid
+    {
+        return None;
+    }
+    result.time_domains.valid = child
+        .time_domains
+        .valid
+        .clone()
+        .or_else(|| parent.time_domains.valid.clone());
+    if parent.formed.is_some()
+        && child.formed.is_some()
+        && parent.time_domains.formed != child.time_domains.formed
+    {
+        return None;
+    }
+    result.time_domains.formed = child
+        .time_domains
+        .formed
+        .clone()
+        .or_else(|| parent.time_domains.formed.clone());
     result.occurred = predicate(parent.occurred, child.occurred)?;
     result.observed = predicate(parent.observed, child.observed)?;
     result.valid = predicate(parent.valid, child.valid)?;
@@ -307,7 +351,7 @@ impl CognitiveRuntimeService {
             }
             outputs.push(value.results);
         }
-        finalize(&bound, &mut result, outputs, output_limit);
+        finalize(&bound, &mut result, outputs, output_limit)?;
         Ok(super::QueryExecution {
             bound,
             result,
@@ -321,7 +365,7 @@ fn finalize(
     result: &mut CognitiveQueryResult,
     outputs: Vec<Vec<CognitiveHit>>,
     output_limit: usize,
-) {
+) -> Result<()> {
     let memberships = outputs
         .iter()
         .map(|hits| {
@@ -349,13 +393,18 @@ fn finalize(
             &mut preferences,
         );
         hit.match_evidence.baseline_rank = (rank + 1) as u32;
-        hit.match_evidence.preference_score =
-            super::preferences::score(&preferences, hit, bound.bound_at, &bound.retrieval_policy);
+        hit.match_evidence.preference_score = super::preferences::score(
+            &preferences,
+            hit,
+            bound.source_query.temporal_frame.clock_stamp()?,
+            &bound.retrieval_policy,
+        );
         hit.match_evidence.final_score =
             hit.match_evidence.base_rank_score + hit.match_evidence.preference_score;
     }
     super::preferences::order(&mut result.results);
     result.results.truncate(output_limit);
+    Ok(())
 }
 
 fn collect_preferences(

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{CognitiveRef, Error, Result};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -19,7 +18,7 @@ pub struct ResultPayload {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ModelResultContext {
     pub dependencies: Vec<CognitiveRef>,
-    pub cognitive_formed_at: Option<DateTime<Utc>>,
+    pub cognitive_formed_at: Option<crate::DomainStamp>,
     pub maintenance_trigger: Option<MaintenanceTrigger>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -5,7 +5,6 @@ package nous.wave.kernel.v1alpha1;
 import "nous/wave/v1alpha1/motivation.proto";
 import "nous/wave/v1alpha1/types.proto";
 import "nous/wave/v1alpha1/management.proto";
-import "nous/wave/v1alpha1/clock.proto";
 import "nous/wave/kernel/v1alpha1/model.proto";
 message CriterionMaterial {string key=1;nous.wave.v1alpha1.CognitiveRef reference=2;string text=3;nous.wave.v1alpha1.Occurrence source_occurrence=4;}
 message SemanticCriterionInput {string key=1;string question=2;repeated CriterionMaterial materials=3;}

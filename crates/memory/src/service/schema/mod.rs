@@ -27,7 +27,11 @@ fn validate_schema_content(content: &SchemaContent) -> Result<()> {
             "schema content is required and bounded".into(),
         ));
     }
-    content.applicability_scope.valid_time.validate()
+    nous_core::DomainTemporalExtent {
+        time_domain_ref: content.applicability_scope.valid_time_domain_ref.clone(),
+        extent: content.applicability_scope.valid_time.clone(),
+    }
+    .validate()
 }
 
 fn validate_schema_revision_content(input: &ReviseSchemaInput) -> Result<()> {
@@ -100,11 +104,16 @@ impl MemoryService {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         input: &CreateSchemaInput,
         producer: Option<Uuid>,
-        formed: DateTime<Utc>,
+        _formed: DateTime<Utc>,
     ) -> Result<(CognitiveSchemaId, CognitiveSchemaRevisionId)> {
+        let formed = self
+            .cognition
+            .formation_stamp_in(tx, input.subject, "memory", input.operation_id)
+            .await?
+            .at;
         let schema_id = CognitiveSchemaId::new();
         let revision_id = CognitiveSchemaRevisionId::new();
-        let now = self.cognition.now(input.subject);
+        let now = self.cognition.recorded_now();
         let basis: Vec<_> = input
             .content
             .evidence_links
@@ -152,8 +161,8 @@ impl MemoryService {
             .iter()
             .map(|id| id.0)
             .collect();
-        sqlx::query("INSERT INTO cognitive_schema_revisions(schema_revision_id,schema_id,revision_no,parent_revision_id,revision_intent,title,structural_claim,applicability_description,aboutness,tags,boundary_definition,formation_kind,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at,producer_signature_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)")
-            .bind(write.revision_id.0).bind(write.schema_id.0).bind(write.number).bind(write.parent.map(|id|id.0)).bind(write.intent.map(|intent|intent.as_str())).bind(&content.title).bind(&content.structural_claim).bind(&content.applicability_scope.description).bind(aboutness).bind(tags).bind(&content.boundary_definition).bind(content.formation_kind.as_str()).bind(kind).bind(start).bind(end).bind(write.formed_at).bind(write.recorded_at).bind(write.producer).execute(&mut **tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO cognitive_schema_revisions(schema_revision_id,schema_id,revision_no,parent_revision_id,revision_intent,title,structural_claim,applicability_description,aboutness,tags,boundary_definition,formation_kind,valid_time_kind,valid_time_start,valid_time_end,formed_at,recorded_at,producer_signature_id,valid_time_domain_ref) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)")
+            .bind(write.revision_id.0).bind(write.schema_id.0).bind(write.number).bind(write.parent.map(|id|id.0)).bind(write.intent.map(|intent|intent.as_str())).bind(&content.title).bind(&content.structural_claim).bind(&content.applicability_scope.description).bind(aboutness).bind(tags).bind(&content.boundary_definition).bind(content.formation_kind.as_str()).bind(kind).bind(start).bind(end).bind(write.formed_at).bind(write.recorded_at).bind(write.producer).bind(&content.applicability_scope.valid_time_domain_ref).execute(&mut **tx).await.map_err(db)?;
         for link in &content.evidence_links {
             self.insert_schema_link(tx, subject, write.revision_id, link.clone())
                 .await?;

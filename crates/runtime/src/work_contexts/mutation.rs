@@ -52,11 +52,12 @@ impl CognitiveRuntimeService {
             MutationStart::Active(mutation) => mutation,
         };
         let tx = mutation.tx();
+        self.capture_semantic_in(tx, input.subject).await?;
         let work_context_id = Uuid::now_v7();
         validate_refs_in_tx(&self.store, tx, input.subject, &input.cognition_anchors).await?;
         let typed = typed_anchors(&input.entity_anchors, &input.tag_anchors);
         validate_refs_in_tx(&self.store, tx, input.subject, &typed).await?;
-        let now = self.now(input.subject);
+        let now = self.recorded_now();
         sqlx::query(
             "INSERT INTO work_contexts(work_context_id,subject_id,state,purpose,unresolved_questions,constraints,resume_conditions,budget_summary,context_text,revision,created_at,updated_at) VALUES($1,$2,'open',$3,$4,$5,$6,$7,$9,1,$8,$8)",
         )
@@ -125,6 +126,7 @@ impl CognitiveRuntimeService {
             MutationStart::Active(mutation) => mutation,
         };
         let tx = mutation.tx();
+        self.capture_semantic_in(tx, input.subject).await?;
         let row = sqlx::query(
             "SELECT * FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR UPDATE",
         )
@@ -160,7 +162,7 @@ impl CognitiveRuntimeService {
             validate_refs_in_tx(&self.store, tx, input.subject, &typed).await?;
             write_anchors(tx, input.work_context_id, &next.cognition_anchors, &typed).await?;
         }
-        let now = self.now(input.subject);
+        let now = self.recorded_now();
         sqlx::query(
             "UPDATE work_contexts SET purpose=$3,unresolved_questions=$4,constraints=$5,resume_conditions=$6,budget_summary=$7,context_text=$9,revision=revision+1,updated_at=$8 WHERE subject_id=$1 AND work_context_id=$2",
         )

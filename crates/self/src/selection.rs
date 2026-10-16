@@ -30,19 +30,32 @@ impl SelfService {
                 "Self selection requires owned targets/ranked references".into(),
             ));
         }
+        let clock = if let Some(clock) = input.clock {
+            clock.clone()
+        } else {
+            self.runtime.read_clock(subject).await?
+        };
         let mut tx = self.store.read_view().await?;
         let mut result = SelfSelection {
             records: Vec::new(),
             degradation: Vec::new(),
         };
-        let now = self.runtime.now(subject);
+        let now = clock.at;
         let mut remaining = input.max_bytes;
         let mut omitted = false;
         // Identity is read separately. Optional/frequently-created records cannot displace it.
         for required in [true, false] {
             let limit = input.max_items.saturating_sub(result.records.len());
             let rows = self
-                .selection_rows(&mut tx, subject, &input, required, limit + 1, now)
+                .selection_rows(
+                    &mut tx,
+                    subject,
+                    &input,
+                    required,
+                    limit + 1,
+                    now,
+                    &clock.time_domain_ref,
+                )
                 .await?;
             if required && rows.len() > limit {
                 return Err(Error::Unavailable(
@@ -96,6 +109,7 @@ impl SelfService {
         required: bool,
         limit: usize,
         now: DateTime<Utc>,
+        domain: &str,
     ) -> Result<Vec<sqlx::postgres::PgRow>> {
         let refs =
             |values: &[CognitiveRef]| values.iter().map(ToString::to_string).collect::<Vec<_>>();
@@ -137,6 +151,7 @@ WITH anchors AS (
  regexp_match(r.content#>>'{value,valid_time,end}', '^([+-]?[0-9]+)-([0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]+))?Z$') AS end_time) temporal
  WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.suppression_state='normal'
  AND (NOT $2 OR (o.family='self_facet' AND o.integrity_state='valid'
+  AND (r.content#>>'{value,valid_time,kind}'='unknown' OR COALESCE(r.content#>>'{value,valid_time_domain_ref}','time:real')=$20)
   AND (r.content#>>'{value,valid_time,kind}'='unknown'
    OR (r.content#>>'{value,valid_time,kind}'='instant' AND ROW(temporal.instant_time[1]::integer,temporal.instant_time[2],rpad(COALESCE(temporal.instant_time[3],''),9,'0')::bigint)=ROW($7::integer,$14::text,$15::bigint))
    OR (r.content#>>'{value,valid_time,kind}'='interval'
@@ -161,7 +176,7 @@ LIMIT $13
         .bind(subject.0).bind(input.automatic).bind(refs(input.targets)).bind(refs(input.ranked))
         .bind(kinds).bind(values).bind(now.year()).bind(&input.scope.purposes)
         .bind(input.scope.work_context.map(|w| w.0.to_string())).bind(&input.scope.conversation)
-        .bind(entities).bind(required).bind(limit as i64).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond() % 1_000_000_000)).bind(input.source_read.map(|r|r.root_keys.clone())).bind(input.source_read.map(|r|r.work_contexts.clone()).unwrap_or_default()).bind(input.source_read.map(|r|r.origin_conversation_refs.clone()).unwrap_or_default()).bind(input.source_read.map(|r|serde_json::json!(&r.explicit_refs)).unwrap_or_else(||serde_json::json!([]))).fetch_all(&mut **tx).await.map_err(db)
+        .bind(entities).bind(required).bind(limit as i64).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond() % 1_000_000_000)).bind(input.source_read.map(|r|r.root_keys.clone())).bind(input.source_read.map(|r|r.work_contexts.clone()).unwrap_or_default()).bind(input.source_read.map(|r|r.origin_conversation_refs.clone()).unwrap_or_default()).bind(input.source_read.map(|r|serde_json::json!(&r.explicit_refs)).unwrap_or_else(||serde_json::json!([]))).bind(domain).fetch_all(&mut **tx).await.map_err(db)
     }
 }
 

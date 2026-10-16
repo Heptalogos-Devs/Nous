@@ -34,10 +34,13 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
                     subject,
                     session: None,
                     occurrence: OccurrenceDescriptor {
+                        occurred_time_domain_ref: "time:real".into(),
                         source_class: nous_core::SourceClass::Message,
+                        world_realized: None,
                         external_object_ref: None,
                         occurred_time: TemporalExtent::Instant { at: time },
                         observed_at: Some(now),
+                        observed_stamp: None,
                         conversation_ref: None,
                         actor_entity_ref: None,
                         context: serde_json::json!({}),
@@ -140,16 +143,14 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
                 hit.reference,
                 CognitiveRef::Occurrence(_) | CognitiveRef::SourceRegion(_)
             ))
-            .all(|hit| !hit.freshness.occurred.is_empty()
-                && hit
-                    .freshness
-                    .occurred
-                    .iter()
-                    .all(|time| TimePredicate::Range {
+            .all(|hit| !hit.freshness.temporal_evidence.sources.is_empty()
+                && hit.freshness.temporal_evidence.sources.iter().all(|time| {
+                    TimePredicate::Range {
                         start: None,
-                        end: Some(now)
+                        end: Some(now),
                     }
-                    .matches_extent(time)))
+                    .matches_extent(&time.occurred.extent)
+                }))
     );
     let (_, ticket) = runtime
         .cognition
@@ -214,10 +215,13 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
                     subject,
                     session: None,
                     occurrence: OccurrenceDescriptor {
+                        occurred_time_domain_ref: "time:real".into(),
                         source_class: nous_core::SourceClass::File,
+                        world_realized: None,
                         external_object_ref: None,
                         occurred_time: TemporalExtent::Instant { at: occurred },
                         observed_at: Some(observed),
+                        observed_stamp: None,
                         conversation_ref: None,
                         actor_entity_ref: None,
                         context: serde_json::json!({}),
@@ -248,6 +252,7 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
         .material
         .persist_derived_representation(
             DerivedRepresentation {
+                formed_stamp: None,
                 derived_representation_id: nous_core::DerivedRepresentationId::new(),
                 subject_id: subject,
                 inputs: vec![DerivationInput {
@@ -339,9 +344,12 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
     }];
     let result = runtime.execute_query(input.clone(), None).await.unwrap();
     let freshness = &result.result.results[0].freshness;
-    assert!(freshness.formed_at.unwrap() >= now);
-    assert!(freshness.observed_at.unwrap() < now);
-    assert!(matches!(freshness.valid_time, TemporalExtent::Unknown));
+    assert!(freshness.formed_at.as_ref().unwrap().at >= now);
+    assert!(freshness.temporal_evidence.observed_real_at().unwrap() < now);
+    assert!(matches!(
+        freshness.valid_time.extent,
+        TemporalExtent::Unknown
+    ));
     input.expression.constraints.formed = Some(TimePredicate::Range {
         start: None,
         end: Some(now),
@@ -349,6 +357,105 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
     assert!(
         runtime
             .execute_query(input, None)
+            .await
+            .unwrap()
+            .result
+            .results
+            .is_empty()
+    );
+    // A real persisted result can be adopted after the semantic world advances.
+    // Its original full formation stamp survives, while this authority write is UTC now.
+    let identity = test_support::model_operation_identity(
+        subject,
+        "material",
+        "non-uuid-material-operation",
+        "saved-material-result",
+    );
+    let original_stamp = runtime.cognition.read_clock(subject).await.unwrap();
+    runtime
+        .store
+        .save_model_operation(
+            &identity,
+            Some(&nous_core::ModelResultContext {
+                cognitive_formed_at: Some(original_stamp.clone()),
+                ..Default::default()
+            }),
+            Some(&test_support::result_payload(
+                serde_json::json!({"text":"saved"}),
+            )),
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    let changed = runtime
+        .clocks
+        .change(
+            subject,
+            nous_core::OperationId::new(),
+            nous_runtime::ClockChange::Advance { seconds: 86_400.0 },
+        )
+        .await
+        .unwrap();
+    assert_ne!(changed.time_domain_ref, "time:real");
+    let mut recovered = derived.clone();
+    recovered.derived_representation_id = nous_core::DerivedRepresentationId::new();
+    recovered.strategy = "saved-result-adoption".into();
+    let recovered = runtime
+        .material
+        .persist_derived_representation(recovered, Some(&identity))
+        .await
+        .unwrap();
+    assert_eq!(recovered.formed_stamp.as_ref(), Some(&original_stamp));
+    assert!(recovered.created_at >= original_stamp.recorded_at);
+    assert!((recovered.created_at - Utc::now()).num_seconds().abs() < 2);
+    assert!(changed.world_now > recovered.created_at + Duration::hours(23));
+    let segments = runtime
+        .material
+        .segment_description(subject, recovered.derived_representation_id)
+        .await
+        .unwrap();
+    let region = &segments[0].region;
+    let region_stamp = region.formed_stamp.as_ref().unwrap();
+    assert_eq!(region_stamp.time_domain_ref, changed.time_domain_ref);
+    assert!(region_stamp.at >= changed.world_now);
+    assert_ne!(region_stamp.time_domain_ref, original_stamp.time_domain_ref);
+    assert!((region.created_at - Utc::now()).num_seconds().abs() < 2);
+    let mut region_query = query(subject);
+    region_query.projection.domains = vec![nous_core::ResultDomain::Evidence];
+    region_query.expression.targets = vec![QueryTarget::Exact {
+        reference: CognitiveRef::DerivedRegion(region.derived_region_id),
+    }];
+    region_query.expression.constraints.formed = Some(TimePredicate::Range {
+        start: Some(changed.world_now),
+        end: None,
+    });
+    region_query.expression.constraints.time_domains.formed = Some(changed.time_domain_ref.clone());
+    let found = runtime
+        .execute_query(region_query.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(found.result.results.len(), 1);
+    assert_eq!(
+        found.result.results[0].freshness.formed_at.as_ref(),
+        Some(region_stamp)
+    );
+    let mut formed_only = region_query.clone();
+    formed_only.expression.targets.clear();
+    let lane = runtime.execute_query(formed_only, None).await.unwrap();
+    assert!(
+        lane.result
+            .results
+            .iter()
+            .any(|hit| hit.reference == CognitiveRef::DerivedRegion(region.derived_region_id))
+    );
+    region_query.expression.targets = vec![QueryTarget::Exact {
+        reference: CognitiveRef::DerivedRepresentation(recovered.derived_representation_id),
+    }];
+    assert!(
+        runtime
+            .execute_query(region_query, None)
             .await
             .unwrap()
             .result

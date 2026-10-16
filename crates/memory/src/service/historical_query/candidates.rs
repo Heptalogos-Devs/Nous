@@ -5,6 +5,10 @@ use super::*;
 use nous_persistence::{TimeColumns, push_time_predicate};
 use sqlx::{Postgres, QueryBuilder};
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one historical candidate SQL applies authorization and correlated domain predicates before its bound"
+)]
 pub(super) async fn select(
     service: &MemoryService,
     bound: &BoundQuery,
@@ -35,25 +39,33 @@ pub(super) async fn select(
         return Ok(vec![]);
     }
     let mut sql = QueryBuilder::<Postgres>::new("");
-    super::super::source_facts::push_source_facts(&mut sql, view.subject, &references, Some(view))?;
+    super::super::source_facts::push_source_facts(
+        &mut sql,
+        view.subject,
+        &references,
+        Some(view),
+        bound.source_query.source_read.as_ref(),
+    )?;
     sql.push(r#", catalog AS (
- SELECT s.root_kind kind,r.memory_revision_id id,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,
-  ARRAY(SELECT entity_ref FROM memory_revision_aboutness WHERE memory_revision_id=r.memory_revision_id) entities,
-  'instant'::text observed_kind,(SELECT max(oc.observed_at) FROM source_occurrences oc JOIN memory_revision_evidence e ON e.memory_revision_id=r.memory_revision_id AND e.occurrence_id=oc.occurrence_id WHERE oc.root_kind=s.root_kind AND oc.root=s.root) observed_start,NULL::timestamptz observed_end
- FROM source_roots s JOIN memory_revisions r ON s.root_kind='memory_revision' AND r.memory_revision_id=s.root JOIN memory_objects o USING(memory_id)
- UNION ALL SELECT s.root_kind,r.schema_revision_id,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.aboutness,
-  'instant',(SELECT max(oc.observed_at) FROM source_occurrences oc WHERE oc.root_kind=s.root_kind AND oc.root=s.root),NULL
- FROM source_roots s JOIN cognitive_schema_revisions r ON s.root_kind='cognitive_schema_revision' AND r.schema_revision_id=s.root JOIN cognitive_schemas o USING(schema_id)
- UNION ALL SELECT s.root_kind,r.episode_revision_id,'unknown',NULL,NULL,r.formed_at,r.recorded_at,
-  ARRAY(SELECT DISTINCT unnest(array_append(oc.entities,oc.actor_entity_ref)) FROM source_occurrences oc WHERE oc.root_kind=s.root_kind AND oc.root=s.root),
-  r.experience_time_kind,r.experience_time_start,r.experience_time_end
- FROM source_roots s JOIN episode_revisions r ON s.root_kind='episode_revision' AND r.episode_revision_id=s.root JOIN episode_objects o USING(episode_id)
- UNION ALL SELECT s.root_kind,r.journal_revision_id,'unknown',NULL,NULL,r.formed_at,r.recorded_at,
-  ARRAY(SELECT DISTINCT unnest(array_append(oc.entities,oc.actor_entity_ref)) FROM source_occurrences oc WHERE oc.root_kind=s.root_kind AND oc.root=s.root),
-  r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end
- FROM source_roots s JOIN journal_revisions r ON s.root_kind='journal_revision' AND r.journal_revision_id=s.root JOIN journal_objects o USING(journal_id)
+ SELECT s.root_kind kind,r.memory_revision_id id,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_time_domain_ref,r.formed_at,r.recorded_at,
+ ARRAY(SELECT entity_ref FROM memory_revision_aboutness WHERE memory_revision_id=r.memory_revision_id) entities
+ FROM source_roots s JOIN memory_revisions r ON s.root_kind='memory_revision' AND r.memory_revision_id=s.root
+ UNION ALL SELECT s.root_kind,r.schema_revision_id,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_time_domain_ref,r.formed_at,r.recorded_at,r.aboutness
+ FROM source_roots s JOIN cognitive_schema_revisions r ON s.root_kind='cognitive_schema_revision' AND r.schema_revision_id=s.root
+ UNION ALL SELECT s.root_kind,r.episode_revision_id,'time:real','unknown',NULL,NULL,r.formed_time_domain_ref,r.formed_at,r.recorded_at,
+ ARRAY(SELECT DISTINCT unnest(array_append(oc.entities,oc.actor_entity_ref)) FROM source_occurrences oc WHERE oc.root_kind=s.root_kind AND oc.root=s.root)
+ FROM source_roots s JOIN episode_revisions r ON s.root_kind='episode_revision' AND r.episode_revision_id=s.root
+ UNION ALL SELECT s.root_kind,r.journal_revision_id,'time:real','unknown',NULL,NULL,r.formed_time_domain_ref,r.formed_at,r.recorded_at,
+ ARRAY(SELECT DISTINCT unnest(array_append(oc.entities,oc.actor_entity_ref)) FROM source_occurrences oc WHERE oc.root_kind=s.root_kind AND oc.root=s.root)
+ FROM source_roots s JOIN journal_revisions r ON s.root_kind='journal_revision' AND r.journal_revision_id=s.root
 ) SELECT c.kind,c.id FROM catalog c WHERE true
 "#);
+    nous_persistence::push_source_read_filter(
+        &mut sql,
+        bound.source_query.source_read.as_ref(),
+        "c.kind",
+        "c.id::text",
+    );
     match family {
         EvidenceFamily::Entity => {
             let entities = entities(&bound.source_query);
@@ -75,39 +87,74 @@ pub(super) async fn select(
         EvidenceFamily::Temporal => (),
         _ => return Err(Error::Invalid("not an owner-direct family".into())),
     }
-    for (columns, predicate) in [
+    for (axis, columns, predicate, domain_column) in [
         (
+            TimeAxis::Valid,
             TimeColumns::Extent {
                 kind: "c.valid_time_kind",
                 start: "c.valid_time_start",
                 end: "c.valid_time_end",
             },
             constraints.valid,
+            Some("c.valid_time_domain_ref"),
         ),
         (
-            TimeColumns::Extent {
-                kind: "c.observed_kind",
-                start: "c.observed_start",
-                end: "c.observed_end",
-            },
-            constraints.observed,
+            TimeAxis::Formed,
+            TimeColumns::Instant("c.formed_at"),
+            constraints.formed,
+            Some("c.formed_time_domain_ref"),
         ),
-        (TimeColumns::Instant("c.formed_at"), constraints.formed),
-        (TimeColumns::Instant("c.recorded_at"), constraints.recorded),
+        (
+            TimeAxis::Recorded,
+            TimeColumns::Instant("c.recorded_at"),
+            constraints.recorded,
+            None,
+        ),
     ] {
-        push_time_predicate_if(&mut sql, columns, predicate)?;
+        if let Some(predicate) = predicate {
+            if let Some(column) = domain_column {
+                sql.push(" AND ")
+                    .push(column)
+                    .push("=")
+                    .push_bind(bound.source_query.time_domain(axis).to_owned());
+            }
+            push_time_predicate(&mut sql, columns, predicate)?;
+        }
     }
-    if let Some(predicate) = constraints.occurred {
-        sql.push(" AND EXISTS(SELECT 1 FROM source_occurrences oc WHERE oc.root_kind=c.kind AND oc.root=c.id AND (c.kind<>'memory_revision' OR EXISTS(SELECT 1 FROM memory_revision_evidence e WHERE e.memory_revision_id=c.id AND e.occurrence_id=oc.occurrence_id))");
-        push_time_predicate(
-            &mut sql,
-            TimeColumns::Extent {
-                kind: "oc.occurred_time_kind",
-                start: "oc.occurred_time_start",
-                end: "oc.occurred_time_end",
-            },
-            predicate,
-        )?;
+    if constraints.occurred.is_some() || constraints.observed.is_some() {
+        sql.push(" AND EXISTS(SELECT 1 FROM source_occurrences oc WHERE oc.root_kind=c.kind AND oc.root=c.id");
+        if let Some(predicate) = constraints.occurred {
+            sql.push(" AND oc.occurred_time_domain_ref=").push_bind(
+                bound
+                    .source_query
+                    .time_domain(TimeAxis::Occurred)
+                    .to_owned(),
+            );
+            push_time_predicate(
+                &mut sql,
+                TimeColumns::Extent {
+                    kind: "oc.occurred_time_kind",
+                    start: "oc.occurred_time_start",
+                    end: "oc.occurred_time_end",
+                },
+                predicate,
+            )?;
+        }
+        if let Some(predicate) = constraints.observed {
+            let column = if bound.source_query.time_domain(TimeAxis::Observed) == "time:real" {
+                "oc.observed_at"
+            } else {
+                sql.push(" AND oc.observed_stamp->>'time_domain_ref'=")
+                    .push_bind(
+                        bound
+                            .source_query
+                            .time_domain(TimeAxis::Observed)
+                            .to_owned(),
+                    );
+                "(oc.observed_stamp->>'at')::timestamptz"
+            };
+            push_time_predicate(&mut sql, TimeColumns::Instant(column), predicate)?;
+        }
         sql.push(")");
     }
     if family == EvidenceFamily::SchemaDirect {
@@ -129,17 +176,6 @@ pub(super) async fn select(
             )
         })
         .collect()
-}
-
-fn push_time_predicate_if(
-    sql: &mut QueryBuilder<Postgres>,
-    columns: TimeColumns,
-    predicate: Option<TimePredicate>,
-) -> Result<()> {
-    if let Some(predicate) = predicate {
-        push_time_predicate(sql, columns, predicate)?;
-    }
-    Ok(())
 }
 
 fn entities(query: &CognitiveQuery) -> Vec<String> {

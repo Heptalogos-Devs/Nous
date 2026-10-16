@@ -105,7 +105,7 @@ pub(crate) async fn check_model_catalog_activity(
                     .map(|reference| parse_reference(&reference.kind, &reference.value).unwrap())
                     .unwrap(),
                 use_kind: nous_runtime::UseKind::ResultSupported,
-                occurred_at: rt.cognition.now(subject),
+                occurred_at: rt.cognition.recorded_now(),
                 context: serde_json::json!({}),
             }],
         })
@@ -119,7 +119,7 @@ pub(crate) async fn check_model_catalog_activity(
             &response.hits[0].reference.as_ref().unwrap().value,
         )
         .unwrap(),
-        rt.cognition.now(subject),
+        rt.cognition.recorded_now(),
     )
     .await
     .unwrap();

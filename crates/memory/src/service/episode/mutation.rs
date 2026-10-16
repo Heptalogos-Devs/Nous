@@ -5,7 +5,7 @@ use super::*;
 
 impl MemoryService {
     pub async fn create_episode(&self, input: EpisodeInput) -> Result<EpisodeView> {
-        let started_at = self.cognition.now(input.subject);
+        let started_at = self.cognition.recorded_now();
         validate_episode_track(&input.track_key)?;
         input.content.validate()?;
         self.store.require_subject(input.subject).await?;
@@ -57,6 +57,7 @@ impl MemoryService {
             &input.track_key,
             input.content.parent_episode_revision_id,
             &input.content.experience_time,
+            &input.content.experience_time_domain_ref,
             None,
         )
         .await?;
@@ -65,7 +66,7 @@ impl MemoryService {
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
             .await?;
-        let now = self.cognition.now(input.subject);
+        let now = self.cognition.recorded_now();
         sqlx::query("INSERT INTO episode_objects(episode_id,subject_id,track_key,current_revision_id,object_epoch,acceptance_state,integrity_state,suppression_state,created_at) VALUES($1,$2,$3,$4,1,'accepted','valid','normal',$5)")
             .bind(episode_id.0).bind(input.subject.0).bind(&input.track_key).bind(revision_id.0).bind(now)
             .execute(&mut **mutation.tx()).await.map_err(db)?;
@@ -127,8 +128,13 @@ impl MemoryService {
             .configuration
             .snapshot_for_subject(subject)?
             .get(nous_runtime::SETTLE_DELAY_KEY)?;
-        let now = self.cognition.now(subject);
-        let due_at = now + chrono::Duration::seconds(delay as i64);
+        let frame = self.cognition.capture_semantic_in(tx, subject).await?;
+        let (_, due_at) = self.cognition.semantic_settlement(
+            subject,
+            &frame,
+            chrono::Duration::seconds(delay as i64),
+            &frame,
+        )?;
         self.cognition
             .wake_blocked_maintenance_in(
                 tx,
@@ -143,12 +149,16 @@ impl MemoryService {
                 },
             )
             .await?;
-        let consolidation_due = now
-            + chrono::Duration::seconds(
+        let (_, consolidation_due) = self.cognition.semantic_settlement(
+            subject,
+            &frame,
+            chrono::Duration::seconds(
                 self.configuration
                     .snapshot_for_subject(subject)?
                     .get(super::longitudinal_policy::CONSOLIDATION_DELAY)? as i64,
-            );
+            ),
+            &frame,
+        )?;
         for (kind, scope_kind, scope_ref) in [
             (
                 "episode_resegment",
@@ -192,7 +202,7 @@ impl MemoryService {
         reason = "Episode revision keeps fencing, hierarchy, members, basis, and receipt commit together"
     )]
     pub async fn revise_episode(&self, input: ReviseEpisodeInput) -> Result<EpisodeView> {
-        let started_at = self.cognition.now(input.subject);
+        let started_at = self.cognition.recorded_now();
         input.content.validate()?;
         if !matches!(input.intent.as_str(), "resegment" | "reinterpret") {
             return Err(Error::Invalid("invalid Episode revision intent".into()));
@@ -246,6 +256,7 @@ impl MemoryService {
             &row.try_get::<String, _>("track_key").map_err(db)?,
             parent,
             &input.content.experience_time,
+            &input.content.experience_time_domain_ref,
             Some(input.episode_id.0),
         )
         .await?;
@@ -264,7 +275,7 @@ impl MemoryService {
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started_at)
             .await?;
-        let now = self.cognition.now(input.subject);
+        let now = self.cognition.recorded_now();
         insert_episode_revision(
             &self.store,
             mutation.tx(),
@@ -358,7 +369,7 @@ impl MemoryService {
             }
         }
         sqlx::query("INSERT INTO episode_revision_relations(from_revision_id,to_revision_id,relation,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
-            .bind(from.0).bind(to.0).bind(&relation).bind(self.cognition.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?;
+            .bind(from.0).bind(to.0).bind(&relation).bind(self.cognition.recorded_now()).execute(&mut **mutation.tx()).await.map_err(db)?;
 
         mutation.commit("episode_relation", None, None, None).await
     }

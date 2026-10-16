@@ -24,7 +24,8 @@ import {
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { ReflectionPlan } from "./subject-reflection-plan.js";
 import { basisDependencies } from "./subject-reflection-plan.js";
-import { chosenBasis, temporal } from "./reflection-catalog.js";
+import { chosenBasis } from "./reflection-catalog.js";
+import { temporal, domainTemporal } from "./temporal.js";
 import type {
   MotivationAction,
   CriterionBlueprint,
@@ -157,7 +158,7 @@ export function compileMotivationAction(
     statement: c.statement,
     scope: scopeJson ? fromJson(MotivationScopeSchema, scopeJson) : undefined,
     basis: chosenBasis(plan, c.basisKeys, targetKey ?? undefined),
-    validTime: temporal(c.validTime),
+    validTime: domainTemporal(c.validTime),
     producer,
     links: c.links.map((l) => ({
       relation: l.relation,

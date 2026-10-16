@@ -56,7 +56,7 @@ try {
         scope: { description: "general" },
         stance: "adopted",
         basis: [evidence],
-        validTime: {},
+        validTime: { timeDomainRef: "time:real", extent: {} },
       },
     },
   });
@@ -113,7 +113,7 @@ try {
             },
           },
         ],
-        validTime: {},
+        validTime: { timeDomainRef: "time:real", extent: {} },
       },
     },
   });
@@ -169,10 +169,13 @@ try {
           kind: "preference",
           statement: "核验工作先读原始材料，普通闲聊无需为了形式调用工具。",
           epistemicClass: "observed",
-          scope: { description: "仅核验执行者", purposes: ["worker"] },
+          scope: {
+            description: "仅核验执行者",
+            purposes: ["professional_execution"],
+          },
           stance: "adopted",
           basis: [evidence],
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
         },
       },
     },
@@ -183,7 +186,7 @@ try {
       subjectId,
       sourceRefs: [{ kind: "occurrence", value: observation.occurrenceId }],
     },
-    purpose: "deliberation",
+    purpose: "subject_deliberation",
     intent: "继续当前工作并保持自称",
     audience: { conversationRef: "conversation:self", visibility: "internal" },
   };
@@ -230,7 +233,7 @@ try {
       ...managedInput,
       usage: {
         ...usage,
-        purpose: "worker",
+        purpose: "professional_execution",
         agentInstanceId: "self-worker-scope",
       },
     },
@@ -293,7 +296,7 @@ try {
       text: "本次输出作出了自称选择。",
       epistemicClass: "observed",
       basis: [evidence],
-      validTime: {},
+      validTime: { timeDomainRef: "time:real", extent: {} },
     },
   });
   const dependent = await c.self.adopt({
@@ -323,7 +326,7 @@ try {
               },
             },
           ],
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
         },
       },
     },
@@ -352,7 +355,7 @@ try {
           interpretation: "我选择青砚作为当前自称；这不提供虚构的个人来历。",
           sourceRefs: [first.reference!],
           basis: [evidence],
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
         },
       },
     },
@@ -447,7 +450,7 @@ try {
       ],
       modifiers: {
         projection: { domains: ["self_facet"] },
-        asOf: first.recordedAt,
+        asRecordedAt: first.recordedAt,
       },
     },
   });
@@ -490,7 +493,7 @@ try {
           epistemicClass: "narrative",
           sourceRefs: [first.reference!, changed.reference!],
           basis: [correctedBasis],
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
         },
       },
     },

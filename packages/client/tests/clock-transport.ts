@@ -61,6 +61,41 @@ assert.equal(
   0,
 );
 assert.equal((await client.clocks.readClock({ subjectId })).rate, 0);
+const observed = await client.clocks.readClock({ subjectId });
+const attempts = [
+  { subjectId, operationId: randomUUID(), expectedRevision: observed.revision },
+  { subjectId, operationId: randomUUID(), expectedRevision: observed.revision },
+];
+const raced = await Promise.allSettled([
+  client.clocks.pauseClock(attempts[0]!),
+  client.clocks.resumeClock({ ...attempts[1]!, rate: 5 }),
+]);
+assert.equal(raced.filter((result) => result.status === "fulfilled").length, 1);
+assert.equal(raced.filter((result) => result.status === "rejected").length, 1);
+const winnerIndex = raced[0]!.status === "fulfilled" ? 0 : 1;
+const winner = raced[winnerIndex]!;
+assert.equal(winner.status, "fulfilled");
+const changed = await client.clocks.configureClock({
+  subjectId,
+  operationId: randomUUID(),
+  timeDomainRef: "time:transport",
+  rate: 7,
+});
+const replayWinner = () =>
+  winnerIndex === 0
+    ? client.clocks.pauseClock(attempts[0]!)
+    : client.clocks.resumeClock({ ...attempts[1]!, rate: 5 });
+assert.deepEqual(await replayWinner(), winner.value);
+const current = await client.clocks.readClock({ subjectId });
+assert.equal(current.revision, changed.revision);
+assert.equal(current.rate, 7);
+await assert.rejects(() =>
+  client.clocks.pauseClock({
+    subjectId,
+    operationId: randomUUID(),
+    expectedRevision: observed.revision,
+  }),
+);
 const connection = { ...client } as Awaited<
   ReturnType<typeof connectNousInstance>
 >;

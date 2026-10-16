@@ -66,8 +66,8 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .unwrap();
     assert_eq!(exact_boundary.cognition[0].head, old);
     assert_eq!(exact_boundary.tags[0].tag, tag.tag_id);
-    let before = start + chrono::Duration::seconds(1);
-    let same = start + chrono::Duration::seconds(2);
+    let before = chrono::Utc::now();
+    let same = chrono::Utc::now();
     let baseline = owner
         .project_as_of(subject, before, RevisionView::Current)
         .await
@@ -99,6 +99,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
             intent: nous_memory::RevisionIntent::Rephrase,
 
             content: nous_memory::MemoryContent {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 formation_mode: nous_memory::FormationMode::Grounded,
                 grounding_occurrence_id: Some(source.occurrence.occurrence_id),
@@ -148,7 +149,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
             .iter()
             .all(|binding| binding.display_name != "Future concept")
     );
-    let later = start + chrono::Duration::seconds(11);
+    let later = chrono::Utc::now();
     let current = owner
         .project_as_of(subject, later, RevisionView::Current)
         .await
@@ -172,6 +173,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     let association = owner
         .create_association(
             nous_memory::CreateAssociationRequest {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 operation_id: OperationId::new(),
                 from: CognitiveRef::MemoryRevision(revised.revision.memory_revision_id),
@@ -191,6 +193,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         )
         .await
         .unwrap();
+    let association_checkpoint = chrono::Utc::now();
     assert!(
         owner
             .project_as_of(subject, later, RevisionView::Current)
@@ -201,11 +204,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     );
     assert!(
         owner
-            .project_as_of(
-                subject,
-                start + chrono::Duration::seconds(16),
-                RevisionView::Current
-            )
+            .project_as_of(subject, association_checkpoint, RevisionView::Current)
             .await
             .unwrap()
             .associations
@@ -235,11 +234,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     );
     assert_eq!(
         owner
-            .project_as_of(
-                subject,
-                start + chrono::Duration::seconds(21),
-                RevisionView::Current
-            )
+            .project_as_of(subject, chrono::Utc::now(), RevisionView::Current)
             .await
             .unwrap()
             .cognition[0]
@@ -261,11 +256,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
         .unwrap();
     assert!(
         owner
-            .project_as_of(
-                subject,
-                start + chrono::Duration::seconds(16),
-                RevisionView::Current
-            )
+            .project_as_of(subject, association_checkpoint, RevisionView::Current)
             .await
             .unwrap()
             .associations
@@ -273,11 +264,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     );
     assert!(
         !owner
-            .project_as_of(
-                subject,
-                start + chrono::Duration::seconds(26),
-                RevisionView::Current
-            )
+            .project_as_of(subject, chrono::Utc::now(), RevisionView::Current)
             .await
             .unwrap()
             .associations
@@ -329,11 +316,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     assert!(!old_view.contains(&CognitiveRef::Tag(survivor.tag_id)));
     assert_eq!(
         owner
-            .project_as_of(
-                subject,
-                start + chrono::Duration::seconds(31),
-                RevisionView::Current
-            )
+            .project_as_of(subject, chrono::Utc::now(), RevisionView::Current)
             .await
             .unwrap()
             .canonical_tag(tag.tag_id),
@@ -382,7 +365,7 @@ async fn historical_material_query_runs_without_memory_micro_system() {
     assert!(rt.memory.is_none());
     let subject = test_support::query::subject(&rt).await;
     let old = observation(&rt, subject, "material archival chronicle").await;
-    let cut = rt.cognition.now(subject);
+    let cut = rt.cognition.recorded_now();
     let future = observation(&rt, subject, "future material archival chronicle").await;
     let request = CognitiveQuery {
         source_read: None,

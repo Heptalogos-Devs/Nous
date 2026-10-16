@@ -383,7 +383,7 @@ async fn direct_concept_recall_is_independent_and_vectors_are_shared_across_prof
         1
     );
     let old_snapshot = current_concepts(&rt, subject).await;
-    let historical_cut = rt.cognition.now(subject);
+    let historical_cut = rt.cognition.recorded_now();
     let revised = owner
         .revise_tag(
             subject,

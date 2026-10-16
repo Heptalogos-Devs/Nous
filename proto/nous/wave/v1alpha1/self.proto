@@ -22,16 +22,17 @@ message SelfFacetContent {
   string stance = 4;
   repeated SelfException exceptions = 5;
   repeated RevisionBasis basis = 6;
-  TemporalExtent valid_time = 7;
+  DomainTemporalExtent valid_time = 7;
   ProducerSignature producer = 8;
   string epistemic_class = 9;
+  DomainKnowledge domain_knowledge = 10;
 }
 message NarrativeContent {
   string theme = 1;
   string interpretation = 2;
   repeated CognitiveRef source_refs = 3;
   repeated RevisionBasis basis = 4;
-  TemporalExtent valid_time = 5;
+  DomainTemporalExtent valid_time = 5;
   ProducerSignature producer = 6;
   string epistemic_class = 7;
 }
@@ -51,7 +52,7 @@ message SelfRecord {
   string integrity_state = 11;
   string suppression_state = 12;
   google.protobuf.Timestamp created_at = 13;
-  google.protobuf.Timestamp formed_at = 14;
+  DomainStamp formed_at = 14;
   google.protobuf.Timestamp recorded_at = 15;
   repeated SelfEvidence evidence = 16;
 }

@@ -50,6 +50,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
         .material
         .persist_derived_representation(
             DerivedRepresentation {
+                formed_stamp: None,
                 derived_representation_id: DerivedRepresentationId::new(),
                 subject_id: subject,
                 inputs: sources
@@ -116,6 +117,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
     let association = owner
         .create_association(
             CreateAssociationRequest {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 operation_id: OperationId::new(),
                 from: memory_ref.clone(),
@@ -415,7 +417,7 @@ async fn insert_source_region(
     let coordinate = serde_json::json!({"start":start,"end":end});
     let mut tx = rt.store.begin().await.unwrap();
     sqlx::query("INSERT INTO source_regions(source_region_id,subject_id,artifact_id,coordinate_kind,coordinate,coordinate_hash,created_at) VALUES($1,$2,$3,'byte_range',$4,$5,$6)")
-        .bind(region.0).bind(subject.0).bind(artifact.0).bind(&coordinate).bind(coordinate.to_string()).bind(rt.cognition.now(subject)).execute(&mut *tx).await.unwrap();
+        .bind(region.0).bind(subject.0).bind(artifact.0).bind(&coordinate).bind(coordinate.to_string()).bind(rt.cognition.recorded_now()).execute(&mut *tx).await.unwrap();
     nous_persistence::AuthorityStore::invalidate_in(
         &mut tx,
         subject,

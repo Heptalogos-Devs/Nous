@@ -21,7 +21,7 @@ pub struct UseFact {
     pub event: UseEventRef,
 }
 
-const EXPERIENCE_ORDER: &str = "SELECT occurrence_id FROM experience_items WHERE subject_id=$1 AND occurrence_id=ANY($2::uuid[]) ORDER BY observed_at,recorded_seq";
+const EXPERIENCE_ORDER: &str = "SELECT occurrence_id FROM experience_items WHERE subject_id=$1 AND occurrence_id=ANY($2::uuid[]) ORDER BY experience_time_domain_ref,experience_at,recorded_seq";
 
 impl CognitiveRuntimeService {
     pub async fn experience_order(

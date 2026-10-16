@@ -483,11 +483,14 @@ async function scenario(endpoint: string, token: string) {
         applicabilityScope: {
           description: "This calibration sequence",
           validTime: {
-            value: {
-              case: "interval",
+            timeDomainRef: "time:real",
+            extent: {
               value: {
-                start: fromJson(TimestampSchema, "2026-10-03T00:00:00Z"),
-                end: fromJson(TimestampSchema, "2026-10-04T00:00:00Z"),
+                case: "interval",
+                value: {
+                  start: fromJson(TimestampSchema, "2026-10-03T00:00:00Z"),
+                  end: fromJson(TimestampSchema, "2026-10-04T00:00:00Z"),
+                },
               },
             },
           },
@@ -519,7 +522,7 @@ async function scenario(endpoint: string, token: string) {
         schema.evidenceLinks[0].basis.basis.value.occurrenceId,
         observationIds[0],
       );
-    assert(schema.formedAt);
+    assert(schema.formedAt?.at);
     assert(schema.createdAt);
     assert.equal(schema.revisionNo, 1);
     assert.equal(schema.parentRevisionId, undefined);
@@ -549,11 +552,13 @@ async function scenario(endpoint: string, token: string) {
     for (const constraints of [
       {
         formed: {
-          predicate: { case: "point" as const, value: schema.formedAt },
+          timeDomainRef: schema.formedAt.timeDomainRef,
+          predicate: { case: "point" as const, value: schema.formedAt.at },
         },
       },
       {
         valid: {
+          timeDomainRef: "time:real",
           predicate: {
             case: "point" as const,
             value: fromJson(TimestampSchema, "2026-10-03T00:00:00Z"),
@@ -605,7 +610,7 @@ async function scenario(endpoint: string, token: string) {
     }
     const nousqlPoint = await client.cognition.query({
       subjectId,
-      nousql: `Calibration $return(schema) $time(formed,at="${toJson(TimestampSchema, create(TimestampSchema, schema.formedAt))}")`,
+      nousql: `Calibration $return(schema) $time(formed,at="${toJson(TimestampSchema, create(TimestampSchema, schema.formedAt.at))}")`,
     });
     assert.equal(nousqlPoint.hits.length, 1);
     const schemas = await client.concepts.listCognitiveSchemas({

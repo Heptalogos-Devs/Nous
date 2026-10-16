@@ -1,3 +1,7 @@
+import {
+  domainTemporalExtentSchema,
+  temporalExtentSchema as time,
+} from "./temporal.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
@@ -82,21 +86,13 @@ export const criterionBlueprintSchema: z.ZodType<CriterionBlueprint> = z.lazy(
       }),
     ]),
 );
-const time = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("unknown") }),
-  z.strictObject({ kind: z.literal("instant"), at: z.iso.datetime() }),
-  z.strictObject({
-    kind: z.literal("interval"),
-    start: z.iso.datetime().nullable(),
-    end: z.iso.datetime().nullable(),
-  }),
-]);
+
 const content = z.strictObject({
   family: z.enum(["desire", "concern", "desired_condition"]),
   matterKey: key,
   statement: z.string().min(1).max(16384),
   basisKeys: z.array(key).min(1).max(64),
-  validTime: time,
+  validTime: domainTemporalExtentSchema,
   links: z
     .array(
       z.strictObject({

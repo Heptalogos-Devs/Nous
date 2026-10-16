@@ -94,8 +94,8 @@ impl MemoryService {
         )
         .await?;
         if let MutationStart::Active(mutation) = &mut start {
-            mutation
-                .capture_authority_time(self.cognition.now(subject))
+            self.cognition
+                .capture_semantic_in(mutation.tx(), subject)
                 .await?;
         }
         Ok(start)
@@ -142,6 +142,11 @@ fn default_explicit_origin() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAssociationRequest {
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub producer: Option<ProducerSignature>,
     pub operation_id: OperationId,
     pub from: CognitiveRef,
@@ -205,14 +210,12 @@ impl MemoryService {
         operation: OperationId,
         started_at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>> {
-        Ok(AuthorityStore::model_result_cognitive_time_in(
-            tx,
-            subject,
-            "memory",
-            &operation.0.to_string(),
-        )
-        .await?
-        .unwrap_or(started_at))
+        let _ = started_at;
+        Ok(self
+            .cognition
+            .formation_stamp_in(tx, subject, "memory", operation)
+            .await?
+            .at)
     }
 
     pub fn new(

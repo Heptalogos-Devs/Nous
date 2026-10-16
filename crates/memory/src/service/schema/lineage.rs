@@ -63,7 +63,12 @@ impl MemoryService {
                 None
             };
             let (child_id, child_revision) = self
-                .create_schema_in(mutation.tx(), &child, producer, self.cognition.now(subject))
+                .create_schema_in(
+                    mutation.tx(),
+                    &child,
+                    producer,
+                    self.cognition.recorded_now(),
+                )
                 .await?;
             sqlx::query("INSERT INTO cognitive_schema_lineage(from_revision_id,to_revision_id,relation) VALUES($1,$2,'schema_split_from')").bind(child_revision.0).bind(source_revision).execute(&mut **mutation.tx()).await.map_err(db)?;
             ids.push(child_id);
@@ -213,7 +218,7 @@ impl MemoryService {
                 mutation.tx(),
                 &merged,
                 producer,
-                self.cognition.now(subject),
+                self.cognition.recorded_now(),
             )
             .await?;
         for (id, source_revision) in source_revisions {

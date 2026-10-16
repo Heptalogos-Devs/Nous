@@ -80,6 +80,27 @@ impl SelfService {
             }
         });
         nous_runtime::ContextSource {
+            epistemic_class: Some(match &record.content {
+                SelfContent::SelfFacet(v) => v.epistemic_class,
+                SelfContent::NarrativeThread(v) => v.epistemic_class,
+            }),
+            domain_knowledge: match &record.content {
+                SelfContent::SelfFacet(facet) => facet.domain_knowledge.clone(),
+                _ => None,
+            },
+            temporal: Some(FreshnessDescriptor {
+                temporal_evidence: TemporalEvidence::default(),
+                valid_time: DomainTemporalExtent {
+                    time_domain_ref: record.content.valid_time_domain_ref().to_owned(),
+                    extent: record.content.valid_time().clone(),
+                },
+                formed_at: Some(DomainStamp {
+                    time_domain_ref: record.formed_time_domain_ref.clone(),
+                    at: record.formed_at,
+                    recorded_at: record.formed_recorded_at,
+                }),
+                recorded_at: Some(record.recorded_at),
+            }),
             reference: record.reference(),
             source_revision: Some(record.revision_id.to_string()),
             text,
@@ -109,6 +130,7 @@ impl SelfService {
             .select(
                 subject,
                 SelfSelectionRequest {
+                    clock: Some(input.clock),
                     source_read: Some(source_read),
                     scope: &scope,
                     targets: &[],

@@ -51,11 +51,26 @@ pub(super) fn occurrence(value: nous_material::ObservationOccurrence) -> p::Occu
         subject_id: value.subject_id.0.to_string(),
         artifact_id: value.artifact_id.map(|id| id.0.to_string()),
         source_class: value.source_class.as_str().into(),
+        world_realized: value.world_realized.map(|source| p::WorldRealizedSource {
+            world_id: source.world_id,
+            event_id: source.event_id,
+            event_revision: source.event_revision,
+            producer_ref: source.producer_ref,
+            generation_method: source.generation_method,
+            realized_at: Some(timestamp(source.realized_at)),
+            world_observed: Some(domain_stamp_proto(&source.world_observed)),
+            shared_origin_refs: source.shared_origin_refs,
+        }),
         external_object_ref: value
             .external_object_ref
             .map(|value| value.as_str().to_owned()),
-        occurred_time: Some(temporal_proto(&value.occurred_time)),
+        occurred_time: Some(domain_temporal_proto(
+            &value.occurred_time_domain_ref,
+            &value.occurred_time,
+        )),
         observed_at: Some(timestamp(value.observed_at)),
+        observed_stamp: Some(domain_stamp_proto(&value.observed_stamp)),
+        recorded_at: Some(timestamp(value.created_at)),
         conversation_ref: value.conversation_ref,
         actor_entity_ref: value
             .actor_entity_ref
@@ -92,6 +107,8 @@ pub(super) fn representation(
     let signature = value.producer.signature_hash.clone();
     p::DerivedRepresentation {
         representation_id: value.derived_representation_id.0.to_string(),
+        formed_stamp: value.formed_stamp.as_ref().map(domain_stamp_proto),
+        recorded_at: Some(timestamp(value.created_at)),
         subject_id: value.subject_id.0.to_string(),
         inputs: value
             .inputs
@@ -128,6 +145,8 @@ pub(super) fn source_region(value: nous_material::SourceRegion) -> p::SourceRegi
 
 pub(super) fn derived_region(value: nous_material::DerivedRegion) -> p::DerivedRegion {
     p::DerivedRegion {
+        formed_at: value.formed_stamp.as_ref().map(domain_stamp_proto),
+        recorded_at: Some(timestamp(value.created_at)),
         derived_region_id: value.derived_region_id.0.to_string(),
         subject_id: value.subject_id.0.to_string(),
         representation_id: value.derived_representation_id.0.to_string(),
