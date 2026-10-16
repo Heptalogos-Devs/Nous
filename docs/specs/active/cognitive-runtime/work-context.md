@@ -31,3 +31,7 @@ Typed public RPCs are `CreateWorkContext`、`GetWorkContext`、`ListWorkContexts
 ## Persistence and recovery
 
 The Runtime stores typed WorkContext data in the fresh canonical schema and recovers it from the same database root after process restart. Prompt, model hidden state, raw cache, and full chat history are not persisted.
+
+## Reactor关键继续信息
+
+WorkContext保存认知目的、问题、约束、anchors和有界继续信息；Life保存产品活动/焦点/时间及成果，两侧引用同一真实结果，不复制完整JSON。新目标/委派让出/切换/取消/完成前同步保存，不依赖异步摘要或反思完成。结果交接失败沿既有稳定待回流身份补交，不重跑已成功工具或付费工作。原生摘要、继续信息与长期认知各自拥有；主观前台由Host组织，Nous不建立平行Reactor。

@@ -58,6 +58,22 @@ ReportUse 仅把实际待发送输入的 exact cognition refs 记为 presented�
 
 普通聊天“记住/忘记”不拥有认知 mutation/purge 能力。工具可见性、执行政策、凭据和 OS 范围由宿主明确配置；插件不向普通主体暴露 Core discovery 管理凭据。运维 OpenClaw 使用独立实例及权限。
 
+## Reactor、继续信息与固定前缀压缩
+
+本节是当前Reactor整包采用的新增实施合同；已有正式role/view、结果保管、预算与原生compaction委派继续使用，后台固定前缀生成/发布完成实际入口和真实长任务验证前不宣称可用。Heptalogos拥有同Subject一条前台决定链、焦点、情境动作及同步继续信息；本集成不另建Reactor或每域认知装配。
+
+主观审议/renderer消费同一适用EpistemicView；renderer为独立自然文本调用，不要求FC，执行模型的末段不是渲染。世界、worker、review和compactor的原始资料execution_only；终态只持久结果和机会，主体具体查看时显式release，新用途不fork父完整历史。WorldProfile/可选Seed分别采用，合法world可见来源/域时间与知识历史沿同一正式类型贯通，不造平行DTO。
+
+关键结果先由owner持久，目标变化、委派让出、切换、完成、取消及正常停止前同步保存最小Activity/WorkContext继续信息，引用真实结果，不等摘要、不加日记模型、不重复付费工具。摘要只维持运行历史，不自动形成Memory/Self或新证人。
+
+OpenClaw独占transcript与摘要发布。soft在完整回合自然节点选择固定前缀，保留完整tool pair及未结束pair之外的切点，捕获原生Session/history generation、role/view、当前摘要代际、结束entry与来源许可；事务外生成。发布短CAS核验同代/未改写/未被后摘要覆盖/来源仍准后，只替换捕获前缀，保留未覆盖历史与新追加尾部。每Session最多一作业，manual/automatic/overflow合流；不建第二摘要队列或数据库。
+
+H=min(实际窗口-输出预留-计量余量,role输入cap)，system/工具/媒体/历史/Nous slice共同计入；soft工程初值70%H、目标约50%H，不覆盖已有明确原生设置，不丢必需身份/目标/限定。soft失败且当前实际输入可容纳则继续并保留问题；硬超窗等待同一有效作业或同owner一次必要前台压缩，仍不足则保留历史并拒provider。换模型重算H，不因摘要模型较大扩大实际窗口，不重置预算或增本层fallback列表。
+
+当前Nous slice、WorldView、焦点、权限与时钟排除于永久摘要并在调用时重建。普通修订由RESET刷新；purge/禁传影响的transcript及派生摘要先history invalidation，再正式reset/清理，后台旧产物不得重新发布或跨群复活。摘要继承原role许可、独立记录用途/成本而非全知人格；原生memory flush对Subject继续关闭。
+
+真实验收需在同安装长任务后台压缩时追加新输入和真实tool结果，发布后继续原工作，验证尾部/完整pair/未决事项；覆盖较小模型硬等待、焦点切换、取消、来源限制与重启。仅mock、摘要函数返回或现有同步compact通过不能替代本新增边界。
+
 ## 发行与验证
 
 [包说明](../../../../packages/openclaw/README.md) 是安装/配置命令的唯一完整入口。`openclaw:pack` 生成 bundled 插件及安装器 tarball，宿主原样安装；`openclaw:prepare` 使用同一产物安装到开发实例。 原生安装使用发行物的 `nous-openclaw-install`：安装根持有固定传递依赖的 npm overrides、lockfile 和可重装插件 tarball；依赖包自身的 overrides 不被当作消费者保障。准备器在原始/补丁哈希前核验 OpenClaw 与 proxyline 解析到的 Undici、MCP SDK 实际版本；不接受旧易受影响的解析路径。
