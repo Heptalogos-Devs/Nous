@@ -11,7 +11,7 @@
     },
     "dist/builtin-openclaw-zQV8Wwjr.js": {
       "original": "62599de51a360163f8020d3f2c9ffbf7481a2424b850363d77308a99056a5303",
-      "patched": "27bfee963f865237e2f67ff8924c763be4bbb580ae123c09edad88f78845925c"
+      "patched": "c1bcae9f248898b6208ce1ff69a0dc90e2a689f8c25de44f0558e89b6d38a057"
     },
     "dist/context-engine-turn-attempt-BPzr5IBp.js": {
       "original": "4cc537188596b09ee72b9d1cff7f027e4eebc836ee43859a414b15eaac36d0fc",
@@ -83,7 +83,7 @@
     },
     "dist/sessions-spawn-tool-1FQMTkIo.js": {
       "original": "a21770222831b6574680621577da6bb0727903117210f20968afdb59a83975b8",
-      "patched": "3cb62bbd2ffb554ce9750442245e5d660820caba16b7224bd62ba47e3edfb97b"
+      "patched": "b0ebc2e62536881dde63cc39a25c3193dea8555928946484ae4d161cbeb5e9b5"
     },
     "dist/system-prompt-params-B645JcX8.js": {
       "original": "df80c676f3d6fd201212bd4c95db25898c6a00dd61f4b598f7e8c5db04d94750",
@@ -163,7 +163,7 @@
     },
     "dist/compact-gStBcHDe.js": {
       "original": "54be690135a3b02b256da3761f5c96d20ee1390da5e2e2cd03ce0c53cadc0e4f",
-      "patched": "2e993923ff27bec8616217f614045f8d2f88a7446ed767197502fce187fcb167"
+      "patched": "7c169d8fb8d4475774fd9a085d4ea1b4a3653008c2ed90b1b2d874e621f80442"
     },
     "dist/session-manager-CNTG_BAJ.js": {
       "original": "8db52c1a8d53e5f69e0bb2fe83c4fb0074b7abf6e2d03a4c832d5536fadc7024",

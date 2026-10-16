@@ -16,6 +16,7 @@ assert(proof && parent);
 const log = (event: string, fields: Record<string, unknown> = {}) =>
   appendFileSync(proof, JSON.stringify({ event, ...fields }) + "\n");
 const handoffs = new Map<string, string>();
+const childSystems = new Map<string, string | undefined>();
 const registered = new Set([parent]);
 const admitted = new Set<string>();
 let counter = 0;
@@ -53,6 +54,11 @@ const engine: ManagedContextEngine = {
   async prepareSubagentSpawn(p) {
     if (!registered.has(p.parentRunId)) throw Error("Unregistered parent");
     handoffs.set(p.childSessionKey, p.parentRunId);
+    assert(typeof p.childExtraSystemPrompt === "string");
+    assert(
+      !p.childExtraSystemPrompt.includes("EPHEMERAL_CURRENT_CONTEXT_FIXTURE"),
+    );
+    childSystems.set(p.childSessionKey, p.childExtraSystemPrompt);
     await p.persistSessionBinding({
       parentNativeRunId: p.parentRunId,
       parentNativeSessionKey: p.parentSessionKey,
@@ -76,6 +82,12 @@ const engine: ManagedContextEngine = {
         throw Error("Unregistered actual input");
       registered.add(p.runId);
     }
+    if (p.runId === parent)
+      assert(
+        p.extraSystemPrompt?.includes("EPHEMERAL_CURRENT_CONTEXT_FIXTURE"),
+      );
+    if (childSystems.has(p.sessionKey ?? ""))
+      assert.equal(p.extraSystemPrompt, childSystems.get(p.sessionKey ?? ""));
     admitted.add(p.runId);
     log("admitted", {
       runId: p.runId,

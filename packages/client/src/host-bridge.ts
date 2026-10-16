@@ -40,6 +40,10 @@ export const hostPrepareRequestSchema = z
   .object({
     ...contactIdentity,
     promptDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    currentContextDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     historyUsers: z
       .array(
         z
@@ -191,6 +195,10 @@ export const hostHandoffRequestSchema = z
     childSessionKey: z.string().min(1),
     childSessionId: z.string().min(1),
     childNousSessionId: z.uuid(),
+    childCurrentContextDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     contextMode: z.literal("isolated"),
   })
   .strict();

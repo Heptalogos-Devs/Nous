@@ -71,6 +71,9 @@ const provider = createServer((req, res) => {
     );
     const text = JSON.stringify(input.messages);
     const isWorker = input.model === "worker-model";
+    if (isWorker) assert(!text.includes("EPHEMERAL_CURRENT_CONTEXT_FIXTURE"));
+    else if (!text.includes("ready for parent review"))
+      assert(text.includes("EPHEMERAL_CURRENT_CONTEXT_FIXTURE"));
     const completion = !isWorker && text.includes("ready for parent review");
     const key = isWorker ? "worker" : completion ? "completion" : "parent";
     const turn = (turns.get(key) ?? 0) + 1;
@@ -306,6 +309,7 @@ try {
     agentId: "main",
     sessionKey,
     message: "PARENT_SYNTHETIC_TASK",
+    extraSystemPrompt: "EPHEMERAL_CURRENT_CONTEXT_FIXTURE",
     idempotencyKey: parentRunId,
     timeout: 30,
     deliver: true,

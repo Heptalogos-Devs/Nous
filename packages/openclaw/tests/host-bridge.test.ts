@@ -64,6 +64,7 @@ vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
   resolveStorePath: () => "fixture-native-store",
 }));
 import plugin from "../src/index.js";
+import { hostInputDigest } from "../src/hosted.js";
 import { HostBridge } from "../src/host.js";
 import { eventIdentity } from "@nous-wave/client/managed";
 const subjectId = "00000000-0000-4000-8000-000000000001";
@@ -1036,6 +1037,29 @@ test("natural completed turn requests background native compaction without waiti
         },
       },
     });
+  } finally {
+    await f.close();
+  }
+});
+
+test("Host preparation binds exact ephemeral current context independently of persistent caller prompt", async () => {
+  const f = await fixture();
+  mocks.history = [];
+  try {
+    const input = f.input();
+    input.extraSystemPrompt =
+      'Fixed role\n<untrusted-current-data>{"world":"EPHEMERAL_ONLY"}</untrusted-current-data>';
+    await f.engine.prepareModelInput(input);
+    expect(f.prepares[0]?.currentContextDigest).toBe(
+      await hostInputDigest(input.extraSystemPrompt),
+    );
+    expect(JSON.stringify(f.prepares)).not.toContain("EPHEMERAL_ONLY");
+    const empty = f.input("empty-context");
+    empty.extraSystemPrompt = "";
+    await f.engine.prepareModelInput(empty);
+    expect(f.prepares[1]?.currentContextDigest).toBe(await hostInputDigest(""));
+    await f.engine.prepareModelInput(f.input("absent-context"));
+    expect(f.prepares[2]).not.toHaveProperty("currentContextDigest");
   } finally {
     await f.close();
   }

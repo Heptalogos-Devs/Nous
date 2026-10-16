@@ -30,6 +30,8 @@ export interface ManagedModelInput {
   agentId: string;
   runId: string;
   prompt: string;
+  /** Actual per-run native system addition; excluded from transcript history. */
+  extraSystemPrompt?: string;
   model: Model;
   context: Context;
   signal: AbortSignal;
@@ -94,6 +96,7 @@ export interface ManagedContextEngine extends ContextEngine {
     >[0] & {
       /** Exact native run that requested this child, carried by the native tool context. */
       parentRunId: string;
+      childExtraSystemPrompt?: string;
       persistSessionBinding(value: Record<string, string>): Promise<void>;
     },
   ): Promise<{ rollback(): Promise<void> }>;

@@ -43,7 +43,7 @@ import {
   prepareCurrentMaterials,
 } from "./material.js";
 import { hostedReadonlyTools } from "./readonly-tools.js";
-import { HostedLifecycle } from "./hosted.js";
+import { HostedLifecycle, hostInputDigest } from "./hosted.js";
 import {
   loadTranscriptEventsSync,
   resolveStorePath,
@@ -655,6 +655,13 @@ function register(api: OpenClawPluginApi): void {
               childSessionKey: params.childSessionKey,
               childSessionId: child.sessionId,
               childNousSessionId: session.sessionId,
+              ...(params.childExtraSystemPrompt !== undefined
+                ? {
+                    childCurrentContextDigest: await hostInputDigest(
+                      params.childExtraSystemPrompt,
+                    ),
+                  }
+                : {}),
               contextMode: "isolated",
             });
           await params.persistSessionBinding({

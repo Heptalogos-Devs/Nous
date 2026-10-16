@@ -392,7 +392,7 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
 +			prepare: async (model, context, signal, budget) => {
 +				capturedInput = { boundaryVersion: 5,
 +                    persistAdmittedContact: async (identity,roleScope) => { assertActive(); const old=sessionManager.getEntries().find(entry=>entry.type==="custom" && entry.customType==="nous_admitted_contact" && entry.data?.identity?.invocationId===identity.invocationId); if(old && JSON.stringify(old.data)!==JSON.stringify({identity,roleScope})) throw Error("Native admitted contact identity changed"); if(!old) sessionManager.appendCustomEntry("nous_admitted_contact",{identity,roleScope}); }, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
-+                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", model, context, signal: signal ?? input.runAbortController.signal,
++                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", extraSystemPrompt:attempt.extraSystemPrompt, model, context, signal: signal ?? input.runAbortController.signal,
 +					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: Math.min(budget.reservedOutputTokens, resolveMaxTokensParam(sessionRuntime.transport.effectiveExtraParams ?? {}) ?? budget.reservedOutputTokens),
 +					audience: { visibility: attempt.sessionKey?.includes(":subagent:") ? "internal" : attempt.chatType === "direct" ? "direct" : attempt.chatType === "group" ? "group" : attempt.chatType === "channel" ? "public" : "internal", channel: attempt.messageChannel ?? attempt.messageProvider, senderId: attempt.senderId, destination: attempt.currentChannelId },
 +					measureContext: (value) => estimateNousInputTokensNative({ messages: value.messages, systemPrompt: value.systemPrompt, prompt: "" }) + estimateNousRenderedTokensNative({ systemPrompt: JSON.stringify(value.tools ?? []), prompt: "" }) };
@@ -548,7 +548,7 @@ diff --git a/dist/compact-gStBcHDe.js b/dist/compact-gStBcHDe.js
 +		// is necessary; a failed model call is not an invitation to retry forever.
 +	}
 +	if (!policy || typeof policy.assertPublish !== "function") throw Error("Required role-scoped compaction permission is unavailable");
-+	const job = runWithoutOwnedSessionTranscriptWrites(async () => { await policy.assertPublish(); return await compactEmbeddedAgentSessionDirectOnceOwned({...paramsInput,nousFixedPrefix:true,abortSignal:policy.background ? void 0 : paramsInput.abortSignal}); });
++	const job = runWithoutOwnedSessionTranscriptWrites(async () => { await policy.assertPublish(); return await compactEmbeddedAgentSessionDirectOnceOwned({...paramsInput,nousFixedPrefix:true,extraSystemPrompt:void 0,abortSignal:policy.background ? void 0 : paramsInput.abortSignal}); });
 +	nousPrefixCompactions.set(key,job);
 +	job.finally(() => {if(nousPrefixCompactions.get(key)===job) nousPrefixCompactions.delete(key);}).catch(()=>{});
 +	if (policy.background) {
@@ -1383,7 +1383,7 @@ diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQ
  import { h as finiteSecondsToTimerSafeMilliseconds } from "./number-coercion-CLj0HTDM.js";
  import { c as isRecord } from "./record-coerce-DItp3I4t.js";
  import { l as normalizeOptionalString, u as normalizeOptionalStringifiedId } from "./string-coerce-CIXf7egm.js";
-@@ -1991,8 +1992,10 @@
+@@ -1991,8 +1992,11 @@
  		return {
  			status: "ok",
  			preparation: await (await deps.resolveContextEngine(params.cfg)).prepareSubagentSpawn?.({
@@ -1391,12 +1391,13 @@ diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQ
 -				childSessionKey: params.childSessionKey,
 +				persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: params.cfg, sessionKey: params.childSessionKey, value }); if (!written.ok) throw new Error(`Required Nous handoff binding was not persisted: ${written.error ?? "unknown child session"}`); },
 +                parentRunId: params.parentRunId,
++                childExtraSystemPrompt:params.childExtraSystemPrompt,
 +                parentSessionKey: params.requesterInternalKey,
 +                childSessionKey: params.childSessionKey,
  				contextMode: params.context.mode,
  				parentSessionId: params.context.parentEntry?.sessionId,
  				parentSessionFile: params.requesterInternalKey,
-@@ -2880,13 +2883,15 @@
+@@ -2880,13 +2884,16 @@
  		const pipelineResult = await runSpawnPipeline({
  			adapter: {
  				async initialize() {
@@ -1410,10 +1411,11 @@ diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQ
  						context: preparedSpawnContext,
  						requesterInternalKey,
 +						parentRunId: ctx.requesterRunId,
++                        childExtraSystemPrompt:childSystemPrompt,
  						childSessionKey,
  						runTimeoutSeconds
  					});
-@@ -2965,6 +2970,7 @@
+@@ -2965,6 +2972,7 @@
  				return {
  					runId,
  					requesterTurnRunId: ctx.requesterTurnRunId,
@@ -1421,7 +1423,7 @@ diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQ
  					childSessionKey,
  					controllerSessionKey: ownership.controllerSessionKey,
  					requesterSessionKey: ownership.completionRequesterSessionKey,
-@@ -3082,7 +3088,7 @@
+@@ -3082,7 +3090,7 @@
  			expectsCompletionMessage: completionMode === "announce",
  			context: preparedSpawnContext.mode,
  			taskName,
@@ -1430,7 +1432,7 @@ diff --git a/dist/sessions-spawn-tool-1FQMTkIo.js b/dist/sessions-spawn-tool-1FQ
  			...resolvedModelMetadata,
  			modelApplied: resolvedModel ? modelApplied : void 0,
  			attachments: attachmentsReceipt
-@@ -3616,7 +3622,8 @@
+@@ -3616,7 +3624,8 @@
  			const cleanup = params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
  			const expectsCompletionMessage = collect ? false : params.expectsCompletionMessage !== false;
  			const sandbox = params.sandbox === "require" ? "require" : "inherit";
