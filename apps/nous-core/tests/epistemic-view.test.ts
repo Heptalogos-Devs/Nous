@@ -54,3 +54,28 @@ test("a selected knowledge stance keeps limitations and reports separate from fr
   expect(view.coverage[0]?.code).toBe("context_budget_omission");
   expect(epistemicView([], []).familiarDomains).toEqual([]);
 });
+
+test("initial setting stays a declared report and never becomes a lived experience contribution", () => {
+  const setting = create(ContextSegmentSchema, {
+    authority: "evidence",
+    domain: "runtime",
+    text: "Declared student role and library entry",
+    sourceRefs: [{ kind: "occurrence", value: "entry-setting" }],
+    epistemicClass: "observed",
+    temporal: {
+      temporalEvidence: {
+        sources: [
+          { occurrenceId: "entry-setting", sourceClass: "initial_setting" },
+        ],
+      },
+    },
+  });
+  const view = epistemicView([setting], []);
+  expect(view.experiences).toHaveLength(0);
+  expect(view.familiarDomains).toHaveLength(0);
+  expect(view.executionAssistance[0]?.epistemicClass).toBe("reported");
+  expect(view.executionAssistance[0]?.attribution).toContain(
+    "not proof of prior lived events",
+  );
+  expect(view.executionAssistance[0]?.text).toBe(setting.text);
+});

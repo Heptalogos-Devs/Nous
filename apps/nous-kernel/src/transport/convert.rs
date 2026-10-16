@@ -365,6 +365,11 @@ pub fn temporal_evidence_proto(value: &nous_core::TemporalEvidence) -> p::Tempor
             .sources
             .iter()
             .map(|source| p::SourceTemporalEvidence {
+                source_class: source
+                    .source_class
+                    .as_ref()
+                    .map(|value| value.as_str().to_owned())
+                    .unwrap_or_default(),
                 occurrence_id: source.occurrence_id.0.to_string(),
                 occurred: Some(domain_temporal_proto(
                     &source.occurred.time_domain_ref,

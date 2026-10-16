@@ -197,6 +197,7 @@ impl MaterialService {
                         sources: occurrence
                             .into_iter()
                             .map(|o| SourceTemporalEvidence {
+                                source_class: Some(o.source_class.clone()),
                                 occurrence_id: o.occurrence_id,
                                 occurred: DomainTemporalExtent {
                                     time_domain_ref: o.occurred_time_domain_ref.clone(),

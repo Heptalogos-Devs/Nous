@@ -65,6 +65,17 @@ impl MaterialService {
             .capture_semantic_in(&mut tx, input.subject)
             .await?;
         let now = observed_stamp.recorded_at;
+        if input.occurrence.source_class == SourceClass::InitialSetting
+            && (input.occurrence.world_realized.is_some()
+                || !matches!(
+                    input.occurrence.occurred_time,
+                    nous_core::TemporalExtent::Unknown
+                ))
+        {
+            return Err(Error::Invalid(
+                "initial_setting declares entry conditions, not a lived world event; occurred_time must remain unknown and world_realized absent".into(),
+            ));
+        }
         if (input.occurrence.source_class == SourceClass::WorldRealized)
             != input.occurrence.world_realized.is_some()
         {

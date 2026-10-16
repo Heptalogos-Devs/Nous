@@ -6,6 +6,7 @@ fn query(constraints: QueryConstraints) -> CognitiveQuery {
 }
 fn source(at: DateTime<Utc>, observed: DateTime<Utc>) -> SourceTemporalEvidence {
     SourceTemporalEvidence {
+        source_class: None,
         occurrence_id: OccurrenceId::new(),
         occurred: DomainTemporalExtent::real(TemporalExtent::Instant { at }),
         observed: DomainStamp {

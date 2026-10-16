@@ -508,3 +508,108 @@ async fn exact_world_knowledge_requires_each_derivation_and_region_formation() {
     );
     runtime.store.close().await;
 }
+
+#[tokio::test]
+async fn initial_setting_is_a_real_contact_with_declared_conditions_not_a_lived_event() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = runtime
+        .subjects
+        .create_subject(nous_subject::CreateSubject {
+            subject_id: None,
+            operation_id: OperationId::new(),
+            metadata: serde_json::json!({}),
+            capabilities: None,
+            cognitive_seed: None,
+        })
+        .await
+        .unwrap()
+        .subject_id;
+    let entry_at = (Utc::now() - Duration::days(365)).trunc_subsecs(6);
+    runtime
+        .clocks
+        .change(
+            subject,
+            OperationId::new(),
+            nous_runtime::ClockChange::Configure {
+                time_domain_ref: "time:entry-setting".into(),
+                rate: 0.0,
+                world_time: Some(entry_at),
+            },
+        )
+        .await
+        .unwrap();
+    let session = runtime
+        .cognition
+        .open_session(subject, None, serde_json::json!({}))
+        .await
+        .unwrap();
+    let contact_clock = runtime.clocks.read(subject).await.unwrap();
+    let real_contact = contact_clock.recorded_at;
+    let input = ObservationInput {
+        subject, session: Some(session.session_id),
+        occurrence: OccurrenceDescriptor {
+            source_class: SourceClass::InitialSetting, world_realized: None,
+            external_object_ref: Some(ObjectRef::new("object:world-profile:entry:1").unwrap()),
+            occurred_time: TemporalExtent::Unknown, occurred_time_domain_ref: "time:entry-setting".into(),
+            observed_at: Some(real_contact), observed_stamp: Some(DomainStamp {time_domain_ref:contact_clock.time_domain_ref,at:contact_clock.world_now,recorded_at:real_contact}), conversation_ref: None, actor_entity_ref: None,
+            context: serde_json::json!({"source_nature":"initial_setting","profile_revision":1}),
+        },
+        material: ObservationMaterial::InlineText {
+            text: "Declared entry conditions: student, in the library. This supplies no prior lived history.".into(),
+            media_type: "text/plain".into(),
+        }, entities: vec![], runtime: Default::default(),
+    };
+    let request = uuid::Uuid::new_v4();
+    let first = runtime
+        .material
+        .record_observation_once(input.clone(), Some(request))
+        .await
+        .unwrap();
+    let replay = runtime
+        .material
+        .record_observation_once(input.clone(), Some(request))
+        .await
+        .unwrap();
+    assert_eq!(
+        first.occurrence.occurrence_id,
+        replay.occurrence.occurrence_id
+    );
+    assert_eq!(first.occurrence.source_class, SourceClass::InitialSetting);
+    assert!(matches!(
+        first.occurrence.occurred_time,
+        TemporalExtent::Unknown
+    ));
+    assert!(first.occurrence.world_realized.is_none());
+    assert_eq!(first.occurrence.observed_at, real_contact);
+    assert_eq!(first.occurrence.observed_stamp.at, entry_at);
+    assert_eq!(
+        first.occurrence.observed_stamp.time_domain_ref,
+        "time:entry-setting"
+    );
+    let contribution = runtime
+        .material
+        .context_sources(
+            subject,
+            &[CognitiveRef::Occurrence(first.occurrence.occurrence_id)],
+            4096,
+            None,
+        )
+        .await
+        .unwrap()
+        .pop()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        contribution.temporal.unwrap().temporal_evidence.sources[0].source_class,
+        Some(SourceClass::InitialSetting)
+    );
+    let mut forged = input;
+    forged.occurrence.occurred_time = TemporalExtent::Instant { at: entry_at };
+    let problem = runtime
+        .material
+        .record_observation(forged)
+        .await
+        .unwrap_err();
+    assert!(problem.to_string().contains("not a lived world event"));
+}

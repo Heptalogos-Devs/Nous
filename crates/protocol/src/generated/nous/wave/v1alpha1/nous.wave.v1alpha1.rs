@@ -903,6 +903,8 @@ pub struct SourceTemporalEvidence {
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="5")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(string, tag="6")]
+    pub source_class: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TemporalEvidence {

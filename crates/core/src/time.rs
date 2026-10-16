@@ -220,6 +220,8 @@ pub fn is_real_time_domain(value: &str) -> bool {
 /// witness by combining the event time of one contact with another observation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceTemporalEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_class: Option<crate::SourceClass>,
     pub occurrence_id: crate::OccurrenceId,
     pub occurred: DomainTemporalExtent,
     pub observed: DomainStamp,

@@ -19,15 +19,23 @@ export function epistemicView(
     coverage: [...coverage],
   });
   for (const source of segments) {
+    const evidenceSources = source.temporal?.temporalEvidence?.sources ?? [];
+    const initialSettingOnly =
+      evidenceSources.length > 0 &&
+      evidenceSources.every((item) => item.sourceClass === "initial_setting");
+    const includesInitialSetting = evidenceSources.some(
+      (item) => item.sourceClass === "initial_setting",
+    );
     const entry = create(EpistemicEntrySchema, {
       sourceRefs: source.sourceRefs,
       text: source.text,
       evidence: source.evidence,
       temporal: source.temporal,
       domainKnowledge: source.domainKnowledge,
-      epistemicClass: source.epistemicClass,
-      attribution:
-        "Subject understanding; preserve source reports, uncertainty and exact revision attribution",
+      epistemicClass: initialSettingOnly ? "reported" : source.epistemicClass,
+      attribution: includesInitialSetting
+        ? "Includes initial setting declarations, not proof of prior lived events, childhood or mastered ability; preserve the exact setting source separately from actual experience"
+        : "Subject understanding; preserve source reports, uncertainty and exact revision attribution",
     });
     if (source.domainKnowledge) {
       view.familiarDomains.push(entry);
@@ -53,6 +61,7 @@ export function epistemicView(
     )
       view.acceptedFactsAndReports.push(entry);
     if (
+      !initialSettingOnly &&
       source.sourceRefs.some((r) =>
         ["episode", "episode_revision", "journal", "journal_revision"].includes(
           r.kind,
@@ -67,11 +76,12 @@ export function epistemicView(
       view.executionAssistance.push(
         create(EpistemicEntrySchema, {
           ...entry,
-          attribution:
-            "Current supplied information or assistance; contact alone does not establish prior personal experience or mastered ability",
+          attribution: includesInitialSetting
+            ? entry.attribution
+            : "Current supplied information or assistance; contact alone does not establish prior personal experience or mastered ability",
         }),
       );
-      if (source.temporal?.temporalEvidence?.sources.length)
+      if (!initialSettingOnly && evidenceSources.length)
         view.experiences.push(entry);
     }
   }

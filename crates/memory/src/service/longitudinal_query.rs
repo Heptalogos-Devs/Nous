@@ -454,6 +454,7 @@ pub(super) async fn longitudinal_metadata(
             }
         }
         value.temporal.sources.push(SourceTemporalEvidence {
+            source_class: Some(SourceClass::from(row.get::<String, _>("source_class"))),
             occurrence_id: OccurrenceId(row.get("occurrence_id")),
             occurred: DomainTemporalExtent {
                 time_domain_ref: row.get("occurred_time_domain_ref"),

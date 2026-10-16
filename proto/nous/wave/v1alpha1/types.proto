@@ -206,7 +206,7 @@ message Memory {
   string epistemic_class = 29;
   optional string grounding_occurrence_id = 30 [(reference_kind) = "occurrence"];
 }
-message SourceTemporalEvidence { string occurrence_id = 1 [(reference_kind) = "occurrence"]; DomainTemporalExtent occurred = 2; DomainStamp observed = 3; google.protobuf.Timestamp observed_at = 4; google.protobuf.Timestamp recorded_at = 5; }
+message SourceTemporalEvidence { string occurrence_id = 1 [(reference_kind) = "occurrence"]; DomainTemporalExtent occurred = 2; DomainStamp observed = 3; google.protobuf.Timestamp observed_at = 4; google.protobuf.Timestamp recorded_at = 5; string source_class = 6; }
 message TemporalEvidence { repeated SourceTemporalEvidence sources = 1; reserved 2,3; }
 message RevisionRelation { string from_revision_id = 1 [(reference_kind) = "memory_revision"]; string to_revision_id = 2 [(reference_kind) = "memory_revision"]; string relation = 3; }
 message ListMemoriesResponse { repeated Memory items = 1; string next_page_token = 2; }
