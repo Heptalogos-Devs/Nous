@@ -71,6 +71,7 @@ export async function sampleVideo(
     const bounded = Math.min(duration, policy.max_video_seconds);
     const frames: { bytes: Uint8Array; timestamp: number }[] = [];
     const requested: number[] = [];
+    const omitted: number[] = [];
     for (let ordinal = 0; ordinal < policy.max_frames; ordinal++) {
       const at =
         policy.max_frames === 1
@@ -109,11 +110,14 @@ export async function sampleVideo(
       ]);
       const outputStat = await stat(output).catch(
         (error: NodeJS.ErrnoException) => {
-          if (animatedGif && error.code === "ENOENT") return undefined;
+          if (error.code === "ENOENT") return undefined;
           throw error;
         },
       );
-      if (!outputStat) continue;
+      if (!outputStat) {
+        omitted.push(at);
+        continue;
+      }
       const size = outputStat.size;
       if (size < 4 || size > policy.max_frame_bytes)
         throw new Error("Video frame exceeds bounds");
@@ -191,12 +195,13 @@ export async function sampleVideo(
         source_duration_seconds: duration,
         sampled_duration_seconds: bounded,
         truncated: duration > bounded,
+        frame_coverage: "sampled",
+        partial_coverage: true,
+        ...(omitted.length ? { omitted_sample_timestamps: omitted } : {}),
         ...(animatedGif
           ? {
               source_media_type: "image/gif",
-              frame_coverage: "sampled",
               animated_timeline: true,
-              partial_coverage: true,
             }
           : {}),
       },

@@ -87,6 +87,38 @@ execFileSync(
   ],
   { stdio: "pipe" },
 );
+execFileSync(
+  ffmpeg,
+  [
+    "-nostdin",
+    "-i",
+    join(home, "timeline.gif"),
+    "-c:v",
+    "mjpeg",
+    "-pix_fmt",
+    "yuvj420p",
+    "-r",
+    "2",
+    "-t",
+    "2",
+    "-y",
+    join(home, "timeline.mov"),
+  ],
+  { stdio: "pipe" },
+);
+const video = await sampleVideo(
+  await readFile(join(home, "timeline.mov")),
+  policy,
+  home,
+  [],
+  false,
+);
+assert(video.frames.length >= 3);
+assert.equal(video.quality.partial_coverage, true);
+assert(
+  video.quality.omitted_sample_timestamps?.length,
+  "low-frame-rate tail must be an explicit omitted sample",
+);
 await writeFile(
   join(home, "manifest.json"),
   JSON.stringify(
@@ -94,6 +126,7 @@ await writeFile(
       ffmpeg: full.quality.ffmpeg_version,
       full: full.quality,
       partial: partial.quality,
+      video: video.quality,
       colors,
       modelCalls: 0,
     },
@@ -105,6 +138,7 @@ console.log(
   JSON.stringify({
     home,
     animatedGif: "PASS",
+    nativeVideo: "PASS",
     pngDecoder: "PASS",
     modelCalls: 0,
   }),

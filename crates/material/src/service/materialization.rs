@@ -719,6 +719,7 @@ async fn perception_metadata_in(
         "source_duration_seconds",
         "sampled_duration_seconds",
         "requested_timestamps",
+        "omitted_sample_timestamps",
         "sampled_timestamps",
         "frame_coverage",
         "partial_coverage",
