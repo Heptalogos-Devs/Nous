@@ -434,3 +434,125 @@ async fn migration_upgrades_only_known_canonical_metadata_and_preserves_result_i
         recorded.parse::<chrono::DateTime<Utc>>().unwrap()
     );
 }
+
+#[tokio::test]
+async fn owner_state_window_uses_committed_world_coordinates_and_real_recording() {
+    use nous_motivation::{Criterion, CriterionReader, OfficialCriterionReader, Truth};
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = test_support::query::subject(&runtime).await;
+    let world = runtime
+        .clocks
+        .change(
+            subject,
+            OperationId::new(),
+            ClockChange::Configure {
+                time_domain_ref: "time:course".into(),
+                rate: 0.0,
+                world_time: Some(Utc::now() + Duration::days(4)),
+            },
+        )
+        .await
+        .unwrap();
+    let source =
+        test_support::observation(&runtime, subject, "a complete owner-state timeline").await;
+    let memory = runtime
+        .require_memory()
+        .unwrap()
+        .form_memory(form_input(
+            subject,
+            source.occurrence.occurrence_id,
+            OperationId::new(),
+            "Owner state in a paused course world",
+        ))
+        .await
+        .unwrap();
+    runtime
+        .clocks
+        .change(
+            subject,
+            OperationId::new(),
+            ClockChange::Advance { seconds: 3600.0 },
+        )
+        .await
+        .unwrap();
+    runtime
+        .require_memory()
+        .unwrap()
+        .mutate_memory_lifecycle(
+            subject,
+            memory.object.memory_id,
+            OperationId::new(),
+            memory.object.object_epoch,
+            nous_memory::LifecycleAction::Suppress,
+        )
+        .await
+        .unwrap();
+    let end = runtime
+        .clocks
+        .change(
+            subject,
+            OperationId::new(),
+            ClockChange::Advance { seconds: 3600.0 },
+        )
+        .await
+        .unwrap();
+    let reader = OfficialCriterionReader {
+        material: runtime.material.clone(),
+        social: None,
+    };
+    let criterion = Criterion::OwnerState {
+        version: 1,
+        reference: CognitiveRef::MemoryRevision(memory.revision.memory_revision_id),
+        state: "normal".into(),
+    };
+    let mut tx = runtime.store.read_view().await.unwrap();
+    let read = reader
+        .read_in(
+            &mut tx,
+            subject,
+            &criterion,
+            &DomainTemporalExtent {
+                time_domain_ref: "time:course".into(),
+                extent: TemporalExtent::Interval {
+                    start: Some(world.world_now),
+                    end: Some(end.world_now),
+                },
+            },
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(
+        read.complete,
+        "actual complete owner history can close this world window"
+    );
+    assert_eq!(read.samples.first().unwrap().truth, Truth::True);
+    assert_eq!(read.samples.last().unwrap().truth, Truth::False);
+    assert_eq!(
+        read.samples.last().unwrap().at,
+        world.world_now + Duration::hours(1)
+    );
+    let other = reader
+        .read_in(
+            &mut tx,
+            subject,
+            &criterion,
+            &DomainTemporalExtent {
+                time_domain_ref: "time:other".into(),
+                extent: TemporalExtent::Interval {
+                    start: Some(world.world_now),
+                    end: Some(end.world_now),
+                },
+            },
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(!other.complete);
+    assert!(other.samples.is_empty());
+    tx.commit().await.unwrap();
+    let recorded: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT max(recorded_at) FROM authority_object_states WHERE subject_id=$1 AND object_kind='memory'")
+        .bind(subject.0).fetch_one(runtime.store.pool()).await.unwrap();
+    assert!((recorded - Utc::now()).num_seconds().abs() < 2);
+}

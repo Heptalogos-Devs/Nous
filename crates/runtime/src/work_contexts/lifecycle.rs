@@ -90,6 +90,7 @@ impl CognitiveRuntimeService {
                 MutationStart::Active(mutation) => mutation,
             };
         let tx = mutation.tx();
+        self.capture_semantic_in(tx, subject).await?;
         let row = sqlx::query(
             "SELECT state,revision FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR UPDATE",
         )
@@ -208,6 +209,7 @@ impl CognitiveRuntimeService {
             MutationStart::Active(mutation) => mutation,
         };
         let tx = mutation.tx();
+        self.capture_semantic_in(tx, subject).await?;
         if let Some(work_context_id) = work_context_id {
             let context = sqlx::query(
                 "SELECT subject_id,state FROM work_contexts WHERE subject_id=$1 AND work_context_id=$2 FOR SHARE",

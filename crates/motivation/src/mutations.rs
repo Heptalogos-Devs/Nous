@@ -30,7 +30,10 @@ impl MotivationService {
             }
             MutationStart::Active(m) => m,
         };
-        let formed_stamp = self.clocks.capture_in(mutation.tx(), input.subject).await?;
+        let formed_stamp = self
+            .runtime
+            .capture_semantic_in(mutation.tx(), input.subject)
+            .await?;
         self.validate_content(mutation.tx(), input.subject, &input.content)
             .await?;
         let object = Uuid::now_v7();
@@ -118,7 +121,10 @@ impl MotivationService {
                 "Different motivation matter requires a distinct object".into(),
             ));
         }
-        let formed_stamp = self.clocks.capture_in(mutation.tx(), input.subject).await?;
+        let formed_stamp = self
+            .runtime
+            .capture_semantic_in(mutation.tx(), input.subject)
+            .await?;
         self.validate_content(mutation.tx(), input.subject, &input.content)
             .await?;
         if serde_json::to_value(&current.content).map_err(json_error)?
