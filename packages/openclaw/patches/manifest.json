@@ -108,6 +108,14 @@
     "dist/agent-harness-runtime-CBvQyLlU.d.ts": {
       "original": "3cfc17d784465aa55353cd625cddba5c923eab6f102df8eb8ec21c4c3375ae35",
       "patched": "133adeba1ba755f3fbac4f2072cfddfea8fd878d84bc0ea928e0827423674d52"
+    },
+    "dist/payloads-B7_zRmw4.js": {
+      "original": "9e350f90dde0ff304d2d9394f7c7f4ecd8209d58994d11154993a93d5f59068d",
+      "patched": "c7befbd0d2ec02e5e4a2fdb0f5b5c33fccd4a9df096a4959fbecd5d10cdf475c"
+    },
+    "dist/delivery.runtime-CAsclR-9.js": {
+      "original": "87623e02f9f3d0750562589b366942db7f677bdab228f90d389accb74b1b5845",
+      "patched": "4d7f86641e2fd6e617eb0641e0412f25247ad78bc74ae2925716af27950be864"
     }
   },
   "dependencyOverrides": {

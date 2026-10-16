@@ -482,6 +482,40 @@ index 5040367..4af6e73 100644
  				if (leaseLost) throw new Error(`Legacy delivery ${params.entry.id} preparation lease was lost`);
  				const startedEntry = {
  					...sourceEntry,
+diff --git a/dist/delivery.runtime-CAsclR-9.js b/dist/delivery.runtime-CAsclR-9.js
+index 0c7e2b5..d1cf687 100644
+--- a/dist/delivery.runtime-CAsclR-9.js
++++ b/dist/delivery.runtime-CAsclR-9.js
+@@ -7,7 +7,7 @@ import { t as formatErrorMessage } from "./errors-u9zSVTak.js";
+ import { m as resolveAgentWorkspaceDir, y as resolveDefaultAgentId } from "./agent-scope-config-CUiGBd59.js";
+ import { _ as resolveSessionAgentId } from "./agent-scope-CSlN0kZb.js";
+ import { c as formatUnknownChannelMessage } from "./error-format-Cae7EwnT.js";
+-import { i as copyReplyPayloadMetadata } from "./reply-payload-DahKk-7n.js";
++import { a as getReplyPayloadMetadata, i as copyReplyPayloadMetadata } from "./reply-payload-DahKk-7n.js";
+ import { a as normalizeChannelId, t as getChannelPlugin } from "./registry-CkcjiYIl.js";
+ import "./plugins-BssTyOqH.js";
+ import { a as isInternalMessageChannel } from "./message-channel-BGKf9KPa.js";
+@@ -611,12 +611,20 @@ async function deliverAgentCommandResult(params) {
+ 			const restartAbort = createRestartOnlyAbortSignal(opts.abortSignal);
+ 			let send;
+ 			try {
++				const producers = deliveryPayloads.map((payload) => getReplyPayloadMetadata(payload)?.nativeFinalProducer);
++				const producer = producers[0];
++				const nativeFinalProducer = producer && producer.runId === opts.runId && producer.sessionKey === effectiveSessionKey && producers.every((value) => value?.runId === producer.runId && value?.sessionKey === producer.sessionKey && value?.invocationId === producer.invocationId) ? producer : void 0;
+ 				send = await sendDurableMessageBatchCore({
+ 					cfg,
+ 					channel: deliveryChannel,
+ 					to: deliveryTarget,
+ 					accountId: resolvedAccountId,
+ 					payloads: deliveryPayloads,
++					...nativeFinalProducer ? {
++						deliveryIntentId: JSON.stringify(["native-agent-final", nativeFinalProducer.runId, nativeFinalProducer.invocationId]),
++						runId: nativeFinalProducer.runId,
++						completionRetention: "permanent"
++					} : {},
+ 					session: outboundSession,
+ 					identity: resolveAgentOutboundIdentity(cfg, deliveryAgentId),
+ 					replyPayloadSendingHook: {
 diff --git a/dist/history-image-prune-Dg0CDQ4a.js b/dist/history-image-prune-Dg0CDQ4a.js
 index dfbd9c1..4aac267 100644
 --- a/dist/history-image-prune-Dg0CDQ4a.js
@@ -598,6 +632,26 @@ index 5fdef04..b4069f1 100644
  		};
  		const runtime = new Proxy(registryParams.runtime, { get(target, prop, receiver) {
  			const runWithPluginScope = (run) => {
+diff --git a/dist/payloads-B7_zRmw4.js b/dist/payloads-B7_zRmw4.js
+index d9dcef9..6b3535c 100644
+--- a/dist/payloads-B7_zRmw4.js
++++ b/dist/payloads-B7_zRmw4.js
+@@ -458,6 +458,15 @@ function buildEmbeddedRunPayloads(params) {
+ 		if (item.isReasoning === true) payload.isReasoning = true;
+ 		if (item.isError === true && params.sourceReplyDeliveryMode === "message_tool_only" && explicitFinalSourceReply === false) markReplyPayloadForSourceSuppressionDelivery(payload);
+ 		if (heartbeatTerminalToolFailure) setReplyPayloadMetadata(payload, { heartbeatTerminalToolFailure });
++		// Preserve the completed native application identity before assistant messages
++		// become transport payloads. This is internal metadata, never model content.
++		const applied = (params.currentAssistant ?? params.lastAssistant)?.nousHostBridge;
++		const appliedIdentity = applied?.outcome === "completed" ? applied.identity : void 0;
++		if (!item.isError && !item.isReasoning && appliedIdentity?.native?.runId === params.runId && typeof appliedIdentity.invocationId === "string" && appliedIdentity.invocationId.length > 0) setReplyPayloadMetadata(payload, { nativeFinalProducer: {
++			runId: appliedIdentity.native.runId,
++			sessionKey: appliedIdentity.native.sessionKey,
++			invocationId: appliedIdentity.invocationId
++		} });
+ 		if (!item.isError && !item.isReasoning && (params.assistantMessageIndex !== void 0 || params.assistantTranscriptOwned === true)) setReplyPayloadMetadata(payload, {
+ 			...params.assistantMessageIndex !== void 0 ? { assistantMessageIndex: params.assistantMessageIndex } : {},
+ 			...item.media?.length ? { assistantTranscriptMediaUrls: [...item.media] } : {},
 diff --git a/dist/plugin-entry-C-sjzaBe.d.ts b/dist/plugin-entry-C-sjzaBe.d.ts
 index ffb23d9..efd267c 100644
 --- a/dist/plugin-entry-C-sjzaBe.d.ts
