@@ -128,28 +128,31 @@ export type HostAdmittedRequest = z.infer<typeof hostAdmittedRequestSchema>;
 export type HostHandoffRequest = z.infer<typeof hostHandoffRequestSchema>;
 export type HostFeedbackRequest = z.infer<typeof hostFeedbackRequestSchema>;
 export type HostFeedbackResponse = z.infer<typeof hostFeedbackResponseSchema>;
+/** HTTP already admits only JSON values. Keep canonical protobuf objects opaque
+ * here; strict z.json/fromJson remain the runtime authorities. Recursive JSON
+ * value definitions cannot survive arbitrary OpenAPI component embedding. */
+function httpSchema(schema: z.ZodType) {
+  const generated = z.toJSONSchema(schema, {
+    target: "draft-07",
+    override({ zodSchema, jsonSchema }) {
+      if (zodSchema === canonicalJson) jsonSchema.additionalProperties = {};
+    },
+  });
+  // Only discard unreachable generated definitions; every actual wire field is
+  // still derived from the owning runtime schema, never copied or stripped.
+  const { definitions, ...body } = generated;
+  if (definitions && !JSON.stringify(body).includes('"$ref"'))
+    delete generated.definitions;
+  return generated;
+}
 export const HOST_BRIDGE_JSON_SCHEMAS = {
-  prepareRequest: z.toJSONSchema(hostPrepareRequestSchema, {
-    target: "draft-7",
-  }),
-  prepareResponse: z.toJSONSchema(hostPrepareResponseSchema, {
-    target: "draft-7",
-  }),
-  admittedRequest: z.toJSONSchema(hostAdmittedRequestSchema, {
-    target: "draft-7",
-  }),
-  acknowledgement: z.toJSONSchema(hostAcknowledgementSchema, {
-    target: "draft-7",
-  }),
-  handoffRequest: z.toJSONSchema(hostHandoffRequestSchema, {
-    target: "draft-7",
-  }),
-  feedbackRequest: z.toJSONSchema(hostFeedbackRequestSchema, {
-    target: "draft-7",
-  }),
-  feedbackResponse: z.toJSONSchema(hostFeedbackResponseSchema, {
-    target: "draft-7",
-  }),
+  prepareRequest: httpSchema(hostPrepareRequestSchema),
+  prepareResponse: httpSchema(hostPrepareResponseSchema),
+  admittedRequest: httpSchema(hostAdmittedRequestSchema),
+  acknowledgement: httpSchema(hostAcknowledgementSchema),
+  handoffRequest: httpSchema(hostHandoffRequestSchema),
+  feedbackRequest: httpSchema(hostFeedbackRequestSchema),
+  feedbackResponse: httpSchema(hostFeedbackResponseSchema),
 };
 
 // Canonical codecs are public so Hosts never import the bundled internal

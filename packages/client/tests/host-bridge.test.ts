@@ -11,8 +11,10 @@ import {
   withHostObservationScope,
 } from "../src/host-bridge.js";
 test("public Host bridge schemas use draft 7 for the formal Fastify/Ajv owner", () => {
-  for (const schema of Object.values(HOST_BRIDGE_JSON_SCHEMAS))
+  for (const schema of Object.values(HOST_BRIDGE_JSON_SCHEMAS)) {
     expect(schema.$schema).toBe("http://json-schema.org/draft-07/schema#");
+    expect(JSON.stringify(schema)).not.toContain('"$ref"');
+  }
 });
 test("public codecs preserve canonical scope and reject unknown cognition fields", () => {
   const usage = decodeCognitionUsage(
