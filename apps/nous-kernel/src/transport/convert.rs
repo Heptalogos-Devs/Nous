@@ -335,3 +335,26 @@ pub fn domain_stamp_proto(value: &nous_core::DomainStamp) -> p::DomainStamp {
         recorded_at: Some(timestamp(value.recorded_at)),
     }
 }
+
+pub fn domain_stamp(value: p::DomainStamp) -> Result<nous_core::DomainStamp> {
+    if value.time_domain_ref.trim().is_empty() || value.time_domain_ref.len() > 256 {
+        return Err(Error::Invalid("invalid time domain".into()));
+    }
+    Ok(nous_core::DomainStamp {
+        time_domain_ref: value.time_domain_ref,
+        at: required(time(value.at)?, "semantic at")?,
+        recorded_at: required(time(value.recorded_at)?, "real recorded_at")?,
+    })
+}
+
+pub fn formation_proto(
+    domain: &str,
+    at: DateTime<Utc>,
+    recorded_at: DateTime<Utc>,
+) -> p::DomainStamp {
+    p::DomainStamp {
+        time_domain_ref: domain.into(),
+        at: Some(timestamp(at)),
+        recorded_at: Some(timestamp(recorded_at)),
+    }
+}

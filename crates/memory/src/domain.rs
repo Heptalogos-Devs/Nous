@@ -121,6 +121,7 @@ pub struct MemoryRevision {
     pub epistemic_class: EpistemicClass,
     pub valid_time: TemporalExtent,
     pub formed_at: DateTime<Utc>,
+    pub formed_time_domain_ref: String,
     pub recorded_at: DateTime<Utc>,
 }
 
@@ -378,6 +379,7 @@ pub struct CognitiveSchemaRevision {
     pub boundary_definition: String,
     pub formation_kind: SchemaFormationKind,
     pub formed_at: DateTime<Utc>,
+    pub formed_time_domain_ref: String,
     pub recorded_at: DateTime<Utc>,
     pub producer_signature_id: Option<Uuid>,
 }

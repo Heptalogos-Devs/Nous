@@ -173,7 +173,11 @@ pub(super) fn schema_view(value: SchemaView) -> p::CognitiveSchema {
                 revoked_at: link.revoked_at.map(timestamp),
             })
             .collect(),
-        formed_at: Some(timestamp(revision.formed_at)),
+        formed_at: Some(formation_proto(
+            &revision.formed_time_domain_ref,
+            revision.formed_at,
+            revision.recorded_at,
+        )),
         recorded_at: Some(timestamp(revision.recorded_at)),
         formation_kind: enum_name(revision.formation_kind),
         producer_signature_id: revision.producer_signature_id.map(|id| id.to_string()),

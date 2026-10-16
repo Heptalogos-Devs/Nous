@@ -69,6 +69,7 @@ pub(super) fn decode_memory_row(
             row.try_get("valid_time_end").map_err(db)?,
         )?,
         formed_at: row.try_get("formed_at").map_err(db)?,
+        formed_time_domain_ref: row.try_get("formed_time_domain_ref").map_err(db)?,
         recorded_at: row.try_get("recorded_at").map_err(db)?,
     };
     Ok((object, revision))

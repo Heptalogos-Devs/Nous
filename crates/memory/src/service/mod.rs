@@ -94,8 +94,8 @@ impl MemoryService {
         )
         .await?;
         if let MutationStart::Active(mutation) = &mut start {
-            mutation
-                .capture_authority_time(self.cognition.now(subject))
+            self.cognition
+                .capture_semantic_in(mutation.tx(), subject)
                 .await?;
         }
         Ok(start)
@@ -205,14 +205,12 @@ impl MemoryService {
         operation: OperationId,
         started_at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>> {
-        Ok(AuthorityStore::model_result_cognitive_time_in(
-            tx,
-            subject,
-            "memory",
-            &operation.0.to_string(),
-        )
-        .await?
-        .unwrap_or(started_at))
+        let _ = started_at;
+        Ok(self
+            .cognition
+            .formation_stamp_in(tx, subject, "memory", operation)
+            .await?
+            .at)
     }
 
     pub fn new(

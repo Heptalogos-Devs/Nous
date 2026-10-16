@@ -33,7 +33,11 @@ pub(super) fn revision(
         parent_episode_revision_id: value.parent_episode_revision_id.map(|v| v.0.to_string()),
         experience_time: Some(temporal_proto(&value.experience_time)),
         boundary_explanation: value.boundary_explanation,
-        formed_at: Some(timestamp(value.formed_at)),
+        formed_at: Some(formation_proto(
+            &value.formed_time_domain_ref,
+            value.formed_at,
+            value.recorded_at,
+        )),
         recorded_at: Some(timestamp(value.recorded_at)),
         producer_signature_id: value.producer_signature_id.map(|v| v.to_string()),
         members: members

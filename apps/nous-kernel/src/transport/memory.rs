@@ -44,7 +44,11 @@ pub(super) fn view(input: MemoryView) -> p::Memory {
             observed_at: input.temporal_evidence.observed_at.map(timestamp),
         }),
         valid_time: Some(temporal_proto(&revision.valid_time)),
-        formed_at: Some(timestamp(revision.formed_at)),
+        formed_at: Some(formation_proto(
+            &revision.formed_time_domain_ref,
+            revision.formed_at,
+            revision.recorded_at,
+        )),
         recorded_at: Some(timestamp(revision.recorded_at)),
         formation_mode: enum_name(revision.formation_mode),
         revision_no: revision.revision_no,

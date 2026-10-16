@@ -51,7 +51,7 @@ message SelfRecord {
   string integrity_state = 11;
   string suppression_state = 12;
   google.protobuf.Timestamp created_at = 13;
-  google.protobuf.Timestamp formed_at = 14;
+  DomainStamp formed_at = 14;
   google.protobuf.Timestamp recorded_at = 15;
   repeated SelfEvidence evidence = 16;
 }

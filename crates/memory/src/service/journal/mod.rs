@@ -84,6 +84,7 @@ pub struct JournalRevision {
     pub temporal_scope: TemporalExtent,
     pub narrative: String,
     pub formed_at: DateTime<Utc>,
+    pub formed_time_domain_ref: String,
     pub recorded_at: DateTime<Utc>,
     pub producer_signature_id: Option<Uuid>,
 }
@@ -141,7 +142,7 @@ impl MemoryService {
         objects: &[Uuid],
     ) -> Result<std::collections::HashMap<Uuid, JournalView>> {
         use std::collections::HashMap;
-        let rows = sqlx::query("SELECT o.*,r.journal_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end,r.narrative,r.formed_at,r.recorded_at,r.producer_signature_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id WHERE o.subject_id=$1 AND (r.journal_revision_id=ANY($2) OR (o.journal_id=ANY($3) AND r.journal_revision_id=o.current_revision_id))").bind(subject.0).bind(revisions).bind(objects).fetch_all(&mut **tx).await.map_err(db)?;
+        let rows = sqlx::query("SELECT o.*,r.journal_revision_id,r.revision_no,r.parent_revision_id,r.revision_intent,r.title,r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end,r.narrative,r.formed_at,r.formed_time_domain_ref,r.recorded_at,r.producer_signature_id FROM journal_objects o JOIN journal_revisions r ON r.journal_id=o.journal_id WHERE o.subject_id=$1 AND (r.journal_revision_id=ANY($2) OR (o.journal_id=ANY($3) AND r.journal_revision_id=o.current_revision_id))").bind(subject.0).bind(revisions).bind(objects).fetch_all(&mut **tx).await.map_err(db)?;
         let selected = rows
             .iter()
             .map(|row| row.try_get::<Uuid, _>("journal_revision_id").map_err(db))
@@ -204,6 +205,9 @@ impl MemoryService {
                         )?,
                         narrative: row.try_get("narrative").map_err(db)?,
                         formed_at: row.try_get("formed_at").map_err(db)?,
+                        formed_time_domain_ref: row
+                            .try_get("formed_time_domain_ref")
+                            .map_err(db)?,
                         recorded_at: row.try_get("recorded_at").map_err(db)?,
                         producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
                     },

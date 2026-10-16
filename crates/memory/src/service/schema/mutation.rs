@@ -324,6 +324,10 @@ impl MemoryService {
         } else {
             None
         };
+        let formed = self
+            .cognition
+            .formation_stamp_in(mutation.tx(), input.subject, "memory", input.operation_id)
+            .await?;
         self.write_schema_revision_in(
             mutation.tx(),
             input.subject,
@@ -334,7 +338,7 @@ impl MemoryService {
                 parent: Some(parent),
                 intent: Some(input.intent),
                 number: revision_no,
-                formed_at: self.cognition.now(input.subject),
+                formed_at: formed.at,
                 recorded_at: self.cognition.now(input.subject),
                 producer,
             },

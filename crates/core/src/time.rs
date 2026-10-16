@@ -140,7 +140,7 @@ impl TimePredicate {
 }
 
 /// An instant belongs to its named time domain. Recording time is always real UTC.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DomainStamp {
     pub time_domain_ref: String,
     pub at: DateTime<Utc>,

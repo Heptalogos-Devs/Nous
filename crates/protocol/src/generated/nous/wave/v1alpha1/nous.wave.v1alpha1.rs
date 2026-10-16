@@ -851,7 +851,7 @@ pub struct Memory {
     #[prost(message, optional, tag="20")]
     pub valid_time: ::core::option::Option<TemporalExtent>,
     #[prost(message, optional, tag="21")]
-    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    pub formed_at: ::core::option::Option<DomainStamp>,
     #[prost(message, optional, tag="22")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(string, tag="23")]
@@ -1460,7 +1460,7 @@ pub struct EpisodeRevision {
     #[prost(string, tag="10")]
     pub boundary_explanation: ::prost::alloc::string::String,
     #[prost(message, optional, tag="11")]
-    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    pub formed_at: ::core::option::Option<DomainStamp>,
     #[prost(message, optional, tag="12")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(string, optional, tag="13")]
@@ -2162,7 +2162,7 @@ pub struct JournalRevision {
     #[prost(string, tag="9")]
     pub narrative: ::prost::alloc::string::String,
     #[prost(message, optional, tag="10")]
-    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    pub formed_at: ::core::option::Option<DomainStamp>,
     #[prost(message, optional, tag="11")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(string, optional, tag="12")]
@@ -2566,7 +2566,7 @@ pub struct CognitiveSchema {
     #[prost(message, repeated, tag="13")]
     pub evidence_links: ::prost::alloc::vec::Vec<SchemaEvidenceLink>,
     #[prost(message, optional, tag="14")]
-    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    pub formed_at: ::core::option::Option<DomainStamp>,
     #[prost(message, optional, tag="15")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(string, tag="16")]
@@ -3052,7 +3052,7 @@ pub struct SelfRecord {
     #[prost(message, optional, tag="13")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="14")]
-    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    pub formed_at: ::core::option::Option<DomainStamp>,
     #[prost(message, optional, tag="15")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, repeated, tag="16")]
@@ -3481,13 +3481,11 @@ pub struct MotivationRecord {
     #[prost(message, optional, tag="13")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="14")]
-    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    pub formed_at: ::core::option::Option<DomainStamp>,
     #[prost(message, optional, tag="15")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, repeated, tag="16")]
     pub evidence: ::prost::alloc::vec::Vec<MotivationEvidence>,
-    #[prost(message, optional, tag="17")]
-    pub formed_stamp: ::core::option::Option<DomainStamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdoptMotivationRequest {
@@ -3879,7 +3877,7 @@ pub struct SocialRecord {
     #[prost(message, optional, tag="13")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag="14")]
-    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    pub formed_at: ::core::option::Option<DomainStamp>,
     #[prost(message, optional, tag="15")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, repeated, tag="16")]

@@ -16,7 +16,11 @@ pub(super) fn journal_revision_proto(value: nous_memory::JournalView) -> p::Jour
         title: revision.title,
         temporal_scope: Some(temporal_proto(&revision.temporal_scope)),
         narrative: revision.narrative,
-        formed_at: Some(timestamp(revision.formed_at)),
+        formed_at: Some(formation_proto(
+            &revision.formed_time_domain_ref,
+            revision.formed_at,
+            revision.recorded_at,
+        )),
         recorded_at: Some(timestamp(revision.recorded_at)),
         producer_signature_id: revision.producer_signature_id.map(|id| id.to_string()),
         points: value

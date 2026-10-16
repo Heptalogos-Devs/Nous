@@ -47,7 +47,7 @@ pub(crate) async fn schema_direct_lane(
         return Ok(output);
     }
     let rows = sqlx::query(
-        "SELECT s.schema_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND ((s.schema_id=ANY($2::uuid[]) AND r.schema_revision_id=s.current_revision_id) OR r.schema_revision_id=ANY($3::uuid[])) AND ($4::text[] IS NULL OR source_read_allowed($1,'cognitive_schema_revision',r.schema_revision_id::text,$4,$5,$6,$7)) ORDER BY (r.schema_revision_id=ANY($3::uuid[])) DESC,r.schema_revision_id LIMIT $8",
+        "SELECT s.schema_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.formed_time_domain_ref,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND ((s.schema_id=ANY($2::uuid[]) AND r.schema_revision_id=s.current_revision_id) OR r.schema_revision_id=ANY($3::uuid[])) AND ($4::text[] IS NULL OR source_read_allowed($1,'cognitive_schema_revision',r.schema_revision_id::text,$4,$5,$6,$7)) ORDER BY (r.schema_revision_id=ANY($3::uuid[])) DESC,r.schema_revision_id LIMIT $8",
     )
     .bind(query.subject.0)
     .bind(schema_ids.iter().copied().collect::<Vec<_>>())
@@ -204,7 +204,7 @@ pub(crate) async fn materialize_schema_revisions(
     if revision_ids.is_empty() {
         return Ok((Vec::new(), BTreeMap::new()));
     }
-    let rows = sqlx::query("SELECT s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND r.schema_revision_id=ANY($2::uuid[])")
+    let rows = sqlx::query("SELECT s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.formed_time_domain_ref,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND r.schema_revision_id=ANY($2::uuid[])")
         .bind(bound.source_query.subject.0)
         .bind(&revision_ids)
         .fetch_all(&mut *tx)
@@ -294,10 +294,18 @@ pub(crate) async fn materialize_schema_revisions(
                 row.try_get("valid_time_end")
                     .map_err(nous_persistence::database_error)?,
             )?,
-            formed_at: Some(
-                row.try_get("formed_at")
-                    .map_err(nous_persistence::database_error)?,
-            ),
+            formed_at: if row
+                .try_get::<String, _>("formed_time_domain_ref")
+                .map_err(nous_persistence::database_error)?
+                == "time:real"
+            {
+                Some(
+                    row.try_get("formed_at")
+                        .map_err(nous_persistence::database_error)?,
+                )
+            } else {
+                None
+            },
             recorded_at: Some(
                 row.try_get("recorded_at")
                     .map_err(nous_persistence::database_error)?,

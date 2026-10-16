@@ -182,6 +182,7 @@ pub struct SelfRecord {
     pub reason: String,
     pub content: SelfContent,
     pub formed_at: DateTime<Utc>,
+    pub formed_time_domain_ref: String,
     pub recorded_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub evidence: Vec<SelfEvidence>,

@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
-import { TimestampSchema } from "@bufbuild/protobuf/wkt";
+import { DomainStampSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { z } from "zod";
 import { ProducerSignatureSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
@@ -274,7 +274,7 @@ export async function executeSubjectInterpretation(
                     ? "self_reflection_text"
                     : "subject_reflection_text",
               );
-              const now = await kernel.queryWorkflow.getCognitiveTime(
+              const clock = await kernel.clocks.readClock(
                 { subjectId: input.subjectId },
                 calls,
               );
@@ -284,11 +284,11 @@ export async function executeSubjectInterpretation(
                   workId: input.operationId,
                   output,
                   producer: toJson(ProducerSignatureSchema, producer),
-                  formedAt: toJson(TimestampSchema, now),
+                  formedAt: toJson(DomainStampSchema, clock.now!),
                 },
                 context: {
                   dependencies: plan.dependencies,
-                  cognitiveFormedAt: now,
+                  cognitiveFormedAt: clock.now,
                   maintenanceTrigger: input.selected
                     ? {
                         needId: input.selected.needId,
@@ -496,7 +496,7 @@ export async function repairSubjectReflection(
             context: {
               dependencies: proposal.plan.dependencies,
               cognitiveFormedAt: proposal.formedAt
-                ? fromJson(TimestampSchema, proposal.formedAt)
+                ? fromJson(DomainStampSchema, proposal.formedAt)
                 : undefined,
             },
             dependencies: proposal.plan.dependencies,

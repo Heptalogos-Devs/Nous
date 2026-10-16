@@ -267,15 +267,11 @@ impl SocialService {
             }
             AuthorityStore::register_producer_in(tx, p).await?;
         }
-        let formed = AuthorityStore::model_result_cognitive_time_in(
-            tx,
-            input.subject,
-            "social",
-            &input.operation_id.0.to_string(),
-        )
-        .await?
-        .unwrap_or(now);
-        sqlx::query("INSERT INTO social_revisions(revision_id,object_id,subject_id,revision_no,parent_revision_id,content,reason,formed_at,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(revision).bind(object).bind(input.subject.0).bind(number).bind(parent).bind(serde_json::to_value(&input.content).map_err(json_error)?).bind(&input.reason).bind(formed).bind(now).execute(&mut **tx).await.map_err(db)?;
+        let formed = self
+            .runtime
+            .formation_stamp_in(tx, input.subject, "social", input.operation_id)
+            .await?;
+        sqlx::query("INSERT INTO social_revisions(revision_id,object_id,subject_id,revision_no,parent_revision_id,content,reason,formed_at,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(revision).bind(object).bind(input.subject.0).bind(number).bind(parent).bind(serde_json::to_value(&input.content).map_err(json_error)?).bind(&input.reason).bind(formed.at).bind(now).execute(&mut **tx).await.map_err(db)?;
         self.index_source_roots(tx, input.subject, revision, input.content.basis())
             .await?;
         self.track_basis(tx, revision, input.content.basis())

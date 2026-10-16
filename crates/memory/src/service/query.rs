@@ -297,7 +297,7 @@ async fn temporal_lane(
     ] {
         let Some(predicate) = predicate else { continue };
         let mut sql = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT DISTINCT r.memory_revision_id,r.memory_id,r.formed_at,r.recorded_at FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id",
+            "SELECT DISTINCT r.memory_revision_id,r.memory_id,r.formed_at,r.formed_time_domain_ref,r.recorded_at FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id",
         );
         sql.push(joins)
             .push(" WHERE o.subject_id=")

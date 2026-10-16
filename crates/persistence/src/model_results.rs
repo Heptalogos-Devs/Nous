@@ -121,12 +121,12 @@ impl AuthorityStore {
         Ok(())
     }
 
-    pub async fn model_result_cognitive_time_in(
+    pub async fn model_result_cognitive_stamp_in(
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
         owner: &str,
         key: &str,
-    ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    ) -> Result<Option<nous_core::DomainStamp>> {
         let value: Option<Option<Json<ModelResultContext>>> = sqlx::query_scalar("SELECT context FROM model_results WHERE subject_id=$1 AND (owner=$2 OR owner='subject_reflection') AND (operation_key=$3 OR $3::uuid=ANY(mutation_operations))")
             .bind(subject.0).bind(owner).bind(key).fetch_optional(&mut **tx).await.map_err(db)?;
         Ok(value

@@ -43,7 +43,10 @@ impl CognitiveContributor for SelfService {
                         formation_mode: None,
                         epistemic_class: Some(epistemic),
                     }) || c.recorded.is_some_and(|p| !p.contains(record.recorded_at))
-                        || c.formed.is_some_and(|p| !p.contains(record.formed_at))
+                        || c.formed.is_some_and(|p| {
+                            record.formed_time_domain_ref != "time:real"
+                                || !p.contains(record.formed_at)
+                        })
                         || c.valid
                             .is_some_and(|p| !p.matches_extent(record.content.valid_time()))
                         || c.observed.is_some()
@@ -69,7 +72,8 @@ impl CognitiveContributor for SelfService {
                             occurred: Vec::new(),
                             observed_at: None,
                             valid_time: record.content.valid_time().clone(),
-                            formed_at: Some(record.formed_at),
+                            formed_at: (record.formed_time_domain_ref == "time:real")
+                                .then_some(record.formed_at),
                             recorded_at: Some(record.recorded_at),
                         },
                         entity_refs: entities,

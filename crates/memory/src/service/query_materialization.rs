@@ -58,7 +58,8 @@ pub(super) fn to_hit(
             occurred: candidate.view.temporal_evidence.occurred.clone(),
             observed_at: candidate.view.temporal_evidence.observed_at,
             valid_time: candidate.view.revision.valid_time.clone(),
-            formed_at: Some(candidate.view.revision.formed_at),
+            formed_at: (candidate.view.revision.formed_time_domain_ref == "time:real")
+                .then_some(candidate.view.revision.formed_at),
             recorded_at: Some(candidate.view.revision.recorded_at),
         },
         entity_refs: candidate.view.aboutness.clone(),
@@ -125,11 +126,10 @@ pub(super) fn temporal_match(query: &CognitiveQuery, view: &MemoryView) -> bool 
                     .observed_at
                     .is_some_and(|value| interval.contains(value))
             })
-        && query
-            .expression
-            .constraints
-            .formed
-            .is_none_or(|interval| interval.contains(view.revision.formed_at))
+        && query.expression.constraints.formed.is_none_or(|interval| {
+            view.revision.formed_time_domain_ref == "time:real"
+                && interval.contains(view.revision.formed_at)
+        })
         && query
             .expression
             .constraints

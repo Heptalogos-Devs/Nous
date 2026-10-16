@@ -59,7 +59,8 @@ impl k::kernel_model_results_service_server::KernelModelResultsService for Kerne
                 }
                 if identity.owner == "memory" && input.proposal.is_some() {
                     id(&identity.operation_key)?;
-                    context.cognitive_formed_at = Some(self.0.cognition.now(identity.subject));
+                    context.cognitive_formed_at =
+                        Some(self.0.cognition.read_clock(identity.subject).await?);
                 }
             }
             let proposal = input.proposal.map(envelope::payload).transpose()?;

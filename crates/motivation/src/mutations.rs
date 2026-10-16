@@ -283,15 +283,15 @@ impl MotivationService {
             }
             AuthorityStore::register_producer_in(tx, p).await?;
         }
-        let formed = AuthorityStore::model_result_cognitive_time_in(
+        let formed = AuthorityStore::model_result_cognitive_stamp_in(
             tx,
             input.subject,
             "motivation",
             &input.operation_id.0.to_string(),
         )
         .await?
-        .unwrap_or(now);
-        sqlx::query("INSERT INTO motivation_revisions(revision_id,object_id,subject_id,revision_no,parent_revision_id,content,reason,formed_at,recorded_at,formed_stamp) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(revision).bind(object).bind(input.subject.0).bind(number).bind(parent).bind(serde_json::to_value(&input.content).map_err(json_error)?).bind(&input.reason).bind(formed).bind(now).bind(serde_json::to_value(formed_stamp).map_err(json_error)?).execute(&mut **tx).await.map_err(db)?;
+        .unwrap_or(formed_stamp);
+        sqlx::query("INSERT INTO motivation_revisions(revision_id,object_id,subject_id,revision_no,parent_revision_id,content,reason,formed_at,recorded_at,formed_stamp) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(revision).bind(object).bind(input.subject.0).bind(number).bind(parent).bind(serde_json::to_value(&input.content).map_err(json_error)?).bind(&input.reason).bind(formed.at).bind(now).bind(serde_json::to_value(formed).map_err(json_error)?).execute(&mut **tx).await.map_err(db)?;
         for link in &input.content.matter().links {
             self.track_reference(tx, revision, &link.target_revision)
                 .await?;

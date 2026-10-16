@@ -163,10 +163,36 @@ impl CognitiveRuntimeService {
             return serde_json::from_str(&prior).map_err(|e| Error::Infrastructure(e.to_string()));
         }
         let stamp = self.semantic_clock.capture_in(tx, subject).await?;
-        sqlx::query("SELECT set_config('nous.semantic_stamp',$1,true),set_config('nous.authority_time',$2,true),set_config('nous.semantic_subject',$3,true)")
+        sqlx::query("SELECT set_config('nous.semantic_stamp',$1,true),set_config('nous.authority_time',$2,true),set_config('nous.semantic_subject',$3,true),set_config('nous.formed_stamp',$1,true)")
             .bind(serde_json::to_string(&stamp).map_err(|e|Error::Infrastructure(e.to_string()))?).bind(stamp.recorded_at.to_rfc3339()).bind(subject.0.to_string()).execute(&mut **tx).await.map_err(nous_persistence::database_error)?;
         Ok(stamp)
     }
+    /// Recovered paid formation retains its original semantic domain. New owner
+    /// formation uses the single stamp captured with this committing mutation.
+    pub async fn formation_stamp_in(
+        &self,
+        tx: &mut nous_persistence::AuthorityTransaction<'_>,
+        subject: SubjectId,
+        owner: &str,
+        operation: nous_core::OperationId,
+    ) -> Result<DomainStamp> {
+        let captured = self.capture_semantic_in(tx, subject).await?;
+        let stamp = nous_persistence::AuthorityStore::model_result_cognitive_stamp_in(
+            tx,
+            subject,
+            owner,
+            &operation.0.to_string(),
+        )
+        .await?
+        .unwrap_or(captured);
+        sqlx::query("SELECT set_config('nous.formed_stamp',$1,true)")
+            .bind(serde_json::to_string(&stamp).map_err(|e| Error::Infrastructure(e.to_string()))?)
+            .execute(&mut **tx)
+            .await
+            .map_err(nous_persistence::database_error)?;
+        Ok(stamp)
+    }
+
     pub async fn require_subject(&self, subject: SubjectId) -> Result<()> {
         self.store.require_subject(subject).await
     }

@@ -158,7 +158,11 @@ pub(super) fn record(v: SocialRecord) -> p::SocialRecord {
         integrity_state: v.integrity_state,
         suppression_state: v.suppression_state,
         created_at: Some(timestamp(v.created_at)),
-        formed_at: Some(timestamp(v.formed_at)),
+        formed_at: Some(formation_proto(
+            &v.formed_time_domain_ref,
+            v.formed_at,
+            v.recorded_at,
+        )),
         recorded_at: Some(timestamp(v.recorded_at)),
         evidence: v
             .evidence

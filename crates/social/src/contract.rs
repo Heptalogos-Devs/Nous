@@ -295,6 +295,7 @@ pub struct SocialRecord {
     pub reason: String,
     pub content: SocialContent,
     pub formed_at: DateTime<Utc>,
+    pub formed_time_domain_ref: String,
     pub recorded_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub evidence: Vec<SocialEvidence>,

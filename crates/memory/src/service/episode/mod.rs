@@ -76,6 +76,7 @@ pub struct EpisodeRevision {
     pub experience_time: TemporalExtent,
     pub boundary_explanation: String,
     pub formed_at: DateTime<Utc>,
+    pub formed_time_domain_ref: String,
     pub recorded_at: DateTime<Utc>,
     pub producer_signature_id: Option<Uuid>,
 }

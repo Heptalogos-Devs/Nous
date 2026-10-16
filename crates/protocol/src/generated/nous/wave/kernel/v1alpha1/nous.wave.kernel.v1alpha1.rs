@@ -551,7 +551,7 @@ pub struct ModelResultContext {
     #[prost(message, repeated, tag="1")]
     pub dependencies: ::prost::alloc::vec::Vec<super::super::v1alpha1::CognitiveRef>,
     #[prost(message, optional, tag="2")]
-    pub cognitive_formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    pub cognitive_formed_at: ::core::option::Option<super::super::v1alpha1::DomainStamp>,
     #[prost(message, optional, tag="3")]
     pub maintenance_trigger: ::core::option::Option<MaintenanceTrigger>,
 }

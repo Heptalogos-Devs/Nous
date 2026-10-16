@@ -100,8 +100,13 @@ impl MemoryService {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         input: &CreateSchemaInput,
         producer: Option<Uuid>,
-        formed: DateTime<Utc>,
+        _formed: DateTime<Utc>,
     ) -> Result<(CognitiveSchemaId, CognitiveSchemaRevisionId)> {
+        let formed = self
+            .cognition
+            .formation_stamp_in(tx, input.subject, "memory", input.operation_id)
+            .await?
+            .at;
         let schema_id = CognitiveSchemaId::new();
         let revision_id = CognitiveSchemaRevisionId::new();
         let now = self.cognition.now(input.subject);

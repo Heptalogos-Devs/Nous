@@ -6,7 +6,6 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "nous/wave/v1alpha1/types.proto";
 import "nous/wave/v1alpha1/presentation.proto";
-import "nous/wave/v1alpha1/clock.proto";
 message MotivationScope {string description=1;repeated string entities=2 [(reference_kind)="entity"];optional string group=3 [(reference_kind)="entity"];optional string channel=4;optional string conversation=5;optional string work_context=6 [(reference_kind)="work_context"];optional string domain=7;}
 message EventWitnessCriterion {uint32 version=1;string event_type=2;optional string target=3;optional string activity=4;}
 message OwnerStateCriterion {uint32 version=1;CognitiveRef reference=2;string state=3;}
@@ -19,7 +18,7 @@ message DesiredConditionContent {CriterionExpression expression=1;string tempora
 message MotivationLink {string relation=1;CognitiveRef target_revision=2;}
 message MotivationContent {string family=1;string matter_key=2;string statement=3;MotivationScope scope=4;repeated RevisionBasis basis=5;TemporalExtent valid_time=6;ProducerSignature producer=7;repeated MotivationLink links=8;DesiredConditionContent condition=9;}
 message MotivationEvidence {string role=1;RevisionBasis basis=2;google.protobuf.Timestamp recorded_at=3;}
-message MotivationRecord {CognitiveRef reference=1;CognitiveRef object_ref=2;string subject_id=3 [(reference_kind)="subject"];string current_revision_id=4;int64 object_epoch=5;int32 revision_no=6;optional string parent_revision_id=7;string reason=8;MotivationContent content=9;string acceptance_state=10;string integrity_state=11;string suppression_state=12;google.protobuf.Timestamp created_at=13;google.protobuf.Timestamp formed_at=14;google.protobuf.Timestamp recorded_at=15;repeated MotivationEvidence evidence=16;DomainStamp formed_stamp=17;}
+message MotivationRecord {CognitiveRef reference=1;CognitiveRef object_ref=2;string subject_id=3 [(reference_kind)="subject"];string current_revision_id=4;int64 object_epoch=5;int32 revision_no=6;optional string parent_revision_id=7;string reason=8;MotivationContent content=9;string acceptance_state=10;string integrity_state=11;string suppression_state=12;google.protobuf.Timestamp created_at=13;DomainStamp formed_at=14;google.protobuf.Timestamp recorded_at=15;repeated MotivationEvidence evidence=16;reserved 17;}
 message AdoptMotivationRequest {string subject_id=1 [(reference_kind)="subject"];string operation_id=2;MotivationContent content=3;string reason=4;}
 message ReviseMotivationRequest {string subject_id=1 [(reference_kind)="subject"];string operation_id=2;CognitiveRef target_revision=3;int64 expected_object_epoch=4;MotivationContent content=5;string reason=6;}
 message AddMotivationEvidenceRequest {string subject_id=1 [(reference_kind)="subject"];string operation_id=2;CognitiveRef target_revision=3;int64 expected_object_epoch=4;string role=5;RevisionBasis basis=6;}

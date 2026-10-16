@@ -37,18 +37,18 @@ pub(super) async fn select(
     let mut sql = QueryBuilder::<Postgres>::new("");
     super::super::source_facts::push_source_facts(&mut sql, view.subject, &references, Some(view))?;
     sql.push(r#", catalog AS (
- SELECT s.root_kind kind,r.memory_revision_id id,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,
+ SELECT s.root_kind kind,r.memory_revision_id id,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.formed_time_domain_ref,r.recorded_at,
   ARRAY(SELECT entity_ref FROM memory_revision_aboutness WHERE memory_revision_id=r.memory_revision_id) entities,
   'instant'::text observed_kind,(SELECT max(oc.observed_at) FROM source_occurrences oc JOIN memory_revision_evidence e ON e.memory_revision_id=r.memory_revision_id AND e.occurrence_id=oc.occurrence_id WHERE oc.root_kind=s.root_kind AND oc.root=s.root) observed_start,NULL::timestamptz observed_end
  FROM source_roots s JOIN memory_revisions r ON s.root_kind='memory_revision' AND r.memory_revision_id=s.root JOIN memory_objects o USING(memory_id)
- UNION ALL SELECT s.root_kind,r.schema_revision_id,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at,r.aboutness,
+ UNION ALL SELECT s.root_kind,r.schema_revision_id,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.formed_time_domain_ref,r.recorded_at,r.aboutness,
   'instant',(SELECT max(oc.observed_at) FROM source_occurrences oc WHERE oc.root_kind=s.root_kind AND oc.root=s.root),NULL
  FROM source_roots s JOIN cognitive_schema_revisions r ON s.root_kind='cognitive_schema_revision' AND r.schema_revision_id=s.root JOIN cognitive_schemas o USING(schema_id)
- UNION ALL SELECT s.root_kind,r.episode_revision_id,'unknown',NULL,NULL,r.formed_at,r.recorded_at,
+ UNION ALL SELECT s.root_kind,r.episode_revision_id,'unknown',NULL,NULL,r.formed_at,r.formed_time_domain_ref,r.recorded_at,
   ARRAY(SELECT DISTINCT unnest(array_append(oc.entities,oc.actor_entity_ref)) FROM source_occurrences oc WHERE oc.root_kind=s.root_kind AND oc.root=s.root),
   r.experience_time_kind,r.experience_time_start,r.experience_time_end
  FROM source_roots s JOIN episode_revisions r ON s.root_kind='episode_revision' AND r.episode_revision_id=s.root JOIN episode_objects o USING(episode_id)
- UNION ALL SELECT s.root_kind,r.journal_revision_id,'unknown',NULL,NULL,r.formed_at,r.recorded_at,
+ UNION ALL SELECT s.root_kind,r.journal_revision_id,'unknown',NULL,NULL,r.formed_at,r.formed_time_domain_ref,r.recorded_at,
   ARRAY(SELECT DISTINCT unnest(array_append(oc.entities,oc.actor_entity_ref)) FROM source_occurrences oc WHERE oc.root_kind=s.root_kind AND oc.root=s.root),
   r.temporal_scope_kind,r.temporal_scope_start,r.temporal_scope_end
  FROM source_roots s JOIN journal_revisions r ON s.root_kind='journal_revision' AND r.journal_revision_id=s.root JOIN journal_objects o USING(journal_id)

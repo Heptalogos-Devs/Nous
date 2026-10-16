@@ -54,9 +54,8 @@ pub(super) fn record(v: MotivationRecord) -> p::MotivationRecord {
         integrity_state: v.integrity_state,
         suppression_state: v.suppression_state,
         created_at: Some(timestamp(v.created_at)),
-        formed_at: Some(timestamp(v.formed_at)),
+        formed_at: Some(stamp_proto(v.formed_stamp)),
         recorded_at: Some(timestamp(v.recorded_at)),
-        formed_stamp: Some(stamp_proto(v.formed_stamp)),
         evidence: v
             .evidence
             .into_iter()
