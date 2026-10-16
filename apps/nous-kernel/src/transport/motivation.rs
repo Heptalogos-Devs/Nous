@@ -392,7 +392,7 @@ struct Selection {
     max_items: usize,
     max_bytes: usize,
     after: Option<uuid::Uuid>,
-    at: Option<chrono::DateTime<chrono::Utc>>,
+    at: Option<nous_core::DomainStamp>,
     as_of: Option<chrono::DateTime<chrono::Utc>>,
     history: bool,
 }
@@ -419,7 +419,7 @@ impl Selection {
             max_items: v.max_items as usize,
             max_bytes: v.max_bytes as usize,
             after: v.after.map(|v| id(&v)).transpose()?,
-            at: time(v.at)?,
+            at: v.at.map(domain_stamp).transpose()?,
             as_of: time(v.as_of)?,
             history: v.history,
         })
@@ -431,7 +431,7 @@ impl Selection {
             max_items: self.max_items,
             max_bytes: self.max_bytes,
             after: self.after,
-            at: self.at,
+            at: self.at.clone(),
             as_of: self.as_of,
             history: self.history,
         }
@@ -769,7 +769,10 @@ impl KernelService {
                     max_items: 2048,
                     max_bytes: 4 * 1024 * 1024,
                     after: None,
-                    at: time(modifiers.and_then(|m| m.clock_now))?,
+                    at: modifiers
+                        .and_then(|m| m.clock_now.clone())
+                        .map(domain_stamp)
+                        .transpose()?,
                     as_of: time(modifiers.and_then(|m| m.as_of))?,
                     history: modifiers.is_some_and(|m| m.history),
                 },

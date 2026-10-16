@@ -9,6 +9,7 @@ pub(super) fn push_source_facts(
     subject: SubjectId,
     roots: &[CognitiveRef],
     view: Option<&HistoricalAuthoritySnapshot>,
+    read: Option<&SourceReadView>,
 ) -> Result<()> {
     let (kinds, ids): (Vec<_>, Vec<_>) = roots
         .iter()
@@ -39,7 +40,23 @@ pub(super) fn push_source_facts(
         )
         .push("::uuid[] bindings, ")
         .push_bind(view.map(|view| view.as_of))
-        .push("::timestamptz cut), source_roots AS (SELECT * FROM unnest(")
+        .push("::timestamptz cut, ")
+        .push_bind(read.is_none())
+        .push("::boolean unrestricted, ")
+        .push_bind(read.map(|r| r.root_keys.clone()).unwrap_or_default())
+        .push("::text[] read_roots, ")
+        .push_bind(read.map(|r| r.work_contexts.clone()).unwrap_or_default())
+        .push("::uuid[] read_work, ")
+        .push_bind(
+            read.map(|r| r.origin_conversation_refs.clone())
+                .unwrap_or_default(),
+        )
+        .push("::text[] read_origins, ")
+        .push_bind(
+            read.map(|r| serde_json::json!(&r.explicit_refs))
+                .unwrap_or_else(|| serde_json::json!([])),
+        )
+        .push("::jsonb read_explicit), source_roots AS (SELECT * FROM unnest(")
         .push_bind(kinds)
         .push("::text[], ")
         .push_bind(ids)
@@ -58,10 +75,11 @@ lineage(root_kind,root,kind,value) AS (
  ) e WHERE e.value IS NOT NULL
 ), source_occurrences AS (
  SELECT DISTINCT l.root_kind,l.root,o.occurrence_id,o.source_class,o.actor_entity_ref,
-  o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.observed_at,
+  o.occurred_time_kind,o.occurred_time_start,o.occurred_time_end,o.occurred_time_domain_ref,o.observed_at,o.observed_stamp,o.recorded_at AS source_recorded_at,
   o.entities
  FROM lineage l CROSS JOIN source_settings x
  JOIN LATERAL material_occurrence_facts(x.subject,x.cut,CASE WHEN x.historical THEN x.bindings ELSE NULL END) o ON o.occurrence_id=CASE WHEN l.kind='occurrence' THEN l.value::uuid END
+ WHERE x.unrestricted OR source_read_allowed(x.subject,'occurrence',o.occurrence_id::text,x.read_roots,x.read_work,x.read_origins,x.read_explicit)
 
 )
 "#);

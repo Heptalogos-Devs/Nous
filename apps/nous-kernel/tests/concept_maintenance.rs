@@ -278,7 +278,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             subject,
             &reverse,
             CognitiveEffort::Maximum,
-            rt.cognition.now(subject),
+            rt.cognition.recorded_now(),
             &snapshot,
             None,
             None,
@@ -349,7 +349,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             event_id: UseEventId::new(),
             reference: revisions[0].clone(),
             use_kind: nous_runtime::UseKind::ActedOn,
-            occurred_at: rt.cognition.now(subject),
+            occurred_at: rt.cognition.recorded_now(),
             context: serde_json::json!({}),
         })
         .collect();
@@ -404,7 +404,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
                 event_id: UseEventId::new(),
                 reference: revisions[0].clone(),
                 use_kind,
-                occurred_at: rt.cognition.now(subject),
+                occurred_at: rt.cognition.recorded_now(),
                 context: serde_json::json!({}),
             })
             .collect(),
@@ -496,7 +496,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
                 .map(|r| (r.clone(), true))
                 .collect::<Vec<_>>(),
             CognitiveEffort::Maximum,
-            rt.cognition.now(subject),
+            rt.cognition.recorded_now(),
             &snapshot,
             None,
             None,

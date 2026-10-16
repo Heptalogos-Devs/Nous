@@ -210,7 +210,7 @@ pub struct CommitJournalRequest {
     #[prost(message, optional, tag="9")]
     pub producer: ::core::option::Option<super::super::v1alpha1::ProducerSignature>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MaintenancePolicy {
     #[prost(bool, tag="1")]
     pub enabled: bool,
@@ -219,7 +219,7 @@ pub struct MaintenancePolicy {
     #[prost(uint32, tag="3")]
     pub max_operations: u32,
     #[prost(message, optional, tag="5")]
-    pub cognitive_now: ::core::option::Option<::prost_types::Timestamp>,
+    pub cognitive_now: ::core::option::Option<super::super::v1alpha1::DomainStamp>,
     #[prost(uint32, tag="6")]
     pub retry_initial_seconds: u32,
     #[prost(uint32, tag="7")]
@@ -281,7 +281,7 @@ pub struct MaintenancePlan {
     #[prost(int64, tag="2")]
     pub authority_seq: i64,
     #[prost(message, optional, tag="3")]
-    pub cognitive_now: ::core::option::Option<::prost_types::Timestamp>,
+    pub cognitive_now: ::core::option::Option<super::super::v1alpha1::DomainStamp>,
     #[prost(string, tag="4")]
     pub status: ::prost::alloc::string::String,
     #[prost(message, repeated, tag="5")]
@@ -343,9 +343,9 @@ pub struct ConsolidationCandidate {
     #[prost(string, repeated, tag="11")]
     pub eligible_basis_keys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(message, optional, tag="8")]
-    pub valid_time: ::core::option::Option<super::super::v1alpha1::TemporalExtent>,
+    pub valid_time: ::core::option::Option<super::super::v1alpha1::DomainTemporalExtent>,
     #[prost(message, optional, tag="9")]
-    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    pub formed_at: ::core::option::Option<super::super::v1alpha1::DomainStamp>,
     #[prost(message, optional, tag="10")]
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(bool, tag="12")]

@@ -83,7 +83,7 @@ message SocialSelectionRequest {
  optional string after = 6;
  optional string expression = 7;
  optional string endpoint = 8 [(reference_kind) = "entity"];
- google.protobuf.Timestamp at = 9;
+ DomainStamp at = 9;
  google.protobuf.Timestamp as_of = 10;
  bool history = 11;
 }

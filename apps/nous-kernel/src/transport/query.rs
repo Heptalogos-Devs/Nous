@@ -209,8 +209,8 @@ pub(super) fn compile_query(
             None => ResultProjection::default(),
         },
         temporal_frame: TemporalFrame {
-            clock_now: time(modifiers.clock_now)?
-                .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH),
+            clock_now: modifiers.clock_now.map(domain_stamp).transpose()?,
+            authority_now: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
             authority_view: time(modifiers.as_of)?
                 .map_or(AuthorityView::Current, AuthorityView::AsOf),
             original_expressions: modifiers.temporal_expressions.clone(),
@@ -412,7 +412,19 @@ fn predicate(value: Option<p::TimePredicate>) -> Result<Option<TimePredicate>> {
 }
 
 fn constraints_from_proto(value: p::QueryConstraints) -> Result<QueryConstraints> {
+    let time_domains = TimeAxisDomains {
+        occurred: predicate_domain(&value.occurred)?,
+        observed: predicate_domain(&value.observed)?,
+        valid: predicate_domain(&value.valid)?,
+        formed: predicate_domain(&value.formed)?,
+    };
+    if predicate_domain(&value.recorded)?.is_some_and(|domain| domain != "time:real") {
+        return Err(Error::Invalid(
+            "recorded predicates require time:real".into(),
+        ));
+    }
     Ok(QueryConstraints {
+        time_domains,
         current_authority: CurrentAuthorityNeed::None,
         source_classes_include: value
             .source_classes_include
@@ -479,14 +491,7 @@ fn hit(value: CognitiveHit, rank: usize) -> p::Hit {
         semantic_role: value.semantic_role,
         cognitive_role: value.cognitive_role,
         formation_mode: value.formation_mode,
-        formed_at: value
-            .freshness
-            .formed_at
-            .map(|v| timestamp(v).seconds.to_string()),
-        recorded_at: value
-            .freshness
-            .recorded_at
-            .map(|v| timestamp(v).seconds.to_string()),
+        temporal: Some(temporal_metadata_proto(&value.freshness)),
         score: Some(p::HitScore {
             baseline: value.match_evidence.base_rank_score,
             preference: value.match_evidence.preference_score,
@@ -525,4 +530,20 @@ fn enum_or_default<T: serde::de::DeserializeOwned + Default>(input: &str) -> Res
     } else {
         enum_value(input)
     }
+}
+
+fn predicate_domain(value: &Option<p::TimePredicate>) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.time_domain_ref.is_empty() {
+        return Ok(None);
+    }
+    if value.time_domain_ref.trim().is_empty()
+        || value.time_domain_ref.len() > 256
+        || value.predicate.is_none()
+    {
+        return Err(Error::Invalid("invalid predicate time domain".into()));
+    }
+    Ok(Some(value.time_domain_ref.clone()))
 }

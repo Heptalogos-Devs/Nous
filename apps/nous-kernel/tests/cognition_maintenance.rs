@@ -140,7 +140,7 @@ async fn assert_consolidation_context(
                 event_id: nous_core::UseEventId::new(),
                 reference: results[0].clone().unwrap(),
                 use_kind,
-                occurred_at: rt.cognition.now(subject),
+                occurred_at: rt.cognition.recorded_now(),
                 context: serde_json::json!({}),
             })
             .collect(),

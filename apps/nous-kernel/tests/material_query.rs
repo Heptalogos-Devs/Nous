@@ -141,16 +141,14 @@ async fn evidence_time_constraints_filter_occurrences_and_regions_through_finali
                 hit.reference,
                 CognitiveRef::Occurrence(_) | CognitiveRef::SourceRegion(_)
             ))
-            .all(|hit| !hit.freshness.occurred.is_empty()
-                && hit
-                    .freshness
-                    .occurred
-                    .iter()
-                    .all(|time| TimePredicate::Range {
+            .all(|hit| !hit.freshness.temporal_evidence.sources.is_empty()
+                && hit.freshness.temporal_evidence.sources.iter().all(|time| {
+                    TimePredicate::Range {
                         start: None,
-                        end: Some(now)
+                        end: Some(now),
                     }
-                    .matches_extent(time)))
+                    .matches_extent(&time.occurred.extent)
+                }))
     );
     let (_, ticket) = runtime
         .cognition
@@ -342,9 +340,12 @@ async fn material_query_keeps_joint_observation_axes_and_derived_formation_time(
     }];
     let result = runtime.execute_query(input.clone(), None).await.unwrap();
     let freshness = &result.result.results[0].freshness;
-    assert!(freshness.formed_at.unwrap() >= now);
-    assert!(freshness.observed_at.unwrap() < now);
-    assert!(matches!(freshness.valid_time, TemporalExtent::Unknown));
+    assert!(freshness.formed_at.as_ref().unwrap().at >= now);
+    assert!(freshness.temporal_evidence.observed_real_at().unwrap() < now);
+    assert!(matches!(
+        freshness.valid_time.extent,
+        TemporalExtent::Unknown
+    ));
     input.expression.constraints.formed = Some(TimePredicate::Range {
         start: None,
         end: Some(now),

@@ -99,7 +99,7 @@ impl CognitiveContributor for MemoryService {
                 &revision_ids,
                 &accessibility_policy,
                 bound.historical_authority.as_deref(),
-                self.cognition.now(subject),
+                self.cognition.recorded_now(),
                 bound.source_query.source_read.as_ref(),
             )
             .await?;
@@ -255,8 +255,9 @@ async fn temporal_lane(
     let mut next_rank = 1usize;
     let constraints = &query.expression.constraints;
     use nous_persistence::{TimeColumns, push_time_predicate};
-    for (predicate, columns, joins, order) in [
+    for (axis, predicate, columns, joins, order) in [
         (
+            TimeAxis::Valid,
             constraints.valid,
             TimeColumns::Extent {
                 kind: "r.valid_time_kind",
@@ -267,6 +268,7 @@ async fn temporal_lane(
             "r.recorded_at DESC,r.memory_revision_id",
         ),
         (
+            TimeAxis::Occurred,
             constraints.occurred,
             TimeColumns::Extent {
                 kind: "oc.occurred_time_kind",
@@ -277,18 +279,25 @@ async fn temporal_lane(
             "r.memory_revision_id",
         ),
         (
+            TimeAxis::Observed,
             constraints.observed,
-            TimeColumns::Instant("oc.observed_at"),
+            TimeColumns::Instant(if query.time_domain(TimeAxis::Observed) == "time:real" {
+                "oc.observed_at"
+            } else {
+                "(oc.observed_stamp->>'at')::timestamptz"
+            }),
             " JOIN memory_revision_evidence e USING(memory_revision_id) JOIN LATERAL material_occurrence_facts(o.subject_id,NULL,NULL) oc USING(occurrence_id)",
             "r.memory_revision_id",
         ),
         (
+            TimeAxis::Formed,
             constraints.formed,
             TimeColumns::Instant("r.formed_at"),
             "",
             "r.formed_at DESC,r.memory_revision_id",
         ),
         (
+            TimeAxis::Recorded,
             constraints.recorded,
             TimeColumns::Instant("r.recorded_at"),
             "",
@@ -302,6 +311,29 @@ async fn temporal_lane(
         sql.push(joins)
             .push(" WHERE o.subject_id=")
             .push_bind(query.subject.0);
+        let domain_column = match axis {
+            TimeAxis::Valid => Some("r.valid_time_domain_ref"),
+            TimeAxis::Occurred => Some("oc.occurred_time_domain_ref"),
+            TimeAxis::Formed => Some("r.formed_time_domain_ref"),
+            TimeAxis::Observed if query.time_domain(TimeAxis::Observed) != "time:real" => {
+                Some("oc.observed_stamp->>'time_domain_ref'")
+            }
+            _ => None,
+        };
+        if let Some(column) = domain_column {
+            sql.push(" AND ")
+                .push(column)
+                .push("=")
+                .push_bind(query.time_domain(axis).to_owned());
+        }
+        if matches!(axis, TimeAxis::Occurred | TimeAxis::Observed) {
+            nous_persistence::push_source_read_filter(
+                &mut sql,
+                query.source_read.as_ref(),
+                "'occurrence'",
+                "oc.occurrence_id::text",
+            );
+        }
         push_time_predicate(&mut sql, columns, predicate)?;
         nous_persistence::push_source_read_filter(
             &mut sql,

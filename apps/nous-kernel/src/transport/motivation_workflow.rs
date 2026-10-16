@@ -129,7 +129,7 @@ impl k::kernel_motivation_service_server::KernelMotivationService for KernelServ
                         input.subject,
                         &refs,
                         1024 * 1024,
-                        self.0.cognition.now(input.subject),
+                        self.0.cognition.recorded_now(),
                         &configuration,
                         Some(&read),
                         Some(&scope),

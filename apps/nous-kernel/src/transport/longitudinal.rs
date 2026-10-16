@@ -80,7 +80,7 @@ impl KernelService {
                 scope_kind: selected.scope_kind,
                 scope_ref: selected.scope_ref,
                 trigger_authority_seq: self.0.store.authority_seq(selected.subject_id).await?,
-                due_at: self.0.cognition.now(selected.subject_id),
+                due_at: self.0.cognition.recorded_now(),
                 priority: selected.priority,
             })
             .await?;
@@ -111,7 +111,13 @@ impl KernelService {
             max_model_calls: snapshot.get(nous_runtime::MAX_MODEL_CALLS)? as u32,
             max_elapsed_ms: snapshot.get(nous_runtime::MAX_ELAPSED)? as u32,
             experience_batch_size: snapshot.get(nous_runtime::EXPERIENCE_BATCH_SIZE)? as u32,
-            cognitive_now: subject.map(|subject| timestamp(self.0.cognition.now(subject))),
+            cognitive_now: if let Some(subject) = subject {
+                Some(domain_stamp_proto(
+                    &self.0.cognition.read_clock(subject).await?,
+                ))
+            } else {
+                None
+            },
         })
     }
 

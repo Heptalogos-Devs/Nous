@@ -16,7 +16,7 @@ impl CognitiveRuntimeService {
     ) -> Result<SessionView> {
         self.require_subject(subject).await?;
         let session = SessionId::new();
-        let now = self.now(subject);
+        let now = self.recorded_now();
         let mut tx = self.store.begin().await?;
         if let Some(parent) = parent {
             self.lock_open_session_in(&mut tx, subject, parent).await?;
@@ -41,7 +41,7 @@ impl CognitiveRuntimeService {
         let mut tx = self.store.begin().await?;
         self.lock_open_session_in(&mut tx, subject, session).await?;
         sqlx::query("UPDATE cognitive_sessions SET closed_at=$3,last_activity_at=$3,runtime_revision=runtime_revision+1 WHERE subject_id=$1 AND session_id=$2")
-            .bind(subject.0).bind(session.0).bind(self.now(subject)).execute(&mut *tx).await.map_err(db)?;
+            .bind(subject.0).bind(session.0).bind(self.recorded_now()).execute(&mut *tx).await.map_err(db)?;
         let result = self.session_in(subject, session, &mut tx).await?;
         tx.commit().await.map_err(db)?;
         Ok(result)
@@ -171,8 +171,11 @@ impl CognitiveRuntimeService {
         admissions: Vec<ResidentAdmission>,
         activity_at: Option<DateTime<Utc>>,
     ) -> Result<ResidentMutationOutcome> {
+        if self.lock_open_session_in(tx, subject, session).await? != current_revision {
+            return Err(stale_session(session));
+        }
         let merged = merge_admissions(admissions)?;
-        let now = self.now(subject);
+        let now = self.recorded_now();
         let mut changed = false;
         let mut admitted_count = 0u32;
         for admission in &merged {

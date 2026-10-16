@@ -417,7 +417,7 @@ async fn insert_source_region(
     let coordinate = serde_json::json!({"start":start,"end":end});
     let mut tx = rt.store.begin().await.unwrap();
     sqlx::query("INSERT INTO source_regions(source_region_id,subject_id,artifact_id,coordinate_kind,coordinate,coordinate_hash,created_at) VALUES($1,$2,$3,'byte_range',$4,$5,$6)")
-        .bind(region.0).bind(subject.0).bind(artifact.0).bind(&coordinate).bind(coordinate.to_string()).bind(rt.cognition.now(subject)).execute(&mut *tx).await.unwrap();
+        .bind(region.0).bind(subject.0).bind(artifact.0).bind(&coordinate).bind(coordinate.to_string()).bind(rt.cognition.recorded_now()).execute(&mut *tx).await.unwrap();
     nous_persistence::AuthorityStore::invalidate_in(
         &mut tx,
         subject,

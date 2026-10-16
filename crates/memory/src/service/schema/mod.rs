@@ -113,7 +113,7 @@ impl MemoryService {
             .at;
         let schema_id = CognitiveSchemaId::new();
         let revision_id = CognitiveSchemaRevisionId::new();
-        let now = self.cognition.now(input.subject);
+        let now = self.cognition.recorded_now();
         let basis: Vec<_> = input
             .content
             .evidence_links

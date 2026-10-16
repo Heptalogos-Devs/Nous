@@ -493,12 +493,6 @@ pub struct ReviseSchemaInput {
     pub copy_link_ids: Vec<SchemaEvidenceLinkId>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TemporalEvidence {
-    pub occurred: Vec<TemporalExtent>,
-    pub observed_at: Option<DateTime<Utc>>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

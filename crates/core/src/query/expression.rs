@@ -126,16 +126,25 @@ pub enum RevisionView {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemporalFrame {
-    pub clock_now: DateTime<Utc>,
+    pub clock_now: Option<DomainStamp>,
+    pub authority_now: DateTime<Utc>,
     pub authority_view: AuthorityView,
     pub revision_view: RevisionView,
     #[serde(default)]
     pub original_expressions: Vec<String>,
 }
+impl TemporalFrame {
+    pub fn clock_stamp(&self) -> Result<&DomainStamp> {
+        self.clock_now
+            .as_ref()
+            .ok_or_else(|| Error::Infrastructure("query clock was not captured".into()))
+    }
+}
 impl Default for TemporalFrame {
     fn default() -> Self {
         Self {
-            clock_now: DateTime::<Utc>::UNIX_EPOCH,
+            clock_now: None,
+            authority_now: DateTime::<Utc>::UNIX_EPOCH,
             authority_view: AuthorityView::Current,
             revision_view: RevisionView::Current,
             original_expressions: Vec::new(),
@@ -243,7 +252,28 @@ pub enum Cue {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TimeAxisDomains {
+    pub occurred: Option<String>,
+    pub observed: Option<String>,
+    pub valid: Option<String>,
+    pub formed: Option<String>,
+}
+impl TimeAxisDomains {
+    pub fn get(&self, axis: TimeAxis) -> Option<&str> {
+        match axis {
+            TimeAxis::Occurred => self.occurred.as_deref(),
+            TimeAxis::Observed => self.observed.as_deref(),
+            TimeAxis::Valid => self.valid.as_deref(),
+            TimeAxis::Formed => self.formed.as_deref(),
+            TimeAxis::Recorded => Some("time:real"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueryConstraints {
+    #[serde(default)]
+    pub time_domains: TimeAxisDomains,
     #[serde(default)]
     pub current_authority: CurrentAuthorityNeed,
     #[serde(default)]

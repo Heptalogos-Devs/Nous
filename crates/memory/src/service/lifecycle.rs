@@ -172,7 +172,7 @@ impl MemoryService {
             .purge_cognition_refs_in(mutation.tx(), subject, revision_kind, &revisions)
             .await?;
         sqlx::query("UPDATE cognitive_schema_evidence_links SET revoked_at=COALESCE(revoked_at,$4) WHERE subject_id=$1 AND basis_kind=$2 AND basis_ref=ANY($3::text[]) AND revoked_at IS NULL")
-                .bind(subject.0).bind(revision_kind).bind(&revisions).bind(self.cognition.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?;
+                .bind(subject.0).bind(revision_kind).bind(&revisions).bind(self.cognition.recorded_now()).execute(&mut **mutation.tx()).await.map_err(db)?;
         sqlx::query("DELETE FROM association_evidence WHERE subject_id=$1 AND ((from_ref_kind=$2 AND from_ref=ANY($3::text[])) OR (to_ref_kind=$2 AND to_ref=ANY($3::text[])) OR association_evidence_id IN (SELECT association_evidence_id FROM association_evidence_basis WHERE basis_kind=$2 AND basis_ref=ANY($3::text[])))")
                 .bind(subject.0).bind(revision_kind).bind(&revisions).execute(&mut **mutation.tx()).await.map_err(db)?;
         let delete = match kind {

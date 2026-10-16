@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct ContextSource {
+    pub temporal: Option<FreshnessDescriptor>,
     pub usage: &'static str,
     pub required: bool,
     pub reference: CognitiveRef,
@@ -28,6 +29,7 @@ pub struct InvocationScope {
     pub entities: Vec<EntityRef>,
 }
 pub struct AutomaticContextRequest<'a> {
+    pub clock: &'a DomainStamp,
     pub scope: &'a InvocationScope,
     pub work_context: Option<Uuid>,
     pub materialize: bool,
@@ -124,6 +126,7 @@ pub struct ProjectionSegment {
 }
 
 pub struct ProjectionView {
+    pub clock: DomainStamp,
     pub subject: SubjectId,
     pub session: SessionId,
     pub active_work_context: Option<Uuid>,
@@ -143,6 +146,7 @@ impl CognitiveRuntimeService {
         if let CognitiveRef::Resource(resource) = reference {
             let descriptor = self.resource(subject, resource).await?.descriptor;
             return Ok(crate::ContextSource {
+                temporal: None,
                 usage: "task_evidence",
                 required: false,
                 reference: reference.clone(),
@@ -175,6 +179,7 @@ impl CognitiveRuntimeService {
             None
         };
         Ok(crate::ContextSource {
+            temporal: None,
             usage: "task_evidence",
             required: false,
             reference: reference.clone(),
@@ -208,6 +213,7 @@ impl CognitiveRuntimeService {
         } else {
             None
         };
+        let clock = self.read_clock(input.subject).await?;
         let mut tx = self.store.read_view().await?;
         let session = self
             .session_in(input.subject, input.session, &mut tx)
@@ -224,7 +230,7 @@ impl CognitiveRuntimeService {
             )
             .into());
         }
-        let now = self.now(input.subject);
+        let now = clock.recorded_at;
         let configuration = self.configuration.snapshot_for_subject(input.subject)?;
         let mut foreground = None;
         let mut foreground_revision: Option<i64> = None;
@@ -339,6 +345,7 @@ impl CognitiveRuntimeService {
                     .automatic_context_sources(
                         input.subject,
                         AutomaticContextRequest {
+                            clock: &clock,
                             scope,
                             work_context: session.active_work_context_id,
                             materialize: input.materialize,
@@ -585,6 +592,7 @@ impl CognitiveRuntimeService {
             .into());
         }
         Ok(ProjectionView {
+            clock,
             subject: input.subject,
             session: input.session,
             active_work_context: session.active_work_context_id,
@@ -598,6 +606,7 @@ impl CognitiveRuntimeService {
 
 fn work_context_source(context: &WorkContextView, max_bytes: usize) -> ContextSource {
     ContextSource {
+        temporal: None,
         usage: "situational_guidance",
         required: true,
         reference: CognitiveRef::WorkContext(WorkContextId(context.work_context_id)),

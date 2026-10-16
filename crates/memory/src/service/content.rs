@@ -6,6 +6,7 @@ use super::*;
 use std::collections::{HashMap, HashSet};
 
 pub(super) struct CognitionText {
+    pub temporal: Option<FreshnessDescriptor>,
     pub reference: CognitiveRef,
     pub revision: Uuid,
     pub title: Option<String>,
@@ -78,7 +79,15 @@ impl MemoryService {
         let references = admitted.as_slice();
         let contents = self
             .content_in(
-                &mut tx, subject, references, &policy, historical, now, effort, 2048,
+                &mut tx,
+                subject,
+                references,
+                &policy,
+                historical,
+                now,
+                effort,
+                2048,
+                source_read,
             )
             .await?;
         tx.commit().await.map_err(db)?;
@@ -106,6 +115,7 @@ impl MemoryService {
         now: DateTime<Utc>,
         effort: CognitiveEffort,
         max_bytes: usize,
+        source_read: Option<&SourceReadView>,
     ) -> Result<Vec<Result<CognitionText>>> {
         if references.len() > 256 || historical.is_some_and(|v| v.subject != subject) {
             return Err(Error::Invalid("cognition content scope exceeded".into()));
@@ -125,7 +135,7 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) WITH ORDINALITY r
 SELECT q.ordinal,'memory_revision' kind,r.memory_revision_id id,o.memory_id object_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,
  CASE WHEN $4>0 THEN r.title END title,CASE WHEN $4>0 THEN left(r.representation_text,$4) ELSE '' END text,NULL::text scope,NULL::text boundary,
- octet_length(r.representation_text)<=$4 complete
+ octet_length(r.representation_text)<=$4 complete,r.formed_at,r.formed_time_domain_ref,r.recorded_at,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end
  FROM requested q JOIN memory_objects o ON o.subject_id=$1
  JOIN memory_revisions r ON r.memory_id=o.memory_id
  WHERE (q.kind='memory_revision' AND r.memory_revision_id::text=q.value)
@@ -134,7 +144,7 @@ UNION ALL
 SELECT q.ordinal,'cognitive_schema_revision',r.schema_revision_id,o.schema_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
  CASE WHEN $4>0 THEN left(r.structural_claim,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.applicability_description,$4) ELSE '' END,CASE WHEN $4>0 THEN left(r.boundary_definition,$4) ELSE '' END,
- octet_length(r.structural_claim)+octet_length(r.applicability_description)+octet_length(r.boundary_definition)+2<=$4
+ octet_length(r.structural_claim)+octet_length(r.applicability_description)+octet_length(r.boundary_definition)+2<=$4,r.formed_at,r.formed_time_domain_ref,r.recorded_at,r.valid_time_domain_ref,r.valid_time_kind,r.valid_time_start,r.valid_time_end
  FROM requested q JOIN cognitive_schemas o ON o.subject_id=$1
  JOIN cognitive_schema_revisions r ON r.schema_id=o.schema_id
  WHERE (q.kind='cognitive_schema_revision' AND r.schema_revision_id::text=q.value)
@@ -142,21 +152,21 @@ SELECT q.ordinal,'cognitive_schema_revision',r.schema_revision_id,o.schema_id,
 UNION ALL
 SELECT q.ordinal,'episode_revision',r.episode_revision_id,o.episode_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
- CASE WHEN $4>0 THEN left(r.boundary_explanation,$4) ELSE '' END,NULL,NULL,octet_length(r.boundary_explanation)<=$4
+ CASE WHEN $4>0 THEN left(r.boundary_explanation,$4) ELSE '' END,NULL,NULL,octet_length(r.boundary_explanation)<=$4,r.formed_at,r.formed_time_domain_ref,r.recorded_at,'time:real','unknown',NULL,NULL
  FROM requested q JOIN episode_objects o ON o.subject_id=$1 JOIN episode_revisions r ON r.episode_id=o.episode_id
  WHERE (q.kind='episode_revision' AND r.episode_revision_id::text=q.value)
     OR (q.kind='episode' AND o.episode_id::text=q.value AND r.episode_revision_id=o.current_revision_id)
 UNION ALL
 SELECT q.ordinal,'journal_revision',r.journal_revision_id,o.journal_id,
  o.acceptance_state,o.integrity_state,o.suppression_state,CASE WHEN $4>0 THEN r.title END,
- CASE WHEN $4>0 THEN left(r.narrative,$4) ELSE '' END,NULL,NULL,octet_length(r.narrative)<=$4
+ CASE WHEN $4>0 THEN left(r.narrative,$4) ELSE '' END,NULL,NULL,octet_length(r.narrative)<=$4,r.formed_at,r.formed_time_domain_ref,r.recorded_at,'time:real','unknown',NULL,NULL
  FROM requested q JOIN journal_objects o ON o.subject_id=$1 JOIN journal_revisions r ON r.journal_id=o.journal_id
  WHERE (q.kind='journal_revision' AND r.journal_revision_id::text=q.value)
     OR (q.kind='journal' AND o.journal_id::text=q.value AND r.journal_revision_id=o.current_revision_id)
 UNION ALL
 SELECT q.ordinal,'tag',t.tag_id,r.tag_revision_id,'accepted','valid','normal',
  CASE WHEN $4>0 THEN r.label END,CASE WHEN $4>0 THEN COALESCE(r.description,'') ELSE '' END,
- CASE WHEN $4>0 THEN r.kind_hint END,NULL,octet_length(r.label)+octet_length(COALESCE(r.description,''))+octet_length(COALESCE(r.kind_hint,''))+32<=$4
+ CASE WHEN $4>0 THEN r.kind_hint END,NULL,octet_length(r.label)+octet_length(COALESCE(r.description,''))+octet_length(COALESCE(r.kind_hint,''))+32<=$4,NULL,NULL,NULL,NULL,NULL,NULL,NULL
  FROM requested q JOIN tags t ON q.kind='tag' AND t.tag_id=canonical_tag($1,CASE WHEN q.kind='tag' THEN q.value::uuid END)
  JOIN tag_revisions r ON r.tag_revision_id=t.current_revision_id WHERE t.subject_id=$1 AND t.status='active'
 "#).bind(subject.0).bind(kinds).bind(values).bind(i32::try_from(max_bytes).map_err(|_| Error::Invalid("content bound exceeded".into()))?)
@@ -169,6 +179,52 @@ SELECT q.ordinal,'tag',t.tag_id,r.tag_revision_id,'accepted','valid','normal',
         let accessibility = self
             .memory_accessibility_in(tx, subject, &memories, policy, historical, now)
             .await?;
+        let mut temporal = HashMap::<Uuid, FreshnessDescriptor>::new();
+        for kind in ["memory", "cognitive_schema", "episode", "journal"] {
+            let refs = rows
+                .iter()
+                .filter(|r| r.get::<String, _>("kind") == format!("{kind}_revision"))
+                .map(|r| r.get("id"))
+                .collect::<Vec<Uuid>>();
+            if refs.is_empty() {
+                continue;
+            }
+            let mut metadata = super::longitudinal_query::longitudinal_metadata(
+                tx,
+                subject,
+                kind,
+                &refs,
+                historical,
+                source_read,
+            )
+            .await?;
+            for row in rows
+                .iter()
+                .filter(|r| r.get::<String, _>("kind") == format!("{kind}_revision"))
+            {
+                let id: Uuid = row.get("id");
+                temporal.insert(
+                    id,
+                    FreshnessDescriptor {
+                        temporal_evidence: metadata.remove(&id).unwrap_or_default().temporal,
+                        valid_time: DomainTemporalExtent {
+                            time_domain_ref: row.get("valid_time_domain_ref"),
+                            extent: temporal_from_columns(
+                                row.get("valid_time_kind"),
+                                row.get("valid_time_start"),
+                                row.get("valid_time_end"),
+                            )?,
+                        },
+                        formed_at: Some(DomainStamp {
+                            time_domain_ref: row.get("formed_time_domain_ref"),
+                            at: row.get("formed_at"),
+                            recorded_at: row.get("recorded_at"),
+                        }),
+                        recorded_at: Some(row.get("recorded_at")),
+                    },
+                );
+            }
+        }
         let mut found = HashMap::new();
         for row in rows {
             let ordinal: i64 = row.try_get("ordinal").map_err(db)?;
@@ -178,7 +234,7 @@ SELECT q.ordinal,'tag',t.tag_id,r.tag_revision_id,'accepted','valid','normal',
             .iter()
             .enumerate()
             .map(|(ordinal, (requested, explicit))| {
-                read_content(
+                let mut content = read_content(
                     requested,
                     *explicit,
                     found.remove(&ordinal),
@@ -186,7 +242,9 @@ SELECT q.ordinal,'tag',t.tag_id,r.tag_revision_id,'accepted','valid','normal',
                     &accessibility,
                     effort,
                     max_bytes,
-                )
+                )?;
+                content.temporal = temporal.remove(&content.revision);
+                Ok(content)
             })
             .collect())
     }
@@ -214,6 +272,7 @@ fn read_content(
             .tag_state(canonical)
             .ok_or_else(|| Error::NotFound("historical Tag not found".into()))?;
         return Ok(CognitionText {
+            temporal: None,
             reference: CognitiveRef::Tag(canonical),
             revision: state.revision_id,
             title: None,
@@ -284,6 +343,7 @@ fn read_content(
         scope = None;
     }
     Ok(CognitionText {
+        temporal: None,
         reference,
         revision: if kind == "tag" { owner } else { id },
         title,

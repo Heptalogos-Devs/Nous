@@ -294,7 +294,7 @@ impl MemoryService {
                     scope_kind: "journal".into(),
                     scope_ref: journal.0.to_string(),
                     trigger_authority_seq: sequence,
-                    due_at: self.cognition.now(subject),
+                    due_at: self.cognition.recorded_now(),
                     priority: 30,
                 },
             )

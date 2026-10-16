@@ -165,7 +165,7 @@ impl MemoryService {
         input: &CreateAssociationRequest,
     ) -> Result<AssociationEvidenceId> {
         let id = AssociationEvidenceId::new();
-        let now = self.cognition.now(subject);
+        let now = self.cognition.recorded_now();
         let (valid_kind, valid_start, valid_end) = temporal_columns(&input.valid_time);
         let (from_kind, from_ref) = reference_parts(&input.from);
         let (to_kind, to_ref) = reference_parts(&input.to);
@@ -500,7 +500,7 @@ impl MemoryService {
         let changed = sqlx::query("UPDATE association_evidence SET revoked_at=COALESCE(revoked_at,$3) WHERE subject_id=$1 AND association_evidence_id=$2")
             .bind(subject.0)
             .bind(association.0)
-            .bind(self.cognition.now(subject))
+            .bind(self.cognition.recorded_now())
             .execute(&mut **mutation.tx())
             .await
             .map_err(db)?;

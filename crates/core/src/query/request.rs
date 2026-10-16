@@ -36,6 +36,33 @@ pub struct CognitiveQuery {
 }
 
 impl CognitiveQuery {
+    pub fn temporal_predicate(&self, axis: TimeAxis) -> Option<DomainTimePredicate> {
+        let constraints = &self.expression.constraints;
+        let predicate = match axis {
+            TimeAxis::Occurred => constraints.occurred,
+            TimeAxis::Observed => constraints.observed,
+            TimeAxis::Valid => constraints.valid,
+            TimeAxis::Formed => constraints.formed,
+            TimeAxis::Recorded => constraints.recorded,
+        }?;
+        Some(DomainTimePredicate {
+            time_domain_ref: self.time_domain(axis).into(),
+            predicate,
+        })
+    }
+
+    pub fn time_domain(&self, axis: TimeAxis) -> &str {
+        self.expression
+            .constraints
+            .time_domains
+            .get(axis)
+            .unwrap_or_else(|| {
+                self.temporal_frame
+                    .clock_now
+                    .as_ref()
+                    .map_or("time:real", |clock| clock.time_domain_ref.as_str())
+            })
+    }
     /// Exact targets close the candidate set within their expression scope.
     /// Child scopes inherit targets unless they supply their own, just as in
     /// Runtime tree execution. A mixed tree still permits discovery elsewhere.

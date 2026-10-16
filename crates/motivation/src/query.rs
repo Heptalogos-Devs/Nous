@@ -49,11 +49,13 @@ impl CognitiveContributor for MotivationService {
                         epistemic_class: Some(epistemic),
                     }) || c.recorded.is_some_and(|p| !p.contains(record.recorded_at))
                         || c.formed.is_some_and(|p| {
-                            record.formed_stamp.time_domain_ref != "time:real"
+                            record.formed_stamp.time_domain_ref
+                                != bound.source_query.time_domain(TimeAxis::Formed)
                                 || !p.contains(record.formed_stamp.at)
                         })
                         || c.valid.is_some_and(|p| {
-                            record.content.matter().valid_time_domain_ref != "time:real"
+                            record.content.matter().valid_time_domain_ref
+                                != bound.source_query.time_domain(TimeAxis::Valid)
                                 || !p.matches_extent(record.content.valid_time())
                         })
                         || c.observed.is_some()
@@ -76,17 +78,17 @@ impl CognitiveContributor for MotivationService {
                         representation: source.text,
                         authority: AuthorityClass::SubjectCognition,
                         freshness: FreshnessDescriptor {
-                            occurred: Vec::new(),
-                            observed_at: None,
-                            valid_time: if record.content.matter().valid_time_domain_ref
-                                == "time:real"
-                            {
-                                record.content.valid_time().clone()
-                            } else {
-                                TemporalExtent::Unknown
+                            temporal_evidence: TemporalEvidence::default(),
+                            valid_time: DomainTemporalExtent {
+                                time_domain_ref: record
+                                    .content
+                                    .matter()
+                                    .valid_time_domain_ref
+                                    .as_str()
+                                    .into(),
+                                extent: record.content.valid_time().clone(),
                             },
-                            formed_at: (record.formed_stamp.time_domain_ref == "time:real")
-                                .then_some(record.formed_stamp.at),
+                            formed_at: Some(record.formed_stamp.clone()),
                             recorded_at: Some(record.recorded_at),
                         },
                         entity_refs: entities,

@@ -117,6 +117,7 @@ pub(super) async fn materialize_longitudinal(
             kind,
             &ids,
             bound.historical_authority.as_deref(),
+            bound.source_query.source_read.as_ref(),
         )
         .await?;
         for (row, exact, epoch) in rows {
@@ -241,14 +242,13 @@ fn longitudinal_hit(
         representation: Some(text),
         authority: AuthorityClass::SubjectCognition,
         freshness: FreshnessDescriptor {
-            occurred: metadata.occurred,
-            observed_at: metadata.observed_at.or_else(|| {
-                row.get::<Option<chrono::DateTime<Utc>>, _>("time_end")
-                    .or_else(|| row.get("time_start"))
+            temporal_evidence: metadata.temporal,
+            valid_time: DomainTemporalExtent::default(),
+            formed_at: Some(DomainStamp {
+                time_domain_ref: row.get("formed_time_domain_ref"),
+                at: row.get("formed_at"),
+                recorded_at: row.get("recorded_at"),
             }),
-            valid_time: TemporalExtent::Unknown,
-            formed_at: (row.get::<String, _>("formed_time_domain_ref") == "time:real")
-                .then(|| row.get("formed_at")),
             recorded_at: Some(row.get("recorded_at")),
         },
         entity_refs: metadata.entities,
@@ -261,7 +261,7 @@ fn longitudinal_hit(
 fn longitudinal_filter(
     query: &CognitiveQuery,
     row: &sqlx::postgres::PgRow,
-    time: &TemporalExtent,
+    _time: &TemporalExtent,
     kind: &str,
     metadata: &LongitudinalMetadata,
 ) -> bool {
@@ -279,22 +279,20 @@ fn longitudinal_filter(
             EpistemicClass::Derived
         }),
     }) && constraints.valid.is_none()
-        && constraints.occurred.is_none_or(|interval| {
-            metadata
-                .occurred
-                .iter()
-                .any(|extent| interval.matches_extent(extent))
-        })
-        && constraints
-            .observed
-            .is_none_or(|interval| interval.matches_extent(time))
-        && constraints.formed.is_none_or(|interval| {
-            row.get::<String, _>("formed_time_domain_ref") == "time:real"
-                && interval.contains(row.get("formed_at"))
+        && metadata.temporal.matches(
+            query.temporal_predicate(TimeAxis::Occurred).as_ref(),
+            query.temporal_predicate(TimeAxis::Observed).as_ref(),
+        )
+        && query.temporal_predicate(TimeAxis::Formed).is_none_or(|p| {
+            p.matches_stamp(&DomainStamp {
+                time_domain_ref: row.get("formed_time_domain_ref"),
+                at: row.get("formed_at"),
+                recorded_at: row.get("recorded_at"),
+            }) == Some(true)
         })
         && constraints
             .recorded
-            .is_none_or(|interval| interval.contains(row.get("recorded_at")))
+            .is_none_or(|p| p.contains(row.get("recorded_at")))
 }
 async fn longitudinal_evidence(
     service: &MemoryService,
@@ -414,8 +412,7 @@ fn append_rendering(output: &mut String, text: &str, maximum: usize) {
 pub(super) struct LongitudinalMetadata {
     entities: Vec<EntityRef>,
     pub(super) source_classes: Vec<SourceClass>,
-    pub(super) occurred: Vec<TemporalExtent>,
-    pub(super) observed_at: Option<chrono::DateTime<Utc>>,
+    pub(super) temporal: TemporalEvidence,
 }
 
 pub(super) async fn longitudinal_metadata(
@@ -424,13 +421,14 @@ pub(super) async fn longitudinal_metadata(
     kind: &str,
     ids: &[Uuid],
     view: Option<&HistoricalAuthoritySnapshot>,
+    read: Option<&SourceReadView>,
 ) -> Result<BTreeMap<Uuid, LongitudinalMetadata>> {
     let roots = ids
         .iter()
         .map(|id| parse_reference(&format!("{kind}_revision"), &id.to_string()))
         .collect::<Result<Vec<_>>>()?;
     let mut sql = sqlx::QueryBuilder::new("");
-    super::source_facts::push_source_facts(&mut sql, subject, &roots, view)?;
+    super::source_facts::push_source_facts(&mut sql, subject, &roots, view, read)?;
     sql.push("SELECT * FROM source_occurrences ORDER BY root,occurrence_id");
     let rows = sql.build().fetch_all(&mut **tx).await.map_err(db)?;
     let mut result = BTreeMap::<Uuid, LongitudinalMetadata>::new();
@@ -448,20 +446,21 @@ pub(super) async fn longitudinal_metadata(
                 value.entities.push(entity);
             }
         }
-        let occurred = temporal_from_columns(
-            row.get("occurred_time_kind"),
-            row.get("occurred_time_start"),
-            row.get("occurred_time_end"),
-        )?;
-        if !value.occurred.contains(&occurred) {
-            value.occurred.push(occurred);
-        }
-        let observed = row.get::<chrono::DateTime<Utc>, _>("observed_at");
-        value.observed_at = Some(
-            value
-                .observed_at
-                .map_or(observed, |current| current.max(observed)),
-        );
+        value.temporal.sources.push(SourceTemporalEvidence {
+            occurrence_id: OccurrenceId(row.get("occurrence_id")),
+            occurred: DomainTemporalExtent {
+                time_domain_ref: row.get("occurred_time_domain_ref"),
+                extent: temporal_from_columns(
+                    row.get("occurred_time_kind"),
+                    row.get("occurred_time_start"),
+                    row.get("occurred_time_end"),
+                )?,
+            },
+            observed: serde_json::from_value(row.get("observed_stamp"))
+                .map_err(|e| Error::Infrastructure(e.to_string()))?,
+            observed_at: row.get("observed_at"),
+            recorded_at: row.get("source_recorded_at"),
+        });
     }
     Ok(result)
 }

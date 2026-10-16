@@ -42,8 +42,13 @@ async fn subject_with_basis(runtime: &NousRuntime) -> (SubjectId, RevisionBasis)
     )
 }
 
-fn request(scope: &InvocationScope, max_items: usize) -> AutomaticContextRequest<'_> {
+fn request<'a>(
+    scope: &'a InvocationScope,
+    max_items: usize,
+    clock: &'a DomainStamp,
+) -> AutomaticContextRequest<'a> {
     AutomaticContextRequest {
+        clock,
         scope,
         max_items,
         work_context: None,
@@ -129,14 +134,15 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
     )
     .await
     .unwrap();
+    let captured_clock = runtime.cognition.read_clock(subject).await.unwrap();
     let one = service
-        .automatic_context(subject, request(&scope, 1), &read)
+        .automatic_context(subject, request(&scope, 1, &captured_clock), &read)
         .await
         .unwrap();
     assert_eq!(one.sources.len(), 1);
     assert_eq!(one.sources[0].reference, records[0].reference());
     let all = service
-        .automatic_context(subject, request(&scope, 8), &read)
+        .automatic_context(subject, request(&scope, 8, &captured_clock), &read)
         .await
         .unwrap();
     let selected = all

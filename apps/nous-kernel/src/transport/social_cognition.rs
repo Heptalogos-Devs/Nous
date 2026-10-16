@@ -503,7 +503,7 @@ struct Selection {
     after: Option<uuid::Uuid>,
     expression: Option<String>,
     endpoint: Option<EntityRef>,
-    at: Option<chrono::DateTime<chrono::Utc>>,
+    at: Option<nous_core::DomainStamp>,
     as_of: Option<chrono::DateTime<chrono::Utc>>,
     history: bool,
 }
@@ -532,7 +532,7 @@ impl Selection {
             after: v.after.map(|v| id(&v)).transpose()?,
             expression: v.expression,
             endpoint: v.endpoint.map(EntityRef::new).transpose()?,
-            at: time(v.at)?,
+            at: v.at.map(domain_stamp).transpose()?,
             as_of: time(v.as_of)?,
             history: v.history,
         })
@@ -547,7 +547,7 @@ impl Selection {
             expression: self.expression.as_deref(),
             endpoint: self.endpoint.as_ref(),
             counterpart: None,
-            at: self.at,
+            at: self.at.clone(),
             as_of: self.as_of,
             history: self.history,
         }
@@ -636,7 +636,10 @@ impl KernelService {
                     expression: None,
                     endpoint: None,
                     counterpart: None,
-                    at: time(modifiers.and_then(|m| m.clock_now))?,
+                    at: modifiers
+                        .and_then(|m| m.clock_now.clone())
+                        .map(domain_stamp)
+                        .transpose()?,
                     as_of: time(modifiers.and_then(|m| m.as_of))?,
                     history: modifiers.is_some_and(|m| m.history),
                 },

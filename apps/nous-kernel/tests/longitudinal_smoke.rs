@@ -175,7 +175,7 @@ async fn run_smoke() {
                             scope_kind: reference.kind().into(),
                             scope_ref: nous_core::reference_parts(&reference).1,
                             trigger_authority_seq: seq,
-                            due_at: server.runtime.cognition.now(subject),
+                            due_at: server.runtime.cognition.recorded_now(),
                             priority: 100,
                         })
                         .await

@@ -360,7 +360,7 @@ impl CognitiveRuntimeService {
         super::preferences::apply(
             &mut result.results,
             &query.expression.preferences,
-            bound.bound_at,
+            bound.source_query.temporal_frame.clock_stamp()?,
             &bound.retrieval_policy,
         );
         result.results.truncate(output_limit);
@@ -527,9 +527,8 @@ fn reference_hit(
         representation: None,
         authority,
         freshness: FreshnessDescriptor {
-            occurred: Vec::new(),
-            observed_at: None,
-            valid_time: TemporalExtent::Unknown,
+            temporal_evidence: TemporalEvidence::default(),
+            valid_time: DomainTemporalExtent::default(),
             formed_at: None,
             recorded_at: None,
         },

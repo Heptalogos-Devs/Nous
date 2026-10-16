@@ -57,7 +57,9 @@ impl KernelService {
         let mut plan = k::MaintenancePlan {
             subject_id: subject.0.to_string(),
             authority_seq: sequence,
-            cognitive_now: Some(timestamp(self.0.cognition.now(subject))),
+            cognitive_now: Some(domain_stamp_proto(
+                &self.0.cognition.read_clock(subject).await?,
+            )),
             status: scope.status,
             next_due: scope.next_due.map(timestamp),
             problem_code: scope.problem,
@@ -134,7 +136,9 @@ impl KernelService {
             Ok(k::MaintenancePlan {
                 subject_id: subject.0.to_string(),
                 authority_seq: concepts.authority_seq,
-                cognitive_now: Some(timestamp(self.0.cognition.now(subject))),
+                cognitive_now: Some(domain_stamp_proto(
+                    &self.0.cognition.read_clock(subject).await?,
+                )),
                 status: "ready".into(),
                 concept_model_input_json: Some(concepts.model_input.to_string()),
                 concept_catalog: Some(k::ConceptMaintenanceCatalog {

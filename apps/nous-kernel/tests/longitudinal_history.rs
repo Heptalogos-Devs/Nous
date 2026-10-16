@@ -58,7 +58,7 @@ async fn historical_schema_episode_journal_use_past_heads_and_history_documents(
         producer: None,
     };
     let journal = owner.commit_journal(journal_input.clone()).await.unwrap();
-    let cut = rt.cognition.now(subject);
+    let cut = rt.cognition.recorded_now();
     let old = vec![
         CognitiveRef::MemoryRevision(memory.revision.memory_revision_id),
         CognitiveRef::CognitiveSchemaRevision(schema.revision.schema_revision_id),
@@ -276,7 +276,7 @@ async fn episode_media_synopsis_tracks_ready_derivation_without_revising_authori
         .episodes
         .remove(0);
     sqlx::query("INSERT INTO coverage_needs(coverage_need_id,subject_id,source_region_id,representation_kind,capability_operation,requirement,state,updated_at) VALUES($1,$2,$3,'image_description','image_interpretation','preferred','missing',$4)")
-        .bind(uuid::Uuid::new_v4()).bind(subject.0).bind(region.0).bind(rt.cognition.now(subject)).execute(rt.store.pool()).await.unwrap();
+        .bind(uuid::Uuid::new_v4()).bind(subject.0).bind(region.0).bind(rt.cognition.recorded_now()).execute(rt.store.pool()).await.unwrap();
     let query = media_episode_query(subject, "cobalt");
     assert!(rt.query(query.clone()).await.unwrap().results.is_empty());
     let synopsis = format!(
@@ -327,7 +327,7 @@ async fn episode_media_synopsis_tracks_ready_derivation_without_revising_authori
         .unwrap();
     assert_eq!(selected.text.len(), 2047);
     assert_synopsis_policy(&rt, subject).await;
-    let historical_cut = rt.cognition.now(subject);
+    let historical_cut = rt.cognition.recorded_now();
     clock.advance_by(subject, Duration::seconds(10)).unwrap();
     let second =
         persist_media_synopsis(&rt, subject, region, "amber inlet", Some(first), "2").await;
@@ -520,7 +520,7 @@ async fn assert_historical_synopsis(
     );
     let current = rt
         .material
-        .project_as_of(subject, rt.cognition.now(subject))
+        .project_as_of(subject, rt.cognition.recorded_now())
         .await
         .unwrap();
     assert!(

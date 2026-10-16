@@ -72,7 +72,10 @@ async fn configure_and_advance(
     assert_real_observation(runtime, subject).await;
     let real = Utc::now();
     assert!(
-        (runtime.cognition.now(subject) - real).num_seconds().abs() < 2,
+        (runtime.cognition.recorded_now() - real)
+            .num_seconds()
+            .abs()
+            < 2,
         "legacy owners remain explicitly real-domain"
     );
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -499,7 +502,8 @@ async fn material_keeps_real_contact_and_world_stamp_across_restart_and_replay()
         .unwrap();
     // The old mathematical-only source interface cannot turn another world's
     // coincident numeric timestamp into a physical QQ event time.
-    let kind: String = sqlx::query_scalar("SELECT occurred_time_kind FROM material_occurrence_facts($1,NULL,NULL) WHERE occurrence_id=$2")
+    let (kind, domain):(String,String) = sqlx::query_as("SELECT occurred_time_kind,occurred_time_domain_ref FROM material_occurrence_facts($1,NULL,NULL) WHERE occurrence_id=$2")
         .bind(subject.0).bind(other.occurrence.occurrence_id.0).fetch_one(reopened.store.pool()).await.unwrap();
-    assert_eq!(kind, "unknown");
+    assert_eq!(kind, "instant");
+    assert_eq!(domain, "time:other");
 }

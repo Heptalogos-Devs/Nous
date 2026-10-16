@@ -45,6 +45,7 @@ impl MemoryService {
                 now,
                 CognitiveEffort::Normal,
                 max_bytes,
+                source_read,
             )
             .await?;
         let exact = contents
@@ -136,6 +137,7 @@ impl MemoryService {
                         return Err(complete_unit_error());
                     }
                     Ok(ContextSource {
+                        temporal: content.temporal,
                         usage: "task_evidence",
                         required: false,
                         reference: content.reference,

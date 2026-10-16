@@ -384,7 +384,7 @@ async fn historical_material_query_runs_without_memory_micro_system() {
     assert!(rt.memory.is_none());
     let subject = test_support::query::subject(&rt).await;
     let old = observation(&rt, subject, "material archival chronicle").await;
-    let cut = rt.cognition.now(subject);
+    let cut = rt.cognition.recorded_now();
     let future = observation(&rt, subject, "future material archival chronicle").await;
     let request = CognitiveQuery {
         source_read: None,

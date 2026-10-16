@@ -138,12 +138,14 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
         conversation: "conversation:fixture:testing".into(),
         ..Default::default()
     };
+    let captured_clock = runtime.cognition.read_clock(subject).await.unwrap();
     let context = runtime
         .require_self()
         .unwrap()
         .automatic_context(
             subject,
             nous_runtime::AutomaticContextRequest {
+                clock: &captured_clock,
                 scope: &scope,
                 max_items: 4,
                 work_context: None,
@@ -234,12 +236,14 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
         .await
         .unwrap();
     let reopened = open_runtime(&url, &root).await;
+    let expired_clock = reopened.cognition.read_clock(subject).await.unwrap();
     let expired = reopened
         .require_self()
         .unwrap()
         .automatic_context(
             subject,
             nous_runtime::AutomaticContextRequest {
+                clock: &expired_clock,
                 scope: &scope,
                 max_items: 4,
                 work_context: None,

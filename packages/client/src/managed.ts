@@ -10,6 +10,7 @@ import {
   type CognitionUsage,
   type ContextCursor,
   type ContextSegment,
+  type DomainStamp,
   type CognitiveRef,
   type ManagedContextResponse,
   type Projection,
@@ -17,7 +18,7 @@ import {
 import type { NousClient, RequestOptions } from "./index.js";
 import type { HostRoleScope } from "./host-bridge.js";
 
-export type { CognitionUsage, ContextSegment };
+export type { CognitionUsage, ContextSegment, DomainStamp };
 export interface AppliedCognition {
   readonly projectionId: string;
   readonly sourceRefs: readonly CognitiveRef[];
@@ -28,6 +29,7 @@ export interface ContextRenderer<T> {
     base: T,
     segments: readonly ContextSegment[],
     usage: CognitionUsage,
+    clock: DomainStamp,
   ): T;
 }
 export interface ActualInvocationOutcome {
@@ -169,6 +171,8 @@ export function createManagedBinding(options: {
         throw new Error(
           "Required cognition preparation is unavailable or has foreign scope",
         );
+      if (!projection.semanticClock?.at || !projection.semanticClock.recordedAt || !projection.semanticClock.timeDomainRef.trim())
+        throw new Error("Required Subject semantic clock is missing; update and prepare the official Nous runtime and plugin");
       let segments: ContextSegment[];
       if (response.kind === "RESET") segments = projection.segments;
       else if (
@@ -190,6 +194,7 @@ export function createManagedBinding(options: {
         base,
         structuredClone(segments),
         structuredClone(projection.usage),
+        structuredClone(projection.semanticClock),
       );
       pending.signal.throwIfAborted();
       const sourceRefs = [

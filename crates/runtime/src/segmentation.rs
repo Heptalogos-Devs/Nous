@@ -44,7 +44,7 @@ impl CognitiveRuntimeService {
         self.require_subject(subject).await?;
         let policy =
             EpisodePolicy::from_snapshot(&self.configuration.snapshot_for_subject(subject)?)?;
-        let now = self.now(subject);
+        let now = self.recorded_now();
         let mut tx = self.store.begin().await?;
         sqlx::query("INSERT INTO segmentation_cursors(subject_id,track_key,updated_at) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
             .bind(subject.0).bind(track).bind(now).execute(&mut *tx).await.map_err(db)?;

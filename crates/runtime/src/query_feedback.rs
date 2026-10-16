@@ -39,7 +39,7 @@ impl CognitiveRuntimeService {
             ));
         }
         let subject = bound.source_query.subject;
-        let created = self.now(subject);
+        let created = self.recorded_now();
         let retention = bound.config_snapshot.get(QUERY_FEEDBACK_RETENTION)?;
         let expires = created
             .checked_add_signed(chrono::Duration::seconds(

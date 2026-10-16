@@ -57,7 +57,7 @@ impl CognitiveRuntimeService {
                 scope_kind: "track".into(),
                 scope_ref: "interaction".into(),
                 trigger_authority_seq: input.recorded_seq,
-                due_at: self.now(input.subject),
+                due_at: self.recorded_now(),
                 priority: 50,
             },
         )

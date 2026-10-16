@@ -300,7 +300,7 @@ async fn assert_longitudinal_use(
                 event_id: nous_core::UseEventId::new(),
                 reference,
                 use_kind: nous_runtime::UseKind::Referenced,
-                occurred_at: rt.cognition.now(subject),
+                occurred_at: rt.cognition.recorded_now(),
                 context: serde_json::json!({}),
             })
             .collect(),

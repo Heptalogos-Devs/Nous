@@ -66,7 +66,7 @@ impl MemoryService {
         let mut pending: VecDeque<_> = revisions.iter().map(|id| (kind.to_owned(), *id)).collect();
         let roots: BTreeSet<_> = pending.iter().cloned().collect();
         let mut seen = BTreeSet::new();
-        let now = self.cognition.now(subject);
+        let now = self.cognition.recorded_now();
         let mut affects_memory = false;
         let mut affects_journal = false;
         while let Some((kind, source)) = pending.pop_front() {

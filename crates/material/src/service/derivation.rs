@@ -203,7 +203,7 @@ INSERT INTO derived_regions(derived_region_id,subject_id,derived_representation_
 SELECT derived_region_id,subject_id,derived_representation_id,coordinate_kind,coordinate,coordinate_hash,parent_derived_region_id,$2
 FROM jsonb_to_recordset($1) r(derived_region_id uuid,subject_id uuid,derived_representation_id uuid,coordinate_kind text,coordinate jsonb,coordinate_hash text,parent_derived_region_id uuid)
 ON CONFLICT(derived_representation_id,coordinate_kind,coordinate_hash) DO NOTHING
-"#).bind(&requested).bind(self.cognition.now(subject)).execute(&mut **tx).await.map_err(db)?.rows_affected();
+"#).bind(&requested).bind(self.cognition.recorded_now()).execute(&mut **tx).await.map_err(db)?.rows_affected();
         let values: Vec<serde_json::Value> = sqlx::query_scalar(r#"
 SELECT to_jsonb(d) FROM jsonb_array_elements($1) WITH ORDINALITY AS input(value,ordinal)
 CROSS JOIN LATERAL jsonb_to_record(input.value) AS r(derived_representation_id uuid,coordinate_kind text,coordinate_hash text)

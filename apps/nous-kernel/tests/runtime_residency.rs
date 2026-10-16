@@ -312,7 +312,7 @@ async fn resident_noop_preserves_hold_and_revision_and_eviction_is_one_revision(
             event_id: nous_core::UseEventId::new(),
             reference: CognitiveRef::MemoryRevision(memory.revision.memory_revision_id),
             use_kind: nous_runtime::UseKind::Referenced,
-            occurred_at: runtime.cognition.now(subject),
+            occurred_at: runtime.cognition.recorded_now(),
             context: serde_json::json!({}),
         });
     }
@@ -398,7 +398,7 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
             subject,
             &[(reference.clone(), false), (reference.clone(), true)],
             &policy,
-            runtime.cognition.now(subject) + Duration::days(36_500),
+            runtime.cognition.recorded_now() + Duration::days(36_500),
             8,
             None,
         )
@@ -425,7 +425,7 @@ async fn projection_materializes_supported_memory_within_the_text_budget() {
             subject,
             &[(reference.clone(), false)],
             &permissive_policy,
-            runtime.cognition.now(subject) + Duration::days(36_500),
+            runtime.cognition.recorded_now() + Duration::days(36_500),
             256,
             None,
         )

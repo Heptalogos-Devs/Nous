@@ -215,6 +215,7 @@ fn projection_proto(
     usage: Option<p::CognitionUsage>,
 ) -> p::Projection {
     p::Projection {
+        semantic_clock: Some(domain_stamp_proto(&view.clock)),
         projection_id: uuid::Uuid::now_v7().to_string(),
         consumer_id: view.consumer_id,
         source_runtime_revision: view.runtime_revision,
@@ -226,6 +227,11 @@ fn projection_proto(
             .segments
             .into_iter()
             .map(|segment| p::ContextSegment {
+                temporal: segment
+                    .source
+                    .temporal
+                    .as_ref()
+                    .map(temporal_metadata_proto),
                 segment_id: uuid::Uuid::now_v7().to_string(),
                 domain: match segment.source.reference.domain() {
                     nous_core::CognitiveDomain::Memory => "memory",

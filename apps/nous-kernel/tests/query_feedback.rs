@@ -251,7 +251,7 @@ async fn linked_use_is_bounded_subject_local_final_and_expiring() {
     clock
         .advance_by(subject_a, chrono::Duration::days(8))
         .unwrap();
-    let later = rt.cognition.now(subject_a);
+    let later = rt.cognition.recorded_now();
     assert!(matches!(
         rt.cognition
             .use_feedback(feedback(subject_a, a.clone(), result.bound.query_id, later))

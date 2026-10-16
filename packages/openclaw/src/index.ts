@@ -780,11 +780,12 @@ function register(api: OpenClawPluginApi): void {
           modelContext,
           prepared,
           {
-            render(base, segments, invocationUsage) {
+            render(base, segments, invocationUsage, clock) {
               const rendered = cognitionRenderer.render(
                 base,
                 segments,
                 invocationUsage,
+                clock,
               );
               providerBudget.assertFits(rendered);
               return rendered;

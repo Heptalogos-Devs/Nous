@@ -220,7 +220,7 @@ impl k::kernel_material_workflow_service_server::KernelMaterialWorkflowService f
                         payload_json: input.structured_payload.map(|value| object(Some(value))),
                         payload_artifact_id: None,
                         quality: object(input.quality),
-                        created_at: self.0.cognition.now(subject),
+                        created_at: self.0.cognition.recorded_now(),
                         supersedes: input
                             .supersedes
                             .as_deref()

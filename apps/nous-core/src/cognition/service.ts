@@ -321,7 +321,7 @@ export class CoreCognition {
           "Supply either NousQL or typed expression",
           Code.InvalidArgument,
         );
-      const cognitiveTime = await this.kernel.queryWorkflow.getCognitiveTime(
+      const clock = await this.kernel.clocks.readClock(
         { subjectId: request.subjectId },
         calls,
       );
@@ -380,7 +380,7 @@ export class CoreCognition {
             lexicalRef: result.candidates[0].lexicalRef,
           };
         },
-        cognitiveTime,
+        clock.now!,
       );
       request.expression = compiled.expression;
       request.nousql = undefined;

@@ -60,7 +60,7 @@ impl MemoryService {
                             &[id.0],
                             policy,
                             None,
-                            self.cognition.now(subject),
+                            self.cognition.recorded_now(),
                             None,
                         )
                         .await?

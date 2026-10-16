@@ -349,7 +349,7 @@ impl MaterialService {
                 metadata,
                 chunks,
                 self.max_upload_bytes,
-                self.cognition.now(subject),
+                self.cognition.recorded_now(),
             )
             .await?;
         tx.commit().await.map_err(db)?;

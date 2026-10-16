@@ -358,3 +358,36 @@ pub fn formation_proto(
         recorded_at: Some(timestamp(recorded_at)),
     }
 }
+
+pub fn temporal_evidence_proto(value: &nous_core::TemporalEvidence) -> p::TemporalEvidence {
+    p::TemporalEvidence {
+        sources: value
+            .sources
+            .iter()
+            .map(|source| p::SourceTemporalEvidence {
+                occurrence_id: source.occurrence_id.0.to_string(),
+                occurred: Some(domain_temporal_proto(
+                    &source.occurred.time_domain_ref,
+                    &source.occurred.extent,
+                )),
+                observed: Some(domain_stamp_proto(&source.observed)),
+                observed_at: Some(timestamp(source.observed_at)),
+                recorded_at: Some(timestamp(source.recorded_at)),
+            })
+            .collect(),
+    }
+}
+
+pub fn temporal_metadata_proto(
+    value: &nous_core::FreshnessDescriptor,
+) -> p::DomainTemporalEvidence {
+    p::DomainTemporalEvidence {
+        temporal_evidence: Some(temporal_evidence_proto(&value.temporal_evidence)),
+        valid: Some(domain_temporal_proto(
+            &value.valid_time.time_domain_ref,
+            &value.valid_time.extent,
+        )),
+        formed: value.formed_at.as_ref().map(domain_stamp_proto),
+        recorded_at: value.recorded_at.map(timestamp),
+    }
+}

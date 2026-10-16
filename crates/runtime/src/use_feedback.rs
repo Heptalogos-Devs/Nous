@@ -18,7 +18,7 @@ impl CognitiveRuntimeService {
         self.invalidate_session_history_in(tx, subject, kind, revisions)
             .await?;
         sqlx::query("INSERT INTO purged_use_receipts(subject_id,consumer_ref,event_id,request_digest,purged_at) SELECT subject_id,consumer_ref,event_id,request_digest,$4 FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind=$2 AND ref_value=ANY($3::text[]) ON CONFLICT DO NOTHING")
-            .bind(subject.0).bind(kind).bind(revisions).bind(self.now(subject)).execute(&mut **tx).await.map_err(db)?;
+            .bind(subject.0).bind(kind).bind(revisions).bind(self.recorded_now()).execute(&mut **tx).await.map_err(db)?;
         sqlx::query("DELETE FROM cognitive_use_events WHERE subject_id=$1 AND ref_kind=$2 AND ref_value=ANY($3::text[])")
             .bind(subject.0).bind(kind).bind(revisions).execute(&mut **tx).await.map_err(db)?;
         self.forget_resident_cognition_in(tx, subject, kind, revisions)
@@ -69,7 +69,7 @@ impl CognitiveRuntimeService {
                 ));
             }
             if event.occurred_at < DateTime::<Utc>::UNIX_EPOCH
-                || event.occurred_at > self.now(input.subject) + chrono::Duration::minutes(5)
+                || event.occurred_at > self.recorded_now() + chrono::Duration::minutes(5)
             {
                 return Err(Error::Invalid(
                     "UseEvent occurred_at is outside the allowed range".into(),
@@ -190,7 +190,7 @@ impl CognitiveRuntimeService {
                     input.subject,
                     query_id,
                     &event.reference,
-                    self.now(input.subject),
+                    self.recorded_now(),
                 )
                 .await?;
             }
@@ -234,7 +234,7 @@ impl CognitiveRuntimeService {
                 .bind(session.0).bind(domains).execute(&mut *tx).await.map_err(db)?;
             }
         }
-        let recorded_at = self.now(input.subject);
+        let recorded_at = self.recorded_now();
         let mut accepted = 0u32;
         let mut duplicates = 0u32;
         let mut meaningful_times = Vec::new();

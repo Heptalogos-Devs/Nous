@@ -11,8 +11,9 @@ mod trace;
 pub use trace::CognitionTraceSources;
 mod time;
 pub use time::{
-    DomainStamp, DomainTemporalEvidence, DomainTemporalExtent, DomainTimePredicate, TemporalExtent,
-    TimeInterval, TimePredicate, is_real_time_domain, real_time_domain,
+    DomainStamp, DomainTemporalExtent, DomainTimePredicate, SourceTemporalEvidence,
+    TemporalEvidence, TemporalExtent, TimeInterval, TimePredicate, is_real_time_domain,
+    real_time_domain,
 };
 mod model_results;
 pub use model_results::{
@@ -357,11 +358,9 @@ impl EmbeddingSpaceSignature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FreshnessDescriptor {
-    #[serde(default)]
-    pub occurred: Vec<TemporalExtent>,
-    pub observed_at: Option<DateTime<Utc>>,
-    pub valid_time: TemporalExtent,
-    pub formed_at: Option<DateTime<Utc>>,
+    pub temporal_evidence: TemporalEvidence,
+    pub valid_time: DomainTemporalExtent,
+    pub formed_at: Option<DomainStamp>,
     pub recorded_at: Option<DateTime<Utc>>,
 }
 

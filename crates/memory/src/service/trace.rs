@@ -108,7 +108,8 @@ impl MemoryService {
                     (&memories, &[]),
                     &policy,
                     None,
-                    self.cognition.now(subject),
+                    self.cognition.recorded_now(),
+                    None,
                 )
                 .await?
                 .into_values()

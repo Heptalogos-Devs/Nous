@@ -55,15 +55,16 @@ pub(super) fn to_hit(
         representation: Some(candidate.view.revision.representation_text.clone()),
         authority: AuthorityClass::SubjectCognition,
         freshness: FreshnessDescriptor {
-            occurred: candidate.view.temporal_evidence.occurred.clone(),
-            observed_at: candidate.view.temporal_evidence.observed_at,
-            valid_time: if candidate.view.revision.valid_time_domain_ref == "time:real" {
-                candidate.view.revision.valid_time.clone()
-            } else {
-                TemporalExtent::Unknown
+            temporal_evidence: candidate.view.temporal_evidence.clone(),
+            valid_time: DomainTemporalExtent {
+                time_domain_ref: candidate.view.revision.valid_time_domain_ref.clone(),
+                extent: candidate.view.revision.valid_time.clone(),
             },
-            formed_at: (candidate.view.revision.formed_time_domain_ref == "time:real")
-                .then_some(candidate.view.revision.formed_at),
+            formed_at: Some(DomainStamp {
+                time_domain_ref: candidate.view.revision.formed_time_domain_ref.clone(),
+                at: candidate.view.revision.formed_at,
+                recorded_at: candidate.view.revision.recorded_at,
+            }),
             recorded_at: Some(candidate.view.revision.recorded_at),
         },
         entity_refs: candidate.view.aboutness.clone(),
@@ -106,37 +107,25 @@ pub(super) fn hard_filter(
 }
 
 pub(super) fn temporal_match(query: &CognitiveQuery, view: &MemoryView) -> bool {
-    query.expression.constraints.valid.is_none_or(|interval| {
-        view.revision.valid_time_domain_ref == "time:real"
-            && interval.matches_extent(&view.revision.valid_time)
+    query.temporal_predicate(TimeAxis::Valid).is_none_or(|p| {
+        p.matches_extent(&DomainTemporalExtent {
+            time_domain_ref: view.revision.valid_time_domain_ref.clone(),
+            extent: view.revision.valid_time.clone(),
+        }) == Some(true)
+    }) && view.temporal_evidence.matches(
+        query.temporal_predicate(TimeAxis::Occurred).as_ref(),
+        query.temporal_predicate(TimeAxis::Observed).as_ref(),
+    ) && query.temporal_predicate(TimeAxis::Formed).is_none_or(|p| {
+        p.matches_stamp(&DomainStamp {
+            time_domain_ref: view.revision.formed_time_domain_ref.clone(),
+            at: view.revision.formed_at,
+            recorded_at: view.revision.recorded_at,
+        }) == Some(true)
     }) && query
         .expression
         .constraints
-        .occurred
-        .is_none_or(|interval| {
-            view.temporal_evidence
-                .occurred
-                .iter()
-                .any(|value| interval.matches_extent(value))
-        })
-        && query
-            .expression
-            .constraints
-            .observed
-            .is_none_or(|interval| {
-                view.temporal_evidence
-                    .observed_at
-                    .is_some_and(|value| interval.contains(value))
-            })
-        && query.expression.constraints.formed.is_none_or(|interval| {
-            view.revision.formed_time_domain_ref == "time:real"
-                && interval.contains(view.revision.formed_at)
-        })
-        && query
-            .expression
-            .constraints
-            .recorded
-            .is_none_or(|interval| interval.contains(view.revision.recorded_at))
+        .recorded
+        .is_none_or(|p| p.contains(view.revision.recorded_at))
 }
 
 pub(super) fn increment_drop(counts: &mut BTreeMap<String, usize>, reason: &str) {

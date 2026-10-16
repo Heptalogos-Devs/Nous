@@ -138,7 +138,7 @@ async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
         .unwrap();
     let mention = uuid::Uuid::now_v7();
     sqlx::query("INSERT INTO entity_mentions(mention_id,subject_id,occurrence_id,surface,created_at) VALUES($1,$2,$3,$4,$5)")
-        .bind(mention).bind(subject.0).bind(observed.occurrence.occurrence_id.0).bind("Release reviewer").bind(rt.cognition.now(subject)).execute(rt.store.pool()).await.unwrap();
+        .bind(mention).bind(subject.0).bind(observed.occurrence.occurrence_id.0).bind("Release reviewer").bind(rt.cognition.recorded_now()).execute(rt.store.pool()).await.unwrap();
     let binding = p::RebindEntityRequest {
         subject_id: subject.0.to_string(),
         mention_id: mention.to_string(),

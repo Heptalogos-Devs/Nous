@@ -27,7 +27,7 @@ message MotivationHistoryRequest {string subject_id=1 [(reference_kind)="subject
 message MotivationListResponse {repeated MotivationRecord items=1;string next_page_token=2;}
 message MotivationMutationRequest {string subject_id=1 [(reference_kind)="subject"];string operation_id=2;CognitiveRef object_ref=3;int64 expected_object_epoch=4;}
 message MotivationLifecycleRequest {MotivationMutationRequest mutation=1;string action=2;}
-message MotivationSelectionRequest {string subject_id=1 [(reference_kind)="subject"];MotivationScope scope=2;SourceReadScope source_read=3;uint32 max_items=4;uint32 max_bytes=5;optional string after=6;google.protobuf.Timestamp at=7;google.protobuf.Timestamp as_of=8;bool history=9;}
+message MotivationSelectionRequest {string subject_id=1 [(reference_kind)="subject"];MotivationScope scope=2;SourceReadScope source_read=3;uint32 max_items=4;uint32 max_bytes=5;optional string after=6;DomainStamp at=7;google.protobuf.Timestamp as_of=8;bool history=9;}
 message MotivationSelectionResponse {repeated MotivationRecord items=1;optional string next=2;bool omitted=3;}
 message EvaluateConditionRequest {string subject_id=1 [(reference_kind)="subject"];string operation_id=2;CognitiveRef condition_revision=3;MotivationScope scope=4;SourceReadScope source_read=5;repeated CognitiveRef evidence_refs=6;}
 message CriterionSample {google.protobuf.Timestamp at=1;string truth=2;repeated CognitiveRef evidence=3;}

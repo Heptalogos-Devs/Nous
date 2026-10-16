@@ -38,6 +38,7 @@ impl MemoryService {
                 accessibility_policy,
                 view,
                 now,
+                source_read,
             )
             .await?;
         tx.commit().await.map_err(db)?;
@@ -56,6 +57,7 @@ impl MemoryService {
         accessibility_policy: &AccessibilityPolicy,
         view: Option<&HistoricalAuthoritySnapshot>,
         now: DateTime<Utc>,
+        source_read: Option<&SourceReadView>,
     ) -> Result<HashMap<Uuid, MemoryView>> {
         let (revisions, objects) = selection;
         if revisions.is_empty() && objects.is_empty() {
@@ -84,52 +86,25 @@ impl MemoryService {
                 row.try_get::<String, _>("entity_ref").map_err(db)?,
             )?);
         }
-        let occurrence_ids = basis
-            .values()
-            .flatten()
-            .filter_map(|basis| match basis {
-                RevisionBasis::Evidence(e) => Some(e.occurrence_id),
-                _ => None,
-            })
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        let occurrence_facts = self
-            .material
-            .occurrences_in(tx, subject, &occurrence_ids, view)
-            .await?;
+        let ids = rows
+            .iter()
+            .map(|row| row.try_get("memory_revision_id").map_err(db))
+            .collect::<Result<Vec<Uuid>>>()?;
+        let mut source_metadata = super::longitudinal_query::longitudinal_metadata(
+            tx,
+            subject,
+            "memory",
+            &ids,
+            view,
+            source_read,
+        )
+        .await?;
         let mut temporal = HashMap::<Uuid, TemporalEvidence>::new();
         let mut source_classes = HashMap::<Uuid, Vec<SourceClass>>::new();
-        for (revision, support) in &basis {
-            let mut occurrences = support
-                .iter()
-                .filter_map(|basis| match basis {
-                    RevisionBasis::Evidence(e) => occurrence_facts.get(&e.occurrence_id),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            occurrences.sort_by_key(|o| o.observed_at);
-            let entry = temporal.entry(*revision).or_default();
-            for occurrence in occurrences {
-                entry
-                    .occurred
-                    .push(if occurrence.occurred_time_domain_ref == "time:real" {
-                        occurrence.occurred_time.clone()
-                    } else {
-                        TemporalExtent::Unknown
-                    });
-                {
-                    entry.observed_at = Some(occurrence.observed_at);
-                }
-                source_classes
-                    .entry(*revision)
-                    .or_default()
-                    .push(occurrence.source_class.clone());
-            }
-            if let Some(classes) = source_classes.get_mut(revision) {
-                classes.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-                classes.dedup();
-            }
+        for id in ids {
+            let metadata = source_metadata.remove(&id).unwrap_or_default();
+            temporal.insert(id, metadata.temporal);
+            source_classes.insert(id, metadata.source_classes);
         }
         let accessibility = self
             .memory_accessibility_in(

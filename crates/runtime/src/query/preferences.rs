@@ -73,7 +73,7 @@ fn lexical_match(text: &str, candidate: &str) -> f64 {
 pub(super) fn score(
     preferences: &[QueryPreference],
     hit: &CognitiveHit,
-    now: DateTime<Utc>,
+    clock: &DomainStamp,
     policy: &super::RetrievalPolicy,
 ) -> f64 {
     preferences
@@ -85,14 +85,44 @@ pub(super) fn score(
                     &hit.reference == reference || hit.revision.as_ref() == Some(reference),
                 ),
                 PreferenceOperand::Recent(axis) => {
+                    let domain = &clock.time_domain_ref;
                     let time = match axis {
-                        TimeAxis::Occurred => {
-                            hit.freshness.occurred.iter().filter_map(extent_time).max()
-                        }
-                        TimeAxis::Observed => hit.freshness.observed_at,
-                        TimeAxis::Valid => extent_time(&hit.freshness.valid_time),
-                        TimeAxis::Formed => hit.freshness.formed_at,
+                        TimeAxis::Occurred => hit
+                            .freshness
+                            .temporal_evidence
+                            .sources
+                            .iter()
+                            .filter(|s| &s.occurred.time_domain_ref == domain)
+                            .filter_map(|s| extent_time(&s.occurred.extent))
+                            .max(),
+                        TimeAxis::Observed => hit
+                            .freshness
+                            .temporal_evidence
+                            .sources
+                            .iter()
+                            .filter_map(|s| {
+                                if domain == "time:real" {
+                                    Some(s.observed_at)
+                                } else {
+                                    (&s.observed.time_domain_ref == domain).then_some(s.observed.at)
+                                }
+                            })
+                            .max(),
+                        TimeAxis::Valid => (&hit.freshness.valid_time.time_domain_ref == domain)
+                            .then(|| extent_time(&hit.freshness.valid_time.extent))
+                            .flatten(),
+                        TimeAxis::Formed => hit
+                            .freshness
+                            .formed_at
+                            .as_ref()
+                            .filter(|s| &s.time_domain_ref == domain)
+                            .map(|s| s.at),
                         TimeAxis::Recorded => hit.freshness.recorded_at,
+                    };
+                    let now = if matches!(axis, TimeAxis::Recorded) {
+                        clock.recorded_at
+                    } else {
+                        clock.at
                     };
                     time.map_or(0.0, |time| {
                         1.0 / (1.0
@@ -114,12 +144,12 @@ pub(super) fn score(
 pub(super) fn apply(
     hits: &mut [CognitiveHit],
     preferences: &[QueryPreference],
-    now: DateTime<Utc>,
+    clock: &DomainStamp,
     policy: &super::RetrievalPolicy,
 ) {
     for (index, hit) in hits.iter_mut().enumerate() {
         hit.match_evidence.baseline_rank = (index + 1) as u32;
-        hit.match_evidence.preference_score = score(preferences, hit, now, policy);
+        hit.match_evidence.preference_score = score(preferences, hit, clock, policy);
         hit.match_evidence.final_score =
             hit.match_evidence.base_rank_score + hit.match_evidence.preference_score;
     }

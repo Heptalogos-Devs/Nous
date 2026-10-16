@@ -144,7 +144,7 @@ impl MemoryService {
                     .map(|reference| (reference.clone(), true))
                     .collect::<Vec<_>>(),
                 CognitiveEffort::Maximum,
-                self.cognition.now(subject),
+                self.cognition.recorded_now(),
                 &snapshot,
                 None,
                 None,
@@ -192,7 +192,7 @@ impl MemoryService {
             &self.store,
             subject,
             &focus,
-            self.cognition.now(subject),
+            self.cognition.recorded_now(),
         )
         .await?;
         let feedback_tags = query_feedback

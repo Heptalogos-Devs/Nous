@@ -47,7 +47,7 @@ impl MemoryService {
             })
             .transpose()?;
         validate_partition(&input)?;
-        let started = self.cognition.now(input.subject);
+        let started = self.cognition.recorded_now();
         let digest = operation_digest("episode_partition", input.subject, &input)?;
         let mut mutation = match self
             .start_mutation(
@@ -88,7 +88,7 @@ impl MemoryService {
         let formed_at = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
             .await?;
-        let recorded_at = self.cognition.now(input.subject);
+        let recorded_at = self.cognition.recorded_now();
         let one_to_one = input.sources.len() == 1 && input.segments.len() == 1;
         if one_to_one && unchanged_partition(mutation.tx(), &input, first).await? {
             let outputs = vec![input.sources[0].revision];

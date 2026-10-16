@@ -233,7 +233,7 @@ impl MemoryService {
         scope: &str,
     ) -> Result<MaintenanceScope> {
         let config = self.configuration.snapshot_for_subject(subject)?;
-        let now = self.cognition.now(subject);
+        let now = self.cognition.recorded_now();
         let max_count = config.get(super::longitudinal_policy::JOURNAL_MAX_EPISODES)? as i64;
         let span = chrono::Duration::seconds(
             config.get(super::longitudinal_policy::JOURNAL_MAX_SPAN)? as i64,

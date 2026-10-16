@@ -36,7 +36,7 @@ impl MemoryService {
             .transpose()?;
         validate_journal(&input)?;
         self.store.require_subject(input.subject).await?;
-        let started = self.cognition.now(input.subject);
+        let started = self.cognition.recorded_now();
         let digest = operation_digest("journal_commit", input.subject, &input)?;
         let mut mutation = match self
             .start_mutation(input.subject, input.operation_id, "journal_commit", &digest)
@@ -74,7 +74,7 @@ impl MemoryService {
         let formed = self
             .formation_time_in(mutation.tx(), input.subject, input.operation_id, started)
             .await?;
-        let recorded = self.cognition.now(input.subject);
+        let recorded = self.cognition.recorded_now();
         let producer = match &input.producer {
             Some(producer) => {
                 Some(AuthorityStore::register_producer_in(mutation.tx(), producer).await?)

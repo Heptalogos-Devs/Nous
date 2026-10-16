@@ -54,7 +54,7 @@ pub(super) fn validate_view(
     if let Some(view) = historical_authority {
         let cutoff = match query.temporal_frame.authority_view {
             AuthorityView::AsOf(at) => at,
-            AuthorityView::Current => query.temporal_frame.clock_now,
+            AuthorityView::Current => query.temporal_frame.authority_now,
         };
         if view.subject != query.subject
             || view.as_of != cutoff

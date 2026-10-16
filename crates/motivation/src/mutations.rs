@@ -35,7 +35,7 @@ impl MotivationService {
             .await?;
         let object = Uuid::now_v7();
         let revision = Uuid::now_v7();
-        let now = self.runtime.now(input.subject);
+        let now = self.runtime.recorded_now();
         sqlx::query("INSERT INTO motivation_objects(object_id,subject_id,family,current_revision_id,created_at,identity_key) VALUES($1,$2,$3,$4,$5,$6)").bind(object).bind(input.subject.0).bind(input.content.family()).bind(revision).bind(now).bind(canonical_request_digest("motivation.identity",input.subject,&input.content.identity())?).execute(&mut **mutation.tx()).await.map_err(db)?;
         self.insert_revision(
             mutation.tx(),
@@ -135,7 +135,7 @@ impl MotivationService {
             return Ok(current);
         }
         let revision = Uuid::now_v7();
-        let now = self.runtime.now(input.subject);
+        let now = self.runtime.recorded_now();
         let adopt = AdoptMotivation {
             subject: input.subject,
             operation_id: input.operation_id,
@@ -232,7 +232,7 @@ impl MotivationService {
         }
         self.track_basis(mutation.tx(), revision, std::slice::from_ref(&basis))
             .await?;
-        let count=sqlx::query("INSERT INTO motivation_evidence(revision_id,role,basis_key,basis,recorded_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(revision).bind(role).bind(basis.canonical_key()).bind(serde_json::to_value(basis).map_err(json_error)?).bind(self.runtime.now(subject)).execute(&mut **mutation.tx()).await.map_err(db)?.rows_affected();
+        let count=sqlx::query("INSERT INTO motivation_evidence(revision_id,role,basis_key,basis,recorded_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(revision).bind(role).bind(basis.canonical_key()).bind(serde_json::to_value(basis).map_err(json_error)?).bind(self.runtime.recorded_now()).execute(&mut **mutation.tx()).await.map_err(db)?.rows_affected();
         if count > 0 {
             sqlx::query(
                 "UPDATE motivation_objects SET object_epoch=object_epoch+1 WHERE object_id=$1",

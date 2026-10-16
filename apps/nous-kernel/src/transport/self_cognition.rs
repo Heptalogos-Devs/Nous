@@ -223,6 +223,7 @@ impl p::self_service_server::SelfService for KernelService {
                 .select(
                     SubjectId(id(&r.subject_id)?),
                     nous_self::SelfSelectionRequest {
+                        clock: None,
                         source_read: source_read.as_ref(),
                         scope: &scope,
                         targets: &targets,

@@ -269,10 +269,25 @@ impl CognitiveRuntimeService {
         });
         Ok(())
     }
-    fn capture_query_clock(&self, query: &mut CognitiveQuery) {
-        if query.temporal_frame.clock_now == chrono::DateTime::<chrono::Utc>::UNIX_EPOCH {
-            query.temporal_frame.clock_now = self.now(query.subject);
+    pub async fn capture_query_clock(&self, query: &mut CognitiveQuery) -> Result<()> {
+        if query.temporal_frame.authority_now == chrono::DateTime::<chrono::Utc>::UNIX_EPOCH {
+            if query.temporal_frame.clock_now.is_none() {
+                let clock = self.read_clock(query.subject).await?;
+                query.temporal_frame.authority_now = clock.recorded_at;
+                query.temporal_frame.clock_now = Some(clock);
+            } else {
+                query.temporal_frame.authority_now = self.recorded_now();
+            }
         }
+        let domain = query
+            .temporal_frame
+            .clock_now
+            .as_ref()
+            .ok_or_else(|| Error::Infrastructure("query clock was not captured".into()))?
+            .time_domain_ref
+            .clone();
+        qualify_temporal_domains(&mut query.expression, &domain)?;
+        Ok(())
     }
 
     async fn bind_exact_targets(
@@ -385,7 +400,7 @@ impl CognitiveRuntimeService {
         historical_authority: Option<std::sync::Arc<HistoricalAuthoritySnapshot>>,
         resolver: &dyn crate::ContextResolver,
     ) -> Result<BoundQuery> {
-        self.capture_query_clock(&mut query);
+        self.capture_query_clock(&mut query).await?;
         super::historical_context::validate_view(&query, historical_authority.as_deref())?;
         let view = historical_authority.as_deref();
         super::closure::validate_query_input(&query)?;
@@ -533,7 +548,7 @@ impl CognitiveRuntimeService {
             concept_enrichment,
             representation: std::sync::Arc::new(representation),
             query_id: Uuid::now_v7(),
-            bound_at: self.now(query.subject),
+            bound_at: self.recorded_now(),
             source_query: query.clone(),
             bound_at_authority_seq,
             revision_policy,
@@ -646,4 +661,29 @@ fn visit_ref_tag(reference: &mut CognitiveRef, visit: &mut impl FnMut(&mut TagId
     if let CognitiveRef::Tag(tag) = reference {
         visit(tag);
     }
+}
+
+fn qualify_temporal_domains(expression: &mut CognitiveQueryExpr, fallback: &str) -> Result<()> {
+    let constraints = &mut expression.constraints;
+    for (predicate, domain) in [
+        (constraints.occurred, &mut constraints.time_domains.occurred),
+        (constraints.observed, &mut constraints.time_domains.observed),
+        (constraints.valid, &mut constraints.time_domains.valid),
+        (constraints.formed, &mut constraints.time_domains.formed),
+    ] {
+        if predicate.is_some() {
+            let value = domain.get_or_insert_with(|| fallback.into());
+            if value.trim().is_empty() || value.len() > 256 {
+                return Err(Error::Invalid("invalid predicate time domain".into()));
+            }
+        } else if domain.is_some() {
+            return Err(Error::Invalid(
+                "time domain requires its axis predicate".into(),
+            ));
+        }
+    }
+    for child in &mut expression.children {
+        qualify_temporal_domains(child, fallback)?;
+    }
+    Ok(())
 }

@@ -13,7 +13,7 @@ pub struct SocialSelectionRequest<'a> {
     pub expression: Option<&'a str>,
     pub endpoint: Option<&'a EntityRef>,
     pub counterpart: Option<&'a EntityRef>,
-    pub at: Option<DateTime<Utc>>,
+    pub at: Option<DomainStamp>,
     pub as_of: Option<DateTime<Utc>>,
     pub history: bool,
 }
@@ -39,12 +39,13 @@ impl SocialService {
         {
             return Err(Error::Invalid("invalid Social selection budget".into()));
         }
-        let clock = self.runtime.read_clock(subject).await?;
-        let domain = if input.at.is_some() {
-            "time:real"
+        let clock = if let Some(clock) = &input.at {
+            clock.clone()
         } else {
-            &clock.time_domain_ref
+            self.runtime.read_clock(subject).await?
         };
+        let domain = clock.time_domain_ref.as_str();
+        let now = clock.at;
         let mut tx = self.store.read_view().await?;
         let read = self
             .roots
@@ -56,7 +57,6 @@ impl SocialService {
             .iter()
             .map(|e| e.as_str())
             .collect::<Vec<_>>();
-        let now = input.at.unwrap_or(clock.at);
         let rows=sqlx::query(r#"
 SELECT o.object_id,r.revision_id,2*octet_length(r.content::text)+octet_length(r.reason)+1024+
  COALESCE((SELECT sum(2*octet_length(e.basis::text)+octet_length(e.role)+128) FROM social_evidence e WHERE e.revision_id=r.revision_id),0)::bigint AS read_bytes

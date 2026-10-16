@@ -99,7 +99,8 @@ impl MotivationService {
         )
         .await?;
         if let MutationStart::Active(m) = &mut result {
-            m.capture_authority_time(self.runtime.now(subject)).await?;
+            m.capture_authority_time(self.runtime.recorded_now())
+                .await?;
         }
         Ok(result)
     }

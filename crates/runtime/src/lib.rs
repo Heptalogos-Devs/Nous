@@ -91,7 +91,6 @@ pub struct CognitiveRuntimeService {
     pub resident_limit: usize,
     pub configuration: nous_configuration::ConfigurationService,
     clock: std::sync::Arc<dyn CognitiveClock>,
-    semantic_clock: std::sync::Arc<dyn CognitiveClock>,
     pending_queries: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<Uuid, query::prepared::PendingQuery>>,
     >,
@@ -124,19 +123,9 @@ impl CognitiveRuntimeService {
             store,
             resident_limit,
             configuration,
-            semantic_clock: clock.clone(),
             clock,
             pending_queries: Default::default(),
         })
-    }
-
-    pub fn with_semantic_clock(mut self, clock: std::sync::Arc<dyn CognitiveClock>) -> Self {
-        self.semantic_clock = clock;
-        self
-    }
-
-    pub fn now(&self, subject: SubjectId) -> DateTime<Utc> {
-        self.clock.now(subject)
     }
 
     /// UTC infrastructure/record time is independent of the Subject semantic clock.
@@ -144,7 +133,7 @@ impl CognitiveRuntimeService {
         Utc::now()
     }
     pub async fn read_clock(&self, subject: SubjectId) -> Result<DomainStamp> {
-        self.semantic_clock.read_stamp(subject).await
+        self.clock.read_stamp(subject).await
     }
     /// One semantic instant per committing owner transaction; no second pool checkout.
     pub async fn capture_semantic_in(
@@ -162,7 +151,7 @@ impl CognitiveRuntimeService {
             }
             return serde_json::from_str(&prior).map_err(|e| Error::Infrastructure(e.to_string()));
         }
-        let stamp = self.semantic_clock.capture_in(tx, subject).await?;
+        let stamp = self.clock.capture_in(tx, subject).await?;
         sqlx::query("SELECT set_config('nous.semantic_stamp',$1,true),set_config('nous.authority_time',$2,true),set_config('nous.semantic_subject',$3,true),set_config('nous.formed_stamp',$1,true)")
             .bind(serde_json::to_string(&stamp).map_err(|e|Error::Infrastructure(e.to_string()))?).bind(stamp.recorded_at.to_rfc3339()).bind(subject.0.to_string()).execute(&mut **tx).await.map_err(nous_persistence::database_error)?;
         Ok(stamp)

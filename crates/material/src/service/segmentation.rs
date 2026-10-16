@@ -66,7 +66,7 @@ impl MaterialService {
                     .to_string(),
                 coordinate,
                 parent_derived_region_id: None,
-                created_at: self.cognition.now(subject),
+                created_at: self.cognition.recorded_now(),
             };
             segments.push(DescriptionSegment {
                 key: format!("D{:03}", ordinal + 1),

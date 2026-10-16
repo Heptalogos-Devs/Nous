@@ -30,7 +30,11 @@ impl SelfService {
                 "Self selection requires owned targets/ranked references".into(),
             ));
         }
-        let clock = self.runtime.read_clock(subject).await?;
+        let clock = if let Some(clock) = input.clock {
+            clock.clone()
+        } else {
+            self.runtime.read_clock(subject).await?
+        };
         let mut tx = self.store.read_view().await?;
         let mut result = SelfSelection {
             records: Vec::new(),

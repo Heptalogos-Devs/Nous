@@ -34,15 +34,7 @@ pub(super) fn view(input: MemoryView) -> p::Memory {
             .collect(),
         tags: input.tags.into_iter().map(|v| v.0.to_string()).collect(),
         created_at: Some(timestamp(object.created_at)),
-        temporal_evidence: Some(p::TemporalEvidence {
-            occurred: input
-                .temporal_evidence
-                .occurred
-                .iter()
-                .map(temporal_proto)
-                .collect(),
-            observed_at: input.temporal_evidence.observed_at.map(timestamp),
-        }),
+        temporal_evidence: Some(temporal_evidence_proto(&input.temporal_evidence)),
         valid_time: Some(domain_temporal_proto(
             &revision.valid_time_domain_ref,
             &revision.valid_time,

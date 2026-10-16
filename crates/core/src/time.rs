@@ -160,15 +160,6 @@ pub struct DomainTemporalExtent {
     pub time_domain_ref: String,
     pub extent: TemporalExtent,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct DomainTemporalEvidence {
-    pub occurred: Option<DomainTemporalExtent>,
-    pub observed: Option<DomainStamp>,
-    pub valid: Option<DomainTemporalExtent>,
-    pub formed: Option<DomainStamp>,
-    pub recorded_at: Option<DateTime<Utc>>,
-    pub observed_real_at: Option<DateTime<Utc>>,
-}
 
 impl DomainTemporalExtent {
     pub fn real(extent: TemporalExtent) -> Self {
@@ -223,4 +214,51 @@ pub fn real_time_domain() -> String {
 }
 pub fn is_real_time_domain(value: &str) -> bool {
     value == "time:real"
+}
+
+/// Actual source rows, not independently aggregated axes which could invent a
+/// witness by combining the event time of one contact with another observation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceTemporalEvidence {
+    pub occurrence_id: crate::OccurrenceId,
+    pub occurred: DomainTemporalExtent,
+    pub observed: DomainStamp,
+    pub observed_at: DateTime<Utc>,
+    pub recorded_at: DateTime<Utc>,
+}
+impl SourceTemporalEvidence {
+    pub fn matches(
+        &self,
+        occurred: Option<&DomainTimePredicate>,
+        observed: Option<&DomainTimePredicate>,
+    ) -> bool {
+        occurred.is_none_or(|p| p.matches_extent(&self.occurred) == Some(true))
+            && observed.is_none_or(|p| {
+                if p.time_domain_ref == "time:real" {
+                    p.predicate.contains(self.observed_at)
+                } else {
+                    p.matches_stamp(&self.observed) == Some(true)
+                }
+            })
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TemporalEvidence {
+    pub sources: Vec<SourceTemporalEvidence>,
+}
+impl TemporalEvidence {
+    pub fn matches(
+        &self,
+        occurred: Option<&DomainTimePredicate>,
+        observed: Option<&DomainTimePredicate>,
+    ) -> bool {
+        (occurred.is_none() && observed.is_none())
+            || self
+                .sources
+                .iter()
+                .any(|source| source.matches(occurred, observed))
+    }
+    pub fn observed_real_at(&self) -> Option<DateTime<Utc>> {
+        self.sources.iter().map(|source| source.observed_at).max()
+    }
 }
