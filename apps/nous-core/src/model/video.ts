@@ -96,7 +96,10 @@ export async function sampleVideo(
         "1",
         "-vf",
         `${animatedGif ? `trim=start=${at},` : ""}scale=512:512:force_original_aspect_ratio=decrease,showinfo`,
-        ...(animatedGif ? ["-pix_fmt", "yuvj420p"] : []),
+        // JPEG uses full-range YUV explicitly; FFmpeg9 rejects inherited
+        // limited-range video formats at its default MJPEG compliance level.
+        "-pix_fmt",
+        "yuvj420p",
         "-q:v",
         "3",
         "-fs",
