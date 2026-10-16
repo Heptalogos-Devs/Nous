@@ -92,6 +92,10 @@
     "dist/types-BzYyevxm.d.ts": {
       "original": "172177f5b571c0f7a29da23b95dea65cf67fa33047ade377c0f070f87f124a7a",
       "patched": "e089a8cfb132e118b01adb4266321f0dec4afed7f9ade46aa77e67b720209dbe"
+    },
+    "dist/loader-UHuBXZwI.js": {
+      "original": "5b9a0239eb83d755aab9e6793cc3dd82749877ab86ef04a8698979593a56f56a",
+      "patched": "5b866392d626b827256bd74ce379b31748cc47937b7ec45b969791709c0d6f61"
     }
   },
   "dependencyOverrides": {
@@ -101,5 +105,8 @@
   "dependencies": {
     "undici": "8.10.2",
     "@modelcontextprotocol/sdk": "1.31.0"
+  },
+  "managedFiles": {
+    "dist/nous-controlled-plugin.mjs": "8e9824b04ba69224af36412d11e441384424f489272541748266f4c9af5a866c"
   }
 }

@@ -4,7 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFile, realpath, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -15,7 +15,7 @@ if (!process.argv[2])
   throw new Error("Usage: nous-openclaw-prepare <openclaw-package-root>");
 const native = await realpath(resolve(process.argv[2]));
 const manifest =
-  /** @type {{version: string, files: Record<string, {original: string, patched: string}>, dependencies: Record<string,string>}} */ (
+  /** @type {{version: string, files: Record<string, {original: string, patched: string}>, dependencies: Record<string,string>, managedFiles?:Record<string,string>}} */ (
     JSON.parse(await readFile(join(plugin, "patches/manifest.json"), "utf8"))
   );
 const installed = /** @type {{name: string, version: string}} */ (
@@ -120,6 +120,19 @@ if (!states.every(({ actual, hashes }) => actual === hashes.patched)) {
 for (const [path, hashes] of Object.entries(manifest.files)) {
   if (digest(await readFile(join(native, path))) !== hashes.patched)
     throw new Error(`Required native model input patch did not apply: ${path}`);
+  execFileSync(process.execPath, ["--check", join(native, path)], {
+    windowsHide: true,
+  });
+}
+// The controlled loader shares this exact installer-owned implementation, never a user plugin module.
+for (const [path, expected] of Object.entries(manifest.managedFiles ?? {})) {
+  if (path !== "dist/nous-controlled-plugin.mjs")
+    throw Error("Unknown installer-owned native module");
+  const bytes = await readFile(join(plugin, "bin/controlled-plugin.mjs"));
+  if (digest(bytes) !== expected)
+    throw Error("Controlled plugin installer implementation integrity failed");
+  await mkdir(dirname(join(native, path)), { recursive: true });
+  await writeFile(join(native, path), bytes);
   execFileSync(process.execPath, ["--check", join(native, path)], {
     windowsHide: true,
   });

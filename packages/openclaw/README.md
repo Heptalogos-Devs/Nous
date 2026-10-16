@@ -23,6 +23,17 @@ npm exec --yes --package=/absolute/path/nous-wave-openclaw-0.2.1.tgz -- nous-ope
 
 原生安装器创建自己的 npm 根与持久插件 tarball，固定 OpenClaw 和经过修复的传递依赖，生成可重装的 lockfile，然后运行入口准备。只接受新目录或先前由该安装器创建的目录，不覆盖任意应用的依赖配置；配置、密钥和主体数据应放在运行代码目录之外。原 OpenClaw 2026.9.1 将 Undici/MCP SDK 固定在受影响版本，因此不能以普通 `npm install openclaw` 代替此入口。当前实际固定 Undici 8.10.2、MCP SDK 1.31.0；`prepare` 同时检查 OpenClaw 和 proxyline 实际解析的版本，旧依赖拒绝准备。
 
+第一方渠道等本地插件通过同一安装器显式安装，不将本地 tarball 冒充官方 npm 来源：
+
+```sh
+node /absolute/path/subject-runtime/node_modules/@nous-wave/openclaw/bin/install.mjs /absolute/path/subject-runtime --plugin /absolute/path/channel-plugin.tgz
+node /absolute/path/subject-runtime/node_modules/@nous-wave/openclaw/bin/install.mjs /absolute/path/subject-runtime --remove-plugin channel-plugin-id
+```
+
+本地包必须在 `package.json` 的 `nousNativeState` 数组中声明实际需要的 `openChannelIngressQueue`、`openKeyedStore`，安装器只支持这两项。受控根保存内容寻址 tarball、真实 npm 安装 identity/integrity 与逐文件哈希；原生 loader 同时核对归档、lockfile、实际包路径、入口和全部文件后才按能力授予。未注册、记录损坏、替换文件或归档都会拒绝；这不授予 bundled、official npm、同步存储、BlobStore 或其他可信插件特权。
+
+替换和移除前必须停止该受控 runtime。首次授予状态时，原生 loader 在安装根登记进程 lease；只要持有状态的进程仍存活，安装器就拒绝更新。安装锁与 lease 交接防止新加载和替换同时接管，不能靠删除记录热撤销已经返回的队列/存储对象。只有确认 PID 不存在才清理 stale lease；权限未知或 PID 复用保持拒绝。安装器保留其他 npm 依赖、未知 overrides 和 metadata，不读写任何 OpenClaw profile、凭据或会话，也不触及 `~/.openclaw`。
+
 需要重复核对或准备已有受控安装时：
 
 ```sh
