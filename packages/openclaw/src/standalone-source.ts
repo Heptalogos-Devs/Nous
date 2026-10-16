@@ -64,8 +64,20 @@ export function standaloneUsage(
     purpose: observation
       ? "reflection"
       : input.sessionKey?.includes(":subagent:")
+        ? "professional_execution"
+        : "subject_deliberation",
+    // Standalone native contact remains the Subject's explicit experience path.
+    role: observation
+      ? "subject.reflection"
+      : input.sessionKey?.includes(":subagent:")
+        ? "subject.execution"
+        : "subject.deliberation",
+    view: observation
+      ? "reflection"
+      : input.sessionKey?.includes(":subagent:")
         ? "worker"
-        : "deliberation",
+        : "subject",
+    contactNature: "subject_experience",
     intent: observation
       ? "Actual observed native source"
       : input.prompt.trim() ||

@@ -20,6 +20,7 @@ import {
   type ProjectionRequest,
   type QueryRequest,
   type ReportUseRequest,
+  type CognitionUsage,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { ConsumerPolicy } from "../domain.js";
 import type { executionOptions } from "../execution.js";
@@ -110,7 +111,7 @@ export class CoreCognition {
   }
 
   async buildProjection(input: ProjectionRequest, calls: Execution) {
-    const policy = this.planner.policy(input.consumerId);
+    const policy = this.invocationPolicy(input.consumerId, input.usage);
     const request = create(ProjectionRequestSchema, input);
     bindProjectionUsage(request);
     request.memoryRequirement = policy.memory;
@@ -219,6 +220,7 @@ export class CoreCognition {
       input.sessionId,
       input.consumerId,
       calls,
+      input.usage,
     );
     const projection = await this.buildProjection(input, calls);
     const policy = this.planner.policy(input.consumerId);
@@ -255,17 +257,38 @@ export class CoreCognition {
     }
     return this.kernel.runtime.reportUse(request, calls);
   }
+  /** An execution view narrows the configured consumer before retrieval/selection. */
+  private invocationPolicy(
+    consumerId: string,
+    usage?: CognitionUsage,
+  ): ConsumerPolicy {
+    const policy = this.planner.policy(consumerId);
+    if (
+      !["world_author", "worker", "review", "maintenance"].includes(
+        usage?.view ?? "",
+      )
+    )
+      return policy;
+    return {
+      ...policy,
+      memory: "FORBIDDEN",
+      selfCognition: "FORBIDDEN",
+      socialCognition: "FORBIDDEN",
+      motivation: "FORBIDDEN",
+    };
+  }
   private async checkModelHistory(
     subjectId: string,
     sessionId: string,
     consumerId: string,
     calls: Execution,
+    usage?: CognitionUsage,
   ) {
     const history = await this.kernel.runtime.getSession(
       { subjectId: subjectId, id: sessionId },
       calls,
     );
-    const consumer = this.planner.policy(consumerId);
+    const consumer = this.invocationPolicy(consumerId, usage);
     if (
       history.historyInvalidated ||
       history.historyDomains.some(
@@ -361,6 +384,29 @@ export class CoreCognition {
       );
       request.expression = compiled.expression;
       request.nousql = undefined;
+    }
+    if (
+      ["world_author", "worker", "review", "maintenance"].includes(
+        request.usage?.view ?? "",
+      ) &&
+      request.expression
+    ) {
+      const modifiers = create(
+        QueryModifiersSchema,
+        request.expression.modifiers,
+      );
+      const domains = modifiers.projection?.domains ?? ["evidence", "resource"];
+      modifiers.projection = create(ResultProjectionSchema, {
+        domains: domains.filter((domain) =>
+          ["evidence", "resource"].includes(domain),
+        ),
+      });
+      if (!modifiers.projection.domains.length)
+        throw new ConnectError(
+          "This execution view has no authority to retrieve private Subject cognition",
+          Code.PermissionDenied,
+        );
+      request.expression.modifiers = modifiers;
     }
     return request;
   }

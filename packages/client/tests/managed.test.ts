@@ -16,7 +16,10 @@ import {
 import { createNousClient } from "../src/index.js";
 import { createManagedBinding } from "../src/managed.js";
 
-function fixture() {
+function fixture(
+  options: Partial<Parameters<typeof createManagedBinding>[0]> = {},
+) {
+  const observations: unknown[] = [];
   const requests: ManagedContextRequest[] = [];
   const reports: ReportUseRequest[] = [];
   let response = create(ManagedContextResponseSchema, {
@@ -71,6 +74,7 @@ function fixture() {
       reports.push(input as ReportUseRequest);
       return { message: create(method.output, { modelInputChecked: true }) };
     }
+    if (method.name === "RecordObservation") observations.push(input);
     return { message: create(method.output) };
   };
   const client = createNousClient({ unary } as unknown as Transport);
@@ -79,8 +83,10 @@ function fixture() {
     subjectId: "subject",
     sessionId: "session",
     consumerId: "consumer",
+    ...options,
   });
   return {
+    observations,
     binding,
     requests,
     reports,
@@ -223,4 +229,36 @@ test("actual presented reports use the internal applied references and stable na
   expect(current.reports[1]?.events[0]?.eventId).toBe(
     current.reports[0]?.events[0]?.eventId,
   );
+});
+
+test("execution-only outcomes stay with their RoleRun instead of becoming Subject observations", async () => {
+  const retained: unknown[] = [];
+  const current = fixture({
+    roleScope: {
+      role: "subject.execution",
+      purpose: "professional_execution",
+      view: "worker",
+      contactNature: "execution_only",
+    },
+    retainExecutionOutcome: async (result) => {
+      retained.push(result);
+    },
+  });
+  const prepared = await current.prepare();
+  const { applied } = current.binding.apply([], prepared, {
+    render: (base) => base,
+  });
+  const result = {
+    invocationId: "actual-input",
+    applied,
+    occurredAt: new Date(),
+    outcome: "completed" as const,
+    observations: [
+      { subjectId: "subject", sessionId: "session", sourceClass: "tool" },
+    ],
+  };
+  await current.binding.admit(result);
+  await current.binding.report(result);
+  expect(retained).toEqual([result]);
+  expect(current.observations).toEqual([]);
 });

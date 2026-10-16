@@ -44,7 +44,11 @@ test("controlled native custody survives SQLite and gates real delivery producer
     // Link each dependency to its physical package root. A junction to pnpm's
     // node_modules leaves scoped packages behind another relative junction;
     // Windows ESM package lookup cannot reliably traverse that nested shape.
-    const dependencies = dirname(source);
+    // Independent controlled installs keep dependencies under the package;
+    // pnpm's workspace package stores them beside it.
+    const dependencies = await realpath(join(source, "node_modules")).catch(
+      () => dirname(source),
+    );
     const modules = join(native, "node_modules");
     await mkdir(modules);
     for (const entry of await readdir(dependencies)) {

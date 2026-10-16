@@ -46,7 +46,24 @@ export interface ManagedToolExecution {
 export interface ManagedToolExecutionGuard {
   run<T>(implementation: () => T | Promise<T>): Promise<T>;
 }
+/** Carried only by the native durable child terminal/announcement owner. */
+export interface NativeSubagentCompletion {
+  parentRunId?: string;
+  parentSessionKey: string;
+  childRunId: string;
+  childSessionKey: string;
+  outcome: "completed" | "failed" | "cancelled";
+  endedAt: string;
+  recover?: boolean;
+}
 export interface ManagedContextEngine extends ContextEngine {
+  prepareSubagentCompletion(input: NativeSubagentCompletion): Promise<
+    | {
+        parentRunId: string;
+        resultRetained: true;
+      }
+    | undefined
+  >;
   authorizeToolExecution(
     input: ManagedModelInput,
     application: ManagedModelApplication,

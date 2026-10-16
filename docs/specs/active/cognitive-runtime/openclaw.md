@@ -38,7 +38,11 @@ OpenClaw 继续拥有工具执行、渠道、Computer use、skills、子 Agent �
 
 原生 session extension 仅保存 Subject/nativeSession/NousSession 身份，不保存 cognition 或 cursor。重启复用未关闭的对应 Session；native reset 使用新 Nous Session；实际 reset entry 标识其历史代际，不假定物理 native sessionId 必然改变。原生会话扩展按 pluginId/namespace 保存；运行时注册表卸载与显式插件禁用的持久状态清理分别处理。子 Agent 同 Subject、独立 Session/binding，在正式委派准备入口保存父 Session 关系，再派发子任务，以隔离任务交接，不能经模型要求 fork 父历史。
 
-记录实际 user/model/tool 事件为 Observation；工具结果包含结构、details 与 isError，并在原生结果发出后立即报告，覆盖终止工具。工具接触可 admit 成为经历；普通 transcript 不自动成为 accepted Memory。模型输出标为 generated/model_output，不声称渠道已发送。流式失败/取消报告实际 invocation outcome。
+正式 Host bridge 每次许可返回受信 role/purpose/view/contactNature。角色覆盖 world.planner、subject.deliberation、subject.execution、subject.render、narrative.review、subject.reflection 与 system.maintenance；技术 Agent ID 不等于产品角色。Host 从已采用行为和真实 native binding 取得用途，模型参数不能选择视角或提升权限。subject deliberation/render 使用必需主体投影；world author、worker 与 review 使用各自受限资料，隐藏世界内容在候选检索前排除。切换用途需要独立干净 Session/binding，不把旧 worker transcript 带入主体历史。
+
+execution_only 的实际模型/工具输出与失败结果只留在所属 RoleRun/native transcript，Host pending 返回 retainedOnly 后官方插件不调用 RecordObservation，不进入主体 Episode、反思或统一检索。主体实际接触由显式有界 release 创建新的 subject_experience contact，引用原运行和被释放的精确结果；释放范围以外的内部推理和工具资料不导入。standalone Nous/OpenClaw 仍保留明确的主体体验路径，真实 user/model/tool 接触可形成 Observation；无 Host 时不发明世界权限或来源。模型输出始终标为 generated/model_output，不证明实际外发。
+
+子 Agent terminal completion 只核对不可变父绑定、保存 exact terminal 结果并提供 activity_result 机会；恢复同一付费结果不重跑 worker。不得把 completion 自动注册为 main/final-send continuation，也不得将 worker 全部结果直接提升个人知识。正式释放后进入主体审议、独立 subject.render、narrative.review、NarrativeCommit，再交唯一发送 owner。renderer 输出只是候选，无法自行发送。
 
 发送前的 admit 使用现有 ReportUse 与 `model_input=true`：来源仍可用、Session 及父链历史安全，才返回 `model_input_checked=true`。没有认知来源的输入仍做 Session 检查；旧 Core 没有确认时停止发送。该操作登记真实待发送输入中的 exact refs，不为每个片段创建另一层持久 receipt。结果在 report 中以实际 outcome Observation 记录；失败和取消不冒充执行成功。
 

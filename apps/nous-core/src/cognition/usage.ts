@@ -1,6 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { hostRoleScopeSchema } from "@nous-wave/client/host-bridge";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
@@ -17,9 +18,16 @@ export function bindProjectionUsage(request: ProjectionRequest): void {
     value.trim().length > 0 && Buffer.byteLength(value) <= maximum;
   if (
     !bounded(usage.agentInstanceId, 512) ||
-    !["deliberation", "expression", "reflection", "worker"].includes(
-      usage.purpose,
-    ) ||
+    !(usage.role
+      ? hostRoleScopeSchema.safeParse({
+          role: usage.role,
+          purpose: usage.purpose,
+          view: usage.view,
+          contactNature: usage.contactNature,
+        }).success
+      : ["deliberation", "expression", "reflection", "worker"].includes(
+          usage.purpose,
+        )) ||
     !bounded(usage.intent, 8192) ||
     (usage.activityRef !== undefined && !bounded(usage.activityRef, 1024)) ||
     usage.participants.length > 64 ||
@@ -29,7 +37,8 @@ export function bindProjectionUsage(request: ProjectionRequest): void {
         !["speaker", "addressee", "participant"].includes(participant.role),
     ) ||
     !usage.audience ||
-    !bounded(usage.audience.conversationRef, 1024) ||
+    (!bounded(usage.audience.conversationRef, 1024) &&
+      usage.audience.visibility !== "internal") ||
     !["direct", "group", "public", "internal"].includes(
       usage.audience.visibility,
     ) ||

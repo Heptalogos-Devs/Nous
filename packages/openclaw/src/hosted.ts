@@ -28,6 +28,7 @@ import {
   occurrenceJson,
   type HostedPermission,
 } from "./host.js";
+import { historyUsers } from "./hosted-history.js";
 import { runHostedTool } from "./readonly-tools.js";
 import type {
   ManagedToolExecution,
@@ -95,6 +96,7 @@ export class HostedLifecycle {
           ? { parentSessionKey: input.parentSessionKey }
           : {}),
       },
+      historyUsers: await historyUsers(input.context),
       promptDigest: [...digest]
         .map((v) => v.toString(16).padStart(2, "0"))
         .join(""),
@@ -207,6 +209,12 @@ export class HostedLifecycle {
     );
     if (pending.stage !== "pending")
       throw new Error("Host did not persist pending observation");
+    // Execution-only results belong to the authenticated RoleRun. They never
+    // become Subject observations, episodes or reflection inputs.
+    if (pending.retainedOnly) {
+      this.acknowledged.add(observation.requestId!);
+      return;
+    }
     const saved = decodeHostObservation(pending.observation, marker.identity);
     const actualUsage = decodeCognitionUsage(
       saved.context![HOST_COGNITION_USAGE_CONTEXT_KEY]!,
