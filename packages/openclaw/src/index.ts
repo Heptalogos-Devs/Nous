@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { toJson, fromJson } from "@bufbuild/protobuf";
+import { invocationBudget } from "./budget.js";
 import { scopeCallerHistory } from "./hosted-history.js";
 import {
   standaloneSourceConfiguration,
@@ -748,14 +749,11 @@ function register(api: OpenClawPluginApi): void {
               .filter(Boolean)
               .join("\n\n"),
           };
-        const reservedOutput = input.reservedOutputTokens;
-        const contextWindow = input.contextTokenBudget;
-        if (!contextWindow)
-          throw new Error(
-            "Managed invocation requires the selected model's context window",
-          );
-        const available =
-          contextWindow - reservedOutput - input.measureContext(modelContext);
+        const providerBudget = invocationBudget(
+          input,
+          permission?.response.tokenBudget,
+        );
+        const available = providerBudget.available(modelContext);
         const budget = Math.min(
           config.cognitionTokenCap + currentMaterials.textBytes,
           available,
@@ -785,13 +783,7 @@ function register(api: OpenClawPluginApi): void {
                 segments,
                 invocationUsage,
               );
-              if (
-                input.measureContext(rendered) + reservedOutput >
-                contextWindow
-              )
-                throw new Error(
-                  "Complete model input exceeds the native context budget",
-                );
+              providerBudget.assertFits(rendered);
               return rendered;
             },
           },
@@ -800,6 +792,7 @@ function register(api: OpenClawPluginApi): void {
           context,
           applied,
           invocationId,
+          providerControls: { maxOutputTokens: providerBudget.outputTokens },
         };
         await binding.admit(
           {

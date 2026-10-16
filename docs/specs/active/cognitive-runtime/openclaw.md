@@ -28,7 +28,9 @@ v4 的 Host 工具列表先过滤模型可见工具，真实 internal preparer �
 
 prepare 复用 BuildManagedContext；apply 成功后才推进本 binding 的 cursor。RESET 替换全部 slice；APPEND 仅接受相同 track/epoch 和连续 revision。受众、用途、执行者、WorkContext 或内容变化会改变 scope/RESET。并行 worker 分开保存临时状态。`ManagedBinding.appliedProjection(applied)` 从本 binding 的真实 apply 返回完整官方 Projection；APPEND 的既有前缀与 EpistemicView 不会在 Host admitted 回执中丢失，Host 可据此构造表达 brief，不从模型自报认识重建认知。
 
-Host 按所选模型的上下文窗口、输出预留、原生完整输入估计剩余预算，再取 cognition cap 的较小值。当前 token 计量是 OpenClaw native estimate；Nous 文本字节上限用于有余量的输入控制，不声称精确 tokenizer。renderer 核验最终输入，超预算停止调用。
+Host 的受信 tokenBudget 指定完整 inputTokens 与 outputTokens，允许工具由 RoleBinding 与当前 Activity scope 取交集后发给原生可见面和实际执行 guard。缺预算/工具政策的旧 RoleRun 标为 unconfigured：保留已有成果、终态和真实送达回流，禁止新增 provider attempt，不推断默认角色预算。新子 Agent 从真实 execution profile 取得显式政策，不把父审议预算冒充子角色配置。
+
+Host 按所选模型的上下文窗口、输出预留、原生完整输入估计剩余预算，再取 role input cap 与 cognition cap 的较小值。最终应用后的 system、tools、history、media 和 Nous slice 一并复核；超限停止这次调用。providerControls.maxOutputTokens 在受控 native stream owner 最终传给 provider，取角色 cap 与实际原生 profile 输出限制的较小值，不覆盖更小的已配置上限。当前 token 计量是 OpenClaw native estimate；Nous 文本字节上限用于有余量的输入控制，不声称精确 tokenizer。renderer 核验最终输入，超预算停止调用。
 
 WorkContext 和 identity/situational guidance 必须完整；不足时拒绝。Memory/Schema/Episode/Journal/Material 等可选语义单元整段省略并报告，不截断条件。REQUIRED 意味着认知 owner/capability 必须可用，不意味着无相关认知的新主体必须凭空有一段记忆。Kernel 核验必需 Memory 的进程和 Subject 能力；来源读取或传输失败照实际错误处理。
 

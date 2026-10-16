@@ -73,6 +73,9 @@ const engine: ManagedContextEngine = {
       context: p.context,
       invocationId: p.runId + ":fixture:" + ++counter,
       applied: { projectionId: randomUUID(), sourceRefs: [] },
+      providerControls: {
+        maxOutputTokens: Math.min(37, p.reservedOutputTokens),
+      },
     };
   },
   async authorizeToolExecution() {

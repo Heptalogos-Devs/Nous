@@ -108,12 +108,21 @@ export const hostRoleScopeSchema = z
 
 export type HostRoleScope = z.infer<typeof hostRoleScopeSchema>;
 
+/** Trusted per-attempt bounds over the complete native input and provider output. */
+export const hostTokenBudgetSchema = z
+  .object({
+    inputTokens: z.number().int().positive(),
+    outputTokens: z.number().int().positive(),
+  })
+  .strict();
+export type HostTokenBudget = z.infer<typeof hostTokenBudgetSchema>;
 export const hostPrepareResponseSchema = z
   .object({
     version: z.literal(1),
     contactRequestId: z.uuid(),
     workContextId: z.uuid(),
     roleScope: hostRoleScopeSchema,
+    tokenBudget: hostTokenBudgetSchema,
     allowedToolNames: z.array(z.string().min(1).max(512)).max(1024),
     currentSources: z.array(canonicalJson).max(64).default([]),
     allowedHistoryUserKeys: z

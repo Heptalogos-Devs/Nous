@@ -60,8 +60,15 @@ const provider = createServer((req, res) => {
       messages: { role: string; content: unknown; tool_call_id?: string }[];
       stream?: boolean;
       model: string;
+      max_tokens?: number;
+      max_completion_tokens?: number;
     };
     modelCalls++;
+    assert.equal(
+      input.max_tokens ?? input.max_completion_tokens,
+      input.model === "worker-model" ? 29 : 37,
+      "Actual provider payload must use the trusted output limit on every model/tool step",
+    );
     const text = JSON.stringify(input.messages);
     const isWorker = input.model === "worker-model";
     const completion = !isWorker && text.includes("ready for parent review");
@@ -182,6 +189,7 @@ await writeFile(
         workspace: join(root, "workspace"),
         subagents: { model: "fixture/worker-model", runTimeoutSeconds: 30 },
         model: { primary: "fixture/bindings-model" },
+        models: { "fixture/worker-model": { params: { maxTokens: 29 } } },
       },
       list: [{ id: "main" }],
     },

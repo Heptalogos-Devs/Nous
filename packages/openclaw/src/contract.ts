@@ -37,6 +37,8 @@ export interface ManagedModelApplication {
   context: Context;
   invocationId: string;
   applied: AppliedCognition;
+  /** Applied by the controlled native stream owner after all generic options. */
+  providerControls: { maxOutputTokens: number };
 }
 export interface ManagedToolExecution {
   readonly toolName: string;
