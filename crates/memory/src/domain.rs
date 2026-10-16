@@ -517,6 +517,7 @@ mod tests {
             cognitive_role: CognitiveRole::Declarative,
 
             content: crate::MemoryContent {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 formation_mode: FormationMode::Grounded,
                 grounding_occurrence_id: Some(occurrence),
@@ -544,6 +545,7 @@ mod tests {
             cognitive_role: CognitiveRole::Declarative,
 
             content: crate::MemoryContent {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 formation_mode: FormationMode::Synthesized,
                 grounding_occurrence_id: None,
