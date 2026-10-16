@@ -8,6 +8,7 @@ import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { transform } from "esbuild";
 import { randomUUID } from "node:crypto";
 const native = resolve(process.argv[2]!);
 const root = await mkdtemp(join(tmpdir(), "native-bindings-"));
@@ -30,16 +31,24 @@ await writeFile(
     id: "nous-cognition",
     kind: "context-engine",
     channels: ["completion-fixture"],
-    contracts: { tools: ["fixture_read", "fixture_binding"] },
+    contracts: { tools: ["fixture_read"] },
     configSchema: { type: "object", additionalProperties: true },
   }),
 );
 await writeFile(
   join(pluginRoot, "index.mjs"),
-  await readFile(
-    new URL("./subagent-completion-plugin.mjs", import.meta.url),
-    "utf8",
-  ),
+  (
+    await transform(
+      await readFile(
+        new URL(
+          "../../../packages/openclaw/test/subagent-completion-plugin.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      { loader: "ts", format: "esm", target: "node24" },
+    )
+  ).code,
 );
 let modelCalls = 0;
 const turns = new Map<string, number>();
@@ -302,7 +311,17 @@ try {
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((s) => JSON.parse(s));
+      .map(
+        (s) =>
+          JSON.parse(s) as {
+            event: string;
+            continuation?: unknown;
+            parentRunId?: string;
+            childRunId: string;
+            childSessionKey: string;
+            endedAt: string;
+          },
+      );
   const until = async (test: () => Promise<boolean>) => {
     const deadline = Date.now() + 30000;
     while (!(await test())) {

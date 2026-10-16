@@ -127,6 +127,16 @@ test("controlled native custody survives SQLite and gates real delivery producer
       { cwd: repositoryRoot, env, encoding: "utf8", windowsHide: true },
     );
     assert(bindings.includes('"nativeAgentRpcToolBindings":"PASS"'));
+    const completion = execFileSync(
+      process.execPath,
+      [
+        join(repositoryRoot, "scripts/tests/openclaw/subagent-completion.ts"),
+        native,
+      ],
+      { cwd: repositoryRoot, env, encoding: "utf8", windowsHide: true },
+    );
+    assert(completion.includes('"terminalCustodyWithoutModelOrSend":"PASS"'));
+    assert(completion.includes('"exactSavedChildRecovery":"PASS"'));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
