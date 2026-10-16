@@ -122,6 +122,24 @@
             }
           }
         }
+      },
+      "materialInputs": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxItems": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 128,
+            "default": 8
+          },
+          "maxTextBytes": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 1048576,
+            "default": 65536
+          }
+        }
       }
     }
   },

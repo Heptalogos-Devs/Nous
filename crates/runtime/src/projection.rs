@@ -70,6 +70,22 @@ pub trait ContextResolver: Send + Sync {
         historical: Option<&HistoricalAuthoritySnapshot>,
     ) -> Result<Vec<QueryDescriptor>>;
 
+    async fn current_material_sources(
+        &self,
+        _subject: SubjectId,
+        sources: &[EvidenceRef],
+        _max_bytes: usize,
+        _read: &SourceReadView,
+    ) -> Result<Vec<Result<ContextSource>>> {
+        if sources.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Err(Error::Unavailable(
+                "current material resolver unavailable".into(),
+            ))
+        }
+    }
+
     async fn context_sources(
         &self,
         subject: SubjectId,
@@ -89,6 +105,7 @@ pub struct ProjectionRequest {
     pub active_work_context: Option<Uuid>,
     pub consumer_id: String,
     pub situation_refs: Vec<CognitiveRef>,
+    pub current_materials: Vec<EvidenceRef>,
     pub max_items: usize,
     pub max_text_bytes: usize,
     pub materialize: bool,
@@ -313,7 +330,7 @@ impl CognitiveRuntimeService {
             }
             references = admitted;
         }
-        let automatic = if input.self_cognition != RequirementStrength::Forbidden
+        let mut automatic = if input.self_cognition != RequirementStrength::Forbidden
             || input.social_cognition != RequirementStrength::Forbidden
             || input.motivation != RequirementStrength::Forbidden
         {
@@ -340,6 +357,33 @@ impl CognitiveRuntimeService {
         } else {
             AutomaticContext::default()
         };
+        if !input.current_materials.is_empty() {
+            if !input.materialize || input.runtime == RequirementStrength::Forbidden {
+                return Err(Error::Unavailable(
+                    "current material perception requires permitted text materialization".into(),
+                ));
+            }
+            let read = source_read.as_ref().ok_or_else(|| {
+                Error::Unavailable("current materials require explicit SourceRead".into())
+            })?;
+            if input.current_materials.len() > 128 {
+                return Err(Error::Invalid("current materials exceed128".into()));
+            }
+            for source in resolver
+                .current_material_sources(
+                    input.subject,
+                    &input.current_materials,
+                    input.max_text_bytes,
+                    read,
+                )
+                .await?
+            {
+                let mut source = source?;
+                source.required = true;
+                source.usage = "current_material";
+                automatic.sources.push(source);
+            }
+        }
         let mut degradation = automatic.degradation;
         let automatic = automatic.sources;
         let required_bytes: usize = automatic
@@ -363,7 +407,21 @@ impl CognitiveRuntimeService {
         }
         let automatic_refs = automatic
             .iter()
-            .map(|s| s.reference.clone())
+            .map(|s| {
+                (
+                    s.reference.clone(),
+                    if s.usage == "current_material" {
+                        "current_material"
+                    } else {
+                        match s.reference.domain() {
+                            CognitiveDomain::SelfCognition => "current_self",
+                            CognitiveDomain::SocialCognition => "current_social",
+                            CognitiveDomain::Motivation => "current_motivation",
+                            _ => "current_cognition",
+                        }
+                    },
+                )
+            })
             .collect::<Vec<_>>();
         let cached = automatic
             .into_iter()
@@ -371,15 +429,9 @@ impl CognitiveRuntimeService {
             .collect::<HashMap<_, _>>();
         references.splice(
             0..0,
-            automatic_refs.into_iter().map(|r| {
-                let role = match r.domain() {
-                    CognitiveDomain::SelfCognition => "current_self",
-                    CognitiveDomain::SocialCognition => "current_social",
-                    CognitiveDomain::Motivation => "current_motivation",
-                    _ => "current_cognition",
-                };
-                (r, role, "checkpoint", true)
-            }),
+            automatic_refs
+                .into_iter()
+                .map(|(r, role)| (r, role, "checkpoint", true)),
         );
         let requirement = |reference: &CognitiveRef| match reference.domain() {
             CognitiveDomain::Memory => input.memory,

@@ -102,7 +102,9 @@ async function deriveMaterialOnce(
         Code.Internal,
       );
     const header = first.value.part.value;
-    const isVideo = header.mediaType.toLowerCase().startsWith("video/");
+    const headerMime = header.mediaType.split(";")[0]!.trim().toLowerCase();
+    const isVideo =
+      headerMime.startsWith("video/") || headerMime === "image/gif";
     const isAudio = header.mediaType.toLowerCase().startsWith("audio/");
     const maxSourceBytes = isAudio
       ? models.configuration.audio.max_source_bytes
@@ -488,7 +490,7 @@ async function deriveMaterialOnce(
           degradation: [],
         };
       }
-      if (mime.startsWith("video/")) {
+      if (mime.startsWith("video/") || mime === "image/gif") {
         const tempRoot = models.tempRoot;
         if (!tempRoot)
           throw new Error("Resolved TempRoot is required for video sampling");
@@ -500,12 +502,13 @@ async function deriveMaterialOnce(
           strategy === "direct_structured"
             ? "material_direct_structuring"
             : "material_description";
-        const transcriptionConfig = models.configuration.roles
-          .speech_transcription
-          ? models.invocations.prepare("speech_transcription").configDigest
-          : null;
+        const transcriptionConfig =
+          mime !== "image/gif" &&
+          models.configuration.roles.speech_transcription
+            ? models.invocations.prepare("speech_transcription").configDigest
+            : null;
         const preprocessingDigest = canonicalDigest({
-          sampling: videoSamplingIdentity(models.configuration.video),
+          sampling: videoSamplingIdentity(models.configuration.video, mime),
           transcriptionConfig,
         });
         const selected = await paid(
@@ -519,8 +522,10 @@ async function deriveMaterialOnce(
               models.configuration.video,
               tempRoot,
               models.credentialEnvironments,
-              Boolean(models.configuration.roles.speech_transcription),
+              mime !== "image/gif" &&
+                Boolean(models.configuration.roles.speech_transcription),
               signal,
+              mime,
             );
             let transcript: string | undefined;
             let transcriptReference:

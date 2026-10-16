@@ -23,10 +23,12 @@ export async function sampleVideo(
   secretNames: readonly string[],
   includeAudio: boolean,
   signal?: AbortSignal,
+  mediaType?: string,
 ) {
+  const animatedGif = mediaType === "image/gif";
   if (bytes.byteLength > policy.max_source_bytes)
     throw new Error("Video source exceeds configured byte bound");
-  const sampling = await videoSampling(policy, secretNames, signal);
+  const sampling = await videoSampling(policy, secretNames, signal, mediaType);
   const { run, version } = sampling;
   await mkdir(tempRoot, { recursive: true });
   const root = await mkdtemp(join(tempRoot, "nous-video-"));
@@ -41,7 +43,7 @@ export async function sampleVideo(
       "-protocol_whitelist",
       "file,pipe",
       "-format_whitelist",
-      "mov,matroska,ogg,avi,mpeg,mpegts",
+      animatedGif ? "gif" : "mov,matroska,ogg,avi,mpeg,mpegts",
     ];
     const metadata = await run("metadata", [
       ...inputArgs,
@@ -69,18 +71,21 @@ export async function sampleVideo(
     const bounded = Math.min(duration, policy.max_video_seconds);
     const frames: { bytes: Uint8Array; timestamp: number }[] = [];
     const requested: number[] = [];
+    const omitted: number[] = [];
     for (let ordinal = 0; ordinal < policy.max_frames; ordinal++) {
       const at =
         policy.max_frames === 1
           ? 0
-          : (ordinal * Math.max(0, bounded - policy.frame_end_margin_seconds)) /
-            (policy.max_frames - 1);
+          : animatedGif
+            ? (ordinal * bounded) / policy.max_frames
+            : (ordinal *
+                Math.max(0, bounded - policy.frame_end_margin_seconds)) /
+              (policy.max_frames - 1);
       requested.push(at);
       const output = join(root, `frame-${ordinal}.jpg`);
       const info = await run("frame", [
         ...inputArgs,
-        "-ss",
-        String(at),
+        ...(!animatedGif ? ["-ss", String(at)] : []),
         "-i",
         input,
         "-map",
@@ -91,7 +96,11 @@ export async function sampleVideo(
         "-threads",
         "1",
         "-vf",
-        "scale=512:512:force_original_aspect_ratio=decrease,showinfo",
+        `${animatedGif ? `trim=start=${at},` : ""}scale=512:512:force_original_aspect_ratio=decrease,showinfo`,
+        // JPEG uses full-range YUV explicitly; FFmpeg9 rejects inherited
+        // limited-range video formats at its default MJPEG compliance level.
+        "-pix_fmt",
+        "yuvj420p",
         "-q:v",
         "3",
         "-fs",
@@ -99,7 +108,17 @@ export async function sampleVideo(
         "-y",
         output,
       ]);
-      const size = (await stat(output)).size;
+      const outputStat = await stat(output).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return undefined;
+          throw error;
+        },
+      );
+      if (!outputStat) {
+        omitted.push(at);
+        continue;
+      }
+      const size = outputStat.size;
       if (size < 4 || size > policy.max_frame_bytes)
         throw new Error("Video frame exceeds bounds");
       const frame = await readFile(output);
@@ -115,7 +134,7 @@ export async function sampleVideo(
           info.stderr,
         );
       if (!pts) throw new Error("Sample frame timestamp is unavailable");
-      const timestamp = at + Number(pts[1]);
+      const timestamp = (animatedGif ? 0 : at) + Number(pts[1]);
       if (
         !Number.isFinite(timestamp) ||
         timestamp < 0 ||
@@ -176,6 +195,15 @@ export async function sampleVideo(
         source_duration_seconds: duration,
         sampled_duration_seconds: bounded,
         truncated: duration > bounded,
+        frame_coverage: "sampled",
+        partial_coverage: true,
+        ...(omitted.length ? { omitted_sample_timestamps: omitted } : {}),
+        ...(animatedGif
+          ? {
+              source_media_type: "image/gif",
+              animated_timeline: true,
+            }
+          : {}),
       },
       preprocessingDigest: sampling.preprocessingDigest,
     };
@@ -189,6 +217,7 @@ async function videoSampling(
   policy: Policy,
   secretNames: readonly string[],
   signal?: AbortSignal,
+  mediaType?: string,
 ) {
   const executable = policy.ffmpeg_executable;
   if (!executable)
@@ -232,14 +261,17 @@ async function videoSampling(
   return {
     run,
     version,
-    preprocessingDigest: videoSamplingIdentity(policy),
+    preprocessingDigest: videoSamplingIdentity(policy, mediaType),
   };
 }
 
 /** Cache identity describes requested sampling; runtime facts are recorded with produced results. */
-export function videoSamplingIdentity(policy: Policy) {
+export function videoSamplingIdentity(policy: Policy, mediaType?: string) {
   return canonicalDigest({
     videoFrameInputIdentity,
+    ...(mediaType === "image/gif"
+      ? { source_media_type: mediaType, animated_sampling: "gif-timeline-v1" }
+      : {}),
     max_frames: policy.max_frames,
     max_frame_bytes: policy.max_frame_bytes,
     max_audio_bytes: policy.max_audio_bytes,

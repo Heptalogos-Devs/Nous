@@ -3,6 +3,7 @@
 // Public, Node-free wire authority. Canonical protobuf JSON is decoded by its
 // generated descriptor at the consuming boundary, never a second cognition DTO.
 import { z } from "zod";
+export const HOST_SELECTED_MEDIA_CONTEXT_KEY = "host_selected_media";
 export const HOST_ACTIVITY_CONTEXT_KEY = "activity_ref";
 export const HOST_BRIDGE_PATHS = Object.freeze({
   prepare: "/nous/v1/prepare",

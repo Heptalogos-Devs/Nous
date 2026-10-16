@@ -75,9 +75,12 @@ impl CognitiveRuntimeService {
                     "UseEvent occurred_at is outside the allowed range".into(),
                 ));
             }
-            if !event.reference.is_cognition_revision() {
+            if !event.reference.is_cognition_revision()
+                && !(input.model_input && is_presented_material(&event.reference))
+            {
                 return Err(Error::Invalid(
-                    "UseEvent requires an exact cognition revision".into(),
+                    "UseEvent requires exact cognition, or Session-bound presented actual Material"
+                        .into(),
                 ));
             }
             if serde_json::to_vec(&event.context)
@@ -161,8 +164,13 @@ impl CognitiveRuntimeService {
             if (stored_digest.is_none() || input.model_input)
                 && validated_targets.insert(event.reference.clone())
             {
-                validate_use_target_in(&mut tx, input.subject, &event.reference).await?;
+                if is_presented_material(&event.reference) {
+                    validate_material_presentation_in(&mut tx, input.subject, &event).await?;
+                } else {
+                    validate_use_target_in(&mut tx, input.subject, &event.reference).await?;
+                }
                 if input.model_input
+                    && event.reference.is_cognition_revision()
                     && !self
                         .store
                         .cognition_available_in(&mut tx, input.subject, &event.reference)
@@ -215,6 +223,7 @@ impl CognitiveRuntimeService {
                     CognitiveDomain::SelfCognition => "self",
                     CognitiveDomain::SocialCognition => "social",
                     CognitiveDomain::Motivation => "motivation",
+                    CognitiveDomain::Material => "material",
                     _ => unreachable!("validated cognition revision"),
                 })
                 .collect::<HashSet<_>>()
@@ -416,4 +425,43 @@ async fn validate_use_target_in(
     exists
         .map(|_| ())
         .ok_or_else(|| Error::NotFound("UseEvent revision is not in Subject".into()))
+}
+
+fn is_presented_material(reference: &CognitiveRef) -> bool {
+    matches!(
+        reference,
+        CognitiveRef::Occurrence(_)
+            | CognitiveRef::DerivedRepresentation(_)
+            | CognitiveRef::DerivedRegion(_)
+    )
+}
+
+async fn validate_material_presentation_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    subject: SubjectId,
+    event: &UseFeedbackEvent,
+) -> Result<()> {
+    let actual = if let CognitiveRef::Occurrence(id) = event.reference {
+        id.0
+    } else {
+        event
+            .context
+            .get("actual_occurrence_id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .ok_or_else(|| {
+                Error::Invalid("Material presented requires its exact actual Occurrence".into())
+            })?
+    };
+    // This fixed owner predicate proves lineage only. The sole explicit leaf is
+    // the actual Occurrence, never an Artifact grant or cross-origin inference.
+    let (kind, value) = reference_parts(&event.reference);
+    let valid: bool = sqlx::query_scalar("SELECT material_source_read_allowed($1,$2,$3,'{}',jsonb_build_array(jsonb_build_object('kind','occurrence','id',$4::text)),$4)")
+        .bind(subject.0).bind(kind).bind(value).bind(actual).fetch_one(&mut **tx).await.map_err(db)?;
+    if !valid {
+        return Err(Error::FailedPrecondition(
+            "Material presented path is unavailable or outside the actual Occurrence".into(),
+        ));
+    }
+    Ok(())
 }

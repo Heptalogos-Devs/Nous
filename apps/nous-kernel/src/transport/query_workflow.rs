@@ -181,7 +181,9 @@ impl KernelService {
     ) -> Result<p::ReadSourcesResponse> {
         use nous_runtime::ContextResolver;
         let subject = SubjectId(id(&input.subject_id)?);
-        if input.references.len() > 128 || input.max_text_bytes > 1024 * 1024 {
+        if input.references.len() + input.material_sources.len() > 128
+            || input.max_text_bytes > 1024 * 1024
+        {
             return Err(Error::Invalid(
                 "bounded source read requires<=128 refs and<=1MiB".into(),
             ));
@@ -257,7 +259,12 @@ impl KernelService {
         } else {
             input.max_text_bytes as usize
         };
-        let sources = self
+        let material_sources = input
+            .material_sources
+            .into_iter()
+            .map(super::convert::material_source)
+            .collect::<Result<Vec<_>>>()?;
+        let mut sources = self
             .0
             .context_sources(
                 subject,
@@ -269,6 +276,11 @@ impl KernelService {
                 Some(&scope),
             )
             .await?;
+        sources.extend(
+            self.0
+                .current_material_sources(subject, &material_sources, limit, &read)
+                .await?,
+        );
         let mut items = Vec::new();
         let mut bytes = 0;
         let mut omitted = false;
