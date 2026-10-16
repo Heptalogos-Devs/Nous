@@ -26,6 +26,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: just dev-prepare
       - run: just check
+      - name: Verify controlled local plugin installation
+        env:
+          NOUS_TEST_NATIVE_INSTALLER: "1"
+        run: |
+          corepack pnpm exec tsc --project packages/openclaw/bin/tsconfig.json
+          corepack pnpm exec vitest run --config .config/vitest.ts scripts/tests/openclaw/controlled-plugin.test.ts
   windows-fast:
     runs-on: windows-2025
     timeout-minutes: 30
@@ -43,3 +49,9 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: just check-fast
+      - name: Verify controlled local plugin installation
+        env:
+          NOUS_TEST_NATIVE_INSTALLER: "1"
+        run: |
+          corepack pnpm exec tsc --project packages/openclaw/bin/tsconfig.json
+          corepack pnpm exec vitest run --config .config/vitest.ts scripts/tests/openclaw/controlled-plugin.test.ts

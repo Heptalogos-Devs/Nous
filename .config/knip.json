@@ -12,7 +12,8 @@
         "scripts/research/{media,serve-gateway,longitudinal,model-contracts,model-trace,dogfooding}.ts!",
         "scripts/tests/**/*.test.ts",
         "scripts/tests/release/client-consumer.ts!",
-        "scripts/tests/openclaw/custody.ts!"
+        "scripts/tests/openclaw/custody.ts!",
+        "scripts/tests/openclaw/local-plugin-probe.ts!"
       ]
     },
     "packages/client": {
@@ -24,7 +25,10 @@
       ]
     },
     "packages/openclaw": {
-      "entry": ["src/index.ts!", "bin/{prepare,install}.mjs!"],
+      "entry": [
+        "src/index.ts!",
+        "bin/{prepare,install,controlled-plugin}.mjs!"
+      ],
       "project": ["src/**/*.ts!", "bin/*.mjs!"],
       "ignoreDependencies": ["openclaw"]
     },

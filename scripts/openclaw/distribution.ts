@@ -8,6 +8,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -55,6 +56,7 @@ export async function buildDistribution(destination: string) {
   );
   for (const name of ["bin", "patches", "openclaw.plugin.json", "README.md"])
     await cp(join(source, name), join(destination, name), { recursive: true });
+  await rm(join(destination, "bin/tsconfig.json"), { force: true });
   await chmod(join(destination, "bin/prepare.mjs"), 0o755);
   await chmod(join(destination, "bin/install.mjs"), 0o755);
   for (const name of ["LICENSE", "NOTICE"])

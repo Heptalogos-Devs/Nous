@@ -769,3 +769,20 @@ diff --git a/dist/types-BzYyevxm.d.ts b/dist/types-BzYyevxm.d.ts
    durableFinal?: ChannelMessageDurableFinalAdapter;
    send?: ChannelMessageSendAdapter<TConfig, TSendResult>;
    live?: ChannelMessageLiveAdapterShape;
+diff --git a/dist/loader-UHuBXZwI.js b/dist/loader-UHuBXZwI.js
+--- a/dist/loader-UHuBXZwI.js
++++ b/dist/loader-UHuBXZwI.js
+@@ -1,3 +1,4 @@
++import { allowControlledPluginState } from "./nous-controlled-plugin.mjs";
+ import { D as resolveExpiresAtMsFromDurationMs, R as timestampMsToIsoString } from "./number-coercion-CLj0HTDM.js";
+ import { a as sanitizeCommandDescriptorDescription, i as normalizeCommandDescriptorName } from "./command-descriptor-utils-DII8rwLT.js";
+ import { a as getPluginCache, f as withPluginCache } from "./plugin-cache-DGWspMEc.js";
+@@ -4626,7 +4627,7 @@
+ 		let scopedAgentRuntime;
+ 		const assertTrustedPluginRuntime = (methodName) => {
+ 			const record = pluginRuntimeRecordById.get(pluginId) ?? registry.plugins.find((entry) => entry.id === pluginId);
+-			if (record?.origin !== "bundled" && record?.trustedOfficialInstall !== true) throw new Error(`${methodName} is only available for trusted plugins in this release. Plugin "${pluginId}" loaded with origin "${record?.origin ?? "unknown"}"; reinstall it from its official npm package or ClawHub listing to enable trusted plugin state.`);
++			if (record?.origin !== "bundled" && record?.trustedOfficialInstall !== true && !allowControlledPluginState({ pluginId, pluginSource: record?.source, methodName })) throw new Error(`${methodName} is only available for trusted plugins in this release. Plugin "${pluginId}" loaded with origin "${record?.origin ?? "unknown"}"; reinstall it from its official npm package or ClawHub listing to enable trusted plugin state.`);
+ 		};
+ 		const runtime = new Proxy(registryParams.runtime, { get(target, prop, receiver) {
+ 			const runWithPluginScope = (run) => {

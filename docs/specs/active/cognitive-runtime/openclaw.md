@@ -55,3 +55,5 @@ ReportUse 仅把实际待发送输入的 exact cognition refs 记为 presented�
 `smoke:openclaw` 使用真实模型 gateway 与正式安装的原生 Gateway，核验最终 provider 输入、工具后续、RESET、原生 compact、子 Agent、真实 Material 回流、必需 Core 不可用时零发送及恢复，并核验真实自我选择的输出进入实际 native compaction summary 后，purge 和进程重启均阻止发送，正式 reset 后新输入不含旧标记。准备/应用日志不冒充已传输证明。未测试的渠道、Computer use 平台和语言人格质量不由该接线场景推定。
 
 Self 的付费行为场景使用同一正式安装入口，检查无 Seed 自主选择、有 Seed 形成、实际公共资料工具步骤、同事项反思修订及旧 exact revision、话题/模型/会话/进程连续性和普通聊天的管理权限边界。命令和模型配置要求见包说明。模型提案仍需按实际语义与来源核对，不能仅凭合法结构或出现名字判定通过。
+
+受控 runtime 可以由同一 installer 显式安装声明所需 native state 的本地插件。仅 `openChannelIngressQueue` 与 `openKeyedStore` 按实际 artifact、npm lock identity、安装文件完整性和准确插件入口授予；不是官方 npm provenance，也不提升其他可信能力。安装锁与真实状态持有进程 lease 要求离线替换/移除，记录删除只影响后续 grant，不代替终止已运行对象。其他用户插件、npm metadata 与 profile 保留；完整命令和字段由包说明维护。
