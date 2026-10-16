@@ -438,7 +438,7 @@ try {
       semanticRole: "fact",
       text: "Cognition is shared; each worker owns its cursor.",
       epistemicClass: "observed",
-      validTime: {},
+      validTime: { timeDomainRef: "time:real", extent: {} },
       basis: [
         {
           basis: {
@@ -598,7 +598,7 @@ try {
             description: "This test conversation only",
             conversationRef: "agent:main:main",
           },
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
           basis: [
             {
               basis: {

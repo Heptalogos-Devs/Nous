@@ -41,7 +41,8 @@ fn content(input: p::SelfContent) -> Result<SelfContent> {
                     })
                     .collect::<Result<_>>()?,
                 basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-                valid_time: temporal(v.valid_time)?,
+                valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+                valid_time: domain_temporal(v.valid_time)?.extent,
                 producer: v.producer.map(from_producer).transpose()?,
             })
         }
@@ -55,7 +56,8 @@ fn content(input: p::SelfContent) -> Result<SelfContent> {
                 .map(from_ref)
                 .collect::<Result<_>>()?,
             basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-            valid_time: temporal(v.valid_time)?,
+            valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+            valid_time: domain_temporal(v.valid_time)?.extent,
             producer: v.producer.map(from_producer).transpose()?,
         }),
     })
@@ -88,7 +90,10 @@ fn content_proto(value: SelfContent) -> p::SelfContent {
                 })
                 .collect(),
             basis: v.basis.into_iter().map(basis_proto).collect(),
-            valid_time: Some(temporal_proto(&v.valid_time)),
+            valid_time: Some(domain_temporal_proto(
+                &v.valid_time_domain_ref,
+                &v.valid_time,
+            )),
             producer: v.producer.map(super::evidence::producer),
         }),
         SelfContent::NarrativeThread(v) => {
@@ -98,7 +103,10 @@ fn content_proto(value: SelfContent) -> p::SelfContent {
                 epistemic_class: v.epistemic_class.as_str().into(),
                 source_refs: v.source_refs.into_iter().map(to_ref).collect(),
                 basis: v.basis.into_iter().map(basis_proto).collect(),
-                valid_time: Some(temporal_proto(&v.valid_time)),
+                valid_time: Some(domain_temporal_proto(
+                    &v.valid_time_domain_ref,
+                    &v.valid_time,
+                )),
                 producer: v.producer.map(super::evidence::producer),
             })
         }

@@ -142,6 +142,11 @@ fn default_explicit_origin() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAssociationRequest {
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub producer: Option<ProducerSignature>,
     pub operation_id: OperationId,
     pub from: CognitiveRef,

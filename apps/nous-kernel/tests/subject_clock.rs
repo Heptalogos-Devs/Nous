@@ -454,6 +454,35 @@ async fn material_keeps_real_contact_and_world_stamp_across_restart_and_replay()
         .unwrap();
     assert_eq!(replay.occurrence.occurrence_id, actual.occurrence_id);
     assert_eq!(replay.occurrence.observed_stamp.at, world.world_now);
+    let observed_real = chrono::SubsecRound::trunc_subsecs(Utc::now(), 6);
+    reopened
+        .clocks
+        .change(
+            subject,
+            OperationId::new(),
+            ClockChange::Advance { seconds: 60.0 },
+        )
+        .await
+        .unwrap();
+    let mut delayed = input.clone();
+    delayed.occurrence.observed_at = Some(observed_real);
+    let delayed = reopened
+        .material
+        .record_observation_once(delayed, Some(uuid::Uuid::now_v7()))
+        .await
+        .unwrap();
+    assert_eq!(delayed.occurrence.observed_at, observed_real);
+    assert_eq!(
+        delayed.occurrence.observed_stamp.time_domain_ref,
+        "time:real"
+    );
+    assert_eq!(delayed.occurrence.observed_stamp.at, observed_real);
+    assert!(
+        (delayed.occurrence.observed_stamp.recorded_at - Utc::now())
+            .num_seconds()
+            .abs()
+            < 2
+    );
     let mut other_world = input;
     other_world.occurrence.occurred_time_domain_ref = "time:other".into();
     assert!(

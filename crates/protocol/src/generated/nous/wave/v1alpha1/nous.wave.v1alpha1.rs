@@ -804,7 +804,7 @@ pub struct MemoryContent {
     #[prost(string, repeated, tag="9")]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(message, optional, tag="10")]
-    pub valid_time: ::core::option::Option<TemporalExtent>,
+    pub valid_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(string, tag="12")]
     pub epistemic_class: ::prost::alloc::string::String,
 }
@@ -849,7 +849,7 @@ pub struct Memory {
     #[prost(message, optional, tag="19")]
     pub temporal_evidence: ::core::option::Option<TemporalEvidence>,
     #[prost(message, optional, tag="20")]
-    pub valid_time: ::core::option::Option<TemporalExtent>,
+    pub valid_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(message, optional, tag="21")]
     pub formed_at: ::core::option::Option<DomainStamp>,
     #[prost(message, optional, tag="22")]
@@ -2522,7 +2522,7 @@ pub struct SchemaScope {
     #[prost(string, repeated, tag="3")]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(message, optional, tag="4")]
-    pub valid_time: ::core::option::Option<TemporalExtent>,
+    pub valid_time: ::core::option::Option<DomainTemporalExtent>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SchemaEvidenceLink {
@@ -2976,7 +2976,7 @@ pub struct SelfFacetContent {
     #[prost(message, repeated, tag="6")]
     pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
     #[prost(message, optional, tag="7")]
-    pub valid_time: ::core::option::Option<TemporalExtent>,
+    pub valid_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(message, optional, tag="8")]
     pub producer: ::core::option::Option<ProducerSignature>,
     #[prost(string, tag="9")]
@@ -2993,7 +2993,7 @@ pub struct NarrativeContent {
     #[prost(message, repeated, tag="4")]
     pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
     #[prost(message, optional, tag="5")]
-    pub valid_time: ::core::option::Option<TemporalExtent>,
+    pub valid_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(message, optional, tag="6")]
     pub producer: ::core::option::Option<ProducerSignature>,
     #[prost(string, tag="7")]
@@ -3435,7 +3435,7 @@ pub struct MotivationContent {
     #[prost(message, repeated, tag="5")]
     pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
     #[prost(message, optional, tag="6")]
-    pub valid_time: ::core::option::Option<TemporalExtent>,
+    pub valid_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(message, optional, tag="7")]
     pub producer: ::core::option::Option<ProducerSignature>,
     #[prost(message, repeated, tag="8")]
@@ -3793,7 +3793,7 @@ pub struct SocialRelationContent {
     #[prost(message, repeated, tag="10")]
     pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
     #[prost(message, optional, tag="11")]
-    pub valid_time: ::core::option::Option<TemporalExtent>,
+    pub valid_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(message, optional, tag="12")]
     pub producer: ::core::option::Option<ProducerSignature>,
     #[prost(string, optional, tag="13")]
@@ -3820,7 +3820,7 @@ pub struct LanguageConventionContent {
     #[prost(message, repeated, tag="9")]
     pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
     #[prost(message, optional, tag="10")]
-    pub valid_time: ::core::option::Option<TemporalExtent>,
+    pub valid_time: ::core::option::Option<DomainTemporalExtent>,
     #[prost(message, optional, tag="11")]
     pub producer: ::core::option::Option<ProducerSignature>,
 }

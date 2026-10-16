@@ -160,7 +160,7 @@ message MemoryContent {
   repeated RevisionBasis basis = 7;
   repeated string aboutness = 8 [(reference_kind) = "entity"];
   repeated string tags = 9 [(reference_kind) = "tag"];
-  TemporalExtent valid_time = 10;
+  DomainTemporalExtent valid_time = 10;
   string epistemic_class = 12;
 }
 message Memory {
@@ -183,7 +183,7 @@ message Memory {
   repeated string tags = 17 [(reference_kind) = "tag"];
   google.protobuf.Timestamp created_at = 18;
   TemporalEvidence temporal_evidence = 19;
-  TemporalExtent valid_time = 20;
+  DomainTemporalExtent valid_time = 20;
   DomainStamp formed_at = 21;
   google.protobuf.Timestamp recorded_at = 22;
   string formation_mode = 23;

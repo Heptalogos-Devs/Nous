@@ -8,6 +8,7 @@ import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { TimestampSchema } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
+  DomainStampSchema,
   CognitionUsageSchema,
   SourceReadScopeSchema,
   CognitiveRefSchema,
@@ -50,6 +51,7 @@ export type ReflectionPlan = {
   currentMemory: [string, JsonValue][];
   currentMotivation: [string, JsonValue][];
   timeDomainRef: string;
+  semanticNow?: JsonValue;
   entities: [string, string][];
   scopes: [string, { self: JsonValue; social: JsonValue }][];
   sourceKeys: string[];
@@ -105,6 +107,11 @@ export async function prepareExplicitSelfPlan(
   maxBytes: number,
   options: ExecutionOptions,
 ): Promise<ReflectionPlan> {
+  const clock = await kernel.clocks.readClock(
+    { subjectId: request.subjectId },
+    options,
+  );
+  const semanticNow = toJson(DomainStampSchema, clock.now!);
   const p = await prepareSelfInterpretation(kernel, request, maxBytes, options);
   return {
     subjectId: request.subjectId,
@@ -117,7 +124,8 @@ export async function prepareExplicitSelfPlan(
     currentSocial: [],
     currentMemory: [],
     currentMotivation: [],
-    timeDomainRef: "time:real",
+    timeDomainRef: clock.timeDomainRef,
+    semanticNow,
     entities: [],
     scopes: [
       [
@@ -132,7 +140,10 @@ export async function prepareExplicitSelfPlan(
       (k) => k === "source" || k.startsWith("source:"),
     ),
     dependencies: [...p.basis.values()].flatMap(basisDependencies),
-    input: p.input,
+    input: JSON.stringify({
+      semanticClock: semanticNow,
+      actualInput: JSON.parse(p.input) as JsonValue,
+    }),
     maxActions: 16,
     degradation: p.degradation.map((d) => ({ code: d.code, detail: d.detail })),
   };
@@ -143,6 +154,7 @@ export async function prepareReflectionPlan(
   options: ExecutionOptions,
 ): Promise<ReflectionPlan> {
   const subjectId = batch.selected!.subjectId;
+  const clock = await kernel.clocks.readClock({ subjectId }, options);
   const basis = new Map<string, RevisionBasis>(),
     sources: CognitiveRef[] = [],
     scopes: ReflectionPlan["scopes"] = [],
@@ -490,9 +502,8 @@ export async function prepareReflectionPlan(
     currentSocial: socialCurrent,
     currentMemory: memoryCurrent,
     currentMotivation: motivationCurrent,
-    timeDomainRef: batch.domains.includes("motivation")
-      ? (await kernel.clocks.readClock({ subjectId }, options)).timeDomainRef
-      : "time:real",
+    timeDomainRef: clock.timeDomainRef,
+    semanticNow: toJson(DomainStampSchema, clock.now!),
     entities: [...entities],
     scopes,
     sourceKeys: [...basis.keys()].filter((k) => k.startsWith("source:")),
@@ -518,6 +529,7 @@ export async function prepareReflectionPlan(
     })),
     enabledDomains: plan.domains,
     actualTimeDomain: plan.timeDomainRef,
+    semanticClock: plan.semanticNow,
     sourceRead: {
       subjectId,
       sourceRefs: [...authorized.values()].map((r) =>

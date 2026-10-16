@@ -217,3 +217,10 @@ impl DomainTimePredicate {
         }
     }
 }
+
+pub fn real_time_domain() -> String {
+    "time:real".into()
+}
+pub fn is_real_time_domain(value: &str) -> bool {
+    value == "time:real"
+}

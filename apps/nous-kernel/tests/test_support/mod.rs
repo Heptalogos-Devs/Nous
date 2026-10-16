@@ -301,6 +301,7 @@ pub(crate) fn form_input(
         cognitive_role: CognitiveRole::Declarative,
 
         content: nous_memory::MemoryContent {
+            valid_time_domain_ref: "time:real".into(),
             producer: None,
             formation_mode: FormationMode::Grounded,
             grounding_occurrence_id: Some(occurrence),

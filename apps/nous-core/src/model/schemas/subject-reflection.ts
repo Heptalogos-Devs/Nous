@@ -1,3 +1,4 @@
+import { domainTemporalExtentSchema as time } from "./temporal.js";
 import { motivationActionSchema } from "./motivation.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
@@ -6,15 +7,7 @@ import { selfInterpretationSchema } from "./self.js";
 const key = z.string().min(1).max(256),
   reason = z.string().min(1).max(8192),
   basisKeys = z.array(key).min(1).max(64);
-const time = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("unknown") }),
-  z.strictObject({ kind: z.literal("instant"), at: z.iso.datetime() }),
-  z.strictObject({
-    kind: z.literal("interval"),
-    start: z.iso.datetime().nullable(),
-    end: z.iso.datetime().nullable(),
-  }),
-]);
+
 const judgment = z.strictObject({
   state: z.enum(["hypothesis", "supported", "disputed"]),
   explanation: z.string().min(1).max(8192),

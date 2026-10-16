@@ -64,7 +64,7 @@ try {
           },
         },
       ],
-      validTime: {},
+      validTime: { timeDomainRef: "time:real", extent: {} },
     },
   });
   const session = await c.runtime.openSession({ subjectId });

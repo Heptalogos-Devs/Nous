@@ -39,6 +39,12 @@ impl SocialService {
         {
             return Err(Error::Invalid("invalid Social selection budget".into()));
         }
+        let clock = self.runtime.read_clock(subject).await?;
+        let domain = if input.at.is_some() {
+            "time:real"
+        } else {
+            &clock.time_domain_ref
+        };
         let mut tx = self.store.read_view().await?;
         let read = self
             .roots
@@ -50,7 +56,7 @@ impl SocialService {
             .iter()
             .map(|e| e.as_str())
             .collect::<Vec<_>>();
-        let now = input.at.unwrap_or_else(|| self.runtime.now(subject));
+        let now = input.at.unwrap_or(clock.at);
         let rows=sqlx::query(r#"
 SELECT o.object_id,r.revision_id,2*octet_length(r.content::text)+octet_length(r.reason)+1024+
  COALESCE((SELECT sum(2*octet_length(e.basis::text)+octet_length(e.role)+128) FROM social_evidence e WHERE e.revision_id=r.revision_id),0)::bigint AS read_bytes
@@ -62,6 +68,7 @@ FROM social_objects o JOIN social_revisions r ON r.object_id=o.object_id
 WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal'
  AND ($2::uuid IS NULL OR r.revision_id>$2)
  AND (($17::timestamptz IS NULL AND ($18 OR r.revision_id=o.current_revision_id)) OR (r.recorded_at<=$17 AND ($18 OR r.revision_id=(SELECT prior.revision_id FROM social_revisions prior WHERE prior.object_id=o.object_id AND prior.recorded_at<=$17 ORDER BY prior.recorded_at DESC,prior.revision_id DESC LIMIT 1))))
+ AND (r.content#>>'{value,valid_time,kind}'='unknown' OR COALESCE(r.content#>>'{value,valid_time_domain_ref}','time:real')=$22)
  AND (r.content#>>'{value,valid_time,kind}'='unknown'
  OR (r.content#>>'{value,valid_time,kind}'='instant' AND ROW(temporal.instant_time[1]::integer,temporal.instant_time[2],rpad(COALESCE(temporal.instant_time[3],''),9,'0')::bigint)=ROW($14::integer,$15::text,$16::bigint))
  OR (r.content#>>'{value,valid_time,kind}'='interval'
@@ -80,7 +87,7 @@ WHERE o.subject_id=$1 AND o.acceptance_state='accepted' AND o.integrity_state='v
  AND ($11::text IS NULL OR (o.family='social_relation' AND (r.content#>>'{value,from}'=$11 OR r.content#>>'{value,to}'=$11)))
  AND ($13::text IS NULL OR (r.content#>>'{value,from}'=$13 OR r.content#>>'{value,to}'=$13))
 ORDER BY r.revision_id LIMIT $12
-"#).bind(subject.0).bind(input.after).bind(entities).bind(input.scope.group.as_ref().map(EntityRef::as_str)).bind(&input.scope.channel).bind(&input.scope.conversation).bind(input.scope.work_context.map(|v|v.0.to_string())).bind(&input.scope.domain).bind(&read.root_keys).bind(input.expression).bind(input.endpoint.map(EntityRef::as_str)).bind((input.max_items+1) as i64).bind(input.counterpart.map(EntityRef::as_str)).bind(now.year()).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond())).bind(input.as_of).bind(input.history).bind(&read.work_contexts).bind(&read.origin_conversation_refs).bind(serde_json::json!(&read.explicit_refs)).fetch_all(&mut *tx).await.map_err(db)?;
+"#).bind(subject.0).bind(input.after).bind(entities).bind(input.scope.group.as_ref().map(EntityRef::as_str)).bind(&input.scope.channel).bind(&input.scope.conversation).bind(input.scope.work_context.map(|v|v.0.to_string())).bind(&input.scope.domain).bind(&read.root_keys).bind(input.expression).bind(input.endpoint.map(EntityRef::as_str)).bind((input.max_items+1) as i64).bind(input.counterpart.map(EntityRef::as_str)).bind(now.year()).bind(now.format("%m-%dT%H:%M:%S").to_string()).bind(i64::from(now.nanosecond())).bind(input.as_of).bind(input.history).bind(&read.work_contexts).bind(&read.origin_conversation_refs).bind(serde_json::json!(&read.explicit_refs)).bind(domain).fetch_all(&mut *tx).await.map_err(db)?;
         let mut ids = Vec::new();
         let mut bytes = 0usize;
         let mut omitted = false;

@@ -313,6 +313,7 @@ async fn assert_owner_timestamp_replay(
             intent: nous_memory::RevisionIntent::Correct,
 
             content: nous_memory::MemoryContent {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 formation_mode: input.content.formation_mode,
                 grounding_occurrence_id: input.content.grounding_occurrence_id,
@@ -357,6 +358,7 @@ async fn assert_schema_clock(
             title: None,
             structural_claim: "Owner-assigned cognitive formation time".into(),
             applicability_scope: nous_memory::SchemaScope {
+                valid_time_domain_ref: "time:real".into(),
                 description: "Timestamp owner contract".into(),
                 aboutness: vec![],
                 tags: vec![],

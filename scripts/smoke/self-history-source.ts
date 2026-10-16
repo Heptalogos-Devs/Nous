@@ -34,7 +34,7 @@ export async function selfHistorySourceSmoke(
         semanticRole: "self_choice_evidence",
         epistemicClass: "observed",
         text,
-        validTime: {},
+        validTime: { timeDomainRef: "time:real", extent: {} },
         basis: [
           {
             basis: {
@@ -63,7 +63,7 @@ export async function selfHistorySourceSmoke(
         stance: "tentative",
         epistemicClass: "observed",
         scope: { description: "this verification task" },
-        validTime: {},
+        validTime: { timeDomainRef: "time:real", extent: {} },
         basis: [
           {
             basis: {
@@ -103,7 +103,7 @@ export async function selfHistorySourceSmoke(
             },
           },
         ],
-        validTime: {},
+        validTime: { timeDomainRef: "time:real", extent: {} },
       },
     },
   });

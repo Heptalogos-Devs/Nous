@@ -16,6 +16,7 @@ fn basis(id: OccurrenceId) -> RevisionBasis {
 }
 fn matter(key: &str, id: OccurrenceId, condition: Option<DesiredCondition>) -> MotivationMatter {
     MotivationMatter {
+        valid_time_domain_ref: "time:real".into(),
         matter_key: key.into(),
         statement: format!("Subject wishes {key}"),
         scope: MotivationScope {

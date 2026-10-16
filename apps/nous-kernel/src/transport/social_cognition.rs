@@ -72,7 +72,8 @@ fn content(v: p::SocialContent) -> Result<SocialContent> {
             judgment: judgment(v.judgment)?,
             coordination_expectations: v.coordination_expectations,
             basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-            valid_time: temporal(v.valid_time)?,
+            valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+            valid_time: domain_temporal(v.valid_time)?.extent,
             producer: v.producer.map(from_producer).transpose()?,
         }),
         p::social_content::Content::Convention(v) => {
@@ -86,7 +87,8 @@ fn content(v: p::SocialContent) -> Result<SocialContent> {
                 pragmatic_use: v.pragmatic_use,
                 judgment: judgment(v.judgment)?,
                 basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-                valid_time: temporal(v.valid_time)?,
+                valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+                valid_time: domain_temporal(v.valid_time)?.extent,
                 producer: v.producer.map(from_producer).transpose()?,
             })
         }
@@ -114,7 +116,10 @@ fn content_proto(v: SocialContent) -> p::SocialContent {
                     judgment: Some(judgment_proto(v.judgment)),
                     coordination_expectations: v.coordination_expectations,
                     basis: v.basis.into_iter().map(basis_proto).collect(),
-                    valid_time: Some(temporal_proto(&v.valid_time)),
+                    valid_time: Some(domain_temporal_proto(
+                        &v.valid_time_domain_ref,
+                        &v.valid_time,
+                    )),
                     producer: v.producer.map(super::evidence::producer),
                 })
             }
@@ -129,7 +134,10 @@ fn content_proto(v: SocialContent) -> p::SocialContent {
                     pragmatic_use: v.pragmatic_use,
                     judgment: Some(judgment_proto(v.judgment)),
                     basis: v.basis.into_iter().map(basis_proto).collect(),
-                    valid_time: Some(temporal_proto(&v.valid_time)),
+                    valid_time: Some(domain_temporal_proto(
+                        &v.valid_time_domain_ref,
+                        &v.valid_time,
+                    )),
                     producer: v.producer.map(super::evidence::producer),
                 })
             }

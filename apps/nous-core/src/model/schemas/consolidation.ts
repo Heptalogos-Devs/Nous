@@ -1,3 +1,4 @@
+import { domainTemporalExtentSchema as time } from "./temporal.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,15 +8,7 @@ const key = z
   .min(1)
   .max(256)
   .describe("Exact invocation-local key from the relevant supplied catalog.");
-const time = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("unknown") }),
-  z.strictObject({ kind: z.literal("instant"), at: z.iso.datetime() }),
-  z.strictObject({
-    kind: z.literal("interval"),
-    start: z.iso.datetime().nullable(),
-    end: z.iso.datetime().nullable(),
-  }),
-]);
+
 const memory = z.strictObject({
   cognitiveRole: z.enum([
     "experiential",

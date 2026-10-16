@@ -99,6 +99,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
             intent: nous_memory::RevisionIntent::Rephrase,
 
             content: nous_memory::MemoryContent {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 formation_mode: nous_memory::FormationMode::Grounded,
                 grounding_occurrence_id: Some(source.occurrence.occurrence_id),
@@ -172,6 +173,7 @@ async fn owner_projection_uses_recorded_revisions_and_past_concept_state() {
     let association = owner
         .create_association(
             nous_memory::CreateAssociationRequest {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 operation_id: OperationId::new(),
                 from: CognitiveRef::MemoryRevision(revised.revision.memory_revision_id),

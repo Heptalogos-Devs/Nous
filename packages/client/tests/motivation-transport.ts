@@ -509,9 +509,14 @@ try {
           scope: { description: "Learning together" },
           statement: "A bounded actual collaboration",
           validTime: {
-            value: {
-              case: "interval",
-              value: { start: timestampFromDate(new Date(Date.now() - 60000)) },
+            timeDomainRef: "time:real",
+            extent: {
+              value: {
+                case: "interval",
+                value: {
+                  start: timestampFromDate(new Date(Date.now() - 60000)),
+                },
+              },
             },
           },
           judgment: {

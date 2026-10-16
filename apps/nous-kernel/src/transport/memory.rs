@@ -43,7 +43,10 @@ pub(super) fn view(input: MemoryView) -> p::Memory {
                 .collect(),
             observed_at: input.temporal_evidence.observed_at.map(timestamp),
         }),
-        valid_time: Some(temporal_proto(&revision.valid_time)),
+        valid_time: Some(domain_temporal_proto(
+            &revision.valid_time_domain_ref,
+            &revision.valid_time,
+        )),
         formed_at: Some(formation_proto(
             &revision.formed_time_domain_ref,
             revision.formed_at,
@@ -94,7 +97,8 @@ fn memory_content(content: p::MemoryContent) -> Result<nous_memory::MemoryConten
             .into_iter()
             .map(|value| Ok(nous_core::TagId(id(&value)?)))
             .collect::<Result<_>>()?,
-        valid_time: temporal(content.valid_time)?,
+        valid_time_domain_ref: domain_temporal(content.valid_time.clone())?.time_domain_ref,
+        valid_time: domain_temporal(content.valid_time)?.extent,
         epistemic_class: enum_value(&content.epistemic_class).map_err(|_| Error::Invalid("MemoryContent.epistemic_class must be observed, reported, derived, inferred, narrative, or simulated".into()))?,
     })
 }

@@ -118,7 +118,10 @@ async function main() {
           semanticRole: "fact",
           text: "runtime continuity",
           basis: [evidence(observed.occurrenceId)],
-          validTime: create(TemporalExtentSchema, {}),
+          validTime: {
+            timeDomainRef: "time:real",
+            extent: create(TemporalExtentSchema, {}),
+          },
 
           epistemicClass: "observed",
         }),

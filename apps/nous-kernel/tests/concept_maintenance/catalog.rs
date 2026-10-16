@@ -82,6 +82,7 @@ pub(super) async fn assert_schema_accretion(
                 title: Some("Independent reviewer approval pattern".into()),
                 structural_claim: "Release approval requires a recorded reviewer signoff".into(),
                 applicability_scope: SchemaScope {
+                    valid_time_domain_ref: "time:real".into(),
                     description: "The two independent release observations".into(),
                     aboutness: vec![],
                     tags: vec![],

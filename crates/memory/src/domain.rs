@@ -120,6 +120,11 @@ pub struct MemoryRevision {
     pub representation_text: String,
     pub epistemic_class: EpistemicClass,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub formed_at: DateTime<Utc>,
     pub formed_time_domain_ref: String,
     pub recorded_at: DateTime<Utc>,
@@ -220,6 +225,11 @@ pub struct AssociationEvidence {
     pub basis: Vec<AssociationBasis>,
     pub producer_signature_id: Option<Uuid>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub created_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
 }
@@ -243,6 +253,11 @@ pub struct MemoryContent {
     pub aboutness: Vec<EntityRef>,
     pub tags: Vec<TagId>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub epistemic_class: EpistemicClass,
 }
 
@@ -266,7 +281,11 @@ impl ExplicitMemoryInput {
 impl MemoryContent {
     pub fn validate(&self) -> Result<()> {
         validate_content(&self.semantic_role, &self.representation_text)?;
-        self.valid_time.validate()?;
+        nous_core::DomainTemporalExtent {
+            time_domain_ref: self.valid_time_domain_ref.clone(),
+            extent: self.valid_time.clone(),
+        }
+        .validate()?;
         if self.basis.is_empty() {
             return Err(Error::Invalid("a Memory revision needs support".into()));
         }
@@ -352,6 +371,11 @@ pub struct SchemaScope {
     #[serde(default)]
     pub tags: Vec<TagId>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

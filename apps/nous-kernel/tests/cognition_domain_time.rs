@@ -100,6 +100,7 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
             operation_id: OperationId::new(),
             reason: "Grounded fixture judgment".into(),
             content: nous_self::SelfContent::SelfFacet(nous_self::SelfFacetContent {
+                valid_time_domain_ref: "time:course".into(),
                 kind: "preference".into(),
                 statement: "I prefer careful tests".into(),
                 epistemic_class: EpistemicClass::Narrative,
@@ -110,7 +111,10 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
                 stance: "adopted".into(),
                 exceptions: vec![],
                 basis: basis.clone(),
-                valid_time: TemporalExtent::Unknown,
+                valid_time: TemporalExtent::Interval {
+                    start: Some(world.world_now),
+                    end: Some(world.world_now + Duration::minutes(1)),
+                },
                 producer: None,
             }),
         })
@@ -118,6 +122,41 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
         .unwrap();
     assert_eq!(own.formed_time_domain_ref, "time:course");
     assert_eq!(own.formed_at, world.world_now);
+    let read = nous_runtime::ContextResolver::source_read_view(
+        &runtime,
+        subject,
+        &SourceReadScope {
+            subject_id: Some(subject),
+            source_refs: vec![CognitiveRef::Occurrence(source.occurrence.occurrence_id)],
+            origin_conversation_refs: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let scope = nous_runtime::InvocationScope {
+        purpose: "reflection".into(),
+        conversation: "conversation:fixture:testing".into(),
+        ..Default::default()
+    };
+    let context = runtime
+        .require_self()
+        .unwrap()
+        .automatic_context(
+            subject,
+            nous_runtime::AutomaticContextRequest {
+                scope: &scope,
+                max_items: 4,
+                work_context: None,
+                materialize: true,
+                max_bytes: 8192,
+                ranked: &[],
+            },
+            &read,
+        )
+        .await
+        .unwrap();
+    assert_eq!(context.sources.len(), 1);
+    assert_eq!(context.sources[0].reference, own.reference());
     let social = runtime
         .require_social()
         .unwrap()
@@ -127,6 +166,7 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
             reason: "Actual fixture expression".into(),
             content: nous_social::SocialContent::LanguageConvention(
                 nous_social::ConventionContent {
+                    valid_time_domain_ref: "time:real".into(),
                     expression: "green".into(),
                     variants: vec![],
                     case_insensitive: false,
@@ -194,6 +234,25 @@ async fn owner_formation_is_world_time_and_recovered_result_keeps_its_original_s
         .await
         .unwrap();
     let reopened = open_runtime(&url, &root).await;
+    let expired = reopened
+        .require_self()
+        .unwrap()
+        .automatic_context(
+            subject,
+            nous_runtime::AutomaticContextRequest {
+                scope: &scope,
+                max_items: 4,
+                work_context: None,
+                materialize: true,
+                max_bytes: 8192,
+                ranked: &[],
+            },
+            &read,
+        )
+        .await
+        .unwrap();
+    assert!(expired.sources.is_empty());
+
     let recovered = reopened
         .require_memory()
         .unwrap()
@@ -234,8 +293,8 @@ async fn migration_upgrades_only_known_canonical_metadata_and_preserves_result_i
     .unwrap();
     let at = "2026-10-15T12:00:00Z";
     let recorded = "2026-10-15T12:00:01Z";
-    let record = serde_json::json!({"formedAt":at,"recordedAt":recorded,"revisionId":"an-opaque-fixture-ref"});
-    let proposal = serde_json::json!({"payload":{"formedAt":at,"plan":{"currentSelf":[["S1",record]],"currentSocial":[],"currentMemory":[],"currentMotivation":[]},"output":{"verbatim":"Do not rewrite formedAt or any raw source"}}});
+    let record = serde_json::json!({"formedAt":at,"recordedAt":recorded,"revisionId":"an-opaque-fixture-ref", "content":{"facet":{"validTime":{"instant":at}}}});
+    let proposal = serde_json::json!({"payload":{"formedAt":at,"plan":{"currentSelf":[["S1",record]],"currentSocial":[],"currentMemory":[],"currentMotivation":[]},"output":{"verbatim":"Do not rewrite formedAt or any raw source","validTime":{"kind":"instant","at":at}}}});
     let outcome = serde_json::json!({"payload":{"result":{"actions":[{"selfRecord":record}]},"proposal":proposal["payload"]}});
     sqlx::query("INSERT INTO model_results(subject_id,owner,operation_key,semantic_digest,context,proposal,outcome,created_at,updated_at) VALUES($1,'subject_reflection','fixture','unchanged-digest',$2,$3,$4,$5::timestamptz,$5::timestamptz)")
         .bind(subject.0).bind(serde_json::json!({"dependencies":[],"cognitive_formed_at":at,"maintenance_trigger":null})).bind(&proposal).bind(&outcome).bind(recorded).execute(&pool).await.unwrap();
@@ -253,6 +312,10 @@ async fn migration_upgrades_only_known_canonical_metadata_and_preserves_result_i
     .await
     .unwrap();
     assert_eq!(digest, "unchanged-digest");
+    assert_eq!(
+        actual_proposal["payload"]["plan"]["currentSelf"][0][1]["content"]["facet"]["validTime"]["timeDomainRef"],
+        "time:real"
+    );
     let context: nous_core::ModelResultContext = serde_json::from_value(context).unwrap();
     assert_eq!(
         context.cognitive_formed_at.unwrap().time_domain_ref,

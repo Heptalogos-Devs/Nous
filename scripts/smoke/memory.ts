@@ -159,7 +159,10 @@ async function main() {
               },
             }),
           ],
-          validTime: create(TemporalExtentSchema, {}),
+          validTime: {
+            timeDomainRef: "time:real",
+            extent: create(TemporalExtentSchema, {}),
+          },
 
           epistemicClass: "observed",
         }),

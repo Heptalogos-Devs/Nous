@@ -179,6 +179,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
         owner
             .create_association(
                 CreateAssociationRequest {
+                    valid_time_domain_ref: "time:real".into(),
                     producer: Some(association_producer.clone()),
                     operation_id: OperationId::new(),
                     from: reference.clone(),
@@ -205,6 +206,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
     owner
         .create_association(
             CreateAssociationRequest {
+                valid_time_domain_ref: "time:real".into(),
                 producer: Some(producer()),
                 operation_id: OperationId::new(),
                 from: revisions[0].clone(),

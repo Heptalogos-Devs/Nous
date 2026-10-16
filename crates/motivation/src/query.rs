@@ -52,8 +52,10 @@ impl CognitiveContributor for MotivationService {
                             record.formed_stamp.time_domain_ref != "time:real"
                                 || !p.contains(record.formed_stamp.at)
                         })
-                        || c.valid
-                            .is_some_and(|p| !p.matches_extent(record.content.valid_time()))
+                        || c.valid.is_some_and(|p| {
+                            record.content.matter().valid_time_domain_ref != "time:real"
+                                || !p.matches_extent(record.content.valid_time())
+                        })
                         || c.observed.is_some()
                         || c.occurred.is_some()
                     {
@@ -76,7 +78,13 @@ impl CognitiveContributor for MotivationService {
                         freshness: FreshnessDescriptor {
                             occurred: Vec::new(),
                             observed_at: None,
-                            valid_time: record.content.valid_time().clone(),
+                            valid_time: if record.content.matter().valid_time_domain_ref
+                                == "time:real"
+                            {
+                                record.content.valid_time().clone()
+                            } else {
+                                TemporalExtent::Unknown
+                            },
                             formed_at: (record.formed_stamp.time_domain_ref == "time:real")
                                 .then_some(record.formed_stamp.at),
                             recorded_at: Some(record.recorded_at),

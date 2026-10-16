@@ -1,18 +1,11 @@
+import { domainTemporalExtentSchema as validTime } from "./temporal.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
 const key = z.string().min(1).max(256);
 const basisKeys = z.array(key).min(1).max(64);
 const reason = z.string().min(1).max(8192);
-const validTime = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("unknown") }),
-  z.strictObject({ kind: z.literal("instant"), at: z.iso.datetime() }),
-  z.strictObject({
-    kind: z.literal("interval"),
-    start: z.iso.datetime().nullable(),
-    end: z.iso.datetime().nullable(),
-  }),
-]);
+
 const epistemicClass = z.enum([
   "observed",
   "reported",

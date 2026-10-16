@@ -57,7 +57,11 @@ pub(super) fn to_hit(
         freshness: FreshnessDescriptor {
             occurred: candidate.view.temporal_evidence.occurred.clone(),
             observed_at: candidate.view.temporal_evidence.observed_at,
-            valid_time: candidate.view.revision.valid_time.clone(),
+            valid_time: if candidate.view.revision.valid_time_domain_ref == "time:real" {
+                candidate.view.revision.valid_time.clone()
+            } else {
+                TemporalExtent::Unknown
+            },
             formed_at: (candidate.view.revision.formed_time_domain_ref == "time:real")
                 .then_some(candidate.view.revision.formed_at),
             recorded_at: Some(candidate.view.revision.recorded_at),
@@ -102,21 +106,19 @@ pub(super) fn hard_filter(
 }
 
 pub(super) fn temporal_match(query: &CognitiveQuery, view: &MemoryView) -> bool {
-    query
+    query.expression.constraints.valid.is_none_or(|interval| {
+        view.revision.valid_time_domain_ref == "time:real"
+            && interval.matches_extent(&view.revision.valid_time)
+    }) && query
         .expression
         .constraints
-        .valid
-        .is_none_or(|interval| interval.matches_extent(&view.revision.valid_time))
-        && query
-            .expression
-            .constraints
-            .occurred
-            .is_none_or(|interval| {
-                view.temporal_evidence
-                    .occurred
-                    .iter()
-                    .any(|value| interval.matches_extent(value))
-            })
+        .occurred
+        .is_none_or(|interval| {
+            view.temporal_evidence
+                .occurred
+                .iter()
+                .any(|value| interval.matches_extent(value))
+        })
         && query
             .expression
             .constraints

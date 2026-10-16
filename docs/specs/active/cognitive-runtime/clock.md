@@ -26,7 +26,9 @@ Material 已保存带域 occurredTime、独立 observedStamp，以及派生表�
 
 Memory/Schema/Episode/Journal/Self/Social 的形成时刻现由同事务 Clock stamp 给出，`formedAt` 对外统一为 DomainStamp。记录中的 formed 时间与域共同构成该轴；recordedAt 保持现实。已保存模型成果的 cognitiveFormedAt 亦为 DomainStamp，恢复沿用原成果，不重新生成时间。0015 只升级已知 canonical reflection 目录和 owner 回执路径，保留语义 digest 和原模型输出文本。
 
-各 owner 的 valid 时间域、完整带域检索与相对日期解析仍待接入。旧裸 formed 查询只接受 real-domain，虚拟域不会伪装 UTC 参与筛选或偏好。现有 owner 的 `CognitiveRuntimeService.now` 保持现实域，不接入虚拟时钟；Material `observed_at` 和 Authority 记录时间不会因世界变速而改变。既有五轴请求没有世界域参数，因此不能用于虚拟域查询，也不能把世界 stamp 填入它们的裸 Timestamp 字段。Host Life 的世界活动应保存正式 domain stamp；跨 owner 的虚拟域查询需要后续完成各 owner 的域存储与过滤合同。
+各 owner 的 validTime 已使用 DomainTemporalExtent，Memory/Schema/Association 保存域列，Self/Social/Motivation 保存同一内容中的域；默认 real 的域不改变既有语义请求身份。当前 Self/Social/Motivation 选择在预算与正文读取之前按实际参考域过滤，Self 的世界有效窗口随正式 Clock advance 到期。明确给出的旧 observedAt 仅标为 real 接触 stamp，不把后续 admission 的世界时间倒填为旧接触。Reflection 输入包含实际捕获的 semanticClock 和来源 observedStamp，原保存成果的输入文本不改。
+
+完整带域 Query frame、检索聚合、Episode/Journal 时间范围和相对日期解析仍待接入。旧裸 formed 查询只接受 real-domain，虚拟域不会伪装 UTC 参与筛选或偏好。现有 owner 的 `CognitiveRuntimeService.now` 保持现实域，不接入虚拟时钟；Material `observed_at` 和 Authority 记录时间不会因世界变速而改变。既有五轴请求没有世界域参数，因此不能用于虚拟域查询，也不能把世界 stamp 填入它们的裸 Timestamp 字段。Host Life 的世界活动应保存正式 domain stamp；跨 owner 的虚拟域查询需要后续完成各 owner 的域存储与过滤合同。
 
 QQ 的 platformSentAt/receivedAt、现实 observedAt、网络 deadline/backoff、worker lease 继续使用现实/单调基础设施时钟。这个服务不改变它们。
 

@@ -483,11 +483,14 @@ async function scenario(endpoint: string, token: string) {
         applicabilityScope: {
           description: "This calibration sequence",
           validTime: {
-            value: {
-              case: "interval",
+            timeDomainRef: "time:real",
+            extent: {
               value: {
-                start: fromJson(TimestampSchema, "2026-10-03T00:00:00Z"),
-                end: fromJson(TimestampSchema, "2026-10-04T00:00:00Z"),
+                case: "interval",
+                value: {
+                  start: fromJson(TimestampSchema, "2026-10-03T00:00:00Z"),
+                  end: fromJson(TimestampSchema, "2026-10-04T00:00:00Z"),
+                },
               },
             },
           },

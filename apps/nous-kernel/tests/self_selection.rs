@@ -63,6 +63,7 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
             .await
             .unwrap();
     let (subject, basis) = subject_with_basis(&runtime).await;
+    let now = runtime.cognition.read_clock(subject).await.unwrap().at;
     let service = runtime.require_self().unwrap();
     let later = now + TimeDelta::nanoseconds(100);
     let times = [
@@ -76,6 +77,7 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
             start: None,
             end: Some(later),
         },
+        TemporalExtent::Instant { at: now },
     ];
     let mut records = Vec::new();
     for (index, valid_time) in times.into_iter().enumerate() {
@@ -86,6 +88,11 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
                     operation_id: OperationId::new(),
                     reason: "Exact applicability boundary regression".into(),
                     content: SelfContent::SelfFacet(SelfFacetContent {
+                        valid_time_domain_ref: if index == 4 {
+                            "time:unmapped".into()
+                        } else {
+                            format!("time:manual:{}", subject.0)
+                        },
                         kind: if index < 2 { "identity" } else { "preference" }.into(),
                         statement: format!("Exact temporal case {index}"),
                         epistemic_class: EpistemicClass::Narrative,

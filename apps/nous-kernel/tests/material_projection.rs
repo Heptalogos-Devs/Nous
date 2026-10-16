@@ -117,6 +117,7 @@ async fn selected_regions_and_multisource_basis_are_shared_across_read_index_and
     let association = owner
         .create_association(
             CreateAssociationRequest {
+                valid_time_domain_ref: "time:real".into(),
                 producer: None,
                 operation_id: OperationId::new(),
                 from: memory_ref.clone(),

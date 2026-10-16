@@ -89,7 +89,7 @@ try {
               conversationRef: "conversation:public",
             },
             basis: [basis(occurrenceId)],
-            validTime: {},
+            validTime: { timeDomainRef: "time:real", extent: {} },
           },
         },
       },
@@ -114,7 +114,7 @@ try {
         formationMode: "grounded",
         groundingOccurrenceId: occurrenceId,
         basis: [basis(occurrenceId)],
-        validTime: {},
+        validTime: { timeDomainRef: "time:real", extent: {} },
       },
     });
   const publicMemory = await form(
@@ -146,7 +146,7 @@ try {
               explanation: "Actual attributed source only",
             },
             basis: [basis(occurrenceId)],
-            validTime: {},
+            validTime: { timeDomainRef: "time:real", extent: {} },
           },
         },
       },

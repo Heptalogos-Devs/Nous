@@ -88,6 +88,7 @@ async fn agent_concept_reads_supported_edges_and_searches_the_tag_catalog() {
     let mut requests = Vec::new();
     for (from, to) in [(tags[0], tags[1]), (tags[1], tags[2])] {
         let request = CreateAssociationRequest {
+            valid_time_domain_ref: "time:real".into(),
             producer: Some(producer.clone()),
             operation_id: OperationId::new(),
             from: CognitiveRef::Tag(from),

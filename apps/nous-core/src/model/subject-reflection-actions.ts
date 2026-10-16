@@ -3,7 +3,8 @@ import {
   ReviseMotivationRequestSchema,
   AddMotivationEvidenceRequestSchema,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
-import { chosenBasis, temporal } from "./reflection-catalog.js";
+import { chosenBasis } from "./reflection-catalog.js";
+import { domainTemporal } from "./temporal.js";
 import { compileMotivationAction } from "./motivation.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
@@ -190,7 +191,7 @@ export function compileReflectionActions(
           estimateMethod: c.judgment.estimateMethod ?? undefined,
         },
         basis: chosenBasis(plan, c.basisKeys, targetKey ?? undefined),
-        validTime: temporal(c.validTime),
+        validTime: domainTemporal(c.validTime),
         producer,
       };
       const content = create(SocialContentSchema, {
@@ -292,7 +293,7 @@ export function compileReflectionActions(
           invalid("Memory entity key is outside actual Host catalog"),
       ),
       epistemicClass: proposal.content.epistemicClass,
-      validTime: temporal(proposal.content.validTime),
+      validTime: domainTemporal(proposal.content.validTime),
     };
     return {
       ...base,

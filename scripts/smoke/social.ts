@@ -86,7 +86,7 @@ try {
               "Observed bounded task outcome; this does not establish global intimacy.",
           },
           basis: [evidence(occurrenceId)],
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
         },
       },
     });
@@ -216,7 +216,7 @@ try {
             "Alice explained the usage; no claim of universal shared understanding.",
         },
         basis: [evidence(a.occurrenceId)],
-        validTime: {},
+        validTime: { timeDomainRef: "time:real", extent: {} },
       },
     },
   });
@@ -544,7 +544,7 @@ try {
           scope: { description: "deployment" },
           stance: "tentative",
           basis: [evidence(a.occurrenceId)],
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
         },
       },
     },

@@ -44,7 +44,7 @@ try {
             epistemicClass: "narrative",
             stance: "adopted",
             scope: { description: "general" },
-            validTime: {},
+            validTime: { timeDomainRef: "time:real", extent: {} },
             basis: [
               {
                 basis: {
@@ -280,7 +280,7 @@ try {
           stance: "adopted",
           epistemicClass: "narrative",
           scope: { description: "worker task only", purposes: ["worker"] },
-          validTime: {},
+          validTime: { timeDomainRef: "time:real", extent: {} },
           basis: [
             {
               basis: {

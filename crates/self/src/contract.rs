@@ -31,6 +31,11 @@ pub struct SelfFacetContent {
     pub exceptions: Vec<SelfException>,
     pub basis: Vec<RevisionBasis>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub producer: Option<ProducerSignature>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +46,11 @@ pub struct NarrativeContent {
     pub source_refs: Vec<CognitiveRef>,
     pub basis: Vec<RevisionBasis>,
     pub valid_time: TemporalExtent,
+    #[serde(
+        default = "nous_core::real_time_domain",
+        skip_serializing_if = "nous_core::is_real_time_domain"
+    )]
+    pub valid_time_domain_ref: String,
     pub producer: Option<ProducerSignature>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +70,12 @@ impl SelfContent {
         match self {
             Self::SelfFacet(v) => &v.basis,
             Self::NarrativeThread(v) => &v.basis,
+        }
+    }
+    pub fn valid_time_domain_ref(&self) -> &str {
+        match self {
+            Self::SelfFacet(value) => &value.valid_time_domain_ref,
+            Self::NarrativeThread(value) => &value.valid_time_domain_ref,
         }
     }
     pub fn valid_time(&self) -> &TemporalExtent {
@@ -106,7 +122,11 @@ impl SelfContent {
             return Err(Error::Invalid("Self basis exceeds source bound".into()));
         }
         validate_exact_basis(self.basis())?;
-        self.valid_time().validate()?;
+        nous_core::DomainTemporalExtent {
+            time_domain_ref: self.valid_time_domain_ref().into(),
+            extent: self.valid_time().clone(),
+        }
+        .validate()?;
         match self {
             Self::SelfFacet(v) => {
                 if ![

@@ -37,6 +37,7 @@ pub(super) fn decode_memory_row(
         created_at: row.try_get("created_at").map_err(db)?,
     };
     let revision = MemoryRevision {
+        valid_time_domain_ref: row.try_get("valid_time_domain_ref").map_err(db)?,
         producer_signature_id: row.try_get("producer_signature_id").map_err(db)?,
         memory_revision_id: revision_id,
         memory_id,

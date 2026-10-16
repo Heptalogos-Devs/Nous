@@ -12,7 +12,7 @@ pub use trace::CognitionTraceSources;
 mod time;
 pub use time::{
     DomainStamp, DomainTemporalEvidence, DomainTemporalExtent, DomainTimePredicate, TemporalExtent,
-    TimeInterval, TimePredicate,
+    TimeInterval, TimePredicate, is_real_time_domain, real_time_domain,
 };
 mod model_results;
 pub use model_results::{

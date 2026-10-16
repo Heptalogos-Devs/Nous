@@ -1,12 +1,8 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
-import { create, fromJson } from "@bufbuild/protobuf";
-import { timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { fromJson } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import {
-  RevisionBasisSchema,
-  TemporalExtentSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { RevisionBasisSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { ReflectionPlan } from "./subject-reflection-plan.js";
 function invalid(message: string): never {
   throw new ConnectError(message, Code.InvalidArgument);
@@ -29,28 +25,5 @@ export function chosenBasis(
     return b
       ? fromJson(RevisionBasisSchema, b)
       : invalid("Reflection basis key is outside actual supplied catalog");
-  });
-}
-export function temporal(
-  v:
-    | { kind: "unknown" }
-    | { kind: "instant"; at: string }
-    | { kind: "interval"; start: string | null; end: string | null },
-) {
-  return create(TemporalExtentSchema, {
-    value:
-      v.kind === "unknown"
-        ? undefined
-        : v.kind === "instant"
-          ? { case: "instant", value: timestampFromDate(new Date(v.at)) }
-          : {
-              case: "interval",
-              value: {
-                start: v.start
-                  ? timestampFromDate(new Date(v.start))
-                  : undefined,
-                end: v.end ? timestampFromDate(new Date(v.end)) : undefined,
-              },
-            },
   });
 }

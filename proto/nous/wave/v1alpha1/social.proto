@@ -29,7 +29,7 @@ message SocialRelationContent {
  SocialJudgment judgment = 8;
  repeated string coordination_expectations = 9;
  repeated RevisionBasis basis = 10;
- TemporalExtent valid_time = 11;
+ DomainTemporalExtent valid_time = 11;
  ProducerSignature producer = 12;
  optional string role = 13;
 }
@@ -43,7 +43,7 @@ message LanguageConventionContent {
  string pragmatic_use = 7;
  SocialJudgment judgment = 8;
  repeated RevisionBasis basis = 9;
- TemporalExtent valid_time = 10;
+ DomainTemporalExtent valid_time = 10;
  ProducerSignature producer = 11;
 }
 message SocialContent { oneof content { SocialRelationContent relation = 1; LanguageConventionContent convention = 2; } }

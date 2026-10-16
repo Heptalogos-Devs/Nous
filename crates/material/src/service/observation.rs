@@ -94,7 +94,14 @@ impl MaterialService {
             }),
             occurred_time: input.occurrence.occurred_time.clone(),
             occurred_time_domain_ref: input.occurrence.occurred_time_domain_ref.clone(),
-            observed_stamp,
+            observed_stamp: input.occurrence.observed_at.map_or_else(
+                || observed_stamp.clone(),
+                |at| nous_core::DomainStamp {
+                    time_domain_ref: "time:real".into(),
+                    at,
+                    recorded_at: now,
+                },
+            ),
             observed_at: input.occurrence.observed_at.unwrap_or(now),
             conversation_ref: input.occurrence.conversation_ref.clone(),
             actor_entity_ref: input.occurrence.actor_entity_ref.clone(),

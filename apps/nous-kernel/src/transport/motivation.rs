@@ -476,7 +476,8 @@ fn content(v: p::MotivationContent) -> Result<MotivationContent> {
         statement: v.statement,
         scope: scope(required(v.scope, "scope")?)?,
         basis: v.basis.into_iter().map(basis).collect::<Result<_>>()?,
-        valid_time: temporal(v.valid_time)?,
+        valid_time_domain_ref: domain_temporal(v.valid_time.clone())?.time_domain_ref,
+        valid_time: domain_temporal(v.valid_time)?.extent,
         producer: v.producer.map(from_producer).transpose()?,
         links: v
             .links
@@ -525,7 +526,10 @@ fn content_proto(v: MotivationContent) -> p::MotivationContent {
         statement: m.statement,
         scope: Some(scope_proto(m.scope)),
         basis: m.basis.into_iter().map(basis_proto).collect(),
-        valid_time: Some(temporal_proto(&m.valid_time)),
+        valid_time: Some(domain_temporal_proto(
+            &m.valid_time_domain_ref,
+            &m.valid_time,
+        )),
         producer: m.producer.map(super::evidence::producer),
         links: m
             .links

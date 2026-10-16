@@ -22,7 +22,7 @@ message SelfFacetContent {
   string stance = 4;
   repeated SelfException exceptions = 5;
   repeated RevisionBasis basis = 6;
-  TemporalExtent valid_time = 7;
+  DomainTemporalExtent valid_time = 7;
   ProducerSignature producer = 8;
   string epistemic_class = 9;
 }
@@ -31,7 +31,7 @@ message NarrativeContent {
   string interpretation = 2;
   repeated CognitiveRef source_refs = 3;
   repeated RevisionBasis basis = 4;
-  TemporalExtent valid_time = 5;
+  DomainTemporalExtent valid_time = 5;
   ProducerSignature producer = 6;
   string epistemic_class = 7;
 }

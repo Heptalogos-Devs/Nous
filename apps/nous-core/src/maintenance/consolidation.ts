@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from "@bufbuild/protobuf";
-import { timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { domainTemporal } from "../model/temporal.js";
 import { Code, ConnectError, type CallOptions } from "@connectrpc/connect";
 import { authorityRejection } from "./rejection.js";
 import type { MaintenancePlan } from "@nous-wave/protocol/nous/wave/kernel/v1alpha1/longitudinal_pb.js";
 import { CognitiveSchemaContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import {
   MemoryContentSchema,
-  TemporalExtentSchema,
   type ProducerSignature,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { KernelClient } from "../kernel-client.js";
@@ -20,26 +19,6 @@ type Action = ConsolidationProposal["actions"][number];
 import type { MaintenanceActionResult } from "./records.js";
 function invalid(message: string): never {
   throw new ConnectError(message, Code.InvalidArgument);
-}
-function time(
-  value: Extract<Action, { action: "create_memory" }>["content"]["validTime"],
-) {
-  if (value.kind === "unknown") return create(TemporalExtentSchema);
-  if (value.kind === "instant")
-    return create(TemporalExtentSchema, {
-      value: { case: "instant", value: timestampFromDate(new Date(value.at)) },
-    });
-  return create(TemporalExtentSchema, {
-    value: {
-      case: "interval",
-      value: {
-        start: value.start
-          ? timestampFromDate(new Date(value.start))
-          : undefined,
-        end: value.end ? timestampFromDate(new Date(value.end)) : undefined,
-      },
-    },
-  });
 }
 
 /** The saved model result is executed with each owner's own transaction and receipt. */
@@ -117,7 +96,7 @@ export async function executeConsolidation(
       basis: selectedBasis(content.basisKeys, eligible),
       aboutness: selectedEntities(content.entityKeys),
       tags: [],
-      validTime: time(content.validTime),
+      validTime: domainTemporal(content.validTime),
       epistemicClass: content.epistemicClass,
     });
   const schema = (
@@ -132,7 +111,7 @@ export async function executeConsolidation(
         description: content.applicability,
         aboutness: selectedEntities(content.entityKeys),
         tags: [],
-        validTime: time(content.validTime),
+        validTime: domainTemporal(content.validTime),
       },
       boundaryDefinition: content.boundaryDefinition,
       formationKind: content.formationKind,

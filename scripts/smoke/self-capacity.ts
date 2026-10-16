@@ -69,12 +69,15 @@ export async function populateSelfCapacity(
             validTime:
               index === 120
                 ? {
-                    value: {
-                      case: "interval",
-                      value: { end: { seconds: 946684800n, nanos: 0 } },
+                    timeDomainRef: "time:real",
+                    extent: {
+                      value: {
+                        case: "interval",
+                        value: { end: { seconds: 946684800n, nanos: 0 } },
+                      },
                     },
                   }
-                : {},
+                : { timeDomainRef: "time:real", extent: {} },
           },
         },
       }),
