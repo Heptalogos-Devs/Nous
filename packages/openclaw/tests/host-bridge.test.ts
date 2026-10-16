@@ -636,11 +636,18 @@ test("subagent handoff requires Host admission and closes rejected child; standa
     await f.engine.prepareModelInput(f.input());
     f.state.handoffReject = true;
     const params = {
+      parentRunId: "native-run",
       parentSessionKey: "native:main",
       childSessionKey: "native:child",
       contextMode: "isolated" as const,
       persistSessionBinding: vi.fn(async () => {}),
     };
+    const beforeMissing = f.runtime.openSession.mock.calls.length;
+    await expect(
+      f.engine.prepareSubagentSpawn({ ...params, parentRunId: "" }),
+    ).rejects.toThrow("handoff control is unavailable");
+    expect(f.runtime.openSession.mock.calls).toHaveLength(beforeMissing);
+    expect(f.handoffs).toHaveLength(0);
     await expect(f.engine.prepareSubagentSpawn(params)).rejects.toThrow(
       "rejected",
     );
@@ -669,6 +676,15 @@ test("subagent handoff requires Host admission and closes rejected child; standa
       agentInstanceId: "native-child:child-run",
     });
     expect(f.handoffs).toHaveLength(2);
+    expect(
+      f.handoffs.map(
+        (value) => hostHandoffRequestSchema.parse(value).parentRunId,
+      ),
+    ).toEqual(["native-run", "native-run"]);
+    const { parentRunId: _run, ...missingRun } = hostHandoffRequestSchema.parse(
+      f.handoffs[0],
+    );
+    expect(hostHandoffRequestSchema.safeParse(missingRun).success).toBe(false);
     await accepted.rollback();
     expect(f.runtime.closeSession).toHaveBeenCalledTimes(2);
   } finally {

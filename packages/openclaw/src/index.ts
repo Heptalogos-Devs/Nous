@@ -358,6 +358,8 @@ function register(api: OpenClawPluginApi): void {
       async prepareSubagentSpawn(params) {
         if (
           params.contextMode !== "isolated" ||
+          typeof params.parentRunId !== "string" ||
+          !params.parentRunId ||
           typeof params.persistSessionBinding !== "function"
         )
           throw new Error(
@@ -393,9 +395,16 @@ function register(api: OpenClawPluginApi): void {
             await bridge.handoff({
               version: 1,
               requestId: await eventIdentity(
-                `${params.parentSessionKey}:${params.childSessionKey}:${child.sessionId}:handoff`,
+                JSON.stringify([
+                  params.parentSessionKey,
+                  params.parentRunId,
+                  params.childSessionKey,
+                  child.sessionId,
+                  "handoff",
+                ]),
               ),
               subjectId: config.subjectId,
+              parentRunId: params.parentRunId,
               parentSessionKey: params.parentSessionKey,
               parentSessionId: parsed.data.nativeSessionId,
               parentNousSessionId: parsed.data.nousSessionId,

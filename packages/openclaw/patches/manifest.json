@@ -55,11 +55,11 @@
     },
     "dist/plugin-entry-C-sjzaBe.d.ts": {
       "original": "5b0d61e56bbef81c0b2d00efc18527905a86ae31661f6f5345bbc97ff048844e",
-      "patched": "2e89b4a3383604c9fe7b0c5bbcfa5ebc31c6d0b000f5e677feedee237a0cde4f"
+      "patched": "fcb1e76f51d97494173cac78c7f9d3d87e03807401838b133b739b862b2c91de"
     },
     "dist/plugin-entry-r6eDtEsn.d.ts": {
       "original": "7504ecd3a396e90bdd2c5021e42c79eb4e5f5b6a43855bbd4f560c35c6660949",
-      "patched": "50712d2c0c18b552b2c13a44ef8541da0503a1d22ef92ec54e87b3d29555bca5"
+      "patched": "96beeb53a1d3f6f4783c2bff4fa53614070c43604a9194dd895292d43c36737f"
     },
     "dist/plugin-sdk/channel-message.d.ts": {
       "original": "4d14ec25989aee109c09757d53db9c781c77576d7323d85bfeef8f34b69d7866",
@@ -75,7 +75,7 @@
     },
     "dist/runtime-api-DDF9iz51.d.ts": {
       "original": "56b584b45458dd0ce1c5d593d92bad569e2aa3526be97588c3ec7f51d1dc6cc9",
-      "patched": "cba9103e35d563add39e1f1e22817c6ae8c2840f1480f4cffe756519ee9adaf4"
+      "patched": "0b474cf9046e60b59907c78b9c8cc90736dd22eb7e8f7807e76c5e524aaca720"
     },
     "dist/runtime-plugins-CWkOjN1D.js": {
       "original": "e7353bc15138284b23a343949c78cbcfc17bcdb6a469951f176ed50ebeedcbff",
@@ -83,7 +83,7 @@
     },
     "dist/sessions-spawn-tool-1FQMTkIo.js": {
       "original": "a21770222831b6574680621577da6bb0727903117210f20968afdb59a83975b8",
-      "patched": "a45a4631e98cd986735aaec2683ded146c3c7a85aaef8820e9e7dab1b3ebc50d"
+      "patched": "bff6d040a277a1becc313848f116fa53c59cd8c97db77abb17f5fba8e4b76bf4"
     },
     "dist/system-prompt-params-B645JcX8.js": {
       "original": "df80c676f3d6fd201212bd4c95db25898c6a00dd61f4b598f7e8c5db04d94750",
@@ -96,6 +96,18 @@
     "dist/loader-UHuBXZwI.js": {
       "original": "5b9a0239eb83d755aab9e6793cc3dd82749877ab86ef04a8698979593a56f56a",
       "patched": "5b866392d626b827256bd74ce379b31748cc47937b7ec45b969791709c0d6f61"
+    },
+    "dist/cli-backend.types-LHE5t00D.d.ts": {
+      "original": "61136c9bd191ac24fb511a8291ad80d3c9a3d685c2e8b0f689eb0bdfa9bf777c",
+      "patched": "b0dea74b3b2780b99ede89af88c8f6db17e8720ede2edbc874d8db38b7bf297c"
+    },
+    "dist/agent-harness-runtime-DUs0hfX9.d.ts": {
+      "original": "a2d82e430780a210a28d5f8c75700cd7bb0369b38a4592d24867f7040405e2d1",
+      "patched": "1d6d6c8380c45f1b9fbb204968041ea0a0f5dd1216b23965ec90754227828acf"
+    },
+    "dist/agent-harness-runtime-CBvQyLlU.d.ts": {
+      "original": "3cfc17d784465aa55353cd625cddba5c923eab6f102df8eb8ec21c4c3375ae35",
+      "patched": "133adeba1ba755f3fbac4f2072cfddfea8fd878d84bc0ea928e0827423674d52"
     }
   },
   "dependencyOverrides": {
