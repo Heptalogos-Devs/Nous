@@ -1,3 +1,4 @@
+import { MotivationService } from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
 import { CognitiveClockService } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
@@ -75,6 +76,7 @@ export type ServiceDescriptors = {
   readonly self: typeof SelfService;
   readonly social: typeof SocialService;
   readonly reflection: typeof SubjectReflectionService;
+  readonly motivation: typeof MotivationService;
   readonly runtime: typeof RuntimeService;
   readonly cognition: typeof CognitionService;
   readonly memory: typeof MemoryService;
@@ -93,6 +95,7 @@ export const serviceDescriptors: ServiceDescriptors = {
   self: SelfService,
   social: SocialService,
   reflection: SubjectReflectionService,
+  motivation: MotivationService,
   runtime: RuntimeService,
   cognition: CognitionService,
   memory: MemoryService,

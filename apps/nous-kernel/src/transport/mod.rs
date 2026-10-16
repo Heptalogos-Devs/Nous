@@ -38,6 +38,7 @@ mod management;
 mod material;
 mod memory;
 mod model;
+mod motivation;
 mod query;
 mod schema;
 mod self_cognition;

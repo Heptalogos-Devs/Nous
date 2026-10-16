@@ -116,6 +116,7 @@ export function parseEffectiveConfiguration(values: Record<string, unknown>) {
       memory: c.memory,
       selfCognition: c.self_cognition,
       socialCognition: c.social_cognition,
+      motivation: c.motivation,
       runtime: c.runtime,
       resource: c.resource,
       maxItems: c.max_items,

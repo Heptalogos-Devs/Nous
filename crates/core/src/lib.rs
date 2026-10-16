@@ -58,6 +58,13 @@ macro_rules! uuid_id {
 }
 
 uuid_id!(SubjectId);
+uuid_id!(DesireId);
+uuid_id!(DesireRevisionId);
+uuid_id!(ConcernId);
+uuid_id!(ConcernRevisionId);
+uuid_id!(DesiredConditionId);
+uuid_id!(DesiredConditionRevisionId);
+
 uuid_id!(SocialRelationId);
 uuid_id!(SocialRelationRevisionId);
 uuid_id!(LanguageConventionId);

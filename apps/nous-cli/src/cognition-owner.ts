@@ -70,6 +70,18 @@ const revisionReaders: Record<
     read: (client, input) => client.memory.getJournalRevision(input),
     trace: true,
   },
+  desire_revision: {
+    read: (client, input) => client.motivation.getRevision(input),
+    trace: true,
+  },
+  concern_revision: {
+    read: (client, input) => client.motivation.getRevision(input),
+    trace: true,
+  },
+  desired_condition_revision: {
+    read: (client, input) => client.motivation.getRevision(input),
+    trace: true,
+  },
   social_relation_revision: {
     read: (client, input) => client.social.getRevision(input),
     trace: true,

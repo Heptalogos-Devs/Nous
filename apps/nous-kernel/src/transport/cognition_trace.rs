@@ -194,6 +194,21 @@ impl KernelService {
                     },
                     sources,
                 ));
+            } else if reference.domain() == CognitiveDomain::Motivation {
+                let (node, sources) = self
+                    .0
+                    .require_motivation()?
+                    .trace_node_in(tx, subject, reference)
+                    .await?;
+                read.push((
+                    p::CognitionTraceNode {
+                        reference: Some(to_ref(reference.clone())),
+                        content: Some(p::cognition_trace_node::Content::MotivationRecord(
+                            super::motivation::record(node),
+                        )),
+                    },
+                    sources,
+                ));
             } else if let CognitiveRef::CognitiveSeedVersion(version) = reference {
                 let seed = self
                     .0

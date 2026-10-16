@@ -70,7 +70,13 @@ fn prepare_lexical(
                         .projection
                         .domains
                         .iter()
-                        .any(|d| d.owner() == nous_core::CognitiveDomain::SocialCognition)
+                        .any(|d| {
+                            matches!(
+                                d.owner(),
+                                nous_core::CognitiveDomain::SocialCognition
+                                    | nous_core::CognitiveDomain::Motivation
+                            )
+                        })
                         .then_some(social_allowed),
                 )?
                 .into_iter()
@@ -321,8 +327,11 @@ fn domain_dense_matches(
         })
         .filter(|record| source_allowed.is_none_or(|refs| refs.contains(&record.reference)))
         .filter(|record| {
-            record.reference.domain() != nous_core::CognitiveDomain::SocialCognition
-                || social_allowed.contains(&record.reference)
+            !matches!(
+                record.reference.domain(),
+                nous_core::CognitiveDomain::SocialCognition
+                    | nous_core::CognitiveDomain::Motivation
+            ) || social_allowed.contains(&record.reference)
         })
         .filter_map(|record| u32::try_from(record.serving_doc_id).ok())
         .collect::<roaring::RoaringBitmap>();

@@ -52,6 +52,21 @@ impl AuthorityStore {
     where
         E: Executor<'e, Database = Postgres>,
     {
+        if reference.domain() == CognitiveDomain::Motivation {
+            let exact = reference.is_cognition_revision();
+            let family = reference
+                .kind()
+                .strip_suffix("_revision")
+                .unwrap_or(reference.kind());
+            let row=sqlx::query("SELECT r.revision_id,o.object_epoch FROM motivation_objects o JOIN motivation_revisions r ON r.object_id=o.object_id JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.motivation AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2 AND r.revision_id=o.current_revision_id))")
+                .bind(subject.0).bind(reference.uuid()).bind(family).bind(exact).fetch_optional(executor).await.map_err(db)?.ok_or_else(||Error::NotFound("Self exact target is unavailable".into()))?;
+            let revision: Uuid = row.try_get("revision_id").map_err(db)?;
+            return Ok((
+                parse_reference(&format!("{family}_revision"), &revision.to_string())?,
+                Some(row.try_get("object_epoch").map_err(db)?),
+                !exact,
+            ));
+        }
         if reference.domain() == CognitiveDomain::SocialCognition {
             let exact = reference.is_cognition_revision();
             let family = reference
@@ -209,6 +224,14 @@ impl AuthorityStore {
     where
         E: Executor<'e, Database = Postgres>,
     {
+        if reference.domain() == CognitiveDomain::Motivation {
+            let family = reference
+                .kind()
+                .strip_suffix("_revision")
+                .unwrap_or(reference.kind());
+            return sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM motivation_objects o JOIN motivation_revisions r USING(object_id) JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.motivation AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2)))")
+                .bind(subject.0).bind(reference.uuid()).bind(family).bind(reference.is_cognition_revision()).fetch_one(executor).await.map_err(db);
+        }
         if reference.domain() == CognitiveDomain::SocialCognition {
             let family = reference
                 .kind()
@@ -226,6 +249,7 @@ impl AuthorityStore {
                 .bind(subject.0).bind(reference.uuid()).bind(family).bind(reference.is_cognition_revision()).fetch_one(executor).await.map_err(db);
         }
         let valid = match reference {
+            CognitiveRef::Desire(_) | CognitiveRef::DesireRevision(_) | CognitiveRef::Concern(_) | CognitiveRef::ConcernRevision(_) | CognitiveRef::DesiredCondition(_) | CognitiveRef::DesiredConditionRevision(_) => unreachable!("Motivation handled above"),
             CognitiveRef::SocialRelation(_) | CognitiveRef::SocialRelationRevision(_) | CognitiveRef::LanguageConvention(_) | CognitiveRef::LanguageConventionRevision(_) => unreachable!("Social handled above"),
             CognitiveRef::SelfFacet(_) | CognitiveRef::SelfFacetRevision(_) | CognitiveRef::NarrativeThread(_) | CognitiveRef::NarrativeThreadRevision(_) => unreachable!("Self owner handled above"),
             CognitiveRef::Memory(id) => sqlx::query_scalar(
@@ -455,6 +479,10 @@ impl AuthorityStore {
             CognitiveRef::JournalRevision(id) => (
                 "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE o.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o",
                 id.0,
+            ),
+            r if r.domain() == CognitiveDomain::Motivation && r.is_cognition_revision() => (
+                "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM motivation_revisions r JOIN motivation_objects o USING(object_id) WHERE o.subject_id=$1 AND r.revision_id=$2 FOR SHARE OF o",
+                r.uuid().expect("Self UUID"),
             ),
             r if r.domain() == CognitiveDomain::SocialCognition && r.is_cognition_revision() => (
                 "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM social_revisions r JOIN social_objects o USING(object_id) WHERE o.subject_id=$1 AND r.revision_id=$2 FOR SHARE OF o",

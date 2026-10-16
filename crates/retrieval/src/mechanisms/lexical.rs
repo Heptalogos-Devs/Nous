@@ -257,18 +257,24 @@ impl LexicalGeneration {
         }
         if let Some(allowed) = social_allowed {
             let social = BooleanQuery::new(
-                ["social_relation", "language_convention"]
-                    .into_iter()
-                    .map(|d| {
-                        (
-                            Occur::Should,
-                            Box::new(TermQuery::new(
-                                Term::from_field_text(self.domain, d),
-                                IndexRecordOption::Basic,
-                            )) as Box<dyn Query>,
-                        )
-                    })
-                    .collect(),
+                [
+                    "social_relation",
+                    "language_convention",
+                    "desire",
+                    "concern",
+                    "desired_condition",
+                ]
+                .into_iter()
+                .map(|d| {
+                    (
+                        Occur::Should,
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(self.domain, d),
+                            IndexRecordOption::Basic,
+                        )) as Box<dyn Query>,
+                    )
+                })
+                .collect(),
             );
             let nonsocial = BooleanQuery::new(vec![
                 (
@@ -482,7 +488,13 @@ mod tests {
             .search_scoped(
                 "marker",
                 1,
-                &["social_relation", "language_convention"],
+                &[
+                    "social_relation",
+                    "language_convention",
+                    "desire",
+                    "concern",
+                    "desired_condition",
+                ],
                 None,
                 Some(&[]),
             )

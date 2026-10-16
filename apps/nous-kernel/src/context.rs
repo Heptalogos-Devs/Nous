@@ -139,6 +139,10 @@ impl ContextResolver for NousRuntime {
                 result.sources.push(source);
             }
         }
+        if capabilities.motivation {
+            self.append_motivation_context(subject, &input, &mut result)
+                .await?;
+        }
         Ok(result)
     }
 
@@ -208,7 +212,12 @@ impl ContextResolver for NousRuntime {
         }
         let identities = identities
             .into_iter()
-            .filter(|r| r.domain() != CognitiveDomain::SocialCognition)
+            .filter(|r| {
+                !matches!(
+                    r.domain(),
+                    CognitiveDomain::SocialCognition | CognitiveDomain::Motivation
+                )
+            })
             .collect::<Vec<_>>();
         descriptors.extend(
             self.store
@@ -288,7 +297,11 @@ impl ContextResolver for NousRuntime {
                     continue;
                 }
             }
-            result[index] = if reference.domain() == CognitiveDomain::SelfCognition {
+            result[index] = if reference.domain() == CognitiveDomain::Motivation {
+                self.require_motivation()?
+                    .context_source(subject, reference, max_bytes > 0)
+                    .await
+            } else if reference.domain() == CognitiveDomain::SelfCognition {
                 self.require_self()?
                     .context_source(subject, reference, max_bytes > 0, source_read)
                     .await
@@ -369,5 +382,106 @@ impl NousRuntime {
             .await?;
         selected.degradation.extend(degradation);
         Ok(selected)
+    }
+}
+
+impl NousRuntime {
+    async fn append_motivation_context(
+        &self,
+        subject: SubjectId,
+        input: &nous_runtime::AutomaticContextRequest<'_>,
+        result: &mut nous_runtime::AutomaticContext,
+    ) -> Result<()> {
+        if input.scope.source_read.subject_id == Some(subject)
+            && (!input.scope.source_read.source_refs.is_empty()
+                || !input.scope.source_read.origin_conversation_refs.is_empty())
+        {
+            let scope = nous_motivation::MotivationScope {
+                description: "Actual Host invocation".into(),
+                entities: input.scope.entities.clone(),
+                group: input.scope.group.clone(),
+                channel: input.scope.channel.clone(),
+                conversation: Some(input.scope.conversation.clone()),
+                work_context: input.work_context.map(WorkContextId),
+                domain: input.scope.domain.clone(),
+            };
+            let selected = self
+                .require_motivation()?
+                .select(
+                    subject,
+                    nous_motivation::MotivationSelectionRequest {
+                        scope: &scope,
+                        source_read: &input.scope.source_read,
+                        max_items: 2048,
+                        max_bytes: 4 * 1024 * 1024,
+                        after: None,
+                        at: None,
+                        as_of: None,
+                        history: false,
+                    },
+                )
+                .await?;
+            if selected.omitted {
+                result.degradation.push(Degradation{code:"motivation_candidate_omission".into(),detail:Some(format!("Authorized structural candidates exceed 2048 / 4MiB read budget; continuation {:?}; selection does not assert a complete motivation world",selected.next))});
+            }
+            let allowed = selected
+                .records
+                .iter()
+                .map(|r| r.reference())
+                .collect::<Vec<_>>();
+            let (ranked, degradation) = self
+                .serving
+                .lexical_candidates_authorized(
+                    subject,
+                    &input.scope.intent,
+                    128,
+                    &["desire", "concern", "desired_condition"],
+                    Some(&allowed),
+                )
+                .await?;
+            result.degradation.extend(degradation);
+            let mut records = selected.records;
+            records.sort_by_key(|r| {
+                ranked
+                    .iter()
+                    .position(|v| *v == r.reference())
+                    .unwrap_or(usize::MAX)
+            });
+            for record in records {
+                if result.sources.len() >= input.max_items {
+                    result.degradation.push(Degradation {
+                        code: "motivation_projection_omission".into(),
+                        detail: Some(
+                            "Complete motivation units omitted at shared projection item budget"
+                                .into(),
+                        ),
+                    });
+                    break;
+                }
+                let mut source =
+                    nous_motivation::MotivationService::record_context(&record, input.materialize);
+                source.usage = "motivation_context";
+                let used = result
+                    .sources
+                    .iter()
+                    .map(|s| s.text.as_ref().map_or(0, String::len))
+                    .sum::<usize>();
+                if source
+                    .text
+                    .as_ref()
+                    .is_some_and(|t| used + t.len() > input.max_bytes)
+                {
+                    result.degradation.push(Degradation {
+                        code: "motivation_projection_omission".into(),
+                        detail: Some(
+                            "Complete motivation unit omitted at shared text budget".into(),
+                        ),
+                    });
+                    continue;
+                }
+                result.sources.push(source);
+            }
+        }
+        Ok(())
     }
 }

@@ -47,6 +47,12 @@ macro_rules! cognitive_refs {
 }
 
 cognitive_refs! {
+    Desire(DesireId) = "desire",
+    DesireRevision(DesireRevisionId) = "desire_revision",
+    Concern(ConcernId) = "concern",
+    ConcernRevision(ConcernRevisionId) = "concern_revision",
+    DesiredCondition(DesiredConditionId) = "desired_condition",
+    DesiredConditionRevision(DesiredConditionRevisionId) = "desired_condition_revision",
     SocialRelation(SocialRelationId) = "social_relation",
     SocialRelationRevision(SocialRelationRevisionId) = "social_relation_revision",
     LanguageConvention(LanguageConventionId) = "language_convention",
@@ -85,6 +91,7 @@ pub enum CognitiveDomain {
     Memory,
     SelfCognition,
     SocialCognition,
+    Motivation,
     Runtime,
     Material,
     Resource,
@@ -101,6 +108,12 @@ impl CognitiveRef {
             | Self::Journal(_)
             | Self::JournalRevision(_)
             | Self::Tag(_) => CognitiveDomain::Memory,
+            Self::Desire(_)
+            | Self::DesireRevision(_)
+            | Self::Concern(_)
+            | Self::ConcernRevision(_)
+            | Self::DesiredCondition(_)
+            | Self::DesiredConditionRevision(_) => CognitiveDomain::Motivation,
             Self::SocialRelation(_)
             | Self::SocialRelationRevision(_)
             | Self::LanguageConvention(_)
@@ -122,7 +135,10 @@ impl CognitiveRef {
     pub fn is_cognition_revision(&self) -> bool {
         matches!(
             self,
-            Self::MemoryRevision(_)
+            Self::DesireRevision(_)
+                | Self::ConcernRevision(_)
+                | Self::DesiredConditionRevision(_)
+                | Self::MemoryRevision(_)
                 | Self::CognitiveSchemaRevision(_)
                 | Self::EpisodeRevision(_)
                 | Self::JournalRevision(_)

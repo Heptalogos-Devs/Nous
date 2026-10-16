@@ -45,7 +45,8 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
             let subject = SubjectId(id(&query.subject_id)?);
             let snapshot = self.0.configuration.snapshot_for_subject(subject)?;
             let limit = snapshot.get(nous_runtime::DEFAULT_RESULT_LIMIT)?;
-            let (social_refs,social_omitted)=self.authorized_query_social_refs(&query).await?;
+            let (mut social_refs,mut social_omitted)=self.authorized_query_social_refs(&query).await?;
+let (motivation_refs,motivation_omitted)=self.authorized_query_motivation_refs(&query).await?;social_refs.extend(motivation_refs);social_omitted |=motivation_omitted;
             let managed_read=query.usage.as_ref().map(|usage|usage.source_read.clone().unwrap_or_default());
             let mut compiled=super::query::compile_query(query,limit)?;
             if let Some(read)=managed_read {
@@ -55,6 +56,7 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
             }
             if let Some(read)=&compiled.source_read {let mut tx=self.0.store.read_view().await?;compiled.source_allowed=Some(nous_persistence::AuthorityStore::source_read_authorized_refs_in(&mut tx,read).await?);}
             let mut bound=self.0.bind_query_with_snapshot_authorized(compiled,snapshot,&social_refs).await?;
+
             if social_omitted {bound.activation.degradation.push(nous_core::Degradation{code:"social_candidate_omission".into(),detail:Some("Authorized scope exceeds bounded 2048 / 4MiB owner candidate read; query does not assert a complete Social world".into())});}
             bound.selected_embedding_space =
                 self.0.serving.embedding().map(|provider| provider.space());

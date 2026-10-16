@@ -22,6 +22,7 @@ nous-object-store.workspace = true
 nous-subject.workspace = true
 nous-self.workspace = true
 nous-social.workspace = true
+nous-motivation.workspace = true
 nous-runtime.workspace = true
 nous-retrieval.workspace = true
 nous-material.workspace = true
