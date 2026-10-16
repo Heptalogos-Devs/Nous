@@ -83,8 +83,9 @@ const engine: ManagedContextEngine = {
       registered.add(p.runId);
     }
     if (p.runId === parent)
-      assert(
-        p.extraSystemPrompt?.includes("EPHEMERAL_CURRENT_CONTEXT_FIXTURE"),
+      assert.equal(
+        p.extraSystemPrompt,
+        "  EPHEMERAL_CURRENT_CONTEXT_FIXTURE\n当前片段\n  ",
       );
     if (childSystems.has(p.sessionKey ?? ""))
       assert.equal(p.extraSystemPrompt, childSystems.get(p.sessionKey ?? ""));

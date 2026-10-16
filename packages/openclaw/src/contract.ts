@@ -30,7 +30,7 @@ export interface ManagedModelInput {
   agentId: string;
   runId: string;
   prompt: string;
-  /** Actual per-run native system addition; excluded from transcript history. */
+  /** Exact authored per-run system addition, before native framework hints; excluded from transcript history. */
   extraSystemPrompt?: string;
   model: Model;
   context: Context;

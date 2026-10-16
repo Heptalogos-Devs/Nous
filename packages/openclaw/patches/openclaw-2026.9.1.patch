@@ -392,7 +392,7 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
 +			prepare: async (model, context, signal, budget) => {
 +				capturedInput = { boundaryVersion: 5,
 +                    persistAdmittedContact: async (identity,roleScope) => { assertActive(); const old=sessionManager.getEntries().find(entry=>entry.type==="custom" && entry.customType==="nous_admitted_contact" && entry.data?.identity?.invocationId===identity.invocationId); if(old && JSON.stringify(old.data)!==JSON.stringify({identity,roleScope})) throw Error("Native admitted contact identity changed"); if(!old) sessionManager.appendCustomEntry("nous_admitted_contact",{identity,roleScope}); }, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
-+                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", extraSystemPrompt:attempt.extraSystemPrompt, model, context, signal: signal ?? input.runAbortController.signal,
++                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", extraSystemPrompt:attempt.nousAuthoredCurrentContext, model, context, signal: signal ?? input.runAbortController.signal,
 +					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: Math.min(budget.reservedOutputTokens, resolveMaxTokensParam(sessionRuntime.transport.effectiveExtraParams ?? {}) ?? budget.reservedOutputTokens),
 +					audience: { visibility: attempt.sessionKey?.includes(":subagent:") ? "internal" : attempt.chatType === "direct" ? "direct" : attempt.chatType === "group" ? "group" : attempt.chatType === "channel" ? "public" : "internal", channel: attempt.messageChannel ?? attempt.messageProvider, senderId: attempt.senderId, destination: attempt.currentChannelId },
 +					measureContext: (value) => estimateNousInputTokensNative({ messages: value.messages, systemPrompt: value.systemPrompt, prompt: "" }) + estimateNousRenderedTokensNative({ systemPrompt: JSON.stringify(value.tools ?? []), prompt: "" }) };
@@ -894,7 +894,15 @@ diff --git a/dist/delivery.runtime-CAsclR-9.js b/dist/delivery.runtime-CAsclR-9.
 diff --git a/dist/embedded-agent-DaSvA-Yk.js b/dist/embedded-agent-DaSvA-Yk.js
 --- a/dist/embedded-agent-DaSvA-Yk.js
 +++ b/dist/embedded-agent-DaSvA-Yk.js
-@@ -3930,14 +3930,14 @@
+@@ -2476,6 +2476,7 @@
+ 		onDeferredLifecycleAbort: params.onDeferredLifecycleAbort,
+ 		onExecutionPhase: params.onExecutionPhase,
+ 		extraSystemPrompt,
++        nousAuthoredCurrentContext:params.extraSystemPrompt,
+ 		sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
+ 		taskSuggestionDeliveryMode: params.taskSuggestionDeliveryMode,
+ 		inputProvenance: params.inputProvenance,
+@@ -3930,14 +3931,14 @@
  		};
  	}
  	let parkedWorkBlocksContinuation = false;

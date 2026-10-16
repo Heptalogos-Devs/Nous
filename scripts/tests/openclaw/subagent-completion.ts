@@ -309,7 +309,7 @@ try {
     agentId: "main",
     sessionKey,
     message: "PARENT_SYNTHETIC_TASK",
-    extraSystemPrompt: "EPHEMERAL_CURRENT_CONTEXT_FIXTURE",
+    extraSystemPrompt: "  EPHEMERAL_CURRENT_CONTEXT_FIXTURE\n当前片段\n  ",
     idempotencyKey: parentRunId,
     timeout: 30,
     deliver: true,
