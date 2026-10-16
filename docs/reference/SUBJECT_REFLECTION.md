@@ -2,11 +2,13 @@
 
 [返回接口参考](README.md)
 
-Runtime 将已实际观察的 Experience 合并为 `subject_reflection` MaintenanceNeed。Observation 接收不执行模型；重复 request 不新增范围。记录的来源包含原作者、实际观察序列、Session 与 WorkContext。来源失效只产生元数据变化；没有新的实际证据时阻断反思，不生成空模型结果。当前实现支持 Memory、Self、SocialRelation 与 LanguageConvention，Motivation 尚未接入。
+Runtime 将已实际观察的 Experience 合并为 `subject_reflection` MaintenanceNeed。Observation 接收不执行模型；重复 request 不新增范围。记录的来源包含原作者、实际观察序列、Session 与 WorkContext。来源失效只产生元数据变化；没有新的实际证据时阻断反思，不生成空模型结果。当前实现支持 Memory、Self、SocialRelation、LanguageConvention 与 Motivation。
 
 显式配置 `reflection.enabled_domains`（默认空）并具备对应 Subject capability 后，Host 才能通过既有 maintenance grant 授予机会、操作数、模型次数与耗时预算。`reflection.debounce_seconds` 合并连续输入；`source_limit`、`source_max_bytes`、`candidate_limit`、`candidate_max_bytes`、`max_actions` 约束输入和动作。模型使用唯一 `subject_reflection` role，操作为 `SubjectReflectionText`，沿既有 execution profile 与 fallback 策略执行。
 
 准备阶段只接收已观察来源和可信 Observation `context.cognition_usage` 的 SourceReadScope。模型只获得本批 source keys、真实 Host EntityRef catalog、来源结构 scope 与有界 current exact heads；缺失来源许可不能扩大候选。部分文本显式标注 partial，不声称已读取完整来源。新 Subject 没有 Seed 时不生成默认人格。
+
+共享反思复用 Material 对现有文本表征的正式选择。已接触的二进制来源没有可读文本表征时，保留该次接触的原作者、情境和时间，以 `contentAvailable=false`、`contentOmission=textual_representation_unavailable` 及 `reflection_source_content_unavailable` 明确标记；不解码原字节，不提供虚构正文，也不阻断同批其他可读来源。该来源只能支持实际接触元数据，不能支持其未读内容。原素材和来源身份继续保留；显式 `interpretSelf` 仍要求可读文本表征。
 
 一次结构化 generation 返回带 domain 的 typed actions。Self 复用显式 interpretSelf 的准备、编译与 apply；Memory、Social 与语言约定分别调用正式 owner。模型不能申请认知管理权限、构造实体、扩大 scope、purge 或自动覆盖冲突。模型结果与 producer 在应用之前进入既有 model-results；各 owner 使用独立短事务和真实 work/action identity。
 

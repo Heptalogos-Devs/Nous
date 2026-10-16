@@ -31,8 +31,9 @@ export async function prepareInterpretationSource(
   request: InterpretSelfRequest,
   maxBytes: number,
   options: ExecutionOptions,
-  allowPartial = false,
+  mode: "explicit" | "reflection" = "explicit",
 ) {
+  const allowPartial = mode === "reflection";
   const basis = new Map<string, RevisionBasis>();
   const subjectId = request.subjectId;
   const sources: CognitiveRef[] = [];
@@ -106,15 +107,20 @@ export async function prepareInterpretationSource(
         Code.ResourceExhausted,
       );
     const mime = material.mediaType.split(";")[0]!.toLowerCase();
-    if (!mime.startsWith("text/") && mime !== "application/json")
+    const textual = mime.startsWith("text/") || mime === "application/json";
+    if (!textual && mode === "explicit")
       throw new ConnectError(
         "Self reflection requires a textual representation",
         Code.FailedPrecondition,
       );
-    const text = new TextDecoder("utf-8", { fatal: !allowPartial }).decode(
-      material.content,
-    );
-    sourceText = text;
+    // A binary contact is real experience, but its bytes are not textual evidence.
+    // Shared reflection can retain that contact without claiming to have read its contents.
+    const text = textual
+      ? new TextDecoder("utf-8", { fatal: !allowPartial }).decode(
+          material.content,
+        )
+      : undefined;
+    sourceText = text ?? "";
     sources.push(
       create(CognitiveRefSchema, {
         kind: "occurrence",
@@ -144,6 +150,13 @@ export async function prepareInterpretationSource(
     source = {
       kind: "observed_material",
       evidenceText: text,
+      ...(!textual
+        ? {
+            mediaType: material.mediaType,
+            contentAvailable: false,
+            contentOmission: "textual_representation_unavailable",
+          }
+        : {}),
       sourceClass: occurrence.sourceClass,
       actor: occurrence.actorEntityRef,
       conversation: occurrence.conversationRef,
