@@ -133,6 +133,51 @@ try {
     pair.forward?.records[0]?.content,
     pair.reverse?.records[0]?.content,
   );
+  const changedForward = await c.social.revise({
+    subjectId,
+    operationId: crypto.randomUUID(),
+    targetRevision: forward.reference,
+    expectedObjectEpoch: forward.objectEpoch,
+    content: relation(actor, peer, "limited", a.occurrenceId),
+    reason: "isolated historical exact source contract",
+  });
+  const historicalUsage = {
+    agentInstanceId: "social-history-smoke",
+    purpose: "reflection",
+    intent: "Read the earlier task relationship",
+    participants: [
+      { entityRef: actor, role: "speaker" },
+      { entityRef: peer, role: "participant" },
+    ],
+    audience: {
+      conversationRef: "conversation:team",
+      recipientEntityRefs: [peer],
+      visibility: "group",
+    },
+    sourceRead,
+    socialDomain: "deployment",
+  };
+  const historical = await c.cognition.query({
+    subjectId,
+    usage: historicalUsage,
+    expression: {
+      operation: "atom",
+      cues: [
+        { cue: { case: "text", value: "deployment trust" } },
+        { cue: { case: "reference", value: forward.objectRef! } },
+      ],
+      modifiers: {
+        projection: { domains: ["social_relation"] },
+        asOf: forward.recordedAt,
+        materialize: true,
+      },
+    },
+  });
+  assert.ok(
+    historical.hits.some((h) => h.revision?.value === forward.reference?.value),
+    "Trusted historical Query authorizes the actual old exact head",
+  );
+  assert.notEqual(changedForward.reference?.value, forward.reference?.value);
   const denied = await c.social.select({
     ...selection,
     sourceRead: { subjectId, sourceRefs: [] },

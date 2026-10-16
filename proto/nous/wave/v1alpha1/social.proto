@@ -84,6 +84,8 @@ message SocialSelectionRequest {
  optional string expression = 7;
  optional string endpoint = 8 [(reference_kind) = "entity"];
  google.protobuf.Timestamp at = 9;
+ google.protobuf.Timestamp as_of = 10;
+ bool history = 11;
 }
 message SocialSelectionResponse { repeated SocialRecord items = 1; optional string next = 2; bool omitted = 3; }
 message SocialPairRequest { SocialSelectionRequest selection = 1; string from = 2 [(reference_kind) = "entity"]; string to = 3 [(reference_kind) = "entity"]; }

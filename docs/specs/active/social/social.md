@@ -31,7 +31,7 @@ scope 的个人/双方 entities、group、channel、conversation、WorkContext�
 
 Canonical [SocialService](../../../../proto/nous/wave/v1alpha1/social.proto) 与官方 Client `social` 提供 adopt/revise、addEvidence、get/getRevision、list/listRevisions、select、pair/neighborhood、resolveConventions、setLifecycle 与 purge。CLI `social` 使用同一合同。
 
-管理页上限 100，仅限制单页。select 是独立的当前认知选择，最多 2048 条、4 MiB 完整正文与依据；按 keyset 返回真实 next 和 omitted，不将缺席解释为不存在。有效时间与许可先于预算。pair 一次返回实际两向记录或明确未知；逆向角色作为带原 exact record 的 inverse view 表达，trust 不镜像。对称共同事项只写一个规范端点对象。
+管理页上限 100，仅限制单页。select 是独立的当前认知选择，最多 2048 条、4 MiB 完整正文与依据；按 keyset 返回真实 next 和 omitted，不将缺席解释为不存在。有效时间与许可先于预算。select 的 as_of/history 选择实际曾记录的 head 或历史修订，revision keyset 保留完整 continuation；历史 Query 再由既有 Authority snapshot 核验当时状态及当前传播屏障。pair 一次返回实际两向记录或明确未知；逆向角色作为带原 exact record 的 inverse view 表达，trust 不镜像。对称共同事项只写一个规范端点对象。
 
 resolveConventions 保留原话，按指定 scope、实际时间点、预算与许可返回字面/显式变体候选、冲突和来源。understanding 与 expression 是独立消费；表达仍须按实际受众选择使用、解释或普通说法。语义补充使用同一 Query/Serving 管线。带可信 usage 的 Query 冻结 exact authorized refs，共享 lexical/dense 在候选生成时过滤，owner 再核验；没有可信 scope 的通用查询不传播 Social。Projection 按当前参与者、来源与受众组织完整社会认识，并报告候选及文本预算省略。
 

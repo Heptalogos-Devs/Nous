@@ -3424,6 +3424,10 @@ pub struct SocialSelectionRequest {
     pub endpoint: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag="9")]
     pub at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="10")]
+    pub as_of: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(bool, tag="11")]
+    pub history: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SocialSelectionResponse {

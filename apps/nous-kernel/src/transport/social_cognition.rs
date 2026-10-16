@@ -492,6 +492,8 @@ struct Selection {
     expression: Option<String>,
     endpoint: Option<EntityRef>,
     at: Option<chrono::DateTime<chrono::Utc>>,
+    as_of: Option<chrono::DateTime<chrono::Utc>>,
+    history: bool,
 }
 impl Selection {
     fn new(v: p::SocialSelectionRequest) -> Result<Self> {
@@ -518,6 +520,8 @@ impl Selection {
             expression: v.expression,
             endpoint: v.endpoint.map(EntityRef::new).transpose()?,
             at: time(v.at)?,
+            as_of: time(v.as_of)?,
+            history: v.history,
         })
     }
     fn input(&self) -> SocialSelectionRequest<'_> {
@@ -531,6 +535,8 @@ impl Selection {
             endpoint: self.endpoint.as_ref(),
             counterpart: None,
             at: self.at,
+            as_of: self.as_of,
+            history: self.history,
         }
     }
 }
@@ -601,6 +607,7 @@ impl KernelService {
                 .transpose()?
                 .map(WorkContextId),
         };
+        let modifiers = query.expression.as_ref().and_then(|e| e.modifiers.as_ref());
         let selected = self
             .0
             .require_social()?
@@ -615,7 +622,9 @@ impl KernelService {
                     expression: None,
                     endpoint: None,
                     counterpart: None,
-                    at: None,
+                    at: time(modifiers.and_then(|m| m.clock_now))?,
+                    as_of: time(modifiers.and_then(|m| m.as_of))?,
+                    history: modifiers.is_some_and(|m| m.history),
                 },
             )
             .await?;

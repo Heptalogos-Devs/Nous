@@ -56,6 +56,8 @@ impl ContextResolver for NousRuntime {
                         endpoint: None,
                         counterpart: None,
                         at: None,
+                        as_of: None,
+                        history: false,
                     },
                 )
                 .await?;
