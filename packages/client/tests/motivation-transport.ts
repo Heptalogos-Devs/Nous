@@ -132,7 +132,7 @@ try {
   const sourceRead = input.sourceRead;
   const usage = {
     agentInstanceId: "fixture:main",
-    purpose: "deliberation",
+    purpose: "subject_deliberation",
     intent: "bounded study condition",
     audience: {
       conversationRef: "conversation:fixture",

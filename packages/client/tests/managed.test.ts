@@ -37,7 +37,7 @@ function fixture(
       projectionId: "p",
       usage: create(CognitionUsageSchema, {
         agentInstanceId: "worker",
-        purpose: "deliberation",
+        purpose: "subject_deliberation",
         intent: "Continue reading",
         audience: { conversationRef: "conversation", visibility: "internal" },
       }),

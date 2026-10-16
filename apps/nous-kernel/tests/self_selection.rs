@@ -119,7 +119,7 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
     }
     let scope = InvocationScope {
         intent: "current applicability".into(),
-        purpose: "expression".into(),
+        purpose: "subject_rendering".into(),
         conversation: "test".into(),
         entities: vec![],
         ..Default::default()

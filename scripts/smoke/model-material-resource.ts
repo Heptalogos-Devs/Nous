@@ -888,7 +888,7 @@ routes = ["memory_formation"]
     ...projection,
     usage: {
       agentInstanceId: "smoke:model-material-resource",
-      purpose: "deliberation",
+      purpose: "subject_deliberation",
       intent: "Continue the foreground material and resource task.",
       sourceRead: {
         subjectId,

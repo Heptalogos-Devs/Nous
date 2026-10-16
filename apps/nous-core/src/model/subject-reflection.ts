@@ -53,6 +53,7 @@ export type SavedReflectionProposal = {
   plan: ReflectionPlan;
   workId: string;
   output: SubjectReflectionProposal;
+  preparation: SubjectReflectionProposal;
   producer: JsonValue;
   formedAt?: JsonValue;
 };
@@ -283,6 +284,7 @@ export async function executeSubjectInterpretation(
                   plan,
                   workId: input.operationId,
                   output,
+                  preparation: output,
                   producer: toJson(ProducerSignatureSchema, producer),
                   formedAt: toJson(DomainStampSchema, clock.now!),
                 },
@@ -317,9 +319,10 @@ export async function executeSubjectInterpretation(
             try {
               compiled = compileReflectionActions(
                 proposal.plan,
-                proposal.output,
+                proposal.preparation,
                 fromJson(ProducerSignatureSchema, proposal.producer),
                 input.operationId,
+                proposal.output,
               );
             } catch (error) {
               if (
@@ -487,9 +490,10 @@ export async function repairSubjectReflection(
           const wanted = new Set(request.resolutions.map((r) => r.actionId));
           const actions = compileReflectionActions(
             proposal.plan,
-            proposal.output,
+            proposal.preparation,
             fromJson(ProducerSignatureSchema, proposal.producer),
             proposal.workId ?? request.operationId,
+            proposal.output,
           ).filter((a) => wanted.has(a.id));
           return {
             proposal: { actions, paid: proposal },

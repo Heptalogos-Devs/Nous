@@ -25,9 +25,15 @@ export function bindProjectionUsage(request: ProjectionRequest): void {
           view: usage.view,
           contactNature: usage.contactNature,
         }).success
-      : ["deliberation", "expression", "reflection", "worker"].includes(
-          usage.purpose,
-        )) ||
+      : [
+          "world_authoring",
+          "subject_deliberation",
+          "professional_execution",
+          "subject_rendering",
+          "narrative_review",
+          "reflection",
+          "maintenance",
+        ].includes(usage.purpose)) ||
     !bounded(usage.intent, 8192) ||
     (usage.activityRef !== undefined && !bounded(usage.activityRef, 1024)) ||
     usage.participants.length > 64 ||

@@ -74,10 +74,7 @@ const content = z.discriminatedUnion("family", [
       purposes: z
         .array(
           z.enum([
-            "deliberation",
-            "expression",
             "reflection",
-            "worker",
             "world_authoring",
             "subject_deliberation",
             "professional_execution",
@@ -86,7 +83,7 @@ const content = z.discriminatedUnion("family", [
             "maintenance",
           ]),
         )
-        .max(10),
+        .max(7),
       bindToInvocation: z
         .boolean()
         .describe(

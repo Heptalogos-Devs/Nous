@@ -270,7 +270,7 @@ try {
             scope: {
               description:
                 "Open natural-language condition, retained for interpretation",
-              purposes: ["expression"],
+              purposes: ["subject_rendering"],
             },
             basis: [capacity.basis],
             validTime: { timeDomainRef: "time:real", extent: {} },
@@ -301,7 +301,7 @@ try {
             },
           ],
         },
-        purpose: "expression",
+        purpose: "subject_rendering",
         intent: "当前自称与普通交流",
         audience: {
           conversationRef: "capacity:current",
@@ -461,7 +461,7 @@ try {
           epistemicClass: "narrative",
           scope: {
             description: "Independent source scope",
-            purposes: ["worker"],
+            purposes: ["professional_execution"],
           },
           basis: [capacity.basis],
           validTime: { timeDomainRef: "time:real", extent: {} },

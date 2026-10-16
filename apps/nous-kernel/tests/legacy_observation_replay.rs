@@ -12,15 +12,19 @@ const TABLES: &[&str] = &[
     "source_regions",
     "observation_request_bindings",
     "model_results",
+    "self_objects",
+    "self_revisions",
+    "self_evidence",
+    "self_dependencies",
+    "mutation_receipts",
 ];
 async fn sdk(stage: &str, project: &Path, endpoint: &str, token: &str, file: &Path) {
+    let (stage, script) = stage.strip_suffix("-self").map_or(
+        (stage, "packages/client/tests/legacy-observation-replay.ts"),
+        |stage| (stage, "packages/client/tests/legacy-self-purpose-replay.ts"),
+    );
     let result = tokio::process::Command::new("node")
-        .args([
-            "--import",
-            "tsx",
-            "packages/client/tests/legacy-observation-replay.ts",
-            stage,
-        ])
+        .args(["--import", "tsx", script, stage])
         .arg(project)
         .arg(endpoint)
         .arg(token)
@@ -44,8 +48,9 @@ async fn sdk(stage: &str, project: &Path, endpoint: &str, token: &str, file: &Pa
 async fn migrated_legacy_inline_and_artifact_requests_replay_without_new_occurrences() {
     let (root, url, _postgres) = test_support::database().await;
     let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let fixture_file = project.join("apps/nous-kernel/tests/fixtures/legacy-observations.json");
+    let fixture_file = project.join("apps/nous-kernel/tests/fixtures/legacy-world-purpose.json");
     let file = root.path().join("requests.json");
+    let self_file = root.path().join("self-requests.json");
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
     if let Some(binary) = std::env::var_os("NOUS_TIME_LEGACY_KERNEL") {
         let old_project = std::env::var_os("NOUS_TIME_LEGACY_PROJECT")
@@ -86,6 +91,14 @@ async fn migrated_legacy_inline_and_artifact_requests_replay_without_new_occurre
             &file,
         )
         .await;
+        sdk(
+            "old-self",
+            Path::new(&old_project),
+            endpoint["endpoint"].as_str().unwrap(),
+            &token,
+            &self_file,
+        )
+        .await;
         drop(stdin);
         assert!(child.wait().await.unwrap().success());
         let request: Value =
@@ -101,7 +114,9 @@ async fn migrated_legacy_inline_and_artifact_requests_replay_without_new_occurre
                     .unwrap(),
             );
         }
-        let fixture = serde_json::json!({"source":"actual official 5bea000e kernel / SDK; isolated PG max_connections=1","request":request,"tables":tables});
+        let self_request: Value =
+            serde_json::from_slice(&tokio::fs::read(&self_file).await.unwrap()).unwrap();
+        let fixture = serde_json::json!({"self_request":self_request,"source":"actual official 5bea000e kernel / SDK; isolated PG max_connections=1","request":request,"tables":tables});
         if std::env::var_os("NOUS_TIME_CAPTURE_LEGACY_FIXTURE").is_some() {
             tokio::fs::write(&fixture_file, serde_json::to_vec_pretty(&fixture).unwrap())
                 .await
@@ -118,6 +133,11 @@ async fn migrated_legacy_inline_and_artifact_requests_replay_without_new_occurre
                 .expect("captured actual legacy fixture"),
         )
         .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET CONSTRAINTS ALL DEFERRED")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
         for table in TABLES {
             let sql = format!(
                 "INSERT INTO {table} SELECT * FROM jsonb_populate_record(NULL::{table},$1)"
@@ -125,11 +145,18 @@ async fn migrated_legacy_inline_and_artifact_requests_replay_without_new_occurre
             for row in fixture["tables"][table].as_array().unwrap() {
                 sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                     .bind(row)
-                    .execute(&pool)
+                    .execute(&mut *tx)
                     .await
                     .unwrap();
             }
         }
+        tx.commit().await.unwrap();
+        tokio::fs::write(
+            &self_file,
+            serde_json::to_vec(&fixture["self_request"]).unwrap(),
+        )
+        .await
+        .unwrap();
         tokio::fs::write(&file, serde_json::to_vec(&fixture["request"]).unwrap())
             .await
             .unwrap();
@@ -156,11 +183,12 @@ async fn migrated_legacy_inline_and_artifact_requests_replay_without_new_occurre
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
     );
     sdk("new", &project, &endpoint, token, &file).await;
+    sdk("new-self", &project, &endpoint, token, &self_file).await;
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM observation_occurrences")
         .fetch_one(runtime.store.pool())
         .await
         .unwrap();
-    assert_eq!(count, 2);
+    assert_eq!(count, 3);
     let after: Vec<(uuid::Uuid, String)> = sqlx::query_as(
         "SELECT request_id,request_digest FROM observation_request_bindings ORDER BY request_id",
     )
@@ -176,7 +204,7 @@ async fn migrated_legacy_inline_and_artifact_requests_replay_without_new_occurre
         .await
         .unwrap();
     assert_eq!(
-        results, 1,
+        results, 2,
         "replay does not regenerate a saved model result"
     );
 

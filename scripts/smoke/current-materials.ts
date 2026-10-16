@@ -82,7 +82,7 @@ try {
   const session = await c.runtime.openSession({ subjectId });
   const usage = create(CognitionUsageSchema, {
     agentInstanceId: "native:synthetic-current-media",
-    purpose: "deliberation",
+    purpose: "subject_deliberation",
     intent: "Read current admitted media",
     audience: {
       conversationRef: "conversation:synthetic-public",

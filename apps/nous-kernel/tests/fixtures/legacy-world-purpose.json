@@ -1,0 +1,709 @@
+{
+  "request": {
+    "artifactId": "01a1443a-318a-7221-ba56-4595ba6691b9",
+    "identity": {
+      "operationKey": "0f30e4b5-aad7-4ae4-981d-77abea637f3e",
+      "owner": "material",
+      "semanticDigest": "known-result-before-domain-upgrade",
+      "subjectId": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+    },
+    "occurrenceIds": [
+      "01a1443a-318d-7bf3-b011-dc33ec9d74fb",
+      "01a1443a-3197-7cd3-b48b-fcd69aec64d4"
+    ],
+    "proposal": "{\"inputIds\":[\"01a1443a-318d-7bf3-b011-dc33ec9d74fb\",\"01a1443a-3197-7cd3-b48b-fcd69aec64d4\"],\"rawOutput\":\"Original retained result; do not rewrite {\\\"formedAt\\\":\\\"old\\\"}\"}",
+    "requests": [
+      {
+        "context": {
+          "fixture": "actual old producer"
+        },
+        "inlineText": {
+          "mediaType": "text/plain",
+          "text": "Legacy actual inline content"
+        },
+        "observedAt": "2026-10-16T10:20:26.884Z",
+        "occurredTime": {
+          "instant": "2026-10-16T10:20:26.884Z"
+        },
+        "requestId": "a0c28a1a-a701-40e6-9b37-13b236c6d94b",
+        "sourceClass": "file",
+        "subjectId": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "artifactId": "01a1443a-318a-7221-ba56-4595ba6691b9",
+        "context": {
+          "fixture": "actual old producer"
+        },
+        "observedAt": "2026-10-16T10:20:26.884Z",
+        "occurredTime": {
+          "instant": "2026-10-16T10:20:26.884Z"
+        },
+        "requestId": "8108f79b-006b-4533-a09a-721514a013f8",
+        "sourceClass": "file",
+        "subjectId": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      }
+    ],
+    "subjectId": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+  },
+  "self_request": {
+    "committedId": "01a1443a-33c6-7fb1-9b9d-443989180aba",
+    "identity": {
+      "operationKey": "65477ae9-f989-43aa-8146-9b36105b61a5",
+      "owner": "subject_reflection",
+      "semanticDigest": "retained-self-purpose-capture",
+      "subjectId": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+    },
+    "ids": [
+      "593c772b-a9f2-50a8-ac1d-5e0284c53f18",
+      "5f4dcfe7-e82d-5644-98ad-8d3830d4ed7a"
+    ],
+    "producer": {
+      "configDigest": "capture",
+      "implementation": "captured-old-owner",
+      "modelIdentity": "retained-result",
+      "operation": "self_formation_text",
+      "preprocessingIdentity": "captured-prompt",
+      "preprocessingRevision": "1",
+      "providerClass": "fixture"
+    },
+    "prompt": "Original prompt {\"purposes\":[\"worker\"]}",
+    "raw": {
+      "actions": [
+        {
+          "domain": "self",
+          "proposal": {
+            "action": "adopt",
+            "content": {
+              "basisKeys": [
+                "source"
+              ],
+              "epistemicClass": "reported",
+              "exceptions": [],
+              "family": "self_facet",
+              "kind": "preference",
+              "scope": {
+                "bindToInvocation": false,
+                "description": "Known bounded use",
+                "purposes": [
+                  "deliberation",
+                  "worker"
+                ]
+              },
+              "stance": "adopted",
+              "statement": "Preference for deliberation",
+              "validTime": {
+                "kind": "unknown"
+              }
+            },
+            "reason": "Captured deliberation decision"
+          },
+          "scopeKey": "invocation"
+        },
+        {
+          "domain": "self",
+          "proposal": {
+            "action": "adopt",
+            "content": {
+              "basisKeys": [
+                "source"
+              ],
+              "epistemicClass": "reported",
+              "exceptions": [],
+              "family": "self_facet",
+              "kind": "preference",
+              "scope": {
+                "bindToInvocation": false,
+                "description": "Known bounded use",
+                "purposes": [
+                  "expression",
+                  "worker"
+                ]
+              },
+              "stance": "adopted",
+              "statement": "Preference for expression",
+              "validTime": {
+                "kind": "unknown"
+              }
+            },
+            "reason": "Captured expression decision"
+          },
+          "scopeKey": "invocation"
+        }
+      ]
+    },
+    "subjectId": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+  },
+  "source": "actual official 5bea000e kernel / SDK; isolated PG max_connections=1",
+  "tables": {
+    "artifacts": [
+      {
+        "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+        "byte_length": 28,
+        "content_hash": "421b54450a9537bdf71f77d1f59c93bbb8a209146949c1781b9276f325d985f5",
+        "created_at": "2026-10-16T10:20:26.890133+00:00",
+        "media_type": "text/plain",
+        "metadata": {},
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "artifact_id": "01a1443a-33b5-7f53-b361-0dd5ce692234",
+        "byte_length": 53,
+        "content_hash": "affda0206050895383861d1af49842df545148fcb153409c49c4781b25cec24d",
+        "created_at": "2026-10-16T10:20:27.445464+00:00",
+        "media_type": "text/plain",
+        "metadata": {},
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+      }
+    ],
+    "model_results": [
+      {
+        "context": {
+          "cognitive_formed_at": "2026-10-16T10:20:26.884Z",
+          "dependencies": [],
+          "maintenance_trigger": null
+        },
+        "created_at": "2026-10-16T10:20:26.90983+00:00",
+        "dependencies": [],
+        "execution_telemetry": null,
+        "maintenance_need_id": null,
+        "maintenance_trigger_revision": null,
+        "mutation_operations": [],
+        "operation_key": "0f30e4b5-aad7-4ae4-981d-77abea637f3e",
+        "outcome": null,
+        "owner": "material",
+        "proposal": {
+          "dependencies": [],
+          "payload": {
+            "inputIds": [
+              "01a1443a-318d-7bf3-b011-dc33ec9d74fb",
+              "01a1443a-3197-7cd3-b48b-fcd69aec64d4"
+            ],
+            "rawOutput": "Original retained result; do not rewrite {\"formedAt\":\"old\"}"
+          },
+          "purged": false
+        },
+        "semantic_digest": "known-result-before-domain-upgrade",
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733",
+        "updated_at": "2026-10-16T10:20:26.90983+00:00"
+      },
+      {
+        "context": null,
+        "created_at": "2026-10-16T10:20:27.511252+00:00",
+        "dependencies": [],
+        "execution_telemetry": null,
+        "maintenance_need_id": null,
+        "maintenance_trigger_revision": null,
+        "mutation_operations": [
+          "593c772b-a9f2-50a8-ac1d-5e0284c53f18",
+          "5f4dcfe7-e82d-5644-98ad-8d3830d4ed7a"
+        ],
+        "operation_key": "65477ae9-f989-43aa-8146-9b36105b61a5",
+        "outcome": null,
+        "owner": "subject_reflection",
+        "proposal": {
+          "dependencies": [],
+          "payload": {
+            "output": {
+              "actions": [
+                {
+                  "domain": "self",
+                  "proposal": {
+                    "action": "adopt",
+                    "content": {
+                      "basisKeys": [
+                        "source"
+                      ],
+                      "epistemicClass": "reported",
+                      "exceptions": [],
+                      "family": "self_facet",
+                      "kind": "preference",
+                      "scope": {
+                        "bindToInvocation": false,
+                        "description": "Known bounded use",
+                        "purposes": [
+                          "deliberation",
+                          "worker"
+                        ]
+                      },
+                      "stance": "adopted",
+                      "statement": "Preference for deliberation",
+                      "validTime": {
+                        "kind": "unknown"
+                      }
+                    },
+                    "reason": "Captured deliberation decision"
+                  },
+                  "scopeKey": "invocation"
+                },
+                {
+                  "domain": "self",
+                  "proposal": {
+                    "action": "adopt",
+                    "content": {
+                      "basisKeys": [
+                        "source"
+                      ],
+                      "epistemicClass": "reported",
+                      "exceptions": [],
+                      "family": "self_facet",
+                      "kind": "preference",
+                      "scope": {
+                        "bindToInvocation": false,
+                        "description": "Known bounded use",
+                        "purposes": [
+                          "expression",
+                          "worker"
+                        ]
+                      },
+                      "stance": "adopted",
+                      "statement": "Preference for expression",
+                      "validTime": {
+                        "kind": "unknown"
+                      }
+                    },
+                    "reason": "Captured expression decision"
+                  },
+                  "scopeKey": "invocation"
+                }
+              ]
+            },
+            "plan": {
+              "basis": [
+                [
+                  "source",
+                  {
+                    "evidence": {
+                      "basisRole": "direct",
+                      "occurrenceId": "01a1443a-33b7-74e2-83b1-adcf739aac07",
+                      "wholeOccurrence": true
+                    }
+                  }
+                ]
+              ],
+              "currentMemory": [],
+              "currentMotivation": [],
+              "currentSelf": [],
+              "currentSocial": [],
+              "degradation": [],
+              "dependencies": [
+                {
+                  "kind": "occurrence",
+                  "value": "01a1443a-33b7-74e2-83b1-adcf739aac07"
+                }
+              ],
+              "domains": [
+                "self"
+              ],
+              "entities": [],
+              "input": "Original prompt {\"purposes\":[\"worker\"]}",
+              "maxActions": 2,
+              "scopes": [
+                [
+                  "invocation",
+                  {
+                    "self": {
+                      "description": "Invocation",
+                      "purposes": [
+                        "worker"
+                      ]
+                    },
+                    "social": {}
+                  }
+                ]
+              ],
+              "sourceKeys": [
+                "source"
+              ],
+              "subjectId": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+            },
+            "producer": {
+              "configDigest": "capture",
+              "implementation": "captured-old-owner",
+              "modelIdentity": "retained-result",
+              "operation": "self_formation_text",
+              "preprocessingIdentity": "captured-prompt",
+              "preprocessingRevision": "1",
+              "providerClass": "fixture"
+            },
+            "workId": "65477ae9-f989-43aa-8146-9b36105b61a5"
+          },
+          "purged": false
+        },
+        "semantic_digest": "retained-self-purpose-capture",
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457",
+        "updated_at": "2026-10-16T10:20:27.511252+00:00"
+      }
+    ],
+    "mutation_receipts": [
+      {
+        "committed_at": "2026-10-16T10:20:26.877968+00:00",
+        "created_at": "2026-10-16T10:20:26.875375+00:00",
+        "operation_id": "cbd29190-23a8-45b0-b808-f27175997af9",
+        "operation_kind": "subject.create",
+        "request_digest": "72eb20f0081c3a7b87f44fa559b6782f885a3c1a475b511ab1165ab3ab89e6ee",
+        "result_epoch": null,
+        "result_kind": "subject",
+        "result_ref": "ee4b196a-07dc-48a2-9e21-95113b3d4733",
+        "result_revision": null,
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "committed_at": "2026-10-16T10:20:27.436389+00:00",
+        "created_at": "2026-10-16T10:20:27.435339+00:00",
+        "operation_id": "a8db678d-b102-4fe6-8468-1b8fdd9b46b9",
+        "operation_kind": "subject.create",
+        "request_digest": "94b97f27010a7b1627589b5ed76f661a4a419727429d1849b89dc26e163f1a5a",
+        "result_epoch": null,
+        "result_kind": "subject",
+        "result_ref": "b0f8c418-3185-4de3-a15a-bb28d6d74457",
+        "result_revision": null,
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+      },
+      {
+        "committed_at": "2026-10-16T10:20:27.468074+00:00",
+        "created_at": "2026-10-16T10:20:27.459515+00:00",
+        "operation_id": "593c772b-a9f2-50a8-ac1d-5e0284c53f18",
+        "operation_kind": "self.adopt",
+        "request_digest": "3edff009eb9ce389e13bf8899c71aeaf393f65783c665c18b1574b90d5daa22f",
+        "result_epoch": 1,
+        "result_kind": "self_facet",
+        "result_ref": "01a1443a-33c6-7fb1-9b9d-4421e30c3a01",
+        "result_revision": "01a1443a-33c6-7fb1-9b9d-443989180aba",
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+      }
+    ],
+    "observation_occurrences": [
+      {
+        "actor_entity_ref": null,
+        "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+        "context": {
+          "fixture": "actual old producer"
+        },
+        "conversation_ref": null,
+        "created_at": "2026-10-16T10:20:26.890133+00:00",
+        "external_object_ref": null,
+        "observed_at": "2026-10-16T10:20:26.884+00:00",
+        "occurred_time_end": null,
+        "occurred_time_kind": "instant",
+        "occurred_time_start": "2026-10-16T10:20:26.884+00:00",
+        "occurrence_id": "01a1443a-318d-7bf3-b011-dc33ec9d74fb",
+        "source_class": "file",
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "actor_entity_ref": null,
+        "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+        "context": {
+          "fixture": "actual old producer"
+        },
+        "conversation_ref": null,
+        "created_at": "2026-10-16T10:20:26.902673+00:00",
+        "external_object_ref": null,
+        "observed_at": "2026-10-16T10:20:26.884+00:00",
+        "occurred_time_end": null,
+        "occurred_time_kind": "instant",
+        "occurred_time_start": "2026-10-16T10:20:26.884+00:00",
+        "occurrence_id": "01a1443a-3197-7cd3-b48b-fcd69aec64d4",
+        "source_class": "file",
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "actor_entity_ref": null,
+        "artifact_id": "01a1443a-33b5-7f53-b361-0dd5ce692234",
+        "context": {},
+        "conversation_ref": null,
+        "created_at": "2026-10-16T10:20:27.445464+00:00",
+        "external_object_ref": null,
+        "observed_at": "2026-10-16T10:20:27.445464+00:00",
+        "occurred_time_end": null,
+        "occurred_time_kind": "unknown",
+        "occurred_time_start": null,
+        "occurrence_id": "01a1443a-33b7-74e2-83b1-adcf739aac07",
+        "source_class": "file",
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+      }
+    ],
+    "observation_request_bindings": [
+      {
+        "accepted": {
+          "artifact": {
+            "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+            "byte_length": 28,
+            "content_hash": "421b54450a9537bdf71f77d1f59c93bbb8a209146949c1781b9276f325d985f5",
+            "created_at": "2026-10-16T10:20:26.890133Z",
+            "media_type": "text/plain",
+            "metadata": {},
+            "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+          },
+          "memory_revisions": [],
+          "mention_ids": [],
+          "occurrence": {
+            "actor_entity_ref": null,
+            "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+            "context": {
+              "fixture": "actual old producer"
+            },
+            "conversation_ref": null,
+            "created_at": "2026-10-16T10:20:26.890133871Z",
+            "external_object_ref": null,
+            "observed_at": "2026-10-16T10:20:26.884Z",
+            "occurred_time": {
+              "at": "2026-10-16T10:20:26.884Z",
+              "kind": "instant"
+            },
+            "occurrence_id": "01a1443a-318d-7bf3-b011-dc33ec9d74fb",
+            "source_class": "file",
+            "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+          },
+          "resident": false,
+          "source_region": {
+            "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+            "coordinate": {},
+            "coordinate_hash": "6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279",
+            "coordinate_kind": "whole_artifact",
+            "created_at": "2026-10-16T10:20:26.890133871Z",
+            "parent_source_region_id": null,
+            "source_region_id": "01a1443a-318e-7753-8cd7-540d618f8ff3",
+            "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+          }
+        },
+        "created_at": "2026-10-16T10:20:26.889157+00:00",
+        "occurrence_id": "01a1443a-318d-7bf3-b011-dc33ec9d74fb",
+        "request_digest": "e1edbaf77ceebacfd39d0448d1c046ab8c9eaa76526e5b5092cb8d03b6514c0d",
+        "request_id": "a0c28a1a-a701-40e6-9b37-13b236c6d94b",
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "accepted": {
+          "artifact": {
+            "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+            "byte_length": 28,
+            "content_hash": "421b54450a9537bdf71f77d1f59c93bbb8a209146949c1781b9276f325d985f5",
+            "created_at": "2026-10-16T10:20:26.890133Z",
+            "media_type": "text/plain",
+            "metadata": {},
+            "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+          },
+          "memory_revisions": [],
+          "mention_ids": [],
+          "occurrence": {
+            "actor_entity_ref": null,
+            "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+            "context": {
+              "fixture": "actual old producer"
+            },
+            "conversation_ref": null,
+            "created_at": "2026-10-16T10:20:26.902673139Z",
+            "external_object_ref": null,
+            "observed_at": "2026-10-16T10:20:26.884Z",
+            "occurred_time": {
+              "at": "2026-10-16T10:20:26.884Z",
+              "kind": "instant"
+            },
+            "occurrence_id": "01a1443a-3197-7cd3-b48b-fcd69aec64d4",
+            "source_class": "file",
+            "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+          },
+          "resident": false,
+          "source_region": {
+            "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+            "coordinate": {},
+            "coordinate_hash": "6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279",
+            "coordinate_kind": "whole_artifact",
+            "created_at": "2026-10-16T10:20:26.890133Z",
+            "parent_source_region_id": null,
+            "source_region_id": "01a1443a-318e-7753-8cd7-540d618f8ff3",
+            "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+          }
+        },
+        "created_at": "2026-10-16T10:20:26.902331+00:00",
+        "occurrence_id": "01a1443a-3197-7cd3-b48b-fcd69aec64d4",
+        "request_digest": "296cf901e359f29be11ec68e6ac1a43097bf8d5fcd8b289d7cb6fc8a981e502f",
+        "request_id": "8108f79b-006b-4533-a09a-721514a013f8",
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "accepted": {
+          "artifact": {
+            "artifact_id": "01a1443a-33b5-7f53-b361-0dd5ce692234",
+            "byte_length": 53,
+            "content_hash": "affda0206050895383861d1af49842df545148fcb153409c49c4781b25cec24d",
+            "created_at": "2026-10-16T10:20:27.445464Z",
+            "media_type": "text/plain",
+            "metadata": {},
+            "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+          },
+          "memory_revisions": [],
+          "mention_ids": [],
+          "occurrence": {
+            "actor_entity_ref": null,
+            "artifact_id": "01a1443a-33b5-7f53-b361-0dd5ce692234",
+            "context": {},
+            "conversation_ref": null,
+            "created_at": "2026-10-16T10:20:27.445464862Z",
+            "external_object_ref": null,
+            "observed_at": "2026-10-16T10:20:27.445464862Z",
+            "occurred_time": {
+              "kind": "unknown"
+            },
+            "occurrence_id": "01a1443a-33b7-74e2-83b1-adcf739aac07",
+            "source_class": "file",
+            "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+          },
+          "resident": false,
+          "source_region": {
+            "artifact_id": "01a1443a-33b5-7f53-b361-0dd5ce692234",
+            "coordinate": {},
+            "coordinate_hash": "6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279",
+            "coordinate_kind": "whole_artifact",
+            "created_at": "2026-10-16T10:20:27.445464862Z",
+            "parent_source_region_id": null,
+            "source_region_id": "01a1443a-33b7-74e2-83b1-add52c90d5e5",
+            "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+          }
+        },
+        "created_at": "2026-10-16T10:20:27.444978+00:00",
+        "occurrence_id": "01a1443a-33b7-74e2-83b1-adcf739aac07",
+        "request_digest": "a1a903aea599fd58c86433e15c0930489175d823c2922a510f64c11b2e042ec8",
+        "request_id": "1d545a5b-9f75-4322-a410-df81cadfdd4c",
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+      }
+    ],
+    "self_dependencies": [
+      {
+        "recorded_at": "2026-10-16T10:20:27.464415+00:00",
+        "ref_kind": "occurrence",
+        "ref_value": "01a1443a-33b7-74e2-83b1-adcf739aac07",
+        "revision_id": "01a1443a-33c6-7fb1-9b9d-443989180aba"
+      }
+    ],
+    "self_evidence": [],
+    "self_objects": [
+      {
+        "acceptance_state": "accepted",
+        "created_at": "2026-10-16T10:20:27.462743+00:00",
+        "current_revision_id": "01a1443a-33c6-7fb1-9b9d-443989180aba",
+        "family": "self_facet",
+        "integrity_state": "valid",
+        "object_epoch": 1,
+        "object_id": "01a1443a-33c6-7fb1-9b9d-4421e30c3a01",
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457",
+        "suppression_state": "normal"
+      }
+    ],
+    "self_revisions": [
+      {
+        "content": {
+          "family": "self_facet",
+          "value": {
+            "basis": [
+              {
+                "kind": "evidence",
+                "value": {
+                  "basis_role": "direct",
+                  "epistemic_relation": null,
+                  "locator": "WholeOccurrence",
+                  "occurrence_id": "01a1443a-33b7-74e2-83b1-adcf739aac07"
+                }
+              }
+            ],
+            "epistemic_class": "reported",
+            "exceptions": [],
+            "kind": "preference",
+            "producer": {
+              "config_digest": "capture",
+              "implementation": "captured-old-owner",
+              "model_identity": "retained-result",
+              "model_revision": null,
+              "operation": "self_formation_text",
+              "output_schema_digest": null,
+              "preprocessing_identity": "captured-prompt",
+              "preprocessing_revision": "1",
+              "provider_class": "fixture",
+              "signature_hash": "106c10282a36d91322b238427027cae299431493b82c0a95a46d26bbd7c542ae"
+            },
+            "scope": {
+              "conversation": null,
+              "description": "Known bounded use",
+              "entities": [],
+              "purposes": [
+                "deliberation",
+                "worker"
+              ],
+              "work_context": null
+            },
+            "stance": "adopted",
+            "statement": "Preference for deliberation",
+            "valid_time": {
+              "kind": "unknown"
+            }
+          }
+        },
+        "formed_at": "2026-10-16T10:20:27.462743+00:00",
+        "object_id": "01a1443a-33c6-7fb1-9b9d-4421e30c3a01",
+        "parent_revision_id": null,
+        "reason": "Captured deliberation decision",
+        "recorded_at": "2026-10-16T10:20:27.462743+00:00",
+        "revision_id": "01a1443a-33c6-7fb1-9b9d-443989180aba",
+        "revision_no": 1,
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+      }
+    ],
+    "source_regions": [
+      {
+        "artifact_id": "01a1443a-318a-7221-ba56-4595ba6691b9",
+        "coordinate": {},
+        "coordinate_hash": "6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279",
+        "coordinate_kind": "whole_artifact",
+        "created_at": "2026-10-16T10:20:26.890133+00:00",
+        "parent_source_region_id": null,
+        "source_region_id": "01a1443a-318e-7753-8cd7-540d618f8ff3",
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "artifact_id": "01a1443a-33b5-7f53-b361-0dd5ce692234",
+        "coordinate": {},
+        "coordinate_hash": "6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279",
+        "coordinate_kind": "whole_artifact",
+        "created_at": "2026-10-16T10:20:27.445464+00:00",
+        "parent_source_region_id": null,
+        "source_region_id": "01a1443a-33b7-74e2-83b1-add52c90d5e5",
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+      }
+    ],
+    "subject_capabilities": [
+      {
+        "memory": false,
+        "motivation": false,
+        "self_cognition": false,
+        "social_cognition": false,
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "memory": false,
+        "motivation": false,
+        "self_cognition": true,
+        "social_cognition": false,
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+      }
+    ],
+    "subjects": [
+      {
+        "authority_seq": 2,
+        "created_at": "2026-10-16T10:20:26.873756+00:00",
+        "metadata": {
+          "fixture": "legacy-domain-time"
+        },
+        "status": "active",
+        "subject_id": "ee4b196a-07dc-48a2-9e21-95113b3d4733"
+      },
+      {
+        "authority_seq": 2,
+        "created_at": "2026-10-16T10:20:27.434533+00:00",
+        "metadata": {},
+        "status": "active",
+        "subject_id": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
+      }
+    ]
+  }
+}

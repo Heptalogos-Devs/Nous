@@ -59,7 +59,8 @@ export async function populateSelfCapacity(
               description: "Only the synthetic horticulture fixture",
               conversationRef:
                 index >= 96 && index < 108 ? "capacity:unrelated" : undefined,
-              purposes: index >= 84 && index < 96 ? ["worker"] : [],
+              purposes:
+                index >= 84 && index < 96 ? ["professional_execution"] : [],
               workContextId:
                 index >= 108 && index < 120
                   ? work.workContext!.workContextId

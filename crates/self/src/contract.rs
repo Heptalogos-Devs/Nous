@@ -162,10 +162,7 @@ impl SelfContent {
                     || v.exceptions.len() > 32
                     || v.scope.purposes.iter().any(|p| {
                         ![
-                            "deliberation",
-                            "expression",
                             "reflection",
-                            "worker",
                             "world_authoring",
                             "subject_deliberation",
                             "professional_execution",
@@ -175,7 +172,7 @@ impl SelfContent {
                         ]
                         .contains(&p.as_str())
                     })
-                    || v.scope.purposes.len() > 10
+                    || v.scope.purposes.len() > 7
                     || v.scope
                         .conversation
                         .as_ref()

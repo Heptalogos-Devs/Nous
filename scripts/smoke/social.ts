@@ -267,7 +267,7 @@ try {
   );
   const usage = {
     agentInstanceId: "social-owner-smoke",
-    purpose: "expression",
+    purpose: "subject_rendering",
     intent: "deployment 灯塔",
     participants: [
       { entityRef: actor, role: "speaker" },

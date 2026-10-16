@@ -84,7 +84,7 @@ try {
   });
   const usage = create(CognitionUsageSchema, {
     agentInstanceId: "native-session:native-run",
-    purpose: "deliberation",
+    purpose: "subject_deliberation",
     intent: "Read exact public source",
     audience: {
       conversationRef: "conversation:synthetic-public",

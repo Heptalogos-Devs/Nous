@@ -117,7 +117,7 @@ impl ContextResolver for NousRuntime {
                 }
                 let mut source =
                     nous_social::SocialService::record_context(&record, input.materialize);
-                source.usage = if input.scope.purpose == "expression" {
+                source.usage = if input.scope.purpose == "subject_rendering" {
                     "audience_language_guidance"
                 } else {
                     "social_understanding"

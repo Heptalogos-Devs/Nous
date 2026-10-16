@@ -105,7 +105,7 @@ stance="adopted"
 epistemic_class="observed"
 [facet.scope]
 description="核对项目事实时适用，闲聊不强制工具调用。"
-purposes=["worker"]
+purposes=["professional_execution"]
 [facet.valid_time]
 [[facet.basis]]
 [facet.basis.evidence]

@@ -169,7 +169,10 @@ try {
           kind: "preference",
           statement: "核验工作先读原始材料，普通闲聊无需为了形式调用工具。",
           epistemicClass: "observed",
-          scope: { description: "仅核验执行者", purposes: ["worker"] },
+          scope: {
+            description: "仅核验执行者",
+            purposes: ["professional_execution"],
+          },
           stance: "adopted",
           basis: [evidence],
           validTime: { timeDomainRef: "time:real", extent: {} },
@@ -183,7 +186,7 @@ try {
       subjectId,
       sourceRefs: [{ kind: "occurrence", value: observation.occurrenceId }],
     },
-    purpose: "deliberation",
+    purpose: "subject_deliberation",
     intent: "继续当前工作并保持自称",
     audience: { conversationRef: "conversation:self", visibility: "internal" },
   };
@@ -230,7 +233,7 @@ try {
       ...managedInput,
       usage: {
         ...usage,
-        purpose: "worker",
+        purpose: "professional_execution",
         agentInstanceId: "self-worker-scope",
       },
     },

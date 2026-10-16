@@ -6,7 +6,7 @@
 
 `crates/self` 拥有 SelfFacet、NarrativeThread、修订、来源与生命周期。Runtime 继续拥有 Session/WorkContext/UseEvent，Core 拥有模型与公共宿主，Subject owner 拥有身份、能力供给和 Seed 来源。
 
-SelfFacet 是可独立修订的事项：kind、完整 statement、scope、stance、exceptions、epistemic class、RevisionBasis、valid time 和 producer。kind 为 identity、role、capability_belief、limitation、tendency、value、preference 或 domain_knowledge；stance 为 adopted、tentative、aspirational 或 attributed。scope 保留自然语言说明，并可按现有 purpose、Entity、WorkContext、conversation 约束。
+SelfFacet 是可独立修订的事项：kind、完整 statement、scope、stance、exceptions、epistemic class、RevisionBasis、valid time 和 producer。kind 为 identity、role、capability_belief、limitation、tendency、value、preference 或 domain_knowledge；stance 为 adopted、tentative、aspirational 或 attributed。scope 保留自然语言说明，并可按现有 purpose、Entity、WorkContext、conversation 约束。purpose 的正式值为 world_authoring、subject_deliberation、professional_execution、subject_rendering、narrative_review、reflection、maintenance，与 Host 实际使用合同一致。
 
 NarrativeThread 保存 theme、interpretation、exact cognition sources 与 basis。叙事重解释修订原 thread；它不重写历史来源。两类对象分别使用 `self_facet`/`narrative_thread` 和对应 `_revision` 引用，不与 Memory 共用对象族。
 
@@ -29,6 +29,8 @@ Canonical `SelfService` 由官方 Client 的 `self` namespace 暴露：
 - `select` 是独立的有界当前候选读取，接收 sources、显式 targets、检索排名和实际条目/正文依据字节预算；返回 candidateScope 与明确省略，不冒充完整管理视图；
 - `setLifecycle` 执行 suppression/restore、withdraw/reaccept；
 - `purge` 通过正式授权操作清除对象、修订和所属 Runtime 引用，保留必要幂等及 tombstone 语义。
+
+旧 purpose 的存储表示通过一次性迁移更新，当前读取与写入不保留旧值别名。已保存反思结果分开保留原输出与 typed preparation；恢复和修复以原输出计算 action identity，以迁移后的 preparation 构造请求。原 prompt、输出、producer、operation id 与对象修订身份保持不变。Self owner 回执摘要在核对原 canonical request 后更新，仍按同一操作重放原结果。
 
 操作使用现有 mutation envelope、owner lock 和 receipt。同 operation id、同请求重放既有结果；输入改变冲突。修订同时核验精确 head 与 epoch；历史读取保留真实旧内容。Self 修订与生命周期变化使依赖的当前解释进入 revalidation_required，不静默改写正文。
 

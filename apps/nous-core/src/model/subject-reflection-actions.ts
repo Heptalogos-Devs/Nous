@@ -72,16 +72,25 @@ export function compileReflectionActions(
   output: SubjectReflectionProposal,
   producer: ProducerSignature,
   operation: string,
+  identityOutput: SubjectReflectionProposal = output,
 ): CompiledReflectionAction[] {
+  if (identityOutput.actions.length !== output.actions.length)
+    invalid("Prepared reflection actions must preserve paid action identities");
   if (output.actions.length > plan.maxActions)
     invalid("Reflection proposal exceeds captured action budget");
   const touched = new Set<string>(),
     ids = new Set<string>();
-  return output.actions.map((typed) => {
+  return output.actions.map((typed, index) => {
+    const identity = identityOutput.actions[index]!;
+    if (
+      identity.domain !== typed.domain ||
+      identity.proposal.action !== typed.proposal.action
+    )
+      invalid("Prepared reflection cannot change paid action kind or domain");
     if (!plan.domains.includes(typed.domain))
       invalid("Reflection proposal targets a domain not explicitly enabled");
     const action = typed.proposal,
-      id = reflectionActionId(operation, typed);
+      id = reflectionActionId(operation, identity);
     if (ids.has(id)) invalid("Duplicate reflection action identity");
     ids.add(id);
     const base = {
