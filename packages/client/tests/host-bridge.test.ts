@@ -1,0 +1,54 @@
+// Copyright 2026 Aravine Zhu
+// SPDX-License-Identifier: Apache-2.0
+import { expect, test } from "vitest";
+import {
+  HOST_BRIDGE_JSON_SCHEMAS,
+  decodeCognitionUsage,
+  encodeCognitionUsage,
+  decodeObservationInput,
+  encodeObservationInput,
+  timestampFromDate,
+  withHostObservationScope,
+} from "../src/host-bridge.js";
+test("public Host bridge schemas use draft 7 for the formal Fastify/Ajv owner", () => {
+  for (const schema of Object.values(HOST_BRIDGE_JSON_SCHEMAS))
+    expect(schema.$schema).toBe("http://json-schema.org/draft-07/schema#");
+});
+test("public codecs preserve canonical scope and reject unknown cognition fields", () => {
+  const usage = decodeCognitionUsage(
+    encodeCognitionUsage({
+      agentInstanceId: "native:run",
+      purpose: "deliberation",
+      intent: "Read actual shared sources",
+      audience: {
+        visibility: "group",
+        conversationRef: "conversation:qq:group",
+      },
+    }),
+  );
+  expect(() => decodeCognitionUsage({ inventedAuthority: true })).toThrow();
+  const observation = withHostObservationScope(
+    {
+      subjectId: "subject",
+      sessionId: "session",
+      requestId: "request",
+      sourceClass: "message",
+      observedAt: timestampFromDate(new Date()),
+      material: {
+        case: "inlineText",
+        value: { text: "actual contact", mediaType: "text/plain" },
+      },
+    },
+    {
+      usage,
+      activityRef: "activity:current",
+      contactRequestId: "contact:current",
+    },
+  );
+  const decoded = decodeObservationInput(encodeObservationInput(observation));
+  expect(decoded.context).toMatchObject({
+    activity_ref: "activity:current",
+    contact_request_id: "contact:current",
+    cognition_usage: encodeCognitionUsage(usage),
+  });
+});

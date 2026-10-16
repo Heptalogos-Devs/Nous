@@ -129,13 +129,27 @@ export type HostHandoffRequest = z.infer<typeof hostHandoffRequestSchema>;
 export type HostFeedbackRequest = z.infer<typeof hostFeedbackRequestSchema>;
 export type HostFeedbackResponse = z.infer<typeof hostFeedbackResponseSchema>;
 export const HOST_BRIDGE_JSON_SCHEMAS = {
-  prepareRequest: z.toJSONSchema(hostPrepareRequestSchema),
-  prepareResponse: z.toJSONSchema(hostPrepareResponseSchema),
-  admittedRequest: z.toJSONSchema(hostAdmittedRequestSchema),
-  acknowledgement: z.toJSONSchema(hostAcknowledgementSchema),
-  handoffRequest: z.toJSONSchema(hostHandoffRequestSchema),
-  feedbackRequest: z.toJSONSchema(hostFeedbackRequestSchema),
-  feedbackResponse: z.toJSONSchema(hostFeedbackResponseSchema),
+  prepareRequest: z.toJSONSchema(hostPrepareRequestSchema, {
+    target: "draft-7",
+  }),
+  prepareResponse: z.toJSONSchema(hostPrepareResponseSchema, {
+    target: "draft-7",
+  }),
+  admittedRequest: z.toJSONSchema(hostAdmittedRequestSchema, {
+    target: "draft-7",
+  }),
+  acknowledgement: z.toJSONSchema(hostAcknowledgementSchema, {
+    target: "draft-7",
+  }),
+  handoffRequest: z.toJSONSchema(hostHandoffRequestSchema, {
+    target: "draft-7",
+  }),
+  feedbackRequest: z.toJSONSchema(hostFeedbackRequestSchema, {
+    target: "draft-7",
+  }),
+  feedbackResponse: z.toJSONSchema(hostFeedbackResponseSchema, {
+    target: "draft-7",
+  }),
 };
 
 // Canonical codecs are public so Hosts never import the bundled internal
