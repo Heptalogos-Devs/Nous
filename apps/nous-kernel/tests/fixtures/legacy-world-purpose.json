@@ -74,9 +74,7 @@
           "proposal": {
             "action": "adopt",
             "content": {
-              "basisKeys": [
-                "source"
-              ],
+              "basisKeys": ["source"],
               "epistemicClass": "reported",
               "exceptions": [],
               "family": "self_facet",
@@ -84,10 +82,7 @@
               "scope": {
                 "bindToInvocation": false,
                 "description": "Known bounded use",
-                "purposes": [
-                  "deliberation",
-                  "worker"
-                ]
+                "purposes": ["deliberation", "worker"]
               },
               "stance": "adopted",
               "statement": "Preference for deliberation",
@@ -104,9 +99,7 @@
           "proposal": {
             "action": "adopt",
             "content": {
-              "basisKeys": [
-                "source"
-              ],
+              "basisKeys": ["source"],
               "epistemicClass": "reported",
               "exceptions": [],
               "family": "self_facet",
@@ -114,10 +107,7 @@
               "scope": {
                 "bindToInvocation": false,
                 "description": "Known bounded use",
-                "purposes": [
-                  "expression",
-                  "worker"
-                ]
+                "purposes": ["expression", "worker"]
               },
               "stance": "adopted",
               "statement": "Preference for expression",
@@ -210,9 +200,7 @@
                   "proposal": {
                     "action": "adopt",
                     "content": {
-                      "basisKeys": [
-                        "source"
-                      ],
+                      "basisKeys": ["source"],
                       "epistemicClass": "reported",
                       "exceptions": [],
                       "family": "self_facet",
@@ -220,10 +208,7 @@
                       "scope": {
                         "bindToInvocation": false,
                         "description": "Known bounded use",
-                        "purposes": [
-                          "deliberation",
-                          "worker"
-                        ]
+                        "purposes": ["deliberation", "worker"]
                       },
                       "stance": "adopted",
                       "statement": "Preference for deliberation",
@@ -240,9 +225,7 @@
                   "proposal": {
                     "action": "adopt",
                     "content": {
-                      "basisKeys": [
-                        "source"
-                      ],
+                      "basisKeys": ["source"],
                       "epistemicClass": "reported",
                       "exceptions": [],
                       "family": "self_facet",
@@ -250,10 +233,7 @@
                       "scope": {
                         "bindToInvocation": false,
                         "description": "Known bounded use",
-                        "purposes": [
-                          "expression",
-                          "worker"
-                        ]
+                        "purposes": ["expression", "worker"]
                       },
                       "stance": "adopted",
                       "statement": "Preference for expression",
@@ -291,9 +271,7 @@
                   "value": "01a1443a-33b7-74e2-83b1-adcf739aac07"
                 }
               ],
-              "domains": [
-                "self"
-              ],
+              "domains": ["self"],
               "entities": [],
               "input": "Original prompt {\"purposes\":[\"worker\"]}",
               "maxActions": 2,
@@ -303,17 +281,13 @@
                   {
                     "self": {
                       "description": "Invocation",
-                      "purposes": [
-                        "worker"
-                      ]
+                      "purposes": ["worker"]
                     },
                     "social": {}
                   }
                 ]
               ],
-              "sourceKeys": [
-                "source"
-              ],
+              "sourceKeys": ["source"],
               "subjectId": "b0f8c418-3185-4de3-a15a-bb28d6d74457"
             },
             "producer": {
@@ -626,10 +600,7 @@
               "conversation": null,
               "description": "Known bounded use",
               "entities": [],
-              "purposes": [
-                "deliberation",
-                "worker"
-              ],
+              "purposes": ["deliberation", "worker"],
               "work_context": null
             },
             "stance": "adopted",
