@@ -127,3 +127,12 @@ message ConceptAssociation { string key = 1; string association_id = 2 [(nous.wa
 message ConceptBasis { string key = 1; nous.wave.v1alpha1.AssociationBasis basis = 2; }
 
 message ExpectedCognition { nous.wave.v1alpha1.CognitiveRef reference = 1; int64 expected_epoch = 2; string object_id = 3; }
+
+message PrepareSubjectReflectionRequest {MaintenanceNeed selected=1;}
+message SubjectReflectionSource {nous.wave.v1alpha1.CognitiveRef reference=1;int64 recorded_sequence=2;optional string work_context_id=3;optional int64 work_context_revision=4;optional string session_id=5;}
+message SubjectReflectionSourceChange {int64 change_id=1;nous.wave.v1alpha1.CognitiveRef reference=2;string reason=3;google.protobuf.Timestamp recorded_at=4;}
+message SubjectReflectionBatch {MaintenanceNeed selected=1;int64 from_sequence=2;int64 through_sequence=3;repeated SubjectReflectionSource sources=4;bool more=5;repeated string domains=6;uint64 source_max_bytes=7;uint64 candidate_limit=8;uint64 candidate_max_bytes=9;uint64 max_actions=10;repeated SubjectReflectionSourceChange changes=11;int64 through_change_id=12;}
+message FinishSubjectReflectionRequest {MaintenanceNeed selected=1;int64 through_sequence=2;string operation_id=3;string status=4;optional string problem_code=5;int64 through_change_id=6;}
+message FinishSubjectReflectionResponse {uint32 operations_consumed=1;}
+message ReflectionMemoryCandidatesRequest {string subject_id=1;repeated nous.wave.v1alpha1.CognitiveRef references=2;uint32 max_items=3;uint64 max_bytes=4;}
+message ReflectionMemoryCandidatesResponse {repeated nous.wave.v1alpha1.Memory items=1;bool omitted=2;}

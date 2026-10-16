@@ -12,3 +12,5 @@
 - [Capability Composition](CAPABILITIES.md)：Process/Subject capability 与 Memory-only 组合。
 
 长期语义和目标 ontology 见 [Architecture-Vault TARGET_DESIGN.md](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/docs/Nous-Wave/TARGET_DESIGN.md)；当前产品行为与 owner 合同见 [Specs](../specs/INDEX.md)。
+
+- [共享 Subject 反思](SUBJECT_REFLECTION.md)

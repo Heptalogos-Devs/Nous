@@ -77,7 +77,18 @@ impl SocialService {
                 &revisions,
             )
             .await?;
-        mutation.invalidate(ProjectionInvalidation::all()).await?;
+        let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
+        if matches!(action, "suppress" | "withdraw") {
+            self.runtime
+                .reflection_source_changed_in(
+                    mutation.tx(),
+                    subject,
+                    &[before.object_reference()],
+                    sequence,
+                    action,
+                )
+                .await?;
+        }
         let result = self.read_in(mutation.tx(), subject, object, false).await?;
         mutation
             .commit(
@@ -135,7 +146,16 @@ impl SocialService {
             .execute(&mut **mutation.tx())
             .await
             .map_err(db)?;
-        mutation.invalidate(ProjectionInvalidation::all()).await?;
+        let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
+        self.runtime
+            .reflection_source_changed_in(
+                mutation.tx(),
+                subject,
+                &[record.object_reference()],
+                sequence,
+                "purge",
+            )
+            .await?;
         mutation
             .commit("purged", Some(&object.to_string()), None, None)
             .await

@@ -49,7 +49,8 @@ impl k::kernel_model_results_service_server::KernelModelResultsService for Kerne
                         )
                         .as_bytes(),
                     );
-                    if identity.owner != "memory" || identity.operation_key != expected.to_string()
+                    if !["memory", "subject_reflection"].contains(&identity.owner.as_str())
+                        || identity.operation_key != expected.to_string()
                     {
                         return Err(Error::Invalid(
                             "maintenance result identity does not match obligation".into(),

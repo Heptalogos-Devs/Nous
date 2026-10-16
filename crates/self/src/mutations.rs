@@ -258,7 +258,9 @@ impl SelfService {
         if let Some(p) = producer {
             if !matches!(
                 p.operation,
-                CapabilityOperation::SelfFormationText | CapabilityOperation::SelfReflectionText
+                CapabilityOperation::SelfFormationText
+                    | CapabilityOperation::SelfReflectionText
+                    | CapabilityOperation::SubjectReflectionText
             ) {
                 return Err(Error::Invalid(
                     "Self producer requires a Self formation/reflection operation".into(),

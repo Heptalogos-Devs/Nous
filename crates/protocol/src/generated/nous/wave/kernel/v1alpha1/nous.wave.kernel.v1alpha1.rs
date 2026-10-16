@@ -432,6 +432,100 @@ pub struct ExpectedCognition {
     #[prost(string, tag="3")]
     pub object_id: ::prost::alloc::string::String,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PrepareSubjectReflectionRequest {
+    #[prost(message, optional, tag="1")]
+    pub selected: ::core::option::Option<MaintenanceNeed>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SubjectReflectionSource {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
+    #[prost(int64, tag="2")]
+    pub recorded_sequence: i64,
+    #[prost(string, optional, tag="3")]
+    pub work_context_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, optional, tag="4")]
+    pub work_context_revision: ::core::option::Option<i64>,
+    #[prost(string, optional, tag="5")]
+    pub session_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SubjectReflectionSourceChange {
+    #[prost(int64, tag="1")]
+    pub change_id: i64,
+    #[prost(message, optional, tag="2")]
+    pub reference: ::core::option::Option<super::super::v1alpha1::CognitiveRef>,
+    #[prost(string, tag="3")]
+    pub reason: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="4")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SubjectReflectionBatch {
+    #[prost(message, optional, tag="1")]
+    pub selected: ::core::option::Option<MaintenanceNeed>,
+    #[prost(int64, tag="2")]
+    pub from_sequence: i64,
+    #[prost(int64, tag="3")]
+    pub through_sequence: i64,
+    #[prost(message, repeated, tag="4")]
+    pub sources: ::prost::alloc::vec::Vec<SubjectReflectionSource>,
+    #[prost(bool, tag="5")]
+    pub more: bool,
+    #[prost(string, repeated, tag="6")]
+    pub domains: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(uint64, tag="7")]
+    pub source_max_bytes: u64,
+    #[prost(uint64, tag="8")]
+    pub candidate_limit: u64,
+    #[prost(uint64, tag="9")]
+    pub candidate_max_bytes: u64,
+    #[prost(uint64, tag="10")]
+    pub max_actions: u64,
+    #[prost(message, repeated, tag="11")]
+    pub changes: ::prost::alloc::vec::Vec<SubjectReflectionSourceChange>,
+    #[prost(int64, tag="12")]
+    pub through_change_id: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FinishSubjectReflectionRequest {
+    #[prost(message, optional, tag="1")]
+    pub selected: ::core::option::Option<MaintenanceNeed>,
+    #[prost(int64, tag="2")]
+    pub through_sequence: i64,
+    #[prost(string, tag="3")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub status: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="5")]
+    pub problem_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, tag="6")]
+    pub through_change_id: i64,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FinishSubjectReflectionResponse {
+    #[prost(uint32, tag="1")]
+    pub operations_consumed: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReflectionMemoryCandidatesRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="2")]
+    pub references: ::prost::alloc::vec::Vec<super::super::v1alpha1::CognitiveRef>,
+    #[prost(uint32, tag="3")]
+    pub max_items: u32,
+    #[prost(uint64, tag="4")]
+    pub max_bytes: u64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReflectionMemoryCandidatesResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<super::super::v1alpha1::Memory>,
+    #[prost(bool, tag="2")]
+    pub omitted: bool,
+}
 /// Only the semantic owner interprets payload_json. Dependencies are explicit;
 /// storage and purge never inspect the domain payload for references.
 #[derive(Clone, PartialEq, ::prost::Message)]

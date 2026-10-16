@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 import { create, toJson } from "@bufbuild/protobuf";
-import { timestampDate, timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { TimestampSchema, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   RevisionBasisSchema,
@@ -26,14 +26,14 @@ type Content = Extract<Action, { action: "adopt" }>["content"];
 export function invalidSelf(message: string): never {
   throw new ConnectError(message, Code.InvalidArgument);
 }
-export async function prepareSelfInterpretation(
+export async function prepareInterpretationSource(
   kernel: KernelClient,
   request: InterpretSelfRequest,
   maxBytes: number,
   options: ExecutionOptions,
+  allowPartial = false,
 ) {
   const basis = new Map<string, RevisionBasis>();
-  const current = new Map<string, SelfRecord>();
   const subjectId = request.subjectId;
   const sources: CognitiveRef[] = [];
   let sourceText = "";
@@ -100,7 +100,7 @@ export async function prepareSelfInterpretation(
     const material = prepared.source;
     if (!material?.reference)
       throw new ConnectError("Self evidence is unavailable", Code.NotFound);
-    if (material.partial)
+    if (material.partial && !allowPartial)
       throw new ConnectError(
         "Self evidence exceeds source budget; select a bounded representation",
         Code.ResourceExhausted,
@@ -111,7 +111,7 @@ export async function prepareSelfInterpretation(
         "Self reflection requires a textual representation",
         Code.FailedPrecondition,
       );
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(
+    const text = new TextDecoder("utf-8", { fatal: !allowPartial }).decode(
       material.content,
     );
     sourceText = text;
@@ -148,17 +148,50 @@ export async function prepareSelfInterpretation(
       actor: occurrence.actorEntityRef,
       conversation: occurrence.conversationRef,
       context: occurrence.context,
+      partial: material.partial,
       occurredTime: occurrence.occurredTime
         ? toJson(TemporalExtentSchema, occurrence.occurredTime)
         : undefined,
       observedAt: occurrence.observedAt
-        ? timestampDate(occurrence.observedAt).toISOString()
+        ? toJson(TimestampSchema, occurrence.observedAt)
         : undefined,
     };
   } else
     invalidSelf(
       "Self interpretation requires an adopted Seed or actual observation",
     );
+  return { basis, sources, sourceText, source };
+}
+export async function prepareSelfInterpretation(
+  kernel: KernelClient,
+  request: InterpretSelfRequest,
+  maxBytes: number,
+  options: ExecutionOptions,
+) {
+  return prepareSelfCandidates(
+    kernel,
+    request,
+    await prepareInterpretationSource(kernel, request, maxBytes, options),
+    maxBytes,
+    options,
+  );
+}
+export async function prepareSelfCandidates(
+  kernel: KernelClient,
+  request: InterpretSelfRequest,
+  prepared: {
+    basis: Map<string, RevisionBasis>;
+    sources: CognitiveRef[];
+    sourceText: string;
+    source: unknown;
+    ranked?: CognitiveRef[];
+  },
+  maxBytes: number,
+  options: ExecutionOptions,
+) {
+  const { basis, sources, sourceText, source } = prepared;
+  const subjectId = request.subjectId;
+  const current = new Map<string, SelfRecord>();
   const maxCandidates = request.maxCandidates || 32;
   if (maxCandidates > 128 || request.targets.length > maxCandidates)
     invalidSelf(
@@ -171,6 +204,7 @@ export async function prepareSelfInterpretation(
       scope: request.scope,
       targets: request.targets,
       sources,
+      ranked: prepared.ranked,
       intent,
       maxItems: maxCandidates,
       maxBytes: Math.floor(maxBytes / 4),
@@ -261,7 +295,7 @@ export function selectedSelfBasis(
     invalidSelf("Duplicate or self-dependent Self basis");
   if (
     requireNewSource &&
-    !keys.some((key) => key === "source" || key.startsWith("source:line:"))
+    !keys.some((key) => key === "source" || key.startsWith("source:"))
   )
     invalidSelf("A Self change must cite its new source");
   return keys.map(
@@ -347,7 +381,13 @@ export function proposedSelfContent(
     invalidSelf("Duplicate or self-dependent narrative sources");
   const sourceRefs = content.sourceKeys.map((key) => {
     if (!plan.basis.has(key)) invalidSelf("Narrative source is unavailable");
-    return selectedSelfTarget(plan, key).reference!;
+    const entry = plan.basis.get(key);
+    if (
+      entry?.basis.case !== "cognitionDependency" ||
+      !entry.basis.value.targetRevision
+    )
+      invalidSelf("Narrative source must be supplied exact cognition");
+    return entry.basis.value.targetRevision;
   });
   return create(SelfContentSchema, {
     content: {

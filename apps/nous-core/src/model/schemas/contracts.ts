@@ -4,6 +4,7 @@
 import type { z } from "zod";
 import type { ModelRole } from "../roles.js";
 import { queryConceptSchema } from "./query-concept.js";
+import { subjectReflectionSchema } from "./subject-reflection.js";
 import { selfInterpretationSchema } from "./self.js";
 import { formationSchema } from "./formation.js";
 import { projectionStewardSchema } from "./projection.js";
@@ -29,6 +30,11 @@ const material = contract(
   materialInterpretationSchema,
 );
 const structuredRoleContracts = {
+  subject_reflection: contract(
+    "subject.reflection",
+    "subject_reflection",
+    subjectReflectionSchema,
+  ),
   query_concept_enrichment: contract(
     "query.concept-enrichment",
     "query_concept_enrichment",

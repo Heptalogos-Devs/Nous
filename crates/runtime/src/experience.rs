@@ -41,7 +41,7 @@ impl CognitiveRuntimeService {
         .bind(input.occurrence.0)
         .bind(input.session.0)
         .bind(input.observed_at)
-        .bind(input.source_class)
+        .bind(&input.source_class)
         .bind(input.conversation_ref)
         .bind(input.actor_entity_ref)
         .bind(row.try_get::<Option<Uuid>, _>("active_work_context_id").map_err(db)?)
@@ -62,6 +62,10 @@ impl CognitiveRuntimeService {
             },
         )
         .await?;
+        if !["generated", "generation", "simulation"].contains(&input.source_class.as_str()) {
+            self.trigger_reflection_in(tx, input.subject, input.recorded_seq)
+                .await?;
+        }
         Ok(())
     }
 }

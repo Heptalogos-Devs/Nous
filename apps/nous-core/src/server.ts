@@ -1,3 +1,5 @@
+import { SubjectReflectionService } from "@nous-wave/protocol/nous/wave/v1alpha1/reflection_pb.js";
+import { reflectionOperations } from "./model/subject-reflection-operations.js";
 import { SocialService } from "@nous-wave/protocol/nous/wave/v1alpha1/social_pb.js";
 import { CognitiveClockService } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
 import { SelfService } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
@@ -185,6 +187,7 @@ export async function createCore(settings: CoreOptions) {
       router.service(SubjectService, forward(SubjectService, kernel.subjects));
       router.service(SelfService, forward(SelfService, kernel.self));
       router.service(SocialService, forward(SocialService, kernel.social));
+      router.service(SubjectReflectionService, reflectionOperations(kernel));
       router.service(CognitionService, cognition);
       router.service(MemoryService, forward(MemoryService, kernel.memory));
       router.service(

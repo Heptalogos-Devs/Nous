@@ -96,6 +96,13 @@ export const commandInventory = {
         "Authenticated Subject world clock; configure/advance/resume take --request-file JSON. Not a model tool.",
     },
     {
+      command: "reflection status|repair",
+      parameters: [
+        "status [operation UUID] exposes pending/recent/blocked/keep/partial/failed and retained paid proposal",
+        "repair --request-file <ReflectionRepairRequest TOML> requires explicitly reviewed exact heads and epochs; never invokes a model",
+      ],
+    },
+    {
       command:
         "social list|select|pair|neighborhood|resolve|adopt|get|revision|history|revise|evidence|suppress|restore|withdraw|reaccept|purge",
       parameters: [

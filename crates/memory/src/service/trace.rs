@@ -151,3 +151,66 @@ impl MemoryService {
         Ok(contents)
     }
 }
+
+impl MemoryService {
+    /// Current exact Memory anchors already supplied by the trusted invocation.
+    /// Filter heads/lifecycle and byte costs before materializing complete bodies.
+    pub async fn reflection_candidates(
+        &self,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+        max_items: usize,
+        max_bytes: usize,
+    ) -> Result<(Vec<MemoryView>, bool)> {
+        if references.len() > 1024
+            || max_items == 0
+            || max_items > 128
+            || max_bytes == 0
+            || max_bytes > 1048576
+        {
+            return Err(Error::Invalid(
+                "invalid reflection Memory candidate budget".into(),
+            ));
+        }
+        let ids = references
+            .iter()
+            .filter_map(|r| {
+                if let CognitiveRef::MemoryRevision(id) = r {
+                    Some(id.0)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut tx = self.store.read_view().await?;
+        let rows=sqlx::query("SELECT r.memory_revision_id,2*octet_length(r.representation_text)+4096+COALESCE((SELECT sum(2*octet_length(to_jsonb(e)::text)) FROM memory_revision_evidence e WHERE e.memory_revision_id=r.memory_revision_id),0)+COALESCE((SELECT sum(2*octet_length(to_jsonb(d)::text)) FROM memory_revision_dependencies d WHERE d.memory_revision_id=r.memory_revision_id),0) AS read_bytes FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id WHERE o.subject_id=$1 AND r.memory_revision_id=ANY($2::uuid[]) AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' ORDER BY r.memory_revision_id LIMIT $3").bind(subject.0).bind(ids).bind((max_items+1) as i64).fetch_all(&mut *tx).await.map_err(db)?;
+        let mut selected = Vec::new();
+        let mut remaining = max_bytes;
+        let mut omitted = false;
+        for row in rows {
+            let cost: i64 = row.try_get("read_bytes").map_err(db)?;
+            if selected.len() >= max_items || cost as usize > remaining {
+                omitted = true;
+                continue;
+            }
+            remaining -= cost as usize;
+            selected.push(CognitiveRef::MemoryRevision(MemoryRevisionId(
+                row.try_get("memory_revision_id").map_err(db)?,
+            )));
+        }
+        let result = self
+            .trace_nodes_in(&mut tx, subject, &selected)
+            .await?
+            .into_iter()
+            .filter_map(|c| {
+                if let CognitionContent::Memory(m) = c {
+                    Some(m)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        tx.commit().await.map_err(db)?;
+        Ok((result, omitted))
+    }
+}

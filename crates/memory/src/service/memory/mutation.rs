@@ -150,9 +150,10 @@ impl MemoryService {
                 p.operation,
                 CapabilityOperation::MemoryFormationText
                     | CapabilityOperation::MemoryConsolidationText
+                    | CapabilityOperation::SubjectReflectionText
             ) {
                 return Err(Error::Invalid(
-                    "Memory producer requires a Memory formation operation".into(),
+                    "Memory producer requires Memory formation/consolidation or shared Subject reflection".into(),
                 ));
             }
             Some(AuthorityStore::register_producer_in(tx, p).await?)
