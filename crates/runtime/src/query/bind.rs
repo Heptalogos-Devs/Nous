@@ -471,6 +471,7 @@ impl CognitiveRuntimeService {
             .degradation
             .extend(context_snapshot.history_exclusions.clone());
         Ok(BoundQuery {
+            social_authorized_refs: Vec::new(),
             context_snapshot: std::sync::Arc::new(context_snapshot),
             historical_authority,
             activation_view: None,

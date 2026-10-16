@@ -387,6 +387,8 @@ export const resultDomainOrder = [
   "schema",
   "episode",
   "journal",
+  "social_relation",
+  "language_convention",
   "self_facet",
   "narrative_thread",
   "evidence",

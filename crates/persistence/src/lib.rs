@@ -23,7 +23,8 @@ pub use projection::concept::{ConceptProjectionInput, ConceptProjectionTag};
 mod query_time;
 pub use query_time::{TimeColumns, push_time_predicate};
 mod references;
-mod self_dependencies;
+mod scoped_cognition_dependencies;
+mod social_dependencies;
 pub use identity::{
     IdentityAddress, IdentityAddressTarget, IdentityBinding, lexical_prefix, validate_lexical,
 };

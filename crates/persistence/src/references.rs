@@ -52,6 +52,21 @@ impl AuthorityStore {
     where
         E: Executor<'e, Database = Postgres>,
     {
+        if reference.domain() == CognitiveDomain::SocialCognition {
+            let exact = reference.is_cognition_revision();
+            let family = reference
+                .kind()
+                .strip_suffix("_revision")
+                .unwrap_or(reference.kind());
+            let row=sqlx::query("SELECT r.revision_id,o.object_epoch FROM social_objects o JOIN social_revisions r ON r.object_id=o.object_id JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.social_cognition AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2 AND r.revision_id=o.current_revision_id))")
+                .bind(subject.0).bind(reference.uuid()).bind(family).bind(exact).fetch_optional(executor).await.map_err(db)?.ok_or_else(||Error::NotFound("Self exact target is unavailable".into()))?;
+            let revision: Uuid = row.try_get("revision_id").map_err(db)?;
+            return Ok((
+                parse_reference(&format!("{family}_revision"), &revision.to_string())?,
+                Some(row.try_get("object_epoch").map_err(db)?),
+                !exact,
+            ));
+        }
         if reference.domain() == CognitiveDomain::SelfCognition {
             let exact = reference.is_cognition_revision();
             let family = reference
@@ -194,6 +209,14 @@ impl AuthorityStore {
     where
         E: Executor<'e, Database = Postgres>,
     {
+        if reference.domain() == CognitiveDomain::SocialCognition {
+            let family = reference
+                .kind()
+                .strip_suffix("_revision")
+                .unwrap_or(reference.kind());
+            return sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social_objects o JOIN social_revisions r USING(object_id) JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.social_cognition AND o.family=$3 AND (($4 AND r.revision_id=$2) OR (NOT $4 AND o.object_id=$2)))")
+                .bind(subject.0).bind(reference.uuid()).bind(family).bind(reference.is_cognition_revision()).fetch_one(executor).await.map_err(db);
+        }
         if reference.domain() == CognitiveDomain::SelfCognition {
             let family = reference
                 .kind()
@@ -203,6 +226,7 @@ impl AuthorityStore {
                 .bind(subject.0).bind(reference.uuid()).bind(family).bind(reference.is_cognition_revision()).fetch_one(executor).await.map_err(db);
         }
         let valid = match reference {
+            CognitiveRef::SocialRelation(_) | CognitiveRef::SocialRelationRevision(_) | CognitiveRef::LanguageConvention(_) | CognitiveRef::LanguageConventionRevision(_) => unreachable!("Social handled above"),
             CognitiveRef::SelfFacet(_) | CognitiveRef::SelfFacetRevision(_) | CognitiveRef::NarrativeThread(_) | CognitiveRef::NarrativeThreadRevision(_) => unreachable!("Self owner handled above"),
             CognitiveRef::Memory(id) => sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM memory_objects WHERE subject_id=$1 AND memory_id=$2)",
@@ -383,7 +407,7 @@ impl AuthorityStore {
 fn is_bound_cognition(reference: &CognitiveRef) -> bool {
     matches!(
         reference.domain(),
-        CognitiveDomain::Memory | CognitiveDomain::SelfCognition
+        CognitiveDomain::Memory | CognitiveDomain::SelfCognition | CognitiveDomain::SocialCognition
     )
 }
 
@@ -395,6 +419,25 @@ impl AuthorityStore {
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
         reference: &CognitiveRef,
+    ) -> Result<bool> {
+        self.cognition_available_in_mode(tx, subject, reference, true)
+            .await
+    }
+    pub async fn cognition_available_read_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+    ) -> Result<bool> {
+        self.cognition_available_in_mode(tx, subject, reference, false)
+            .await
+    }
+    async fn cognition_available_in_mode(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+        lock: bool,
     ) -> Result<bool> {
         let (query, id) = match reference {
             CognitiveRef::MemoryRevision(id) => (
@@ -413,6 +456,10 @@ impl AuthorityStore {
                 "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM journal_revisions r JOIN journal_objects o USING(journal_id) WHERE o.subject_id=$1 AND r.journal_revision_id=$2 FOR SHARE OF o",
                 id.0,
             ),
+            r if r.domain() == CognitiveDomain::SocialCognition && r.is_cognition_revision() => (
+                "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM social_revisions r JOIN social_objects o USING(object_id) WHERE o.subject_id=$1 AND r.revision_id=$2 FOR SHARE OF o",
+                r.uuid().expect("Self UUID"),
+            ),
             r if r.domain() == CognitiveDomain::SelfCognition && r.is_cognition_revision() => (
                 "SELECT o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' FROM self_revisions r JOIN self_objects o USING(object_id) WHERE o.subject_id=$1 AND r.revision_id=$2 FOR SHARE OF o",
                 r.uuid().expect("Self UUID"),
@@ -422,6 +469,11 @@ impl AuthorityStore {
                     "lifecycle read needs exact cognition".into(),
                 ));
             }
+        };
+        let query = if lock {
+            query
+        } else {
+            query.strip_suffix(" FOR SHARE OF o").unwrap_or(query)
         };
         Ok(sqlx::query_scalar(query)
             .bind(subject.0)

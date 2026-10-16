@@ -70,6 +70,14 @@ const revisionReaders: Record<
     read: (client, input) => client.memory.getJournalRevision(input),
     trace: true,
   },
+  social_relation_revision: {
+    read: (client, input) => client.social.getRevision(input),
+    trace: true,
+  },
+  language_convention_revision: {
+    read: (client, input) => client.social.getRevision(input),
+    trace: true,
+  },
   self_facet_revision: {
     read: (client, input) => client.self.getRevision(input),
     trace: true,

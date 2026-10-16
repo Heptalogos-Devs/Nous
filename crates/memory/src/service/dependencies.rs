@@ -73,7 +73,7 @@ impl MemoryService {
             if !seen.insert((kind.clone(), source)) {
                 continue;
             }
-            AuthorityStore::invalidate_self_dependents_in(
+            AuthorityStore::invalidate_scoped_cognition_dependents_in(
                 tx,
                 subject,
                 &kind,

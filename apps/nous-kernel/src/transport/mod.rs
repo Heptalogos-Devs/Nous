@@ -40,6 +40,7 @@ mod model;
 mod query;
 mod schema;
 mod self_cognition;
+mod social_cognition;
 mod subject;
 mod work_context;
 
@@ -102,6 +103,30 @@ impl KernelService {
                         .as_ref()
                         .map(|u| {
                             Ok::<_, nous_core::Error>(nous_runtime::InvocationScope {
+                                source_read: u
+                                    .source_read
+                                    .as_ref()
+                                    .map(|s| {
+                                        Ok::<_, Error>(nous_core::SourceReadScope {
+                                            subject_id: Some(SubjectId(id(&s.subject_id)?)),
+                                            source_refs: s
+                                                .source_refs
+                                                .clone()
+                                                .into_iter()
+                                                .map(from_ref)
+                                                .collect::<nous_core::Result<_>>()?,
+                                        })
+                                    })
+                                    .transpose()?
+                                    .unwrap_or_default(),
+                                group: u
+                                    .audience
+                                    .as_ref()
+                                    .and_then(|a| a.group_entity_ref.clone())
+                                    .map(nous_core::EntityRef::new)
+                                    .transpose()?,
+                                channel: u.audience.as_ref().and_then(|a| a.channel_ref.clone()),
+                                domain: u.social_domain.clone(),
                                 intent: u.intent.clone(),
                                 purpose: u.purpose.clone(),
                                 conversation: u
@@ -144,6 +169,11 @@ impl KernelService {
                     } else {
                         requirement(&input.self_requirement)?
                     },
+                    social_cognition: if input.social_requirement.is_empty() {
+                        nous_core::RequirementStrength::Optional
+                    } else {
+                        requirement(&input.social_requirement)?
+                    },
                     runtime: requirement(&input.runtime_requirement)?,
                     resource: requirement(&input.resource_requirement)?,
                 },
@@ -174,6 +204,7 @@ fn projection_proto(
                 domain: match segment.source.reference.domain() {
                     nous_core::CognitiveDomain::Memory => "memory",
                     nous_core::CognitiveDomain::SelfCognition => "self",
+                    nous_core::CognitiveDomain::SocialCognition => "social",
                     nous_core::CognitiveDomain::Resource => "resource",
                     _ => "runtime",
                 }

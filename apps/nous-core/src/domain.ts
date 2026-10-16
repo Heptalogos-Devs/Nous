@@ -11,6 +11,7 @@ export interface ConsumerPolicy {
   revision: string;
   memory: Requirement;
   selfCognition: Requirement;
+  socialCognition: Requirement;
   runtime: Requirement;
   resource: Requirement;
   maxItems: number;

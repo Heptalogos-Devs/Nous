@@ -35,6 +35,10 @@ pub struct IdentityAddress {
 pub fn lexical_prefix(kind: &str) -> Result<&'static str> {
     Ok(match kind {
         "entity" => "ent",
+        "social_relation" => "rel",
+        "social_relation_revision" => "relrev",
+        "language_convention" => "lang",
+        "language_convention_revision" => "langrev",
         "self_facet" => "self",
         "self_facet_revision" => "selfrev",
         "narrative_thread" => "narr",
@@ -70,6 +74,10 @@ pub fn validate_lexical(value: &str) -> Result<&str> {
     if !matches!(
         kind,
         "ent"
+            | "rel"
+            | "relrev"
+            | "lang"
+            | "langrev"
             | "self"
             | "selfrev"
             | "narr"

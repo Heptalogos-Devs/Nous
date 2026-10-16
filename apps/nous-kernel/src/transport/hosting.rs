@@ -72,6 +72,7 @@ pub async fn router(runtime: NousRuntime, token: String) -> tonic::transport::se
                 auth.clone(),
             ),
         )
+        .add_service(nous_protocol::public::social_service_server::SocialServiceServer::with_interceptor(service.clone(),auth.clone()))
         .add_service(nous_protocol::public::runtime_service_server::RuntimeServiceServer::with_interceptor(service.clone(),auth.clone()))
         .add_service(nous_protocol::public::resource_registry_service_server::ResourceRegistryServiceServer::with_interceptor(service.clone(),auth.clone()))
         .add_service(nous_protocol::public::system_service_server::SystemServiceServer::with_interceptor(service.clone(),auth.clone()))

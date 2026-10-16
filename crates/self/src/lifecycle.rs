@@ -52,7 +52,7 @@ impl SelfService {
         }
         sqlx::query("UPDATE self_objects SET suppression_state=CASE WHEN $2='suppression_state' THEN $3 ELSE suppression_state END,acceptance_state=CASE WHEN $2='acceptance_state' THEN $3 ELSE acceptance_state END,object_epoch=object_epoch+1 WHERE object_id=$1").bind(object).bind(field).bind(to).execute(&mut **mutation.tx()).await.map_err(db)?;
         let revisions = self.revision_ids(mutation.tx(), object).await?;
-        AuthorityStore::invalidate_self_dependents_in(
+        AuthorityStore::invalidate_scoped_cognition_dependents_in(
             mutation.tx(),
             subject,
             before.reference().kind(),
@@ -109,7 +109,7 @@ impl SelfService {
             return Err(Error::Invalid("Self reference family mismatch".into()));
         }
         let revisions = self.revision_ids(mutation.tx(), object).await?;
-        AuthorityStore::invalidate_self_dependents_in(
+        AuthorityStore::invalidate_scoped_cognition_dependents_in(
             mutation.tx(),
             subject,
             record.reference().kind(),

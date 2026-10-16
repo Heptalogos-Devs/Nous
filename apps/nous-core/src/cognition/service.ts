@@ -115,6 +115,7 @@ export class CoreCognition {
     bindProjectionUsage(request);
     request.memoryRequirement = policy.memory;
     request.selfRequirement = policy.selfCognition;
+    request.socialRequirement = policy.socialCognition;
     request.runtimeRequirement = policy.runtime;
     request.resourceRequirement = policy.resource;
     request.materialize = policy.materialize;
@@ -140,6 +141,11 @@ export class CoreCognition {
         subject.capabilities?.selfCognition
           ? ["self_facet", "narrative_thread"]
           : []),
+        ...(policy.socialCognition !== "FORBIDDEN" &&
+        subject.capabilities?.socialCognition &&
+        request.usage?.sourceRead
+          ? ["social_relation", "language_convention"]
+          : []),
         ...(policy.runtime !== "FORBIDDEN" ? ["evidence"] : []),
         ...(policy.resource !== "FORBIDDEN" ? ["resource"] : []),
       ];
@@ -163,6 +169,7 @@ export class CoreCognition {
       const query = await this.queries.execute(
         create(QueryRequestSchema, {
           subjectId: request.subjectId,
+          usage: request.usage,
           sessionId: request.sessionId,
           expression: request.query,
           workContextId: request.activeWorkContextId,
@@ -258,7 +265,8 @@ export class CoreCognition {
       history.historyDomains.some(
         (domain) =>
           (domain === "memory" && consumer.memory === "FORBIDDEN") ||
-          (domain === "self" && consumer.selfCognition === "FORBIDDEN"),
+          (domain === "self" && consumer.selfCognition === "FORBIDDEN") ||
+          (domain === "social" && consumer.socialCognition === "FORBIDDEN"),
       )
     ) {
       throw domainError(

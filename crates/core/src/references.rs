@@ -47,6 +47,10 @@ macro_rules! cognitive_refs {
 }
 
 cognitive_refs! {
+    SocialRelation(SocialRelationId) = "social_relation",
+    SocialRelationRevision(SocialRelationRevisionId) = "social_relation_revision",
+    LanguageConvention(LanguageConventionId) = "language_convention",
+    LanguageConventionRevision(LanguageConventionRevisionId) = "language_convention_revision",
     SelfFacet(SelfFacetId) = "self_facet",
     SelfFacetRevision(SelfFacetRevisionId) = "self_facet_revision",
     NarrativeThread(NarrativeThreadId) = "narrative_thread",
@@ -80,6 +84,7 @@ cognitive_refs! {
 pub enum CognitiveDomain {
     Memory,
     SelfCognition,
+    SocialCognition,
     Runtime,
     Material,
     Resource,
@@ -96,6 +101,10 @@ impl CognitiveRef {
             | Self::Journal(_)
             | Self::JournalRevision(_)
             | Self::Tag(_) => CognitiveDomain::Memory,
+            Self::SocialRelation(_)
+            | Self::SocialRelationRevision(_)
+            | Self::LanguageConvention(_)
+            | Self::LanguageConventionRevision(_) => CognitiveDomain::SocialCognition,
             Self::SelfFacet(_)
             | Self::SelfFacetRevision(_)
             | Self::NarrativeThread(_)
@@ -117,6 +126,8 @@ impl CognitiveRef {
                 | Self::CognitiveSchemaRevision(_)
                 | Self::EpisodeRevision(_)
                 | Self::JournalRevision(_)
+                | Self::SocialRelationRevision(_)
+                | Self::LanguageConventionRevision(_)
                 | Self::SelfFacetRevision(_)
                 | Self::NarrativeThreadRevision(_)
         )

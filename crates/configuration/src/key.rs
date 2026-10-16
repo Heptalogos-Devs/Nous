@@ -54,6 +54,8 @@ pub enum ConfigSource {
 pub struct ProcessCapabilities {
     pub memory: bool,
     pub self_cognition: bool,
+    #[serde(default)]
+    pub social_cognition: bool,
 }
 
 impl Default for ProcessCapabilities {
@@ -61,6 +63,7 @@ impl Default for ProcessCapabilities {
         Self {
             memory: true,
             self_cognition: true,
+            social_cognition: true,
         }
     }
 }
@@ -69,6 +72,8 @@ impl Default for ProcessCapabilities {
 pub struct SubjectCapabilities {
     pub memory: bool,
     pub self_cognition: bool,
+    #[serde(default)]
+    pub social_cognition: bool,
 }
 
 impl Default for SubjectCapabilities {
@@ -76,6 +81,7 @@ impl Default for SubjectCapabilities {
         Self {
             memory: true,
             self_cognition: false,
+            social_cognition: false,
         }
     }
 }
@@ -90,6 +96,11 @@ impl SubjectCapabilities {
         if self.self_cognition && !process.self_cognition {
             return Err(Error::Invalid(
                 "Subject Self capability is unavailable in this process".into(),
+            ));
+        }
+        if self.social_cognition && !process.social_cognition {
+            return Err(Error::Invalid(
+                "Subject Social capability unavailable in this process".into(),
             ));
         }
         Ok(self)
@@ -164,6 +175,9 @@ pub enum ConfigSensitivity {
     SensitiveReference,
 }
 
+pub const PROCESS_SOCIAL: ConfigKey<bool> = ConfigKey::new("capabilities.process.social_cognition");
+pub const SUBJECT_DEFAULT_SOCIAL: ConfigKey<bool> =
+    ConfigKey::new("capabilities.subject_defaults.social_cognition");
 pub const PROCESS_SELF: ConfigKey<bool> = ConfigKey::new("capabilities.process.self_cognition");
 pub const SUBJECT_DEFAULT_SELF: ConfigKey<bool> =
     ConfigKey::new("capabilities.subject_defaults.self_cognition");
@@ -175,6 +189,7 @@ pub fn process_capabilities(snapshot: &crate::ConfigSnapshot) -> Result<ProcessC
     Ok(ProcessCapabilities {
         memory: snapshot.get(PROCESS_MEMORY)?,
         self_cognition: snapshot.get(PROCESS_SELF)?,
+        social_cognition: snapshot.get(PROCESS_SOCIAL)?,
     })
 }
 
@@ -184,5 +199,6 @@ pub fn subject_default_capabilities(
     Ok(SubjectCapabilities {
         memory: snapshot.get(SUBJECT_DEFAULT_MEMORY)?,
         self_cognition: snapshot.get(SUBJECT_DEFAULT_SELF)?,
+        social_cognition: snapshot.get(SUBJECT_DEFAULT_SOCIAL)?,
     })
 }

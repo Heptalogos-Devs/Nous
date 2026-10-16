@@ -16,6 +16,7 @@
 - [Episode Runtime integration](active/episode/episode-runtime-integration.md)
 
 - [Self](active/self/self.md)
+- [SocialRelation 与 LanguageConvention](active/social/social.md)
 
 ## Model、Material 与 Resource
 

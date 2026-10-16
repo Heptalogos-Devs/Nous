@@ -10,6 +10,7 @@ import { RuntimeService } from "@nous-wave/protocol/nous/wave/v1alpha1/services_
 import { IdentityService } from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
 import { ConceptService } from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
 import { MemoryService } from "@nous-wave/protocol/nous/wave/v1alpha1/services_pb.js";
+import { SocialService } from "@nous-wave/protocol/nous/wave/v1alpha1/social_pb.js";
 import { SelfService } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
 import { SubjectService } from "@nous-wave/protocol/nous/wave/v1alpha1/services_pb.js";
 import { MaterialService } from "@nous-wave/protocol/nous/wave/v1alpha1/services_pb.js";
@@ -48,6 +49,7 @@ export class KernelClient {
   readonly memory;
   readonly subjects;
   readonly self;
+  readonly social;
   readonly material;
   readonly artifacts;
   readonly health;
@@ -74,6 +76,7 @@ export class KernelClient {
     this.material = createClient(MaterialService, transport);
     this.subjects = createClient(SubjectService, transport);
     this.self = createClient(SelfService, transport);
+    this.social = createClient(SocialService, transport);
     this.memory = createClient(MemoryService, transport);
     this.concepts = createClient(ConceptService, transport);
     this.identity = createClient(IdentityService, transport);

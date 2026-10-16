@@ -4,6 +4,7 @@
 
 mod context;
 mod longitudinal;
+mod source_read;
 pub use longitudinal::ExperienceSegmentationResult;
 pub mod transport;
 
@@ -27,6 +28,7 @@ pub struct NousRuntime {
     pub store: AuthorityStore,
     pub subjects: SubjectCoreService,
     pub self_cognition: Option<nous_self::SelfService>,
+    pub social_cognition: Option<nous_social::SocialService>,
     pub cognition: CognitiveRuntimeService,
     pub memory: Option<MemoryService>,
     pub process_capabilities: ProcessCapabilities,
@@ -112,6 +114,20 @@ impl NousRuntime {
                 configuration.clone(),
             )
         });
+        let social_cognition = process_capabilities.social_cognition.then(|| {
+            nous_social::SocialService::new(
+                store.clone(),
+                material.clone(),
+                objects.clone(),
+                cognition.clone(),
+                Arc::new(source_read::SourceRoots {
+                    store: store.clone(),
+                    material: material.clone(),
+                    memory: memory.clone(),
+                    self_cognition: self_cognition.clone(),
+                }),
+            )
+        });
         let serving = ServingService::new(
             store.clone(),
             material.clone(),
@@ -131,6 +147,7 @@ impl NousRuntime {
             store,
             subjects,
             self_cognition,
+            social_cognition,
             cognition,
             memory,
             process_capabilities,
@@ -146,6 +163,16 @@ impl NousRuntime {
                 "Self MicroSystem is disabled",
             )
             .with_context("capability", "self_cognition")
+            .into()
+        })
+    }
+    pub fn require_social(&self) -> Result<&nous_social::SocialService> {
+        self.social_cognition.as_ref().ok_or_else(|| {
+            DomainError::new(
+                DomainErrorCode::CapabilityUnavailable,
+                "Social MicroSystem is disabled",
+            )
+            .with_context("capability", "social_cognition")
             .into()
         })
     }
@@ -175,6 +202,11 @@ impl NousRuntime {
         {
             owners.push(owner);
         }
+        if capabilities.social_cognition
+            && let Some(owner) = &self.social_cognition
+        {
+            owners.push(owner);
+        }
         owners
     }
     pub async fn query(&self, query: CognitiveQuery) -> Result<CognitiveQueryResult> {
@@ -182,13 +214,25 @@ impl NousRuntime {
     }
     pub async fn bind_query_with_snapshot(
         &self,
+        query: CognitiveQuery,
+        config: nous_configuration::ConfigSnapshot,
+    ) -> Result<nous_runtime::BoundQuery> {
+        self.bind_query_with_snapshot_authorized(query, config, &[])
+            .await
+    }
+    pub async fn bind_query_with_snapshot_authorized(
+        &self,
         mut query: CognitiveQuery,
         config: nous_configuration::ConfigSnapshot,
+        social_authorized_refs: &[CognitiveRef],
     ) -> Result<nous_runtime::BoundQuery> {
         let caps = self.subjects.subject(query.subject).await?.capabilities;
         query.projection.domains.retain(|d| match d.owner() {
             CognitiveDomain::Memory => caps.memory,
             CognitiveDomain::SelfCognition => caps.self_cognition,
+            CognitiveDomain::SocialCognition => {
+                caps.social_cognition && !social_authorized_refs.is_empty()
+            }
             _ => true,
         });
         if query
@@ -206,6 +250,14 @@ impl NousRuntime {
             .any(|d| d.owner() == CognitiveDomain::SelfCognition)
         {
             self.require_self()?;
+        }
+        if query
+            .projection
+            .domains
+            .iter()
+            .any(|d| d.owner() == CognitiveDomain::SocialCognition)
+        {
+            self.require_social()?;
         }
         if query.projection.domains.is_empty() {
             return Err(DomainError::new(
@@ -231,9 +283,12 @@ impl NousRuntime {
         } else {
             None
         };
-        self.cognition
+        let mut bound = self
+            .cognition
             .bind_query_with_authority_view(query, config, view, self)
-            .await
+            .await?;
+        bound.social_authorized_refs = social_authorized_refs.to_vec();
+        Ok(bound)
     }
     pub async fn historical_authority_view(
         &self,
@@ -247,6 +302,13 @@ impl NousRuntime {
         } else {
             HistoricalAuthoritySnapshot::empty(subject, at, revision_view)
         };
+        if capabilities.social_cognition {
+            view.cognition.extend(
+                self.require_social()?
+                    .project_as_of(subject, at, revision_view)
+                    .await?,
+            );
+        }
         if capabilities.self_cognition {
             view.cognition.extend(
                 self.require_self()?

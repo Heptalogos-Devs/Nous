@@ -50,6 +50,10 @@ impl ServingService {
             config["producer"] = serde_json::to_value(provider.producer())
                 .map_err(|e| Error::Infrastructure(e.to_string()))?;
         }
+        if family == "lexical" {
+            config["representation_version"] =
+                serde_json::json!("canonical-reference-authorization-v1");
+        }
         if family == "concept" {
             config["representation_version"] = serde_json::json!(TAG_REPRESENTATION_VERSION);
         }

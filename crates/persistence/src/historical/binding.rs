@@ -20,9 +20,10 @@ impl AuthorityStore {
         }
         if matches!(reference, CognitiveRef::Tag(_)) || view.cognition_for(reference).is_some() {
             let allowed: bool =
-                sqlx::query_scalar("SELECT CASE WHEN $2 THEN self_cognition ELSE memory END FROM subject_capabilities WHERE subject_id=$1")
+                sqlx::query_scalar("SELECT CASE WHEN $2 THEN self_cognition WHEN $3 THEN social_cognition ELSE memory END FROM subject_capabilities WHERE subject_id=$1")
                     .bind(subject.0)
                     .bind(reference.domain()==CognitiveDomain::SelfCognition)
+                    .bind(reference.domain()==CognitiveDomain::SocialCognition)
                     .fetch_one(self.pool())
                     .await
                     .map_err(db)?;
@@ -47,6 +48,7 @@ impl AuthorityStore {
             };
             let (kind, value) = reference_parts(&state.object);
             let (table, column) = match kind.as_str() {
+                "social_relation" | "language_convention" => ("social_objects", "object_id"),
                 "self_facet" | "narrative_thread" => ("self_objects", "object_id"),
                 "memory" => ("memory_objects", "memory_id"),
                 "cognitive_schema" => ("cognitive_schemas", "schema_id"),

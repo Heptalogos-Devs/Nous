@@ -38,6 +38,7 @@ import { traceCommands } from "./trace.js";
 import { contextCommands } from "./context.js";
 import { queryCommands, showCommands, readCommands } from "./query.js";
 import { materialCommands } from "./material.js";
+import { socialCommands } from "./social.js";
 import { selfCommands } from "./self.js";
 import { memoryCommands } from "./memory.js";
 import { schemaCommands } from "./schema.js";
@@ -293,6 +294,24 @@ export async function runCli(
         "occurrences",
         "representations",
         "producer",
+      ]),
+      social: family("social", socialCommands, [
+        "list",
+        "select",
+        "pair",
+        "neighborhood",
+        "resolve",
+        "adopt",
+        "get",
+        "revision",
+        "history",
+        "revise",
+        "evidence",
+        "suppress",
+        "restore",
+        "withdraw",
+        "reaccept",
+        "purge",
       ]),
       self: family("self", selfCommands, [
         "list",

@@ -37,10 +37,9 @@ impl k::kernel_query_service_server::KernelQueryService for KernelService {
             let subject = SubjectId(id(&query.subject_id)?);
             let snapshot = self.0.configuration.snapshot_for_subject(subject)?;
             let limit = snapshot.get(nous_runtime::DEFAULT_RESULT_LIMIT)?;
-            let mut bound = self
-                .0
-                .bind_query_with_snapshot(super::query::compile_query(query, limit)?, snapshot)
-                .await?;
+            let (social_refs,social_omitted)=self.authorized_query_social_refs(&query).await?;
+            let mut bound=self.0.bind_query_with_snapshot_authorized(super::query::compile_query(query,limit)?,snapshot,&social_refs).await?;
+            if social_omitted {bound.activation.degradation.push(nous_core::Degradation{code:"social_candidate_omission".into(),detail:Some("Authorized scope exceeds bounded 2048 / 4MiB owner candidate read; query does not assert a complete Social world".into())});}
             bound.selected_embedding_space =
                 self.0.serving.embedding().map(|provider| provider.space());
             let embedding_text = bound.representation.text.clone();
