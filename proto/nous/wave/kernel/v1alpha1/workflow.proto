@@ -8,6 +8,7 @@ import "nous/wave/kernel/v1alpha1/longitudinal.proto";
 import "nous/wave/v1alpha1/types.proto";
 import "nous/wave/v1alpha1/services.proto";
 import "nous/wave/v1alpha1/journal.proto";
+import "nous/wave/v1alpha1/reflection.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 service KernelQueryService {
@@ -20,6 +21,10 @@ service KernelQueryService {
   rpc ReleaseQuery(ReleaseQueryRequest) returns (google.protobuf.Empty);
 }
 service KernelMaintenanceService {
+  rpc ReflectionMemoryCandidates(ReflectionMemoryCandidatesRequest) returns (ReflectionMemoryCandidatesResponse);
+  rpc PrepareSubjectReflection(PrepareSubjectReflectionRequest) returns (SubjectReflectionBatch);
+  rpc FinishSubjectReflection(FinishSubjectReflectionRequest) returns (FinishSubjectReflectionResponse);
+  rpc InspectSubjectReflection(nous.wave.v1alpha1.ReflectionInspectRequest) returns (nous.wave.v1alpha1.ReflectionState);
   rpc RefreshMaintenance(RefreshMaintenanceRequest) returns (google.protobuf.Empty);
   rpc PlanMaintenance(PlanMaintenanceRequest) returns (MaintenancePlan);
   rpc GetMaintenancePolicy(nous.wave.v1alpha1.SubjectRequest) returns (MaintenancePolicy);

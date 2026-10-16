@@ -202,6 +202,17 @@ impl MemoryService {
         reason: &str,
     ) -> Result<()> {
         let sequence = mutation.invalidate(ProjectionInvalidation::all()).await?;
+        let reference = parse_reference(
+            if kind == "schema" {
+                "cognitive_schema"
+            } else {
+                kind
+            },
+            &id.to_string(),
+        )?;
+        self.cognition
+            .reflection_source_changed_in(mutation.tx(), subject, &[reference], sequence, reason)
+            .await?;
         if kind == "journal" {
             self.wake_journal_revalidation_in(mutation.tx(), subject, JournalId(id), sequence)
                 .await?;

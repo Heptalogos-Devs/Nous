@@ -1,0 +1,19 @@
+// Copyright 2026 Aravine Zhu
+// SPDX-License-Identifier: Apache-2.0
+syntax = "proto3";
+package nous.wave.v1alpha1;
+import "nous/wave/v1alpha1/types.proto";
+import "nous/wave/v1alpha1/self.proto";
+import "nous/wave/v1alpha1/social.proto";
+import "nous/wave/v1alpha1/presentation.proto";
+import "google/protobuf/timestamp.proto";
+message ReflectionInspectRequest {string subject_id = 1 [(reference_kind)="subject"];uint32 limit=2;uint32 max_payload_bytes=3;optional string operation_id=4;}
+message ReflectionPending {string need_id=1;uint64 trigger_revision=2;int64 trigger_sequence=3;string state=4;optional string problem_code=5;}
+message ReflectionRecord {string operation_id=1;string semantic_digest=2;optional string proposal_json=3;optional string outcome_json=4;bool body_omitted=5;google.protobuf.Timestamp recorded_at=6;}
+message ReflectionState {int64 through_sequence=1;optional string last_operation_id=2;optional string last_status=3;optional string last_problem_code=4;repeated ReflectionPending pending=5;repeated ReflectionRecord recent=6;bool more=7;}
+message ReflectionActionOutcome {string action_id=1;string domain=2;string action=3;string operation_id=4;string status=5;string reason=6;repeated CognitiveRef references=7;optional string problem_code=8;oneof owner_result {SelfRecord self_record=9;SocialRecord social_record=10;Memory memory_record=11;}}
+message ReflectionOutcome {string operation_id=1;string status=2;repeated ReflectionActionOutcome actions=3;uint32 operations_consumed=4;int64 through_sequence=5;optional string problem_code=6;repeated Degradation degradation=7;}
+// Explicit reviewed CAS resolution; automatic retries never replace a newer head.
+message ReflectionRepairTarget {string action_id=1;CognitiveRef exact_head=2;int64 expected_object_epoch=3;}
+message ReflectionRepairRequest {string subject_id=1 [(reference_kind)="subject"];string operation_id=2;string semantic_digest=3;string repair_id=4;repeated ReflectionRepairTarget resolutions=5;}
+service SubjectReflectionService {rpc Inspect(ReflectionInspectRequest) returns(ReflectionState);rpc Repair(ReflectionRepairRequest) returns(ReflectionOutcome);}

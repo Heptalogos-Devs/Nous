@@ -273,6 +273,14 @@ impl CognitiveRuntimeService {
         let sequence:Option<i64>=sqlx::query_scalar("SELECT authority_seq FROM subjects WHERE subject_id=$1 AND EXISTS(SELECT 1 FROM experience_items WHERE subject_id=$1 AND active_work_context_id=$2)")
             .bind(subject.0).bind(context).fetch_optional(&mut **tx).await.map_err(db)?;
         if let Some(sequence) = sequence {
+            self.reflection_source_changed_in(
+                tx,
+                subject,
+                &[CognitiveRef::WorkContext(WorkContextId(context))],
+                sequence,
+                "work_context_ended",
+            )
+            .await?;
             for kind in ["episode_segment", "journal_review"] {
                 self.enqueue_maintenance_in(
                     tx,

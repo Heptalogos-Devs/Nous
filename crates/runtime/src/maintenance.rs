@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, Row, Transaction};
 
 pub const MAINTENANCE_KINDS: &[&str] = &[
+    "subject_reflection",
     "episode_segment",
     "episode_resegment",
     "journal_review",
@@ -212,7 +213,7 @@ impl CognitiveRuntimeService {
             .bind(retry_delay).bind(self.maintenance_block_digest(selected.subject_id)?)
             .execute(&mut *tx).await.map_err(db)?;
         // Only maintenance-bound completed workflows lose their runtime purpose after ack.
-        sqlx::query("DELETE FROM model_results WHERE subject_id=$1 AND maintenance_need_id=$2 AND maintenance_trigger_revision=$3 AND outcome IS NOT NULL")
+        sqlx::query("DELETE FROM model_results WHERE subject_id=$1 AND maintenance_need_id=$2 AND maintenance_trigger_revision=$3 AND outcome IS NOT NULL AND owner<>'subject_reflection'")
             .bind(selected.subject_id.0).bind(selected.need_id).bind(selected.trigger_revision as i64).execute(&mut *tx).await.map_err(db)?;
         self.cleanup_maintenance_in(&mut tx, selected.subject_id)
             .await?;
@@ -232,7 +233,7 @@ impl CognitiveRuntimeService {
         tx: &mut Transaction<'_, Postgres>,
         subject: SubjectId,
     ) -> Result<()> {
-        sqlx::query("DELETE FROM model_results w USING maintenance_needs n WHERE w.subject_id=$1 AND w.maintenance_need_id=n.need_id AND w.maintenance_trigger_revision<n.trigger_revision")
+        sqlx::query("DELETE FROM model_results w USING maintenance_needs n WHERE w.subject_id=$1 AND w.maintenance_need_id=n.need_id AND w.maintenance_trigger_revision<n.trigger_revision AND n.kind<>'subject_reflection'")
             .bind(subject.0).execute(&mut **tx).await.map_err(db)?;
         let retention = self
             .configuration

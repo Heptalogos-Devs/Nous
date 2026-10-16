@@ -3594,6 +3594,135 @@ pub struct ResolveConventionsResponse {
     pub explanation: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReflectionInspectRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(uint32, tag="2")]
+    pub limit: u32,
+    #[prost(uint32, tag="3")]
+    pub max_payload_bytes: u32,
+    #[prost(string, optional, tag="4")]
+    pub operation_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReflectionPending {
+    #[prost(string, tag="1")]
+    pub need_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag="2")]
+    pub trigger_revision: u64,
+    #[prost(int64, tag="3")]
+    pub trigger_sequence: i64,
+    #[prost(string, tag="4")]
+    pub state: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="5")]
+    pub problem_code: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReflectionRecord {
+    #[prost(string, tag="1")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub semantic_digest: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="3")]
+    pub proposal_json: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="4")]
+    pub outcome_json: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag="5")]
+    pub body_omitted: bool,
+    #[prost(message, optional, tag="6")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReflectionState {
+    #[prost(int64, tag="1")]
+    pub through_sequence: i64,
+    #[prost(string, optional, tag="2")]
+    pub last_operation_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="3")]
+    pub last_status: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="4")]
+    pub last_problem_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="5")]
+    pub pending: ::prost::alloc::vec::Vec<ReflectionPending>,
+    #[prost(message, repeated, tag="6")]
+    pub recent: ::prost::alloc::vec::Vec<ReflectionRecord>,
+    #[prost(bool, tag="7")]
+    pub more: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReflectionActionOutcome {
+    #[prost(string, tag="1")]
+    pub action_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub domain: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub action: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub status: ::prost::alloc::string::String,
+    #[prost(string, tag="6")]
+    pub reason: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="7")]
+    pub references: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(string, optional, tag="8")]
+    pub problem_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(oneof="reflection_action_outcome::OwnerResult", tags="9, 10, 11")]
+    pub owner_result: ::core::option::Option<reflection_action_outcome::OwnerResult>,
+}
+/// Nested message and enum types in `ReflectionActionOutcome`.
+pub mod reflection_action_outcome {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum OwnerResult {
+        #[prost(message, tag="9")]
+        SelfRecord(super::SelfRecord),
+        #[prost(message, tag="10")]
+        SocialRecord(super::SocialRecord),
+        #[prost(message, tag="11")]
+        MemoryRecord(super::Memory),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReflectionOutcome {
+    #[prost(string, tag="1")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub status: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="3")]
+    pub actions: ::prost::alloc::vec::Vec<ReflectionActionOutcome>,
+    #[prost(uint32, tag="4")]
+    pub operations_consumed: u32,
+    #[prost(int64, tag="5")]
+    pub through_sequence: i64,
+    #[prost(string, optional, tag="6")]
+    pub problem_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="7")]
+    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
+}
+/// Explicit reviewed CAS resolution; automatic retries never replace a newer head.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReflectionRepairTarget {
+    #[prost(string, tag="1")]
+    pub action_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub exact_head: ::core::option::Option<CognitiveRef>,
+    #[prost(int64, tag="3")]
+    pub expected_object_epoch: i64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReflectionRepairRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub semantic_digest: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub repair_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="5")]
+    pub resolutions: ::prost::alloc::vec::Vec<ReflectionRepairTarget>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CognitionTraceRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,

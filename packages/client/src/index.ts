@@ -39,6 +39,7 @@ import {
   MemoryService,
   MaterialService,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/services_pb.js";
+import { SubjectReflectionService } from "@nous-wave/protocol/nous/wave/v1alpha1/reflection_pb.js";
 import { SocialService } from "@nous-wave/protocol/nous/wave/v1alpha1/social_pb.js";
 import { SelfService } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
 import { IdentityService } from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
@@ -73,6 +74,7 @@ export type ServiceDescriptors = {
   readonly subjects: typeof SubjectService;
   readonly self: typeof SelfService;
   readonly social: typeof SocialService;
+  readonly reflection: typeof SubjectReflectionService;
   readonly runtime: typeof RuntimeService;
   readonly cognition: typeof CognitionService;
   readonly memory: typeof MemoryService;
@@ -90,6 +92,7 @@ export const serviceDescriptors: ServiceDescriptors = {
   subjects: SubjectService,
   self: SelfService,
   social: SocialService,
+  reflection: SubjectReflectionService,
   runtime: RuntimeService,
   cognition: CognitionService,
   memory: MemoryService,

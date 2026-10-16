@@ -1,6 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
+import { runSubjectReflection } from "../model/subject-reflection.js";
 import { executeConceptMaintenance } from "./concept-maintenance.js";
 import { executeConsolidation } from "./consolidation.js";
 import {
@@ -47,6 +48,15 @@ export async function runModelMaintenance(
   modelBudget: number,
   reserveModelCall: () => void,
 ) {
+  if (need.kind === "subject_reflection")
+    return runSubjectReflection(
+      kernel,
+      models,
+      need,
+      options,
+      modelBudget,
+      reserveModelCall,
+    );
   const operationId = maintenanceOperationId(need);
   const identity = {
     subjectId: need.subjectId,

@@ -1746,6 +1746,40 @@ pub mod kernel_maintenance_service_server {
     #[async_trait]
     pub trait KernelMaintenanceService: std::marker::Send + std::marker::Sync + 'static {
         ///
+        async fn reflection_memory_candidates(
+            &self,
+            request: tonic::Request<super::ReflectionMemoryCandidatesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ReflectionMemoryCandidatesResponse>,
+            tonic::Status,
+        >;
+        ///
+        async fn prepare_subject_reflection(
+            &self,
+            request: tonic::Request<super::PrepareSubjectReflectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SubjectReflectionBatch>,
+            tonic::Status,
+        >;
+        ///
+        async fn finish_subject_reflection(
+            &self,
+            request: tonic::Request<super::FinishSubjectReflectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::FinishSubjectReflectionResponse>,
+            tonic::Status,
+        >;
+        ///
+        async fn inspect_subject_reflection(
+            &self,
+            request: tonic::Request<
+                super::super::super::v1alpha1::ReflectionInspectRequest,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<super::super::super::v1alpha1::ReflectionState>,
+            tonic::Status,
+        >;
+        ///
         async fn refresh_maintenance(
             &self,
             request: tonic::Request<super::RefreshMaintenanceRequest>,
@@ -1879,6 +1913,220 @@ pub mod kernel_maintenance_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/nous.wave.kernel.v1alpha1.KernelMaintenanceService/ReflectionMemoryCandidates" => {
+                    #[allow(non_camel_case_types)]
+                    struct ReflectionMemoryCandidatesSvc<T: KernelMaintenanceService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: KernelMaintenanceService,
+                    > tonic::server::UnaryService<
+                        super::ReflectionMemoryCandidatesRequest,
+                    > for ReflectionMemoryCandidatesSvc<T> {
+                        type Response = super::ReflectionMemoryCandidatesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::ReflectionMemoryCandidatesRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KernelMaintenanceService>::reflection_memory_candidates(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ReflectionMemoryCandidatesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.kernel.v1alpha1.KernelMaintenanceService/PrepareSubjectReflection" => {
+                    #[allow(non_camel_case_types)]
+                    struct PrepareSubjectReflectionSvc<T: KernelMaintenanceService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: KernelMaintenanceService,
+                    > tonic::server::UnaryService<super::PrepareSubjectReflectionRequest>
+                    for PrepareSubjectReflectionSvc<T> {
+                        type Response = super::SubjectReflectionBatch;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::PrepareSubjectReflectionRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KernelMaintenanceService>::prepare_subject_reflection(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = PrepareSubjectReflectionSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.kernel.v1alpha1.KernelMaintenanceService/FinishSubjectReflection" => {
+                    #[allow(non_camel_case_types)]
+                    struct FinishSubjectReflectionSvc<T: KernelMaintenanceService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: KernelMaintenanceService,
+                    > tonic::server::UnaryService<super::FinishSubjectReflectionRequest>
+                    for FinishSubjectReflectionSvc<T> {
+                        type Response = super::FinishSubjectReflectionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::FinishSubjectReflectionRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KernelMaintenanceService>::finish_subject_reflection(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = FinishSubjectReflectionSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/nous.wave.kernel.v1alpha1.KernelMaintenanceService/InspectSubjectReflection" => {
+                    #[allow(non_camel_case_types)]
+                    struct InspectSubjectReflectionSvc<T: KernelMaintenanceService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: KernelMaintenanceService,
+                    > tonic::server::UnaryService<
+                        super::super::super::v1alpha1::ReflectionInspectRequest,
+                    > for InspectSubjectReflectionSvc<T> {
+                        type Response = super::super::super::v1alpha1::ReflectionState;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::super::v1alpha1::ReflectionInspectRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KernelMaintenanceService>::inspect_subject_reflection(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = InspectSubjectReflectionSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/nous.wave.kernel.v1alpha1.KernelMaintenanceService/RefreshMaintenance" => {
                     #[allow(non_camel_case_types)]
                     struct RefreshMaintenanceSvc<T: KernelMaintenanceService>(

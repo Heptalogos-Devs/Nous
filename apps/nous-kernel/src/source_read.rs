@@ -87,24 +87,14 @@ impl nous_runtime::SourceRootResolver for SourceRoots {
                         .memory
                         .as_ref()
                         .ok_or_else(|| Error::Unavailable("Memory unavailable".into()))?;
-                    let nodes = owner
-                        .trace_nodes_in(tx, subject, std::slice::from_ref(&reference))
-                        .await?;
-                    nodes
-                        .into_iter()
-                        .flat_map(|n| n.trace_sources().references)
-                        .collect::<Vec<_>>()
+                    owner.source_references_in(tx, subject, &reference).await?
                 }
                 CognitiveDomain::SelfCognition => {
                     let owner = self
                         .self_cognition
                         .as_ref()
                         .ok_or_else(|| Error::Unavailable("Self unavailable".into()))?;
-                    owner
-                        .trace_node_in(tx, subject, &reference)
-                        .await?
-                        .1
-                        .references
+                    owner.source_references_in(tx, subject, &reference).await?
                 }
                 CognitiveDomain::SocialCognition => {
                     let resolved = AuthorityStore::social_source_roots_in(

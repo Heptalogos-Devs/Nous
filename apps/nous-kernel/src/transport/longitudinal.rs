@@ -9,7 +9,7 @@ use nous_memory::{
 };
 use nous_runtime::{MaintenanceDisposition, MaintenanceNeed};
 
-fn need_proto(value: MaintenanceNeed) -> k::MaintenanceNeed {
+pub(super) fn need_proto(value: MaintenanceNeed) -> k::MaintenanceNeed {
     k::MaintenanceNeed {
         need_id: value.need_id.to_string(),
         subject_id: value.subject_id.0.to_string(),

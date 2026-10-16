@@ -86,7 +86,7 @@ impl AuthorityStore {
         operation: nous_core::OperationId,
         dependencies: &[nous_core::CognitiveRef],
     ) -> Result<()> {
-        let rows = sqlx::query("SELECT outcome FROM model_results WHERE subject_id=$1 AND owner=$2 AND (operation_key=$3::uuid::text OR $3=ANY(mutation_operations)) FOR UPDATE")
+        let rows = sqlx::query("SELECT outcome FROM model_results WHERE subject_id=$1 AND (owner=$2 OR owner='subject_reflection') AND (operation_key=$3::uuid::text OR $3=ANY(mutation_operations)) FOR UPDATE")
             .bind(subject.0).bind(owner).bind(operation.0).fetch_all(&mut **tx).await.map_err(db)?;
         for row in rows {
             let outcome = row
@@ -96,7 +96,7 @@ impl AuthorityStore {
                 return Err(Error::NotFound("operation material was purged".into()));
             }
         }
-        sqlx::query("UPDATE model_results w SET dependencies=(SELECT COALESCE(jsonb_agg(DISTINCT ref),'[]') FROM jsonb_array_elements(w.dependencies||$4::jsonb) ref) WHERE w.subject_id=$1 AND w.owner=$2 AND (w.operation_key=$3::uuid::text OR $3=ANY(w.mutation_operations)) AND w.outcome IS NULL")
+        sqlx::query("UPDATE model_results w SET dependencies=(SELECT COALESCE(jsonb_agg(DISTINCT ref),'[]') FROM jsonb_array_elements(w.dependencies||$4::jsonb) ref) WHERE w.subject_id=$1 AND (w.owner=$2 OR w.owner='subject_reflection') AND (w.operation_key=$3::uuid::text OR $3=ANY(w.mutation_operations)) AND w.outcome IS NULL")
             .bind(subject.0).bind(owner).bind(operation.0).bind(Json(dependencies))
             .execute(&mut **tx).await.map_err(db)?;
         Ok(())
@@ -127,7 +127,7 @@ impl AuthorityStore {
         owner: &str,
         key: &str,
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
-        let value: Option<Option<Json<ModelResultContext>>> = sqlx::query_scalar("SELECT context FROM model_results WHERE subject_id=$1 AND owner=$2 AND operation_key=$3")
+        let value: Option<Option<Json<ModelResultContext>>> = sqlx::query_scalar("SELECT context FROM model_results WHERE subject_id=$1 AND (owner=$2 OR owner='subject_reflection') AND (operation_key=$3 OR $3::uuid=ANY(mutation_operations))")
             .bind(subject.0).bind(owner).bind(key).fetch_optional(&mut **tx).await.map_err(db)?;
         Ok(value
             .flatten()
@@ -217,7 +217,7 @@ impl AuthorityStore {
         if let Some(claim) = maintenance
             && proposal.is_some()
         {
-            let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM maintenance_needs WHERE subject_id=$1 AND need_id=$2 AND state='pending' AND trigger_authority_seq=$3 AND trigger_revision=$4)")
+            let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM maintenance_needs WHERE subject_id=$1 AND need_id=$2 AND state='pending' AND ((trigger_authority_seq=$3 AND trigger_revision=$4) OR (kind='subject_reflection' AND trigger_authority_seq>=$3 AND trigger_revision>=$4)))")
                 .bind(subject.0).bind(claim.need_id).bind(claim.trigger_authority_seq).bind(revision)
                 .fetch_one(&mut *tx).await.map_err(db)?;
             if !current {

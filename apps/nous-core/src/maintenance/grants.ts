@@ -175,6 +175,7 @@ async function grantMaintenanceOnce(
       let problemCode: string | undefined;
       let errorDetail: MaintenanceOperationResult["errorDetail"];
       let nextDue;
+      let consumed = need.kind === "subject_reflection" ? 0 : 1;
       try {
         if (need.kind === "episode_segment") {
           const organized = await kernel.maintenance.organizeExperience(
@@ -208,6 +209,11 @@ async function grantMaintenanceOnce(
             },
           );
           status = outcome.status;
+          if (
+            need.kind === "subject_reflection" &&
+            "operationsConsumed" in outcome
+          )
+            consumed = outcome.operationsConsumed;
           problemCode =
             "problemCode" in outcome ? outcome.problemCode : undefined;
           nextDue = "nextDue" in outcome ? outcome.nextDue : undefined;
@@ -267,11 +273,18 @@ async function grantMaintenanceOnce(
         }
       }
       if (
-        problemCode === "model_unavailable" ||
+        (problemCode === "model_unavailable" &&
+          need.kind !== "subject_reflection") ||
         problemCode === "model_budget_exhausted"
       )
         continue;
-      operations++;
+      operations += consumed;
+      if (
+        need.kind === "subject_reflection" &&
+        ["partial", "failed"].includes(status)
+      ) {
+        problemCode = "reflection_action_rejected";
+      }
       if (
         status === "retry" &&
         need.retryCount + 1 >= policy.retryMaxAttempts
@@ -289,7 +302,9 @@ async function grantMaintenanceOnce(
                 : status === "retry"
                   ? "retry"
                   : status === "blocked_dependency" ||
-                      status === "internal_failure"
+                      status === "internal_failure" ||
+                      (need.kind === "subject_reflection" &&
+                        ["partial", "failed"].includes(status))
                     ? "blocked"
                     : status === "obsolete"
                       ? "obsolete"

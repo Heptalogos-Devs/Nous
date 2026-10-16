@@ -55,3 +55,26 @@ impl SelfService {
         Ok((record, sources))
     }
 }
+
+impl SelfService {
+    /// Dependency metadata only; no content, evidence prose or producer body is read.
+    pub async fn source_references_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+    ) -> Result<Vec<CognitiveRef>> {
+        if reference.domain() != CognitiveDomain::SelfCognition
+            || !reference.is_cognition_revision()
+        {
+            return Err(Error::Invalid(
+                "Self source metadata requires exact revision".into(),
+            ));
+        }
+        let rows: Vec<(String,String)> = sqlx::query_as("SELECT d.ref_kind,d.ref_value FROM self_dependencies d JOIN self_revisions r USING(revision_id) WHERE r.subject_id=$1 AND r.revision_id=$2 ORDER BY d.ref_kind,d.ref_value")
+            .bind(subject.0).bind(reference.uuid()).fetch_all(&mut **tx).await.map_err(db)?;
+        rows.into_iter()
+            .map(|(k, v)| parse_reference(&k, &v))
+            .collect()
+    }
+}

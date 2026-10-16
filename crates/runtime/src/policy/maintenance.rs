@@ -133,6 +133,7 @@ pub fn register_maintenance_configuration(registry: &mut ConfigRegistryBuilder) 
     registry.bounds(EPISODE_NEIGHBOR_SPAN, 1, 86400, Some("cognitive_seconds"))?;
     reference.tag(registry, EPISODE_MAX_NEIGHBORS.path())?;
     reference.tag(registry, EPISODE_NEIGHBOR_SPAN.path())?;
+    crate::register_reflection_configuration(registry)?;
     register_work_state_configuration(registry)
 }
 

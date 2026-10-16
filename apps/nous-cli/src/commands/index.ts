@@ -39,6 +39,7 @@ import { traceCommands } from "./trace.js";
 import { contextCommands } from "./context.js";
 import { queryCommands, showCommands, readCommands } from "./query.js";
 import { materialCommands } from "./material.js";
+import { reflectionCommands } from "./reflection.js";
 import { socialCommands } from "./social.js";
 import { selfCommands } from "./self.js";
 import { memoryCommands } from "./memory.js";
@@ -302,6 +303,10 @@ export async function runCli(
         "occurrences",
         "representations",
         "producer",
+      ]),
+      reflection: family("reflection", reflectionCommands, [
+        "status",
+        "repair",
       ]),
       social: family("social", socialCommands, [
         "list",

@@ -12,6 +12,7 @@ import type { Dependency } from "../operation-results.js";
 import type { ModelGenerationOutput } from "../model/schemas/contracts.js";
 
 export const maintenanceRoles = {
+  subject_reflection: "subject_reflection",
   episode_resegment: "episode_segmentation",
   journal_review: "journal_synthesis",
   journal_revalidate: "journal_synthesis",
