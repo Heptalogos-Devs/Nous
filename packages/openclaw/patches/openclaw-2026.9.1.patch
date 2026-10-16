@@ -334,6 +334,26 @@ index a37da26..365a415 100644
      parentSessionKey: string;
      childSessionKey: string;
      contextMode?: "isolated" | "fork";
+diff --git a/dist/compaction-DlElLXrZ.js b/dist/compaction-DlElLXrZ.js
+index 02fc494..da4d5e3 100644
+--- a/dist/compaction-DlElLXrZ.js
++++ b/dist/compaction-DlElLXrZ.js
+@@ -137,6 +137,7 @@ function convertToLlm(messages) {
+ 				};
+ 			}
+ 			case "branchSummary": return {
++                nousNativeHistoryKind: "branch_summary",
+ 				role: "user",
+ 				content: [{
+ 					type: "text",
+@@ -145,6 +146,7 @@ function convertToLlm(messages) {
+ 				timestamp: message.timestamp
+ 			};
+ 			case "compactionSummary": return {
++                nousNativeHistoryKind: "compaction_summary",
+ 				role: "user",
+ 				content: [{
+ 					type: "text",
 diff --git a/dist/context-engine-turn-attempt-BPzr5IBp.js b/dist/context-engine-turn-attempt-BPzr5IBp.js
 index 0c1c60c..0424796 100644
 --- a/dist/context-engine-turn-attempt-BPzr5IBp.js

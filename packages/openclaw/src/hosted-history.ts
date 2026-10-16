@@ -56,8 +56,13 @@ export function scopeCallerHistory(
         return !withheld;
       }
       if (message.role === "user") {
-        withheld = false;
-        return true;
+        const kind: unknown = Reflect.get(message, "nousNativeHistoryKind");
+        const carrier: unknown = Reflect.get(message, "runtimeContextCarrier");
+        withheld = !(
+          ["compaction_summary", "branch_summary"].includes(String(kind)) ||
+          carrier === true
+        );
+        return !withheld;
       }
       return !withheld;
     }),

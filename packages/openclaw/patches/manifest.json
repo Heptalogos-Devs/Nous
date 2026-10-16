@@ -152,6 +152,10 @@
     "dist/plugin-sdk/core.js": {
       "original": "63cc8eb8e771fbf6a273b8f4381facdf4c9320fc7aff777f4ac23ff6a6cd1b44",
       "patched": "e089bd9203f222a7c4dd01dbd60452f975753ea728ba8dc49e503c371d1a9249"
+    },
+    "dist/compaction-DlElLXrZ.js": {
+      "original": "5b27e4c36a99deb33bafa818ae2525a2a3566ffb2104f471e004f2ddf4739cc0",
+      "patched": "d133f2531e7a6e61d8d684d4b0c4ab2a99ae32923b4296f31caf2bdca71b4244"
     }
   },
   "dependencyOverrides": {
