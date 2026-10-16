@@ -20,45 +20,67 @@ const judgment = z.strictObject({
   estimate: z.number().min(0).max(1).nullable(),
   estimateMethod: z.string().max(8192).nullable(),
 });
-const socialContent = z.discriminatedUnion("family", [
-  z.strictObject({
-    family: z.literal("social_relation"),
-    fromKey: key,
-    toKey: key,
-    relationType: z.enum([
-      "familiarity",
-      "affinity",
-      "trust",
-      "closeness",
-      "collaboration",
-      "mentor_of",
-      "member_of",
-      "conflict_with",
-    ]),
-    degree: z
-      .discriminatedUnion("kind", [
-        z.strictObject({
-          kind: z.literal("ordinal"),
-          value: z.string().max(128),
-        }),
-        z.strictObject({
-          kind: z.literal("affinity"),
-          value: z.number().min(-1).max(1),
-        }),
-        z.strictObject({
-          kind: z.literal("state"),
-          value: z.string().max(128),
-        }),
-      ])
-      .nullable(),
-    role: z.string().max(1024).nullable(),
-    symmetric: z.boolean(),
-    statement: z.string().min(1).max(16384),
-    coordinationExpectations: z.array(z.string().max(8192)).max(32),
-    judgment,
-    basisKeys,
-    validTime: time,
+const relationBase = z.strictObject({
+  family: z.literal("social_relation"),
+  fromKey: key,
+  toKey: key,
+  role: z.string().max(1024).nullable(),
+  symmetric: z.boolean(),
+  statement: z.string().min(1).max(16384),
+  coordinationExpectations: z.array(z.string().max(8192)).max(32),
+  judgment,
+  basisKeys,
+  validTime: time,
+});
+const ordinal = <T extends string>(values: readonly [T, ...T[]]) =>
+  z
+    .strictObject({ kind: z.literal("ordinal"), value: z.enum(values) })
+    .nullable();
+const state = <T extends string>(values: readonly [T, ...T[]]) =>
+  z
+    .strictObject({ kind: z.literal("state"), value: z.enum(values) })
+    .nullable();
+const relation = z.discriminatedUnion("relationType", [
+  relationBase.extend({
+    relationType: z.literal("familiarity"),
+    degree: ordinal(["acquainted", "growing", "familiar", "deep"]),
   }),
+  relationBase.extend({
+    relationType: z.literal("affinity"),
+    degree: z
+      .strictObject({
+        kind: z.literal("affinity"),
+        value: z.number().min(-1).max(1),
+      })
+      .nullable(),
+  }),
+  relationBase.extend({
+    relationType: z.literal("trust"),
+    degree: ordinal(["cautious", "limited", "stable"]),
+  }),
+  relationBase.extend({
+    relationType: z.literal("closeness"),
+    degree: ordinal(["ordinary", "close", "very_close"]),
+  }),
+  relationBase.extend({
+    relationType: z.literal("collaboration"),
+    degree: state(["proposed", "active", "paused", "ended"]),
+  }),
+  relationBase.extend({
+    relationType: z.literal("conflict_with"),
+    degree: state(["disagreement", "ongoing", "resolved"]),
+  }),
+  relationBase.extend({
+    relationType: z.literal("mentor_of"),
+    degree: z.null(),
+  }),
+  relationBase.extend({
+    relationType: z.literal("member_of"),
+    degree: z.null(),
+  }),
+]);
+const socialContent = z.union([
+  relation,
   z.strictObject({
     family: z.literal("language_convention"),
     expression: z.string().min(1).max(4096),

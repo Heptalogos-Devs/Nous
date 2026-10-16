@@ -232,7 +232,9 @@ export function compileReflectionActions(
                         degree:
                           c.degree.kind === "affinity"
                             ? { case: "affinity", value: c.degree.value }
-                            : { case: c.degree.kind, value: c.degree.value },
+                            : c.degree.kind === "ordinal"
+                              ? { case: "ordinal", value: c.degree.value }
+                              : { case: "state", value: c.degree.value },
                       }
                     : undefined,
                   role: c.role ?? undefined,
