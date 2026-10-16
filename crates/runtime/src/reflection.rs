@@ -102,9 +102,19 @@ pub struct ReflectionBatch {
 }
 impl CognitiveRuntimeService {
     pub async fn reflection_domains(&self, subject: SubjectId) -> Result<Vec<String>> {
+        let mut tx = self.store.read_view().await?;
+        let domains = self.reflection_domains_in(&mut tx, subject).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(domains)
+    }
+    async fn reflection_domains_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        subject: SubjectId,
+    ) -> Result<Vec<String>> {
         let config = self.configuration.snapshot_for_subject(subject)?;
         let domains = config.get(REFLECTION_DOMAINS)?;
-        let row=sqlx::query("SELECT memory,self_cognition,social_cognition FROM subject_capabilities WHERE subject_id=$1").bind(subject.0).fetch_one(self.store.pool()).await.map_err(db)?;
+        let row=sqlx::query("SELECT memory,self_cognition,social_cognition FROM subject_capabilities WHERE subject_id=$1").bind(subject.0).fetch_one(&mut **tx).await.map_err(db)?;
         Ok(domains
             .into_iter()
             .filter(|d| match d.as_str() {
@@ -129,7 +139,7 @@ impl CognitiveRuntimeService {
         {
             return Ok(());
         }
-        let domains = self.reflection_domains(subject).await?;
+        let domains = self.reflection_domains_in(tx, subject).await?;
         if domains.is_empty() {
             return Ok(());
         }
@@ -289,7 +299,7 @@ impl CognitiveRuntimeService {
                 "reflection source change exceeds batch bound".into(),
             ));
         }
-        if self.reflection_domains(subject).await?.is_empty() {
+        if self.reflection_domains_in(tx, subject).await?.is_empty() {
             return Ok(());
         }
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")

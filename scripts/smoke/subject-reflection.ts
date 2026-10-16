@@ -193,7 +193,7 @@ try {
   const locator = await prepare(home);
   await appendFile(
     join(home, "config/nous.toml"),
-    `\n[maintenance]\npoll_interval_seconds=3600\n[reflection]\nenabled_domains=["self","social","memory"]\ndebounce_seconds=1\nsource_limit=16\nsource_max_bytes=4096\ncandidate_limit=32\ncandidate_max_bytes=262144\nmax_actions=16\n[models.gateway_profiles.contract]\nbase_url="http://127.0.0.1:${address.port}/v1"\ncredential_env="NOUS_REFLECTION_CONTRACT"\n[models.model_profiles.contract]\ngateway="contract"\nprotocol="openai-chat"\nmodel="reflection-contract"\ncapabilities=["text","structured_output"]\n[models.execution_profiles.contract]\nmodel="contract"\n[models.roles.subject_reflection]\nroutes=["contract"]\n`,
+    `\n[database]\nmax_connections=1\n[maintenance]\npoll_interval_seconds=3600\n[reflection]\nenabled_domains=["self","social","memory"]\ndebounce_seconds=1\nsource_limit=16\nsource_max_bytes=4096\ncandidate_limit=32\ncandidate_max_bytes=262144\nmax_actions=16\n[models.gateway_profiles.contract]\nbase_url="http://127.0.0.1:${address.port}/v1"\ncredential_env="NOUS_REFLECTION_CONTRACT"\n[models.model_profiles.contract]\ngateway="contract"\nprotocol="openai-chat"\nmodel="reflection-contract"\ncapabilities=["text","structured_output"]\n[models.execution_profiles.contract]\nmodel="contract"\n[models.roles.subject_reflection]\nroutes=["contract"]\n`,
   );
   core = await boot(locator);
   const c = core.client;
