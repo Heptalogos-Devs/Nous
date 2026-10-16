@@ -1766,6 +1766,8 @@ pub struct ClockMutationRequest {
     pub subject_id: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
     pub operation_id: ::prost::alloc::string::String,
+    #[prost(int64, optional, tag="3")]
+    pub expected_revision: ::core::option::Option<i64>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConfigureClockRequest {
@@ -1797,6 +1799,8 @@ pub struct ResumeClockRequest {
     pub operation_id: ::prost::alloc::string::String,
     #[prost(double, tag="3")]
     pub rate: f64,
+    #[prost(int64, optional, tag="4")]
+    pub expected_revision: ::core::option::Option<i64>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConfigDescriptor {

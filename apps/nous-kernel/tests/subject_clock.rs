@@ -509,3 +509,69 @@ async fn material_keeps_real_contact_and_world_stamp_across_restart_and_replay()
     assert_eq!(kind, "instant");
     assert_eq!(domain, "time:other");
 }
+
+#[tokio::test]
+async fn lifecycle_cas_checks_durable_revision_before_mutation_and_replay_is_read_only() {
+    let (root, url, _postgres) = database().await;
+    let runtime = open_runtime(&url, &root).await;
+    let subject = subject(&runtime).await;
+    let initial = runtime.clocks.read(subject).await.unwrap();
+    // Separate in-memory services cannot satisfy this with a local read guard.
+    let first = SubjectClockService::open(runtime.store.clone(), Arc::new(SystemCognitiveClock))
+        .await
+        .unwrap();
+    let second = SubjectClockService::open(runtime.store.clone(), Arc::new(SystemCognitiveClock))
+        .await
+        .unwrap();
+    let a = OperationId::new();
+    let b = OperationId::new();
+    let (left, right) = tokio::join!(
+        first.change_if_revision(subject, a, ClockChange::Pause, Some(initial.revision)),
+        second.change_if_revision(subject, b, ClockChange::Pause, Some(initial.revision))
+    );
+    assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+    let (winner, operation, saved) = match (left, right) {
+        (Ok(value), Err(nous_core::Error::Conflict(_))) => (&first, a, value),
+        (Err(nous_core::Error::Conflict(_)), Ok(value)) => (&second, b, value),
+        _ => panic!("exactly one durable CAS must succeed"),
+    };
+    let operator = winner
+        .change(
+            subject,
+            OperationId::new(),
+            ClockChange::Resume { rate: 9.0 },
+        )
+        .await
+        .unwrap();
+    let replay = winner
+        .change_if_revision(
+            subject,
+            operation,
+            ClockChange::Pause,
+            Some(initial.revision),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.revision, saved.revision);
+    assert_eq!(replay.world_now, saved.world_now);
+    let current = winner.read(subject).await.unwrap();
+    assert_eq!(current.revision, operator.revision);
+    assert_eq!(current.rate, 9.0);
+    let stored: i64 = sqlx::query_scalar("SELECT revision FROM subject_clocks WHERE subject_id=$1")
+        .bind(subject.0)
+        .fetch_one(runtime.store.pool())
+        .await
+        .unwrap();
+    assert_eq!(stored, operator.revision);
+    let unconditioned_digest: String = sqlx::query_scalar("SELECT request_digest FROM mutation_receipts WHERE subject_id=$1 AND operation_kind='clock.change' AND result_epoch=$2").bind(subject.0).bind(operator.revision).fetch_one(runtime.store.pool()).await.unwrap();
+    assert_eq!(
+        unconditioned_digest,
+        nous_core::canonical_request_digest(
+            "clock.change",
+            subject,
+            &ClockChange::Resume { rate: 9.0 }
+        )
+        .unwrap()
+    );
+    runtime.store.close().await;
+}

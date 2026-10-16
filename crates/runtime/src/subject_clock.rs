@@ -204,12 +204,34 @@ impl SubjectClockService {
         operation: OperationId,
         change: ClockChange,
     ) -> Result<ClockSnapshot> {
+        self.change_if_revision(subject, operation, change, None)
+            .await
+    }
+    /// Optional lifecycle compare-and-set, enforced inside the owner transaction.
+    pub async fn change_if_revision(
+        &self,
+        subject: SubjectId,
+        operation: OperationId,
+        change: ClockChange,
+        expected_revision: Option<i64>,
+    ) -> Result<ClockSnapshot> {
+        if expected_revision.is_some_and(|revision| revision < 0) {
+            return Err(Error::Invalid(
+                "expected_revision must be nonnegative".into(),
+            ));
+        }
         if operation.0.is_nil() {
             return Err(Error::Invalid("operation_id is required".into()));
         }
         let _change = self.changes.lock().await;
         self.store.require_subject(subject).await?;
-        let digest = nous_core::canonical_request_digest("clock.change", subject, &change)?;
+        let mut request =
+            serde_json::to_value(&change).map_err(|error| Error::Invalid(error.to_string()))?;
+        // Absence preserves the exact canonical request of unconditional management.
+        if let Some(revision) = expected_revision {
+            request["expected_revision"] = serde_json::json!(revision);
+        }
+        let digest = nous_core::canonical_request_digest("clock.change", subject, &request)?;
         let mut mutation = match MutationEnvelope::begin(
             &self.store,
             subject,
@@ -229,59 +251,22 @@ impl SubjectClockService {
             MutationStart::Active(mutation) => mutation,
         };
         let mut snapshot = self.snapshot(subject);
-        let previous = snapshot.world_now;
-        let previous_domain = snapshot.time_domain_ref.clone();
-        match change {
-            ClockChange::Configure {
-                time_domain_ref,
-                rate,
-                world_time,
-            } => {
-                if time_domain_ref.trim().is_empty() || time_domain_ref.len() > 256 {
-                    return Err(Error::Invalid(
-                        "time_domain_ref must contain 1..256 bytes".into(),
-                    ));
-                }
-                if snapshot.time_domain_ref != REAL_TIME_DOMAIN
-                    && snapshot.time_domain_ref != time_domain_ref
-                    && snapshot.revision != 0
-                {
-                    return Err(Error::Invalid("Subject has one primary time domain; use an isolated Subject for another world".into()));
-                }
-                snapshot.time_domain_ref = time_domain_ref;
-                snapshot.rate = valid_rate(rate)?;
-                snapshot.world_now = world_time.unwrap_or(previous).trunc_subsecs(6);
-            }
-            ClockChange::Pause => snapshot.rate = 0.0,
-            ClockChange::Advance { seconds } => {
-                valid_rate(seconds)?;
-                let micros = seconds * 1_000_000.0;
-                if micros > i64::MAX as f64 {
-                    return Err(Error::Invalid(
-                        "clock advance exceeds duration range".into(),
-                    ));
-                }
-                snapshot.world_now = previous
-                    .checked_add_signed(Duration::microseconds(micros as i64))
-                    .ok_or_else(|| Error::Invalid("clock timestamp overflow".into()))?;
-            }
-            ClockChange::Resume { rate } => {
-                snapshot.rate = valid_rate(rate)?;
-                if rate == 0.0 {
-                    return Err(Error::Invalid("resume rate must be positive".into()));
-                }
+        if let Some(expected) = expected_revision {
+            let persisted: Option<i64> = sqlx::query_scalar(
+                "SELECT revision FROM subject_clocks WHERE subject_id=$1 FOR UPDATE",
+            )
+            .bind(subject.0)
+            .fetch_optional(&mut **mutation.tx())
+            .await
+            .map_err(db)?;
+            let current = persisted.unwrap_or(0);
+            if current != expected || snapshot.revision != current {
+                return Err(Error::Conflict(format!(
+                    "Subject clock revision changed: expected {expected}, current {current}"
+                )));
             }
         }
-        if snapshot.time_domain_ref == previous_domain && snapshot.world_now < previous {
-            return Err(Error::Invalid(
-                "CognitiveClock cannot move backwards".into(),
-            ));
-        }
-        if snapshot.time_domain_ref == REAL_TIME_DOMAIN
-            && (snapshot.rate != 1.0 || snapshot.world_now > previous)
-        {
-            snapshot.time_domain_ref = format!("time:subject:{}", subject.0);
-        }
+        apply_clock_change(&mut snapshot, change)?;
         snapshot.real_anchor = Utc::now();
         snapshot.world_anchor = snapshot.world_now;
         snapshot.recorded_at = snapshot.real_anchor;
@@ -319,6 +304,63 @@ impl SubjectClockService {
         Ok(snapshot)
     }
 }
+fn apply_clock_change(snapshot: &mut ClockSnapshot, change: ClockChange) -> Result<()> {
+    let previous = snapshot.world_now;
+    let previous_domain = snapshot.time_domain_ref.clone();
+    match change {
+        ClockChange::Configure {
+            time_domain_ref,
+            rate,
+            world_time,
+        } => {
+            if time_domain_ref.trim().is_empty() || time_domain_ref.len() > 256 {
+                return Err(Error::Invalid(
+                    "time_domain_ref must contain 1..256 bytes".into(),
+                ));
+            }
+            if snapshot.time_domain_ref != REAL_TIME_DOMAIN
+                && snapshot.time_domain_ref != time_domain_ref
+                && snapshot.revision != 0
+            {
+                return Err(Error::Invalid("Subject has one primary time domain; use an isolated Subject for another world".into()));
+            }
+            snapshot.time_domain_ref = time_domain_ref;
+            snapshot.rate = valid_rate(rate)?;
+            snapshot.world_now = world_time.unwrap_or(previous).trunc_subsecs(6);
+        }
+        ClockChange::Pause => snapshot.rate = 0.0,
+        ClockChange::Advance { seconds } => {
+            valid_rate(seconds)?;
+            let micros = seconds * 1_000_000.0;
+            if micros > i64::MAX as f64 {
+                return Err(Error::Invalid(
+                    "clock advance exceeds duration range".into(),
+                ));
+            }
+            snapshot.world_now = previous
+                .checked_add_signed(Duration::microseconds(micros as i64))
+                .ok_or_else(|| Error::Invalid("clock timestamp overflow".into()))?;
+        }
+        ClockChange::Resume { rate } => {
+            snapshot.rate = valid_rate(rate)?;
+            if rate == 0.0 {
+                return Err(Error::Invalid("resume rate must be positive".into()));
+            }
+        }
+    }
+    if snapshot.time_domain_ref == previous_domain && snapshot.world_now < previous {
+        return Err(Error::Invalid(
+            "CognitiveClock cannot move backwards".into(),
+        ));
+    }
+    if snapshot.time_domain_ref == REAL_TIME_DOMAIN
+        && (snapshot.rate != 1.0 || snapshot.world_now > previous)
+    {
+        snapshot.time_domain_ref = format!("time:subject:{}", snapshot.subject_id.0);
+    }
+    Ok(())
+}
+
 #[async_trait::async_trait]
 impl CognitiveClock for SubjectClockService {
     fn time_domain_ref(&self, subject: SubjectId) -> String {

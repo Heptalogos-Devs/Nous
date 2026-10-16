@@ -114,6 +114,39 @@ impl MemoryService {
             }
             _ => return Err(Error::Invalid("invalid consolidation source kind".into())),
         }
+        let (family, object, revision) = if let Some(journal) = &result.journal {
+            (
+                "journal",
+                journal.object.journal_id.0,
+                journal.revision.journal_revision_id.0,
+            )
+        } else {
+            let episode = &result.episodes[0];
+            (
+                "episode",
+                episode.object.episode_id.0,
+                episode.revision.episode_revision_id.0,
+            )
+        };
+        let committed: serde_json::Value = sqlx::query_scalar("SELECT semantic_stamp FROM authority_object_states WHERE subject_id=$1 AND object_kind=$2 AND object_ref=$3 AND state->>'current_revision_id'=$4 ORDER BY event_id LIMIT 1")
+            .bind(subject.0).bind(family).bind(object.to_string()).bind(revision.to_string())
+            .fetch_one(self.store.pool()).await.map_err(db)?;
+        let committed: nous_core::DomainStamp = serde_json::from_value(committed)
+            .map_err(|error| Error::Infrastructure(error.to_string()))?;
+        let frame = self.cognition.read_clock(subject).await?;
+        let delay = chrono::Duration::seconds(
+            self.configuration
+                .snapshot_for_subject(subject)?
+                .get(super::longitudinal_policy::CONSOLIDATION_DELAY)? as i64,
+        );
+        let (settled, wake) = self
+            .cognition
+            .semantic_settlement(subject, &committed, delay, &frame)?;
+        if !settled {
+            result.status = "deferred".into();
+            result.next_due = Some(wake);
+            return Ok(result);
+        }
         result.occurrences = scope_occurrences(&result.episodes)?;
         Ok(result)
     }

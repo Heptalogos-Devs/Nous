@@ -26,6 +26,7 @@ message SubjectClock {
 message ClockMutationRequest {
   string subject_id = 1 [(reference_kind) = "subject"];
   string operation_id = 2;
+  optional int64 expected_revision = 3;
 }
 message ConfigureClockRequest {
   string subject_id = 1 [(reference_kind) = "subject"];
@@ -43,4 +44,5 @@ message ResumeClockRequest {
   string subject_id = 1 [(reference_kind) = "subject"];
   string operation_id = 2;
   double rate = 3;
+  optional int64 expected_revision = 4;
 }

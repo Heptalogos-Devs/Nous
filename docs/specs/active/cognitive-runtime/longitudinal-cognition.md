@@ -72,6 +72,8 @@ Journal 重验证等待全部当前来源稳定后再规划完整集合。来源
 
 `memory_consolidation` 使用 `MemoryConsolidationText`，scope 为 current eligible EpisodeRevision 或 JournalRevision。计划包含有界 source/member/support/entity catalogs、independent roots 和通过 Query/Serving 选出的最多 16 个当前 Memory/Schema context candidates。候选包括 exact revision/epoch、正文及 text_truncated 标记、Schema applicability/boundary/tags、独立时间轴和按 use kind 汇总的 meaningful use；presented 不计入摘要。截断标记描述模型当前可见范围，不表示来源或已存 cognition 缺少该内容，不能仅据此修订候选。
 
+整合 delay 从实际 source Authority commit 的 semantic stamp 计算，同域成熟后才准备整合正文。Episode/Journal 的初次现实唤醒按当前 clock mapping 投影；暂停、缺 mapping 或尚未成熟的 scope 返回 deferred 和现实 next_due。旧故事发生时间不使刚提交的认知提前成熟。
+
 proposal action 为 skip、create/revise Memory、create/revise CognitiveSchema、link relation。引用只能选择 supplied catalog 或较早 action result。Core 保存一次模型 proposal 后逐项调用 canonical FormMemory、ReviseMemory、Create/ReviseCognitiveSchema 和 LinkRevisions；每项使用由 operation id、index 与 action kind 派生的稳定 operation ID。各 owner 的 receipt 与 Authority mutation 同事务；后项非法不回滚此前独立提交，依赖失败 action 的 relation 记录 skipped_dependency，其他独立 action 继续。本次逐项结果随最终 outcome 一次保存，transport retry 重放同一 proposal 和 ID，不再次调用模型。目标 epoch 已陈旧时记录 stale；owner invariant/internal failure 停止 grant 并暴露工程错误。Planner 为每个 revision candidate 提供排除该对象全部旧 revision 的 eligible basis keys；owner 继续执行 cycle、provenance、lifecycle 与身份核验。skip 不修改认知 Authority。Journal 是可选来源，Episode 可直接整合。
 
 Query/Serving、WorkContext、UseEvent 和下游失效合同分别见 [Query](../memory-reference-profile/03-query-serving.md)、[WorkContext](work-context.md)、[Use](../memory-reference-profile/02-runtime-use.md) 和 [Authority](../memory-reference-profile/01-memory-authority-provenance.md)。

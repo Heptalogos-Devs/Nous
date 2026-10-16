@@ -521,7 +521,20 @@ impl NousRuntime {
         operation: nous_core::OperationId,
         change: nous_runtime::ClockChange,
     ) -> Result<nous_runtime::ClockSnapshot> {
-        let snapshot = self.clocks.change(subject, operation, change).await?;
+        self.change_clock_if_revision(subject, operation, change, None)
+            .await
+    }
+    pub async fn change_clock_if_revision(
+        &self,
+        subject: SubjectId,
+        operation: nous_core::OperationId,
+        change: nous_runtime::ClockChange,
+        expected_revision: Option<i64>,
+    ) -> Result<nous_runtime::ClockSnapshot> {
+        let snapshot = self
+            .clocks
+            .change_if_revision(subject, operation, change, expected_revision)
+            .await?;
         self.cognition.clock_changed(subject).await?;
         Ok(snapshot)
     }

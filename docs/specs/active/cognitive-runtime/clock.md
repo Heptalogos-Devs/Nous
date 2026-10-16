@@ -66,6 +66,8 @@ Authority history 在原 `authority_object_states` 同时保存 semantic 提交 
 
 官方 Client 导出 `projectWorldDeadline(clock, dueStamp)`，按读取的当前段把世界 due 转成现实唤醒时间。暂停且尚未到期返回 `paused`；域不匹配或缺数据返回 `unmapped`。调用方在变速、暂停和恢复后重新读取并重新投影已有 Activity job；辅助函数不自行创建定时器或模型工作。
 
+pause/resume 的 generated 请求可携带 `expectedRevision`（int64）；Host 生命周期必须用实际 clock read 或暂停 receipt 捕获的 revision。Owner 在同一 Authority 事务和 subject-clock 锁内比较持久 revision，冲突不改钟。相同 operationId 与相同请求先重放原 receipt，再考虑当前 revision，因此重放不会撤销后来 operator 的修改。不填该字段表示显式无条件管理，原请求摘要保持不变。
+
 CLI 读取使用 `nous clock read --subject <reference>`；configure/advance/resume 通过 `--request-file <JSON>` 传入上述 generated 请求字段。Subject 与 operationId 仍由当前 CLI 选择与操作身份机制提供。Client 例如：
 
 ```ts

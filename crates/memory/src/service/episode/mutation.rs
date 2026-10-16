@@ -128,8 +128,13 @@ impl MemoryService {
             .configuration
             .snapshot_for_subject(subject)?
             .get(nous_runtime::SETTLE_DELAY_KEY)?;
-        let now = self.cognition.recorded_now();
-        let due_at = now + chrono::Duration::seconds(delay as i64);
+        let frame = self.cognition.capture_semantic_in(tx, subject).await?;
+        let (_, due_at) = self.cognition.semantic_settlement(
+            subject,
+            &frame,
+            chrono::Duration::seconds(delay as i64),
+            &frame,
+        )?;
         self.cognition
             .wake_blocked_maintenance_in(
                 tx,
@@ -144,12 +149,16 @@ impl MemoryService {
                 },
             )
             .await?;
-        let consolidation_due = now
-            + chrono::Duration::seconds(
+        let (_, consolidation_due) = self.cognition.semantic_settlement(
+            subject,
+            &frame,
+            chrono::Duration::seconds(
                 self.configuration
                     .snapshot_for_subject(subject)?
                     .get(super::longitudinal_policy::CONSOLIDATION_DELAY)? as i64,
-            );
+            ),
+            &frame,
+        )?;
         for (kind, scope_kind, scope_ref) in [
             (
                 "episode_resegment",

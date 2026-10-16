@@ -17,10 +17,6 @@ struct JournalRevisionWrite {
 }
 
 impl MemoryService {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Journal commit owns one atomic Authority transaction"
-    )]
     pub async fn commit_journal(&self, mut input: JournalInput) -> Result<JournalView> {
         input.producer = input
             .producer
@@ -118,14 +114,8 @@ impl MemoryService {
         }
         self.wake_journal_revalidation_in(mutation.tx(), input.subject, journal, sequence)
             .await?;
-        self.schedule_journal_consolidation_in(
-            mutation.tx(),
-            input.subject,
-            revision,
-            sequence,
-            recorded,
-        )
-        .await?;
+        self.schedule_journal_consolidation_in(mutation.tx(), input.subject, revision, sequence)
+            .await?;
 
         mutation
             .publish_workflow_results(
@@ -195,8 +185,19 @@ impl MemoryService {
         subject: SubjectId,
         revision: JournalRevisionId,
         sequence: i64,
-        recorded: DateTime<Utc>,
     ) -> Result<()> {
+        let frame = self.cognition.capture_semantic_in(tx, subject).await?;
+        let (_, due_at) = self.cognition.semantic_settlement(
+            subject,
+            &frame,
+            chrono::Duration::seconds(
+                self.configuration
+                    .snapshot_for_subject(subject)?
+                    .get(super::super::longitudinal_policy::CONSOLIDATION_DELAY)?
+                    as i64,
+            ),
+            &frame,
+        )?;
         self.cognition
             .enqueue_maintenance_in(
                 tx,
@@ -206,13 +207,7 @@ impl MemoryService {
                     scope_kind: "journal_revision".into(),
                     scope_ref: revision.0.to_string(),
                     trigger_authority_seq: sequence,
-                    due_at: recorded
-                        + chrono::Duration::seconds(
-                            self.configuration
-                                .snapshot_for_subject(subject)?
-                                .get(super::super::longitudinal_policy::CONSOLIDATION_DELAY)?
-                                as i64,
-                        ),
+                    due_at,
                     priority: 40,
                 },
             )

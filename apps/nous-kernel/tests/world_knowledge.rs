@@ -146,6 +146,22 @@ async fn late_realization_has_story_knowledge_without_backdating_real_history() 
     assert!(
         matches!(episodes.episodes[0].revision.experience_time, TemporalExtent::Instant { at } if at == story_seen)
     );
+    let episode_scope = episodes.episodes[0]
+        .revision
+        .episode_revision_id
+        .0
+        .to_string();
+    let waiting = runtime
+        .require_memory()
+        .unwrap()
+        .plan_consolidation_scope(subject, "episode_revision", &episode_scope)
+        .await
+        .unwrap();
+    assert_eq!(
+        waiting.status, "deferred",
+        "old story occurrence time cannot mature a newly committed paused-world Episode"
+    );
+
     let memory = runtime
         .require_memory()
         .unwrap()
@@ -167,6 +183,14 @@ async fn late_realization_has_story_knowledge_without_backdating_real_history() 
         )
         .await
         .unwrap();
+    let ready = runtime
+        .require_memory()
+        .unwrap()
+        .plan_consolidation_scope(subject, "episode_revision", &episode_scope)
+        .await
+        .unwrap();
+    assert_eq!(ready.status, "ready");
+
     let mut revised_content = form_input(
         subject,
         source.occurrence.occurrence_id,
