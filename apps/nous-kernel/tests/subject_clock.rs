@@ -289,7 +289,7 @@ async fn clock_process_resume_worker() {
             .fetch_one(store.pool())
             .await
             .unwrap();
-    let stamp: nous_runtime::DomainStamp = serde_json::from_value(saved).unwrap();
+    let stamp: nous_core::DomainStamp = serde_json::from_value(saved).unwrap();
     let clock = SubjectClockService::open(store.clone(), Arc::new(SystemCognitiveClock))
         .await
         .unwrap();

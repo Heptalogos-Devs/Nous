@@ -14,21 +14,6 @@ service CognitiveClockService {
   rpc AdvanceClock(AdvanceClockRequest) returns (SubjectClock) { option idempotency_level = IDEMPOTENT; }
   rpc ResumeClock(ResumeClockRequest) returns (SubjectClock) { option idempotency_level = IDEMPOTENT; }
 }
-message DomainStamp {
-  string time_domain_ref = 1;
-  google.protobuf.Timestamp at = 2;
-  google.protobuf.Timestamp recorded_at = 3; // Real UTC recording time, never virtual.
-}
-message DomainTemporalExtent { string time_domain_ref = 1; TemporalExtent extent = 2; }
-// Host event semantics keep independent axes. Absent axes remain unknown.
-message DomainTemporalEvidence {
-  DomainTemporalExtent occurred = 1;
-  DomainStamp observed = 2;
-  DomainTemporalExtent valid = 3;
-  DomainStamp formed = 4;
-  google.protobuf.Timestamp recorded_at = 5;
-  google.protobuf.Timestamp observed_real_at = 6; // Actual real-world acquisition, distinct from recording.
-}
 message SubjectClock {
   string subject_id = 1 [(reference_kind) = "subject"];
   string time_domain_ref = 2;

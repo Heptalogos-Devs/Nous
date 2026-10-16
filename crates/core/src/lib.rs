@@ -10,7 +10,10 @@
 mod trace;
 pub use trace::CognitionTraceSources;
 mod time;
-pub use time::{TemporalExtent, TimeInterval, TimePredicate};
+pub use time::{
+    DomainStamp, DomainTemporalEvidence, DomainTemporalExtent, TemporalExtent, TimeInterval,
+    TimePredicate,
+};
 mod model_results;
 pub use model_results::{
     AttemptStatus, ExecutionAttempt, ExecutionTelemetry, ExecutionUsage, MaintenanceTrigger,

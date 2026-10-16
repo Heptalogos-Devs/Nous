@@ -9,10 +9,7 @@ pub use planning::{ExperienceMetadata, UseSummary};
 pub use policy::execution::QUERY_SLOTS;
 mod clock;
 mod subject_clock;
-pub use subject_clock::{
-    ClockChange, ClockSnapshot, DomainStamp, DomainTemporalEvidence, DomainTemporalExtent,
-    REAL_TIME_DOMAIN, SubjectClockService,
-};
+pub use subject_clock::{ClockChange, ClockSnapshot, SubjectClockService};
 mod experience;
 mod history;
 mod maintenance;

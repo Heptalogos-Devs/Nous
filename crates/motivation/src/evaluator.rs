@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use nous_runtime::{DomainStamp, DomainTemporalExtent};
+use nous_core::{DomainStamp, DomainTemporalExtent};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -138,3 +138,34 @@ impl TimePredicate {
         }
     }
 }
+
+/// An instant belongs to its named time domain. Recording time is always real UTC.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DomainStamp {
+    pub time_domain_ref: String,
+    pub at: DateTime<Utc>,
+    pub recorded_at: DateTime<Utc>,
+}
+impl DomainStamp {
+    /// No inferred mapping between worlds, including numerically equal timestamps.
+    pub fn compare(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        (!self.time_domain_ref.trim().is_empty() && self.time_domain_ref == other.time_domain_ref)
+            .then(|| self.at.cmp(&other.at))
+    }
+}
+
+/// A scoped extent does not compare against another world's numeric timestamps.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DomainTemporalExtent {
+    pub time_domain_ref: String,
+    pub extent: TemporalExtent,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DomainTemporalEvidence {
+    pub occurred: Option<DomainTemporalExtent>,
+    pub observed: Option<DomainStamp>,
+    pub valid: Option<DomainTemporalExtent>,
+    pub formed: Option<DomainStamp>,
+    pub recorded_at: Option<DateTime<Utc>>,
+    pub observed_real_at: Option<DateTime<Utc>>,
+}

@@ -458,14 +458,14 @@ pub(super) fn read_scope(v: Option<p::SourceReadScope>) -> Result<SourceReadScop
             .collect::<Result<_>>()?,
     })
 }
-pub(super) fn stamp_proto(v: nous_runtime::DomainStamp) -> p::DomainStamp {
+pub(super) fn stamp_proto(v: nous_core::DomainStamp) -> p::DomainStamp {
     p::DomainStamp {
         time_domain_ref: v.time_domain_ref,
         at: Some(timestamp(v.at)),
         recorded_at: Some(timestamp(v.recorded_at)),
     }
 }
-fn extent_proto(v: nous_runtime::DomainTemporalExtent) -> p::DomainTemporalExtent {
+fn extent_proto(v: nous_core::DomainTemporalExtent) -> p::DomainTemporalExtent {
     p::DomainTemporalExtent {
         time_domain_ref: v.time_domain_ref,
         extent: Some(temporal_proto(&v.extent)),
@@ -496,7 +496,7 @@ fn content(v: p::MotivationContent) -> Result<MotivationContent> {
                 Ok::<_, Error>(DesiredCondition {
                     expression: criterion(required(c.expression, "expression")?)?,
                     temporal_form: enum_value(&c.temporal_form)?,
-                    window: nous_runtime::DomainTemporalExtent {
+                    window: nous_core::DomainTemporalExtent {
                         time_domain_ref: w.time_domain_ref,
                         extent: temporal(w.extent)?,
                     },

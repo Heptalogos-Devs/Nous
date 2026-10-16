@@ -391,7 +391,7 @@ struct RevisionWrite {
     parent: Option<Uuid>,
     number: i32,
     now: DateTime<Utc>,
-    formed_stamp: nous_runtime::DomainStamp,
+    formed_stamp: nous_core::DomainStamp,
 }
 impl MotivationService {
     async fn commit_revision(

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use chrono::{DateTime, Utc};
 use nous_core::*;
-use nous_runtime::{DomainStamp, DomainTemporalExtent};
+use nous_core::{DomainStamp, DomainTemporalExtent};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use nous_runtime::DomainTemporalExtent;
+use nous_core::DomainTemporalExtent;
 use serde::{Deserialize, Serialize};
 /// Formal typed facts live on actual Material observations. Text is not parsed
 /// into deterministic truth; generated/simulated sources never witness effects.
@@ -13,7 +13,7 @@ pub enum CriterionFact {
         event_type: String,
         target: Option<String>,
         activity: Option<String>,
-        at: nous_runtime::DomainStamp,
+        at: nous_core::DomainStamp,
     },
     Measurement {
         version: u32,
@@ -23,7 +23,7 @@ pub enum CriterionFact {
         value: f64,
         #[serde(default)]
         error: f64,
-        at: nous_runtime::DomainStamp,
+        at: nous_core::DomainStamp,
     },
 }
 #[derive(Clone)]
@@ -82,7 +82,7 @@ impl CriterionReader for OfficialCriterionReader {
 
 impl CriterionFact {
     pub fn to_canonical_json(&self) -> serde_json::Value {
-        let stamp = |at: &nous_runtime::DomainStamp| serde_json::json!({"timeDomainRef":at.time_domain_ref,"at":at.at,"recordedAt":at.recorded_at});
+        let stamp = |at: &nous_core::DomainStamp| serde_json::json!({"timeDomainRef":at.time_domain_ref,"at":at.at,"recordedAt":at.recorded_at});
         match self {
             Self::Event {
                 version,

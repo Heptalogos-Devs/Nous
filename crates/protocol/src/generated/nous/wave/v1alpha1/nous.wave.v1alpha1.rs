@@ -234,6 +234,40 @@ pub struct TimeInterval {
     #[prost(message, optional, tag="2")]
     pub end: ::core::option::Option<::prost_types::Timestamp>,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DomainStamp {
+    #[prost(string, tag="1")]
+    pub time_domain_ref: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub at: ::core::option::Option<::prost_types::Timestamp>,
+    /// Real UTC recording time, never virtual.
+    #[prost(message, optional, tag="3")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DomainTemporalExtent {
+    #[prost(string, tag="1")]
+    pub time_domain_ref: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub extent: ::core::option::Option<TemporalExtent>,
+}
+/// Host event semantics keep independent axes. Absent axes remain unknown.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DomainTemporalEvidence {
+    #[prost(message, optional, tag="1")]
+    pub occurred: ::core::option::Option<DomainTemporalExtent>,
+    #[prost(message, optional, tag="2")]
+    pub observed: ::core::option::Option<DomainStamp>,
+    #[prost(message, optional, tag="3")]
+    pub valid: ::core::option::Option<DomainTemporalExtent>,
+    #[prost(message, optional, tag="4")]
+    pub formed: ::core::option::Option<DomainStamp>,
+    #[prost(message, optional, tag="5")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+    /// Actual real-world acquisition, distinct from recording.
+    #[prost(message, optional, tag="6")]
+    pub observed_real_at: ::core::option::Option<::prost_types::Timestamp>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimePredicate {
     #[prost(oneof="time_predicate::Predicate", tags="1, 2")]
@@ -1612,40 +1646,6 @@ impl WorkContextClearScope {
             _ => None,
         }
     }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct DomainStamp {
-    #[prost(string, tag="1")]
-    pub time_domain_ref: ::prost::alloc::string::String,
-    #[prost(message, optional, tag="2")]
-    pub at: ::core::option::Option<::prost_types::Timestamp>,
-    /// Real UTC recording time, never virtual.
-    #[prost(message, optional, tag="3")]
-    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct DomainTemporalExtent {
-    #[prost(string, tag="1")]
-    pub time_domain_ref: ::prost::alloc::string::String,
-    #[prost(message, optional, tag="2")]
-    pub extent: ::core::option::Option<TemporalExtent>,
-}
-/// Host event semantics keep independent axes. Absent axes remain unknown.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct DomainTemporalEvidence {
-    #[prost(message, optional, tag="1")]
-    pub occurred: ::core::option::Option<DomainTemporalExtent>,
-    #[prost(message, optional, tag="2")]
-    pub observed: ::core::option::Option<DomainStamp>,
-    #[prost(message, optional, tag="3")]
-    pub valid: ::core::option::Option<DomainTemporalExtent>,
-    #[prost(message, optional, tag="4")]
-    pub formed: ::core::option::Option<DomainStamp>,
-    #[prost(message, optional, tag="5")]
-    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
-    /// Actual real-world acquisition, distinct from recording.
-    #[prost(message, optional, tag="6")]
-    pub observed_real_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubjectClock {

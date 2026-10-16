@@ -1,9 +1,10 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use nous_core::DomainTemporalExtent;
 use nous_core::*;
 use nous_motivation::*;
-use nous_runtime::{ContextResolver, DomainTemporalExtent};
+use nous_runtime::ContextResolver;
 use prost::Message;
 use serde::Deserialize;
 use std::collections::BTreeMap;

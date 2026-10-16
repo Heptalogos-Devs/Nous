@@ -9,11 +9,10 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { ConditionEvaluationSchema, EvaluateConditionRequest, EvaluateConditionRequestSchema } from "../../v1alpha1/motivation_pb.js";
 import { file_nous_wave_v1alpha1_motivation } from "../../v1alpha1/motivation_pb.js";
-import type { CognitiveRef } from "../../v1alpha1/types_pb.js";
+import type { CognitiveRef, DomainStamp } from "../../v1alpha1/types_pb.js";
 import { file_nous_wave_v1alpha1_types } from "../../v1alpha1/types_pb.js";
 import type { Occurrence } from "../../v1alpha1/management_pb.js";
 import { file_nous_wave_v1alpha1_management } from "../../v1alpha1/management_pb.js";
-import type { DomainStamp } from "../../v1alpha1/clock_pb.js";
 import { file_nous_wave_v1alpha1_clock } from "../../v1alpha1/clock_pb.js";
 import type { OperationIdentity } from "./model_pb.js";
 import { file_nous_wave_kernel_v1alpha1_model } from "./model_pb.js";

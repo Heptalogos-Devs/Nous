@@ -12,7 +12,7 @@ pub struct SemanticPreparation {
     pub request_digest: String,
     pub leaves: Vec<SemanticInput>,
     pub dependencies: Vec<CognitiveRef>,
-    pub evaluated: nous_runtime::DomainStamp,
+    pub evaluated: nous_core::DomainStamp,
 }
 impl MotivationService {
     /// Fixed source-authorized leaf catalog. Host materialization happens only after
@@ -25,7 +25,7 @@ impl MotivationService {
             request_digest,
             leaves: vec![],
             dependencies: vec![input.condition_revision.clone()],
-            evaluated: nous_runtime::DomainStamp {
+            evaluated: nous_core::DomainStamp {
                 time_domain_ref: snapshot.time_domain_ref,
                 at: snapshot.world_now,
                 recorded_at: snapshot.recorded_at,

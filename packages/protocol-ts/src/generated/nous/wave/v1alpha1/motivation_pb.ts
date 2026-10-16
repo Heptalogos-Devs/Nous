@@ -9,10 +9,9 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { EmptySchema, Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_empty, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { CognitiveRef, ObjectRequestSchema, Page, ProducerSignature, RevisionBasis, SourceReadScope, TemporalExtent } from "./types_pb.js";
+import type { CognitiveRef, DomainStamp, DomainTemporalExtent, ObjectRequestSchema, Page, ProducerSignature, RevisionBasis, SourceReadScope, TemporalExtent } from "./types_pb.js";
 import { file_nous_wave_v1alpha1_types } from "./types_pb.js";
 import { file_nous_wave_v1alpha1_presentation } from "./presentation_pb.js";
-import type { DomainStamp, DomainTemporalExtent } from "./clock_pb.js";
 import { file_nous_wave_v1alpha1_clock } from "./clock_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 

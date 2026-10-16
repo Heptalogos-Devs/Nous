@@ -3,8 +3,8 @@
 mod test_support;
 use chrono::{Duration, Utc};
 use nous_core::*;
+use nous_core::{DomainStamp, DomainTemporalExtent};
 use nous_motivation::*;
-use nous_runtime::{DomainStamp, DomainTemporalExtent};
 use test_support::{database, observation};
 fn basis(id: OccurrenceId) -> RevisionBasis {
     RevisionBasis::Evidence(EvidenceRef {
