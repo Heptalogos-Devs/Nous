@@ -140,7 +140,7 @@ impl SelfService {
             now,
         )
         .await?;
-        AuthorityStore::invalidate_self_dependents_in(
+        AuthorityStore::invalidate_scoped_cognition_dependents_in(
             mutation.tx(),
             input.subject,
             current.reference().kind(),
@@ -206,7 +206,13 @@ impl SelfService {
         self.validate_basis(mutation.tx(), subject, std::slice::from_ref(&basis))
             .await?;
         if let RevisionBasis::CognitionDependency(d) = &basis
-            && self.dependency_reaches(mutation.tx(), d, revision).await?
+            && AuthorityStore::cognition_dependency_reaches_in(
+                mutation.tx(),
+                subject,
+                &d.target_revision,
+                &target,
+            )
+            .await?
         {
             return Err(Error::Invalid("Self support would create a cycle".into()));
         }
@@ -234,21 +240,6 @@ impl SelfService {
             )
             .await?;
         Ok(result)
-    }
-    async fn dependency_reaches(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-        source: &CognitionDependency,
-        target: Uuid,
-    ) -> Result<bool> {
-        if source.target_revision.domain() != CognitiveDomain::SelfCognition {
-            return Ok(false);
-        }
-        let start = source.target_revision.uuid().expect("Self UUID");
-        if start == target {
-            return Ok(true);
-        }
-        sqlx::query_scalar("WITH RECURSIVE walk(id) AS (SELECT ref_value::uuid FROM self_dependencies WHERE revision_id=$1 AND ref_kind IN ('self_facet_revision','narrative_thread_revision') UNION SELECT d.ref_value::uuid FROM self_dependencies d JOIN walk w ON d.revision_id=w.id WHERE d.ref_kind IN ('self_facet_revision','narrative_thread_revision')) SELECT EXISTS(SELECT 1 FROM walk WHERE id=$2)").bind(start).bind(target).fetch_one(&mut **tx).await.map_err(db)
     }
     async fn insert_revision(
         &self,

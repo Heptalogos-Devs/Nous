@@ -12,40 +12,116 @@ impl ContextResolver for NousRuntime {
         subject: SubjectId,
         input: nous_runtime::AutomaticContextRequest<'_>,
     ) -> Result<nous_runtime::AutomaticContext> {
-        if !self
-            .subjects
-            .subject(subject)
-            .await?
-            .capabilities
-            .self_cognition
-        {
-            return Ok(nous_runtime::AutomaticContext::default());
-        }
-        let (discovered, degradation) = self
-            .serving
-            .lexical_candidates(
-                subject,
-                &input.scope.intent.chars().take(2048).collect::<String>(),
-                input.max_items.min(128),
-                &["self_facet"],
-            )
-            .await?;
-        let mut ranked = input.ranked.to_vec();
-        ranked.extend(discovered);
-        ranked.retain(|r| r.domain() == CognitiveDomain::SelfCognition);
-        ranked.truncate(128);
-        let mut selected = self
-            .require_self()?
-            .automatic_context(
+        let capabilities = self.subjects.subject(subject).await?.capabilities;
+        let mut result = if capabilities.self_cognition {
+            self.automatic_self_context(
                 subject,
                 nous_runtime::AutomaticContextRequest {
-                    ranked: &ranked,
-                    ..input
+                    scope: input.scope,
+                    work_context: input.work_context,
+                    materialize: input.materialize,
+                    max_items: input.max_items,
+                    max_bytes: input.max_bytes,
+                    ranked: input.ranked,
                 },
             )
-            .await?;
-        selected.degradation.extend(degradation);
-        Ok(selected)
+            .await?
+        } else {
+            nous_runtime::AutomaticContext::default()
+        };
+        if capabilities.social_cognition
+            && input.scope.source_read.subject_id == Some(subject)
+            && !input.scope.source_read.source_refs.is_empty()
+        {
+            let scope = nous_social::SocialScope {
+                description: "Actual Host invocation".into(),
+                entities: input.scope.entities.clone(),
+                group: input.scope.group.clone(),
+                channel: input.scope.channel.clone(),
+                conversation: Some(input.scope.conversation.clone()),
+                work_context: input.work_context.map(WorkContextId),
+                domain: input.scope.domain.clone(),
+            };
+            let selected = self
+                .require_social()?
+                .select(
+                    subject,
+                    nous_social::SocialSelectionRequest {
+                        scope: &scope,
+                        source_read: &input.scope.source_read,
+                        max_items: 2048,
+                        max_bytes: 4 * 1024 * 1024,
+                        after: None,
+                        expression: None,
+                        endpoint: None,
+                        counterpart: None,
+                        at: None,
+                    },
+                )
+                .await?;
+            if selected.omitted {
+                result.degradation.push(Degradation{code:"social_candidate_omission".into(),detail:Some(format!("Authorized structural candidates exceed 2048 / 4MiB read budget; continuation {:?}; selection does not assert a complete social world",selected.next))});
+            }
+            let allowed = selected
+                .records
+                .iter()
+                .map(|r| r.reference())
+                .collect::<Vec<_>>();
+            let (ranked, degradation) = self
+                .serving
+                .lexical_candidates_authorized(
+                    subject,
+                    &input.scope.intent,
+                    128,
+                    &["social_relation", "language_convention"],
+                    Some(&allowed),
+                )
+                .await?;
+            result.degradation.extend(degradation);
+            let mut records = selected.records;
+            records.sort_by_key(|r| {
+                ranked
+                    .iter()
+                    .position(|v| *v == r.reference())
+                    .unwrap_or(usize::MAX)
+            });
+            for record in records {
+                if result.sources.len() >= input.max_items {
+                    result.degradation.push(Degradation {
+                        code: "social_projection_omission".into(),
+                        detail: Some(
+                            "Complete social units omitted at shared projection item budget".into(),
+                        ),
+                    });
+                    break;
+                }
+                let mut source =
+                    nous_social::SocialService::record_context(&record, input.materialize);
+                source.usage = if input.scope.purpose == "expression" {
+                    "audience_language_guidance"
+                } else {
+                    "social_understanding"
+                };
+                let used = result
+                    .sources
+                    .iter()
+                    .map(|s| s.text.as_ref().map_or(0, String::len))
+                    .sum::<usize>();
+                if source
+                    .text
+                    .as_ref()
+                    .is_some_and(|t| used + t.len() > input.max_bytes)
+                {
+                    result.degradation.push(Degradation {
+                        code: "social_projection_omission".into(),
+                        detail: Some("Complete social unit omitted at shared text budget".into()),
+                    });
+                    continue;
+                }
+                result.sources.push(source);
+            }
+        }
+        Ok(result)
     }
 
     async fn query_descriptors(
@@ -106,6 +182,10 @@ impl ContextResolver for NousRuntime {
                 Err(error) => return Err(error),
             }
         }
+        let identities = identities
+            .into_iter()
+            .filter(|r| r.domain() != CognitiveDomain::SocialCognition)
+            .collect::<Vec<_>>();
         descriptors.extend(
             self.store
                 .identity_descriptors(query.subject, &identities, historical)
@@ -181,5 +261,48 @@ impl ContextResolver for NousRuntime {
             };
         }
         Ok(result)
+    }
+}
+
+impl NousRuntime {
+    async fn automatic_self_context(
+        &self,
+        subject: SubjectId,
+        input: nous_runtime::AutomaticContextRequest<'_>,
+    ) -> Result<nous_runtime::AutomaticContext> {
+        if !self
+            .subjects
+            .subject(subject)
+            .await?
+            .capabilities
+            .self_cognition
+        {
+            return Ok(nous_runtime::AutomaticContext::default());
+        }
+        let (discovered, degradation) = self
+            .serving
+            .lexical_candidates(
+                subject,
+                &input.scope.intent.chars().take(2048).collect::<String>(),
+                input.max_items.min(128),
+                &["self_facet"],
+            )
+            .await?;
+        let mut ranked = input.ranked.to_vec();
+        ranked.extend(discovered);
+        ranked.retain(|r| r.domain() == CognitiveDomain::SelfCognition);
+        ranked.truncate(128);
+        let mut selected = self
+            .require_self()?
+            .automatic_context(
+                subject,
+                nous_runtime::AutomaticContextRequest {
+                    ranked: &ranked,
+                    ..input
+                },
+            )
+            .await?;
+        selected.degradation.extend(degradation);
+        Ok(selected)
     }
 }

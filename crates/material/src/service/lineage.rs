@@ -139,6 +139,20 @@ WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), o
             .collect()
     }
 
+    pub async fn lineage_roots_batch_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subject: SubjectId,
+        references: &[CognitiveRef],
+    ) -> Result<BTreeSet<EvidenceRoot>> {
+        Ok(self
+            .lineage_entries_in(tx, subject, references, None)
+            .await?
+            .into_values()
+            .flat_map(|v| v.roots)
+            .collect())
+    }
+
     pub async fn lineage_roots_batch(
         &self,
         subject: SubjectId,

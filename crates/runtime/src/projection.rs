@@ -15,7 +15,12 @@ pub struct ContextSource {
     pub evidence: Vec<EvidenceHandle>,
 }
 
+#[derive(Default)]
 pub struct InvocationScope {
+    pub source_read: SourceReadScope,
+    pub group: Option<EntityRef>,
+    pub channel: Option<String>,
+    pub domain: Option<String>,
     pub intent: String,
     pub purpose: String,
     pub conversation: String,
@@ -74,6 +79,7 @@ pub struct ProjectionRequest {
     pub materialize: bool,
     pub memory: RequirementStrength,
     pub self_cognition: RequirementStrength,
+    pub social_cognition: RequirementStrength,
     pub runtime: RequirementStrength,
     pub resource: RequirementStrength,
 }
@@ -228,7 +234,9 @@ impl CognitiveRuntimeService {
                 .into_iter()
                 .map(|reference| (reference, "request_situation", "request", true)),
         );
-        let automatic = if input.self_cognition != RequirementStrength::Forbidden {
+        let automatic = if input.self_cognition != RequirementStrength::Forbidden
+            || input.social_cognition != RequirementStrength::Forbidden
+        {
             if let Some(scope) = &input.scope {
                 resolver
                     .automatic_context_sources(
@@ -290,6 +298,7 @@ impl CognitiveRuntimeService {
         let requirement = |reference: &CognitiveRef| match reference.domain() {
             CognitiveDomain::Memory => input.memory,
             CognitiveDomain::SelfCognition => input.self_cognition,
+            CognitiveDomain::SocialCognition => input.social_cognition,
             CognitiveDomain::Resource => input.resource,
             _ => input.runtime,
         };

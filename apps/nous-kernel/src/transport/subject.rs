@@ -64,6 +64,7 @@ fn subject(input: SubjectView) -> p::Subject {
         capabilities: Some(p::SubjectCapabilities {
             memory: capabilities.memory,
             self_cognition: capabilities.self_cognition,
+            social_cognition: capabilities.social_cognition,
         }),
     }
 }
@@ -82,6 +83,7 @@ impl KernelService {
                     SubjectCapabilities {
                         memory: c.memory,
                         self_cognition: c.self_cognition,
+                        social_cognition: c.social_cognition,
                     },
                 )
                 .await?,
@@ -108,6 +110,7 @@ impl KernelService {
                 capabilities: input.capabilities.map(|value| SubjectCapabilities {
                     memory: value.memory,
                     self_cognition: value.self_cognition,
+                    social_cognition: value.social_cognition,
                 }),
             })
             .await?;

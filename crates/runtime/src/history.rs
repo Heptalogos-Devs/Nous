@@ -14,7 +14,8 @@ impl CognitiveRuntimeService {
         revisions: &[String],
     ) -> Result<()> {
         let mut sources =
-            AuthorityStore::self_dependency_references_in(tx, subject, kind, revisions).await?;
+            AuthorityStore::scoped_cognition_dependency_references_in(tx, subject, kind, revisions)
+                .await?;
         sources.extend(
             revisions
                 .iter()

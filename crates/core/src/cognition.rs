@@ -9,7 +9,7 @@
 
 use crate::{
     CognitiveRef, CognitiveSeedVersionId, DerivedRegionId, DerivedRepresentationId, Error,
-    EvidenceHandle, OccurrenceId, Result, SourceRegionId,
+    EvidenceHandle, OccurrenceId, Result, SourceRegionId, SubjectId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -292,4 +292,12 @@ pub fn validate_exact_basis(basis: &[RevisionBasis]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Trusted invocation authorization, separate from model-owned query constraints.
+/// Empty sources deny transmission of source-derived cognition.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourceReadScope {
+    pub subject_id: Option<SubjectId>,
+    pub source_refs: Vec<CognitiveRef>,
 }

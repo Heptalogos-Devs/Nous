@@ -51,6 +51,7 @@ fn prepare_lexical(
     query: &nous_core::CognitiveQuery,
     query_text: &str,
     plan: &QueryPlan,
+    social_allowed: &[CognitiveRef],
 ) -> Result<LaneOutput> {
     let lexical = {
         let mut output = LaneOutput::empty(EvidenceFamily::Lexical, LaneStatus::Unavailable);
@@ -60,10 +61,17 @@ fn prepare_lexical(
             output.status = LaneStatus::Ready;
             output.generation_ref = Some(index.generation_id);
             output.candidates = index
-                .search_with_domains(
+                .search_scoped(
                     query_text,
                     plan.lane_budget(EvidenceFamily::Lexical),
                     &query.projection.domain_names(),
+                    None,
+                    query
+                        .projection
+                        .domains
+                        .iter()
+                        .any(|d| d.owner() == nous_core::CognitiveDomain::SocialCognition)
+                        .then_some(social_allowed),
                 )?
                 .into_iter()
                 .enumerate()
@@ -95,6 +103,7 @@ fn prepare_dense(
     embedding: Option<&QuerySemanticEmbedding>,
     embedding_error: Option<String>,
     provider_available: bool,
+    social_allowed: &[CognitiveRef],
 ) -> Result<LaneOutput> {
     let mut output = LaneOutput::empty(EvidenceFamily::Dense, LaneStatus::Unavailable);
     if query_text.trim().is_empty()
@@ -109,8 +118,13 @@ fn prepare_dense(
             }
             output.generation_ref = Some(generation.generation_id);
             let limit = plan.lane_budget(EvidenceFamily::Dense);
-            let matches =
-                domain_dense_matches(generation, &embedding.vector, limit, &query.projection)?;
+            let matches = domain_dense_matches(
+                generation,
+                &embedding.vector,
+                limit,
+                &query.projection,
+                social_allowed,
+            )?;
             for (rank, item) in matches.into_iter().enumerate() {
                 let Some(record) = item.record else {
                     continue;
@@ -168,11 +182,12 @@ async fn prepare_signals(
     embedding_text: &str,
     provider: Option<&dyn TextEmbeddingProvider>,
     prepared_embedding: Option<&nous_runtime::QuerySemanticEmbedding>,
+    social_allowed: &[CognitiveRef],
 ) -> Result<PreparedQuerySignals> {
     let query_text = text_query(query);
     let lexical = enabled_lanes
         .contains(&EvidenceFamily::Lexical)
-        .then(|| prepare_lexical(snapshot, query, &query_text, plan))
+        .then(|| prepare_lexical(snapshot, query, &query_text, plan, social_allowed))
         .transpose()?;
 
     let dense_enabled = enabled_lanes.contains(&EvidenceFamily::Dense);
@@ -224,6 +239,7 @@ async fn prepare_signals(
                 embedding.as_ref(),
                 embedding_error,
                 provider.is_some(),
+                social_allowed,
             )
         })
         .transpose()?;
@@ -260,6 +276,7 @@ impl ServingService {
             &bound.representation.text,
             provider,
             bound.activation.embedding.as_ref(),
+            &bound.social_authorized_refs,
         )
         .await?;
         let topology = if bound.lane_enabled(EvidenceFamily::TopologyWave) {
@@ -293,13 +310,17 @@ fn domain_dense_matches(
     vector: &[f32],
     limit: usize,
     projection: &nous_core::ResultProjection,
+    social_allowed: &[CognitiveRef],
 ) -> Result<Vec<DenseMatch>> {
-    if projection.domain_names().is_empty() {
-        return generation.search(vector, limit);
-    }
     let allowed = generation
         .records()
-        .filter(|record| projection.allows_reference(&record.reference))
+        .filter(|record| {
+            projection.domain_names().is_empty() || projection.allows_reference(&record.reference)
+        })
+        .filter(|record| {
+            record.reference.domain() != nous_core::CognitiveDomain::SocialCognition
+                || social_allowed.contains(&record.reference)
+        })
         .filter_map(|record| u32::try_from(record.serving_doc_id).ok())
         .collect::<roaring::RoaringBitmap>();
     generation.search_filtered(vector, limit, &allowed)
@@ -413,6 +434,22 @@ impl ServingService {
         limit: usize,
         domains: &[&str],
     ) -> Result<(Vec<CognitiveRef>, Vec<Degradation>)> {
+        self.lexical_candidates_authorized(subject, intent, limit, domains, None)
+            .await
+    }
+    pub async fn lexical_candidates_authorized(
+        &self,
+        subject: SubjectId,
+        intent: &str,
+        limit: usize,
+        domains: &[&str],
+        allowed: Option<&[CognitiveRef]>,
+    ) -> Result<(Vec<CognitiveRef>, Vec<Degradation>)> {
+        if allowed.is_some_and(|v| v.len() > 2048) {
+            return Err(Error::Invalid(
+                "authorized search exceeds candidate bound".into(),
+            ));
+        }
         if intent.trim().is_empty() || limit == 0 {
             return Ok((Vec::new(), Vec::new()));
         }
@@ -440,7 +477,7 @@ impl ServingService {
             return Ok((Vec::new(), degradation));
         };
         let refs = index
-            .search_with_domains(intent, limit, domains)?
+            .search_authorized(intent, limit, domains, allowed)?
             .into_iter()
             .filter_map(|m| m.reference)
             .collect();

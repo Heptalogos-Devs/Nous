@@ -157,6 +157,13 @@ impl LexicalGeneration {
             indexed.add_text(self.body, document.representation_text.clone());
             indexed.add_text(self.title, title);
             indexed.add_text(self.reference, document.serving_doc_id.to_string());
+            indexed.add_text(
+                self.index
+                    .schema()
+                    .get_field("canonical_ref")
+                    .map_err(|e| Error::Infrastructure(e.to_string()))?,
+                document.reference.to_string(),
+            );
             indexed.add_text(self.metadata, metadata);
             indexed.add_text(self.domain, reference_query_domain(&document.reference));
             for value in &document.entity_refs {
@@ -196,6 +203,95 @@ impl LexicalGeneration {
         query: &str,
         limit: usize,
         domains: &[&str],
+    ) -> Result<Vec<LexicalMatch>> {
+        self.search_authorized(query, limit, domains, None)
+    }
+    pub fn search_authorized(
+        &self,
+        query: &str,
+        limit: usize,
+        domains: &[&str],
+        allowed: Option<&[CognitiveRef]>,
+    ) -> Result<Vec<LexicalMatch>> {
+        self.search_scoped(query, limit, domains, allowed, None)
+    }
+    fn permitted_references(&self, allowed: &[CognitiveRef]) -> Result<Box<dyn Query>> {
+        let field = self
+            .index
+            .schema()
+            .get_field("canonical_ref")
+            .map_err(|_| {
+                Error::Unavailable(
+                    "lexical generation requires rebuild for authorized search".into(),
+                )
+            })?;
+        Ok(Box::new(BooleanQuery::new(
+            allowed
+                .iter()
+                .map(|r| {
+                    (
+                        Occur::Should,
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(field, &r.to_string()),
+                            IndexRecordOption::Basic,
+                        )) as Box<dyn Query>,
+                    )
+                })
+                .collect(),
+        )))
+    }
+    fn filter_source_permissions(
+        &self,
+        mut query: Box<dyn Query>,
+        allowed: Option<&[CognitiveRef]>,
+        social_allowed: Option<&[CognitiveRef]>,
+    ) -> Result<Box<dyn Query>> {
+        let intersect = |query: Box<dyn Query>, filter: Box<dyn Query>| -> Box<dyn Query> {
+            Box::new(BooleanQuery::new(vec![
+                (Occur::Must, query),
+                (Occur::Must, Box::new(ConstScoreQuery::new(filter, 0.0))),
+            ]))
+        };
+        if let Some(allowed) = allowed {
+            query = intersect(query, self.permitted_references(allowed)?);
+        }
+        if let Some(allowed) = social_allowed {
+            let social = BooleanQuery::new(
+                ["social_relation", "language_convention"]
+                    .into_iter()
+                    .map(|d| {
+                        (
+                            Occur::Should,
+                            Box::new(TermQuery::new(
+                                Term::from_field_text(self.domain, d),
+                                IndexRecordOption::Basic,
+                            )) as Box<dyn Query>,
+                        )
+                    })
+                    .collect(),
+            );
+            let nonsocial = BooleanQuery::new(vec![
+                (
+                    Occur::Must,
+                    Box::new(tantivy::query::AllQuery) as Box<dyn Query>,
+                ),
+                (Occur::MustNot, Box::new(social)),
+            ]);
+            let visibility = BooleanQuery::new(vec![
+                (Occur::Should, Box::new(nonsocial) as Box<dyn Query>),
+                (Occur::Should, self.permitted_references(allowed)?),
+            ]);
+            query = intersect(query, Box::new(visibility));
+        }
+        Ok(query)
+    }
+    pub fn search_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        domains: &[&str],
+        allowed: Option<&[CognitiveRef]>,
+        social_allowed: Option<&[CognitiveRef]>,
     ) -> Result<Vec<LexicalMatch>> {
         if query.trim().is_empty() || limit == 0 {
             return Ok(Vec::new());
@@ -249,6 +345,7 @@ impl LexicalGeneration {
                 ),
             ]))
         };
+        let parsed = self.filter_source_permissions(parsed, allowed, social_allowed)?;
         let hits = searcher
             .search(
                 parsed.as_ref(),
@@ -317,6 +414,7 @@ fn schema() -> (
     let schema_ids = builder.add_text_field("schema_ids", keyword.clone());
     let source_class = builder.add_text_field("source_class", keyword);
     builder.add_text_field("domain", STRING);
+    builder.add_text_field("canonical_ref", STRING);
     (
         builder.build(),
         body,
@@ -333,6 +431,68 @@ fn schema() -> (
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn social_source_permissions_filter_before_top_k_and_preserve_other_owners() {
+        let mut index = LexicalGeneration::in_memory().unwrap();
+        let permitted =
+            CognitiveRef::SocialRelationRevision(nous_core::SocialRelationRevisionId::new());
+        let private = CognitiveRef::LanguageConventionRevision(
+            nous_core::LanguageConventionRevisionId::new(),
+        );
+        let memory = CognitiveRef::MemoryRevision(nous_core::MemoryRevisionId::new());
+        let docs = [
+            (permitted.clone(), "marker public relation"),
+            (private.clone(), "marker marker marker private language"),
+            (memory.clone(), "marker ordinary memory"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, (reference, text))| LexicalDocument {
+            serving_doc_id: i as u64,
+            reference,
+            representation_text: text.into(),
+            title: None,
+            entity_refs: Vec::new(),
+            tag_ids: Vec::new(),
+            schema_ids: Vec::new(),
+            source_class: None,
+        })
+        .collect::<Vec<_>>();
+        index
+            .add_documents(&docs, crate::MINIMUM_LEXICAL_WRITER_BYTES)
+            .unwrap();
+        let hits = index
+            .search_scoped(
+                "marker",
+                10,
+                &[],
+                None,
+                Some(std::slice::from_ref(&permitted)),
+            )
+            .unwrap();
+        let refs = hits
+            .into_iter()
+            .filter_map(|h| h.reference)
+            .collect::<Vec<_>>();
+        assert!(refs.contains(&permitted));
+        assert!(refs.contains(&memory));
+        assert!(!refs.contains(&private));
+        let denied = index
+            .search_scoped(
+                "marker",
+                1,
+                &["social_relation", "language_convention"],
+                None,
+                Some(&[]),
+            )
+            .unwrap();
+        assert!(denied.is_empty());
+        let bounded = index
+            .search_authorized("marker", 1, &[], Some(std::slice::from_ref(&permitted)))
+            .unwrap();
+        assert_eq!(bounded[0].reference, Some(permitted));
+    }
 
     #[test]
     fn natural_language_is_literal_not_search_syntax() {

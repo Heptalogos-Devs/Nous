@@ -58,6 +58,10 @@ macro_rules! uuid_id {
 }
 
 uuid_id!(SubjectId);
+uuid_id!(SocialRelationId);
+uuid_id!(SocialRelationRevisionId);
+uuid_id!(LanguageConventionId);
+uuid_id!(LanguageConventionRevisionId);
 uuid_id!(SelfFacetId);
 uuid_id!(SelfFacetRevisionId);
 uuid_id!(NarrativeThreadId);
@@ -229,6 +233,7 @@ pub enum CapabilityOperation {
     MemoryFormationText,
     SelfFormationText,
     SelfReflectionText,
+    SubjectReflectionText,
     MemoryConsolidationText,
     ConceptMaintenanceText,
     EpisodeSegmentationText,

@@ -1,0 +1,109 @@
+// Copyright 2026 Aravine Zhu
+// SPDX-License-Identifier: Apache-2.0
+syntax = "proto3";
+package nous.wave.v1alpha1;
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "nous/wave/v1alpha1/types.proto";
+import "nous/wave/v1alpha1/presentation.proto";
+
+message SocialScope {
+ string description = 1;
+ repeated string entities = 2 [(reference_kind) = "entity"];
+ optional string group = 3 [(reference_kind) = "entity"];
+ optional string channel = 4;
+ optional string conversation = 5;
+ optional string work_context = 6 [(reference_kind) = "work_context"];
+ optional string domain = 7;
+}
+message SocialJudgment { string state = 1; string explanation = 2; optional double estimate = 3; optional string estimate_method = 4; }
+message RelationDegree { oneof degree { string ordinal = 1; double affinity = 2; string state = 3; } }
+message SocialRelationContent {
+ string from = 1 [(reference_kind) = "entity"];
+ string to = 2 [(reference_kind) = "entity"];
+ string relation_type = 3;
+ RelationDegree degree = 4;
+ bool symmetric = 5;
+ SocialScope scope = 6;
+ string statement = 7;
+ SocialJudgment judgment = 8;
+ repeated string coordination_expectations = 9;
+ repeated RevisionBasis basis = 10;
+ TemporalExtent valid_time = 11;
+ ProducerSignature producer = 12;
+ optional string role = 13;
+}
+message LanguageConventionContent {
+ string expression = 1;
+ repeated string variants = 2;
+ bool case_insensitive = 3;
+ string meaning = 4;
+ optional string referent = 5 [(reference_kind) = "entity"];
+ SocialScope scope = 6;
+ string pragmatic_use = 7;
+ SocialJudgment judgment = 8;
+ repeated RevisionBasis basis = 9;
+ TemporalExtent valid_time = 10;
+ ProducerSignature producer = 11;
+}
+message SocialContent { oneof content { SocialRelationContent relation = 1; LanguageConventionContent convention = 2; } }
+message SocialEvidence { string role = 1; RevisionBasis basis = 2; google.protobuf.Timestamp recorded_at = 3; }
+message SocialRecord {
+  CognitiveRef reference = 1;
+  CognitiveRef object_ref = 2;
+  string subject_id = 3 [(reference_kind) = "subject"];
+  string current_revision_id = 4;
+  int64 object_epoch = 5;
+  int32 revision_no = 6;
+  optional string parent_revision_id = 7;
+  string reason = 8;
+  SocialContent content = 9;
+  string acceptance_state = 10;
+  string integrity_state = 11;
+  string suppression_state = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp formed_at = 14;
+  google.protobuf.Timestamp recorded_at = 15;
+  repeated SocialEvidence evidence = 16;
+}
+message AdoptSocialRequest {string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; SocialContent content = 3; string reason = 4;}
+message ReviseSocialRequest {string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; CognitiveRef target_revision = 3; int64 expected_object_epoch = 4; SocialContent content = 5; string reason = 6;}
+message AddSocialEvidenceRequest {string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; CognitiveRef target_revision = 3; int64 expected_object_epoch = 4; string role = 5; RevisionBasis basis = 6;}
+message SocialListRequest {string subject_id = 1 [(reference_kind) = "subject"]; string family = 2; Page page = 3;}
+message SocialHistoryRequest {string subject_id = 1 [(reference_kind) = "subject"]; CognitiveRef object_ref = 2; Page page = 3;}
+message SocialListResponse {repeated SocialRecord items = 1; string next_page_token = 2;}
+message SocialMutationRequest {string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; CognitiveRef object_ref = 3; int64 expected_object_epoch = 4;}
+message SocialLifecycleRequest {SocialMutationRequest mutation = 1; string action = 2;}
+message SocialSelectionRequest {
+ string subject_id = 1 [(reference_kind) = "subject"];
+ SocialScope scope = 2;
+ SourceReadScope source_read = 3;
+ uint32 max_items = 4;
+ uint32 max_bytes = 5;
+ optional string after = 6;
+ optional string expression = 7;
+ optional string endpoint = 8 [(reference_kind) = "entity"];
+ google.protobuf.Timestamp at = 9;
+}
+message SocialSelectionResponse { repeated SocialRecord items = 1; optional string next = 2; bool omitted = 3; }
+message SocialPairRequest { SocialSelectionRequest selection = 1; string from = 2 [(reference_kind) = "entity"]; string to = 3 [(reference_kind) = "entity"]; }
+message RelationInverseView { string role = 1; SocialRecord record = 2; }
+message RelationDirection { string from = 1 [(reference_kind) = "entity"]; string to = 2 [(reference_kind) = "entity"]; repeated SocialRecord records = 3; bool unknown = 4; repeated RelationInverseView inverse_views = 5; }
+message SocialPairResponse { RelationDirection forward = 1; RelationDirection reverse = 2; bool omitted = 3; optional string next = 4; }
+message ResolveConventionsRequest { SocialSelectionRequest selection = 1; string original = 2; string consumption = 3; }
+message ResolveConventionsResponse { string original = 1; string consumption = 2; repeated SocialRecord candidates = 3; bool conflicts = 4; bool omitted = 5; optional string next = 6; string explanation = 7; }
+service SocialService {
+  rpc Pair(SocialPairRequest) returns (SocialPairResponse);
+  rpc Neighborhood(SocialSelectionRequest) returns (SocialSelectionResponse);
+  rpc ResolveConventions(ResolveConventionsRequest) returns (ResolveConventionsResponse);
+  rpc Select(SocialSelectionRequest) returns (SocialSelectionResponse);
+  rpc Adopt(AdoptSocialRequest) returns (SocialRecord) {option idempotency_level = IDEMPOTENT;}
+  rpc Revise(ReviseSocialRequest) returns (SocialRecord) {option idempotency_level = IDEMPOTENT;}
+  rpc AddEvidence(AddSocialEvidenceRequest) returns (SocialRecord) {option idempotency_level = IDEMPOTENT;}
+  rpc Get(ObjectRequest) returns (SocialRecord);
+  rpc GetRevision(ObjectRequest) returns (SocialRecord);
+  rpc List(SocialListRequest) returns (SocialListResponse);
+  rpc ListRevisions(SocialHistoryRequest) returns (SocialListResponse);
+  rpc SetLifecycle(SocialLifecycleRequest) returns (SocialRecord) {option idempotency_level = IDEMPOTENT;}
+  rpc Purge(SocialMutationRequest) returns (google.protobuf.Empty) {option idempotency_level = IDEMPOTENT;}
+}

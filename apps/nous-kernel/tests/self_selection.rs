@@ -19,6 +19,7 @@ async fn subject_with_basis(runtime: &NousRuntime) -> (SubjectId, RevisionBasis)
             capabilities: Some(nous_subject::SubjectCapabilities {
                 memory: false,
                 self_cognition: true,
+                social_cognition: false,
             }),
             cognitive_seed: Some(nous_subject::CognitiveSeedInput {
                 text: "schema_version = 1".into(),
@@ -107,6 +108,7 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
         purpose: "expression".into(),
         conversation: "test".into(),
         entities: vec![],
+        ..Default::default()
     };
     let one = service
         .automatic_context(subject, request(&scope, 1))

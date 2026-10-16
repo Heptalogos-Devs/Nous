@@ -70,6 +70,28 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
         ConfigSemanticEffect::SubjectProvisioning,
         bool_validator,
     )?;
+    registry.register(
+        PROCESS_SOCIAL,
+        "configuration-service",
+        "Whether the process provides Social cognition.",
+        true,
+        ConfigExposure::Developer,
+        ConfigScopePolicy::SystemOnly,
+        ConfigApplyMode::RestartProcess,
+        ConfigSemanticEffect::Operational,
+        bool_validator,
+    )?;
+    registry.register(
+        SUBJECT_DEFAULT_SOCIAL,
+        "configuration-service",
+        "Default Social capability for new Subjects.",
+        false,
+        ConfigExposure::Developer,
+        ConfigScopePolicy::SystemOnly,
+        ConfigApplyMode::NewSubjectsOnly,
+        ConfigSemanticEffect::SubjectProvisioning,
+        bool_validator,
+    )?;
     Ok(())
 }
 

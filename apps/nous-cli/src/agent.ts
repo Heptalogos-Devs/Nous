@@ -92,6 +92,18 @@ export const commandInventory = {
   commands: [
     {
       command:
+        "social list|select|pair|neighborhood|resolve|adopt|get|revision|history|revise|evidence|suppress|restore|withdraw|reaccept|purge",
+      parameters: [
+        "[typed SocialRelation/LanguageConvention object or exact revision reference]",
+        "adopt/revise --request-file <SocialContent TOML> --text <reason>",
+        "select/neighborhood --request-file <SocialSelectionRequest TOML with trusted source_read and scope>",
+        "pair/resolve --request-file <SocialPairRequest/ResolveConventionsRequest TOML>",
+        "evidence --request-file <AddSocialEvidenceRequest TOML with role and basis>",
+        "--expected-object-epoch <epoch>; --operation-id <stable retry id>",
+      ],
+    },
+    {
+      command:
         "self list|soul|interpret|interpret-seed|adopt|get|revision|history|revise|evidence|suppress|restore|withdraw|reaccept|purge",
       parameters: [
         "[typed SelfFacet/NarrativeThread object or exact revision reference]",

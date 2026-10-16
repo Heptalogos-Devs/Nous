@@ -332,10 +332,12 @@ pub(crate) async fn sources_in(
                 .await?
                 .0;
         sources.extend(self_sources(tx, subject, None, Some(view)).await?);
+        sources.extend(social_sources(tx, subject, None, Some(view)).await?);
         return Ok(sources);
     }
     let mut sources = material_sources(tx, subject, None).await?;
     sources.extend(self_sources(tx, subject, None, None).await?);
+    sources.extend(social_sources(tx, subject, None, None).await?);
     if memory_enabled {
         sources.extend(memory_sources(tx, subject, None).await?);
         sources.extend(longitudinal_sources(tx, subject, budget, None).await?);
@@ -410,6 +412,78 @@ pub(crate) async fn self_sources(
                 value["valid_time"]
             )
         };
+        let entities = value["scope"]["entities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect();
+        sources.push(TextProjectionSource {
+            reference,
+            text: Some(text),
+            member_fragments: Vec::new(),
+            title: value["theme"]
+                .as_str()
+                .or(value["kind"].as_str())
+                .map(str::to_owned),
+            source_class: None,
+            entity_refs: entities,
+            tag_ids: Vec::new(),
+            schema_ids: Vec::new(),
+        });
+    }
+    Ok(sources)
+}
+
+pub(crate) async fn social_sources(
+    tx: &mut Transaction<'_, Postgres>,
+    subject: SubjectId,
+    references: Option<&[CognitiveRef]>,
+    view: Option<&HistoricalAuthoritySnapshot>,
+) -> Result<Vec<TextProjectionSource>> {
+    let selected = view.map(|v| {
+        v.cognition
+            .iter()
+            .filter(|s| s.object.domain() == CognitiveDomain::SocialCognition)
+            .flat_map(|s| s.revisions.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let ids = if let Some(selected) = &selected {
+        Some(
+            selected
+                .iter()
+                .filter(|r| references.is_none_or(|refs| refs.contains(r)))
+                .filter_map(CognitiveRef::uuid)
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        references.map(|refs| {
+            refs.iter()
+                .filter(|r| r.domain() == CognitiveDomain::SocialCognition)
+                .filter_map(CognitiveRef::uuid)
+                .collect()
+        })
+    };
+    let rows=sqlx::query("SELECT o.family,r.revision_id,r.content FROM social_objects o JOIN social_revisions r USING(object_id) JOIN subject_capabilities c ON c.subject_id=o.subject_id WHERE o.subject_id=$1 AND c.social_cognition AND o.acceptance_state='accepted' AND o.integrity_state='valid' AND o.suppression_state='normal' AND (($2::uuid[] IS NULL AND r.revision_id=o.current_revision_id) OR r.revision_id=ANY($2)) ORDER BY r.revision_id").bind(subject.0).bind(ids).fetch_all(&mut **tx).await.map_err(db)?;
+    let mut sources = Vec::new();
+    for row in rows {
+        let family: String = row.try_get("family").map_err(db)?;
+        let id: Uuid = row.try_get("revision_id").map_err(db)?;
+        let reference = parse_reference(&format!("{family}_revision"), &id.to_string())?;
+        if view.is_some_and(|v| {
+            v.cognition_for(&reference).is_none_or(|s| {
+                s.state["acceptance_state"] != "accepted"
+                    || s.state["integrity_state"] != "valid"
+                    || s.state["suppression_state"] != "normal"
+            })
+        }) {
+            continue;
+        }
+        let content: serde_json::Value = row.try_get("content").map_err(db)?;
+        let value = &content["value"];
+        let text = serde_json::to_string_pretty(&content)
+            .map_err(|e| Error::Infrastructure(e.to_string()))?;
         let entities = value["scope"]["entities"]
             .as_array()
             .into_iter()

@@ -114,11 +114,12 @@ impl SubjectCoreService {
             .await
             .map_err(nous_persistence::database_error)?;
         sqlx::query(
-            "INSERT INTO subject_capabilities(subject_id,memory,self_cognition) VALUES($1,$2,$3)",
+            "INSERT INTO subject_capabilities(subject_id,memory,self_cognition,social_cognition) VALUES($1,$2,$3,$4)",
         )
         .bind(subject.0)
         .bind(capabilities.memory)
         .bind(capabilities.self_cognition)
+        .bind(capabilities.social_cognition)
         .execute(&mut *tx)
         .await
         .map_err(nous_persistence::database_error)?;
@@ -172,7 +173,7 @@ impl SubjectCoreService {
     }
 
     pub async fn subject(&self, subject: SubjectId) -> Result<SubjectView> {
-        let row = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory,c.self_cognition FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE s.subject_id=$1")
+        let row = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory,c.self_cognition,c.social_cognition FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE s.subject_id=$1")
             .bind(subject.0).fetch_optional(self.store.pool()).await
             .map_err(nous_persistence::database_error)?
             .ok_or_else(|| Error::NotFound("subject not found".into()))?;
@@ -185,7 +186,7 @@ impl SubjectCoreService {
         limit: i64,
         after: Option<uuid::Uuid>,
     ) -> Result<(Vec<SubjectView>, bool)> {
-        let mut rows = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory,c.self_cognition FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE ($1::uuid IS NULL OR s.subject_id>$1) AND ($2='' OR s.status=$2) ORDER BY s.subject_id LIMIT $3")
+        let mut rows = sqlx::query("SELECT s.subject_id,s.created_at,s.authority_seq,s.status,s.metadata,c.memory,c.self_cognition,c.social_cognition FROM subjects s JOIN subject_capabilities c USING(subject_id) WHERE ($1::uuid IS NULL OR s.subject_id>$1) AND ($2='' OR s.status=$2) ORDER BY s.subject_id LIMIT $3")
             .bind(after).bind(status).bind(limit+1).fetch_all(self.store.pool()).await.map_err(nous_persistence::database_error)?;
         let more = rows.len() > limit as usize;
         rows.truncate(limit as usize);
@@ -217,6 +218,9 @@ fn decode_subject(row: sqlx::postgres::PgRow) -> Result<SubjectView> {
             .try_get("metadata")
             .map_err(nous_persistence::database_error)?,
         capabilities: SubjectCapabilities {
+            social_cognition: row
+                .try_get("social_cognition")
+                .map_err(nous_persistence::database_error)?,
             self_cognition: row
                 .try_get("self_cognition")
                 .map_err(nous_persistence::database_error)?,
@@ -254,7 +258,7 @@ impl SubjectCoreService {
             nous_persistence::MutationStart::Replay(_) => return self.subject(subject).await,
             nous_persistence::MutationStart::Active(m) => m,
         };
-        let changed=sqlx::query("UPDATE subject_capabilities SET memory=memory OR $2,self_cognition=self_cognition OR $3 WHERE subject_id=$1 AND (($2 AND NOT memory) OR ($3 AND NOT self_cognition))").bind(subject.0).bind(requested.memory).bind(requested.self_cognition).execute(&mut **mutation.tx()).await.map_err(nous_persistence::database_error)?.rows_affected();
+        let changed=sqlx::query("UPDATE subject_capabilities SET memory=memory OR $2,self_cognition=self_cognition OR $3,social_cognition=social_cognition OR $4 WHERE subject_id=$1 AND (($2 AND NOT memory) OR ($3 AND NOT self_cognition) OR ($4 AND NOT social_cognition))").bind(subject.0).bind(requested.memory).bind(requested.self_cognition).bind(requested.social_cognition).execute(&mut **mutation.tx()).await.map_err(nous_persistence::database_error)?.rows_affected();
         if changed > 0 {
             mutation
                 .invalidate(nous_persistence::ProjectionInvalidation::all())

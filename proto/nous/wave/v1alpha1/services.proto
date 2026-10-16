@@ -5,6 +5,7 @@ syntax = "proto3";
 package nous.wave.v1alpha1;
 import "nous/wave/v1alpha1/journal.proto";
 import "nous/wave/v1alpha1/self.proto";
+import "nous/wave/v1alpha1/social.proto";
 import "nous/wave/v1alpha1/presentation.proto";
 import "google/protobuf/empty.proto";
 import "nous/wave/v1alpha1/management.proto";
@@ -36,7 +37,7 @@ service CognitionService {
   rpc BuildManagedContext(ManagedContextRequest) returns (ManagedContextResponse);
 }
 message CognitionTraceRequest { string subject_id = 1 [(reference_kind) = "subject"]; CognitiveRef reference = 2; uint32 max_nodes = 3; uint32 max_bytes = 4; }
-message CognitionTraceNode { CognitiveRef reference = 1; oneof content { Memory memory = 2; CognitiveSchema schema = 3; EpisodeRevision episode = 4; JournalRevision journal = 5; SelfRecord self_record = 6; CognitiveSeedVersion seed = 7; } }
+message CognitionTraceNode { CognitiveRef reference = 1; oneof content { Memory memory = 2; CognitiveSchema schema = 3; EpisodeRevision episode = 4; JournalRevision journal = 5; SelfRecord self_record = 6; CognitiveSeedVersion seed = 7; SocialRecord social_record = 8; } }
 message CognitionTrace { CognitiveRef reference = 1; repeated CognitionTraceNode nodes = 2; MaterialLineage lineage = 3; repeated ProducerSignature producers = 4; bool truncated = 5; }
 service MemoryService {
   rpc GetJournal(ObjectRequest) returns (JournalResponse);

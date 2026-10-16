@@ -2012,6 +2012,7 @@ dependencies = [
  "nous-retrieval",
  "nous-runtime",
  "nous-self",
+ "nous-social",
  "nous-subject",
  "postgresql_embedded",
  "prost",
@@ -2163,6 +2164,24 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "uuid",
+]
+
+[[package]]
+name = "nous-social"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "nous-core",
+ "nous-material",
+ "nous-object-store",
+ "nous-persistence",
+ "nous-runtime",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "unicode-normalization",
  "uuid",
 ]
 

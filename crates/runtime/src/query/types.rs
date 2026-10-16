@@ -12,6 +12,7 @@ use uuid::Uuid;
 /// the enabled lane set or its budgets while it is running.
 #[derive(Debug, Clone)]
 pub struct BoundQuery {
+    pub social_authorized_refs: Vec<CognitiveRef>,
     pub context_snapshot: std::sync::Arc<super::QueryContextSnapshot>,
     pub historical_authority: Option<std::sync::Arc<HistoricalAuthoritySnapshot>>,
     pub activation: super::QueryActivation,

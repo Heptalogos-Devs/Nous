@@ -383,12 +383,21 @@ pub struct CognitiveSeed {
     #[prost(message, optional, tag="3")]
     pub provenance: ::core::option::Option<::prost_types::Struct>,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SourceReadScope {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="2")]
+    pub source_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubjectCapabilities {
     #[prost(bool, tag="1")]
     pub memory: bool,
     #[prost(bool, tag="2")]
     pub self_cognition: bool,
+    #[prost(bool, tag="3")]
+    pub social_cognition: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Subject {
@@ -781,6 +790,8 @@ pub struct QueryRequest {
     pub situation: ::core::option::Option<QuerySituation>,
     #[prost(message, optional, tag="8")]
     pub capabilities: ::core::option::Option<QueryCapabilities>,
+    #[prost(message, optional, tag="9")]
+    pub usage: ::core::option::Option<CognitionUsage>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PreparedQueryResponse {
@@ -1560,6 +1571,10 @@ pub struct CognitionAudience {
     pub recipient_entity_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, tag="3")]
     pub visibility: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="4")]
+    pub group_entity_ref: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="5")]
+    pub channel_ref: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CognitionUsage {
@@ -1575,6 +1590,10 @@ pub struct CognitionUsage {
     pub participants: ::prost::alloc::vec::Vec<CognitionParticipant>,
     #[prost(message, optional, tag="6")]
     pub audience: ::core::option::Option<CognitionAudience>,
+    #[prost(message, optional, tag="7")]
+    pub source_read: ::core::option::Option<SourceReadScope>,
+    #[prost(string, optional, tag="8")]
+    pub social_domain: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProjectionRequest {
@@ -1606,6 +1625,8 @@ pub struct ProjectionRequest {
     pub usage: ::core::option::Option<CognitionUsage>,
     #[prost(string, tag="14")]
     pub self_requirement: ::prost::alloc::string::String,
+    #[prost(string, tag="15")]
+    pub social_requirement: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ContextSegment {
@@ -3142,6 +3163,344 @@ pub struct InterpretSelfResponse {
     pub degradation: ::prost::alloc::vec::Vec<Degradation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SocialScope {
+    #[prost(string, tag="1")]
+    pub description: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="2")]
+    pub entities: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="3")]
+    pub group: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="4")]
+    pub channel: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="5")]
+    pub conversation: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="6")]
+    pub work_context: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="7")]
+    pub domain: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SocialJudgment {
+    #[prost(string, tag="1")]
+    pub state: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub explanation: ::prost::alloc::string::String,
+    #[prost(double, optional, tag="3")]
+    pub estimate: ::core::option::Option<f64>,
+    #[prost(string, optional, tag="4")]
+    pub estimate_method: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RelationDegree {
+    #[prost(oneof="relation_degree::Degree", tags="1, 2, 3")]
+    pub degree: ::core::option::Option<relation_degree::Degree>,
+}
+/// Nested message and enum types in `RelationDegree`.
+pub mod relation_degree {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Degree {
+        #[prost(string, tag="1")]
+        Ordinal(::prost::alloc::string::String),
+        #[prost(double, tag="2")]
+        Affinity(f64),
+        #[prost(string, tag="3")]
+        State(::prost::alloc::string::String),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SocialRelationContent {
+    #[prost(string, tag="1")]
+    pub from: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub to: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub relation_type: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="4")]
+    pub degree: ::core::option::Option<RelationDegree>,
+    #[prost(bool, tag="5")]
+    pub symmetric: bool,
+    #[prost(message, optional, tag="6")]
+    pub scope: ::core::option::Option<SocialScope>,
+    #[prost(string, tag="7")]
+    pub statement: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="8")]
+    pub judgment: ::core::option::Option<SocialJudgment>,
+    #[prost(string, repeated, tag="9")]
+    pub coordination_expectations: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag="10")]
+    pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
+    #[prost(message, optional, tag="11")]
+    pub valid_time: ::core::option::Option<TemporalExtent>,
+    #[prost(message, optional, tag="12")]
+    pub producer: ::core::option::Option<ProducerSignature>,
+    #[prost(string, optional, tag="13")]
+    pub role: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LanguageConventionContent {
+    #[prost(string, tag="1")]
+    pub expression: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="2")]
+    pub variants: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(bool, tag="3")]
+    pub case_insensitive: bool,
+    #[prost(string, tag="4")]
+    pub meaning: ::prost::alloc::string::String,
+    #[prost(string, optional, tag="5")]
+    pub referent: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="6")]
+    pub scope: ::core::option::Option<SocialScope>,
+    #[prost(string, tag="7")]
+    pub pragmatic_use: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="8")]
+    pub judgment: ::core::option::Option<SocialJudgment>,
+    #[prost(message, repeated, tag="9")]
+    pub basis: ::prost::alloc::vec::Vec<RevisionBasis>,
+    #[prost(message, optional, tag="10")]
+    pub valid_time: ::core::option::Option<TemporalExtent>,
+    #[prost(message, optional, tag="11")]
+    pub producer: ::core::option::Option<ProducerSignature>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SocialContent {
+    #[prost(oneof="social_content::Content", tags="1, 2")]
+    pub content: ::core::option::Option<social_content::Content>,
+}
+/// Nested message and enum types in `SocialContent`.
+pub mod social_content {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Content {
+        #[prost(message, tag="1")]
+        Relation(super::SocialRelationContent),
+        #[prost(message, tag="2")]
+        Convention(super::LanguageConventionContent),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SocialEvidence {
+    #[prost(string, tag="1")]
+    pub role: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub basis: ::core::option::Option<RevisionBasis>,
+    #[prost(message, optional, tag="3")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SocialRecord {
+    #[prost(message, optional, tag="1")]
+    pub reference: ::core::option::Option<CognitiveRef>,
+    #[prost(message, optional, tag="2")]
+    pub object_ref: ::core::option::Option<CognitiveRef>,
+    #[prost(string, tag="3")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub current_revision_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="5")]
+    pub object_epoch: i64,
+    #[prost(int32, tag="6")]
+    pub revision_no: i32,
+    #[prost(string, optional, tag="7")]
+    pub parent_revision_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag="8")]
+    pub reason: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="9")]
+    pub content: ::core::option::Option<SocialContent>,
+    #[prost(string, tag="10")]
+    pub acceptance_state: ::prost::alloc::string::String,
+    #[prost(string, tag="11")]
+    pub integrity_state: ::prost::alloc::string::String,
+    #[prost(string, tag="12")]
+    pub suppression_state: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="13")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="14")]
+    pub formed_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="15")]
+    pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, repeated, tag="16")]
+    pub evidence: ::prost::alloc::vec::Vec<SocialEvidence>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdoptSocialRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub content: ::core::option::Option<SocialContent>,
+    #[prost(string, tag="4")]
+    pub reason: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReviseSocialRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub target_revision: ::core::option::Option<CognitiveRef>,
+    #[prost(int64, tag="4")]
+    pub expected_object_epoch: i64,
+    #[prost(message, optional, tag="5")]
+    pub content: ::core::option::Option<SocialContent>,
+    #[prost(string, tag="6")]
+    pub reason: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AddSocialEvidenceRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub target_revision: ::core::option::Option<CognitiveRef>,
+    #[prost(int64, tag="4")]
+    pub expected_object_epoch: i64,
+    #[prost(string, tag="5")]
+    pub role: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="6")]
+    pub basis: ::core::option::Option<RevisionBasis>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SocialListRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub family: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub page: ::core::option::Option<Page>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SocialHistoryRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub object_ref: ::core::option::Option<CognitiveRef>,
+    #[prost(message, optional, tag="3")]
+    pub page: ::core::option::Option<Page>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SocialListResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<SocialRecord>,
+    #[prost(string, tag="2")]
+    pub next_page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SocialMutationRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub object_ref: ::core::option::Option<CognitiveRef>,
+    #[prost(int64, tag="4")]
+    pub expected_object_epoch: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SocialLifecycleRequest {
+    #[prost(message, optional, tag="1")]
+    pub mutation: ::core::option::Option<SocialMutationRequest>,
+    #[prost(string, tag="2")]
+    pub action: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SocialSelectionRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub scope: ::core::option::Option<SocialScope>,
+    #[prost(message, optional, tag="3")]
+    pub source_read: ::core::option::Option<SourceReadScope>,
+    #[prost(uint32, tag="4")]
+    pub max_items: u32,
+    #[prost(uint32, tag="5")]
+    pub max_bytes: u32,
+    #[prost(string, optional, tag="6")]
+    pub after: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="7")]
+    pub expression: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="8")]
+    pub endpoint: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="9")]
+    pub at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SocialSelectionResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<SocialRecord>,
+    #[prost(string, optional, tag="2")]
+    pub next: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag="3")]
+    pub omitted: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SocialPairRequest {
+    #[prost(message, optional, tag="1")]
+    pub selection: ::core::option::Option<SocialSelectionRequest>,
+    #[prost(string, tag="2")]
+    pub from: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub to: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RelationInverseView {
+    #[prost(string, tag="1")]
+    pub role: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub record: ::core::option::Option<SocialRecord>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RelationDirection {
+    #[prost(string, tag="1")]
+    pub from: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub to: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="3")]
+    pub records: ::prost::alloc::vec::Vec<SocialRecord>,
+    #[prost(bool, tag="4")]
+    pub unknown: bool,
+    #[prost(message, repeated, tag="5")]
+    pub inverse_views: ::prost::alloc::vec::Vec<RelationInverseView>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SocialPairResponse {
+    #[prost(message, optional, tag="1")]
+    pub forward: ::core::option::Option<RelationDirection>,
+    #[prost(message, optional, tag="2")]
+    pub reverse: ::core::option::Option<RelationDirection>,
+    #[prost(bool, tag="3")]
+    pub omitted: bool,
+    #[prost(string, optional, tag="4")]
+    pub next: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResolveConventionsRequest {
+    #[prost(message, optional, tag="1")]
+    pub selection: ::core::option::Option<SocialSelectionRequest>,
+    #[prost(string, tag="2")]
+    pub original: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub consumption: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResolveConventionsResponse {
+    #[prost(string, tag="1")]
+    pub original: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub consumption: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="3")]
+    pub candidates: ::prost::alloc::vec::Vec<SocialRecord>,
+    #[prost(bool, tag="4")]
+    pub conflicts: bool,
+    #[prost(bool, tag="5")]
+    pub omitted: bool,
+    #[prost(string, optional, tag="6")]
+    pub next: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag="7")]
+    pub explanation: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CognitionTraceRequest {
     #[prost(string, tag="1")]
     pub subject_id: ::prost::alloc::string::String,
@@ -3156,7 +3515,7 @@ pub struct CognitionTraceRequest {
 pub struct CognitionTraceNode {
     #[prost(message, optional, tag="1")]
     pub reference: ::core::option::Option<CognitiveRef>,
-    #[prost(oneof="cognition_trace_node::Content", tags="2, 3, 4, 5, 6, 7")]
+    #[prost(oneof="cognition_trace_node::Content", tags="2, 3, 4, 5, 6, 7, 8")]
     pub content: ::core::option::Option<cognition_trace_node::Content>,
 }
 /// Nested message and enum types in `CognitionTraceNode`.
@@ -3175,6 +3534,8 @@ pub mod cognition_trace_node {
         SelfRecord(super::SelfRecord),
         #[prost(message, tag="7")]
         Seed(super::CognitiveSeedVersion),
+        #[prost(message, tag="8")]
+        SocialRecord(super::SocialRecord),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]

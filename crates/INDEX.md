@@ -19,6 +19,7 @@
 `crates/protocol/src/generated/` is derived output. Change canonical `.proto` sources and regenerate.
 
 - [Self owner](self/README.md)
+- [Social owner](social/README.md)
 
 ## 修改一项功能时的模块入口
 
