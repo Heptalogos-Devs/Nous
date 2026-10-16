@@ -193,3 +193,5 @@ Memory、Schema、Episode、Journal 的修订和 lifecycle 可用 `--expected-ob
 `trace <精确认知修订> --max-nodes 64 --max-bytes 65536` 返回认知依赖节点、材料来源 DAG 和实际 producers。统一调用 `client.cognition.trace`，由 Kernel 组合各认知 owner 和 Material 来源；包含 Self 与 exact Seed 原文，不由 CLI 逐节点编排 RPC。节点和正文预算共享于本次 trace；`truncated` 表示边界内未返回全部来源。
 
 `serving clean --subject <Subject>` 直接回收过期 Serving 制品；返回 reclaimed、bytesReclaimed、readersActive 和 orphanDirectories，保护 current、research-pinned 和在用制品。`schema list|history`、`tag history`、`association get|list` 提供完整 owner 读取与既有分页；history 对显式对象返回其修订，当前对象状态与 get 保持一致。
+
+普通 MCP 只开放带可信来源范围的 Query / PrepareQuery / ReadSources / ManagedContext 与系统就绪状态。启动时由 operator 通过 `--source-scope-file <CognitionUsage.json>` 提供同 Subject 的 canonical usage；工具参数不能更改来源许可。`show` / `read` 在该连接转为正式 `ReadSources`，不会调用管理体 getter。没有 scope 时拒绝；recordObservation、derive、embedding、Runtime mutation、管理 get/list/trace 等均不在普通连接开放。独立 `--management` 连接与认证 SDK 的原管理读写保留。

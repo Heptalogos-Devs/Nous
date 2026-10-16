@@ -21,6 +21,7 @@ fn unordered_membership_and_independent_evidence_preserve_mass_and_roots() {
     let ai = ids.id(&a).unwrap();
     let bi = ids.id(&b).unwrap();
     let edge = WaveEdgeEvidence {
+        source_refs: Vec::new(),
         from: a.clone(),
         to: b.clone(),
         basis_class: "source_evidence".into(),

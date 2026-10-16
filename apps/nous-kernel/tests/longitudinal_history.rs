@@ -431,6 +431,8 @@ async fn assert_synopsis_policy(rt: &NousRuntime, subject: nous_core::SubjectId)
 fn media_episode_query(subject: nous_core::SubjectId, text: &str) -> nous_core::CognitiveQuery {
     use nous_core::{CognitiveQuery, CognitiveQueryExpr, Cue, TextCue};
     let mut query = CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         projection: Default::default(),
         temporal_frame: Default::default(),
 

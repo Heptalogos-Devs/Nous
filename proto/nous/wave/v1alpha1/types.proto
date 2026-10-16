@@ -15,7 +15,7 @@ message SubjectRequest { string subject_id = 1 [(reference_kind) = "subject"]; }
 message ObjectRequest { string subject_id = 1 [(reference_kind) = "subject"]; string id = 2; }
 message ListRequest { string subject_id = 1 [(reference_kind) = "subject"]; Page page = 2; string status = 3; }
 message CognitiveSeed { string text = 1; string format = 2; google.protobuf.Struct provenance = 3; }
-message SourceReadScope { string subject_id = 1 [(reference_kind) = "subject"]; repeated CognitiveRef source_refs = 2; }
+message SourceReadScope { string subject_id = 1 [(reference_kind) = "subject"]; repeated CognitiveRef source_refs = 2; repeated string origin_conversation_refs = 3; }
 message SubjectCapabilities { bool memory = 1; bool self_cognition = 2; bool social_cognition = 3; }
 message Subject { string subject_id = 1 [(reference_kind) = "subject"]; google.protobuf.Timestamp created_at = 2; int64 authority_seq = 3; string status = 4; google.protobuf.Struct metadata = 5; SubjectCapabilities capabilities = 6; }
 message CreateSubjectRequest { optional string subject_id = 1 [(reference_kind) = "subject"]; CognitiveSeed cognitive_seed = 2; google.protobuf.Struct metadata = 3; string operation_id = 4; SubjectCapabilities capabilities = 5; }
@@ -349,3 +349,7 @@ message ListEpisodeRevisionsRequest { string subject_id = 1 [(reference_kind) = 
 message EpisodeResponse { Episode episode = 1; repeated Degradation degradation = 2; }
 message ListEpisodesResponse { repeated Episode items = 1; string next_page_token = 2; }
 message ListEpisodeRevisionsResponse { repeated EpisodeRevision items = 1; string next_page_token = 2; }
+
+// Bounded source-scoped body/support read, never an authorization grant from model input.
+message ReadSourcesRequest {string subject_id=1 [(reference_kind)="subject"]; CognitionUsage usage=2; repeated CognitiveRef references=3; uint32 max_text_bytes=4; optional string work_context_id=5 [(reference_kind)="work_context"];}
+message ReadSourcesResponse {repeated ContextSegment items=1; repeated Degradation degradation=2;}

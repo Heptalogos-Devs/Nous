@@ -110,6 +110,8 @@ pub fn vcp_candidate_curve(
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VcpEvidenceContribution {
+    #[serde(default)]
+    pub source_refs: Vec<CognitiveRef>,
     pub source_id: i64,
     pub target_id: i64,
     pub provenance_root: Option<String>,
@@ -155,6 +157,17 @@ pub fn vcp_evidence_contributions(
             )| VcpEvidenceContribution {
                 source_id,
                 target_id,
+                source_refs: edges
+                    .iter()
+                    .filter(|e| {
+                        ids.id(&e.from).ok() == Some(source_id)
+                            && ids.id(&e.to).ok() == Some(target_id)
+                            && e.provenance_root == provenance_root
+                            && e.basis_class == basis_class
+                            && e.association_kind == association_kind
+                    })
+                    .flat_map(|e| e.source_refs.clone())
+                    .collect(),
                 provenance_root,
                 basis_class,
                 association_kind,

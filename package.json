@@ -52,6 +52,7 @@
     "client:pack": "tsx scripts/release/client.ts",
     "client:verify": "tsx scripts/release/verify-client.ts",
     "smoke:client": "tsx scripts/smoke/client.ts",
+    "smoke:source-read": "tsx scripts/smoke/source-read.ts",
     "smoke:subject-reflection": "tsx scripts/smoke/subject-reflection.ts",
     "smoke:social": "tsx scripts/smoke/social.ts",
     "smoke:self-selection": "tsx scripts/smoke/self-selection.ts",

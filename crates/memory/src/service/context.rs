@@ -6,6 +6,10 @@ use super::*;
 use nous_runtime::ContextSource;
 
 impl MemoryService {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "captured source authorization and bounded owner materialization stay in one read view"
+    )]
     pub async fn context_sources(
         &self,
         subject: SubjectId,
@@ -13,13 +17,29 @@ impl MemoryService {
         policy: &AccessibilityPolicy,
         now: DateTime<Utc>,
         max_bytes: usize,
+        source_read: Option<&SourceReadView>,
     ) -> Result<Vec<Result<ContextSource>>> {
         let mut tx = self.store.read_view().await?;
+        let mut admitted = Vec::new();
+        let mut indices = Vec::new();
+        for (index, reference) in references.iter().enumerate() {
+            if source_read.is_none()
+                || AuthorityStore::source_read_allowed_in(
+                    &mut tx,
+                    source_read.expect("checked read"),
+                    &reference.0,
+                )
+                .await?
+            {
+                admitted.push(reference.clone());
+                indices.push(index);
+            }
+        }
         let contents = self
             .content_in(
                 &mut tx,
                 subject,
-                references,
+                &admitted,
                 policy,
                 None,
                 now,
@@ -60,7 +80,7 @@ impl MemoryService {
                 points.entry(row.try_get("journal_revision_id").map_err(db)?).or_default().push(text);
             }
         }
-        let results = contents
+        let results: Vec<_> = contents
             .into_iter()
             .map(|content| {
                 content.and_then(|content| {
@@ -128,7 +148,17 @@ impl MemoryService {
             })
             .collect();
         tx.commit().await.map_err(db)?;
-        Ok(results)
+        let mut ordered = (0..references.len())
+            .map(|_| {
+                Err(Error::Unavailable(
+                    "source read denied (unknown/cyclic/over-budget lineage withheld)".into(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        for (index, result) in indices.into_iter().zip(results) {
+            ordered[index] = result;
+        }
+        Ok(ordered)
     }
 }
 

@@ -7,19 +7,29 @@ impl SelfService {
         subject: SubjectId,
         reference: &CognitiveRef,
         materialize: bool,
+        source_read: Option<&SourceReadView>,
     ) -> Result<nous_runtime::ContextSource> {
         if reference.domain() != CognitiveDomain::SelfCognition {
             return Err(Error::Invalid(
                 "Self contribution requires its owned reference".into(),
             ));
         }
+        self.require_enabled(subject).await?;
+        let mut tx = self.store.read_view().await?;
+        if let Some(read) = source_read
+            && !AuthorityStore::source_read_allowed_in(&mut tx, read, reference).await?
+        {
+            return Err(Error::Unavailable("Self source read denied".into()));
+        }
         let record = self
-            .get(
+            .read_in(
+                &mut tx,
                 subject,
                 reference.uuid().expect("Self UUID"),
                 reference.is_cognition_revision(),
             )
             .await?;
+        tx.commit().await.map_err(db)?;
         let actual = if reference.is_cognition_revision() {
             record.reference()
         } else {
@@ -86,6 +96,7 @@ impl SelfService {
         &self,
         subject: SubjectId,
         input: nous_runtime::AutomaticContextRequest<'_>,
+        source_read: &SourceReadView,
     ) -> Result<nous_runtime::AutomaticContext> {
         let scope = SelfScope {
             description: String::new(),
@@ -98,6 +109,7 @@ impl SelfService {
             .select(
                 subject,
                 SelfSelectionRequest {
+                    source_read: Some(source_read),
                     scope: &scope,
                     targets: &[],
                     sources: &[],

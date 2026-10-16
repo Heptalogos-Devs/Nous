@@ -3,6 +3,9 @@
 
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { fromJsonString } from "@bufbuild/protobuf";
+import { CognitionUsageSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { cliExecutor, createMcpServer } from "./mcp.js";
 
@@ -13,6 +16,7 @@ try {
       "state-root": { type: "string" },
       consumer: { type: "string" },
       management: { type: "boolean", default: false },
+      "source-scope-file": { type: "string" },
     },
   });
   if (!values["run-root"] || !values["state-root"] || !values.consumer)
@@ -24,6 +28,12 @@ try {
     stateRoot: resolve(values["state-root"]),
     consumer: values.consumer,
     management: values.management,
+    trustedUsage: values["source-scope-file"]
+      ? fromJsonString(
+          CognitionUsageSchema,
+          await readFile(resolve(values["source-scope-file"]), "utf8"),
+        )
+      : undefined,
   });
   serveStdio(() => createMcpServer(execute));
 } catch (error) {

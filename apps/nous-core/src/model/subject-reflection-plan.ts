@@ -5,6 +5,7 @@ import { TimestampSchema } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   CognitionUsageSchema,
+  SourceReadScopeSchema,
   CognitiveRefSchema,
   RevisionBasisSchema,
   MemorySchema,
@@ -139,6 +140,7 @@ export async function prepareReflectionPlan(
     scopes: ReflectionPlan["scopes"] = [],
     entities = new Map<string, string>(),
     authorized = new Map<string, CognitiveRef>();
+  const authorizedOrigins = new Set<string>();
   const sourceCatalog: unknown[] = [];
   const degradation: ReflectionPlan["degradation"] = [];
   const addRef = (r: CognitiveRef) => authorized.set(`${r.kind}:${r.value}`, r);
@@ -188,6 +190,9 @@ export async function prepareReflectionPlan(
     sources.push(...prepared.sources);
     prepared.sources.forEach(addRef);
     usage?.sourceRead?.sourceRefs.forEach(addRef);
+    usage?.sourceRead?.originConversationRefs.forEach((origin) =>
+      authorizedOrigins.add(origin),
+    );
     const entityRefs = [
       ...new Set([
         ...(source.actor ? [source.actor] : []),
@@ -284,6 +289,11 @@ export async function prepareReflectionPlan(
         sources,
         sourceText: JSON.stringify(sourceCatalog),
         source: sourceCatalog,
+        sourceRead: create(SourceReadScopeSchema, {
+          subjectId,
+          sourceRefs: [...authorized.values()],
+          originConversationRefs: [...authorizedOrigins],
+        }),
         ranked: [...authorized.values()]
           .filter((r) =>
             ["self_facet_revision", "narrative_thread_revision"].includes(
@@ -315,7 +325,11 @@ export async function prepareReflectionPlan(
         {
           subjectId,
           scope: fromJson(SocialScopeSchema, s.social),
-          sourceRead: { subjectId, sourceRefs: [...authorized.values()] },
+          sourceRead: {
+            subjectId,
+            sourceRefs: [...authorized.values()],
+            originConversationRefs: [...authorizedOrigins],
+          },
           maxItems: Number(batch.candidateLimit) - socialCurrent.length,
           maxBytes: socialBytes,
         },

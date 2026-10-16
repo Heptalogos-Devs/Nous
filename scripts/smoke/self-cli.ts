@@ -63,7 +63,7 @@ export async function selfCliSmoke(
   assert(!JSON.stringify(denied).includes('"receipt"'));
   assert.equal(
     (await ordinary(["--subject", subjectId, "self", "soul"])).isError,
-    undefined,
+    true,
   );
   assert.equal(
     (

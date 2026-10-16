@@ -11,21 +11,22 @@ impl MaterialService {
         subject: SubjectId,
         refs: &[CognitiveRef],
         view: Option<&HistoricalAuthoritySnapshot>,
+        source_read: Option<&SourceReadView>,
     ) -> Result<Vec<QueryDescriptor>> {
         if refs.len() > 256 || view.is_some_and(|v| v.subject != subject) {
             return Err(Error::Invalid("Material descriptor scope exceeded".into()));
         }
         let (kinds, values): (Vec<_>, Vec<_>) = refs.iter().map(reference_parts).unzip();
         let rows = sqlx::query(r#"
-WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value)), catalog AS (
+WITH requested AS (SELECT * FROM unnest($2::text[],$3::text[]) r(kind,value) WHERE $5::text[] IS NULL OR source_read_allowed($1,kind,value,$5,$6,$7,$8)), catalog AS (
  SELECT r.kind,r.value,left(d.payload_text,2048) text FROM requested r JOIN derived_representations d ON r.kind='derived_representation' AND d.derived_representation_id::text=r.value WHERE d.subject_id=$1 AND ($4::timestamptz IS NULL OR d.created_at<=$4) AND d.payload_text IS NOT NULL
  UNION ALL
  SELECT r.kind,r.value,'Observation ('||o.source_class||', observed '||to_char(o.observed_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS')||' UTC)'||CASE WHEN $4::timestamptz IS NULL THEN ': '||COALESCE(description.text,'content descriptor unavailable') ELSE '' END
  FROM requested r JOIN observation_occurrences o ON r.kind='occurrence' AND o.occurrence_id::text=r.value
- LEFT JOIN LATERAL (SELECT left(d.payload_text,1536) text FROM derived_representations d WHERE $4::timestamptz IS NULL AND d.subject_id=$1 AND d.payload_text IS NOT NULL AND EXISTS(SELECT 1 FROM representation_source_regions($1,d.derived_representation_id) roots JOIN source_regions region USING(source_region_id) WHERE region.artifact_id=o.artifact_id) ORDER BY d.created_at DESC,d.derived_representation_id LIMIT 1) description ON true
+ LEFT JOIN LATERAL (SELECT left(d.payload_text,1536) text FROM derived_representations d WHERE $4::timestamptz IS NULL AND d.subject_id=$1 AND d.payload_text IS NOT NULL AND ($5::text[] IS NULL OR source_read_allowed($1,'derived_representation',d.derived_representation_id::text,$5,$6,$7,$8)) AND EXISTS(SELECT 1 FROM representation_source_regions($1,d.derived_representation_id) roots JOIN source_regions region USING(source_region_id) WHERE region.artifact_id=o.artifact_id) ORDER BY d.created_at DESC,d.derived_representation_id LIMIT 1) description ON true
  WHERE o.subject_id=$1 AND ($4::timestamptz IS NULL OR o.created_at<=$4)
 ) SELECT DISTINCT kind,value,text FROM catalog ORDER BY kind,value
-"#).bind(subject.0).bind(kinds).bind(values).bind(view.map(|v| v.as_of)).fetch_all(self.store.pool()).await.map_err(db)?;
+"#).bind(subject.0).bind(kinds).bind(values).bind(view.map(|v| v.as_of)).bind(source_read.map(|v|v.root_keys.clone())).bind(source_read.map(|v|v.work_contexts.clone()).unwrap_or_default()).bind(source_read.map(|v|v.origin_conversation_refs.clone()).unwrap_or_default()).bind(source_read.map(|v|serde_json::json!(&v.explicit_refs)).unwrap_or_else(||serde_json::json!([]))).fetch_all(self.store.pool()).await.map_err(db)?;
         rows.into_iter()
             .map(|row| {
                 Ok(QueryDescriptor {

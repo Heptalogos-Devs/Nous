@@ -100,6 +100,7 @@ impl CognitiveContributor for MemoryService {
                 &accessibility_policy,
                 bound.historical_authority.as_deref(),
                 self.cognition.now(subject),
+                bound.source_query.source_read.as_ref(),
             )
             .await?;
         let mut drops = BTreeMap::new();
@@ -219,11 +220,11 @@ async fn entity_lane(
         return Ok(output);
     }
     let rows = sqlx::query(
-        "SELECT r.memory_revision_id,r.memory_id,COUNT(DISTINCT a.entity_ref)::bigint AS matched,MIN(array_position($2::text[],a.entity_ref)) AS best_cue FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id JOIN memory_revision_aboutness a USING(memory_revision_id) WHERE o.subject_id=$1 AND a.entity_ref=ANY($2::text[]) GROUP BY r.memory_revision_id,r.memory_id ORDER BY matched DESC,best_cue ASC,r.memory_revision_id LIMIT $3",
+        "SELECT r.memory_revision_id,r.memory_id,COUNT(DISTINCT a.entity_ref)::bigint AS matched,MIN(array_position($2::text[],a.entity_ref)) AS best_cue FROM memory_objects o JOIN memory_revisions r ON r.memory_revision_id=o.current_revision_id JOIN memory_revision_aboutness a USING(memory_revision_id) WHERE o.subject_id=$1 AND a.entity_ref=ANY($2::text[]) AND ($4::text[] IS NULL OR source_read_allowed($1,'memory_revision',r.memory_revision_id::text,$4,$5,$6,$7)) GROUP BY r.memory_revision_id,r.memory_id ORDER BY matched DESC,best_cue ASC,r.memory_revision_id LIMIT $3",
     )
     .bind(query.subject.0)
     .bind(&values)
-    .bind(plan.lane_budget(EvidenceFamily::Entity) as i64)
+    .bind(plan.lane_budget(EvidenceFamily::Entity) as i64).bind(bound.source_query.source_read.as_ref().map(|r|r.root_keys.clone())).bind(bound.source_query.source_read.as_ref().map(|r|r.work_contexts.clone()).unwrap_or_default()).bind(query.source_read.as_ref().map(|r|r.origin_conversation_refs.clone()).unwrap_or_default()).bind(query.source_read.as_ref().map(|r|serde_json::json!(&r.explicit_refs)).unwrap_or_else(||serde_json::json!([])))
     .fetch_all(service.store.pool())
     .await
     .map_err(nous_persistence::database_error)?;
@@ -302,6 +303,12 @@ async fn temporal_lane(
             .push(" WHERE o.subject_id=")
             .push_bind(query.subject.0);
         push_time_predicate(&mut sql, columns, predicate)?;
+        nous_persistence::push_source_read_filter(
+            &mut sql,
+            query.source_read.as_ref(),
+            "'memory_revision'",
+            "r.memory_revision_id::text",
+        );
         sql.push(" ORDER BY ")
             .push(order)
             .push(" LIMIT ")

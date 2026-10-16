@@ -7,6 +7,8 @@ pub(crate) async fn check_permission_fence(
 ) {
     let reference = view.cognition[0].head.clone();
     let query = CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         subject,
         session: None,
         work_context: None,

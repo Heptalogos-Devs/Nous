@@ -8,6 +8,8 @@ use test_support::*;
 
 fn query(subject: SubjectId) -> CognitiveQuery {
     CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         subject,
         projection: Default::default(),
         temporal_frame: Default::default(),

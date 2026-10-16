@@ -77,6 +77,7 @@ message SelfSelectionRequest {
   // Complete body/support read ceiling, at most 4 MiB.
   uint32 max_bytes = 7;
   string intent = 8;
+  SourceReadScope source_read = 9;
 }
 message SelfSelectionResponse {
   repeated SelfRecord items = 1;

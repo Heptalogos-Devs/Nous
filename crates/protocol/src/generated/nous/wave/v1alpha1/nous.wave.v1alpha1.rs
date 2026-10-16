@@ -57,6 +57,8 @@ pub struct SourceReadScope {
     pub subject_id: ::prost::alloc::string::String,
     #[prost(message, repeated, tag="2")]
     pub source_refs: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(string, repeated, tag="3")]
+    pub origin_conversation_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubjectCapabilities {
@@ -1541,6 +1543,27 @@ pub struct ListEpisodeRevisionsResponse {
     pub items: ::prost::alloc::vec::Vec<EpisodeRevision>,
     #[prost(string, tag="2")]
     pub next_page_token: ::prost::alloc::string::String,
+}
+/// Bounded source-scoped body/support read, never an authorization grant from model input.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReadSourcesRequest {
+    #[prost(string, tag="1")]
+    pub subject_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub usage: ::core::option::Option<CognitionUsage>,
+    #[prost(message, repeated, tag="3")]
+    pub references: ::prost::alloc::vec::Vec<CognitiveRef>,
+    #[prost(uint32, tag="4")]
+    pub max_text_bytes: u32,
+    #[prost(string, optional, tag="5")]
+    pub work_context_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReadSourcesResponse {
+    #[prost(message, repeated, tag="1")]
+    pub items: ::prost::alloc::vec::Vec<ContextSegment>,
+    #[prost(message, repeated, tag="2")]
+    pub degradation: ::prost::alloc::vec::Vec<Degradation>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -3126,6 +3149,8 @@ pub struct SelfSelectionRequest {
     pub max_bytes: u32,
     #[prost(string, tag="8")]
     pub intent: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="9")]
+    pub source_read: ::core::option::Option<SourceReadScope>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SelfSelectionResponse {

@@ -105,6 +105,29 @@ impl CognitiveContributor for SocialService {
     }
 }
 impl SocialService {
+    async fn get_query_authorized(
+        &self,
+        subject: SubjectId,
+        reference: &CognitiveRef,
+        read: Option<&SourceReadView>,
+    ) -> Result<SocialRecord> {
+        self.require_enabled(subject).await?;
+        let mut tx = self.store.read_view().await?;
+        if let Some(read) = read
+            && !AuthorityStore::source_read_allowed_in(&mut tx, read, reference).await?
+        {
+            return Err(Error::Unavailable(
+                "Social source permission unavailable".into(),
+            ));
+        }
+        self.read_in(
+            &mut tx,
+            subject,
+            reference.uuid().expect("Social UUID"),
+            reference.is_cognition_revision(),
+        )
+        .await
+    }
     async fn query_record(
         &self,
         subject: SubjectId,
@@ -126,7 +149,7 @@ impl SocialService {
                 ));
             }
             let mut record = self
-                .get(subject, selected.uuid().expect("Social UUID"), true)
+                .get_query_authorized(subject, selected, bound.source_query.source_read.as_ref())
                 .await?;
             if !record.is_current_available() {
                 return Err(Error::Unavailable(
@@ -152,12 +175,8 @@ impl SocialService {
             record.evidence.retain(|e| e.recorded_at <= view.as_of);
             record
         } else {
-            self.get(
-                subject,
-                reference.uuid().expect("Social UUID"),
-                reference.is_cognition_revision(),
-            )
-            .await?
+            self.get_query_authorized(subject, reference, bound.source_query.source_read.as_ref())
+                .await?
         };
         let actual = if reference.is_cognition_revision() {
             record.reference()

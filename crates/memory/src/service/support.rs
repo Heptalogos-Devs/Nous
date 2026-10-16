@@ -12,20 +12,6 @@ pub(super) struct CognitionSupport {
 }
 
 impl MemoryService {
-    pub(super) async fn exact_supports(
-        &self,
-        subject: SubjectId,
-        references: &[CognitiveRef],
-        view: Option<&HistoricalAuthoritySnapshot>,
-    ) -> Result<HashMap<CognitiveRef, CognitionSupport>> {
-        let mut tx = self.store.read_view().await?;
-        let result = self
-            .exact_supports_in(&mut tx, subject, references, view)
-            .await?;
-        tx.commit().await.map_err(db)?;
-        Ok(result)
-    }
-
     pub(super) async fn exact_supports_in(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

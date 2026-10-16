@@ -3,6 +3,8 @@
 
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import type { MessageInitShape } from "@bufbuild/protobuf";
+import type { CognitionUsageSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import { connectNousInstance } from "@nous-wave/client/node";
 import { mcpConnection } from "./mcp-scope.js";
 import { runCli } from "./commands/index.js";
@@ -18,7 +20,7 @@ export function createMcpServer(execute: Execute) {
     if (
       args[0] === "mcp" ||
       args.some((arg) =>
-        /^--(?:run-root|instance-root|state-root|consumer|management)(?:=|$)/.test(
+        /^--(?:run-root|instance-root|state-root|consumer|management|source-scope-file)(?:=|$)/.test(
           arg,
         ),
       )
@@ -47,7 +49,7 @@ export function createMcpServer(execute: Execute) {
     "nous_command",
     {
       description:
-        "Execute native Nous CLI argv (no shell). Discover commands with nous_help. This connection has isolated selection, exact result:N references and retry receipts. Default semantic text; use --json only when needed. Cognition reads, observations and task context are available by default. Authority mutations require an operator-configured management connection. Failed commands preserve the native error and retry receipt. Subject/Session selection is explicit or durable locally.",
+        "Execute native Nous CLI argv (no shell). Discover commands with nous_help. This connection has isolated selection, exact result:N references and retry receipts. Default semantic text; use --json only when needed. Cognition query and managed context use an operator-configured source scope. Observations, task mutations and raw management-body reads require a separate operator connection. Failed commands preserve the native error and retry receipt. Subject/Session selection is explicit or durable locally.",
       inputSchema: z.object({
         args: z.array(z.string().max(65536)).min(1).max(128),
       }),
@@ -82,6 +84,7 @@ export function cliExecutor(options: {
   stateRoot: string;
   consumer: string;
   management?: boolean;
+  trustedUsage?: MessageInitShape<typeof CognitionUsageSchema>;
 }): Execute {
   return async (args) => {
     const command = [
@@ -100,6 +103,7 @@ export function cliExecutor(options: {
           mcpConnection(
             await connectNousInstance(location),
             options.management === true,
+            options.trustedUsage,
           ),
         friendlyOutput,
       );

@@ -13,8 +13,23 @@ impl MemoryService {
         accessibility_policy: &AccessibilityPolicy,
         view: Option<&HistoricalAuthoritySnapshot>,
         now: DateTime<Utc>,
+        source_read: Option<&SourceReadView>,
     ) -> Result<HashMap<Uuid, MemoryView>> {
         let mut tx = self.store.read_view().await?;
+        let mut admitted = Vec::new();
+        for id in revisions {
+            if source_read.is_none()
+                || AuthorityStore::source_read_allowed_in(
+                    &mut tx,
+                    source_read.expect("checked read"),
+                    &CognitiveRef::MemoryRevision(MemoryRevisionId(*id)),
+                )
+                .await?
+            {
+                admitted.push(*id);
+            }
+        }
+        let revisions = admitted.as_slice();
         let result = self
             .memory_views_in(
                 &mut tx,

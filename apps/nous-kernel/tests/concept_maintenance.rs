@@ -279,6 +279,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             rt.cognition.now(subject),
             &snapshot,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -495,6 +496,7 @@ async fn concepts_use_local_typed_catalogs_and_derived_accretion_without_batch_c
             CognitiveEffort::Maximum,
             rt.cognition.now(subject),
             &snapshot,
+            None,
             None,
         )
         .await

@@ -14,4 +14,10 @@ Runtime 将已实际观察的 Experience 合并为 `subject_reflection` Maintena
 
 Official Client `reflection.inspect`、CLI `reflection status` 提供有界 pending/recent 状态与 payload 遗漏信息，可见 blocked、kept、partial、failed。`reflection.repair` 与 CLI `reflection repair` 使用同一公开合同。迁移 `0009_subject_reflection.sql` 增量保留已有数据与付费结果。
 
-验证入口：`corepack pnpm smoke:subject-reflection` 使用隔离真实 PostgreSQL 和确定性本机模型，覆盖合批、重放、旧 trigger、新来源、三 owner 单次生成、partial 与无模型 exact-head 修复；它不证明 QQ 自然学习。真实 QQ 后续使用还要求共享 Query/Projection 的 SourceRead 前置过滤完整闭合。
+验证入口：`corepack pnpm smoke:subject-reflection` 使用隔离真实 PostgreSQL 和确定性本机模型，覆盖合批、重放、旧 trigger、新来源、三 owner 单次生成、partial 与无模型 exact-head 修复；它不证明 QQ 自然学习。共享 Query/Projection/ReadSources 已按 SourceRead 在候选预算和正文前过滤；真实 QQ 学习与后续使用仍由部署验证。
+
+SourceReadScope 的 `sourceRefs` 与显式 `originConversationRefs` 并用，origin 不是 audience 的别名。Shared SQL 对实际 occurrence 与 locator 路径核验，同字节不合并私域 attribution；unknown、cycle 与1024节点/64层闭包上限均不披露。WorkContext 只在显式授予其 ref 时读正文，anchors 不继承授权。查询与自动投影在 owner SQL / Serving filter 后再使用候选预算，完整语义单元无法读出时明确 omission。
+
+`cognition.readSources` 提供无需 Session 的 bounded source 文本/evidence 读取，适合模型工具。认证管理 API 的无 usage 语义保留；普通 MCP/native producer 必须注入可信 usage，模型参数不能授予来源。新迁移 `0011_source_read.sql` 共用 Material canonical lineage、固定 owner metadata dispatch，不创建第二权限索引。旧 topology 资产缺实际支持 refs 时，scoped traversal 将其视为 UNKNOWN；应重建可再生 Serving，保留所有原付费结果与素材。
+
+真实 Lite 隔离 proof 已保全：只调用一次 upstream，局部 LanguageConvention 与 bounded SelfFacet applied，另一个关系 degree 被 owner 拒绝而保留 partial。随后 schema/prompt 已按正式 relation type 窄化；没有篡改原 proposal 或再次付费。该 proof 不是 QQ 自然学习。

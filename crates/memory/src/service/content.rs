@@ -58,9 +58,24 @@ impl MemoryService {
         now: DateTime<Utc>,
         configuration: &nous_configuration::ConfigSnapshot,
         historical: Option<&HistoricalAuthoritySnapshot>,
+        source_read: Option<&SourceReadView>,
     ) -> Result<Vec<QueryDescriptor>> {
         let policy = resolve_accessibility_policy(configuration)?;
         let mut tx = self.store.read_view().await?;
+        let mut admitted = Vec::new();
+        for r in references {
+            if source_read.is_none()
+                || AuthorityStore::source_read_allowed_in(
+                    &mut tx,
+                    source_read.expect("checked read"),
+                    &r.0,
+                )
+                .await?
+            {
+                admitted.push(r.clone());
+            }
+        }
+        let references = admitted.as_slice();
         let contents = self
             .content_in(
                 &mut tx, subject, references, &policy, historical, now, effort, 2048,

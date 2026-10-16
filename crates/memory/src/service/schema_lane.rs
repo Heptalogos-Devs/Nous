@@ -15,9 +15,10 @@ use uuid::Uuid;
 pub(crate) async fn schema_direct_lane(
     service: &MemoryService,
     bound: &BoundQuery,
-    _plan: &QueryPlan,
+    plan: &QueryPlan,
 ) -> Result<LaneOutput> {
     let query = &bound.source_query;
+    let mut tx = service.store.read_view().await?;
     let mut schema_ids = BTreeSet::new();
     let mut exact_revisions = BTreeSet::new();
     for cue in &query.expression.cues {
@@ -46,15 +47,21 @@ pub(crate) async fn schema_direct_lane(
         return Ok(output);
     }
     let rows = sqlx::query(
-        "SELECT s.schema_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND (s.schema_id=ANY($2::uuid[]) OR r.schema_revision_id=ANY($3::uuid[]))",
+        "SELECT s.schema_id,s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND ((s.schema_id=ANY($2::uuid[]) AND r.schema_revision_id=s.current_revision_id) OR r.schema_revision_id=ANY($3::uuid[])) AND ($4::text[] IS NULL OR source_read_allowed($1,'cognitive_schema_revision',r.schema_revision_id::text,$4,$5,$6,$7)) ORDER BY (r.schema_revision_id=ANY($3::uuid[])) DESC,r.schema_revision_id LIMIT $8",
     )
     .bind(query.subject.0)
     .bind(schema_ids.iter().copied().collect::<Vec<_>>())
-    .bind(exact_revisions.iter().copied().collect::<Vec<_>>())
-    .fetch_all(service.store.pool())
+    .bind(exact_revisions.iter().copied().collect::<Vec<_>>()).bind(query.source_read.as_ref().map(|v|v.root_keys.clone())).bind(query.source_read.as_ref().map(|v|v.work_contexts.clone()).unwrap_or_default()).bind(query.source_read.as_ref().map(|v|v.origin_conversation_refs.clone()).unwrap_or_default()).bind(query.source_read.as_ref().map(|v|serde_json::json!(&v.explicit_refs)).unwrap_or_else(||serde_json::json!([]))).bind((plan.lane_budget(EvidenceFamily::SchemaDirect)+1) as i64)
+    .fetch_all(&mut *tx)
     .await
     .map_err(nous_persistence::database_error)?;
-    let mut rows = rows;
+    if rows.len() > plan.lane_budget(EvidenceFamily::SchemaDirect) {
+        output.status = LaneStatus::Truncated;
+    }
+    let mut rows = rows
+        .into_iter()
+        .take(plan.lane_budget(EvidenceFamily::SchemaDirect))
+        .collect::<Vec<_>>();
     rows.sort_by(|left, right| {
         let left_id: Uuid = left.try_get("schema_revision_id").unwrap_or_default();
         let right_id: Uuid = right.try_get("schema_revision_id").unwrap_or_default();
@@ -69,7 +76,7 @@ pub(crate) async fn schema_direct_lane(
         .filter_map(|row| row.try_get::<Uuid, _>("schema_revision_id").ok())
         .collect::<Vec<_>>();
     let mut metadata = super::longitudinal_query::longitudinal_metadata(
-        service,
+        &mut tx,
         query.subject,
         "cognitive_schema",
         &revision_keys,
@@ -134,7 +141,7 @@ pub(crate) async fn schema_direct_lane(
         )
         .bind(query.subject.0)
         .bind(revision_ids)
-        .fetch_all(service.store.pool())
+        .fetch_all(&mut *tx)
         .await
         .map_err(nous_persistence::database_error)?;
         let rank = (output.candidates.len() + 1) as u32;
@@ -168,6 +175,25 @@ pub(crate) async fn materialize_schema_revisions(
     bound: &BoundQuery,
     references: &[CognitiveRef],
 ) -> Result<(Vec<CognitiveHit>, BTreeMap<String, usize>)> {
+    let mut tx = service.store.read_view().await?;
+    let mut admitted = Vec::new();
+    for reference in references {
+        if bound.source_query.source_read.is_none()
+            || AuthorityStore::source_read_allowed_in(
+                &mut tx,
+                bound
+                    .source_query
+                    .source_read
+                    .as_ref()
+                    .expect("checked read"),
+                reference,
+            )
+            .await?
+        {
+            admitted.push(reference.clone());
+        }
+    }
+    let references = admitted.as_slice();
     let revision_ids = references
         .iter()
         .filter_map(|reference| match reference {
@@ -181,11 +207,11 @@ pub(crate) async fn materialize_schema_revisions(
     let rows = sqlx::query("SELECT s.current_revision_id,s.object_epoch,s.acceptance_state,s.integrity_state,s.suppression_state,r.schema_id,r.schema_revision_id,r.structural_claim,r.aboutness,r.valid_time_kind,r.valid_time_start,r.valid_time_end,r.formed_at,r.recorded_at FROM cognitive_schemas s JOIN cognitive_schema_revisions r ON r.schema_id=s.schema_id WHERE s.subject_id=$1 AND r.schema_revision_id=ANY($2::uuid[])")
         .bind(bound.source_query.subject.0)
         .bind(&revision_ids)
-        .fetch_all(service.store.pool())
+        .fetch_all(&mut *tx)
         .await
         .map_err(nous_persistence::database_error)?;
     let mut metadata = super::longitudinal_query::longitudinal_metadata(
-        service,
+        &mut tx,
         bound.source_query.subject,
         "cognitive_schema",
         &revision_ids,

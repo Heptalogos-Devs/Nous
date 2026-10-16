@@ -22,6 +22,7 @@ fn graph() -> WaveGraphGeneration {
         })
         .collect();
     let edge = |from, to, mass, root: &str| WaveEdgeEvidence {
+        source_refs: Vec::new(),
         from: reference(from),
         to: reference(to),
         basis_class: "host_explicit".into(),

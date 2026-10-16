@@ -476,8 +476,26 @@ impl CognitiveRuntimeService {
                 .as_ref()
                 .and_then(|session| session.active_work_context_id)
         });
+        let mut authorized_context = context_id;
+        if let (Some(id), Some(read)) = (context_id, query.source_read.as_ref())
+            && !nous_persistence::AuthorityStore::source_read_allowed_in(
+                &mut tx,
+                read,
+                &CognitiveRef::WorkContext(WorkContextId(id)),
+            )
+            .await?
+        {
+            authorized_context = None;
+            let anchors:Vec<(String,String)>=sqlx::query_as("SELECT r.ref_kind,r.ref_value FROM work_context_refs r JOIN work_contexts w USING(work_context_id) WHERE w.subject_id=$1 AND w.work_context_id=$2").bind(query.subject.0).bind(id).fetch_all(&mut *tx).await.map_err(nous_persistence::database_error)?;
+            for (kind, value) in anchors {
+                sources.push(QuerySource::new(
+                    parse_reference(&kind, &value)?,
+                    "work_context",
+                ));
+            }
+        }
         let context =
-            if let Some(id) = context_id {
+            if let Some(id) = authorized_context {
                 let context = self.work_context_in(query.subject, id, &mut tx).await?;
                 if context.state != WorkContextState::Open {
                     return Err(DomainError::new(

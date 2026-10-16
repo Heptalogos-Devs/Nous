@@ -13,6 +13,8 @@ pub struct WaveNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WaveEdgeEvidence {
+    #[serde(default)]
+    pub source_refs: Vec<CognitiveRef>,
     pub from: CognitiveRef,
     pub to: CognitiveRef,
     pub basis_class: String,
@@ -263,10 +265,77 @@ fn class_quality(class: &str, values: &std::collections::BTreeMap<String, f64>) 
     values.get(class).copied().unwrap_or(0.0)
 }
 
+impl WaveGraphGeneration {
+    /// Rebuild only the request-local graph, preserving ranks on the authorized subgraph.
+    pub(crate) fn authorized(
+        &self,
+        allowed: &std::collections::HashSet<CognitiveRef>,
+    ) -> Result<Self> {
+        let nodes = self
+            .nodes
+            .iter()
+            .filter(|node| allowed.contains(&node.reference))
+            .cloned()
+            .collect();
+        let evidence = self
+            .evidence
+            .values()
+            .flatten()
+            .filter(|e| {
+                allowed.contains(&e.from)
+                    && allowed.contains(&e.to)
+                    && !e.source_refs.is_empty()
+                    && e.source_refs.iter().all(|r| allowed.contains(r))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        // Private support must not remain in conductance or hub normalization.
+        let mut graph = Self::build(nodes, &evidence, self.config.clone())?;
+        graph.generation_id = self.generation_id;
+        graph.cognitive_profile = self.cognitive_profile;
+        Ok(graph)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use nous_core::MemoryRevisionId;
+
+    #[test]
+    fn scoped_graph_recomputes_weights_from_authorized_support_only() {
+        let a = CognitiveRef::MemoryRevision(MemoryRevisionId(uuid::Uuid::new_v4()));
+        let b = CognitiveRef::MemoryRevision(MemoryRevisionId(uuid::Uuid::new_v4()));
+        let public = CognitiveRef::MemoryRevision(MemoryRevisionId(uuid::Uuid::new_v4()));
+        let private = CognitiveRef::MemoryRevision(MemoryRevisionId(uuid::Uuid::new_v4()));
+        let edge = |source: CognitiveRef, mass| WaveEdgeEvidence {
+            from: a.clone(),
+            to: b.clone(),
+            source_refs: vec![source],
+            basis_class: "source_evidence".into(),
+            association_kind: "basis".into(),
+            polarity: "positive".into(),
+            support_mass: mass,
+            provenance_root: Some(mass.to_string()),
+        };
+        let visible = edge(public.clone(), 0.2);
+        let graph = WaveGraphGeneration::build(
+            vec![node(a.clone(), 0), node(b.clone(), 1)],
+            &[visible.clone(), edge(private, 0.9)],
+            WaveConfig::default(),
+        )
+        .unwrap();
+        let filtered = graph
+            .authorized(&[a.clone(), b.clone(), public].into_iter().collect())
+            .unwrap();
+        let expected = WaveGraphGeneration::build(
+            vec![node(a, 0), node(b, 1)],
+            &[visible],
+            WaveConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(filtered.artifact().edges, expected.artifact().edges);
+    }
 
     fn node(id: CognitiveRef, serving_id: u32) -> WaveNode {
         WaveNode {
@@ -283,6 +352,7 @@ mod tests {
             vec![node(a.clone(), 0), node(b.clone(), 1)],
             &[
                 WaveEdgeEvidence {
+                    source_refs: Vec::new(),
                     from: a.clone(),
                     to: b.clone(),
                     basis_class: "host_explicit".into(),
@@ -292,6 +362,7 @@ mod tests {
                     provenance_root: None,
                 },
                 WaveEdgeEvidence {
+                    source_refs: Vec::new(),
                     from: a.clone(),
                     to: b.clone(),
                     basis_class: "host_explicit".into(),
@@ -315,6 +386,7 @@ mod tests {
             vec![node(a.clone(), 0), node(b.clone(), 1)],
             &[
                 WaveEdgeEvidence {
+                    source_refs: Vec::new(),
                     from: a.clone(),
                     to: b.clone(),
                     basis_class: "host_explicit".into(),
@@ -324,6 +396,7 @@ mod tests {
                     provenance_root: Some("artifact:one".into()),
                 },
                 WaveEdgeEvidence {
+                    source_refs: Vec::new(),
                     from: a.clone(),
                     to: b.clone(),
                     basis_class: "host_explicit".into(),
@@ -333,6 +406,7 @@ mod tests {
                     provenance_root: Some("artifact:one".into()),
                 },
                 WaveEdgeEvidence {
+                    source_refs: Vec::new(),
                     from: a,
                     to: b,
                     basis_class: "host_explicit".into(),
@@ -357,6 +431,7 @@ mod tests {
             vec![node(a.clone(), 0), node(b.clone(), 1), node(c.clone(), 2)],
             &[
                 WaveEdgeEvidence {
+                    source_refs: Vec::new(),
                     from: a.clone(),
                     to: b,
                     basis_class: "host_explicit".into(),
@@ -366,6 +441,7 @@ mod tests {
                     provenance_root: None,
                 },
                 WaveEdgeEvidence {
+                    source_refs: Vec::new(),
                     from: a,
                     to: c,
                     basis_class: "host_explicit".into(),

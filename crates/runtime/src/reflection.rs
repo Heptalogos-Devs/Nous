@@ -197,11 +197,18 @@ impl CognitiveRuntimeService {
         }
 
         let from:i64=sqlx::query_scalar("SELECT COALESCE((SELECT last_recorded_seq FROM subject_reflection_progress WHERE subject_id=$1),0)").bind(subject.0).fetch_one(&mut *tx).await.map_err(db)?;
-        let rows=sqlx::query("SELECT recorded_seq,occurrence_id,active_work_context_id,active_work_context_revision,session_id FROM experience_items WHERE subject_id=$1 AND recorded_seq>$2 AND recorded_seq<=$3 AND source_class NOT IN ('generated','generation','simulation') ORDER BY recorded_seq LIMIT $4").bind(subject.0).bind(from).bind(selected.trigger_authority_seq).bind((limit+1) as i64).fetch_all(&mut *tx).await.map_err(db)?;
-        let more = rows.len() > limit as usize;
+        let rows=sqlx::query("SELECT e.recorded_seq,e.occurrence_id,e.active_work_context_id,e.active_work_context_revision,e.session_id,o.conversation_ref FROM experience_items e JOIN observation_occurrences o ON o.subject_id=e.subject_id AND o.occurrence_id=e.occurrence_id WHERE e.subject_id=$1 AND e.recorded_seq>$2 AND e.recorded_seq<=$3 AND e.source_class NOT IN ('generated','generation','simulation') ORDER BY e.recorded_seq LIMIT $4").bind(subject.0).bind(from).bind(selected.trigger_authority_seq).bind((limit+1) as i64).fetch_all(&mut *tx).await.map_err(db)?;
+        let mut more = rows.len() > limit as usize;
+        let mut origin: Option<Option<String>> = None;
         let mut through = from;
         let mut sources = Vec::new();
         for row in rows.into_iter().take(limit as usize) {
+            let next_origin: Option<String> = row.try_get("conversation_ref").map_err(db)?;
+            if origin.as_ref().is_some_and(|prior| *prior != next_origin) {
+                more = true;
+                break;
+            }
+            origin = Some(next_origin);
             through = row.try_get("recorded_seq").map_err(db)?;
             sources.push(ReflectionSource {
                 reference: CognitiveRef::Occurrence(OccurrenceId(

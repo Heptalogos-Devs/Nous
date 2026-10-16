@@ -289,6 +289,18 @@ try {
       maxTextBytes: 4096,
       usage: {
         agentInstanceId: "capacity",
+        sourceRead: {
+          subjectId,
+          sourceRefs: [
+            {
+              kind: "occurrence",
+              value:
+                capacity.basis.basis.case === "evidence"
+                  ? capacity.basis.basis.value.occurrenceId
+                  : "",
+            },
+          ],
+        },
         purpose: "expression",
         intent: "当前自称与普通交流",
         audience: {

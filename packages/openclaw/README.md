@@ -95,7 +95,12 @@ RESET 替换临时 slice，APPEND 仅接受相同 track/epoch 的连续前缀。
 同一正式插件可选配置 `hostBridge`，不需要 Host 复制插件。配置由操作者提供：
 
 ```json
-{"hostBridge":{"origin":"http://127.0.0.1:19090","credentialFile":"/absolute/private/host-bridge.token"}}
+{
+  "hostBridge": {
+    "origin": "http://127.0.0.1:19090",
+    "credentialFile": "/absolute/private/host-bridge.token"
+  }
+}
 ```
 
 origin 只接受配置的 IPv4/IPv6 loopback HTTP origin，拒绝 URL 凭据、路径与重定向。credentialFile 为绝对、owner-only 私密文件，内容是一行 Bearer token；只有插件 Node 端读取，不进入公开 schema 模块、prompt 或日志。每次请求实际等待 Host；拒绝、离线、取消及缺少可信上下文都会阻止 provider。未配置 Host 的独立安装使用同一插件和 v3 原生入口。 子 Agent handoff 的 `parentRunId` 必须由原生工具上下文的当前 run 传入，并参与请求 identity；不能按 Session 查找或猜测父 run。缺失该控制时在创建子 Nous Session 前拒绝。
@@ -170,3 +175,9 @@ node --env-file=/absolute/path/operator.env node_modules/tsx/dist/cli.mjs script
 场景使用同一 provider 的首个模型执行原生交互，最后一个模型执行正式 Self 形成/反思并检验切换，配置中需要两个不同模型。它保留无 Seed 主体的实际自选名字和有情境偏好，通过实际公共资料任务检查使用，再对照 Seed 主体、来源修订、重启、新会话及普通聊天权限。Self 解释使用显式的 180 秒执行上限；模型选择需具备结构化输出及语义判断能力，结构合法不代表形成结果正确。需检查私有结果中的实际陈述、适用条件、工具步骤与最终输入，不能用“回答出现名字”代替认知应用证明。
 
 场景失败后可在末尾传入其 evidence 目录继续，同一 Subject、原始来源、付费解释结果和原生会话都会保留。诊断目录不应加入版本控制。
+
+### 独立模式来源许可
+
+无 Host bridge 的独立安装使用同一 SourceReadScope 与 `withAcceptedContactRoots`。安装器提供 `nous-source-policy.example.json`，新 profile 应明确配置 `sourceRead.currentConversation=true`，只授当前真实 Native conversation origin；不自动授 Subject 的全部历史。外部 DM/group 必须已按 account/channel/peer 隔离 Native Session，shared DM main 不能提升为整会话授权。既有缺省 profile 不静默扩授，仍仅有本批真实已接收 receipts 的 exact 来源。Host 模式完全使用 Host scope，独立默认不覆盖它。
+
+`sourceRead.sourceRefs` / `originConversationRefs` 是 operator 明确授予的公共来源；`routes[{conversationRef,sourceRefs,originConversationRefs}]` 可按当前目标会话授专属来源。来源 refs 最多1024，origin 最多64；长会话用明确 origin，不能只截最近1024条。已选 WorkContext ID 不授其正文或 anchors，任务正文应在 sourceRefs 显式授该 work_context ref，anchors 各自按真实来源许可。旧来源、旧 scope、原 Subject 与已付费模型结果均保留。

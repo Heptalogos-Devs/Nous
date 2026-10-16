@@ -32,6 +32,8 @@ pub(crate) async fn check_historical_binding(
         .await
         .unwrap();
     let query = CognitiveQuery {
+        source_read: None,
+        source_allowed: None,
         subject,
         session: None,
         work_context: Some(context.work_context_id),

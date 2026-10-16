@@ -110,14 +110,25 @@ async fn automatic_time_filter_preserves_submicrosecond_applicability_before_lim
         entities: vec![],
         ..Default::default()
     };
+    let read = nous_runtime::ContextResolver::source_read_view(
+        &runtime,
+        subject,
+        &SourceReadScope {
+            subject_id: Some(subject),
+            source_refs: vec![basis.evidence_handle().reference],
+            origin_conversation_refs: vec![],
+        },
+    )
+    .await
+    .unwrap();
     let one = service
-        .automatic_context(subject, request(&scope, 1))
+        .automatic_context(subject, request(&scope, 1), &read)
         .await
         .unwrap();
     assert_eq!(one.sources.len(), 1);
     assert_eq!(one.sources[0].reference, records[0].reference());
     let all = service
-        .automatic_context(subject, request(&scope, 8))
+        .automatic_context(subject, request(&scope, 8), &read)
         .await
         .unwrap();
     let selected = all

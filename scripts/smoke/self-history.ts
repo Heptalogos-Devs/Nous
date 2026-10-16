@@ -78,6 +78,12 @@ try {
       signal: new AbortController().signal,
       usage: create(CognitionUsageSchema, {
         agentInstanceId: "history-contract",
+        sourceRead: {
+          subjectId,
+          sourceRefs: [
+            { kind: "cognitive_seed_version", value: seed.seedVersionId },
+          ],
+        },
         purpose: "deliberation",
         intent: "Continue actual task",
         audience: {

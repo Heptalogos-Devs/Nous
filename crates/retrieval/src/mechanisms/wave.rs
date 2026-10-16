@@ -358,6 +358,7 @@ mod tests {
             ],
             &[
                 WaveEdgeEvidence {
+                    source_refs: Vec::new(),
                     from: root.clone(),
                     to: left,
                     basis_class: "host_explicit".into(),
@@ -367,6 +368,7 @@ mod tests {
                     provenance_root: None,
                 },
                 WaveEdgeEvidence {
+                    source_refs: Vec::new(),
                     from: root,
                     to: right,
                     basis_class: "host_explicit".into(),

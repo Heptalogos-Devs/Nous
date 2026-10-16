@@ -65,7 +65,7 @@ fn prepare_lexical(
                     query_text,
                     plan.lane_budget(EvidenceFamily::Lexical),
                     &query.projection.domain_names(),
-                    None,
+                    query.source_allowed.as_deref(),
                     query
                         .projection
                         .domains
@@ -124,6 +124,7 @@ fn prepare_dense(
                 limit,
                 &query.projection,
                 social_allowed,
+                query.source_allowed.as_deref(),
             )?;
             for (rank, item) in matches.into_iter().enumerate() {
                 let Some(record) = item.record else {
@@ -311,12 +312,14 @@ fn domain_dense_matches(
     limit: usize,
     projection: &nous_core::ResultProjection,
     social_allowed: &[CognitiveRef],
+    source_allowed: Option<&[CognitiveRef]>,
 ) -> Result<Vec<DenseMatch>> {
     let allowed = generation
         .records()
         .filter(|record| {
             projection.domain_names().is_empty() || projection.allows_reference(&record.reference)
         })
+        .filter(|record| source_allowed.is_none_or(|refs| refs.contains(&record.reference)))
         .filter(|record| {
             record.reference.domain() != nous_core::CognitiveDomain::SocialCognition
                 || social_allowed.contains(&record.reference)
@@ -386,7 +389,7 @@ impl ServingService {
         {
             need.topology = false;
         }
-        let (status, snapshot) = self
+        let (mut status, snapshot) = self
             .prepare_assets(
                 bound.source_query.subject,
                 need,
@@ -394,6 +397,31 @@ impl ServingService {
                 bound.historical_authority.as_deref(),
             )
             .await?;
+        let mut snapshot = snapshot;
+        if let Some(authorized) = &bound.source_query.source_allowed {
+            status.degradation.push(Degradation {
+                code: "source_read_filtered_serving".into(),
+                detail: Some("Serving is restricted to authorized provenance; unsupported or legacy support without exact source metadata is omitted, not evidence of absence".into()),
+            });
+            let allowed = authorized
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>();
+            if let Some(vcp) = snapshot.vcp.take() {
+                snapshot.vcp = Some(Arc::new(vcp.authorized(&allowed)?));
+            }
+            if let Some(graph) = snapshot.topology.take() {
+                snapshot.topology = Some(Arc::new(graph.authorized(&allowed)?));
+            }
+            for generation in &mut snapshot.concept {
+                let mut filtered = (**generation).clone();
+                filtered.records.retain(|record| {
+                    !record.attachments.is_empty()
+                        && record.attachments.iter().all(|r| allowed.contains(r))
+                });
+                *generation = Arc::new(filtered);
+            }
+        }
         let reader = self.query_reader(bound, snapshot)?;
         drop(lease);
         Ok((status, reader))
@@ -445,19 +473,6 @@ impl ServingService {
         domains: &[&str],
         allowed: Option<&[CognitiveRef]>,
     ) -> Result<(Vec<CognitiveRef>, Vec<Degradation>)> {
-        if allowed.is_some_and(|v| v.len() > 2048) {
-            return Err(Error::Invalid(
-                "authorized search exceeds candidate bound".into(),
-            ));
-        }
-        if intent.trim().is_empty() || limit == 0 {
-            return Ok((Vec::new(), Vec::new()));
-        }
-        if limit > 128 || intent.len() > 32768 {
-            return Err(Error::Invalid(
-                "lexical candidate request exceeds bound".into(),
-            ));
-        }
         let _lease = self.read_gate.clone().read_owned().await;
         let config = self.configuration.snapshot_for_subject(subject)?;
         let (status, snapshot) = self
