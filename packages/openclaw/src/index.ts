@@ -779,7 +779,6 @@ function register(api: OpenClawPluginApi): void {
           const selected = await prepareHostCurrentSources(
             await connect(),
             permission,
-            config.consumerId,
             input.signal,
           );
           currentMaterials.sources.push(...selected.sources);

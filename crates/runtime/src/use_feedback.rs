@@ -431,6 +431,7 @@ fn is_presented_material(reference: &CognitiveRef) -> bool {
     matches!(
         reference,
         CognitiveRef::Occurrence(_)
+            | CognitiveRef::SourceRegion(_)
             | CognitiveRef::DerivedRepresentation(_)
             | CognitiveRef::DerivedRegion(_)
     )

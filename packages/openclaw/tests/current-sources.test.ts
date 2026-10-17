@@ -82,7 +82,6 @@ test("whole and exact region/derived locators read back their actual occurrence 
   const result = await prepareHostCurrentSources(
     f.client,
     p,
-    "consumer",
     new AbortController().signal,
   );
   expect(result.sources.map((source) => source.locator.case)).toEqual([
@@ -97,16 +96,7 @@ test("whole and exact region/derived locators read back their actual occurrence 
     materialSources: result.sources,
   });
   expect(toJson(CognitionUsageSchema, p.usage)).toEqual(before);
-  expect(
-    f.reportUse.mock.calls[0]?.[0].events?.map(
-      (event) => `${event.reference?.kind}:${event.reference?.value}`,
-    ),
-  ).toEqual([
-    `occurrence:${occurrence}`,
-    "source_region:source-region",
-    "derived_representation:ready-representation",
-    "derived_region:derived-region",
-  ]);
+  expect(f.reportUse).not.toHaveBeenCalled();
   expect(result.textBytes).toBeGreaterThan(0);
 });
 test("a locator needs exact returned material and occurrence, and owner denial is never promoted", async () => {
@@ -130,24 +120,14 @@ test("a locator needs exact returned material and occurrence, and owner denial i
   ]) {
     const f = fixture(items);
     await expect(
-      prepareHostCurrentSources(
-        f.client,
-        p,
-        "consumer",
-        new AbortController().signal,
-      ),
+      prepareHostCurrentSources(f.client, p, new AbortController().signal),
     ).rejects.toThrow("unavailable or omitted");
     expect(f.reportUse).not.toHaveBeenCalled();
   }
   const f = fixture([]);
   f.readSources.mockRejectedValueOnce(Error("Material lineage mismatch"));
   await expect(
-    prepareHostCurrentSources(
-      f.client,
-      p,
-      "consumer",
-      new AbortController().signal,
-    ),
+    prepareHostCurrentSources(f.client, p, new AbortController().signal),
   ).rejects.toThrow("Material lineage mismatch");
   expect(f.reportUse).not.toHaveBeenCalled();
 });
@@ -162,7 +142,6 @@ test("empty occurrence/locator or false wholeOccurrence stops before reading", a
       prepareHostCurrentSources(
         f.client,
         permission([source]),
-        "consumer",
         new AbortController().signal,
       ),
     ).rejects.toThrow(/exact/);

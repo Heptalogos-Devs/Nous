@@ -2096,6 +2096,7 @@ dependencies = [
  "futures",
  "nous-core",
  "opendal",
+ "tempfile",
  "tokio",
  "uuid",
 ]

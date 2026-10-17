@@ -1,13 +1,10 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
-import { fromJson, type MessageInitShape } from "@bufbuild/protobuf";
-import { timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { fromJson } from "@bufbuild/protobuf";
 import type { NousClient } from "@nous-wave/client";
 import type { HostPrepareRequest } from "@nous-wave/client/host-bridge";
-import { eventIdentity } from "@nous-wave/client/managed";
 import {
   EvidenceRefSchema,
-  UseEventSchema,
   type EvidenceRef,
 } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
 import type { HostedPermission } from "./host.js";
@@ -36,11 +33,10 @@ function selectedReference(source: EvidenceRef) {
   throw Error("Host current sources require an exact Material locator");
 }
 
-/** Locator selections never expand SourceRead; the Material owner checks scope and exact lineage. */
+/** Validate current locators without recording use; the final applied projection owns admission. */
 export async function prepareHostCurrentSources(
-  client: Pick<NousClient, "cognition" | "runtime">,
+  client: Pick<NousClient, "cognition">,
   permission: HostedPermission & { identity: HostPrepareRequest },
-  consumerId: string,
   signal: AbortSignal,
 ) {
   const sources = permission.response.currentSources.map((raw) =>
@@ -77,37 +73,6 @@ export async function prepareHostCurrentSources(
     )
   )
     throw Error("Actual Host current sources are unavailable or omitted");
-  const events = new Map<string, MessageInitShape<typeof UseEventSchema>>();
-  for (const [index, source] of sources.entries())
-    for (const reference of [
-      { kind: "occurrence", value: source.occurrenceId },
-      references[index]!,
-    ]) {
-      const key = `${source.occurrenceId}:${reference.kind}:${reference.value}`;
-      if (events.has(key)) continue;
-      events.set(key, {
-        eventId: await eventIdentity(
-          `${permission.identity.contactRequestId}:completion:${source.occurrenceId}${
-            reference.kind === "occurrence"
-              ? ""
-              : `:${reference.kind}:${reference.value}`
-          }`,
-        ),
-        reference,
-        kind: "presented",
-        occurredAt: timestampFromDate(new Date()),
-        context: { native_completion: true },
-      });
-    }
-  await client.runtime.reportUse(
-    {
-      subjectId: permission.identity.subjectId,
-      sessionId: permission.identity.nousSessionId,
-      consumerRef: consumerId,
-      events: [...events.values()],
-    },
-    { signal },
-  );
   return {
     sources,
     textBytes: checked.items.reduce(
