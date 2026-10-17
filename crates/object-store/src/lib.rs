@@ -126,7 +126,14 @@ impl ObjectStore {
                 return Err(Error::Infrastructure(error.to_string()));
             }
         }
-        if let Err(error) = file.flush().await {
+        // Flush reports pending Tokio write failures; sync_all then persists
+        // both content and file metadata before the canonical path is visible.
+        if let Err(error) = async {
+            file.flush().await?;
+            file.sync_all().await
+        }
+        .await
+        {
             let _ = tokio::fs::remove_file(&staging).await;
             return Err(Error::Infrastructure(error.to_string()));
         }
@@ -135,28 +142,65 @@ impl ObjectStore {
         let hash = hasher.finalize().to_hex().to_string();
         let key = Self::storage_key(&hash)?;
         let target = self.root.join(&key);
-        if let Some(parent) = target.parent() {
-            tokio::fs::create_dir_all(parent)
+        let parent = self.root.join(&hash[..2]);
+        tokio::fs::create_dir_all(&parent)
+            .await
+            .map_err(|e| Error::Infrastructure(e.to_string()))?;
+        if Self::existing_matches(&target, &hash, size).await? {
+            tokio::fs::remove_file(&staging)
+                .await
+                .map_err(|e| Error::Infrastructure(e.to_string()))?;
+        } else {
+            // Every writer of this identity has verified the same bytes. Rename
+            // atomically publishes a complete object, including when repairing
+            // a corrupt target or racing another registration of this hash.
+            tokio::fs::rename(&staging, &target)
                 .await
                 .map_err(|e| Error::Infrastructure(e.to_string()))?;
         }
-        match tokio::fs::metadata(&target).await {
-            Ok(_) => {
-                tokio::fs::remove_file(&staging)
-                    .await
-                    .map_err(|e| Error::Infrastructure(e.to_string()))?;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                tokio::fs::rename(&staging, &target)
-                    .await
-                    .map_err(|e| Error::Infrastructure(e.to_string()))?;
-            }
-            Err(error) => {
-                let _ = tokio::fs::remove_file(&staging).await;
-                return Err(Error::Infrastructure(error.to_string()));
-            }
+        // Unix supports syncing directory entries: persist both the promoted
+        // object and its hash-prefix directory before Authority may commit.
+        // Windows retains the filesystem rename contract and file sync above;
+        // it does not offer this directory-sync operation through std::fs.
+        #[cfg(unix)]
+        for directory in [&parent, &self.root] {
+            tokio::fs::File::open(directory)
+                .await
+                .map_err(|e| Error::Infrastructure(e.to_string()))?
+                .sync_all()
+                .await
+                .map_err(|e| Error::Infrastructure(e.to_string()))?;
         }
         Ok((hash, size))
+    }
+
+    async fn existing_matches(path: &std::path::Path, hash: &str, size: u64) -> Result<bool> {
+        let mut file = match tokio::fs::File::open(path).await {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(Error::Infrastructure(error.to_string())),
+        };
+        if file
+            .metadata()
+            .await
+            .map_err(|e| Error::Infrastructure(e.to_string()))?
+            .len()
+            != size
+        {
+            return Ok(false);
+        }
+        let mut hasher = blake3::Hasher::new();
+        let mut chunk = vec![0; 262_144];
+        loop {
+            let count = file
+                .read(&mut chunk)
+                .await
+                .map_err(|e| Error::Infrastructure(e.to_string()))?;
+            if count == 0 {
+                return Ok(hasher.finalize().to_hex().as_str() == hash);
+            }
+            hasher.update(&chunk[..count]);
+        }
     }
 
     pub async fn get(&self, hash: &str) -> Result<Vec<u8>> {
