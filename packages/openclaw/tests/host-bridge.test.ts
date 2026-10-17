@@ -1091,6 +1091,45 @@ test("trusted structured role output and natural renderer formats reach the fina
     expect(structured.providerControls.responseFormat).toEqual(
       f.state.responseFormat,
     );
+    const input = f.input();
+    const assistant = {
+      role: "assistant",
+      content: [
+        { type: "text", text: '{"reason":"actual structured result"}' },
+      ],
+      timestamp: Date.now(),
+      stopReason: "stop",
+    } as Context["messages"][number];
+    f.engine.captureNativeEvent(input, assistant, structured, "completed");
+    // A Host outage retains the exact native marker; report must parse it before retrying feedback.
+    f.state.pendingReject = true;
+    await expect(
+      f.engine.reportModelOutcome(input, structured, "completed", assistant),
+    ).resolves.toBeUndefined();
+    const persisted = JSON.parse(
+      JSON.stringify({ type: "message", message: assistant }),
+    ) as {
+      message: {
+        nousHostBridge: {
+          providerControls: { responseFormat: HostResponseFormat };
+        };
+      };
+    };
+    expect(
+      persisted.message.nousHostBridge.providerControls.responseFormat,
+    ).toEqual(f.state.responseFormat);
+    mocks.history.push(persisted);
+    f.state.pendingReject = false;
+    const recovered = f.reopen();
+    await recovered.prepareModelInput(f.input("after-structured-result"));
+    expect(
+      [...f.stored.values()].some(
+        (record) =>
+          JSON.stringify(record.context?.native_provider_controls) ===
+          JSON.stringify(structured.providerControls),
+      ),
+    ).toBe(true);
+
     f.state.responseFormat = { type: "text" };
     const natural = await f.engine.prepareModelInput(f.input("renderer-call"));
     expect(natural.providerControls.responseFormat).toEqual({ type: "text" });
