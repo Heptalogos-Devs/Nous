@@ -9,6 +9,10 @@ use test_support::query::subject;
 use test_support::{database, open_runtime};
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exact locator journey covers scope, admission, replay and history withdrawal"
+)]
 async fn current_locator_requires_actual_occurrence_lineage_and_current_scope() {
     let (root, url, _postgres) = database().await;
     let runtime = open_runtime(&url, &root).await;
@@ -108,6 +112,84 @@ async fn current_locator_requires_actual_occurrence_lineage_and_current_scope() 
             .to_string()
             .contains("locator source does not match occurrence")
     );
+    let session = runtime
+        .cognition
+        .open_session(subject, None, serde_json::json!({}))
+        .await
+        .unwrap();
+    let source_region = observations[1]
+        .source_region
+        .as_ref()
+        .unwrap()
+        .source_region_id;
+    for reference in [
+        CognitiveRef::SourceRegion(source_region),
+        CognitiveRef::DerivedRepresentation(representation.derived_representation_id),
+    ] {
+        let feedback = |actual: OccurrenceId, model_input: bool| nous_runtime::UseFeedback {
+            model_input,
+            subject,
+            session_id: Some(session.session_id),
+            consumer_ref: "consumer:current-material".into(),
+            events: vec![nous_runtime::UseFeedbackEvent {
+                query_id: None,
+                event_id: UseEventId::new(),
+                reference: reference.clone(),
+                use_kind: nous_runtime::UseKind::Presented,
+                occurred_at: runtime.cognition.recorded_now(),
+                context: serde_json::json!({"actual_occurrence_id": actual.0.to_string()}),
+            }],
+        };
+        assert!(
+            runtime
+                .cognition
+                .use_feedback(feedback(occurrence_b, false))
+                .await
+                .is_err()
+        );
+        assert!(
+            runtime
+                .cognition
+                .use_feedback(feedback(occurrence_a, true))
+                .await
+                .is_err()
+        );
+        let mut missing_pair = feedback(occurrence_b, true);
+        missing_pair.events[0].context = serde_json::json!({});
+        assert!(runtime.cognition.use_feedback(missing_pair).await.is_err());
+        let valid = feedback(occurrence_b, true);
+        assert_eq!(
+            runtime
+                .cognition
+                .use_feedback(valid.clone())
+                .await
+                .unwrap()
+                .0,
+            1
+        );
+        assert_eq!(runtime.cognition.use_feedback(valid).await.unwrap().1, 1);
+    }
+    let source_pair = EvidenceRef {
+        locator: EvidenceLocator::SourceRegion(source_region),
+        ..pair.clone()
+    };
+    let source_selected = runtime
+        .material
+        .current_material_sources(subject, std::slice::from_ref(&source_pair), 4096, &both)
+        .await
+        .unwrap();
+    assert!(source_selected[0].is_ok());
+    let wrong_source = EvidenceRef {
+        occurrence_id: occurrence_a,
+        ..source_pair.clone()
+    };
+    assert!(
+        runtime
+            .material
+            .current_material_sources(subject, &[wrong_source], 4096, &both)
+            .await
+            .is_err()
+    );
     let only_a = ContextResolver::source_read_view(&runtime, subject, &scope(vec![occurrence_a]))
         .await
         .unwrap();
@@ -117,4 +199,30 @@ async fn current_locator_requires_actual_occurrence_lineage_and_current_scope() 
         .await
         .unwrap();
     assert!(denied[0].is_err());
+    let source_denied = runtime
+        .material
+        .current_material_sources(subject, &[source_pair], 4096, &only_a)
+        .await
+        .unwrap();
+    assert!(source_denied[0].is_err());
+    let mut tx = runtime.store.begin().await.unwrap();
+    runtime
+        .cognition
+        .invalidate_session_history_in(
+            &mut tx,
+            subject,
+            "source_region",
+            &[source_region.0.to_string()],
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(
+        runtime
+            .cognition
+            .session(subject, session.session_id)
+            .await
+            .unwrap()
+            .history_invalidated
+    );
 }

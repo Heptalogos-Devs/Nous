@@ -77,7 +77,12 @@ function fixture(
     }
     if (method.name === "ReportUse") {
       reports.push(input as ReportUseRequest);
-      return { message: create(method.output, { modelInputChecked: true }) };
+      return {
+        message: create(method.output, {
+          modelInputChecked: true,
+          acceptedCount: (input as ReportUseRequest).events.length,
+        }),
+      };
     }
     if (method.name === "RecordObservation") observations.push(input);
     return { message: create(method.output) };
@@ -208,6 +213,7 @@ test("failed application leaves the cursor uncommitted; closed and foreign prepa
       },
     }),
   ).toThrow("render failed");
+  expect(current.reports).toHaveLength(0);
   await current.prepare();
   expect(current.requests.at(-1)?.knownCursor).toBeUndefined();
   current.replace(
@@ -280,4 +286,62 @@ test("execution-only outcomes stay with their RoleRun instead of becoming Subjec
   await current.binding.report(result);
   expect(retained).toEqual([result]);
   expect(current.observations).toEqual([]);
+});
+
+test("only applied Material locators enter Session admission with their exact occurrence", async () => {
+  const current = fixture();
+  const sourceRefs = [
+    { kind: "source_region", value: "actual-source-region" },
+    { kind: "derived_representation", value: "actual-derived" },
+  ];
+  current.replace(
+    create(ManagedContextResponseSchema, {
+      ...current.response(),
+      projection: {
+        ...current.response().projection!,
+        segments: sourceRefs.map((ref, index) =>
+          create(ContextSegmentSchema, {
+            segmentId: `material-${index}`,
+            text: "Actual retained material",
+            sourceRefs: [ref],
+            evidence: [
+              {
+                basisRole: "actual_occurrence",
+                reference: { kind: "occurrence", value: "actual-occurrence" },
+              },
+            ],
+          }),
+        ),
+      },
+    }),
+  );
+  const prepared = await current.binding.prepare({
+    usage: current.response().projection!.usage!,
+    cognitionTokenBudget: 2048,
+    signal: new AbortController().signal,
+  });
+  const { applied } = current.binding.apply("base", prepared, {
+    render: (base) => base,
+  });
+  expect(current.reports).toHaveLength(0);
+  await current.binding.admit({
+    invocationId: "actual-material-input",
+    applied,
+    occurredAt: new Date(),
+  });
+  expect(current.reports[0]).toMatchObject({
+    modelInput: true,
+    sessionId: "session",
+  });
+  expect(current.reports[0]!.events.map((e) => e.reference)).toEqual([
+    expect.objectContaining(sourceRefs[0]),
+    expect.objectContaining({ kind: "occurrence", value: "actual-occurrence" }),
+    expect.objectContaining(sourceRefs[1]),
+  ]);
+  for (const event of current.reports[0]!.events.filter(
+    (e) => e.reference?.kind !== "occurrence",
+  ))
+    expect(event.context).toMatchObject({
+      actual_occurrence_id: "actual-occurrence",
+    });
 });

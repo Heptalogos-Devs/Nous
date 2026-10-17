@@ -248,6 +248,7 @@ export function createManagedBinding(options: {
       const client = await options.client();
       const materialKinds = new Set([
         "occurrence",
+        "source_region",
         "derived_representation",
         "derived_region",
       ]);
@@ -313,9 +314,13 @@ export function createManagedBinding(options: {
           },
           request,
         );
-        if (!admitted.modelInputChecked)
+        if (
+          !admitted.modelInputChecked ||
+          admitted.acceptedCount + admitted.duplicateCount !==
+            references.slice(offset, offset + 256).length
+        )
           throw new Error(
-            "Core did not enforce the required model input history check",
+            "Core did not admit the complete required model input history",
           );
       }
       let accepted = admissions.get(result.applied);
