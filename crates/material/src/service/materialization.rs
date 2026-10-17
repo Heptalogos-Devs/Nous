@@ -136,6 +136,16 @@ impl MaterialService {
                 admitted.push(reference.clone());
             }
         }
+        if let Some(paths) = paths {
+            let qualified = paths
+                .iter()
+                .zip(&allowed)
+                .filter(|(_, allowed)| **allowed)
+                .map(|(path, _)| path.clone())
+                .collect::<Vec<_>>();
+            self.evidence_roots_batch_in(&mut tx, subject, &qualified, None)
+                .await?;
+        }
         let mut inputs = self
             .read_inputs_in(&mut tx, subject, &admitted, None, max_bytes > 0)
             .await?;
