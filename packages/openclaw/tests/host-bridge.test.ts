@@ -22,6 +22,7 @@ import {
   HOST_BRIDGE_PATHS,
   type HostPrepareRequest,
   type HostRoleScope,
+  type HostResponseFormat,
   withHostObservationScope,
   encodeCognitionUsage,
   decodeObservationInput,
@@ -87,6 +88,7 @@ async function fixture(hosted = true) {
     allowedToolNames: ["nous_query", "nous_read", "actual_read"],
     workContextId: firstWork,
     tokenBudget: { inputTokens: 8192, outputTokens: 128 },
+    responseFormat: undefined as HostResponseFormat | undefined,
   };
   const prepares: HostPrepareRequest[] = [];
   const terminals: HostRunTerminalRequest[] = [];
@@ -234,6 +236,9 @@ async function fixture(hosted = true) {
             allowedToolNames: state.allowedToolNames,
             roleScope,
             tokenBudget: state.tokenBudget,
+            ...(state.responseFormat
+              ? { responseFormat: state.responseFormat }
+              : {}),
             allowedHistoryUserKeys:
               request.historyUsers?.map((user) => user.key) ?? [],
             usage: toJson(CognitionUsageSchema, actualUsage),
@@ -1060,6 +1065,74 @@ test("Host preparation binds exact ephemeral current context independently of pe
     expect(f.prepares[1]?.currentContextDigest).toBe(await hostInputDigest(""));
     await f.engine.prepareModelInput(f.input("absent-context"));
     expect(f.prepares[2]).not.toHaveProperty("currentContextDigest");
+  } finally {
+    await f.close();
+  }
+});
+
+test("trusted structured role output and natural renderer formats reach the final native controls", async () => {
+  const f = await fixture();
+  mocks.history = [];
+  try {
+    f.state.responseFormat = {
+      type: "json_schema",
+      json_schema: {
+        name: "subject_deliberation",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: { reason: { type: "string" } },
+          required: ["reason"],
+          additionalProperties: false,
+        },
+      },
+    };
+    const structured = await f.engine.prepareModelInput(f.input());
+    expect(structured.providerControls.responseFormat).toEqual(
+      f.state.responseFormat,
+    );
+    const input = f.input();
+    const assistant = {
+      role: "assistant",
+      content: [
+        { type: "text", text: '{"reason":"actual structured result"}' },
+      ],
+      timestamp: Date.now(),
+      stopReason: "stop",
+    } as Context["messages"][number];
+    f.engine.captureNativeEvent(input, assistant, structured, "completed");
+    // A Host outage retains the exact native marker; report must parse it before retrying feedback.
+    f.state.pendingReject = true;
+    await expect(
+      f.engine.reportModelOutcome(input, structured, "completed", assistant),
+    ).resolves.toBeUndefined();
+    const persisted = JSON.parse(
+      JSON.stringify({ type: "message", message: assistant }),
+    ) as {
+      message: {
+        nousHostBridge: {
+          providerControls: { responseFormat: HostResponseFormat };
+        };
+      };
+    };
+    expect(
+      persisted.message.nousHostBridge.providerControls.responseFormat,
+    ).toEqual(f.state.responseFormat);
+    mocks.history.push(persisted);
+    f.state.pendingReject = false;
+    const recovered = f.reopen();
+    await recovered.prepareModelInput(f.input("after-structured-result"));
+    expect(
+      [...f.stored.values()].some(
+        (record) =>
+          JSON.stringify(record.context?.native_provider_controls) ===
+          JSON.stringify(structured.providerControls),
+      ),
+    ).toBe(true);
+
+    f.state.responseFormat = { type: "text" };
+    const natural = await f.engine.prepareModelInput(f.input("renderer-call"));
+    expect(natural.providerControls.responseFormat).toEqual({ type: "text" });
   } finally {
     await f.close();
   }

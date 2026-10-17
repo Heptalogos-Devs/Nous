@@ -381,6 +381,73 @@ const nativeAgentSource = await readFile(
   join(native, "dist/agent-core-BxgCPa8O.js"),
   "utf8",
 );
+// Exercise the installed managed boundary's exact final provider call, before stream iteration.
+const streamStart = nativeAgentSource.indexOf(
+  "async function streamAssistantResponse(",
+);
+const streamIteration = nativeAgentSource.indexOf(
+  "let partialMessage = null;",
+  streamStart,
+);
+assert(streamStart >= 0 && streamIteration > streamStart);
+const callProvider = vm.runInNewContext(`
+  const normalizeCoreContextMessages = messages => messages;
+  const resolveAgentCoreStreamFn = (_runtime, stream) => stream;
+  ${nativeAgentSource.slice(streamStart, streamIteration)} return response; }
+  streamAssistantResponse;
+`) as (...args: unknown[]) => Promise<unknown>;
+for (const responseFormat of [
+  {
+    type: "json_schema",
+    json_schema: {
+      name: "decision",
+      strict: true,
+      schema: {
+        type: "object",
+        required: ["reason"],
+        properties: { reason: { type: "string" } },
+        additionalProperties: false,
+      },
+    },
+  },
+  { type: "text" },
+]) {
+  let captured: Record<string, unknown> | undefined;
+  await callProvider(
+    { messages: [], systemPrompt: "native" },
+    {
+      model: { provider: "fixture", maxTokens: 64 },
+      maxTokens: 64,
+      responseFormat: { type: "json_object" },
+      convertToLlm: async (messages: unknown) => messages,
+      managedCognition: {
+        prepare: async () => ({
+          applied: {},
+          context: { messages: [], systemPrompt: "applied" },
+          providerControls: { maxOutputTokens: 7, responseFormat },
+        }),
+        report: async () => undefined,
+      },
+    },
+    undefined,
+    async () => undefined,
+    async (
+      _model: unknown,
+      context: { systemPrompt: string },
+      options: Record<string, unknown>,
+    ) => {
+      assert.equal(context.systemPrompt, "applied");
+      captured = options;
+      return {};
+    },
+    {},
+  );
+  assert.equal(captured?.maxTokens, 7);
+  assert.equal(
+    JSON.stringify(captured?.responseFormat),
+    JSON.stringify(responseFormat),
+  );
+}
 const emitActualTool = vm.runInNewContext(`
   const copyInternalToolResultState=(_source,message)=>message;
   const withToolResultContentSource=(message)=>message;

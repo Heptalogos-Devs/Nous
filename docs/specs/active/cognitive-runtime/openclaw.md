@@ -32,6 +32,8 @@ prepare 复用 BuildManagedContext；apply 成功后才推进本 binding 的 cur
 
 Host 的受信 tokenBudget 指定完整 inputTokens 与 outputTokens，允许工具由 RoleBinding 与当前 Activity scope 取交集后发给原生可见面和实际执行 guard。缺预算/工具政策的旧 RoleRun 标为 unconfigured：保留已有成果、终态和真实送达回流，禁止新增 provider attempt，不推断默认角色预算。新子 Agent 从真实 execution profile 取得显式政策，不把父审议预算冒充子角色配置。
 
+Host 可随许可返回受信 responseFormat：结构角色使用所属 owner 的 strict json_schema，独立自然文本角色显式使用 text。SDK 将该值交给受控原生 stream owner，在每次实际 provider 调用的最终选项中应用；同一格式随真实接触 marker 保存并用于结果反馈与重启补交。
+
 Host 按所选模型的上下文窗口、输出预留、原生完整输入估计剩余预算，再取 role input cap 与 cognition cap 的较小值。最终应用后的 system、tools、history、media 和 Nous slice 一并复核；超限停止这次调用。providerControls.maxOutputTokens 在受控 native stream owner 最终传给 provider，取角色 cap 与实际原生 profile 输出限制的较小值，不覆盖更小的已配置上限。当前 token 计量是 OpenClaw native estimate；Nous 文本字节上限用于有余量的输入控制，不声称精确 tokenizer。renderer 核验最终输入，超预算停止调用。
 
 WorkContext 和 identity/situational guidance 必须完整；不足时拒绝。Memory/Schema/Episode/Journal/Material 等可选语义单元整段省略并报告，不截断条件。REQUIRED 意味着认知 owner/capability 必须可用，不意味着无相关认知的新主体必须凭空有一段记忆。Kernel 核验必需 Memory 的进程和 Subject 能力；来源读取或传输失败照实际错误处理。

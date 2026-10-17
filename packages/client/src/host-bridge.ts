@@ -122,6 +122,23 @@ export const hostTokenBudgetSchema = z
   })
   .strict();
 export type HostTokenBudget = z.infer<typeof hostTokenBudgetSchema>;
+/** Exact native structured-output control supplied by the trusted role owner. */
+export const hostResponseFormatSchema = z.union([
+  z.object({ type: z.literal("text") }).strict(),
+  z
+    .object({
+      type: z.literal("json_schema"),
+      json_schema: z
+        .object({
+          name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+          strict: z.literal(true),
+          schema: canonicalJson,
+        })
+        .strict(),
+    })
+    .strict(),
+]);
+export type HostResponseFormat = z.infer<typeof hostResponseFormatSchema>;
 export const hostPrepareResponseSchema = z
   .object({
     version: z.literal(1),
@@ -129,6 +146,7 @@ export const hostPrepareResponseSchema = z
     workContextId: z.uuid(),
     roleScope: hostRoleScopeSchema,
     tokenBudget: hostTokenBudgetSchema,
+    responseFormat: hostResponseFormatSchema.optional(),
     allowedToolNames: z.array(z.string().min(1).max(512)).max(1024),
     currentSources: z.array(canonicalJson).max(64).default([]),
     allowedHistoryUserKeys: z

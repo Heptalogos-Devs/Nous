@@ -5,6 +5,7 @@ import type { Context, Model } from "@openclaw/ai";
 import type {
   HostContactIdentity,
   HostRoleScope,
+  HostResponseFormat,
   HostRunTerminalRequest,
   HostRunTerminalResponse,
 } from "@nous-wave/client/host-bridge";
@@ -50,7 +51,10 @@ export interface ManagedModelApplication {
   invocationId: string;
   applied: AppliedCognition;
   /** Applied by the controlled native stream owner after all generic options. */
-  providerControls: { maxOutputTokens: number };
+  providerControls: {
+    maxOutputTokens: number;
+    responseFormat?: HostResponseFormat;
+  };
 }
 export interface ManagedToolExecution {
   readonly toolName: string;

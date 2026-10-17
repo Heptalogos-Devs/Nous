@@ -15,6 +15,7 @@ import {
   encodeCognitionUsage,
   withHostObservationScope,
   hostPrepareRequestSchema,
+  hostResponseFormatSchema,
   hostContactIdentitySchema,
   type HostPrepareRequest,
 } from "@nous-wave/client/host-bridge";
@@ -52,7 +53,10 @@ const markerSchema = z
     outcome: z.enum(["completed", "failed", "cancelled"]).optional(),
     projectionId: z.string().optional(),
     providerControls: z
-      .object({ maxOutputTokens: z.number().int().positive() })
+      .object({
+        maxOutputTokens: z.number().int().positive(),
+        responseFormat: hostResponseFormatSchema.optional(),
+      })
       .strict()
       .optional(),
   })

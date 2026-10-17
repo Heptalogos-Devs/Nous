@@ -123,6 +123,8 @@ v5 在原生 `message_end` 写入前同步附上非秘密 contact identity、首
 
 v5 在实际 provider stream 强制应用 `providerControls.maxOutputTokens`，保留更小的原生 profile 上限；原生完整 system/tools/history/media/Nous slice 使用既有估算统一核对角色 input cap。实际 cap 与模型 metadata 随原生事实保存。
 
+Host prepare 的可选 `responseFormat` 接受 `{type:"text"}` 或 `{type:"json_schema",json_schema:{name,strict:true,schema}}`。它经 `providerControls.responseFormat` 在最终原生 provider 调用中应用，并随实际接触 marker 保存以支持反馈及重启补交。结构角色由受信 Host 提供正式 schema；自然文本 renderer 使用显式 text。
+
 准备安装会统一升级到 boundaryVersion **5**；旧 native 入口明确拒绝，需重新运行正式 prepare。自动测试使用真实 loopback Host 与 mock Nous 公共操作检查上述许可/来源/恢复边界；离线 native fixture 另验证真实 SQLite 保留 contact 标记及 reset 历史。真实 Host、Activity 与 QQ 全流程仍由产品集成验证。
 
 ## 宿主控制的渠道派发
