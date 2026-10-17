@@ -1,7 +1,7 @@
 // Copyright 2026 Aravine Zhu
 // SPDX-License-Identifier: Apache-2.0
 
-import { toJson, fromJson, type JsonObject } from "@bufbuild/protobuf";
+import { toJson, type JsonObject } from "@bufbuild/protobuf";
 import { invocationBudget } from "./budget.js";
 import { scopeCallerHistory, allowsCompactionScope } from "./hosted-history.js";
 import {
@@ -18,10 +18,8 @@ import {
   decodeAcceptedObservation,
 } from "@nous-wave/client/host-bridge";
 import { createManagedBinding, eventIdentity } from "@nous-wave/client/managed";
-import {
-  CognitionUsageSchema,
-  EvidenceRefSchema,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { CognitionUsageSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/types_pb.js";
+import { prepareHostCurrentSources } from "./current-sources.js";
 import {
   delegateCompactionToRuntime,
   retryNousSubagentCompletion,
@@ -778,70 +776,14 @@ function register(api: OpenClawPluginApi): void {
             )
           : { sources: [], textBytes: 0, omissions: [] };
         if (permission?.response.currentSources.length) {
-          const connected = await connect();
-          const sources = permission.response.currentSources.map((raw) =>
-            fromJson(EvidenceRefSchema, raw),
+          const selected = await prepareHostCurrentSources(
+            await connect(),
+            permission,
+            config.consumerId,
+            input.signal,
           );
-          if (
-            sources.some(
-              (source) =>
-                !source.occurrenceId ||
-                source.locator.case !== "wholeOccurrence" ||
-                !source.locator.value,
-            )
-          )
-            throw Error(
-              "Host completion sources require exact actual whole Occurrences",
-            );
-          const checked = await connected.cognition.readSources(
-            {
-              subjectId: config.subjectId,
-              usage: permission.usage,
-              materialSources: sources,
-              maxTextBytes: 1048576,
-            },
-            { signal: input.signal },
-          );
-          if (
-            checked.degradation.length ||
-            sources.some(
-              (source) =>
-                !checked.items.some((item) =>
-                  item.sourceRefs.some(
-                    (ref) =>
-                      ref.kind === "occurrence" &&
-                      ref.value === source.occurrenceId,
-                  ),
-                ),
-            )
-          )
-            throw Error(
-              "Actual child completion sources are unavailable or omitted",
-            );
-          await connected.runtime.reportUse(
-            {
-              subjectId: config.subjectId,
-              sessionId: binding.sessionId,
-              consumerRef: config.consumerId,
-              events: await Promise.all(
-                sources.map(async (source) => ({
-                  eventId: await eventIdentity(
-                    `${permission.identity.contactRequestId}:completion:${source.occurrenceId}`,
-                  ),
-                  reference: { kind: "occurrence", value: source.occurrenceId },
-                  kind: "presented",
-                  occurredAt: timestampFromDate(new Date()),
-                  context: { native_completion: true },
-                })),
-              ),
-            },
-            { signal: input.signal },
-          );
-          currentMaterials.sources.push(...sources);
-          currentMaterials.textBytes += checked.items.reduce(
-            (sum, item) => sum + Buffer.byteLength(item.text),
-            0,
-          );
+          currentMaterials.sources.push(...selected.sources);
+          currentMaterials.textBytes += selected.textBytes;
         }
         const currentTurn = input.context.messages.findLastIndex(
           (message) => message.role === "user",
