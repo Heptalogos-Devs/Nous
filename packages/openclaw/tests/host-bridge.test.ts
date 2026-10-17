@@ -22,6 +22,7 @@ import {
   HOST_BRIDGE_PATHS,
   type HostPrepareRequest,
   type HostRoleScope,
+  type HostResponseFormat,
   withHostObservationScope,
   encodeCognitionUsage,
   decodeObservationInput,
@@ -87,6 +88,7 @@ async function fixture(hosted = true) {
     allowedToolNames: ["nous_query", "nous_read", "actual_read"],
     workContextId: firstWork,
     tokenBudget: { inputTokens: 8192, outputTokens: 128 },
+    responseFormat: undefined as HostResponseFormat | undefined,
   };
   const prepares: HostPrepareRequest[] = [];
   const terminals: HostRunTerminalRequest[] = [];
@@ -234,6 +236,9 @@ async function fixture(hosted = true) {
             allowedToolNames: state.allowedToolNames,
             roleScope,
             tokenBudget: state.tokenBudget,
+            ...(state.responseFormat
+              ? { responseFormat: state.responseFormat }
+              : {}),
             allowedHistoryUserKeys:
               request.historyUsers?.map((user) => user.key) ?? [],
             usage: toJson(CognitionUsageSchema, actualUsage),
@@ -1060,6 +1065,35 @@ test("Host preparation binds exact ephemeral current context independently of pe
     expect(f.prepares[1]?.currentContextDigest).toBe(await hostInputDigest(""));
     await f.engine.prepareModelInput(f.input("absent-context"));
     expect(f.prepares[2]).not.toHaveProperty("currentContextDigest");
+  } finally {
+    await f.close();
+  }
+});
+
+test("trusted structured role output and natural renderer formats reach the final native controls", async () => {
+  const f = await fixture();
+  mocks.history = [];
+  try {
+    f.state.responseFormat = {
+      type: "json_schema",
+      json_schema: {
+        name: "subject_deliberation",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: { reason: { type: "string" } },
+          required: ["reason"],
+          additionalProperties: false,
+        },
+      },
+    };
+    const structured = await f.engine.prepareModelInput(f.input());
+    expect(structured.providerControls.responseFormat).toEqual(
+      f.state.responseFormat,
+    );
+    f.state.responseFormat = { type: "text" };
+    const natural = await f.engine.prepareModelInput(f.input("renderer-call"));
+    expect(natural.providerControls.responseFormat).toEqual({ type: "text" });
   } finally {
     await f.close();
   }

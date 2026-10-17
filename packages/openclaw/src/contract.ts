@@ -50,7 +50,10 @@ export interface ManagedModelApplication {
   invocationId: string;
   applied: AppliedCognition;
   /** Applied by the controlled native stream owner after all generic options. */
-  providerControls: { maxOutputTokens: number };
+  providerControls: {
+    maxOutputTokens: number;
+    responseFormat?: Record<string, unknown>;
+  };
 }
 export interface ManagedToolExecution {
   readonly toolName: string;

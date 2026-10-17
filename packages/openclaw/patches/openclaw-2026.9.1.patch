@@ -86,7 +86,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
 +	let response;
 +	try { response = await streamFunction(config.model, llmContext, {
  		...config,
-+        ...(managed ? {maxTokens: controlledOutputLimit} : {}),
++        ...(managed ? {maxTokens: controlledOutputLimit, ...(application.providerControls.responseFormat ? {responseFormat: application.providerControls.responseFormat} : {})} : {}),
  		apiKey: resolvedApiKey,
  		signal
 -	});

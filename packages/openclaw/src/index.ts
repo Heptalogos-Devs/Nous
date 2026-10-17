@@ -924,7 +924,12 @@ function register(api: OpenClawPluginApi): void {
           context,
           applied,
           invocationId,
-          providerControls: { maxOutputTokens: providerBudget.outputTokens },
+          providerControls: {
+            maxOutputTokens: providerBudget.outputTokens,
+            ...(permission?.response.responseFormat
+              ? { responseFormat: permission.response.responseFormat }
+              : {}),
+          },
         };
         await binding.admit(
           {
