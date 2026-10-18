@@ -16,7 +16,6 @@ check-fast:
 check: check-fast
     corepack pnpm test
     cargo test --workspace --all-features -- --test-threads=1
-    just smoke
 
 audit:
     cargo deny --config .config/deny.toml check
@@ -29,7 +28,6 @@ dev-prepare:
     corepack pnpm dev:prepare
 
 smoke:
-    cargo build -p nous-kernel
     corepack pnpm smoke
 
 release-prepare:

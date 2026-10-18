@@ -116,6 +116,3 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
     )?;
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

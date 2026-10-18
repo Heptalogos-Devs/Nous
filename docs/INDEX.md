@@ -23,6 +23,7 @@
 - [Configuration](reference/CONFIGURATION.md)
 - [Model Runtime](reference/MODEL_RUNTIME.md)
 - [Capability Composition](reference/CAPABILITIES.md)
+- [共享 Subject 反思](reference/SUBJECT_REFLECTION.md)
 - [配置示例](reference/examples/README.md)
 
 ## 研究与方向

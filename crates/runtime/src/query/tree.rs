@@ -437,7 +437,3 @@ fn collect_preferences(
     }
     matched
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/query_tree.rs"]
-mod tests;

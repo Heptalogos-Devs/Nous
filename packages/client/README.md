@@ -34,7 +34,7 @@ const subjects = await client.subjects.listSubjects({});
 
 TypeScript Host 使用 `module/moduleResolution: "NodeNext"` 并安装 `@types/node`；所有服务请求/响应保留 canonical generated 类型。`NodeNousClient` 和 `NousInstanceClient` 是 `/node` 的正式返回类型，`ArtifactUploadOptions`、`UploadedArtifact` 也从该入口公开。
 
-维护者执行 `corepack pnpm client:verify`，会重新打包、在系统临时目录的独立 npm 项目安装，逐一加载全部入口，并在 `skipLibCheck: false` 下验证 generated 类型与下游声明生成。该检查已接入 `check:fast`。`corepack pnpm smoke:client` 复用[公共 smoke](../../scripts/smoke/README.md) 的隔离实例，用安装后的正式 Client 执行 status、Subject create/get/list，不调用付费模型；已接入 `just smoke`。独立消费者成功后清理，失败时打印并保留路径。
+维护者执行 `corepack pnpm client:verify`，会重新打包、在系统临时目录的独立 npm 项目安装，逐一加载全部入口，并在 `skipLibCheck: false` 下验证 generated 类型与下游声明生成。该检查已接入 `check:fast`。`corepack pnpm smoke:longitudinal` 使用真实隔离 Core/Kernel/PostgreSQL 和正式 Client 检查认知操作及重启恢复。独立消费者成功后清理，失败时打印并保留路径。
 
 Client returns generated canonical Protobuf messages directly. Decode configuration `Value` fields explicitly with `toJson(ValueSchema, value)`; the workspace CLI uses `messageData` from `@nous-wave/protocol/messages` at text/JSON output boundaries. The bundled Protocol is an internal Client dependency, rather than a separate Host import entry. Freeform JSON leaves remain opaque.
 

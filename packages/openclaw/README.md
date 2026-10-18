@@ -170,21 +170,7 @@ QQ、真实 Host API 或模型交互；这些由产品集成验证。
 
 ## 验证
 
-```sh
-node --env-file=/absolute/path/operator.env node_modules/tsx/dist/cli.mjs scripts/smoke/openclaw.ts /absolute/path/openclaw.json /absolute/path/openclaw-package-root
-```
-
-该公共场景使用现有 loopback HTTP 模型 gateway 的真实 provider；创建隔离 Nous/Core/Kernel/PostgreSQL 与原生 Gateway，以 `/readyz` 判断就绪。检查实际 provider 输入、读文件工具结果、WorkContext RESET、原生压缩、子 Agent、认知不可用时阻止发送，Core 重启后恢复，以及实际 Self 输出进入原生压缩摘要后的 purge、Gateway 重启拒绝发送和正式 reset 后的干净输入。诊断与失败输入留在私有临时目录，不输出凭据。它不替换 operator 实例或证明未测渠道/平台能力。
-
-Self 的真实行为场景单独运行，不进入默认离线 smoke：
-
-```sh
-node --env-file=/absolute/path/operator.env node_modules/tsx/dist/cli.mjs scripts/smoke/openclaw-self.ts /absolute/path/openclaw.json /absolute/path/openclaw-package-root
-```
-
-场景使用同一 provider 的首个模型执行原生交互，最后一个模型执行正式 Self 形成/反思并检验切换，配置中需要两个不同模型。它保留无 Seed 主体的实际自选名字和有情境偏好，通过实际公共资料任务检查使用，再对照 Seed 主体、来源修订、重启、新会话及普通聊天权限。Self 解释使用显式的 180 秒执行上限；模型选择需具备结构化输出及语义判断能力，结构合法不代表形成结果正确。需检查私有结果中的实际陈述、适用条件、工具步骤与最终输入，不能用“回答出现名字”代替认知应用证明。
-
-场景失败后可在末尾传入其 evidence 目录继续，同一 Subject、原始来源、付费解释结果和原生会话都会保留。诊断目录不应加入版本控制。
+`pnpm openclaw:custody:verify` 执行实际原生 custody、历史压缩、工具绑定和执行 scope 场景。`pnpm test scripts/tests/openclaw/controlled-plugin.test.ts` 检查受控安装、状态保留和运行中替换拒绝。真实 QQ、Host 与人格连续性沿产品原任务验证，继续使用原 Subject、来源和已付费结果。
 
 ### 独立模式来源许可
 

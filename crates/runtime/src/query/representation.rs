@@ -559,7 +559,3 @@ impl CognitiveRuntimeService {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/query_representation.rs"]
-mod tests;

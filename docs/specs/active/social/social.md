@@ -41,4 +41,4 @@ resolveConventions 保留原话，按指定 scope、实际时间点、预算与�
 
 共享 subject_reflection 负责模型机会、真实来源、预算、成果保存与恢复。Core 的 [typed proposal/apply](../../../../apps/nous-core/src/model/social.ts) 接收 adopt/revise/add_evidence/keep，逐项返回实际结果；producer 必须为 SubjectReflectionText。此模块不创建 Social 模型 role 或独立执行链，不自动授予生命周期或 purge 权限。
 
-`pnpm smoke:social` 使用隔离 PostgreSQL，验证 owner、来源/作用域拒绝、Query/Projection、独立方向、逆关系、单对象对称读取、追加证据、混合 owner 循环、历史屏障及超过管理页 100 的候选。它不声称真实 QQ 自然学习已通过；实际成长还需 Host 的可信事件与共享反思接线。
+`apps/nous-kernel/tests/cognition_domain_time.rs` 检查 Social 的形成域、历史 valid 候选与来源权限；`world_knowledge.rs` 检查角色见闻与现实历史切面。真实 QQ 自然学习沿 Host 的可信事件与共享反思路径验证。
