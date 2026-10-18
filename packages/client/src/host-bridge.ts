@@ -183,7 +183,7 @@ export const hostPrepareResponseSchema = z.union([
         view: z.literal("review"),
         contactNature: z.literal("execution_only"),
       }),
-      allowedToolNames: z.tuple([]),
+      allowedToolNames: z.array(z.string()).length(0),
     })
     .strict(),
 ]);
