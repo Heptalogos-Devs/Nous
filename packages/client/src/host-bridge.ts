@@ -139,29 +139,54 @@ export const hostResponseFormatSchema = z.union([
     .strict(),
 ]);
 export type HostResponseFormat = z.infer<typeof hostResponseFormatSchema>;
-export const hostPrepareResponseSchema = z
-  .object({
-    version: z.literal(1),
-    contactRequestId: z.uuid(),
-    workContextId: z.uuid(),
-    roleScope: hostRoleScopeSchema,
-    tokenBudget: hostTokenBudgetSchema,
-    responseFormat: hostResponseFormatSchema.optional(),
-    allowedToolNames: z.array(z.string().min(1).max(512)).max(1024),
-    currentSources: z.array(canonicalJson).max(64).default([]),
-    allowedHistoryUserKeys: z
-      .array(z.string().min(1).max(4096))
-      .max(2048)
-      .default([]),
-    usage: canonicalJson,
-    contacts: z.array(
-      z
-        .object({ contactRef: z.string().min(1), observation: canonicalJson })
-        .strict(),
-    ),
-    scope: hostScopeSchema,
-  })
-  .strict();
+export const hostPrepareResponseFields = {
+  version: z.literal(1),
+  contactRequestId: z.uuid(),
+  roleScope: hostRoleScopeSchema,
+  tokenBudget: hostTokenBudgetSchema,
+  responseFormat: hostResponseFormatSchema.optional(),
+  allowedToolNames: z.array(z.string().min(1).max(512)).max(1024),
+  currentSources: z.array(canonicalJson).max(64).default([]),
+  allowedHistoryUserKeys: z
+    .array(z.string().min(1).max(4096))
+    .max(2048)
+    .default([]),
+  usage: canonicalJson,
+  contacts: z.array(
+    z
+      .object({ contactRef: z.string().min(1), observation: canonicalJson })
+      .strict(),
+  ),
+  scope: hostScopeSchema,
+};
+/** Current work and owner-authorized retained work have distinct context authority. */
+export const hostPrepareResponseSchema = z.union([
+  z
+    .object({
+      ...hostPrepareResponseFields,
+      workContextId: z.uuid(),
+      continuationSourceRef: z.never().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...hostPrepareResponseFields,
+      workContextId: z.never().optional(),
+      continuationSourceRef: z
+        .string()
+        .regex(
+          /^expression-candidate:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+        ),
+      roleScope: hostRoleScopeSchema.safeExtend({
+        role: z.literal("narrative.review"),
+        purpose: z.literal("narrative_review"),
+        view: z.literal("review"),
+        contactNature: z.literal("execution_only"),
+      }),
+      allowedToolNames: z.tuple([]),
+    })
+    .strict(),
+]);
 export const hostAdmittedRequestSchema = z
   .object({
     ...contactIdentity,
@@ -294,7 +319,7 @@ export const hostResultReleaseResponseSchema = z
     accepted: z.literal(true),
     activityRef: z.string().min(1),
     contactNature: z.literal("subject_experience"),
-    contacts: hostPrepareResponseSchema.shape.contacts,
+    contacts: hostPrepareResponseFields.contacts,
     opportunity: z
       .object({
         kind: z.literal("activity_result"),

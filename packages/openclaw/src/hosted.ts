@@ -130,10 +130,14 @@ export class HostedLifecycle {
     execution: ManagedToolExecution,
   ): Promise<ManagedToolExecutionGuard> {
     const permission = this.current.get(this.key(input));
+    const workContextId = permission?.response.workContextId;
     if (
       !permission ||
+      !workContextId ||
       permission.identity.invocationId !== application.invocationId ||
-      !permission.response.allowedToolNames.includes(execution.toolName)
+      !permission.response.allowedToolNames.some(
+        (name) => name === execution.toolName,
+      )
     )
       throw new Error("No current Host contact permits the actual native tool");
     const response = await this.bridge.toolExecution(
@@ -159,7 +163,7 @@ export class HostedLifecycle {
             identity: permission.identity,
             execution,
             usage,
-            workContextId: permission.response.workContextId,
+            workContextId,
             client: this.client,
             signal: input.signal,
             consumerRef: this.consumerRef,

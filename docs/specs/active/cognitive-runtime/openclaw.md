@@ -20,7 +20,7 @@ Host 保有历史、工具 schema、输出预留和 provider controls。renderer
 
 ## Host Life 与实际接触
 
-可选 Host bridge 使用官方 Client `/host-bridge` 的单一公开 wire 合同。操作者配置的 loopback origin 与私密 credentialFile 决定 Host，不从模型参数获得。v5 严格 provider 边界在每次调用前等待 Host 核验已持久 NativeRun/Activity、原生身份、prompt digest 与受限来源；缺少许可则终止。Host canonical usage 与结构化 contacts 分别进入 CognitionUsage/ObservationInput 的正式 fromJson，不另造认知对象。动态 WorkContext 替代静态绑定；Hosted user 消息不再从工程 prompt 重复生成泛化 Observation。
+可选 Host bridge 使用官方 Client `/host-bridge` 的单一公开 wire 合同。操作者配置的 loopback origin 与私密 credentialFile 决定 Host，不从模型参数获得。v5 严格 provider 边界在每次调用前等待 Host 核验已持久 NativeRun/Activity、原生身份、prompt digest 与受限来源；缺少许可则终止。Host canonical usage 与结构化 contacts 分别进入 CognitionUsage/ObservationInput 的正式 fromJson，不另造认知对象。HostPrepareResponse区分当前工作与已保存义务：正常调用提供当前workContextId；Narrative owner确认原candidate仍有pending索引义务后，可返回continuationSourceRef而省略当前WC，仅限execution-only narrative.review且无工具。插件用正式SetActiveWorkContext CAS清空Session旧绑定，prepare/query不传原任务WC作为当前工作；registration及SourceRead保留原任务lineage。原WC的closed状态、来源撤回和Core历史检查继续适用。Hosted user消息不从工程prompt重复生成泛化Observation。
 
 Host `currentSources` 使用既有 `EvidenceRef` 选择 actual occurrence 的 whole/source-region/derived-representation/derived-region locator，交正式 `currentMaterials`；选择不增加 `SourceRead` 权限。Material owner 在当前 scope 下核对 occurrence 与 locator 的真实 lineage，SDK 只采用 exact locator 与 actual occurrence 均匹配的读回结果，不复制旧投影正文或重派生既有材料。
 

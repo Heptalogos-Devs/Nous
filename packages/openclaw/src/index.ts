@@ -735,6 +735,7 @@ function register(api: OpenClawPluginApi): void {
             { subjectId: config.subjectId, id: binding.sessionId },
             { signal: input.signal },
           );
+          // The Host owns current-work eligibility; omitted current context clears a prior foreground via the official CAS.
           if (session.activeWorkContextId !== permission.response.workContextId)
             await connected.runtime.setActiveWorkContext(
               {
@@ -807,7 +808,9 @@ function register(api: OpenClawPluginApi): void {
                 permission.usage,
               ),
               tools: input.context.tools?.filter((tool) =>
-                permission.response.allowedToolNames.includes(tool.name),
+                permission.response.allowedToolNames.some(
+                  (name) => name === tool.name,
+                ),
               ),
             }
           : input.context;
@@ -900,8 +903,9 @@ function register(api: OpenClawPluginApi): void {
           );
         const prepared = await binding.prepare({
           usage,
-          workContextId:
-            permission?.response.workContextId ?? config.workContextId,
+          workContextId: permission
+            ? permission.response.workContextId
+            : config.workContextId,
           cognitionTokenBudget: budget,
           currentMaterials: currentMaterials.sources,
           signal: input.signal,
