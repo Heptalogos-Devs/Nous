@@ -70,13 +70,9 @@ Self 的原始 basis、异常、追加证据、叙事 exact sources 与实际 pr
 
 正式 managed binding 在模型发送前通过 Runtime 检查来源和 Session 历史。显式 purge/suppression/withdrawal 使已经接触该来源的历史待 reset，沿父 Session 关系传递；删除认知与清理 UseEvent 在同一 owner 事务中保留该屏障。未接触来源的独立 Session 不被一并清空。标记跨 Core/Gateway 重启保留，旧实际模型输出和压缩摘要不能因新 slice 移除来源就继续发送。详细原生合同见 [Managed OpenClaw](../cognitive-runtime/openclaw.md)。
 
-## 原生运行验证
+## 验证
 
-CLI/MCP 提供正式 owner 操作、来源解释与只读 soul；OpenClaw 自动贡献走同一输入路径。原生行为场景覆盖无 Seed 的实际名字/有情境偏好、有 Seed 的独立主体、公共原文工具结果、同事项反例修订和精确旧历史，以及换话题、模型、会话和 Core/Gateway 重启后的连续性。普通聊天的“记住/忘记”通过状态比较核验权限边界。运行要求与命令由 [插件包说明](../../../../packages/openclaw/README.md) 维护。
-
-## 容量验证
-
-`pnpm smoke:self-selection` 已接入 `smoke:self`，在隔离实例中通过正式 API 先创建 121 项容量背景（多数撤回，其余不匹配 purpose/conversation/WorkContext 或已过期），再建立第一页之后的当前身份。检查管理分页与完整 evidence、精确历史、自动身份/省略、有界来源/目标及一跳依赖候选和反思输入范围。真实配置与 native 运行方法见 [公共 smoke](../../../../scripts/smoke/README.md)，不修改原 Subject。
+`apps/nous-kernel/tests/self_selection.rs` 检查 Self 选择与适用范围；`cognition_domain_time.rs` 检查 Self/Social/Motivation 形成域、历史 valid 与来源权限。原生执行边界由 [插件包说明](../../../../packages/openclaw/README.md) 的 custody 场景检查。真实人格连续性沿部署的原 Subject 和已保存成果验证。
 
 ## 领域知识与本次认识投影
 

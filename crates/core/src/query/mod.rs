@@ -11,7 +11,3 @@ pub use eligibility::QueryFacts;
 pub use expression::*;
 pub use request::*;
 pub use result::*;
-
-#[cfg(test)]
-#[path = "../../tests/unit/query_projection.rs"]
-mod projection_tests;

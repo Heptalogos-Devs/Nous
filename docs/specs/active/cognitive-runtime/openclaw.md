@@ -82,7 +82,7 @@ H=min(实际窗口-输出预留-计量余量,role输入cap)，system/工具/媒�
 
 [包说明](../../../../packages/openclaw/README.md) 是安装/配置命令的唯一完整入口。`openclaw:pack` 生成 bundled 插件及安装器 tarball，宿主原样安装；`openclaw:prepare` 使用同一产物安装到开发实例。 原生安装使用发行物的 `nous-openclaw-install`：安装根持有固定传递依赖的 npm overrides、lockfile 和可重装插件 tarball；依赖包自身的 overrides 不被当作消费者保障。准备器在原始/补丁哈希前核验 OpenClaw 与 proxyline 解析到的 Undici、MCP SDK 实际版本；不接受旧易受影响的解析路径。
 
-`smoke:openclaw` 使用真实模型 gateway 与正式安装的原生 Gateway，核验最终 provider 输入、工具后续、RESET、原生 compact、子 Agent、真实 Material 回流、必需 Core 不可用时零发送及恢复，并核验真实自我选择的输出进入实际 native compaction summary 后，purge 和进程重启均阻止发送，正式 reset 后新输入不含旧标记。准备/应用日志不冒充已传输证明。未测试的渠道、Computer use 平台和语言人格质量不由该接线场景推定。
+`pnpm openclaw:custody:verify` 使用正式 prepare 与真实原生执行代码，检查 SQLite queue、发送授权、历史压缩、工具绑定和子任务交接；真实 provider 输入与 QQ 交付沿产品原任务验证。
 
 Self 的付费行为场景使用同一正式安装入口，检查无 Seed 自主选择、有 Seed 形成、实际公共资料工具步骤、同事项反思修订及旧 exact revision、话题/模型/会话/进程连续性和普通聊天的管理权限边界。命令和模型配置要求见包说明。模型提案仍需按实际语义与来源核对，不能仅凭合法结构或出现名字判定通过。
 

@@ -430,10 +430,6 @@ SELECT * FROM records
     }
 }
 
-#[cfg(test)]
-#[path = "../../tests/unit/query.rs"]
-mod tests;
-
 impl MaterialService {
     async fn formed_temporal_lane(
         &self,

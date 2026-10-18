@@ -20,7 +20,7 @@ Client 构建复用工作区 TypeScript 编译器和 npm 打包，不需要 Kern
 
 ## Client 发布
 
-`corepack pnpm client:pack` 生成 `data/releases/client/nous-wave-client-0.1.0.tgz`。`corepack pnpm client:verify` 在系统临时目录安装该产物，用普通 Node 加载全部公开入口，并用严格 TypeScript 消费者生成声明。类型 fixture 位于 [client-consumer.ts](../tests/release/client-consumer.ts)。该检查已接入 `check:fast`，真实隔离实例操作已接入 [smoke:client](../smoke/client.ts)。安装方式和入口合同由 [Client README](../../packages/client/README.md) 维护。
+`corepack pnpm client:pack` 生成 `data/releases/client/nous-wave-client-0.1.0.tgz`。`corepack pnpm client:verify` 在系统临时目录安装该产物，用普通 Node 加载全部公开入口，并用严格 TypeScript 消费者生成声明。类型 fixture 位于 [client-consumer.ts](../tests/release/client-consumer.ts)。该检查已接入 `check:fast`，真实隔离实例操作由 [longitudinal](../smoke/longitudinal.ts) 执行。安装方式和入口合同由 [Client README](../../packages/client/README.md) 维护。
 
 ## Portable 发布
 

@@ -16,7 +16,7 @@ Runtime 将已实际观察的 Experience 合并为 `subject_reflection` Maintena
 
 Official Client `reflection.inspect`、CLI `reflection status` 提供有界 pending/recent 状态与 payload 遗漏信息，可见 blocked、kept、partial、failed。`reflection.repair` 与 CLI `reflection repair` 使用同一公开合同。迁移 `0009_subject_reflection.sql` 增量保留已有数据与付费结果。
 
-验证入口：`corepack pnpm smoke:subject-reflection` 使用隔离真实 PostgreSQL 和确定性本机模型，覆盖合批、重放、旧 trigger、新来源、三 owner 单次生成、partial 与无模型 exact-head 修复；它不证明 QQ 自然学习。共享 Query/Projection/ReadSources 已按 SourceRead 在候选预算和正文前过滤；真实 QQ 学习与后续使用仍由部署验证。
+验证按 owner 责任执行：纵向公共场景检查真实 Core/Kernel 的维护机会、成果复用和重启；`maintenance_model_results.rs` 检查持久成果与 blocked scope；`longitudinal_runtime.rs` 检查旧 trigger 确认不丢失新工作。共享 Query/Projection/ReadSources 按 SourceRead 在候选预算和正文前过滤；真实 QQ 学习与后续使用沿部署原任务验证。
 
 SourceReadScope 的 `sourceRefs` 与显式 `originConversationRefs` 并用，origin 不是 audience 的别名。Shared SQL 对实际 occurrence 与 locator 路径核验，同字节不合并私域 attribution；unknown、cycle 与1024节点/64层闭包上限均不披露。WorkContext 只在显式授予其 ref 时读正文，anchors 不继承授权。查询与自动投影在 owner SQL / Serving filter 后再使用候选预算，完整语义单元无法读出时明确 omission。
 
