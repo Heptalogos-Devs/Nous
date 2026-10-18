@@ -124,7 +124,9 @@ fn content_proto(value: SelfContent) -> p::SelfContent {
     }
 }
 pub(super) fn record(v: SelfRecord) -> p::SelfRecord {
+    let context_text = v.context_text();
     p::SelfRecord {
+        context_text,
         reference: Some(to_ref(v.reference())),
         object_ref: Some(to_ref(v.object_reference())),
         subject_id: v.subject_id.0.to_string(),

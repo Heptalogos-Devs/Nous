@@ -15,10 +15,10 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm openclaw:pack
 ```
 
-将生成的 `data/releases/openclaw/nous-wave-openclaw-0.2.1.tgz` 交给宿主。在独立安装目录中：
+将生成的 `data/releases/openclaw/nous-wave-openclaw-0.2.2.tgz` 交给宿主。在独立安装目录中：
 
 ```sh
-npm exec --yes --package=/absolute/path/nous-wave-openclaw-0.2.1.tgz -- nous-openclaw-install /absolute/path/subject-runtime
+npm exec --yes --package=/absolute/path/nous-wave-openclaw-0.2.2.tgz -- nous-openclaw-install /absolute/path/subject-runtime
 ```
 
 原生安装器创建自己的 npm 根与持久插件 tarball，固定 OpenClaw 和经过修复的传递依赖，生成可重装的 lockfile，然后运行入口准备。只接受新目录或先前由该安装器创建的目录，不覆盖任意应用的依赖配置；配置、密钥和主体数据应放在运行代码目录之外。原 OpenClaw 2026.9.1 将 Undici/MCP SDK 固定在受影响版本，因此不能以普通 `npm install openclaw` 代替此入口。当前实际固定 Undici 8.10.2、MCP SDK 1.31.0、@openclaw/ai 2026.9.1；`prepare` 同时检查 OpenClaw 和 proxyline 实际解析的版本，旧依赖拒绝准备。

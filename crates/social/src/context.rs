@@ -47,16 +47,7 @@ impl SocialService {
             value.basis_role = e.role.clone();
             evidence.push(value);
         }
-        let text = materialize.then(|| {
-            let text = record.content.text();
-            if record.revision_id == record.current_revision_id {
-                text
-            } else {
-                format!(
-                    "Historical Social revision (past understanding, not the current view):\n{text}"
-                )
-            }
-        });
+        let text = materialize.then(|| record.context_text());
         nous_runtime::ContextSource {
             epistemic_class: None,
             domain_knowledge: None,
@@ -81,5 +72,44 @@ impl SocialService {
             usage: "task_evidence",
             required: false,
         }
+    }
+}
+
+impl SocialRecord {
+    /// Computed presentation only; immutable cognition revisions remain the sole stored authority.
+    pub fn context_text(&self) -> String {
+        let body = self.content.text();
+        let body = if self.revision_id == self.current_revision_id {
+            body
+        } else {
+            format!(
+                "Historical Social revision (past understanding, not the current view):\n{body}"
+            )
+        };
+        let mut lines = vec![
+            body,
+            format!(
+                "精确修订：{}；对象epoch：{}",
+                self.reference(),
+                self.object_epoch
+            ),
+            format!(
+                "状态：{} / {} / {}",
+                self.acceptance_state, self.integrity_state, self.suppression_state
+            ),
+            format!("采用或修订理由：{}", self.reason),
+            format!(
+                "形成：{}；时间域：{}\n\n记录：{}",
+                self.formed_at.to_rfc3339(),
+                self.formed_time_domain_ref,
+                self.recorded_at.to_rfc3339()
+            ),
+        ];
+        lines.extend(
+            self.evidence
+                .iter()
+                .map(|e| format!("补充依据（{}）：{}", e.role, e.basis.canonical_key())),
+        );
+        lines.join("\n\n")
     }
 }

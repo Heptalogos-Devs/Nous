@@ -19,10 +19,10 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm client:pack
 
 # 在 Host 项目内安装生成的包
-npm install /absolute/path/nous-wave-client-0.1.0.tgz
+npm install /absolute/path/nous-wave-client-0.1.1.tgz
 ```
 
-产物为 `data/releases/client/nous-wave-client-0.1.0.tgz`，要求 Node >=24.21.0。包提供 `@nous-wave/client`、`/node`、`/managed`、`/errors`、`/consumer-policy`、`/execution-policy`、`/host-bridge` 的 ESM JavaScript 和 `.d.ts`；无需 tsx 或源码 checkout。官方 `@nous-wave/protocol` 的同源编译代码和 generated 声明作为 bundled dependency 随 Client 一起安装，其余精确 npm dependencies 正常安装。tarball 仅含编译代码、类型、包元数据和许可证，不包含实例配置、凭据或数据。
+产物为 `data/releases/client/nous-wave-client-0.1.1.tgz`，要求 Node >=24.21.0。包提供 `@nous-wave/client`、`/node`、`/managed`、`/errors`、`/consumer-policy`、`/execution-policy`、`/host-bridge` 的 ESM JavaScript 和 `.d.ts`；无需 tsx 或源码 checkout。官方 `@nous-wave/protocol` 的同源编译代码和 generated 声明作为 bundled dependency 随 Client 一起安装，其余精确 npm dependencies 正常安装。tarball 仅含编译代码、类型、包元数据和许可证，不包含实例配置、凭据或数据。
 
 ```js
 import { connectNousInstance } from "@nous-wave/client/node";
@@ -61,3 +61,5 @@ Subject 的认证生活世界时钟使用 `client.clocks.readClock/configureCloc
 `@nous-wave/client/host-bridge` 是 Node-free Host Life 接线合同，导出四个 `/nous/v1/*` 路径、请求/响应 Zod schemas、TS 类型和 JSON Schema。公开 encode/decode CognitionUsage、ObservationInput、AcceptedObservation、Projection codec 与 `timestampFromDate`，Host 不需要引用 bundled Protocol 私有路径。认知 usage/observations 仍使用 canonical Protobuf JSON，不维护第二份认知 DTO。`/managed` 的 `outcomeObservation` 为实际 invocation outcome 构造稳定 requestId 与 ObservationInput，Host 可以先保存 pending 再幂等提交；显式 observedAt 应复用首次实际接触时间。详细配置、来源与反馈恢复合同见[正式 OpenClaw 包说明](../openclaw/README.md#host-life-与结构化接触)。
 
 Motivation 的正式操作位于 `client.motivation`。`@nous-wave/client/motivation` 的 `criterionFactContext` 使用 canonical CriterionFact 为真实 Observation 构造事件/测量 context；它不登记事实、不授予来源权限或执行行为。完整语义见 [Motivation Spec](../../docs/specs/active/motivation/motivation.md)。
+
+Self/Social 的 get、list、select 返回域 owner 计算的 `contextText`，与当前 Projection 整单元正文使用同一 renderer。文本保留适用范围、精确修订、依据、生命周期和时间含义；它是只读呈现，不是第二份认知。`/host-bridge` 公开 `encodeSelfContent/decodeSelfContent` 与 `encodeSocialContent/decodeSocialContent`，使用正式 Protobuf JSON。显式修订仍调用既有 revise，并携带原 revision、expectedObjectEpoch 和 reason。

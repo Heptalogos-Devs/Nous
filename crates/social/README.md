@@ -11,3 +11,5 @@ Social 拥有有向 SocialRelation 和限定社会作用域的 LanguageConventio
 带可信 usage 的 Query 冻结被授权的 exact refs，共享 lexical/dense 在生成候选时过滤，owner 最终核验。Projection 自动组织当前参与者关系与用语解释，保留候选和正文省略信息，表达另按实际受众使用。旧 lexical generation 缺少授权搜索字段时需要重建，不能退回未过滤搜索。
 
 共享 `subject_reflection` 负责模型调用和先保存成果；[typed proposal/apply](../../apps/nous-core/src/model/social.ts) 只向正式 owner 提交。Social 不建立自己的模型 role 或执行链。真实 QQ 自动成长和自然后续行为仍需 Host 可信场景、共享反思与真实外部证据接线；手工 owner 烟测不证明自然学习。
+
+域 owner 的 `Record::context_text()` 统一生成可读正文，读取 wire 的 `contextText` 与运行时 ContextSource 共用它。当前修订、历史前缀、结构 scope、来源依据及时间均来自原记录；不另存文档状态。正文更新进入既有 Projection 内容 digest，ContextCompiler 按实际变化 RESET 缓存。

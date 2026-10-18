@@ -15,3 +15,5 @@ The Core does not own canonical PostgreSQL state or the internal semantics of Ru
 Use `corepack pnpm dev` from the repository root for the platform-neutral development path. Public smoke uses normal Core startup and the official Client.
 
 For an external foreground launcher, `nous serve --locator <bootstrap.toml> --stop-on-stdin-close` requests graceful shutdown when the launcher's stdin pipe closes. Interactive deployments can continue using SIGINT/SIGTERM. `ConfigurationRoot/nous.toml` owns user settings and `RunRoot/core.json` supplies official Client discovery. Core model clients use explicit gateway/profile/role bindings and local Prompt assets. Core resolves upstream credentials through SecretRoot/environment and keeps them outside Kernel process settings.
+
+当前 Self/Social 投影保留域 owner 的完整可读正文，沿用既有 scope、选择和整单元预算；projection_steward 继续处理其它材料与历史。正文参与既有 segment digest；格式或修订变化使 ContextCompiler 重置相应投影缓存。Self/Social wire 的 contextText 与该正文同源，不增加持久认知或数据库迁移。

@@ -20,6 +20,18 @@ pub enum TemporalExtent {
 }
 
 impl TemporalExtent {
+    /// Readable extent without changing its declared clock domain or open endpoints.
+    pub fn context_text(&self) -> String {
+        match self {
+            Self::Unknown => "未确定".into(),
+            Self::Instant { at } => at.to_rfc3339(),
+            Self::Interval { start, end } => format!(
+                "{} 至 {}（结束点不含）",
+                start.map_or_else(|| "起点未限定".into(), |v| v.to_rfc3339()),
+                end.map_or_else(|| "终点未限定".into(), |v| v.to_rfc3339()),
+            ),
+        }
+    }
     pub fn validate(&self) -> Result<()> {
         if let Self::Interval {
             start: Some(start),

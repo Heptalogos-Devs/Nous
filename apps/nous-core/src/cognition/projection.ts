@@ -82,9 +82,14 @@ export class ProjectionPlanner {
     const optional = batch.segments.filter(
       (s) => s.domain !== "self" && policy[family(s)] !== "REQUIRED",
     );
-    let refined = optional;
+    const ownedCurrent = (source: Segment) =>
+      source.semanticRole === "current_self" ||
+      source.semanticRole === "current_social";
+    const stewarded = optional.filter((source) => !ownedCurrent(source));
+    let refined = stewarded;
+    let synthesized = false;
     const degradation = [...batch.degradation];
-    if (policy.materialize && optional.some((source) => source.text)) {
+    if (policy.materialize && stewarded.some((source) => source.text)) {
       try {
         const output = (
           await this.models.invocations.generate(
@@ -94,7 +99,7 @@ export class ProjectionPlanner {
                 semanticClock: batch.semanticClock
                   ? toJson(DomainStampSchema, batch.semanticClock)
                   : undefined,
-                sources: optional.map((s) => ({
+                sources: stewarded.map((s) => ({
                   id: s.segmentId,
                   role: s.semanticRole,
                   text: s.text,
@@ -107,14 +112,14 @@ export class ProjectionPlanner {
             { signal },
           )
         ).value;
-        const ids = new Set(optional.map((s) => s.segmentId));
+        const ids = new Set(stewarded.map((s) => s.segmentId));
         if (
           new Set(output.selectedIds).size !== output.selectedIds.length ||
           output.selectedIds.some((id) => !ids.has(id))
         )
           throw new Error("Steward proposed invalid source IDs");
         const selected = new Set(output.selectedIds);
-        refined = optional.filter((s) => selected.has(s.segmentId));
+        refined = stewarded.filter((s) => selected.has(s.segmentId));
         if (output.summary) {
           if (!refined.length)
             throw new Error("A Steward summary requires selected sources");
@@ -129,6 +134,7 @@ export class ProjectionPlanner {
             }),
             output.summary,
           ]);
+          synthesized = true;
           refined = [
             create(ContextSegmentSchema, {
               segmentId: `steward:${revision}`,
@@ -163,7 +169,8 @@ export class ProjectionPlanner {
           signal,
           "projection_steward",
         );
-        refined = optional;
+        refined = stewarded;
+        synthesized = false;
         degradation.push(
           create(DegradationSchema, {
             code: "steward_rejected",
@@ -172,8 +179,21 @@ export class ProjectionPlanner {
         );
       }
     }
+    const refinedIds = new Set(refined.map((source) => source.segmentId));
+    // Keep the owner's whole current units in their original selection order.
+    const selectedOptional = synthesized
+      ? optional.flatMap((source) =>
+          ownedCurrent(source)
+            ? [source]
+            : source === stewarded[0]
+              ? refined
+              : [],
+        )
+      : optional.filter(
+          (source) => ownedCurrent(source) || refinedIds.has(source.segmentId),
+        );
     const selected = budget(
-      [...required, ...refined],
+      [...required, ...selectedOptional],
       items,
       bytes,
       policy.materialize,
@@ -188,7 +208,7 @@ export class ProjectionPlanner {
         "Required cognition does not fit the input budget",
         Code.ResourceExhausted,
       );
-    if (selected.length < required.length + refined.length)
+    if (selected.length < required.length + selectedOptional.length)
       degradation.push(
         create(DegradationSchema, {
           code: "context_budget_omission",

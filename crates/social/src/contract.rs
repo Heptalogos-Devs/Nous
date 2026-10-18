@@ -176,7 +176,119 @@ impl SocialContent {
         e
     }
     pub fn text(&self) -> String {
-        serde_json::to_string_pretty(self).expect("Social content serializable")
+        let mut lines = match self {
+            Self::SocialRelation(v) => {
+                let relation = match v.relation_type {
+                    RelationType::Familiarity => "熟悉",
+                    RelationType::Affinity => "好感",
+                    RelationType::Trust => "信任",
+                    RelationType::Closeness => "亲近",
+                    RelationType::Collaboration => "协作",
+                    RelationType::MentorOf => "指导",
+                    RelationType::MemberOf => "成员归属",
+                    RelationType::ConflictWith => "分歧",
+                };
+                let direction = if v.symmetric { "↔" } else { "→" };
+                let mut lines = vec![format!(
+                    "### {relation}：{} {direction} {}\n\n{}",
+                    v.from.as_str(),
+                    v.to.as_str(),
+                    v.statement
+                )];
+                if let Some(degree) = &v.degree {
+                    let value = match degree {
+                        RelationDegree::Ordinal(v) | RelationDegree::State(v) => v.clone(),
+                        RelationDegree::Affinity(v) => v.to_string(),
+                    };
+                    lines.push(format!("程度或状态：{value}"));
+                }
+                if let Some(role) = &v.role {
+                    lines.push(format!("角色：{role}"));
+                }
+                lines.extend(
+                    v.coordination_expectations
+                        .iter()
+                        .map(|value| format!("交往约定：{value}")),
+                );
+                lines
+            }
+            Self::LanguageConvention(v) => {
+                let mut lines = vec![
+                    format!("### 用语：{}\n\n含义：{}", v.expression, v.meaning),
+                    format!("使用情境：{}", v.pragmatic_use),
+                    format!(
+                        "大小写：{}",
+                        if v.case_insensitive {
+                            "不区分"
+                        } else {
+                            "区分"
+                        }
+                    ),
+                ];
+                if !v.variants.is_empty() {
+                    lines.push(format!("其他写法：{}", v.variants.join("、")));
+                }
+                if let Some(referent) = &v.referent {
+                    lines.push(format!("指代对象：{}", referent.as_str()));
+                }
+                lines
+            }
+        };
+        let scope = self.scope();
+        lines.push(format!("适用范围（条件共同生效）：{}", scope.description));
+        if !scope.entities.is_empty() {
+            lines.push(format!(
+                "相关参与者：{}",
+                scope
+                    .entities
+                    .iter()
+                    .map(|value| value.as_str().to_owned())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            ));
+        }
+        for (label, value) in [
+            (
+                "群体",
+                scope.group.as_ref().map(|value| value.as_str().to_owned()),
+            ),
+            ("渠道", scope.channel.clone()),
+            ("会话", scope.conversation.clone()),
+            ("工作情境", scope.work_context.map(|v| v.0.to_string())),
+            ("领域", scope.domain.clone()),
+        ] {
+            if let Some(value) = value {
+                lines.push(format!("{label}：{value}"));
+            }
+        }
+        let judgment = self.judgment();
+        let state = match judgment.state.as_str() {
+            "hypothesis" => "假设",
+            "supported" => "有依据",
+            "disputed" => "有争议",
+            other => other,
+        };
+        lines.push(format!(
+            "认识状态：{state}\n\n判断依据：{}",
+            judgment.explanation
+        ));
+        if let Some(estimate) = judgment.estimate {
+            lines.push(format!(
+                "估计值：{estimate}；估计依据：{}",
+                judgment.estimate_method.as_deref().unwrap_or("未记录")
+            ));
+        }
+        lines.push(format!(
+            "有效时间：{}；时间域：{}",
+            self.valid_time().context_text(),
+            self.valid_time_domain_ref()
+        ));
+        lines.extend(
+            self.basis()
+                .iter()
+                .map(|basis| format!("依据：{}", basis.canonical_key())),
+        );
+        lines.join("\n\n")
     }
     /// Object identity cannot be revised into a different social matter.
     pub fn identity(&self) -> serde_json::Value {

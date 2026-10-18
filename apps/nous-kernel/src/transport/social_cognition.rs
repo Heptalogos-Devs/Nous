@@ -152,7 +152,9 @@ fn enum_text<T: serde::Serialize>(v: T) -> String {
         .into()
 }
 pub(super) fn record(v: SocialRecord) -> p::SocialRecord {
+    let context_text = v.context_text();
     p::SocialRecord {
+        context_text,
         reference: Some(to_ref(v.reference())),
         object_ref: Some(to_ref(v.object_reference())),
         subject_id: v.subject_id.0.to_string(),

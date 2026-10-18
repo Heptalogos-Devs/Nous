@@ -473,6 +473,21 @@ export const encodeProjection = (
 export const decodeProjection = (json: JsonValue) =>
   fromJson(ProjectionSchema, json);
 
+import { SelfContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
+import { SocialContentSchema } from "@nous-wave/protocol/nous/wave/v1alpha1/social_pb.js";
+export const encodeSelfContent = (
+  value: MessageInitShape<typeof SelfContentSchema>,
+): JsonObject =>
+  toJson(SelfContentSchema, create(SelfContentSchema, value)) as JsonObject;
+export const decodeSelfContent = (json: JsonValue) =>
+  fromJson(SelfContentSchema, json);
+export const encodeSocialContent = (
+  value: MessageInitShape<typeof SocialContentSchema>,
+): JsonObject =>
+  toJson(SocialContentSchema, create(SocialContentSchema, value)) as JsonObject;
+export const decodeSocialContent = (json: JsonValue) =>
+  fromJson(SocialContentSchema, json);
+
 export const HOST_COGNITION_USAGE_CONTEXT_KEY = "cognition_usage";
 export const HOST_CONTACT_CONTEXT_KEY = "contact_request_id";
 /** Apply once when the Host persists the actual contact/pending fact. Replays

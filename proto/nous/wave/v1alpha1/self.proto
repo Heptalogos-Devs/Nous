@@ -55,6 +55,8 @@ message SelfRecord {
   DomainStamp formed_at = 14;
   google.protobuf.Timestamp recorded_at = 15;
   repeated SelfEvidence evidence = 16;
+  // Computed by the domain renderer used for runtime context; never stored as a second cognition.
+  string context_text = 17;
 }
 message AdoptSelfRequest {string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; SelfContent content = 3; string reason = 4;}
 message ReviseSelfRequest {string subject_id = 1 [(reference_kind) = "subject"]; string operation_id = 2; CognitiveRef target_revision = 3; int64 expected_object_epoch = 4; SelfContent content = 5; string reason = 6;}

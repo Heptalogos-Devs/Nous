@@ -3167,6 +3167,9 @@ pub struct SelfRecord {
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, repeated, tag="16")]
     pub evidence: ::prost::alloc::vec::Vec<SelfEvidence>,
+    /// Computed by the domain renderer used for runtime context; never stored as a second cognition.
+    #[prost(string, tag="17")]
+    pub context_text: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdoptSelfRequest {
@@ -3992,6 +3995,9 @@ pub struct SocialRecord {
     pub recorded_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, repeated, tag="16")]
     pub evidence: ::prost::alloc::vec::Vec<SocialEvidence>,
+    /// Computed by the domain renderer used for runtime context; never stored as a second cognition.
+    #[prost(string, tag="17")]
+    pub context_text: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdoptSocialRequest {
