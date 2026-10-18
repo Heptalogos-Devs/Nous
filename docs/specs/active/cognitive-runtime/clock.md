@@ -20,7 +20,7 @@
 
 在线时间为 `worldAnchor + rate × monotonicElapsed`，使用 `Instant`；暂停为零。变速先捕获当前世界时刻，再建立新段。返回值精度为 PostgreSQL 微秒精度，防止纳秒截断造成恢复倒退。
 
-`subject_clocks` 保存现实 checkpoint 与已提交世界高水位，`subject_clock_changes` 保存操作的精确重放结果。重启从高水位恢复；明确暂停保持世界时间，其余情况停机期间按现实 1 倍经过时间推进，之后恢复配置的在线速率。现实校时回退产生的负经过时间取零。Clock read 本身写入 checkpoint；单纯调用同步 `CognitiveClock::now` 只读取进程视图，不构成持久提交。
+`subject_clocks` 保存现实 checkpoint 与已提交世界高水位，`subject_clock_changes` 保存操作的精确重放结果。重启从高水位恢复；明确暂停保持世界时间，其余情况停机期间按现实 1 倍经过时间推进，之后恢复配置的在线速率。现实校时回退产生的负经过时间取零。Clock read 与同步 `CognitiveClock::now` 只读取当前投影，不写 checkpoint。业务结果在所属 Authority 事务中捕获并持久化时间，明确的改钟操作保存新段；管理观察和日历查看不产生持久写入。
 
 新的识别时间域的 Rust owner 在自己的 Authority 事务中调用一次 `clocks.capture_in(tx, subject)`，同时保存返回的 `DomainStamp` 和本次业务结果。checkpoint 与结果一起提交或回滚。该操作应先于事务内其他 Clock 操作，以保持 Subject clock 锁顺序。Host Life 可读取同一正式 API 的 `now` stamp，并将它保存在自己的活动/事件结果中。
 
