@@ -56,7 +56,7 @@ diff --git a/dist/agent-command-DPfawBbr.js b/dist/agent-command-DPfawBbr.js
 diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
 --- a/dist/agent-core-BxgCPa8O.js
 +++ b/dist/agent-core-BxgCPa8O.js
-@@ -421,23 +421,41 @@
+@@ -421,23 +421,44 @@
  */
  async function streamAssistantResponse(context, config, signal, emit, streamFn, runtime, turnTainted = false) {
  	let messages = context.messages;
@@ -80,13 +80,16 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
 +    const nativeOutputLimit = config.maxTokens ?? config.model.maxTokens;
 +    const controlledOutputLimit = application?.providerControls?.maxOutputTokens ?? nativeOutputLimit;
 +    if (managed && (!Number.isSafeInteger(application?.providerControls?.maxOutputTokens) || controlledOutputLimit<1 || controlledOutputLimit>nativeOutputLimit || controlledOutputLimit>config.model.maxTokens)) throw Error("Required managed provider output budget is unavailable or exceeds the native limit");
++	if (managed && !["openai-completions", "openai-responses"].includes(config.model.api)) throw Error("Required native provider custody is unavailable for this protocol");
++	const providerCustody = managed ? managed.providerCustody(application) : void 0;
++	if (managed && typeof providerCustody?.request !== "function") throw Error("Required native provider custody is unavailable");
  	const streamFunction = resolveAgentCoreStreamFn(runtime, streamFn);
  	const resolvedApiKey = (config.getApiKey ? await config.getApiKey(config.model.provider) : void 0) || config.apiKey;
 -	const response = await streamFunction(config.model, llmContext, {
 +	let response;
 +	try { response = await streamFunction(config.model, llmContext, {
  		...config,
-+        ...(managed ? {maxTokens: controlledOutputLimit, ...(application.providerControls.responseFormat ? {responseFormat: application.providerControls.responseFormat} : {})} : {}),
++        ...(managed ? {transport: "sse", nousManagedProviderRequired: true, nousProviderCustody: providerCustody, maxTokens: controlledOutputLimit, ...(application.providerControls.responseFormat ? {responseFormat: application.providerControls.responseFormat} : {})} : {}),
  		apiKey: resolvedApiKey,
  		signal
 -	});
@@ -101,7 +104,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	for await (const event of response) switch (event.type) {
  		case "start": {
  			const message = event.partial;
-@@ -474,6 +492,13 @@
+@@ -474,6 +495,13 @@
  		case "error": return await finalizeAssistantMessage();
  	}
  	return await finalizeAssistantMessage();
@@ -115,7 +118,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	async function finalizeAssistantMessage() {
  		const finalMessage = withAssistantTurnTaint(ensureToolTurnIdentity(removeNonExecutableToolCalls(await response.result())), turnTainted);
  		if (addedPartial) context.messages[context.messages.length - 1] = finalMessage;
-@@ -484,10 +509,14 @@
+@@ -484,10 +512,14 @@
  				message: { ...finalMessage }
  			});
  		}
@@ -130,7 +133,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  		return finalMessage;
  	}
  }
-@@ -615,7 +644,7 @@
+@@ -615,7 +647,7 @@
  			}
  			if (launched) await Promise.all(launched.started.map(async ({ index, entry, outcome }) => settle(index, entry, await outcome)));
  			for (const finalized of ordered) if (finalized) {
@@ -139,7 +142,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  				finalizedCalls.push(finalized);
  			}
  		} finally {
-@@ -633,7 +662,7 @@
+@@ -633,7 +665,7 @@
  		const toolCall = toolCalls[cursor];
  		if (!toolCall) continue;
  		const finalized = await completeUnstartedToolCall(batch, toolCall, { reason: skippedReason });
@@ -148,7 +151,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -665,7 +694,7 @@
+@@ -665,7 +697,7 @@
  	const execution = await prepareToolCallExecution(preparation, {
  		assistantMessage: batch.assistantMessage,
  		toolCall: preparation.toolCall
@@ -157,7 +160,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	return execution.kind === "immediate" ? await finalizeExecutedToolCall(batch, preparation, execution.outcome, preparation.args) : {
  		...preparation,
  		execution
-@@ -875,7 +904,10 @@
+@@ -875,7 +907,10 @@
  		args: validatedArgs
  	};
  }
@@ -169,7 +172,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	const updateEvents = [];
  	let acceptingUpdates = true;
  	const onUpdate = (partialResult) => {
-@@ -927,7 +959,10 @@
+@@ -927,7 +962,10 @@
  						executionStarted: false
  					};
  					try {
@@ -181,7 +184,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  							try {
  								onImplementationStart?.();
  							} catch (error) {
-@@ -936,6 +971,7 @@
+@@ -936,6 +974,7 @@
  							}
  							executionStarted = true;
  						});
@@ -189,7 +192,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  						if (implementationStartError) throw implementationStartError.error;
  						return {
  							result,
-@@ -968,12 +1004,13 @@
+@@ -968,12 +1007,13 @@
  	});
  	let internalPreparation;
  	try {
@@ -204,7 +207,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	} catch (error) {
  		return await immediateError(error);
  	}
-@@ -1108,7 +1145,7 @@
+@@ -1108,7 +1148,7 @@
  			...hideFromChannelProgress ? { hideFromChannelProgress: true } : {}
  		}, validation?.kind === "prepared" ? validation.args : toolCall.arguments);
  		await emitToolExecutionEnd(finalized, batch.emit);
@@ -213,7 +216,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  		finalizedCalls.push(finalized);
  	}
  	return {
-@@ -1162,7 +1199,7 @@
+@@ -1162,7 +1202,7 @@
  		...finalized.hideFromChannelProgress === true ? { hideFromChannelProgress: true } : {}
  	});
  }
@@ -222,7 +225,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	const message = copyInternalToolResultState(finalized.result, withToolResultContentSource({
  		role: "toolResult",
  		toolCallId: finalized.toolCall.id,
-@@ -1176,10 +1213,12 @@
+@@ -1176,10 +1216,12 @@
  		type: "message_start",
  		message
  	});
@@ -235,7 +238,7 @@ diff --git a/dist/agent-core-BxgCPa8O.js b/dist/agent-core-BxgCPa8O.js
  	return message;
  }
  function readTurnTaintMetadata(message) {
-@@ -1531,6 +1570,7 @@
+@@ -1531,6 +1573,7 @@
  			} : void 0,
  			convertToLlm: this.convertToLlm,
  			transformContext: this.transformContext,
@@ -332,7 +335,12 @@ diff --git a/dist/attempt-execution-BUOS5Nu-.js b/dist/attempt-execution-BUOS5Nu
 diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.js
 --- a/dist/builtin-openclaw-zQV8Wwjr.js
 +++ b/dist/builtin-openclaw-zQV8Wwjr.js
-@@ -238,6 +238,8 @@
+@@ -1,3 +1,4 @@
++import { createNousProviderCustody } from "./nous-provider-custody.mjs";
+ import { D as resolveExpiresAtMsFromDurationMs, F as resolveTimerTimeoutMs, g as isFutureDateTimestampMs, h as finiteSecondsToTimerSafeMilliseconds, m as clampTimerTimeoutMs, o as asDateTimestampMs, s as asFiniteNumber, v as parseDateFirstTimestampMs, w as parseStrictPositiveInteger, y as parseDateStringTimestampMs } from "./number-coercion-CLj0HTDM.js";
+ import { n as consumeRootOptionToken } from "./cli-root-options-BgX5QR_Z.js";
+ import { t as sanitizeForLog } from "./ansi-DrXAcdMD.js";
+@@ -238,6 +239,8 @@
  import { n as claimHeartbeatOutcomeForRun, t as buildHeartbeatOutcomeContext } from "./heartbeat-outcome-store-BoT9c8Af.js";
  import { I as streamWithPayloadPatch } from "./provider-stream-shared-BmB0vX9b.js";
  import { i as resolveEmbeddedAgentStream, n as resolveEmbeddedAgentApiKey, r as resolveEmbeddedAgentBaseStreamFn, t as wrapStreamFnWithDiagnosticModelCallEvents } from "./attempt.model-diagnostic-events-B4dGIs0S.js";
@@ -341,7 +349,7 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
  import { a as appendModelIdentitySystemPrompt, c as buildProjectMemoryWriteInstruction, i as buildConfiguredAgentSystemPrompt, l as prepareProjectMemoryBootstrap, o as buildModelIdentityPromptLine, s as resolveAgentPromptSurfaceForSessionKey } from "./system-prompt-params-B645JcX8.js";
  import { o as resolveUserTimezone, r as formatDateStamp } from "./date-time-C7YbYLih.js";
  import { n as prepareWatchedSessionsPrompt } from "./watched-sessions-prompt-C9QfwkEy.js";
-@@ -279,7 +281,7 @@
+@@ -279,7 +282,7 @@
  import { Type } from "typebox";
  import { Buffer as Buffer$1 } from "node:buffer";
  import { responsesPromptObserver } from "@openclaw/ai/internal/openai";
@@ -350,7 +358,7 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
  import { onLlmRequestActivity, parseStreamingJson } from "@openclaw/ai/internal/runtime";
  import { SYSTEM_PROMPT_CACHE_BOUNDARY, ensureSystemPromptCacheBoundary, sanitizeSurrogates, sortPromptCacheToolsByName, splitSystemPromptCacheBoundary, stripSystemPromptCacheBoundary } from "@openclaw/ai/internal/shared";
  import { OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH } from "@openclaw/ai/providers";
-@@ -5522,7 +5524,7 @@
+@@ -5522,7 +5525,7 @@
  async function prepareEmbeddedAttemptPromptAssembly(input) {
  	const { attempt } = input;
  	const isSettledTurnFinalization = attempt.operation === "settled-tool-finalization";
@@ -359,7 +367,7 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
  	let systemPromptText = input.systemPromptText;
  	const setSystemPrompt = (next) => {
  		systemPromptText = next;
-@@ -14248,6 +14250,64 @@
+@@ -14248,6 +14251,68 @@
  		state.terminal = mergeAgentRunAttemptTerminal(state.terminal, incoming);
  	};
  	const idleTimeoutTriggerRef = {};
@@ -390,7 +398,7 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
 +				return refreshed;
 +			},
 +			prepare: async (model, context, signal, budget) => {
-+				capturedInput = { boundaryVersion: 5,
++				capturedInput = { boundaryVersion: 5, providerCustodyVersion: 1,
 +                    persistAdmittedContact: async (identity,roleScope) => { assertActive(); const old=sessionManager.getEntries().find(entry=>entry.type==="custom" && entry.customType==="nous_admitted_contact" && entry.data?.identity?.invocationId===identity.invocationId); if(old && JSON.stringify(old.data)!==JSON.stringify({identity,roleScope})) throw Error("Native admitted contact identity changed"); if(!old) sessionManager.appendCustomEntry("nous_admitted_contact",{identity,roleScope}); }, historyIsFresh: nativeHistoryWasEmpty, historyGeneration: nativeHistoryGeneration,
 +                    persistSessionBinding: async (value) => { const written = await persistNousSessionExtension({ pluginId: "nous-cognition", namespace: "nous-cognition", cfg: attempt.config, sessionKey: attempt.sessionKey, agentId: input.setup.sessionAgentId, value, assertCurrent: assertActive }); if (!written.ok) throw new Error(`Required Nous binding was not persisted: ${written.error ?? "unknown native session"}`); }, sessionId: attempt.sessionId, sessionKey: attempt.sessionKey, parentSessionKey: attempt.spawnedBy ?? void 0, agentId: input.setup.sessionAgentId, runId: attempt.runId, prompt: attempt.prompt ?? "", extraSystemPrompt:attempt.nousAuthoredCurrentContext, model, context, signal: signal ?? input.runAbortController.signal,
 +					contextTokenBudget: Math.min(attempt.contextTokenBudget ?? model.contextWindow, model.contextWindow), reservedOutputTokens: Math.min(budget.reservedOutputTokens, resolveMaxTokensParam(sessionRuntime.transport.effectiveExtraParams ?? {}) ?? budget.reservedOutputTokens),
@@ -412,6 +420,10 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
 +                if (!Number.isSafeInteger(capturedApplication?.providerControls?.maxOutputTokens) || capturedApplication.providerControls.maxOutputTokens<1 || capturedApplication.providerControls.maxOutputTokens>capturedInput.reservedOutputTokens) throw Error("Managed output budget exceeds the actual native profile output limit");
 +				return capturedApplication;
 +			},
++			providerCustody: (application) => {
++                if (!capturedInput || application !== capturedApplication) throw Error("Native provider custody has no actual managed input");
++                return createNousProviderCustody(sessionManager, capturedInput, application);
++            },
 +			authorizeToolExecution: (execution) => {
 +				if (!capturedInput || !capturedApplication) throw new Error("Native tool execution has no actual model input contact");
 +				return engine.authorizeToolExecution(capturedInput, capturedApplication, execution);
@@ -424,7 +436,7 @@ diff --git a/dist/builtin-openclaw-zQV8Wwjr.js b/dist/builtin-openclaw-zQV8Wwjr.
  	const { cacheObservabilityEnabled, promptCacheTools } = installEmbeddedAttemptStreamGuards({
  		attempt,
  		session: activeSession,
-@@ -16828,7 +16888,7 @@
+@@ -16828,7 +16893,7 @@
  }
  async function prepareEmbeddedAttemptSessionBoundary(input) {
  	const { activeSession, attempt, isRawModelRun, sessionManager } = input;

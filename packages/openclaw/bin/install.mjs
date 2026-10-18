@@ -43,7 +43,7 @@ for (let index = 3; index < process.argv.length; index += 2) {
 if (!prefix)
   throw Error("An explicit controlled runtime directory is required");
 const manifest =
-  /** @type {{version:string,dependencyOverrides:Record<string,string>}} */ (
+  /** @type {{version:string,dependencyOverrides:Record<string,string>,dependencyPatches?:Record<string,unknown>}} */ (
     JSON.parse(await readFile(join(plugin, "patches/manifest.json"), "utf8"))
   );
 const existing = await readFile(join(prefix, "package.json"), "utf8")
@@ -218,8 +218,19 @@ try {
   )
     .then((text) => /** @type {unknown} */ (JSON.parse(text)))
     .catch(() => undefined);
-  if (prepared && JSON.stringify(prepared) !== JSON.stringify(manifest))
+  if (prepared && JSON.stringify(prepared) !== JSON.stringify(manifest)) {
+    // Fixed provider code is re-acquired by the same official npm install on a distribution upgrade.
+    for (const name of Object.keys(manifest.dependencyPatches ?? {})) {
+      if (name !== "@openclaw/ai")
+        throw Error("Unknown controlled provider dependency");
+      await rm(join(modules, name), { recursive: true, force: true });
+      await rm(join(modules, "@openclaw/proxyline"), {
+        recursive: true,
+        force: true,
+      });
+    }
     await rm(nativeRoot, { recursive: true, force: true });
+  }
   npmRun(["install", "--no-audit", "--no-fund"]);
   descriptors ??= additions.map((path) => ({
     path,

@@ -18,6 +18,7 @@ type ContextEngine = Awaited<
 /** The required model-boundary extension carried by the controlled OpenClaw distribution. */
 export interface ManagedModelInput {
   boundaryVersion: 5;
+  providerCustodyVersion: 1;
   historyIsFresh: boolean;
   historyGeneration: string;
   persistSessionBinding(value: Record<string, string>): Promise<void>;
@@ -47,6 +48,7 @@ export interface ManagedModelInput {
   };
 }
 export interface ManagedModelApplication {
+  subjectId: string;
   context: Context;
   invocationId: string;
   applied: AppliedCognition;

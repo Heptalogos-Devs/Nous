@@ -64,7 +64,16 @@ test("controlled native custody survives SQLite and gates real delivery producer
       )
         return;
       await mkdir(dirname(join(modules, name)), { recursive: true });
-      await symlink(await realpath(candidate), join(modules, name), "junction");
+      if (["@openclaw/ai", "@openclaw/proxyline"].includes(name))
+        await cp(await realpath(candidate), join(modules, name), {
+          recursive: true,
+        });
+      else
+        await symlink(
+          await realpath(candidate),
+          join(modules, name),
+          "junction",
+        );
       linked.add(name);
     };
     for (const dependencies of [

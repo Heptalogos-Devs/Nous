@@ -508,3 +508,82 @@ export function withAcceptedContactRoots(
   }
   return usage;
 }
+
+/** Authenticated native metadata read; complete provider bodies require explicit input detail. */
+export const NATIVE_PROVIDER_ATTEMPTS_METHOD = "nous.provider-attempts";
+export const nativeProviderAttemptsRequestSchema = z
+  .object({
+    subjectId: z.uuid(),
+    runId: z.string().min(1).max(2048),
+    agentId: z.string().min(1).max(512),
+    sessionId: z.string().min(1).max(2048),
+    sessionKey: z.string().min(1).max(4096),
+    includeInputs: z.boolean().default(false),
+    afterSequence: z.number().int().nonnegative().default(0),
+    limit: z.number().int().min(1).max(64).default(16),
+  })
+  .strict();
+export const nativeProviderAttemptsResponseSchema = z
+  .object({
+    version: z.literal(1),
+    subjectId: z.uuid(),
+    runId: z.string(),
+    coverage: z.enum(["recorded", "not_recorded"]),
+    attempts: z.array(
+      z
+        .object({
+          attemptId: z.string(),
+          sequence: z.number().int().positive(),
+          runId: z.string(),
+          sessionKey: z.string(),
+          invocationId: z.string(),
+          contactRequestId: z.string().optional(),
+          provider: z.string(),
+          model: z.string(),
+          api: z.string(),
+          recordedAt: z.string(),
+          requestDigest: z.string(),
+          outcome: z.enum(["completed", "failed", "uncertain"]),
+          costKnown: z.boolean(),
+          response: canonicalJson.optional(),
+          usage: canonicalJson.optional(),
+          error: canonicalJson.optional(),
+          responseId: z.string().optional(),
+          input: canonicalJson.optional(),
+        })
+        .strict(),
+    ),
+    nextSequence: z.number().int().positive().nullable(),
+    retainedResults: z.array(
+      z
+        .object({
+          invocationId: z.string().optional(),
+          timestamp: z.number(),
+          provider: z.string().optional(),
+          model: z.string().optional(),
+          api: z.string().optional(),
+          stopReason: z.string().optional(),
+          usage: canonicalJson.optional(),
+        })
+        .strict(),
+    ),
+    retainedResultsOmitted: z.boolean(),
+  })
+  .strict();
+export type NativeProviderAttemptsRequest = z.input<
+  typeof nativeProviderAttemptsRequestSchema
+>;
+export type NativeProviderAttemptsResponse = z.output<
+  typeof nativeProviderAttemptsResponseSchema
+>;
+export async function readNativeProviderAttempts(
+  input: NativeProviderAttemptsRequest,
+  call: (method: string, params: Record<string, unknown>) => Promise<unknown>,
+): Promise<NativeProviderAttemptsResponse> {
+  return nativeProviderAttemptsResponseSchema.parse(
+    await call(
+      NATIVE_PROVIDER_ATTEMPTS_METHOD,
+      nativeProviderAttemptsRequestSchema.parse(input),
+    ),
+  );
+}

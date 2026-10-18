@@ -1,0 +1,251 @@
+diff --git a/dist/openai-completions-D0QZ0AyB.mjs b/dist/openai-completions-D0QZ0AyB.mjs
+--- a/dist/openai-completions-D0QZ0AyB.mjs
++++ b/dist/openai-completions-D0QZ0AyB.mjs
+@@ -46,6 +46,7 @@
+ 		};
+ 		const provisionalCommentaryTags = /* @__PURE__ */ new Map();
+ 		let firstEventAbort;
++        let nativeProviderAttempt;
+ 		try {
+ 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
+ 			const compat = resolveOpenAICompletionsCompat(model);
+@@ -56,6 +57,8 @@
+ 			let params = buildParams(model, context, options, compat, cacheRetention);
+ 			const nextParams = await options?.onPayload?.(params, model);
+ 			if (nextParams !== void 0) params = nextParams;
++            if (options?.nousManagedProviderRequired && typeof options?.nousProviderCustody?.request !== "function") throw Error("Required native provider request custody is unavailable");
++            nativeProviderAttempt = await options?.nousProviderCustody?.request(params, model);
+ 			firstEventAbort = createFirstStreamEventAbortController(options?.signal);
+ 			const requestOptions = {
+ 				signal: firstEventAbort.signal,
+@@ -63,6 +66,7 @@
+ 				maxRetries: 0
+ 			};
+ 			const { data: openaiStream, response } = await client.chat.completions.create(params, requestOptions).withResponse();
++            await nativeProviderAttempt?.response({status:response.status,requestId:response.headers.get("x-request-id") ?? undefined});
+ 			const hookedOpenAIStream = withProviderResponseHook({
+ 				stream: openaiStream,
+ 				signal: firstEventAbort.signal,
+@@ -137,6 +141,7 @@
+ 				throw error;
+ 			}
+ 			for (const block of output.content) if (block.type !== "toolCall" || output.stopReason === "toolUse") finishBlock(block);
++            await nativeProviderAttempt?.finish({outcome:"completed",...(output.usage?.totalTokens ? {usage:output.usage} : {}),responseId:output.responseId});
+ 			stream.push({
+ 				type: "done",
+ 				reason: output.stopReason,
+@@ -144,6 +149,7 @@
+ 			});
+ 			stream.end();
+ 		} catch (error) {
++            try { await nativeProviderAttempt?.finish({outcome:"failed",error, ...(output.usage?.totalTokens ? {usage:output.usage} : {})}); } catch (custodyError) { error = custodyError; }
+ 			const terminal = assignTransportErrorDetails(output, error, options?.signal);
+ 			finalizeOpenAICompletionsToolCalls(output, { allowSilentToolCallPromotion: false });
+ 			clearPendingCommentaryText(provisionalCommentaryTags);
+diff --git a/dist/openai-responses-shared-DiAdpNAM.mjs b/dist/openai-responses-shared-DiAdpNAM.mjs
+--- a/dist/openai-responses-shared-DiAdpNAM.mjs
++++ b/dist/openai-responses-shared-DiAdpNAM.mjs
+@@ -626,8 +626,12 @@
+ 				egress: "responses-sdk",
+ 				payloadVariant: attempt.kind
+ 			});
++			if (params.nousManagedProviderRequired && typeof params.nousProviderCustody?.request !== "function") throw Error("Required native provider request custody is unavailable");
++            const nativeProviderAttempt = await params.nousProviderCustody?.request(attempt.request, params.model);
++            params.onNativeProviderAttempt?.(nativeProviderAttempt);
+ 			try {
+ 				const { data, response } = await params.client.responses.create(attempt.request, params.requestOptions).withResponse();
++                await nativeProviderAttempt?.response({status:response.status,requestId:response.headers.get("x-request-id") ?? undefined});
+ 				commitResponsesEncryptedContentAttempt(attempt, (checkpoint) => {
+ 					if (checkpoint) params.onCompactionRejected?.(checkpoint);
+ 				});
+@@ -635,9 +639,10 @@
+ 				return {
+ 					stream: data,
+ 					response,
+-					attempt
++					attempt, nativeProviderAttempt
+ 				};
+ 			} catch (error) {
++                await nativeProviderAttempt?.finish({outcome:"failed",error});
+ 				let nextAttempt = await resolveNextResponsesEncryptedContentAttempt(attempt, error, { buildFullHistoryRequest: params.buildFullHistoryRequest });
+ 				if (!nextAttempt && attempt.request.previous_response_id && error && typeof error === "object" && typeof error.status === "number" && error.code === "previous_response_not_found") {
+ 					const request = { ...params.buildFullHistoryRequest ? await params.buildFullHistoryRequest() : attempt.request };
+@@ -682,6 +687,7 @@
+ 					}
+ 					return;
+ 				} catch (error) {
++                    await current.nativeProviderAttempt?.finish({outcome:"failed",error});
+ 					const nextAttempt = params.canRetryStream?.() === true && !params.requestOptions?.signal?.aborted ? await resolveNextResponsesEncryptedContentAttempt(current.attempt, error, { buildFullHistoryRequest: params.buildFullHistoryRequest }) : void 0;
+ 					if (!nextAttempt) {
+ 						if (rejectedEvent !== void 0) {
+@@ -2109,6 +2115,10 @@
+ 	return clampedReasoning;
+ }
+ function applyCommonResponsesParams(params, model, context, options, config) {
++    if (options?.responseFormat) {
++        const format = options.responseFormat;
++        params.text = {...params.text,format:format.type === "json_schema" ? {type:"json_schema",...format.json_schema} : {type:"text"}};
++    }
+ 	if (options?.maxTokens) params.max_output_tokens = Math.max(options.maxTokens, 16);
+ 	if (options?.temperature !== void 0 && supportsOpenAITemperature(model)) params.temperature = options.temperature;
+ 	if (context.tools) {
+@@ -2140,6 +2150,7 @@
+ async function runResponsesStreamLifecycle(params) {
+ 	const { stream, output, options } = params;
+ 	let firstEventAbort;
++    let nativeProviderAttempt;
+ 	try {
+ 		const model = params.resolveRequestModel?.(params.model) ?? params.model;
+ 		const client = params.createClient(model);
+@@ -2155,6 +2166,9 @@
+ 		let started = false;
+ 		const { stream: hookedOpenAIStream } = await createResponsesStreamWithEncryptedContentRetry({
+ 			client,
++            nousManagedProviderRequired: options?.nousManagedProviderRequired,
++            nousProviderCustody: options?.nousProviderCustody,
++            onNativeProviderAttempt: (attempt) => { nativeProviderAttempt = attempt; },
+ 			request: requestParams,
+ 			requestOptions: {
+ 				...buildResponsesRequestOptions(options),
+@@ -2195,12 +2209,14 @@
+ 				authProfileId: options?.authProfileId
+ 			})
+ 		});
++        await nativeProviderAttempt?.finish({outcome:output.stopReason === "error" || output.stopReason === "aborted" ? "failed" : "completed",...(output.usage?.totalTokens ? {usage:output.usage} : {}),responseId:output.responseId});
+ 		finalizeTransportStream({
+ 			stream,
+ 			output,
+ 			signal: options?.signal
+ 		});
+ 	} catch (error) {
++        try { await nativeProviderAttempt?.finish({outcome:"failed",error,...(output.usage?.totalTokens ? {usage:output.usage} : {})}); } catch (custodyError) { error = custodyError; }
+ 		failTransportStream({
+ 			stream,
+ 			output,
+diff --git a/dist/simple-options-0PLDyJ-d.mjs b/dist/simple-options-0PLDyJ-d.mjs
+--- a/dist/simple-options-0PLDyJ-d.mjs
++++ b/dist/simple-options-0PLDyJ-d.mjs
+@@ -116,6 +116,9 @@
+ 		promptCacheKey: options?.promptCacheKey,
+ 		headers: options?.headers,
+ 		onPayload: options?.onPayload,
++        responseFormat: options?.responseFormat,
++        nousManagedProviderRequired: options?.nousManagedProviderRequired,
++        nousProviderCustody: options?.nousProviderCustody,
+ 		onResponse: options?.onResponse,
+ 		timeoutMs: options?.timeoutMs,
+ 		firstEventTimeoutMs: firstEventOptions?.firstEventTimeoutMs,
+diff --git a/dist/transports.mjs b/dist/transports.mjs
+--- a/dist/transports.mjs
++++ b/dist/transports.mjs
+@@ -1800,6 +1800,7 @@
+ 				timestamp: Date.now()
+ 			};
+ 			let firstEventAbort;
++            let nativeProviderAttempt;
+ 			try {
+ 				const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
+ 				const doneDetector = createSseDoneDetector();
+@@ -1833,9 +1834,12 @@
+ 					assertCodeModeResponsesToolSurface(params, visibleToolNames);
+ 				}
+ 				if (getCompat(model).requiresNonEmptyUserOrAssistantMessage) assertOpenAICompletionsPayloadHasConversationTurn(params, model);
++                if (options?.nousManagedProviderRequired && typeof options?.nousProviderCustody?.request !== "function") throw Error("Required native provider request custody is unavailable");
++                nativeProviderAttempt = await options?.nousProviderCustody?.request(params, model);
+ 				const emitReasoning = shouldEmitOpenAICompletionsReasoning(model, options);
+ 				firstEventAbort = createFirstStreamEventAbortController(options?.signal);
+ 				const { data: responseStream, response } = await client.chat.completions.create(params, buildOpenAISdkRequestOptions(model, firstEventAbort.signal, { timeoutMs: options?.timeoutMs })).withResponse();
++                await nativeProviderAttempt?.response({status:response.status,requestId:response.headers.get("x-request-id") ?? undefined});
+ 				const hookedResponseStream = withProviderResponseHook({
+ 					stream: responseStream,
+ 					signal: firstEventAbort.signal,
+@@ -1855,12 +1859,14 @@
+ 					onFirstEventTimeout: getFirstStreamEventTimeoutHandler(options),
+ 					sawStreamDONE: doneDetector.sawDone
+ 				});
++                await nativeProviderAttempt?.finish({outcome:output.stopReason === "error" || output.stopReason === "aborted" ? "failed" : "completed",...(output.usage?.totalTokens ? {usage:output.usage} : {}),responseId:output.responseId});
+ 				finalizeTransportStream({
+ 					stream,
+ 					output,
+ 					signal: options?.signal
+ 				});
+ 			} catch (error) {
++                try { await nativeProviderAttempt?.finish({outcome:"failed",error,...(output.usage?.totalTokens ? {usage:output.usage} : {})}); } catch (custodyError) { error = custodyError; }
+ 				failTransportStream({
+ 					stream,
+ 					output,
+@@ -2531,13 +2537,14 @@
+ }
+ async function postOpenAIResponsesCompaction(params) {
+ 	const compactInput = typeof params.request.instructions === "string" && params.request.instructions.length > 0 ? [buildOpenAIResponsesCompactSystemMessage(params.model, params.request.instructions), ...params.request.input ?? []] : params.request.input;
+-	const response = await params.client.post("/responses/compact", {
+-		...buildOpenAISdkRequestOptions(params.model, params.options?.signal, { timeoutMs: params.options?.timeoutMs }),
+-		body: {
+-			model: params.request.model,
+-			input: compactInput
+-		}
+-	});
++    const body = {model:params.request.model,input:compactInput};
++    if (params.options?.nousManagedProviderRequired && typeof params.options?.nousProviderCustody?.request !== "function") throw Error("Required native provider request custody is unavailable");
++    const nativeProviderAttempt = await params.options?.nousProviderCustody?.request(body, params.model);
++    try {
++	const {data:response,response:httpResponse} = await params.client.post("/responses/compact", {
++		...buildOpenAISdkRequestOptions(params.model, params.options?.signal, { timeoutMs: params.options?.timeoutMs }), body
++	}).withResponse();
++    await nativeProviderAttempt?.response({status:httpResponse.status,requestId:httpResponse.headers.get("x-request-id") ?? undefined});
+ 	const output = isRecord(response) && Array.isArray(response.output) ? response.output : [];
+ 	const item = output.at(-1);
+ 	const retainedItems = output.slice(0, -1);
+@@ -2546,6 +2553,7 @@
+ 	const retainedMessagePrefixSupported = supportsNativeOpenAIResponsesEndpoint(params.model);
+ 	const usage = isRecord(response) && isRecord(response.usage) ? response.usage : void 0;
+ 	if (!isRecord(response) || response.object !== "response.compaction" || !isOpenAIResponsesCompactionOutput(output, params.model) || retainedItems.length > 0 && (!retainedMessagePrefixSupported || retainedUserMessageCount !== inputUserMessageCount) || !isRecord(item) || item.type !== "compaction" || typeof item.encrypted_content !== "string" || item.encrypted_content.length === 0 || !usage || typeof usage.input_tokens !== "number" || typeof usage.output_tokens !== "number") throw new Error("Responses compact endpoint did not return one trailing compaction item");
++    await nativeProviderAttempt?.finish({outcome:"completed",usage:{input:usage.input_tokens,output:usage.output_tokens,totalTokens:usage.input_tokens+usage.output_tokens}});
+ 	return {
+ 		output,
+ 		item,
+@@ -2557,6 +2565,10 @@
+ 			sessionId: params.options?.sessionId
+ 		})
+ 	};
++    } catch (error) {
++        try { await nativeProviderAttempt?.finish({outcome:"failed",error}); } catch (custodyError) { error = custodyError; }
++        throw error;
++    }
+ }
+ function createResponsesTransportExecutor(config) {
+ 	return (model, context, options) => {
+@@ -2566,6 +2578,7 @@
+ 		(async () => {
+ 			const output = createOpenAIResponsesAssistantOutput(model, config.outputApi);
+ 			let firstEventAbort;
++            let nativeProviderAttempt;
+ 			let continuationClaim;
+ 			try {
+ 				const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
+@@ -2649,6 +2662,9 @@
+ 				const createSseStream = async (initialRequest = continuationClaim?.request ?? params, initialAttemptKind = "initial", initialRejectedCompaction) => {
+ 					const { stream: responseStream } = await createResponsesStreamWithEncryptedContentRetry({
+ 						client,
++                        nousManagedProviderRequired: options?.nousManagedProviderRequired,
++                        nousProviderCustody: options?.nousProviderCustody,
++                        onNativeProviderAttempt: (attempt) => { nativeProviderAttempt = attempt; },
+ 						request: initialRequest,
+ 						requestOptions,
+ 						model,
+@@ -2762,6 +2778,7 @@
+ 					finishWebSocket?.({ keep: false });
+ 					throw error;
+ 				}
++                await nativeProviderAttempt?.finish({outcome:"completed",...(output.usage?.totalTokens ? {usage:output.usage} : {}),responseId:output.responseId});
+ 				emitModelTransportDebug(log, `[responses] completed provider=${model.provider} api=${model.api} model=${model.id} transport=${transport} elapsedMs=${Date.now() - requestStartedAt}`);
+ 				finalizeTransportStream({
+ 					stream,
+@@ -2769,6 +2786,7 @@
+ 					signal: options?.signal
+ 				});
+ 			} catch (error) {
++                try { await nativeProviderAttempt?.finish({outcome:"failed",error,...(output.usage?.totalTokens ? {usage:output.usage} : {})}); } catch (custodyError) { error = custodyError; }
+ 				if (compactRequest) {
+ 					compactRequest.reject(error);
+ 					failTransportStream({

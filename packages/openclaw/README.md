@@ -21,7 +21,7 @@ corepack pnpm openclaw:pack
 npm exec --yes --package=/absolute/path/nous-wave-openclaw-0.2.1.tgz -- nous-openclaw-install /absolute/path/subject-runtime
 ```
 
-原生安装器创建自己的 npm 根与持久插件 tarball，固定 OpenClaw 和经过修复的传递依赖，生成可重装的 lockfile，然后运行入口准备。只接受新目录或先前由该安装器创建的目录，不覆盖任意应用的依赖配置；配置、密钥和主体数据应放在运行代码目录之外。原 OpenClaw 2026.9.1 将 Undici/MCP SDK 固定在受影响版本，因此不能以普通 `npm install openclaw` 代替此入口。当前实际固定 Undici 8.10.2、MCP SDK 1.31.0；`prepare` 同时检查 OpenClaw 和 proxyline 实际解析的版本，旧依赖拒绝准备。
+原生安装器创建自己的 npm 根与持久插件 tarball，固定 OpenClaw 和经过修复的传递依赖，生成可重装的 lockfile，然后运行入口准备。只接受新目录或先前由该安装器创建的目录，不覆盖任意应用的依赖配置；配置、密钥和主体数据应放在运行代码目录之外。原 OpenClaw 2026.9.1 将 Undici/MCP SDK 固定在受影响版本，因此不能以普通 `npm install openclaw` 代替此入口。当前实际固定 Undici 8.10.2、MCP SDK 1.31.0、@openclaw/ai 2026.9.1；`prepare` 同时检查 OpenClaw 和 proxyline 实际解析的版本，旧依赖拒绝准备。
 
 第一方渠道等本地插件通过同一安装器显式安装，不将本地 tarball 冒充官方 npm 来源：
 
@@ -29,6 +29,15 @@ npm exec --yes --package=/absolute/path/nous-wave-openclaw-0.2.1.tgz -- nous-ope
 node /absolute/path/subject-runtime/node_modules/@nous-wave/openclaw/bin/install.mjs /absolute/path/subject-runtime --plugin /absolute/path/channel-plugin.tgz
 node /absolute/path/subject-runtime/node_modules/@nous-wave/openclaw/bin/install.mjs /absolute/path/subject-runtime --remove-plugin channel-plugin-id
 ```
+
+同时升级 Nous 受控发行物与渠道插件时，使用新归档提供的安装器：
+
+```sh
+npm exec --yes --package=/absolute/path/new-nous-wave-openclaw.tgz -- nous-openclaw-install /absolute/path/subject-runtime --plugin /absolute/path/new-channel-plugin.tgz
+```
+
+受控代码修订变化时，同一安装器重新取得固定的 OpenClaw/AI 包并准备全部哈希。DATA、配置、登录与任务仍在原位置。
+
 
 本地包必须在 `package.json` 的 `nousNativeState` 数组中声明实际需要的 `openChannelIngressQueue`、`openKeyedStore`，安装器只支持这两项。受控根保存内容寻址 tarball、真实 npm 安装 identity/integrity 与逐文件哈希；原生 loader 同时核对归档、lockfile、实际包路径、入口和全部文件后才按能力授予。未注册、记录损坏、替换文件或归档都会拒绝；这不授予 bundled、official npm、同步存储、BlobStore 或其他可信插件特权。
 
@@ -197,3 +206,11 @@ GIF 使用现有 video sampler 的有界多帧与时间戳，再由既有 scene 
 ### 原生 agent RPC 的每 run 工具绑定
 
 受控 2026.9.1 的 `agent` 请求支持与 `chat.send` 相同的 `toolBindings` namespace map（最多16个namespace，键长1..128，值opaque）。可信调用者在模型参数之外提供它；RPC ingress 和 embedded attempt 原样传到既有 `PluginToolContext.toolBindings`。绑定不写入 Session，不从 prompt、tool args 或“最近run”补值；下一run缺失绑定就是缺失。该元数据只定位宿主实际run，不授予工具/发送权限，宿主仍须检查当前Activity与operator grants。
+
+## 实际 Provider 输入与用量
+
+受控原生边界要求`providerCustodyVersion: 1`。OpenAI Chat Completions和Responses使用SSE HTTP路径；每次真实`create`之前，在所有`onPayload`变更及Responses重试调整之后，先将完整JSON请求体保存到原SessionManager的`nous_provider_attempt` custom entry。保存失败终止提交。记录保持Subject、native run/session、invocation和attempt身份；HTTP回执、provider返回的usage与终态继续追加，重复同次回执幂等。custom entry不进入模型消息。API key与transport headers不入记录。
+
+正式Gateway RPC`nous.provider-attempts`要求`operator.admin`并核对实际Subject、run、agent、sessionId及sessionKey。公共SDK`@nous-wave/client/host-bridge`提供`readNativeProviderAttempts`、请求与响应schema；传入宿主现有认证Gateway调用即可。默认返回metadata、outcome与usage，显式`includeInputs: true`返回完整`input`，`afterSequence/limit`分页。请求有记录但结果未确认时为`uncertain`。
+
+旧运行未保存请求体时，`coverage`为`not_recorded`；已有原生assistant的用量放在`retainedResults`，仍可按原invocation查看。`usage.cost`保留原生模型价表估值，`costKnown: false`表示provider账单金额未知。实际provider请求数以新custody记录及其确认状态读取，旧assistant记录数单独显示。

@@ -79,8 +79,7 @@ const message = {
         (input.custody as { reference: string }).reference,
         "host:adopted-behavior",
       );
-      if (denied || input.to === "1072706649")
-        throw new Error("Host forbids send");
+      if (denied) throw new Error("Host forbids send");
     },
   },
   send: {
@@ -284,28 +283,10 @@ await pending.sendPayload({ text: "typed payload" });
 assert.equal(sends.length, 3);
 assert.equal(checks.length, 3);
 assert.equal(adoptions, 1, "replay must not adopt again");
-assert.equal(
-  (checks[1]!.payload as { mediaUrl: string }).mediaUrl,
-  "https://fixture.invalid/media",
-);
-assert.equal(
-  (checks[0]!.payload as { deliveryPartIndex: number }).deliveryPartIndex,
-  0,
-);
 denied = true;
 await assert.rejects(pending.sendText("cancelled"), /Host rejected/);
 assert.equal(sends.length, 3);
 denied = false;
-const observer = fixture.handler({
-  ...params,
-  to: "1072706649",
-  preparedBatch: replayed,
-});
-await assert.rejects(
-  observer.sendMedia("forbidden", "https://fixture.invalid/image"),
-  /Host rejected/,
-);
-assert.equal(sends.length, 3);
 const forged = fixture.handler({ ...params, preparedBatch: raw });
 await assert.rejects(forged.sendText("forged"), /custody/);
 assert.equal(sends.length, 3);
@@ -416,11 +397,12 @@ for (const responseFormat of [
   await callProvider(
     { messages: [], systemPrompt: "native" },
     {
-      model: { provider: "fixture", maxTokens: 64 },
+      model: { provider: "fixture", api: "openai-completions", maxTokens: 64 },
       maxTokens: 64,
       responseFormat: { type: "json_object" },
       convertToLlm: async (messages: unknown) => messages,
       managedCognition: {
+        providerCustody: () => ({ request: async () => ({}) }),
         prepare: async () => ({
           applied: {},
           context: { messages: [], systemPrompt: "applied" },

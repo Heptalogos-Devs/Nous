@@ -3,7 +3,7 @@
   "files": {
     "dist/agent-core-BxgCPa8O.js": {
       "original": "0c9bcca812ac44e9cd79a8df3ce627c55cd569182a4e9f0f6623d54483f149fa",
-      "patched": "634875bd9993c81d214f20386b00370a796bda1e55039932a867a6897d70f58d"
+      "patched": "f9aec996e5079022c37efd792ef66cabe536921ecea86fcb3c8b73395d5c9b2c"
     },
     "dist/agent-exec-DQrJo6Wo.js": {
       "original": "233e7376ce3481a5905fa1083d0077cdade601164303c122d07fbbb8810ac669",
@@ -11,7 +11,7 @@
     },
     "dist/builtin-openclaw-zQV8Wwjr.js": {
       "original": "62599de51a360163f8020d3f2c9ffbf7481a2424b850363d77308a99056a5303",
-      "patched": "5e0d5682e43c14b10d043398ba7b28aefb9e88234bf30c8d687a6f9182654453"
+      "patched": "309715150865049501e3e8dcd8e48995af89bf6d9e23f98a92c976c4606a8412"
     },
     "dist/context-engine-turn-attempt-BPzr5IBp.js": {
       "original": "4cc537188596b09ee72b9d1cff7f027e4eebc836ee43859a414b15eaac36d0fc",
@@ -188,9 +188,34 @@
   },
   "dependencies": {
     "undici": "8.10.2",
-    "@modelcontextprotocol/sdk": "1.31.0"
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "@openclaw/ai": "2026.9.1"
   },
   "managedFiles": {
-    "dist/nous-controlled-plugin.mjs": "8bb072948c8fc389d53eda8a8ec239abeeda27631450bdf2e78907fc1d7bfb3e"
+    "dist/nous-controlled-plugin.mjs": "8bb072948c8fc389d53eda8a8ec239abeeda27631450bdf2e78907fc1d7bfb3e",
+    "dist/nous-provider-custody.mjs": "2fc973f6f16028d18a58561414e25eb42c048ec5d919b444b4642ac47a4518e9"
+  },
+  "dependencyPatches": {
+    "@openclaw/ai": {
+      "patch": "patches/ai-2026.9.1.patch",
+      "files": {
+        "dist/openai-completions-D0QZ0AyB.mjs": {
+          "original": "ea69c7769d81a647bf0b50d46ee3f4f33d0ce6dd00d7bbb4b84e4292a778a6d1",
+          "patched": "f30630fc53ef0f54def1301f6e4deafddcaa130718db599ad9add31ec40e8634"
+        },
+        "dist/openai-responses-shared-DiAdpNAM.mjs": {
+          "original": "3dad9174262fb22fd56bd39ef6fc6d3004aecf95bf10bfc48a03e3ae1326ccd5",
+          "patched": "e7ad5ab685db3707af8332b176d3711050d994c3ae44d6cd3f0fb450b0bb4de5"
+        },
+        "dist/simple-options-0PLDyJ-d.mjs": {
+          "original": "be75cd99a47649324730a36c5036efb5cd214e1c6afe95cc54aa96782734a89e",
+          "patched": "fdcc404570ddab3362d04a38054800039c2c204f4b06986d63dd39fc8dc10dab"
+        },
+        "dist/transports.mjs": {
+          "original": "dd79bb426097bc7b02930ac1f6ddefdf1e062c0bbf3b69fb392b52fb40b1db8b",
+          "patched": "fccd742837fc19609869533c3f5dd422803d1c35ad85c8ef65c5ad057b9f943a"
+        }
+      }
+    }
   }
 }

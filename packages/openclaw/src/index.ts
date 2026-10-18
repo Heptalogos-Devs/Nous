@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { toJson, type JsonObject } from "@bufbuild/protobuf";
+import { registerProviderAttemptRead } from "./provider-attempts.js";
 import { invocationBudget } from "./budget.js";
 import { scopeCallerHistory, allowsCompactionScope } from "./hosted-history.js";
 import {
@@ -74,6 +75,7 @@ const configuration = z
 
 function register(api: OpenClawPluginApi): void {
   const config = configuration.parse(api.pluginConfig);
+  registerProviderAttemptRead(api, config.subjectId);
   const connect = () => connectNousInstance({ runRoot: config.runRoot });
   const bridge = config.hostBridge
     ? new HostBridge(config.hostBridge)
@@ -699,6 +701,7 @@ function register(api: OpenClawPluginApi): void {
       async prepareModelInput(input) {
         if (
           input.boundaryVersion !== 5 ||
+          input.providerCustodyVersion !== 1 ||
           typeof input.historyGeneration !== "string" ||
           !input.historyGeneration ||
           typeof input.historyIsFresh !== "boolean" ||
@@ -921,6 +924,7 @@ function register(api: OpenClawPluginApi): void {
           },
         );
         const application: ManagedModelApplication = {
+          subjectId: config.subjectId,
           context,
           applied,
           invocationId,
