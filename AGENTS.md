@@ -2,7 +2,7 @@
 
 PRE_PRODUCTION; no released external consumers. Internal replacements update current producers/consumers together and delete superseded shapes. Architecture-Vault owns long-term cognition semantics and accepted decisions. Executable contracts are routed through [docs/INDEX.md](docs/INDEX.md). For behavior changes, read the relevant Vault target design and accepted decisions, owning current Spec, direct dependency contracts, and current code.
 
-Use project-specific engineering guidance in [.agents/skills/AGENTS.md](.agents/skills/AGENTS.md); the installed antigpt-exec skill owns general execution behavior.
+Use project-specific engineering guidance in [.agents/skills/AGENTS.md](.agents/skills/AGENTS.md); the installed antirlhf-exec and refactoring skills guide execution and structural replacement. During iteration, use affected checks rather than requiring the complete suite for every edit. The active user goal owns the test-count and test/support-length budgets; keep the existing checks runnable without adding a counting platform.
 
 TypeScript Core owns public hosting and model/resource execution. Rust semantic owners hold Authority, mutation and lifecycle meaning. `persistence` supplies database mechanics; `retrieval` supplies rebuildable Serving. `runtime` is independent of concrete retrieval/provider implementations.
 
